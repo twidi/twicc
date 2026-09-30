@@ -34,6 +34,7 @@ import { useTextSelectionComment } from '../../../composables/useTextSelectionCo
 import { useChatNavigation } from '../../../composables/useChatNavigation'
 import { useChatEntrance } from '../../../composables/useChatEntrance.js'
 import { useChatReveal } from '../../../composables/useChatReveal.js'
+import { createSwitchGate, provideFooterMotion } from '../../../composables/useFooterMotion.js'
 import { isInTurnState, shouldNoteViewChange } from '../../../utils/chatEntrance.js'
 import { getProviderLabel } from '../../../providers'
 
@@ -355,6 +356,35 @@ watch(() => props.sessionId, () => {
     openBlock.value = pendingRequest.value ? 'pending' : 'message-input'
     nextTick(applyOpenBlock)
 }, { immediate: true })
+
+// ── Footer motion (visual refresh step 7d) ───────────────────────────────────
+// One controller for the footer blocks (composables/useFooterMotion.js): heights on open /
+// collapse, enter / leave on mount / unmount, inset on maximize / restore. No motion while
+// the session is inactive, nor from a session switch until the frame after the new
+// session's blocks have mounted and reshaped (this component is reused across sessions).
+// ``immediate`` arms the first mount too: the accordion init above reshapes the composer.
+// The chat stays pinned at its distance from the bottom on a main session; a subagent's
+// list never auto-scrolls.
+const gate = createSwitchGate()
+watch(() => props.sessionId, () => gate.arm(), { immediate: true })
+const { capturePin, footerEnter, footerLeave, vFooterEnter } = provideFooterMotion({
+    enabled: computed(() => sessionActive.value && gate.open.value),
+    pinEnabled: computed(() => !props.parentSessionId),
+    getScrollEl: getScrollerElement,
+    isAtBottom: () => !!scrollerRef.value?.isAtBottom(),
+})
+// A block mounts or unmounts (or the hybrid notice appears): read the chat's gap to the
+// bottom before the DOM changes (the enter / leave motion pins it).
+watch(
+    [
+        hasAnswerablePendingRequest,
+        () => !!currentGoal.value,
+        () => isHybridSession.value && !props.parentSessionId && settingsStore.isClaudeHybridEnabled,
+        () => isHybridSession.value && !props.parentSessionId && !settingsStore.isClaudeHybridEnabled,
+    ],
+    () => capturePin(),
+    { flush: 'pre' },
+)
 
 // External footer-panel navigation (global Alt+Shift+{PageDown/PageUp/T}
 // shortcuts and the matching command-palette actions, routed through
@@ -2269,20 +2299,24 @@ defineExpose({
         </div>
 
         <div class="session-footer">
+            <!-- Footer motion (step 7d): each block mounts and unmounts through a JS-only
+                 Transition (height + fade); the banners grow in (v-footer-enter). -->
             <template v-if="isEphemeral">
-                <PendingRequestForm
-                    v-if="hasAnswerablePendingRequest"
-                    ref="pendingFormRef"
-                    :session-id="sessionId"
-                    :pending-request="pendingRequest"
-                    :pending-count="pendingRequests.length"
-                    @request-open="setOpenBlock('pending', { focus: true })"
-                    @request-collapse="collapsePendingRequest"
-                />
+                <Transition :css="false" @enter="footerEnter" @leave="footerLeave">
+                    <PendingRequestForm
+                        v-if="hasAnswerablePendingRequest"
+                        ref="pendingFormRef"
+                        :session-id="sessionId"
+                        :pending-request="pendingRequest"
+                        :pending-count="pendingRequests.length"
+                        @request-open="setOpenBlock('pending', { focus: true })"
+                        @request-collapse="collapsePendingRequest"
+                    />
+                </Transition>
                 <EphemeralActionsBar :session-id="sessionId" />
             </template>
             <!-- Stale session banner (replaces message input for stale main sessions) -->
-            <div v-else-if="isStale && !parentSessionId" class="stale-banner">
+            <div v-else-if="isStale && !parentSessionId" v-footer-enter class="stale-banner">
                 <wa-callout variant="warning" appearance="outlined">
                     <wa-icon slot="icon" name="clock-rotate-left"></wa-icon>
                     <div class="stale-banner-content">
@@ -2292,7 +2326,7 @@ defineExpose({
                 </wa-callout>
             </div>
             <!-- Provider disabled banner (replaces message input when the session's provider is disabled) -->
-            <div v-else-if="!isProviderEnabled && !parentSessionId" class="provider-disabled-banner">
+            <div v-else-if="!isProviderEnabled && !parentSessionId" v-footer-enter class="provider-disabled-banner">
                 <wa-callout variant="warning" appearance="outlined">
                     <wa-icon slot="icon" name="circle-pause"></wa-icon>
                     <div class="provider-disabled-content">
@@ -2310,15 +2344,17 @@ defineExpose({
                      panel) goes through the accordion like the other panels.
                      Hidden once the user dismisses a closed goal; a new goal
                      brings it back. -->
-                <GoalBlock
-                    v-if="currentGoal"
-                    ref="goalBlockRef"
-                    :session-id="sessionId"
-                    :project-id="projectId"
-                    :sending-locked="hasAnswerablePendingRequest"
-                    @request-open="setOpenBlock('goal', { focus: true })"
-                    @request-collapse="goToComposer(true)"
-                />
+                <Transition :css="false" @enter="footerEnter" @leave="footerLeave">
+                    <GoalBlock
+                        v-if="currentGoal"
+                        ref="goalBlockRef"
+                        :session-id="sessionId"
+                        :project-id="projectId"
+                        :sending-locked="hasAnswerablePendingRequest"
+                        @request-open="setOpenBlock('goal', { focus: true })"
+                        @request-collapse="goToComposer(true)"
+                    />
+                </Transition>
                 <!-- Pending request form. When multiple parallel requests are pending, the
                      oldest is shown and a counter is displayed for the others. On a main
                      session it stacks above the composer; the two coordinate so at most one
@@ -2328,34 +2364,41 @@ defineExpose({
                      answerable requests (dual surface: the TUI dialog stays answerable
                      too, first responder wins); only a request degraded to badge-only
                      (`hybrid_terminal`, GUI channel expired) hides it. -->
-                <PendingRequestForm
-                    v-if="hasAnswerablePendingRequest"
-                    ref="pendingFormRef"
-                    :session-id="sessionId"
-                    :pending-request="pendingRequest"
-                    :pending-count="pendingRequests.length"
-                    @request-open="setOpenBlock('pending', { focus: true })"
-                    @request-collapse="collapsePendingRequest"
-                />
+                <Transition :css="false" @enter="footerEnter" @leave="footerLeave">
+                    <PendingRequestForm
+                        v-if="hasAnswerablePendingRequest"
+                        ref="pendingFormRef"
+                        :session-id="sessionId"
+                        :pending-request="pendingRequest"
+                        :pending-count="pendingRequests.length"
+                        @request-open="setOpenBlock('pending', { focus: true })"
+                        @request-collapse="collapsePendingRequest"
+                    />
+                </Transition>
                 <!-- Hybrid CLI sessions: the embedded terminal, with a badge in the
                      block header pointing at pending prompts (the TUI surface).
                      Gated by the hybrid feature flag — see the notice below for the
                      flag-off case (an existing hybrid session on a server where the
                      feature is disabled). -->
-                <HybridTerminalBlock
-                    v-if="isHybridSession && !parentSessionId && settingsStore.isClaudeHybridEnabled"
-                    ref="hybridTerminalRef"
-                    :session-id="sessionId"
-                    @request-open="setOpenBlock('terminal', { focus: true })"
-                    @request-collapse="goToComposer(true)"
-                    @show-pending-form="setOpenBlock('pending', { focus: true })"
-                    @state-change="onHybridTerminalState"
-                />
+                <Transition :css="false" @enter="footerEnter" @leave="footerLeave">
+                    <HybridTerminalBlock
+                        v-if="isHybridSession && !parentSessionId && settingsStore.isClaudeHybridEnabled"
+                        ref="hybridTerminalRef"
+                        :session-id="sessionId"
+                        @request-open="setOpenBlock('terminal', { focus: true })"
+                        @request-collapse="goToComposer(true)"
+                        @show-pending-form="setOpenBlock('pending', { focus: true })"
+                        @state-change="onHybridTerminalState"
+                    />
+                </Transition>
                 <!-- Hybrid mode disabled on this server: the session is hybrid but
                      the feature is gated off, so the CLI terminal can't run. Show a
-                     notice in its place rather than a dead terminal. -->
+                     notice in its place rather than a dead terminal. Its own v-if
+                     (the terminal's v-else before): a v-else cannot follow a
+                     Transition. -->
                 <div
-                    v-else-if="isHybridSession && !parentSessionId"
+                    v-if="isHybridSession && !parentSessionId && !settingsStore.isClaudeHybridEnabled"
+                    v-footer-enter
                     class="hybrid-disabled-notice"
                 >
                     <wa-callout variant="warning" size="small">
@@ -2546,6 +2589,11 @@ defineExpose({
 .session-footer:has(.pending-request-form.maximized),
 .session-footer:has(.hybrid-terminal-block.maximized),
 .session-footer:has(.goal-block.maximized) {
+    position: static;
+}
+/* A block restoring from maximized (footer motion, step 7d) is held absolute for the run:
+   same containing block (the list), and the footer's overflow does not clip it. */
+.session-footer:has([data-footer-restoring]) {
     position: static;
 }
 

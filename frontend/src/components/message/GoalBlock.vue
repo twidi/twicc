@@ -19,6 +19,7 @@ import { computed, nextTick, ref, useId, watch } from 'vue'
 import { useDataStore } from '../../stores/data'
 import { sendWsMessage } from '../../composables/useWebSocket'
 import { toast } from '../../composables/useToast'
+import { useFooterBlockMotion } from '../../composables/useFooterMotion.js'
 import { generateUUID } from '../../utils/crypto'
 import { formatFullDateTime, formatRelative } from '../../utils/date'
 import AppTooltip from '../ui/AppTooltip.vue'
@@ -74,6 +75,18 @@ function collapse() {
 function toggleMaximized() {
     viewState.value = isMaximized.value ? 'open' : 'maximized'
 }
+
+// Footer motion (visual refresh step 7d): the single root animates its height on open /
+// collapse, the block its inset on maximize / restore.
+const wrapperRef = ref(null)
+const blockRef = ref(null)
+const footerShape = computed(() => isOpen.value ? 'open' : 'collapsed')
+useFooterBlockMotion({
+    wrapperRef,
+    blockRef,
+    shape: footerShape,
+    maximized: isMaximized,
+})
 
 // ── Focus on (accordion-driven) open ─────────────────────────────────────────
 // Order-independent like the other footer panels: if still collapsed when
@@ -247,12 +260,12 @@ const datesId = useId()
 </script>
 
 <template>
+    <div v-if="goal" ref="wrapperRef" class="footer-block">
     <!-- Guarded together with the divider: during the transient frame where the
          goal vanishes before the parent unmounts this component, neither should
-         linger. -->
-    <template v-if="goal">
+         linger. The single root is the footer motion's wrapper (its height animates). -->
     <wa-divider></wa-divider>
-    <div class="goal-block" :class="{ open: isOpen, maximized: isMaximized }">
+    <div ref="blockRef" class="goal-block" :class="{ open: isOpen, maximized: isMaximized }">
         <!-- Collapsed (resting) state: the same single-line bar as the other
              reduced footer panels, tinted by the goal state. -->
         <CollapsedBar
@@ -404,10 +417,16 @@ const datesId = useId()
             </form>
         </template>
     </div>
-    </template>
+    </div>
 </template>
 
 <style scoped>
+/* The single root (footer motion, step 7d): flow-root keeps a child's margin inside, so an
+   animated height never clips it. */
+.footer-block {
+    display: flow-root;
+}
+
 wa-divider {
     --width: var(--divider-size);
     --spacing: 0;

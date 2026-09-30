@@ -12,6 +12,7 @@ import { ref, computed, watch, useId, nextTick } from 'vue'
 import { getProviderLabel, respondToPendingRequest } from '../../providers'
 import { useDataStore } from '../../stores/data'
 import { PROVIDER } from '../../constants'
+import { useFooterBlockMotion } from '../../composables/useFooterMotion.js'
 import AppTooltip from '../ui/AppTooltip.vue'
 import CollapsedBar from './CollapsedBar.vue'
 import ClaudePendingRequestBody from '../session/detail/items/claude_code/PendingRequestBody.vue'
@@ -148,6 +149,17 @@ function toggleMaximized() {
     viewState.value = isMaximized.value ? 'normal' : 'maximized'
 }
 
+// Footer motion (visual refresh step 7d): the single root animates its height on minimize /
+// restore, the form its inset on maximize / restore.
+const wrapperRef = ref(null)
+const footerShape = computed(() => isMinimized.value ? 'minimized' : 'normal')
+useFooterBlockMotion({
+    wrapperRef,
+    blockRef: rootRef,
+    shape: footerShape,
+    maximized: isMaximized,
+})
+
 // Request type for conditional rendering of the header icon/title
 const requestType = computed(() => props.pendingRequest.request_type)
 
@@ -195,12 +207,14 @@ watch(() => props.pendingRequest?.request_id, (newId, oldId) => {
 </script>
 
 <template>
+    <div ref="wrapperRef" class="footer-block">
     <!--
         Shell-only component. Per-provider rendering lives in the
         ``bodyComponent`` resolved by ``session.provider`` (Claude vs
         Codex). The dynamic ``:is="bodyComponent"`` avoids the SFC
         compiler limitation that bit PR2b when we tried to nest
-        ``<template v-else-if>`` branches.
+        ``<template v-else-if>`` branches. The single root is the footer
+        motion's wrapper (its height animates).
     -->
     <wa-divider></wa-divider>
     <div ref="rootRef" class="pending-request-form" :class="{ maximized: isMaximized, minimized: isMinimized }">
@@ -282,9 +296,15 @@ watch(() => props.pendingRequest?.request_id, (newId, oldId) => {
             @submit="onBodySubmit"
         />
     </div>
+    </div>
 </template>
 
 <style scoped>
+/* The single root (footer motion, step 7d): flow-root keeps the card's margin inside, so an
+   animated height never clips it. */
+.footer-block {
+    display: flow-root;
+}
 
 wa-divider {
     --width: var(--divider-size);

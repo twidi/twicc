@@ -22,7 +22,8 @@ export function usePendingRequestSubmitShortcut(onShortcut, isResponding) {
     function handler(e) {
         if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey)) return
         if (isResponding && isResponding()) return
-        const form = document.querySelector('.pending-request-form')
+        // Not a form fading out (footer motion): its wrapper carries data-footer-leaving.
+        const form = document.querySelector('.pending-request-form:not([data-footer-leaving] *)')
         if (!form || !form.contains(document.activeElement)) return
         onShortcut(e)
     }

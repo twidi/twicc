@@ -225,7 +225,7 @@ function onSubmitShortcut(e) {
     if (e.key !== 'Enter') return
     if (!(e.metaKey || e.ctrlKey)) return
     if (selfContainedBody.value) return
-    const form = document.querySelector('.pending-request-form')
+    const form = document.querySelector('.pending-request-form:not([data-footer-leaving] *)')
     if (!form || !form.contains(document.activeElement)) return
     if (props.isResponding) return
 

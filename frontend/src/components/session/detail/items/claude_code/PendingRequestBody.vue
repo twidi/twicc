@@ -248,7 +248,7 @@ function focusPrimaryTarget() {
         if (requestType.value === 'tool_approval') {
             approveButtonRef.value?.focus()
         } else {
-            document.querySelector('.pending-request-form .option-card.auto-focused')?.focus()
+            document.querySelector('.pending-request-form:not([data-footer-leaving] *) .option-card.auto-focused')?.focus()
         }
     })
 }
@@ -260,7 +260,7 @@ function focusPrimaryTarget() {
 // one element carries it at any given time).
 function focusFormPrimary() {
     nextTick(() => {
-        document.querySelector('.pending-request-form .auto-focused')?.focus()
+        document.querySelector('.pending-request-form:not([data-footer-leaving] *) .auto-focused')?.focus()
     })
 }
 
@@ -279,7 +279,7 @@ function focusFormPrimary() {
 const TOOLS_WITH_CODE_EDITOR = new Set(['Bash', 'Write', 'Edit', 'NotebookEdit'])
 function focusEditedContent(retries = 10) {
     nextTick(() => {
-        const details = document.querySelector('.pending-request-form .pending-request-details')
+        const details = document.querySelector('.pending-request-form:not([data-footer-leaving] *) .pending-request-details')
         if (!details) {
             focusFormPrimary()
             return
@@ -327,7 +327,7 @@ function onSubmitShortcut(e) {
     // Self-contained bodies register their own Cmd/Ctrl+Enter handler
     // (usePendingRequestSubmitShortcut) — never double-fire from here.
     if (selfContainedBody.value) return
-    const form = document.querySelector('.pending-request-form')
+    const form = document.querySelector('.pending-request-form:not([data-footer-leaving] *)')
     if (!form || !form.contains(document.activeElement)) return
     if (props.isResponding) return
 

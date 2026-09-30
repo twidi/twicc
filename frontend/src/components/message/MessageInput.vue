@@ -14,6 +14,7 @@ import ProviderIcon from '../ui/ProviderIcon.vue'
 import { sendWsMessage, notifyUserDraftUpdated } from '../../composables/useWebSocket'
 import { useSessionAgentSettings } from '../../composables/useSessionAgentSettings'
 import { ensureProjectTrust } from '../../composables/useTrustGate'
+import { useFooterBlockMotion } from '../../composables/useFooterMotion.js'
 import { resolveProjectTrust } from '../../utils/trust'
 import { vPopoverFocusFix } from '../../directives/vPopoverFocusFix'
 import {
@@ -811,10 +812,40 @@ function recomputeIsTall() {
     isTall.value = rootRef.value.offsetHeight > viewportHeight * COLLAPSE_THRESHOLD_RATIO
 }
 
+// Footer motion (visual refresh step 7d): the root animates its height on collapse /
+// expand. beforeMeasure gives the textarea its final height before the measure (else the
+// animation ends short); `animating` is true while this root animates, and onSettled
+// recomputes isTall once the motion has ended.
+//
+// Then it forces the `message-input` container query to re-evaluate: Firefox 156 keeps the
+// answer computed in the collapsed state (padding 0), so the snippets bar's
+// `(width < 40rem)` rule stayed stale and the expanded height measured 64px too tall.
+// The controller calls it only while the root exists.
+function beforeFooterMeasure() {
+    adjustTextareaHeight()
+    const root = rootRef.value
+    root.style.containerType = 'normal'
+    root.offsetWidth
+    root.style.containerType = ''
+}
+
+const footerShape = computed(() => collapsed.value ? 'collapsed' : 'open')
+const { animating } = useFooterBlockMotion({
+    wrapperRef: rootRef,
+    shape: footerShape,
+    beforeMeasure: beforeFooterMeasure,
+    onSettled: recomputeIsTall,
+})
+
 onMounted(() => {
     if (!rootRef.value) return
     if (typeof ResizeObserver !== 'undefined') {
-        collapseResizeObserver = new ResizeObserver(recomputeIsTall)
+        // Skipped while the root's height animates: every frame would flip the floating
+        // collapse button on and off.
+        collapseResizeObserver = new ResizeObserver(() => {
+            if (animating.value) return
+            recomputeIsTall()
+        })
         collapseResizeObserver.observe(rootRef.value)
     }
     // The threshold is viewport-relative, so a window/visual-viewport resize

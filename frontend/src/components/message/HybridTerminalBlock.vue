@@ -15,6 +15,7 @@
 // PendingRequestForm above the composer (first responder wins).
 import { ref, computed, watch, watchEffect, useId, provide, onBeforeUnmount, markRaw, nextTick } from 'vue'
 import { useDataStore } from '../../stores/data'
+import { useFooterBlockMotion } from '../../composables/useFooterMotion.js'
 import AppTooltip from '../ui/AppTooltip.vue'
 import TerminalInstance from '../terminal/TerminalInstance.vue'
 
@@ -206,11 +207,26 @@ const isVisible = computed(() => !isClosed.value || attentionTerminalOnly.value)
 watch([isVisible, calloutShown], () => {
     emit('state-change', { visible: isVisible.value, attention: calloutShown.value })
 }, { immediate: true })
+
+// ── Footer motion (visual refresh step 7d) ───────────────────────────────────
+// The single root animates its height on open / close and when the callout shows or
+// goes (closed with no callout is a zero height), the block its inset on maximize /
+// restore. The xterm refits on its own (useTerminal's resize debounce).
+const wrapperRef = ref(null)
+const blockRef = ref(null)
+const footerShape = computed(() => isClosed.value ? (calloutShown.value ? 'callout' : 'closed') : 'open')
+useFooterBlockMotion({
+    wrapperRef,
+    blockRef,
+    shape: footerShape,
+    maximized: isMaximized,
+})
 </script>
 
 <template>
+    <div ref="wrapperRef" class="footer-block">
     <wa-divider v-if="isVisible"></wa-divider>
-    <div class="hybrid-terminal-block" :class="{ maximized: isMaximized, closed: isClosed, attention: calloutShown }">
+    <div ref="blockRef" class="hybrid-terminal-block" :class="{ maximized: isMaximized, closed: isClosed, attention: calloutShown }">
         <!-- Closed + attention: a warning callout takes the block's place, opens
              the terminal on click. -->
         <wa-callout
@@ -290,9 +306,16 @@ watch([isVisible, calloutShown], () => {
             />
         </div>
     </div>
+    </div>
 </template>
 
 <style scoped>
+/* The single root (footer motion, step 7d): flow-root keeps a child's margin inside, so an
+   animated height never clips it. */
+.footer-block {
+    display: flow-root;
+}
+
 wa-divider {
     --width: var(--divider-size);
     --spacing: 0;

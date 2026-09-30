@@ -71,7 +71,9 @@ export function runOnChatTab(route, router, action) {
  *   - ask_user_question        → first option-card
  */
 export function getPendingRequestPrimaryTarget() {
-    const form = document.querySelector('.pending-request-form')
+    // Never a form fading out after its answer (footer motion: its wrapper carries
+    // data-footer-leaving for the leave's duration, and the retries below outlast it).
+    const form = document.querySelector('.pending-request-form:not([data-footer-leaving] *)')
     // No form, or it is minimized to its header (its body — and therefore every
     // actionable control — is display:none). In the minimized case the user has
     // expanded the composer alongside it, so it is no longer the primary target.
