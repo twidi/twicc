@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch } from 'vue'
-import { findNewlyCompleted, getDetail } from '../../../../utils/todoList'
+import { getDetail, tickRanks } from '../../../../utils/todoList'
 
 // Provider-agnostic todo/plan renderer. Each ``todos`` entry must carry
 // ``status`` plus at least one of ``content`` / ``activeForm`` (see
@@ -29,19 +29,20 @@ const props = defineProps({
     },
 })
 
-// Indices whose check is popping. Grown by union, never replaced: the store
-// hands a new array on every session_updated broadcast, even with no change,
-// and a replacement would cut a running pop. Not immediate: a first render
+// Indices whose check is popping, with their ranks (the position among the tasks
+// completed in the same snapshot, which staggers the ticks). Grown by union, never
+// replaced: the store hands a new array on every session_updated broadcast, even with
+// no change, and a replacement would cut a running pop. Not immediate: a first render
 // never pops.
-const popping = ref(new Set())
+const popping = ref(new Map())
 
 watch(() => props.todos, (newValue, oldValue) => {
     if (props.animate) {
-        for (const index of findNewlyCompleted(oldValue, newValue)) popping.value.add(index)
+        for (const [index, rank] of tickRanks(oldValue, newValue)) popping.value.set(index, rank)
     }
     // An item that leaves `completed` during its pop loses its icon (v-if), and
     // neither animationend nor animationcancel is guaranteed: drop it here.
-    for (const index of [...popping.value]) {
+    for (const index of [...popping.value.keys()]) {
         if (newValue?.[index]?.status !== 'completed') popping.value.delete(index)
     }
 })
@@ -62,7 +63,8 @@ function onPopEnd(index) {
             v-for="(todo, i) in todos"
             :key="i"
             class="todo-item"
-            :class="`todo-item-${todo.status}`"
+            :class="[`todo-item-${todo.status}`, { 'todo-item-ticking': popping.has(i) }]"
+            :style="{ '--tick-rank': popping.get(i) ?? null }"
         >
             <wa-icon
                 v-if="todo.status === 'completed'"
@@ -88,7 +90,7 @@ function onPopEnd(index) {
                 class="todo-item-icon todo-item-icon-pending"
                 variant="regular"
             ></wa-icon>
-            <span class="todo-item-text">{{ getDetail(todo) }}</span>
+            <span class="todo-item-text"><span class="todo-item-strike">{{ getDetail(todo) }}</span></span>
         </li>
     </ol>
 </template>
@@ -128,9 +130,11 @@ function onPopEnd(index) {
 
 /* Check pop of a task that just became completed. 420ms: the mock's value. Under reduced
    motion the amount is 0, so the keyframe moves nothing but still ends (animationend
-   cleans the popping set). */
+   cleans the popping set). The delay chains the ticks of one snapshot; `both` holds the
+   icon at its `from` frame until its turn. */
 .todo-item-icon--pop {
     animation: todo-check-pop 420ms var(--motion-ease-spring) both;
+    animation-delay: calc(var(--tick-rank, 0) * 150ms);
 }
 
 @keyframes todo-check-pop {

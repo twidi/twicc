@@ -513,20 +513,24 @@ test('11. completed-task check pop: animation, set logic, active → animate cha
     const tree = componentTree('../components/session/detail/items/TodoContent.vue')
     assert.equal(findRule(tree.filter((n) => n.type === 'rule'), ['.todo-item-icon--pop']).decls.animation,
         'todo-check-pop 420ms var(--motion-ease-spring) both')
+    assert.equal(findRule(tree.filter((n) => n.type === 'rule'), ['.todo-item-icon--pop']).decls['animation-delay'],
+        'calc(var(--tick-rank, 0) * 150ms)')
     const [frame] = keyframeEntries(tree, 'todo-check-pop')
     assert.equal(frame.rule.selector, 'from')
     assert.deepEqual(frame.rule.decls, { scale: 'calc(1 - var(--motion-amount))', rotate: 'calc(-30deg * var(--motion-amount))' })
 
     assert.match(sfc, /animate:\s*\{\s*type:\s*Boolean,\s*default:\s*false,?\s*\}/, 'animate prop')
-    assert.match(sfc, /'todo-item-icon--pop':/, 'pop class binding')
+    assert.match(sfc, /'todo-item-icon--pop': popping\.has\(i\)/, 'pop class binding, gated by the popping map')
     assert.match(sfc, /@animationend=/)
     assert.match(sfc, /@animationcancel=/)
     const script = sfc.match(/<script setup>([\s\S]*?)<\/script>/)[1]
     const todosWatch = script.slice(script.indexOf('watch(() => props.todos'), script.indexOf('watch(() => props.animate'))
-    assert.ok(todosWatch.includes('findNewlyCompleted('), 'todos watcher uses findNewlyCompleted')
+    assert.ok(todosWatch.includes('tickRanks('), 'todos watcher uses tickRanks')
     assert.ok(todosWatch.includes('if (props.animate)'), 'todos watcher only adds pops while the list is visible')
-    assert.ok(todosWatch.includes('.add('), 'todos watcher adds to the set')
+    assert.ok(todosWatch.includes('.set('), 'todos watcher sets ranks in the map')
     assert.ok(todosWatch.includes('.delete('), 'todos watcher deletes indices no longer completed')
+    assert.ok(todosWatch.includes('popping.value.keys()'), 'the clean-up loop iterates the indices, not [index, rank] pairs')
+    assert.ok(todosWatch.includes('tickRanks(oldValue, newValue)'), 'tickRanks takes the previous snapshot first')
     assert.ok(!/popping\.value\s*=/.test(script), 'the set is never replaced')
     assert.ok(!/immediate/.test(todosWatch), 'no immediate watcher: a first render never pops')
     const animateWatch = script.slice(script.indexOf('watch(() => props.animate'))

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { findNewlyCompleted } from './todoList.js'
+import { countTasks, findNewlyCompleted, tickRanks, TICK_MAX_RANK } from './todoList.js'
 
 const todo = (content, status, activeForm) => ({ content, status, ...(activeForm ? { activeForm } : {}) })
 
@@ -49,4 +49,57 @@ test('findNewlyCompleted: a shorter previous list only compares the shared indic
     const previous = [todo('A', 'pending')]
     const next = [todo('A', 'completed'), todo('B', 'completed')]
     assert.deepEqual([...findNewlyCompleted(previous, next)], [0])
+})
+
+test('TICK_MAX_RANK is 8', () => {
+    assert.equal(TICK_MAX_RANK, 8)
+})
+
+test('tickRanks: two items completing together are ranked in list order', () => {
+    const previous = [todo('A', 'completed'), todo('B', 'in_progress'), todo('C', 'pending'), todo('D', 'pending')]
+    const next = [todo('A', 'completed'), todo('B', 'completed'), todo('C', 'pending'), todo('D', 'completed')]
+    assert.deepEqual(tickRanks(previous, next), new Map([[1, 0], [3, 1]]))
+})
+
+test('tickRanks: a single item gets rank 0', () => {
+    const previous = [todo('A', 'completed'), todo('B', 'completed'), todo('C', 'in_progress')]
+    const next = [todo('A', 'completed'), todo('B', 'completed'), todo('C', 'completed')]
+    assert.deepEqual(tickRanks(previous, next), new Map([[2, 0]]))
+})
+
+test('tickRanks: nothing newly completed gives an empty map', () => {
+    const list = [todo('A', 'completed'), todo('B', 'pending')]
+    assert.equal(tickRanks(list, [todo('A', 'completed'), todo('B', 'pending')]).size, 0)
+    assert.equal(tickRanks(null, list).size, 0)
+})
+
+test('tickRanks: twelve items completing together are capped at TICK_MAX_RANK', () => {
+    const names = Array.from({ length: 12 }, (_, i) => `T${i}`)
+    const previous = names.map((n) => todo(n, 'pending'))
+    const next = names.map((n) => todo(n, 'completed'))
+    assert.deepEqual([...tickRanks(previous, next).values()], [0, 1, 2, 3, 4, 5, 6, 7, 8, 8, 8, 8])
+})
+
+test('tickRanks: an inserted item that shifts indices gives an empty map', () => {
+    const previous = [todo('A', 'pending'), todo('B', 'completed')]
+    const next = [todo('New', 'pending'), todo('A', 'completed'), todo('B', 'completed')]
+    assert.equal(tickRanks(previous, next).size, 0)
+})
+
+test('countTasks: null gives zeros', () => {
+    assert.deepEqual(countTasks(null), { done: 0, total: 0, percent: 0 })
+})
+
+test('countTasks: deleted tasks are out of both numbers', () => {
+    const list = [todo('A', 'completed'), todo('B', 'deleted'), todo('C', 'pending')]
+    assert.deepEqual(countTasks(list), { done: 1, total: 2, percent: 50 })
+})
+
+test('countTasks: two of five done is 40 percent', () => {
+    const list = [todo('A', 'completed'), todo('B', 'completed'), todo('C', 'in_progress'), todo('D', 'pending'), todo('E', 'pending')]
+    assert.deepEqual(countTasks(list), { done: 2, total: 5, percent: 40 })
+})
+
+test('countTasks: all deleted gives total 0', () => {
+    assert.deepEqual(countTasks([todo('A', 'deleted'), todo('B', 'deleted')]), { done: 0, total: 0, percent: 0 })
 })

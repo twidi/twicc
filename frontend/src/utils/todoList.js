@@ -134,6 +134,46 @@ export function findNewlyCompleted(previousTodos, nextTodos) {
     return indices
 }
 
+export const TICK_MAX_RANK = 8
+
+/**
+ * Rank per newly completed index for one snapshot change: Map<index, rank>.
+ *
+ * The rank is the position among the items that become completed in the same snapshot, in
+ * list order, capped at `maxRank`: from the ninth item on, ticks share the last delay.
+ *
+ * @param {Array<{status: string, content?: string, activeForm?: string}>|null|undefined} previousTodos
+ * @param {Array<{status: string, content?: string, activeForm?: string}>|null|undefined} nextTodos
+ * @param {number} [maxRank]
+ * @returns {Map<number, number>}
+ */
+export function tickRanks(previousTodos, nextTodos, maxRank = TICK_MAX_RANK) {
+    const ranks = new Map()
+    let rank = 0
+    for (const index of findNewlyCompleted(previousTodos, nextTodos)) {
+        ranks.set(index, Math.min(rank, maxRank))
+        rank += 1
+    }
+    return ranks
+}
+
+/**
+ * Counts for the progress line: `deleted` tasks are out of both numbers.
+ *
+ * @param {Array<{status: string}>|null|undefined} todos
+ * @returns {{done: number, total: number, percent: number}}
+ */
+export function countTasks(todos) {
+    let done = 0
+    let total = 0
+    for (const todo of todos ?? []) {
+        if (todo.status === 'deleted') continue
+        total += 1
+        if (todo.status === 'completed') done += 1
+    }
+    return { done, total, percent: total ? (done / total) * 100 : 0 }
+}
+
 function sameTodoIdentity(a, b) {
     if (typeof a.content === 'string' && typeof b.content === 'string') return a.content === b.content
     if (typeof a.activeForm === 'string' && typeof b.activeForm === 'string') return a.activeForm === b.activeForm
