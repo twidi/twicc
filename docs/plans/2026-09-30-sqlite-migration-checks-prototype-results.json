@@ -1,0 +1,428 @@
+{
+  "django": "6.0.4",
+  "sqlite": "3.53.1",
+  "results": [
+    {
+      "case": "observed_no_operation",
+      "editor": "ObservedEditor",
+      "checks": [],
+      "failure": null,
+      "seconds": 0.001233,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "standard_data_update",
+      "editor": "DatabaseSchemaEditor",
+      "checks": [
+        "PRAGMA foreign_key_check"
+      ],
+      "failure": null,
+      "seconds": 0.000999,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "enforced_data_update",
+      "editor": "EnforcedDataEditor",
+      "checks": [],
+      "failure": null,
+      "seconds": 0.000587,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "enforced_invalid_fk",
+      "editor": "EnforcedDataEditor",
+      "checks": [],
+      "failure": "IntegrityError",
+      "seconds": 0.000729,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_data_update",
+      "editor": "ObservedEditor",
+      "checks": [],
+      "failure": null,
+      "seconds": 0.000842,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_runsql_update",
+      "editor": "ObservedEditor",
+      "checks": [],
+      "failure": null,
+      "seconds": 0.005981,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_invalid_fk",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check(\"probe_child\")"
+      ],
+      "failure": "IntegrityError",
+      "seconds": 0.001395,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_native_invalid_fk",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check(\"probe_child\")"
+      ],
+      "failure": "IntegrityError",
+      "seconds": 0.000836,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_delete_parent",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check(\"probe_child\")"
+      ],
+      "failure": "IntegrityError",
+      "seconds": 0.000835,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_operation_error",
+      "editor": "ObservedEditor",
+      "checks": [],
+      "failure": "ValueError",
+      "seconds": 0.000391,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_trigger",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check(\"probe_child\")"
+      ],
+      "failure": "IntegrityError",
+      "seconds": 0.001574,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_cached_statement",
+      "editor": "ObservedEditor",
+      "checks": [],
+      "failure": null,
+      "seconds": 0.000729,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_cached_invalid_statement",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check(\"probe_child\")"
+      ],
+      "failure": "IntegrityError",
+      "seconds": 0.000851,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_native_executemany",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check(\"probe_child\")"
+      ],
+      "failure": "IntegrityError",
+      "seconds": 0.000782,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_unique_replace",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check(\"unique_child\")"
+      ],
+      "failure": "IntegrityError",
+      "seconds": 0.001744,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_update_replace_unique",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check(\"probe_child\")"
+      ],
+      "failure": "IntegrityError",
+      "seconds": 0.002687,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_schema_conflict_replace",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check(\"replace_child\")"
+      ],
+      "failure": "IntegrityError",
+      "seconds": 0.001645,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_partial_unique_replace",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check(\"probe_child\")"
+      ],
+      "failure": "IntegrityError",
+      "seconds": 0.001721,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_expression_unique_replace",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check(\"probe_child\")"
+      ],
+      "failure": "IntegrityError",
+      "seconds": 0.001826,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_generated_unique_replace",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check(\"generated_replace_child\")"
+      ],
+      "failure": "IntegrityError",
+      "seconds": 0.002371,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_attached_write_rejected",
+      "editor": "ObservedEditor",
+      "checks": [],
+      "failure": "DatabaseError",
+      "seconds": 0.000845,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_temp_write_rejected",
+      "editor": "ObservedEditor",
+      "checks": [],
+      "failure": "DatabaseError",
+      "seconds": 0.000895,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_attach_rejected",
+      "editor": "ObservedEditor",
+      "checks": [],
+      "failure": "DatabaseError",
+      "seconds": 0.000649,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_temp_ddl_rejected",
+      "editor": "ObservedEditor",
+      "checks": [],
+      "failure": "DatabaseError",
+      "seconds": 0.001545,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_nested_editor_preserves_outer",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check"
+      ],
+      "failure": "IntegrityError",
+      "seconds": 0.00104,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_generated_parent_key",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check(\"generated_child\")"
+      ],
+      "failure": "IntegrityError",
+      "seconds": 0.00162,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_uppercase_parent_reference",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check(\"probe_child\")",
+        "PRAGMA foreign_key_check(\"uppercase_child\")"
+      ],
+      "failure": "IntegrityError",
+      "seconds": 0.001476,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_mixed_data",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check(\"probe_child\")"
+      ],
+      "failure": "IntegrityError",
+      "seconds": 0.001123,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_backward_label",
+      "editor": "ObservedEditor",
+      "checks": [],
+      "failure": null,
+      "seconds": 0.000898,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_backward_invalid_fk",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check(\"probe_child\")"
+      ],
+      "failure": "IntegrityError",
+      "seconds": 0.000661,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_empty_table",
+      "editor": "ObservedEditor",
+      "checks": [],
+      "failure": null,
+      "seconds": 0.001206,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_empty_fk_table",
+      "editor": "ObservedEditor",
+      "checks": [],
+      "failure": null,
+      "seconds": 0.001933,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_schema_then_invalid_data",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check(\"probe_child\")"
+      ],
+      "failure": "IntegrityError",
+      "seconds": 0.001498,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_index",
+      "editor": "ObservedEditor",
+      "checks": [],
+      "failure": null,
+      "seconds": 0.001714,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "enforced_parent_rebuild",
+      "editor": "EnforcedDataEditor",
+      "checks": [],
+      "failure": "IntegrityError",
+      "seconds": 0.002152,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_parent_rebuild",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check"
+      ],
+      "failure": null,
+      "seconds": 0.002665,
+      "foreign_keys_restored": true
+    },
+    {
+      "case": "observed_unknown_schema",
+      "editor": "ObservedEditor",
+      "checks": [
+        "PRAGMA foreign_key_check"
+      ],
+      "failure": null,
+      "seconds": 0.001502,
+      "foreign_keys_restored": true
+    }
+  ],
+  "upgrade_replay": {
+    "migrations": [
+      "0147_session_history_fact",
+      "0148_live_contribution_indexes_squashed_0149_remove_redundant_message_index"
+    ],
+    "forward_and_backward_checks": [],
+    "migration_records_removed": true,
+    "schema_restored": true
+  },
+  "synthetic_benchmark": {
+    "storage": "in-memory",
+    "repetitions": 3,
+    "seed_time_excluded": true,
+    "note": "Not a cold-disk or production-startup benchmark",
+    "cases": [
+      {
+        "child_rows": 10000,
+        "payload_bytes_per_extra_row": 256,
+        "samples": {
+          "DatabaseSchemaEditor": {
+            "seconds": [
+              0.001676,
+              0.001893,
+              0.001573
+            ],
+            "median_seconds": 0.001676
+          },
+          "ObservedEditor": {
+            "seconds": [
+              0.00115,
+              0.001137,
+              0.001709
+            ],
+            "median_seconds": 0.00115
+          }
+        }
+      },
+      {
+        "child_rows": 100000,
+        "payload_bytes_per_extra_row": 256,
+        "samples": {
+          "DatabaseSchemaEditor": {
+            "seconds": [
+              0.008408,
+              0.008529,
+              0.008594
+            ],
+            "median_seconds": 0.008529
+          },
+          "ObservedEditor": {
+            "seconds": [
+              0.001123,
+              0.001338,
+              0.001112
+            ],
+            "median_seconds": 0.001123
+          }
+        }
+      },
+      {
+        "child_rows": 100000,
+        "payload_bytes_per_extra_row": 4096,
+        "samples": {
+          "DatabaseSchemaEditor": {
+            "seconds": [
+              0.012696,
+              0.013783,
+              0.012361
+            ],
+            "median_seconds": 0.012696
+          },
+          "ObservedEditor": {
+            "seconds": [
+              0.001222,
+              0.001155,
+              0.001097
+            ],
+            "median_seconds": 0.001155
+          }
+        }
+      }
+    ]
+  }
+}
