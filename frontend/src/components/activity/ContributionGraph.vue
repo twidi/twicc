@@ -5,8 +5,7 @@
 // Colors come from CSS custom properties (--sparkline-project-gradient-color-0..4),
 // read reactively when the effective theme changes via settingsStore.
 
-import { ref, computed } from 'vue'
-import { useElementSize } from '@vueuse/core'
+import { computed } from 'vue'
 import { CalendarHeatmap } from 'vue3-calendar-heatmap'
 import 'vue3-calendar-heatmap/dist/style.css'
 import { useSettingsStore } from '../../stores/settings'
@@ -29,10 +28,6 @@ const isCostMode = computed(() => props.mode === 'cost')
 const isSessionsMode = computed(() => props.mode === 'sessions')
 
 const settingsStore = useSettingsStore()
-
-const graphContainer = ref(null)
-const { width: containerWidth } = useElementSize(graphContainer)
-const isVertical = computed(() => containerWidth.value > 0 && containerWidth.value < 600)
 
 const isDark = computed(() => settingsStore.getEffectiveColorScheme === 'dark')
 
@@ -118,11 +113,11 @@ function tooltipFormatter(item, unit) {
 </script>
 
 <template>
-    <div ref="graphContainer" class="contribution-graph" :class="{ vertical: isVertical }">
+    <div class="contribution-graph">
         <h3 class="contribution-graph-title">{{ isCostMode ? 'Cost per day' : isSessionsMode ? 'Sessions created per day' : 'Message turns per day' }}</h3>
         <CalendarHeatmap
             v-if="heatmapValues.length > 0 && rangeColor.length === 6"
-            :key="`${rangeColor.join(',')}-${isVertical}-${mode}`"
+            :key="`${rangeColor.join(',')}-${mode}`"
             :values="heatmapValues"
             :end-date="endDate"
             :max="heatmapMax"
@@ -132,7 +127,6 @@ function tooltipFormatter(item, unit) {
             :tooltip-unit="isCostMode ? 'cost' : isSessionsMode ? 'sessions created' : 'message turns'"
             :tooltip-formatter="tooltipFormatter"
             :dark-mode="isDark"
-            :vertical="isVertical"
         />
         <div v-else-if="dailyActivity.length === 0" class="no-data">
             No activity data
@@ -154,12 +148,24 @@ function tooltipFormatter(item, unit) {
     width: 100%;
     max-width: 80rem;
 }
-.contribution-graph.vertical :deep(.vch__container) {
-    max-width: 20rem;
-    svg {
-        translate: 1rem 0; /* compensate for hidden less-more legent */
+
+/* The wave (visual refresh step 7a, stats motion design §5.2): the cells fade in week by
+   week, then day by day. Opacity only: the cell's own SVG transform attribute places it, a
+   CSS transform would override it. --heat-week-delay is registered in motion.css, so it
+   computes sibling-index() on the week group and its cells inherit the resulting time.
+   Without sibling-index() every cell fades together. */
+.contribution-graph :deep(.vch__day__square) {
+    animation: heatmap-cell-in 360ms ease-in-out backwards;
+}
+@supports (animation-delay: calc(sibling-index() * 1ms)) {
+    .contribution-graph :deep(.vch__month__wrapper) {
+        --heat-week-delay: calc(sibling-index() * 14ms);
+    }
+    .contribution-graph :deep(.vch__day__square) {
+        animation-delay: calc(var(--heat-week-delay) + sibling-index() * 10ms);
     }
 }
+@keyframes heatmap-cell-in { from { opacity: 0; } }
 
 /* Override vue3-calendar-heatmap styles for theme integration */
 .contribution-graph :deep(svg.vch__wrapper) {

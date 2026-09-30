@@ -49,6 +49,11 @@
     initial-value: 1;
 }
 
+/* Heatmap wave (stats motion design §5.2): the week delay of the project stats heatmap.
+   Registered as a <time>, so sibling-index() computes on the week group that sets it and
+   its cells inherit the resulting time (unregistered, each cell would read its own index). */
+@property --heat-week-delay { syntax: '<time>'; inherits: true; initial-value: 0s; }
+
 /* Web Awesome components take the same timing. The theme declares these tokens in
    @layer wa-theme on the theme root and again on .wa-light / .wa-dark / .wa-invert
    descendants: repeated on .wa-invert (tooltips), which would otherwise re-declare the

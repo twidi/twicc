@@ -9,8 +9,10 @@
 
 import { computed } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
+import AnimatedNumber from '../ui/AnimatedNumber.vue'
 import AppTooltip from '../ui/AppTooltip.vue'
 import CostDisplay from '../ui/CostDisplay.vue'
+import { formatAvg } from '../../utils/countUp.js'
 
 const settingsStore = useSettingsStore()
 const showCosts = computed(() => settingsStore.areCostsShown)
@@ -90,16 +92,6 @@ function computeTrend(cur, prev, upIsGood) {
         direction,
         variant: (isPositive === upIsGood) ? 'success' : 'danger',
     }
-}
-
-/**
- * Format a decimal number for display (e.g. 12.3, 0.5).
- * Shows one decimal place, or integer if whole number.
- */
-function formatAvg(value) {
-    if (value === null) return '-'
-    const rounded = Math.round(value * 10) / 10
-    return rounded % 1 === 0 ? rounded.toString() : rounded.toFixed(1)
 }
 
 const periodDefs = [
@@ -249,7 +241,7 @@ const periods = computed(() => {
                             <div class="wa-cluster wa-gap-m">
                                 <div class="wa-stack wa-gap-3xs wa-align-items-center">
                                     <span v-if="period.mainTrend && period.mainTrend.direction !== 'up'" class="wa-caption-xs prev-value">{{ period.prevMainValue }}</span>
-                                    <span class="wa-heading-2xl">{{ period.mainValue }}</span>
+                                    <AnimatedNumber :value="period.mainValue" format="integer" class="wa-heading-2xl stat-number" />
                                     <span v-if="period.mainTrend && period.mainTrend.direction === 'up'" class="wa-caption-xs prev-value">{{ period.prevMainValue }}</span>
                                 </div>
                                 <wa-tag
@@ -281,12 +273,12 @@ const periods = computed(() => {
                                     <div class="wa-stack wa-gap-2xs wa-align-items-center">
                                         <template v-if="isSessionsMode">
                                             <span v-if="period.sub1Trend && period.sub1Trend.direction !== 'up'" class="wa-caption-xs prev-value">{{ formatAvg(period.prevSub1Value) }}</span>
-                                            <span class="wa-heading-l">{{ formatAvg(period.sub1Value) }}</span>
+                                            <AnimatedNumber :value="period.sub1Value" format="average" class="wa-heading-l stat-number" />
                                             <span v-if="period.sub1Trend && period.sub1Trend.direction === 'up'" class="wa-caption-xs prev-value">{{ formatAvg(period.prevSub1Value) }}</span>
                                         </template>
                                         <template v-else>
                                             <CostDisplay v-if="period.sub1Trend && period.sub1Trend.direction !== 'up'" :cost="period.prevSub1Value" :icon="false" class="wa-caption-s prev-value" />
-                                            <CostDisplay :cost="period.sub1Value" class="wa-heading-l" />
+                                            <AnimatedNumber :value="period.sub1Value" format="cost" class="wa-heading-l stat-number" />
                                             <CostDisplay v-if="period.sub1Trend && period.sub1Trend.direction === 'up'" :cost="period.prevSub1Value" :icon="false" class="wa-caption-xs prev-value" />
                                         </template>
                                     </div>
@@ -319,7 +311,7 @@ const periods = computed(() => {
                                 <div class="wa-cluster wa-gap-m sub-metric">
                                     <div class="wa-stack wa-gap-2xs wa-align-items-center">
                                         <CostDisplay v-if="period.sub2Trend && period.sub2Trend.direction !== 'up'" :cost="period.prevSub2Value" :icon="false" class="wa-caption-xs prev-value" />
-                                        <CostDisplay :cost="period.sub2Value" class="wa-heading-l" />
+                                        <AnimatedNumber :value="period.sub2Value" format="cost" class="wa-heading-l stat-number" />
                                         <CostDisplay v-if="period.sub2Trend && period.sub2Trend.direction === 'up'" :cost="period.prevSub2Value" :icon="false" class="wa-caption-xs prev-value" />
                                     </div>
                                     <wa-tag
@@ -394,6 +386,18 @@ wa-card {
 
 .prev-value {
     color: var(--wa-color-text-quiet);
+}
+
+/* Counted numbers: a vertical text gradient toward the accent (visual refresh step 7a). The
+   dollar icon of CostDisplay paints with currentColor, which is transparent here. */
+.stat-number {
+    background: linear-gradient(180deg, var(--wa-color-text-normal),
+        color-mix(in oklab, var(--wa-color-text-normal) 70%, var(--wa-color-brand-60)));
+    background-clip: text;
+    color: transparent;
+}
+.stat-number :deep(.cost-icon) {
+    color: var(--wa-color-text-normal);
 }
 
 wa-tag {

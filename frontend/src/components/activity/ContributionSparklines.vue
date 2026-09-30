@@ -6,8 +6,9 @@
 // Supports a "combined" mode that overlays all three curves in a single SVG
 // with distinct colors (green for messages, blue for sessions, red for cost).
 
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, useId } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
+import { areaPoints } from '../../utils/sparklineArea.js'
 
 const settingsStore = useSettingsStore()
 const isTouchDevice = computed(() => settingsStore.isTouchDevice)
@@ -41,6 +42,10 @@ const SVG_HEIGHT = 150
 const GRAPH_HEIGHT = 146
 const VIEWBOX_HEIGHT = 150 // viewBox goes from 0 to VIEWBOX_HEIGHT, graph draws within 0..SVG_HEIGHT
 const MIN_Y = 1.0
+
+// Prefix of the Separate-mode gradient ids: unique per instance, so two cached project
+// panels never share an id.
+const uid = useId()
 
 /**
  * Build a full 365-day array from sparse daily activity data.
@@ -326,24 +331,18 @@ const allSeparateCurves = [
         key: 'sessions',
         label: () => `Sessions created ${periodLabel.value}`,
         points: () => sessionsPoints.value,
-        gradientId: 'sparkline-contrib-sessions-gradient',
-        maskId: 'sparkline-contrib-sessions-mask',
         colorPrefix: 'blue',
     },
     {
         key: 'messages',
         label: () => `Message turns ${periodLabel.value}`,
         points: () => messagesPoints.value,
-        gradientId: 'sparkline-contrib-messages-gradient',
-        maskId: 'sparkline-contrib-messages-mask',
         colorPrefix: 'green',
     },
     {
         key: 'cost',
         label: () => `Cost ${periodLabel.value}`,
         points: () => costPoints.value,
-        gradientId: 'sparkline-contrib-cost-gradient',
-        maskId: 'sparkline-contrib-cost-mask',
         colorPrefix: 'red',
         isCost: true,
     },
@@ -355,24 +354,18 @@ const allCombinedCurves = [
         key: 'sessions',
         label: () => 'Sessions',
         points: () => sessionsPoints.value,
-        gradientId: 'sparkline-combined-sessions-gradient',
-        maskId: 'sparkline-combined-sessions-mask',
         colorPrefix: 'blue',
     },
     {
         key: 'messages',
         label: () => 'Message turns',
         points: () => messagesPoints.value,
-        gradientId: 'sparkline-combined-messages-gradient',
-        maskId: 'sparkline-combined-messages-mask',
         colorPrefix: 'green',
     },
     {
         key: 'cost',
         label: () => 'Cost',
         points: () => costPoints.value,
-        gradientId: 'sparkline-combined-cost-gradient',
-        maskId: 'sparkline-combined-cost-mask',
         colorPrefix: 'red',
         isCost: true,
     },
@@ -529,6 +522,8 @@ function formatAverage(value, isCost) {
                             <polyline
                                 v-for="curve in combinedCurves"
                                 :key="curve.key"
+                                class="sparkline-line"
+                                :style="{ '--curve-color': colorVars(curve.colorPrefix).stroke }"
                                 :transform="`translate(0, ${GRAPH_HEIGHT}) scale(1,-1)`"
                                 :points="curve.points"
                                 fill="none"
@@ -593,8 +588,23 @@ function formatAverage(value, isCost) {
                         @mousemove="onSvgMouseMove"
                         @mouseleave="onSvgMouseLeave"
                     >
+                        <!-- Area gradient: opaque at the peaks, transparent at the baseline -->
+                        <defs>
+                            <linearGradient :id="`${uid}-${curve.key}-area`" x1="0" x2="0" y1="1" y2="0">
+                                <stop offset="0" :stop-color="colorVars(curve.colorPrefix).stroke" stop-opacity="0.35"></stop>
+                                <stop offset="1" :stop-color="colorVars(curve.colorPrefix).stroke" stop-opacity="0"></stop>
+                            </linearGradient>
+                        </defs>
                         <g transform="translate(0, 2.0)">
+                            <polygon
+                                class="sparkline-area"
+                                :transform="`translate(0, ${GRAPH_HEIGHT}) scale(1,-1)`"
+                                :points="areaPoints(curve.points, MIN_Y)"
+                                :fill="`url(#${uid}-${curve.key}-area)`"
+                            ></polygon>
                             <polyline
+                                class="sparkline-line"
+                                :style="{ '--curve-color': colorVars(curve.colorPrefix).stroke }"
                                 :transform="`translate(0, ${GRAPH_HEIGHT}) scale(1,-1)`"
                                 :points="curve.points"
                                 fill="none"
@@ -677,10 +687,37 @@ function formatAverage(value, isCost) {
     font-size: var(--wa-font-size-l);
 }
 
+/* Reveal, left to right (visual refresh step 7a, stats motion design §6.1): a wipe shows the
+   line and its area together. Both keyframes are written (inset() does not interpolate with
+   none); the -1rem insets and the visible overflow leave room for the line halo. */
 .contribution-sparkline {
     display: block;
     width: 100%;
     height: 150px;
+    overflow: visible;
+    animation: sparkline-reveal 1100ms var(--motion-ease-out) backwards;
+}
+@keyframes sparkline-reveal {
+    from { clip-path: inset(-1rem 100% -1rem -1rem); }
+    to { clip-path: inset(-1rem -1rem -1rem -1rem); }
+}
+
+/* Reduced motion: a fade instead of the wipe. After the rule above (same specificity). */
+@media (prefers-reduced-motion: reduce) {
+    .contribution-sparkline {
+        animation: sparkline-fade 300ms ease-in-out backwards;
+    }
+}
+@keyframes sparkline-fade { from { opacity: 0; } }
+
+/* Gradient area under a Separate-mode curve */
+.sparkline-area {
+    stroke: none;
+}
+
+/* Soft halo of the curve's own color */
+.sparkline-line {
+    filter: drop-shadow(0 0 0.1875rem color-mix(in oklab, var(--curve-color) 60%, transparent));
 }
 
 /* Legend */
