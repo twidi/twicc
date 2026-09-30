@@ -16,7 +16,7 @@ written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
 | 4→5 | Fixed theme `default` + accent `cyan` | **Done** — spec `docs/plans/2026-09-28-fixed-theme-accent-design.md` (`105963a1`), commit `798cd5b2` |
 | 5 | Entrances (virtual-scroll aware) + skeletons | **5a done** (live chat entrances + chat skeleton): spec `6104a040`, code `f8cee943` (§6g); **5b done** (overlays): spec `2d19c1af` (+ §14 amendment in the code commit), code `9ec679f0` (§6h); **5c done** (list cascade, theme reveal, tab crossfade + overlay slide): spec `b181801d`, code `024f8532` (§6i) |
 | 6 | Accent glow + live states | **6a done** (accent glow): spec `0f1c5979` (§16–§17 amendments in the code commits), code `655c65a9` + artifacts-list parity `a2020d6d` (§6j); **6a-bis done** (gliding open-row fill + edge-only smooth reveal): spec and code `7c8b2529` (§6k); **6b done** (live states): spec and code `b5f625a5`, browser-review amendments (spec §14) `02a59eaa` (§6l) |
-| 7 | Secondary screens | Split in **7a–7f** (see §6m); order 7a → 7f. **7a done** (stats motion): spec and code `f6d68b71` (§6n); **7b done** (home motion): spec and code `23204e18` (§6o) |
+| 7 | Secondary screens | Split in **7a–7f** (see §6m); order 7a → 7f. **7a done** (stats motion): spec and code `f6d68b71` (§6n); **7b done** (home motion): spec and code `23204e18` (§6o); **7c done** (tasks tab motion): spec and code `a1faf330` (§6p); **7d done** (footer blocks motion): spec and code `1a292d76` (§6q) |
 
 **No merge into `main` and no pull request until the whole redesign (steps 1–7) is done.**
 We keep iterating on branch `enhanced-ui`.
@@ -779,6 +779,81 @@ coordinator's runtime has no component harness).
 - A `:style` binding that can go to `null` removes the whole `style` attribute, wiping
   imperatively set custom properties: bind an object with `null` values instead.
 
+## 6p. Step 7c — tasks tab motion (done)
+
+Spec: `docs/plans/2026-09-30-tasks-motion-design.md` (reviewed PASS in 3 rounds). Code
+`a1faf330` (implemented and code-reviewed by sub-agents, 62 testable mutants: all killed
+after three pins were added; the `TodoContent` watcher / Map runtime has no component
+harness).
+
+### 6p.1 What it does
+
+- `utils/todoList.js` `tickRanks` + `TodoContent.vue`: `popping` is a `Map<index, rank>`;
+  tasks completed by one snapshot tick one by one (150ms apart, rank capped at 8): the check
+  pop, the grey fade and the strike-through all start after the rank delay
+  (`--tick-rank`, `todo-item-ticking` on the item).
+- Strike-through (Tasks tab only, `TaskPane.vue` `:deep`): a background line on an inline
+  `span.todo-item-strike` that draws left to right and follows wrapped lines. The timeline
+  todo blocks keep grey text. The colour fade is declared on ticking items only.
+- `TaskPane.vue`: a "N of M done" line and a thin bar above the list (`countTasks`; deleted
+  tasks do not count), styled like the footer usage bars in the check's success colour;
+  it fills from 0 each time the tab is shown (CSS animation) and grows smoothly on change
+  (transition). Reduced motion: no pop movement, no draw, the bar snaps; the text still
+  fades.
+
+### 6p.2 Lessons (do not regress)
+
+- A spec that states a decision twice (a CSS block and a sentence) must keep both in sync:
+  a "pinned whole" block that contradicts its own bullet gets implemented and tested as
+  written (`overflow: hidden` clipped the glow the bullet asked for).
+- Draw a strike-through with a background on an **inline** child span: a background on a
+  blockified flex item draws one line at mid height, on an inline box it follows every
+  wrapped line (`box-decoration-break: slice`) and `background-size` animates across them.
+- A class added in the same Vue patch as a colour change puts a transition declaration in
+  the after-change style: scope such a transition to the class (here `ticking`) so a
+  page-wide scheme switch does not fade the text; the class outlasting the transition keeps
+  it from being cut.
+- A `v-if` div between a `v-if` and its `v-else` breaks the pairing: wrap the `v-else`
+  branch in a `template`.
+
+## 6q. Step 7d — footer blocks motion (done)
+
+Spec: `docs/plans/2026-09-30-footer-blocks-motion-design.md` (reviewed PASS in 11 rounds;
+§9 and §9.1 are amendments from the first browser review and its code review). Code
+`1a292d76` (implemented and code-reviewed by sub-agents; every testable mutant killed after
+test additions; the SFC wiring has no component harness, so it is source-pinned).
+
+### 6q.1 What it does
+
+- `utils/footerMotion.js` + `composables/useFooterMotion.js`: Web Animations on the block's
+  single root (`div.footer-block`, `display: flow-root`) for goal, question/approvals, hybrid
+  terminal and composer: height 380ms + fade 200ms on open/collapse, appear/disappear
+  (`<Transition :css="false">`), maximize/restore (inset animation; restore keeps the block
+  absolute and the footer static through `data-footer-restoring`); banners fade in.
+- The chat stays pinned to the bottom (a `ResizeObserver` keeps the gap read BEFORE the
+  change); no motion on a session switch (`createSwitchGate`), in a hidden tab, or under
+  reduced motion (heights snap, fades stay).
+- A leaving question form is `inert` and excluded from every document-wide
+  `.pending-request-form` lookup.
+
+### 6q.2 Lessons (do not regress)
+
+- Firefox has no `interpolate-size` and native scroll anchoring does NOT keep a bottom-pinned
+  list pinned when its viewport shrinks: pin with a `ResizeObserver` and read the gap before
+  the DOM change (the browser clamps `scrollTop` afterwards).
+- Measure a natural height only after the Web Awesome elements rendered (`updateComplete`,
+  microtasks only): right after insertion a `wa-button` bar measured 33.6px instead of 46px,
+  so the animation overshot and snapped back (browser review, frame-by-frame recording).
+- A wrapper with `display: block` lets a child's margin collapse out of it; an explicit
+  animated height then pushes the margin inside and shifts the neighbours: use `flow-root`.
+- Firefox keeps a stale container-query answer after the container's padding changes: the
+  composer toggles `container-type` (with a reflow) before measuring.
+- `getAnimations()` also returns CSS animations: cancel only the animations you created.
+- Vue disposes a component's effect scope before the Transition leave hook runs: per-block
+  state lives in a `WeakMap` keyed on the wrapper, never dropped on scope disposal.
+- A running `opacity` animation on an ancestor creates a stacking context and hides a
+  `z-index` child under later siblings: fade the maximized block itself, not its wrapper.
+
 ## 7. Deferred / open topics
 
 - **Project-selector widening** (on hover/focus/open it pushes the peer button out of the
@@ -1008,4 +1083,4 @@ Awesome tokens and re-reviewed per step. Everything must honour `prefers-reduced
   (from `main` at `43402928`).
 - Dev instance: `uv run ./devctl.py start|stop|status` from the worktree →
   http://localhost:5174 (backend 3501). DB copied from `~/.twicc` on first setup.
-- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a, 701 with step 5b, 744 with step 5c, 770 with step 6a, 869 with step 6a-bis, 880 with step 6b, 896 with step 7a, 912 with step 7b).
+- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a, 701 with step 5b, 744 with step 5c, 770 with step 6a, 869 with step 6a-bis, 880 with step 6b, 896 with step 7a, 912 with step 7b, 929 with step 7c, 1010 with step 7d).
