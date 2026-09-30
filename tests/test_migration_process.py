@@ -148,3 +148,94 @@ run_migrations()
     log = (tmp_path / "logs/backend.log").read_text()
     assert "Migration process did not complete" in log
     assert "FileNotFoundError" in log
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+def test_construction_interruption_reaps_child_under_lock(tmp_path, interrupt):
+    child_script = f"""
+import signal, time
+from pathlib import Path
+blocked = signal.pthread_sigmask(signal.SIG_BLOCK, [])
+assert not blocked.intersection((signal.SIGINT, signal.SIGTERM))
+Path({str(tmp_path / 'construction.ready')!r}).touch()
+time.sleep(60)
+"""
+    result = probe(tmp_path, f"""
+import os, signal, subprocess, sys, time
+from pathlib import Path
+from twicc.instance_lock import InstanceLock
+from twicc.db import migration_process
+original = subprocess.Popen
+spawned = []
+handlers = {{sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}}
+def interrupt_before_return(command, **kwargs):
+    child = original([sys.executable, '-c', {child_script!r}], **kwargs)
+    spawned.append(child)
+    deadline = time.monotonic() + 5
+    while not Path({str(tmp_path / 'construction.ready')!r}).exists():
+        assert child.poll() is None and time.monotonic() < deadline, 'Child readiness failed'
+        time.sleep(0.01)
+    communicate = child.communicate
+    def repeated_interruption(**kwargs):
+        child.communicate = communicate
+        os.kill(os.getpid(), signal.SIGINT)
+        os.kill(os.getpid(), signal.SIGTERM)
+        return communicate(**kwargs)
+    child.communicate = repeated_interruption
+    os.kill(os.getpid(), {int(interrupt)})
+    return child
+migration_process.subprocess.Popen = interrupt_before_return
+try:
+    with InstanceLock(Path({str(tmp_path)!r})):
+        try:
+            migration_process.run_migrations()
+        except (KeyboardInterrupt, SystemExit) as error:
+            assert isinstance(error, {'KeyboardInterrupt' if interrupt == signal.SIGINT else 'SystemExit'})
+            if isinstance(error, SystemExit):
+                assert error.code == 143
+        else:
+            raise AssertionError('Interruption did not propagate')
+        # waitpid proves reaping, rather than only termination.
+        try:
+            os.waitpid(spawned[0].pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+        else:
+            raise AssertionError('Child was not reaped before lock release')
+        contender = original([sys.executable, '-c',
+            'from pathlib import Path; from twicc.instance_lock import InstanceLock, InstanceAlreadyRunning\\n'
+            + 'lock = InstanceLock(Path(' + repr({str(tmp_path)!r}) + '))\\n'
+            + 'try:\\n    lock.acquire()\\nexcept InstanceAlreadyRunning:\\n    pass\\n'
+            + 'else:\\n    raise AssertionError("Lock released before child reaped")'], stderr=subprocess.PIPE, text=True)
+        _, stderr = contender.communicate(timeout=5)
+        assert contender.returncode == 0, stderr
+    for sig, handler in handlers.items():
+        assert signal.getsignal(sig) == handler
+finally:
+    for child in spawned:
+        if child.poll() is None:
+            child.kill()
+        child.communicate()
+""")
+    assert result.returncode == 0, result.stderr
+
+
+def test_launch_failure_restores_signal_handlers(tmp_path):
+    result = probe(tmp_path, """
+import signal, sys
+from twicc.db.migration_process import run_migrations
+def original_handler(signum, frame):
+    pass
+for sig in (signal.SIGINT, signal.SIGTERM):
+    signal.signal(sig, original_handler)
+sys.executable = '/nonexistent/twicc-migration-python'
+try:
+    run_migrations()
+except FileNotFoundError:
+    pass
+else:
+    raise AssertionError('Launch failure did not propagate')
+for sig in (signal.SIGINT, signal.SIGTERM):
+    assert signal.getsignal(sig) is original_handler
+""")
+    assert result.returncode == 0, result.stderr
