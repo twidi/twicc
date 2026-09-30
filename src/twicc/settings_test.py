@@ -36,7 +36,7 @@ PROVIDER_HOMES_DESCRIPTION = provider_homes.describe_provider_homes()
 # Use in-memory SQLite for tests
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.sqlite3",
+        "ENGINE": "twicc.db.backends.sqlite3",
         "NAME": ":memory:",
     }
 }

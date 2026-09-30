@@ -86,3 +86,76 @@ Both independent reviewers confirm the final wording correction.
 Final result: no unresolved findings or blockers for the first-milestone implementation plan.
 
 Plan approval does not establish production correctness or complete stage-2 table-rebuild optimization.
+
+## Implementation review: Task 1
+
+Implementation commits: `248581e8`, `b4bafaa2`.
+Independent reviewer: `sqlite_task1_review` (GPT-6.1 Sol).
+Initial review finds two Important defects:
+
+- A child INTEGER PRIMARY KEY FK update through rowid can skip its required check.
+- Argument-free incremental_vacuum can mutate an attached database without a write authorization.
+
+Fix round 1 adds real regression tests, selects outgoing child relations for rowid aliases,
+and replaces the no-argument PRAGMA heuristic with explicit read-only forms.
+Unknown main PRAGMAs select global validation; unproved attached/temp PRAGMAs are rejected.
+The independent scoped re-review marks both findings addressed, with no new breakage.
+Final focused evidence: 122 tests pass; Ruff and diff checks pass.
+Task 2 must still prove writable_schema entry rejection and editor lifecycle cleanup.
+Task 3 must prove the standard-backend override and complete migration graph.
+
+## Implementation review: Task 2
+
+Implementation commits: `b56c3e35`, `12b00c6c`.
+Independent reviewer: `sqlite_task2_review` (GPT-6.1 Sol).
+Initial review finds two Important defects:
+
+- Explicit COMMIT can persist invalid data before validation.
+- Custom Meta.indexes can inherit standard deferred provenance during CreateModel.
+
+Fix round 1 rejects SQLITE_TRANSACTION during atomic observation before execution.
+Editor lifecycle controls run outside observation. Savepoints retain the outer transaction;
+a regression verifies that RELEASE cannot commit it and final validation rolls back both writes.
+Deferred index proof registration now carries exact Index provenance.
+Standard field indexes and exact standard Meta.indexes retain their optimized path.
+Scoped re-review approves both fixes and finds no new Important/Critical breakage.
+Final focused evidence: 71 schema tests pass; Ruff and diff checks pass.
+
+Transaction ownership clarification: migrations that explicitly complete or replace the
+atomic editor transaction require the standard-backend opt-out. The authorizer enforces
+this boundary without parsing SQL. Atomic=False keeps its existing partial-commit semantics.
+
+## Implementation evidence: Task 3
+
+Task 3 selects the optimized backend before connections open.
+`TWICC_SQLITE_STANDARD_MIGRATIONS=1` selects Django's standard backend.
+The migrate subclass delegates execution and output to Django and adds ContextVar-based duration diagnostics.
+Both failure and success restore the caller's context. fake_initial records its final fake outcome.
+
+Disposable tests cover the complete fresh graph, rollback through 0146, and populated replay.
+The mixed state runs original 0149 apply/reverse before replacement bookkeeping, then normal replacement recording and rollback.
+Facts-table, Session index, redundant SessionItem index, original records, and replacement records match each stage.
+Known replay operations execute zero FK-check PRAGMAs with existing SessionItem rows.
+Logging tests cover skipped, selected, global, failed validation, fake, and backward cases at verbosity 0.
+The custom-operation regression keeps global checks in both directions. sqlmigrate collects without writes.
+
+The actual production-backend probe applies/unapplies 0147 and the squash on representative in-memory tables.
+Every standard sample executes four global checks; every optimized sample executes zero checks.
+Three repetitions vary SessionItem rows and payload size. Median total replay times:
+
+| Rows | Payload | Standard | Optimized |
+| --- | --- | --- | --- |
+| 10,000 | 256 bytes | 0.018267 s | 0.015620 s |
+| 100,000 | 256 bytes | 0.058935 s | 0.016571 s |
+| 100,000 | 4,096 bytes | 0.088218 s | 0.022096 s |
+
+Seed time is excluded; seeded pages are resident. These are not cold-disk or live-startup predictions.
+Final focused evidence: 212 migration and peer tests pass in 27.29 seconds.
+The original standalone synthetic probe also passes. makemigrations reports no changes; Ruff passes.
+The complete suite runs once: 6 failed, 6213 passed, 21 skipped, 61 warnings in 348.10 seconds.
+The six failures reproduce with the standard backend in a disposable in-memory database.
+Five wait-reply cases fail on missing provider configuration. One log-retention case has a fixed-date fixture.
+Those tests and production files remain unchanged from the Task 3 base.
+Warnings comprise two existing AsyncMock coroutine warnings and 59 Click protected_args deprecations.
+The extra custom-operation regression runs separately after the complete-suite collection.
+Independent Task 3 review remains pending. Stage-2 rebuild preservation remains pending.

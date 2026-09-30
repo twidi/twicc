@@ -1,6 +1,7 @@
 # Selective SQLite migration checks
 
-Status: direction approved subject to prototyping; first milestone prototyped. Implementation plan awaits review.
+Status: first milestone implemented in the isolated worktree. Final integration review remains pending.
+Stage-2 table-rebuild preservation proof remains pending. Main integration and live-instance validation remain outside this work.
 
 ## Goal
 
@@ -63,8 +64,8 @@ Use SQLite's own table-scoped foreign key check for relations that can change.
 Use the global check when the implementation cannot establish a narrower safe scope.
 
 This avoids a separate SQL implementation of SQLite foreign key semantics.
-The prototype proves the first milestone on the cases listed below.
-It does not prove the table-rebuild preservation rules required by the second milestone.
+The production backend implements the first milestone with disposable-database regression tests.
+It retains global checks for table rebuilds until the second milestone proves preservation.
 
 ### C. Validate once after an entire migration batch
 
@@ -198,14 +199,28 @@ Results:
 - Nested-editor rejection preserves the outer observer and enforcement state.
 - Rebuilds remain a deliberate global fallback in the prototype.
 
-Remaining obligations before product integration:
+Completed first-milestone production obligations:
 
 1. Restrict trusted schema scopes to exact standard operations and expected objects. A broad nesting flag is insufficient.
 2. Validate immutable deferred-statement provenance. The prototype's object-identity shortcut is not a production guarantee.
 3. Cover all schema authorization codes, unknown codes, unsupported-schema rejection, unique-index removal, and unsupported driver features.
 4. Prove exception cleanup, atomic=False behavior, and nested contexts in the production backend.
 5. Run the complete migration graph, squash bookkeeping, and sqlmigrate compatibility on disposable project databases.
-6. Prove rebuild preservation from actual key mappings, types, collations, defaults, and relation definitions before optimizing rebuilds.
+
+The production editor now covers obligations 1-5.
+The complete graph tests cover fresh install, populated replay, original 0149 in the mixed 0148 state, and replacement bookkeeping.
+The original 0149 applies and reverses before replacement bookkeeping; normal migrate then records the replacement.
+A fresh loader reverses the replacement through 0146 and removes the original and replacement records.
+Every known replay operation executes zero FK-check PRAGMAs, including with existing SessionItem rows.
+
+Pending stage-2 preservation obligations:
+
+- Compare the old and new outgoing FK definitions and incoming referenced keys.
+- Prove each copied key maps to the same value with the same SQLite storage and comparison semantics.
+- Account for affinity, collation, defaults, null replacement, generated columns, and unique-conflict behavior.
+- Prove renamed keys and native column operations preserve every affected relation.
+- Test valid and invalid existing rows, forward and backward paths, and atomic failure rollback.
+- Retain global validation for every rebuild without that proof.
 
 The supported migration contract does not include disabling or replacing the backend observer through raw driver APIs.
 Use the standard-backend opt-out for migrations that need unsupported connection customization.
@@ -275,8 +290,23 @@ There is no Django failure progress callback. Catch failures in handle(), log th
 fake_initial may start with fake=False and finish with fake=True; use the final callback's flag for outcome logging.
 
 Provide `TWICC_SQLITE_STANDARD_MIGRATIONS=1` as a startup-time opt-out that selects standard Django SQLite behavior.
-The same selection must work for command-line migrations and application startup.
-Tests must run the optimized backend explicitly; the current test settings select the standard backend.
+The settings selection applies before connections open, for command-line migrations and application startup.
+Test settings explicitly select the optimized backend. Comparison fixtures instantiate the standard backend separately.
+
+The command subclass delegates execution and CLI output to Django.
+ContextVar state identifies each migration and direction; finally restores the caller's previous context.
+The callback records the final fake flag, including fake_initial's false-to-true transition.
+FK-check logs include scope, selected tables, reason, check duration, and success.
+Migration logs separately include total duration, direction, fake outcome, and failure identity at verbosity 0.
+
+First-milestone limits remain explicit:
+
+- Native column changes and table rebuilds can still require global validation.
+- Atomic editing owns transaction controls; user BEGIN/COMMIT/ROLLBACK are rejected before execution.
+- atomic=False preserves already committed effects and cannot provide full rollback.
+- Only main-schema mutations are supported; attached/temp read-only access remains allowed.
+- Raw-driver replacement or removal of the observer is outside the supported contract.
+- Synthetic in-memory timings measure this probe only; they do not predict live startup duration.
 
 ## Non-goals
 
@@ -289,12 +319,12 @@ Tests must run the optimized backend explicitly; the current test settings selec
 ## Review checklist
 
 - No reliance on an operation name alone when arbitrary writes can follow it.
-- No full scan merely because a known table rebuild occurs.
+- Table rebuilds keep global validation until stage-2 preservation proof exists.
 - No custom approximation of SQLite's FK comparison rules.
 - No frozen migration-file rewrite or runtime global monkeypatch.
 - Unknown cases fall back explicitly and remain visible in logs.
 - Proof obligations for stage 2 remain visible rather than implied complete.
 
-Review result: first-milestone direction is supported by the prototype.
-The implementation plan must retain the production proof obligations above.
+Review result: the implemented first milestone retains the production proof obligations above.
+Tasks 1 and 2 pass independent review. Task 3 integration review remains pending.
 The table-rebuild target remains unproved and must not be reported complete with the first milestone.

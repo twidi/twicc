@@ -328,7 +328,11 @@ CHANNEL_LAYERS = {
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.sqlite3",
+        "ENGINE": (
+            "django.db.backends.sqlite3"
+            if os.environ.get("TWICC_SQLITE_STANDARD_MIGRATIONS") == "1"
+            else "twicc.db.backends.sqlite3"
+        ),
         "NAME": get_db_path(),
         "OPTIONS": {
             "timeout": 30,

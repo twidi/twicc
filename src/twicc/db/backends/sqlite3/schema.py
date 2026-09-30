@@ -4,11 +4,14 @@ import sqlite3
 import sys
 from contextlib import contextmanager
 from typing import NamedTuple
+from time import perf_counter
 
 from django.db import NotSupportedError
 from django.db.backends.base.schema import BaseDatabaseSchemaEditor
 from django.db.backends.sqlite3.schema import DatabaseSchemaEditor as SQLiteSchemaEditor
 from django.db.models import Index
+
+from twicc.db.migration_logging import log_fk_check
 
 from .effects import CheckDecision, EffectObserver
 from .metadata import canonical_identifier, read_schema
@@ -96,10 +99,17 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
                 }
                 if self.decision.scope != "global" and incoming:
                     self.decision = CheckDecision("tables", self.decision.tables | incoming, self.decision.reasons)
-                if self.decision.scope == "global":
-                    self.connection.check_constraints()
-                elif self.decision.scope == "tables":
-                    self.connection.check_constraints([after[key].name for key in sorted(self.decision.tables)])
+                started = perf_counter()
+                success = False
+                try:
+                    if self.decision.scope == "global":
+                        self.connection.check_constraints()
+                    elif self.decision.scope == "tables":
+                        self.connection.check_constraints([after[key].name for key in sorted(self.decision.tables)])
+                    success = True
+                finally:
+                    duration = perf_counter() - started if self.decision.scope != "none" else 0
+                    log_fk_check(self.decision, duration, success)
         except BaseException:
             error = sys.exc_info()
             raise
