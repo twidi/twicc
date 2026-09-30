@@ -15,7 +15,7 @@ written separately (`docs/plans/<date>-<topic>-design.md` / `-plan.md`).
 | 4 | Motion tokens + micro-interactions | **4a done** — commit `46b4926c` (§6d); **4b done** — commit `d11ea446` (§6e); **4c done** — commit `116f9d10` (§6f) |
 | 4→5 | Fixed theme `default` + accent `cyan` | **Done** — spec `docs/plans/2026-09-28-fixed-theme-accent-design.md` (`105963a1`), commit `798cd5b2` |
 | 5 | Entrances (virtual-scroll aware) + skeletons | **5a done** (live chat entrances + chat skeleton): spec `6104a040`, code `f8cee943` (§6g); **5b done** (overlays): spec `2d19c1af` (+ §14 amendment in the code commit), code `9ec679f0` (§6h); **5c done** (list cascade, theme reveal, tab crossfade + overlay slide): spec `b181801d`, code `024f8532` (§6i) |
-| 6 | Accent glow + live states | **6a done** (accent glow): spec `0f1c5979` (§16–§17 amendments in the code commits), code `655c65a9` + artifacts-list parity `a2020d6d` (§6j); **6a-bis done** (gliding open-row fill + edge-only smooth reveal): spec and code `7c8b2529` (§6k); **6b** (live states) to specify |
+| 6 | Accent glow + live states | **6a done** (accent glow): spec `0f1c5979` (§16–§17 amendments in the code commits), code `655c65a9` + artifacts-list parity `a2020d6d` (§6j); **6a-bis done** (gliding open-row fill + edge-only smooth reveal): spec and code `7c8b2529` (§6k); **6b done** (live states): spec and code `b5f625a5`, browser-review amendments (spec §14) `02a59eaa` (§6l) |
 | 7 | Secondary screens | To specify |
 
 **No merge into `main` and no pull request until the whole redesign (steps 1–7) is done.**
@@ -81,6 +81,11 @@ From the mock (round 1 pick, round 2 review) and from step 1 reviews:
 - **Right dock:** right-top and right-bottom are **two separate cards**.
 - **Working badge:** no expanding halo/ripple around the hopping icon; the icon animation is
   enough.
+- **Working line (2026-09-30):** no pill, no comet, no glow — the mock's "working card"
+  (§8.9) was built and rejected; the line sits on the session background (shimmering
+  label, dots on the robot's 1.4s cycle). Something nicer may come later.
+- **Assistant block (2026-09-30):** no card chrome — it sits on the session background
+  (only a right padding kept); user messages keep their card.
 - **Dark canvas:** the accent must be visible across the whole canvas, not only in one
   corner — tuned by the user in several rounds (see §6.3). **The light canvas was right from
   the start and must not change.**
@@ -643,6 +648,42 @@ Spec: `docs/plans/2026-09-29-sidebar-row-glide-design.md` (§1–§9 reviewed PA
   `clientHeight` depending on the resize history — read `clientHeight` for geometry.
 - Firefox rounds rects to 1/60px: compare boxes with a tolerance before snapping.
 
+## 6l. Step 6b — live states, and the assistant block on the session background (done)
+
+Spec: `docs/plans/2026-09-30-live-states-design.md` (reviewed PASS in 28 rounds, the last
+ones as two parallel reviews by zone; §14 = the user's browser-review amendments). Code
+`b5f625a5` (implemented and code-reviewed by sub-agents, 44 mutants, all killed after two
+test additions), amendments `02a59eaa`.
+
+### 6l.1 What it does
+
+- Working line (`WorkingAssistantMessage.vue`): the label shimmers, three dots replace the
+  "..." and bounce on the robot's 1.4s cycle; calm (no shimmer, static dots) while the
+  agent waits for the user. The pill with a running comet was built, then dropped by the
+  user: the line sits on the session background ("something nicer later"). Tool targets
+  keep only the code font.
+- Unread eye: opacity fade everywhere it marks unread content (`motion-status-pulse`
+  2.4s).
+- Context ring: the arc pulses softly while its session or agent works, not while it
+  waits for an answer (`utils/liveStates.js`).
+- Pending request panel: inset card with a gradient accent border and a soft glow;
+  maximized, it follows the host card's clip radius. Question icon and "Other" links in
+  accent (they used the undefined `--wa-color-primary-60`).
+- Assistant block: no card chrome (transparent background, no border, shadow or inner
+  spacing but on the right); its markdown toolbars move left by half the card spacing;
+  the conversation-mode "Show details" toggle shows on hover while inactive; half the
+  gap above the assistant timestamp.
+
+### 6l.2 Lessons (do not regress)
+
+- A spec's tests must pin each new CSS rule whole (ordered declaration list), not
+  declaration by declaration: a missing colour or a shorthand after its longhand breaks
+  the look with every per-declaration test still green.
+- A gap written as a margin on the first in-flow child collapses out of a card whose
+  top has no padding or border: put it on the card's own padding variable.
+- A browser check must state its trigger conditions (display mode, viewport height,
+  session state, share host): a correct change looks broken otherwise.
+
 ## 7. Deferred / open topics
 
 - **Project-selector widening** (on hover/focus/open it pushes the peer button out of the
@@ -872,4 +913,4 @@ Awesome tokens and re-reviewed per step. Everything must honour `prefers-reduced
   (from `main` at `43402928`).
 - Dev instance: `uv run ./devctl.py start|stop|status` from the worktree →
   http://localhost:5174 (backend 3501). DB copied from `~/.twicc` on first setup.
-- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a, 701 with step 5b, 744 with step 5c, 770 with step 6a, 869 with step 6a-bis).
+- Tests: `cd frontend && node --test` (449 at the end of step 1, 455 at the end of step 2, 468 at the end of step 3, 487 at the end of step 4a, 537 at the end of step 4b, 583 at the end of step 4c, 586 after the fixed theme, 635 with step 5a, 701 with step 5b, 744 with step 5c, 770 with step 6a, 869 with step 6a-bis, 880 with step 6b).
