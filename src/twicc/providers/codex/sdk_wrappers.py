@@ -247,18 +247,15 @@ class TwiccAsyncThread(AsyncThread):
     async def inject_user_message(self, text: str) -> None:
         """Append a synthetic user message to the thread via ``thread/inject_items``.
 
-        Records a ``message`` (role=user) item in the thread's rollout AND
-        model-visible history WITHOUT starting or steering a turn (Codex
-        ``inject_no_new_turn`` + ``flush_rollout``), so it is safe even while a
-        turn runs. TwiCC uses this for two durable transcript gaps:
+        Appends a ``message`` (role=user) item without starting or steering a
+        turn. A successful RPC response does not guarantee persistence after a
+        failed turn; terminal error recovery reads task_complete.error instead.
+        TwiCC uses this for command transcript gaps:
 
         - ``/goal clear`` and ``/compact`` write no "the user asked" rollout
           line, so their injected item is relabelled as a real ``user_message``;
-        - terminal provider errors exist only on the live app-server stream,
-          so their private marker is rewritten into an ``api_error`` item.
-
-        See ``CodexSessionCompute._transform_inline_provider`` for both
-        rewrites. Like the goal RPCs, ``thread/inject_items`` has no generated
+        See ``CodexSessionCompute._transform_inline_provider`` for the
+        rewrite. Like the goal RPCs, ``thread/inject_items`` has no generated
         SDK wrapper.
         """
         await self._codex._ensure_initialized()

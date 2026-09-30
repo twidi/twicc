@@ -7,10 +7,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import orjson
+import pytest
 
 from openai_codex.generated.v2_all import ErrorNotification
 from twicc.core.enums import ItemDisplayLevel, ItemKind
 from twicc.providers.codex.agent.agent import CodexAgent
+from twicc.providers.codex.agent_runs import is_task_complete
 from twicc.providers.codex.compute import get_compute
 from twicc.providers.codex.provider_errors import (
     CodexProviderError,
@@ -86,7 +88,44 @@ def test_hidden_resume_instruction_is_not_a_user_message():
     assert compute.compute_item_kind(parsed) == ItemKind.SYSTEM
 
 
-def test_terminal_notification_injects_error_before_teardown():
+@pytest.mark.parametrize("error_type", ["server_overloaded", {"http_connection_failed": {"http_status_code": 401}}])
+def test_native_failed_turn_becomes_visible_api_error(error_type):
+    compute = get_compute()
+    payload = {
+        "type": "task_complete",
+        "turn_id": "failed-turn",
+        "last_agent_message": None,
+        "error": {"message": "Provider request failed", "codex_error_info": error_type},
+    }
+    parsed = {"type": "event_msg", "payload": payload.copy()}
+
+    transformed = compute.transform_inline(parsed, session_id="native-error", line_num=10)
+
+    assert transformed == orjson.dumps(parsed).decode()
+    assert parsed["type"] == "event_msg"
+    assert parsed["payload"] == payload
+    assert is_task_complete(parsed)
+    assert parsed["provider"] == "codex"
+    assert parsed["isApiErrorMessage"] is True
+    assert parsed["turnId"] == "failed-turn"
+    assert parsed["error"] == {"type": error_type, "message": "Provider request failed"}
+    assert compute.compute_item_kind(parsed) == ItemKind.API_ERROR
+    assert compute.compute_item_display_level(parsed, ItemKind.API_ERROR) == ItemDisplayLevel.ALWAYS
+    # Recompute must preserve both the error and the native turn-end evidence.
+    compute.transform_inline(parsed, session_id="native-error", line_num=10)
+    assert parsed["payload"] == payload
+    assert compute.compute_item_kind(parsed) == ItemKind.API_ERROR
+
+
+@pytest.mark.parametrize("error", [None, {}, {"message": ""}, {"message": 42}])
+def test_task_complete_without_valid_error_stays_system(error):
+    compute = get_compute()
+    parsed = {"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "ok", "error": error}}
+    assert compute.transform_inline(parsed, session_id="successful-turn", line_num=10) is None
+    assert compute.compute_item_kind(parsed) == ItemKind.SYSTEM
+
+
+def test_terminal_notification_closes_without_injecting_error():
     async def scenario():
         agent = CodexAgent.__new__(CodexAgent)
         agent.session_id = "thread-1"
@@ -116,13 +155,7 @@ def test_terminal_notification_injects_error_before_teardown():
             SimpleNamespace(method="error", payload=payload)
         )
 
-        agent._thread.inject_user_message.assert_awaited_once()
-        marker = agent._thread.inject_user_message.await_args.args[0]
-        assert parse_provider_error_marker(marker) == CodexProviderError(
-            turn_id="turn-1",
-            message="Selected model is at capacity. Please try a different model.",
-            error_type="serverOverloaded",
-        )
+        agent._thread.inject_user_message.assert_not_awaited()
         agent._transition_to_dead.assert_awaited_once()
         agent._codex.close.assert_awaited_once()
         assert agent.kill_reason == "error"

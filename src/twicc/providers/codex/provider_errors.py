@@ -1,9 +1,7 @@
-"""Durable transcript markers for terminal Codex provider errors.
+"""Provider error fields and legacy Codex transcript markers.
 
-Codex exposes terminal turn errors as live app-server notifications but does
-not write them to the rollout JSONL. TwiCC injects a no-turn user item carrying
-this private marker before closing the failed transport; the compute pipeline
-then rewrites it into a provider-agnostic ``api_error`` item for the UI.
+Current runtimes persist errors in task_complete.error. Older TwiCC histories
+carry an injected private marker; compute still reads those legacy markers.
 """
 
 from __future__ import annotations

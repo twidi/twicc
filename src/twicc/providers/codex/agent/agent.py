@@ -68,7 +68,6 @@ from twicc.core.enums import Provider
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
 
 from ..permission_modes import resolve_codex_turn_overrides
-from ..provider_errors import CodexProviderError, build_provider_error_marker
 from ..sdk_wrappers import TwiccAsyncCodex, TwiccAsyncThread, service_tier_from_fast_mode
 from ..streaming_registry import get_streamed_item_registry
 from .approvals import (
@@ -2698,35 +2697,9 @@ class CodexAgent(BaseAgent):
                     payload.error.codex_error_info,
                 )
 
-                # Codex exposes the terminal error only on the live app-server
-                # stream; unlike Claude Code it writes no error item to the
-                # rollout. Persist a private no-turn item before closing the
-                # transport so the watcher can rewrite it into a durable
-                # ``api_error`` transcript row with one-click recovery. The RPC
-                # is local and normally immediate, but error teardown must not
-                # hang if the app-server is already unhealthy.
-                error_info = payload.error.codex_error_info
-                error_type = (
-                    error_info.model_dump(mode="json", by_alias=True)
-                    if error_info is not None
-                    else None
-                )
-                marker = build_provider_error_marker(CodexProviderError(
-                    turn_id=payload.turn_id,
-                    message=payload.error.message,
-                    error_type=error_type,
-                ))
-                try:
-                    await asyncio.wait_for(
-                        self._thread.inject_user_message(marker),
-                        timeout=5,
-                    )
-                except Exception:
-                    self._logger.warning(
-                        "Could not persist terminal Codex error for session %s",
-                        self.session_id,
-                        exc_info=True,
-                    )
+            # The rollout's task_complete.error carries the durable callout.
+            # Do not inject a second error into the model-visible history:
+            # Codex can acknowledge that RPC without persisting it on failure.
 
             # Mirror Claude's order of ops on ``authentication_failed``:
             # cancel pending futures → set DEAD → notify → (auth only:

@@ -81,9 +81,10 @@ function extractBastardErrorInfo(data) {
 }
 
 const errorInfo = computed(() => {
-    // TwiCC's provider-neutral shape, currently emitted for Codex terminal
-    // app-server errors after their private rollout marker is normalized.
-    if (props.data?.type === 'twicc_provider_error') {
+    // Codex native turn errors and legacy normalized rollout markers share
+    // the same error fields. Native errors keep their turn-completion payload.
+    if (props.data?.type === 'twicc_provider_error'
+        || (props.data?.provider === 'codex' && props.data?.isApiErrorMessage === true)) {
         return {
             type: props.data?.error?.type || 'unknown_error',
             message: props.data?.error?.message || 'Unknown error',

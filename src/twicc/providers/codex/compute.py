@@ -29,10 +29,11 @@ are migrated to the same shape). The readers live in :mod:`.canonical`.
   Codex writes no "the user asked" rollout line of its own) is likewise
   rewritten into a private canonical ``UserMessage`` carrying that command.
   Same ``twiccOriginalContent`` preservation.
-- A ``response_item.message`` carrying TwiCC's terminal provider-error marker
+- A failed ``event_msg.task_complete`` carries a durable ``error``. It becomes
+  ``API_ERROR`` (→ ``ALWAYS``) with normalized frontend error fields, while its
+  native wrapper and payload remain available for subagent run-end attribution.
+- A legacy ``response_item.message`` carrying TwiCC's terminal provider-error marker
   is rewritten into ``twicc_provider_error`` → ``API_ERROR`` (→ ``ALWAYS``).
-  Codex only emits these errors on its live app-server stream, so the agent
-  injects the marker before teardown to make the recovery block durable.
 - A ``UserMessage`` starting with ``<twicc-resume>`` is TwiCC's hidden
   mid-turn recovery instruction → ``SYSTEM`` (→ ``DEBUG_ONLY``).
 - ``item_completed`` / ``FileChange`` and ``McpToolCall`` → kind stays
@@ -1550,6 +1551,21 @@ def _injected_provider_error(parsed_json: dict) -> CodexProviderError | None:
     if not isinstance(text, str) or PROVIDER_ERROR_MARKER not in text:
         return None
     return parse_provider_error_marker(text)
+
+
+def _native_provider_error(parsed_json: dict) -> CodexProviderError | None:
+    """Read the durable error on a failed native turn completion."""
+    if not is_task_complete(parsed_json):
+        return None
+    payload = _payload(parsed_json)
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    message = error.get("message")
+    turn_id = payload.get("turn_id")
+    if not isinstance(message, str) or not message.strip() or not isinstance(turn_id, str) or not turn_id:
+        return None
+    return CodexProviderError(turn_id, message, error.get("codex_error_info"))
 
 
 def _is_internal_resume_message(parsed_json: dict) -> bool:
@@ -3716,11 +3732,21 @@ class CodexSessionCompute(BaseSessionCompute):
             if isinstance(goal, dict):
                 self._note_goal_status(session_id, line_num, goal.get("status"))
 
-        # Terminal provider error → canonical visible API-error item. Codex
-        # only emits the error on its live notification stream, so the agent
-        # persists this private ``thread/inject_items`` marker before teardown.
-        # Keep the native injected payload for debugging while exposing one
-        # provider-neutral shape to the frontend.
+        # Native turn errors are durable even when thread/inject_items silently
+        # drops an error marker after a failed turn. Preserve the event wrapper
+        # and payload: subagent run-end attribution still reads task_complete.
+        native_error = _native_provider_error(parsed_json)
+        if native_error is not None:
+            parsed_json["provider"] = Provider.CODEX.value
+            parsed_json["isApiErrorMessage"] = True
+            parsed_json["turnId"] = native_error.turn_id
+            parsed_json["error"] = {
+                "type": native_error.error_type,
+                "message": native_error.message,
+            }
+            return orjson.dumps(parsed_json).decode("utf-8")
+
+        # Legacy injected errors remain readable for existing histories.
         provider_error = _injected_provider_error(parsed_json)
         if provider_error is not None:
             parsed_json["twiccOriginalContent"] = parsed_json.get("payload")
@@ -4146,7 +4172,7 @@ class CodexSessionCompute(BaseSessionCompute):
         wrapper_type = parsed_json.get("type")
         payload = _payload(parsed_json)
 
-        if wrapper_type == _TYPE_TWICC_PROVIDER_ERROR:
+        if wrapper_type == _TYPE_TWICC_PROVIDER_ERROR or _native_provider_error(parsed_json) is not None:
             return ItemKind.API_ERROR
 
         # ``compacted`` is the top-level wrapper Codex CLI writes when
