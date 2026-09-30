@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Claude Sonnet 5.5** — support for Anthropic's new Sonnet model, now the latest Sonnet (Sonnet 5 remains selectable).
+- **GPT-6.1 Sol** — support for OpenAI's new Sol model, now the latest Sol (GPT-6 Sol remains selectable).
 - **File upload** — Upload files into any folder of the Files or Artifacts tab from its context menu, handy from a phone or another computer.
 - **Resumed subagents** — A subagent shows as running again when the agent sends it a new message or task.
 - **Background shells** — A new status (green terminal icon) shows when the provider reports that the agent has finished its turn but a shell it started is still running. Such sessions are no longer stopped automatically.

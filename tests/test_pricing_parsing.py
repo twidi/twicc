@@ -104,6 +104,8 @@ CLAUDE_MODEL_CASES: list[ModelCase] = [
               ("claude-opus-4-5", "claude-opus-4-5-20251101")),
     ModelCase("opus", "4.1", ("anthropic/claude-opus-4.1",), ("claude-opus-4-1",)),
     ModelCase("opus", "4", ("anthropic/claude-opus-4",), ("claude-opus-4",)),
+    ModelCase("sonnet", "5.5", ("anthropic/claude-sonnet-5.5",), ("claude-sonnet-5-5",)),
+    ModelCase("sonnet", "5", ("anthropic/claude-sonnet-5",), ("claude-sonnet-5",)),
     ModelCase("sonnet", "4.6", ("anthropic/claude-sonnet-4.6",), ("claude-sonnet-4-6",)),
     ModelCase("sonnet", "4.5", ("anthropic/claude-sonnet-4.5",),
               ("claude-sonnet-4-5", "claude-sonnet-4-5-20250929")),
@@ -164,6 +166,7 @@ CLAUDE_SPEC = ProviderSpec(
 
 CODEX_MODEL_CASES: list[ModelCase] = [
     ModelCase("gpt-astra", "6", ("openai/gpt-6-astra",), ("gpt-6-astra",)),
+    ModelCase("gpt-sol",   "6.1", ("openai/gpt-6.1-sol",), ("gpt-6.1-sol",)),
     ModelCase("gpt-sol",   "6", ("openai/gpt-6-sol",),   ("gpt-6-sol",)),
     ModelCase("gpt-luna",  "6", ("openai/gpt-6-luna",),  ("gpt-6-luna",)),
 

@@ -280,10 +280,10 @@ class CodexHelpers(BaseProviderHelpers):
             cache_write_5m_price=Decimal(0),
             cache_write_1h_price=Decimal(0),
         ),
-        "gpt-sol": FamilyPrices(  # gpt-6-sol pricing
+        "gpt-sol": FamilyPrices(  # gpt-6.1-sol pricing (gpt-6-sol reads cache at 0.20)
             input_price=Decimal("2.00"),
             output_price=Decimal("10.00"),
-            cache_read_price=Decimal("0.20"),
+            cache_read_price=Decimal("0.10"),
             cache_write_5m_price=Decimal("2.50"),
             cache_write_1h_price=Decimal("2.50"),
         ),

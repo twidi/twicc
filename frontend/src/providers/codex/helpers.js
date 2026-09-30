@@ -166,7 +166,7 @@ const AGENT_SETTINGS_CHOICES = {
             value: true,
             label: 'Enabled',
             display_label: 'Fast mode',
-            description: 'Faster generation — 2x on GPT-6 Astra, 1.5x on other models; uses credits at 2.5x.',
+            description: 'Faster generation — 2x on GPT-6 Astra and GPT-6.1 Sol, 1.5x on other models; uses credits at 2.5x.',
         },
         { value: false, label: 'Disabled', display_label: 'No fast mode' },
     ],
