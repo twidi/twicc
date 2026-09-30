@@ -1,6 +1,8 @@
 """Exercise editor decisions and failure boundaries on disposable databases."""
 
 import sqlite3
+import subprocess
+import sys
 from contextlib import contextmanager
 
 import pytest
@@ -920,3 +922,338 @@ def test_successful_native_callback_detects_implicit_rollback_before_return(conn
     ):
         native.execute("SELECT rollback_callback()")
     assert_restored(connection)
+
+
+@pytest.mark.parametrize("registered", [False, True])
+@pytest.mark.parametrize("path", ["connection", "cursor", "many", "custom_cursor", "django"])
+@pytest.mark.parametrize("backward", [False, True])
+def test_executor_parameter_adaptation_rollback_cannot_autocommit(connection, monkeypatch, registered, path, backward):
+    native = connection.connection
+
+    class CustomCursor(sqlite3.Cursor):
+        pass
+
+    cursor = native.cursor(factory=CustomCursor) if path == "custom_cursor" else native.cursor()
+    sql = "UPDATE child SET parent_id=?"
+
+    class Parameter:
+        def __conform__(self, protocol):
+            return adapt(self)
+
+    def adapt(value):
+        with pytest.raises(sqlite3.IntegrityError):
+            native.execute("INSERT OR ROLLBACK INTO parent(id) VALUES (1)")
+        return 99
+
+    if registered:
+        monkeypatch.setitem(sqlite3.adapters, (Parameter, sqlite3.PrepareProtocol), adapt)
+
+    def write(apps, editor):
+        native.execute(sql, (1,))  # Reuse the cached statement during binding.
+        if path == "many":
+            native.executemany(sql, [(Parameter(),)])
+        elif path == "django":
+            with editor.connection.cursor() as django_cursor:
+                django_cursor.execute("UPDATE child SET parent_id=%s", (Parameter(),))
+        else:
+            (native if path == "connection" else cursor).execute(sql, (Parameter(),))
+
+    executor = MigrationExecutor(connection)
+    executor.recorder.ensure_schema()
+    item = migration(RunPython(write, write))
+    if backward:
+        executor.recorder.record_applied("scope_app", "scope_test")
+    with pytest.raises((sqlite3.OperationalError, OperationalError)):
+        if backward:
+            executor.unapply_migration(state(), item)
+        else:
+            executor.apply_migration(state(), item)
+    assert native.execute("SELECT parent_id FROM child").fetchone() == (1,)
+    assert native.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert (("scope_app", "scope_test") in executor.recorder.applied_migrations()) is backward
+    assert_restored(connection)
+
+
+@pytest.mark.parametrize("stage", ["acquire", "release"])
+def test_buffer_binding_callbacks_cannot_write_after_implicit_rollback(connection, stage):
+    native = connection.connection
+    events = []
+
+    def rollback():
+        with pytest.raises(sqlite3.IntegrityError):
+            native.execute("INSERT OR ROLLBACK INTO parent(id) VALUES (1)")
+
+    class Buffer:
+        def __buffer__(self, flags):
+            events.append(("acquire", flags))
+            if stage == "acquire":
+                rollback()
+            return memoryview(b"invalid")
+
+        def __release_buffer__(self, view):
+            events.append(("release", bytes(view)))
+            if stage == "release":
+                rollback()
+
+    with pytest.raises(sqlite3.OperationalError), connection.schema_editor():
+        native.execute("UPDATE child SET parent_id=?", (Buffer(),))
+    assert native.execute("SELECT parent_id FROM child").fetchone() == (1,)
+    assert events == [("acquire", 0), ("release", b"invalid")]
+    assert_restored(connection)
+
+
+@pytest.mark.parametrize("shape", ["sequence_length", "sequence_item", "mapping_item"])
+def test_binding_container_callbacks_cannot_write_after_implicit_rollback(connection, shape):
+    native = connection.connection
+
+    def rollback():
+        with pytest.raises(sqlite3.IntegrityError):
+            native.execute("INSERT OR ROLLBACK INTO parent(id) VALUES (1)")
+
+    class Sequence:
+        def __len__(self):
+            if shape == "sequence_length":
+                rollback()
+            return 1
+
+        def __getitem__(self, key):
+            if shape == "sequence_item":
+                rollback()
+            return 99
+
+    class Mapping(dict):
+        def __getitem__(self, key):
+            rollback()
+            return 99
+
+    sql = "UPDATE child SET parent_id=:parent" if shape == "mapping_item" else "UPDATE child SET parent_id=?"
+    params = Mapping() if shape == "mapping_item" else Sequence()
+    with pytest.raises(sqlite3.OperationalError), connection.schema_editor():
+        native.execute(sql, params)
+    assert native.execute("SELECT parent_id FROM child").fetchone() == (1,)
+    assert_restored(connection)
+
+
+@pytest.mark.parametrize("kind", ["null_adapter", "null_conform", "adapter_precedence", "native_adapter", "buffers", "buffer_hook", "buffer_adapter", "buffer_descriptor"])
+def test_binding_matches_native_adaptation_semantics(connection, monkeypatch, kind):
+    events = []
+
+    class Value:
+        def __conform__(self, protocol):
+            events.append("conform")
+            return None if kind == "null_conform" else 7
+
+    class Buffer:
+        def __buffer__(self, flags):
+            events.append(("acquire", flags))
+            return memoryview(b"buffer")
+
+        def __release_buffer__(self, view):
+            events.append(("release", bytes(view)))
+
+    if kind == "buffer_descriptor":
+        class BufferMethod:
+            def __get__(self, instance, owner):
+                events.append("buffer_descriptor")
+                return lambda flags: memoryview(b"descriptor")
+
+        Buffer.__buffer__ = BufferMethod()
+
+    def adapter(value):
+        events.append("adapter")
+        if kind == "buffer_adapter":
+            return memoryview(b"adapted buffer")
+        return None if kind == "null_adapter" else 12
+
+    if kind in ("null_adapter", "adapter_precedence", "buffer_adapter"):
+        monkeypatch.setitem(sqlite3.adapters, (Value, sqlite3.PrepareProtocol), adapter)
+    if kind in ("null_adapter", "adapter_precedence", "native_adapter"):
+        # Registered native adapters must not run again on an adapter's result.
+        for native_type in (int, type(None)):
+            monkeypatch.setitem(sqlite3.adapters, (native_type, sqlite3.PrepareProtocol), lambda value: 42)
+            sqlite3.register_adapter(native_type, sqlite3.adapters[native_type, sqlite3.PrepareProtocol])
+    if kind == "buffer_adapter":
+        for native_type in (bytes, bytearray, memoryview):
+            monkeypatch.setitem(sqlite3.adapters, (native_type, sqlite3.PrepareProtocol), lambda value: b"readapted")
+    if kind == "native_adapter":
+        params = (4, None)
+    elif kind == "buffers":
+        params = (b"bytes", bytearray(b"mutable"), memoryview(b"view"))
+    elif kind in ("buffer_hook", "buffer_descriptor"):
+        params = (Buffer(),)
+    else:
+        params = (Value(),)
+    sql = "SELECT " + ", ".join("?" for _ in params)
+
+    def result(native):
+        events.clear()
+        try:
+            value = native.execute(sql, params).fetchone()
+            return ("value", value, list(events))
+        except sqlite3.Error as error:
+            return (type(error), str(error), list(events))
+
+    with sqlite3.connect(":memory:") as standard:
+        expected = result(standard)
+    with connection.schema_editor():
+        assert result(connection.connection) == expected
+    assert_restored(connection)
+
+
+def test_named_binding_skips_unused_values_and_preserves_lookup_order(connection):
+    calls = []
+
+    class Value:
+        def __conform__(self, protocol):
+            calls.append("adapt")
+            return 1
+
+    class Unused:
+        def __conform__(self, protocol):
+            raise AssertionError("unused parameter must not be adapted")
+
+    class Params(dict):
+        def __getitem__(self, key):
+            calls.append(key)
+            return super().__getitem__(key)
+
+    params = Params(value=Value(), unused=Unused())
+    with connection.schema_editor():
+        assert connection.connection.execute("SELECT :value, :value", params).fetchone() == (1, 1)
+    assert calls == ["value", "adapt"]
+    assert_restored(connection)
+
+
+@pytest.mark.parametrize(
+    "sql, params",
+    [
+        ("SELECT ?", ()),
+        ("SELECT ?", (1, 2)),
+        ("SELECT :missing", {}),
+        ("SELECT ?", {"value": 1}),
+        ("SELECT ?", None),
+        ("SELECT ?", (object(),)),
+        ("SELECT ?", (memoryview(b"abcdef")[::2],)),
+        ("broken sql ?", (object(),)),
+    ],
+)
+def test_binding_errors_keep_native_type_and_message(connection, sql, params):
+    def failure(native):
+        with pytest.raises(Exception) as error:
+            native.execute(sql, params)
+        return type(error.value), str(error.value)
+
+    with sqlite3.connect(":memory:") as standard:
+        expected = failure(standard)
+    with connection.schema_editor():
+        assert failure(connection.connection) == expected
+    assert_restored(connection)
+
+
+def test_binding_adapter_error_takes_precedence_over_caught_rollback(connection):
+    native = connection.connection
+
+    class Parameter:
+        def __conform__(self, protocol):
+            with pytest.raises(sqlite3.IntegrityError):
+                native.execute("INSERT OR ROLLBACK INTO parent(id) VALUES (1)")
+            raise ValueError("adapter original error")
+
+    with pytest.raises(ValueError, match="adapter original error"), connection.schema_editor():
+        native.execute("UPDATE child SET parent_id=?", (Parameter(),))
+    assert native.execute("SELECT parent_id FROM child").fetchone() == (1,)
+    assert_restored(connection)
+
+
+def test_custom_cursor_receives_original_parameters_before_guarded_binding(connection):
+    received = []
+
+    class CustomCursor(sqlite3.Cursor):
+        def execute(self, sql, parameters=()):
+            received.append(parameters)
+            return super().execute(sql, parameters)
+
+    params = (1,)
+    cursor = connection.connection.cursor(factory=CustomCursor)
+    with connection.schema_editor():
+        assert cursor.execute("SELECT ?", params).fetchone() == (1,)
+    assert received == [params]
+    assert received[0] is params
+    assert_restored(connection)
+
+
+@pytest.mark.parametrize("stage", ["parameter", "adapted"])
+def test_binding_temporaries_cannot_rollback_between_guard_and_step(connection, stage):
+    native = connection.connection
+
+    def rollback():
+        try:
+            native.execute("INSERT OR ROLLBACK INTO parent(id) VALUES (1)")
+        except sqlite3.IntegrityError:
+            pass
+
+    class Adapted(int):
+        def __del__(self):
+            rollback()
+
+    class Value:
+        def __conform__(self, protocol):
+            return Adapted(99) if stage == "adapted" else 99
+
+        def __del__(self):
+            if stage == "parameter":
+                rollback()
+
+    class Parameters:
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, index):
+            return Value()
+
+    with pytest.raises(sqlite3.OperationalError), connection.schema_editor():
+        native.execute("UPDATE child SET parent_id=?", Parameters())
+    assert native.execute("SELECT parent_id FROM child").fetchone() == (1,)
+    assert_restored(connection)
+
+
+def test_django_mapping_conversion_cannot_autocommit_a_statement_without_bindings(connection):
+    native = connection.connection
+
+    class Params(dict):
+        def __iter__(self):
+            with pytest.raises(sqlite3.IntegrityError):
+                native.execute("INSERT OR ROLLBACK INTO parent(id) VALUES (1)")
+            return iter(())
+
+    with pytest.raises(OperationalError), connection.schema_editor(), connection.cursor() as cursor:
+        cursor.execute("UPDATE child SET parent_id=99", Params())
+    assert native.execute("SELECT parent_id FROM child").fetchone() == (1,)
+    assert_restored(connection)
+
+
+def test_binding_guard_registers_only_its_private_adapter():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sqlite3
+class Existing:
+    pass
+def existing_adapter(value):
+    return 1
+sqlite3.register_adapter(Existing, existing_adapter)
+before = dict(sqlite3.adapters)
+from twicc.db.backends.sqlite3.bindings import Parameter, adapt_parameter
+assert all(sqlite3.adapters[key] is value for key, value in before.items())
+assert sqlite3.adapters.keys() - before.keys() == {(Parameter, sqlite3.PrepareProtocol)}
+assert sqlite3.adapters[Parameter, sqlite3.PrepareProtocol] is adapt_parameter
+print('one private registration; existing adapters unchanged')
+""",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == "one private registration; existing adapters unchanged"

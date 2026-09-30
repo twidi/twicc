@@ -3,6 +3,8 @@
 import sqlite3
 from functools import lru_cache
 
+from .bindings import BindingCursor
+
 
 class GuardedCursor:
     """Mixin placed before a native cursor class, including Django's cursor."""
@@ -62,7 +64,13 @@ class GuardedCursor:
 def guarded_cursor_class(factory):
     if issubclass(factory, GuardedCursor):
         return factory
-    return type(f"Guarded{factory.__name__}", (GuardedCursor, factory), {})
+    if factory is sqlite3.Cursor:
+        bases = (GuardedCursor, BindingCursor)
+    elif issubclass(factory, BindingCursor):
+        bases = (GuardedCursor, factory)
+    else:
+        bases = (GuardedCursor, factory, BindingCursor)
+    return type(f"Guarded{factory.__name__}", bases, {})
 
 
 class Connection(sqlite3.Connection):

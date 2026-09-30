@@ -166,6 +166,17 @@ A callback can catch that error while Django still reports an active atomic bloc
 Check the native in_transaction state before further execution, including cached statements and cursor result steps.
 Check again after successful execution. Preserve the original driver error when execution itself fails.
 Guard each executemany parameter iteration because its iterator can execute SQL between rows.
+Parameter adaptation also runs inside the native execute call, before SQLite steps the statement.
+A binding cursor sits after Django/custom cursor transformations and immediately before the native cursor.
+Lazy sequence/dict proxies let SQLite select parameters and retain its placeholder validation and error order.
+A registered adapter for one private wrapper type delegates to sqlite3.adapt, then checks transaction ownership.
+It adds one new adapter entry; it replaces no existing adapter or driver method.
+This preserves registered-adapter precedence, SQL NULL, and one adaptation per bound value.
+Unused mapping values are not accessed or adapted.
+Buffer values use a PyBUF_SIMPLE snapshot so acquisition and release callbacks finish before the ownership check.
+Parameter and adapter-result references remain alive through the native step, preventing binding-time finalizers from escaping the guard.
+The outer driver guard checks again after these retained references are released.
+Binding wrappers are inactive outside atomic editing.
 Keep this guard through deferred SQL, metadata refresh, and validation. Remove it before transaction cleanup.
 Check editor exit even when a caught rollback has no subsequent SQL.
 Reject after boundary loss before another data write or migration-record write can autocommit.
@@ -291,6 +302,8 @@ Required correctness cases:
 - Caught implicit rollback from statement conflicts, schema conflicts, and triggers in both executor directions.
 - Cached native connection/cursor execution, pre-existing cursors, executemany iterators, and pending cursor result steps.
 - Early rejection of unsupported factories, original-error precedence, and inactive guards outside atomic editing.
+- Registered adapters and __conform__, native-type adapters, unused mapping values, and native binding error precedence.
+- Buffer acquisition/release, native buffer flags, descriptor calls, and binding temporary lifetimes.
 - Non-atomic migrations, unknown custom operations, and collected SQL.
 - Fresh database installation and migration squash replacement bookkeeping.
 - Existing database triggers and unexpected execution paths.
