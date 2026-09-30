@@ -1206,8 +1206,11 @@ usePendingRequestDraft({
                         @keydown="handleOptionKeydown($event, qIndex, option, question.multiSelect)"
                     >
                         <div class="option-card-content">
-                            <span class="option-label">{{ option.label }}</span>
-                            <span v-if="option.description" class="option-description">{{ option.description }}</span>
+                            <span class="option-indicator" :class="question.multiSelect ? 'option-indicator--check' : 'option-indicator--radio'" aria-hidden="true"></span>
+                            <div class="option-card-text">
+                                <span class="option-label">{{ option.label }}</span>
+                                <span v-if="option.description" class="option-description">{{ option.description }}</span>
+                            </div>
                         </div>
                     </wa-card>
                 </div>
@@ -1396,7 +1399,7 @@ usePendingRequestDraft({
 }
 
 /* Always show the focus outline on the primary target of the form (initial Approve,
-   "Approve with changes" in edit mode, deny reason textarea, first option-card).
+   "Approve with changes" in edit mode, deny reason textarea).
    The `auto-focused` class is placed statically on these elements; the rules below
    render the outline whenever focus lands on them, regardless of how it got there
    (programmatic from Alt+Shift+M or component auto-focus, keyboard tab, or mouse
@@ -1404,18 +1407,10 @@ usePendingRequestDraft({
    hides the indicator we want for these primary actions.
    We use :focus-within (not :focus) because wa-button / wa-textarea delegate focus
    to an element in their shadow DOM; the host doesn't carry :focus, but the browser
-   keeps :focus-within accurate via activeElement. For .option-card (a plain
-   tabindex element), :focus-within is also true while it holds focus, so the same
-   selector works there. */
+   keeps :focus-within accurate via activeElement. The first option card's rule lives
+   in styles/option-cards.css. */
 wa-button.auto-focused:focus-within::part(base),
 wa-textarea.auto-focused:focus-within::part(base) {
-    outline: var(--wa-focus-ring);
-    outline-offset: var(--wa-focus-ring-offset);
-}
-
-/* Match the existing .option-card:focus-visible style so Alt+Shift+M and Tab focus
-   look identical on the same card. */
-.option-card.auto-focused:focus-within {
     outline: var(--wa-focus-ring);
     outline-offset: var(--wa-focus-ring-offset);
 }
@@ -1478,62 +1473,8 @@ wa-textarea.auto-focused:focus-within::part(base) {
     color: var(--wa-color-text-quiet);
 }
 
-.question-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--wa-space-s);
-    margin-top: var(--wa-space-2xs);
-}
-
-.option-card {
-    flex: 1 1 0;
-    min-width: min-content;
-    max-width: 20rem;
-    cursor: pointer;
-    transition: border-color 0.15s, background-color 0.15s;
-    --spacing: var(--wa-space-m);
-
-    --border-color-base: var(--wa-color-surface-border);
-    --background-color-base: var(--wa-color-surface-raised);
-    --border-color: var(--border-color-base);
-    --background-color: var(--background-color-base);
-
-    border-color: var(--border-color);
-    background: var(--background-color);
-    box-shadow: var(--depth-1);
-    &:hover {
-        /* use new css color syntax to make border-color and background color 10% lighter */
-        --border-color: oklch(from var(--border-color-base)calc(l + 0.025) c h);
-        --background-color: oklch(from var(--background-color-base)calc(l + 0.025) c h);
-    }
-}
-
-.option-card.selected {
-    --border-color-base: var(--wa-color-border-normal);
-    --background-color-base: var(--wa-color-fill-normal);
-}
-
-.option-card.disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-}
-
-.option-card:focus-visible {
-    outline: var(--wa-focus-ring);
-    outline-offset: var(--wa-focus-ring-offset);
-}
-
-.option-card-content {
-    display: flex;
-    flex-direction: column;
-    gap: var(--wa-space-s);
-}
-
-.option-label {
-    font-weight: 600;
-    color: var(--wa-color-text);
-    line-height: 1.4;
-}
+/* The option cards (.question-options, .option-card*, .option-indicator*, .option-label)
+   live in styles/option-cards.css, shared with the Codex question body. */
 
 .option-description {
     display: block;

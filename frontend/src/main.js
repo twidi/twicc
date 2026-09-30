@@ -21,6 +21,8 @@ import './styles/glow.css'
 import './styles/surfaces.css'
 // Sidebar list rows, shared by the session and artifact lists (SPA only).
 import './styles/sidebar-rows.css'
+// Question option cards, shared by the Claude and Codex question bodies (SPA only).
+import './styles/option-cards.css'
 import '@awesome.me/webawesome/dist/components/badge/badge.js'
 import '@awesome.me/webawesome/dist/components/button/button.js'
 import '@awesome.me/webawesome/dist/components/button-group/button-group.js'

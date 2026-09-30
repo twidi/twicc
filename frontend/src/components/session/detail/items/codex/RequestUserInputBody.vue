@@ -279,8 +279,11 @@ usePendingRequestDraft({
                         @keydown="handleOptionKeydown($event, qIndex, option)"
                     >
                         <div class="option-card-content">
-                            <span class="option-label">{{ option.label }}</span>
-                            <span v-if="option.description" class="option-description">{{ option.description }}</span>
+                            <span class="option-indicator option-indicator--radio" aria-hidden="true"></span>
+                            <div class="option-card-text">
+                                <span class="option-label">{{ option.label }}</span>
+                                <span v-if="option.description" class="option-description">{{ option.description }}</span>
+                            </div>
                         </div>
                     </wa-card>
                 </div>
@@ -438,81 +441,18 @@ usePendingRequestDraft({
     color: var(--wa-color-text-quiet);
 }
 
-.question-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--wa-space-s);
-    margin-top: var(--wa-space-2xs);
-}
+/* The option cards (.question-options, .option-card*, .option-indicator*, .option-label)
+   live in styles/option-cards.css, shared with the Claude question body. */
 
-/* Two-layer variable indirection: the `-base` layer carries the state
-   colors (default vs .selected), and the derived layer is what's painted —
-   hover lightens the derived layer FROM the current base, so hovering a
-   selected card keeps its selected colors. */
-.option-card {
-    flex: 1 1 0;
-    min-width: min-content;
-    max-width: 20rem;
-    cursor: pointer;
-    transition: border-color 0.15s, background-color 0.15s;
-    --spacing: var(--wa-space-m);
-
-    --border-color-base: var(--wa-color-surface-border);
-    --background-color-base: var(--wa-color-surface-raised);
-    --border-color: var(--border-color-base);
-    --background-color: var(--background-color-base);
-
-    border-color: var(--border-color);
-    background: var(--background-color);
-    box-shadow: var(--depth-1);
-    &:hover {
-        /* use new css color syntax to make border-color and background color 10% lighter */
-        --border-color: oklch(from var(--border-color-base)calc(l + 0.025) c h);
-        --background-color: oklch(from var(--background-color-base)calc(l + 0.025) c h);
-    }
-}
-
-.option-card.selected {
-    --border-color-base: var(--wa-color-border-normal);
-    --background-color-base: var(--wa-color-fill-normal);
-}
-
-.option-card.disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-}
-
-.option-card:focus-visible {
-    outline: var(--wa-focus-ring);
-    outline-offset: var(--wa-focus-ring-offset);
-}
-
-/* Always show the focus outline on the primary target of the form (first
-   option card, or the lone text input for an options-less question),
-   whether focus lands there via mouse click, Tab, or the programmatic
-   auto-focus on mount / new request. Default :focus-visible would skip
+/* Always show the focus outline on the primary target of the form (the lone
+   text input for an options-less question; the option cards' focus rule lives in
+   styles/option-cards.css), whether focus lands there via mouse click, Tab, or the
+   programmatic auto-focus on mount / new request. Default :focus-visible would skip
    mouse and programmatic focus, which hides the indicator here. */
-.option-card.auto-focused:focus-within {
-    outline: var(--wa-focus-ring);
-    outline-offset: var(--wa-focus-ring-offset);
-}
-
 wa-textarea.auto-focused:focus-within::part(base),
 wa-input.auto-focused:focus-within::part(base) {
     outline: var(--wa-focus-ring);
     outline-offset: var(--wa-focus-ring-offset);
-}
-
-.option-card-content {
-    display: flex;
-    flex-direction: column;
-    gap: var(--wa-space-s);
-}
-
-.option-label {
-    font-weight: 600;
-    color: var(--wa-color-text);
-    line-height: 1.4;
 }
 
 .option-description {

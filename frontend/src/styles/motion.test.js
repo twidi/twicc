@@ -422,6 +422,8 @@ test('8. invariants: individual transforms, scaled by --motion-amount, hover ins
     const keyframes = keyframeEntries(motionTree, '').filter((e) => e.ancestors[0].prelude !== '@keyframes motion-spin')
     assert.ok(keyframes.length > 0)
     assertMotionInvariants(keyframes, 'motion.css keyframes')
+    // The question option cards' global sheet (step 7e §6): its mark scales only.
+    assertMotionInvariants(flatten(parseBlocks(stripComments(read('option-cards.css')))), 'option-cards.css')
 
     const changed = [
         ['../components/message/MessageSnippetsBar.vue', (s) => s.includes('.snippet-btn')],

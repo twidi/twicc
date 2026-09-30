@@ -276,18 +276,11 @@ test('8. quota bars: the colour as --usage-fill, gradient and glow in CSS', () =
 })
 
 test('9. option cards: the focus ring token, no hard outline left', () => {
-    const sites = [
-        ['../components/session/detail/items/claude_code/PendingRequestBody.vue', ['.option-card:focus-visible', '.option-card.auto-focused:focus-within']],
-        ['../components/session/detail/items/codex/RequestUserInputBody.vue', ['.option-card:focus-visible', '.option-card.auto-focused:focus-within']],
-    ]
-    for (const [file, selectors] of sites) {
-        const rules = parseCss(styleOf(read(file)))
-        for (const selector of selectors) {
-            const r = rule(rules, [selector], topLevel)
-            assert.equal(r.decls.outline, 'var(--wa-focus-ring)', `${file} ${selector}`)
-            assert.equal(r.decls['outline-offset'], 'var(--wa-focus-ring-offset)', `${file} ${selector}`)
-        }
-    }
+    // One shared focus rule in option-cards.css (step 7e,
+    // docs/plans/2026-09-30-question-options-motion-design.md §4.2), for both question bodies.
+    const focus = rule(parseCss(read('option-cards.css')), [':where(.option-card:focus-visible)', ':where(.option-card.auto-focused:focus-within)'], topLevel)
+    assert.equal(focus.decls.outline, 'var(--wa-focus-ring)')
+    assert.equal(focus.decls['outline-offset'], 'var(--wa-focus-ring-offset)')
     const files = readdirSync(srcDir, { recursive: true, withFileTypes: true })
         .filter((e) => e.isFile() && /\.(vue|css|js)$/.test(e.name) && !e.name.endsWith('.test.js'))
         .map((e) => join(e.parentPath ?? e.path, e.name))
