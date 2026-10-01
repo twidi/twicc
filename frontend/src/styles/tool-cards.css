@@ -1,0 +1,25 @@
+/* Tool cards: the collapsible rows of the chat (Thinking, Bash, ... wa-details.item-details)
+   wear the card of the quotes and code blocks (quote-card.css): the opaque lit gradient of the
+   callouts and a coloured hairline, in the brand colour itself, light values (a mix of grey and
+   brand reads as a slate slab). One colour for every kind of row.
+   Only the colours: the shape, the shadow and the joining of a run of cards (squared inner
+   corners, a shared edge) stay with SessionItem.vue. The card is the part `base`: Web Awesome
+   paints the surface token there, transparent inside cards, so the gradient shows.
+   The solid surface is --surface-solid (surfaces.css). SPA only. */
+wa-details.item-details {
+    --tool-c: var(--wa-color-brand-60);
+}
+wa-details.item-details::part(base) {
+    border-color: color-mix(in oklab, var(--tool-c) 38%, transparent);
+    background-color: transparent;
+    background-image: linear-gradient(100deg, color-mix(in oklab, var(--tool-c) 17%, var(--surface-solid)), color-mix(in oklab, var(--tool-c) 2%, var(--surface-solid)));
+}
+.wa-dark wa-details.item-details::part(base) {
+    background-image: linear-gradient(100deg, color-mix(in oklab, var(--tool-c) 26%, var(--surface-solid)), color-mix(in oklab, var(--tool-c) 6%, var(--surface-solid)));
+}
+
+/* The "Result" disclosure inside a tool card is a plain wa-details: its default border (the
+   surface border) vanishes on the lit card, so it takes the card's own edge colour. */
+wa-details.tool-result::part(base) {
+    border-color: color-mix(in oklab, var(--tool-c) 38%, transparent);
+}

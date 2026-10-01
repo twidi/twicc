@@ -34,6 +34,8 @@ import './styles/tags.css'
 // Quote cards: blockquotes, container blocks, and the quote boxes of the Peer inbox and the
 // text-selection comment (the renderer also inlines it, for its own cascade order).
 import './styles/quote-card.css'
+// Tool cards: the collapsible rows of the chat wear the same card, in the neutral colour (SPA only).
+import './styles/tool-cards.css'
 import '@awesome.me/webawesome/dist/components/badge/badge.js'
 import '@awesome.me/webawesome/dist/components/button/button.js'
 import '@awesome.me/webawesome/dist/components/button-group/button-group.js'
