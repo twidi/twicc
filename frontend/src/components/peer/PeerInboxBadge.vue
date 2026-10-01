@@ -49,6 +49,6 @@ defineProps({
     translate: 30% -30%;
     /* A surface ring keeps the pinned badge readable over a solid button of the same
        accent fill (the home page's Inbox button). */
-    box-shadow: 0 0 0 2px var(--wa-color-surface-default);
+    box-shadow: 0 0 0 2px var(--surface-solid);
 }
 </style>

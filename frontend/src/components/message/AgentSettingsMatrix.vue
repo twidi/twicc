@@ -531,7 +531,7 @@ onBeforeUnmount(() => {
        its counter-color, used inside the selected-check badge (disc = fg,
        glyph = counter) so the badge reads on any fill. */
     --cell-fg: var(--wa-color-text-normal);
-    --cell-check-fg: var(--wa-color-surface-default);
+    --cell-check-fg: var(--surface-solid);
     position: relative;
     box-sizing: border-box;
     display: flex;
@@ -552,7 +552,7 @@ onBeforeUnmount(() => {
    color so the number stays readable on the strong fill. In dark mode
    text-normal already reads on the fill, so we leave it (no inversion). */
 :root:not(.wa-dark) .matrix-cell.score-high {
-    --cell-fg: var(--wa-color-surface-default);
+    --cell-fg: var(--surface-solid);
     --cell-check-fg: var(--wa-color-text-normal);
 }
 
@@ -615,7 +615,7 @@ onBeforeUnmount(() => {
     color: var(--cell-check-fg);
     font-size: 9px;
     line-height: 1;
-    border: 1px solid var(--wa-color-surface-default);
+    border: 1px solid var(--surface-solid);
     box-sizing: content-box;
     z-index: 1;
     pointer-events: none;

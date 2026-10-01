@@ -845,7 +845,7 @@ onBeforeUnmount(() => {
     inset: 0;
     z-index: 40;
     pointer-events: none;
-    background: color-mix(in srgb, var(--wa-color-surface-default, #fff) 18%, transparent);
+    background: color-mix(in srgb, var(--surface-solid, #fff) 18%, transparent);
 }
 .tab-drop-zone {
     position: absolute;
@@ -887,7 +887,7 @@ onBeforeUnmount(() => {
     z-index: 2;
     border-radius: 2px;
     background: var(--wa-color-brand-600, #2563eb);
-    box-shadow: 0 0 0 1px var(--wa-color-surface-default, #fff);
+    box-shadow: 0 0 0 1px var(--surface-solid, #fff);
 }
 .tab-drop-insertion.axis-v { width: 3px; }
 .tab-drop-insertion.axis-h { height: 3px; }
@@ -897,7 +897,7 @@ onBeforeUnmount(() => {
     pointer-events: none;
     opacity: 0.94;
     filter: drop-shadow(0 5px 12px rgba(0, 0, 0, 0.25));
-    background: var(--wa-color-surface-default, #fff);
+    background: var(--surface-solid, #fff);
     border-radius: var(--wa-border-radius-s, 4px);
 }
 .layout-tab-drag-ghost::part(base) {

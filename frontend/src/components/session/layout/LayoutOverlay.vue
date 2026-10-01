@@ -89,6 +89,13 @@ function onShow(event) { emit('select', event.detail.name) }
     background: rgba(0, 0, 0, 0.2);
     border-radius: var(--panel-radius); /* follow the outer cards' corners */
 }
+/* Dark: black 20% over an almost black page shows nothing. Black 70% dims what is behind, so
+   the overlay's edge reads by contrast, as it does in light. The overlay itself keeps the page
+   colour under the veil (--panel-solid). Written `.wa-dark .overlay-backdrop`, never with
+   :global(): Vue compiles `:global(.wa-dark) .overlay-backdrop` to a bare `.wa-dark { ... }`. */
+.wa-dark .overlay-backdrop {
+    background: rgba(0, 0, 0, 0.7);
+}
 .layout-overlay {
     position: absolute;
     z-index: 11;
@@ -99,6 +106,8 @@ function onShow(event) { emit('select', event.detail.name) }
        the card's: the overlay floats above the other cards. Not --wa-shadow-l (level 3): its
        48px side reach would be cut flat by the layout's clip in the gap. */
     box-shadow: var(--panel-overlay-shadow);
+    /* Opaque: it floats above the cards, which now let the canvas show through. */
+    background: var(--panel-solid);
 }
 /* While a FilePane preview teleported into this overlay is expanded to full-window
    (position:fixed; z-index:1000), the overlay's own z-index:11 stacking context traps it

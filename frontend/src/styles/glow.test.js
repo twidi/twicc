@@ -712,7 +712,7 @@ test('21. the pending request card and the accent fixes (§8)', () => {
         border: 1px solid transparent;
         border-radius: var(--wa-border-radius-l);
         background:
-            linear-gradient(var(--wa-color-surface-default), var(--wa-color-surface-default)) padding-box,
+            linear-gradient(var(--surface-solid), var(--surface-solid)) padding-box,
             linear-gradient(120deg, var(--glow-accent), var(--glow-accent-shifted), var(--glow-accent)) border-box;
         box-shadow: 0 0 1rem -0.5rem color-mix(in oklab, var(--glow-accent) 45%, transparent);`)
     const maximized = rule(form, ['.pending-request-form.maximized'], topLevel)

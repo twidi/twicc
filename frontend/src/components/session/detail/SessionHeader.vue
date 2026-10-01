@@ -1490,7 +1490,8 @@ wa-divider {
            column gap before the divider. The overlay panel has no divider, so
            it reproduces that space itself. */
         padding-bottom: var(--wa-space-xs);
-        background: var(--wa-color-surface-default);
+        /* Opaque like the floating cards: the cards let the canvas show through. */
+        background: var(--panel-solid);
         /* Spans the whole width of .session-view, clipped at the gap: keep the panel budget. */
         box-shadow: var(--panel-overlay-shadow);
         border-bottom: solid var(--wa-color-surface-border) var(--divider-size);

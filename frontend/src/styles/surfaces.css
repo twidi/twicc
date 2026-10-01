@@ -27,6 +27,24 @@
        drawer is transformed). Laid over --canvas-color. */
     --canvas-drawer-top: color-mix(in oklab, var(--canvas-aura-start) 50%, transparent);
 
+    /* The cards are a very faint veil over the canvas, not a flat surface: the canvas gradient
+       shows through almost whole (checked with no veil at all). Light: white 30%, the card is a
+       touch lighter than the canvas; dark (below): black 30%, a touch darker. */
+    --panel-veil: color-mix(in oklab, white 30%, transparent);
+    /* The flat colour a card LOOKS like, without the gradient. Light: the canvas colour itself
+       (the auras barely reach the middle of the page). Dark (below): the auras cover most of the
+       page, so the canvas colour alone is far too dark. */
+    --canvas-flat: var(--canvas-color);
+    /* For the cards that float above the others (the layout overlay, the headers' overflow
+       panels): they must not show what is behind them. The flat colour of a card, under the
+       same veil: opaque, lightened (light) or darkened (dark) by the same step. Declared once,
+       so the veil resolves on <html>, where .wa-dark also applies. */
+    --panel-solid: linear-gradient(var(--panel-veil), var(--panel-veil)), linear-gradient(var(--canvas-flat), var(--canvas-flat)), var(--canvas-color);
+    /* The page surface as an opaque colour, for the few places that use it AS a colour (a check
+       mark, a ring, a drag ghost): inside a card the token itself is transparent. Declared here, so
+       its var() resolves on <html>, outside the cards. */
+    --surface-solid: var(--wa-color-surface-default);
+
     --panel-gap: var(--wa-space-xs);
     --panel-half-gap: calc(var(--panel-gap) / 2);
     --panel-radius: var(--wa-border-radius-l);
@@ -62,6 +80,11 @@
     --canvas-aura-fade: 80%;
     /* Wider, slower-fading start aura: near the drawer's top it is close to full strength. */
     --canvas-drawer-top: color-mix(in oklab, var(--canvas-aura-start) 85%, transparent);
+    --panel-veil: color-mix(in oklab, black 30%, transparent);
+    /* Measured against the average colour of the cards in dark (20,33,46): 30% of the start
+       aura and 40% of the end aura mixed into the canvas colour gives (21,34,46). The auras are
+       translucent colours, so --panel-solid lays this over the opaque canvas colour. */
+    --canvas-flat: color-mix(in oklab, var(--canvas-aura-start) 30%, color-mix(in oklab, var(--canvas-aura-end) 40%, var(--canvas-color)));
     --panel-shadow:
         0 1px 2px oklch(0 0 0 / 0.4),
         0 6px 10px -6px oklch(0 0 0 / 0.55);
@@ -130,7 +153,12 @@ body::before {
 /* One floating card. Every card carries this class: it is also the marker the pooled
    iframes look for to round their corners (PersistentFrame). */
 .panel-card {
-    background: var(--wa-color-surface-default);
+    /* Everything inside that painted the page surface paints nothing: the cards show the veil
+       over the canvas. The colour uses of the token read --surface-solid instead. Web Awesome's
+       own tokens declared on :root (the form control background...) resolved there: fields stay
+       solid. */
+    --wa-color-surface-default: transparent;
+    background: var(--panel-veil);
     border: var(--panel-border);
     border-radius: var(--panel-radius);
     box-shadow: var(--panel-shadow);
