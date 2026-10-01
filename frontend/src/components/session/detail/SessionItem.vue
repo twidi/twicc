@@ -972,7 +972,7 @@ wa-details.item-details {
 }
 
 /* checked "toggles" (usually) before wa-details must have some removed space to keep spacing harmonious */
-.group-toggle:not(:has(+.session-item > .json-view:first-child)) wa-switch:state(checked) {
+.group-toggle[aria-expanded="true"]:not(:has(+.session-item > .json-view:first-child)) {
     margin-bottom: calc(var(--card-spacing) * -1/4);
     z-index: 1;
 }
