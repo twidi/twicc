@@ -3054,6 +3054,10 @@ wa-dropdown-item:hover .row-menu-trigger,
     flex: 1;
     min-width: 0;
     height: 100%;
+    /* Not a scroll container (overflow: clip below), so its automatic minimum height is the height
+       of its content: the split panel's grid would grow to it and the whole page, sidebar included,
+       would scroll instead of the card's content. 0: the card scrolls inside. */
+    min-height: 0;
     padding-block: var(--panel-gap);
     padding-inline-end: var(--panel-gap);
     overflow: clip;
