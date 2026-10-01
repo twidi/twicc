@@ -922,7 +922,7 @@ const splitPanelRef = ref(null)
 // Neutralize pooled-iframe pointer-events while this split's divider is dragged
 // (the content pane on the right can be a pooled HTML preview that would freeze
 // the drag; a pooled frame from another pane can also sit under its path).
-useSplitDividerDragFlag(splitPanelRef)
+const { dragging: splitResizing } = useSplitDividerDragFlag(splitPanelRef)
 
 // The FilePane's over-iframe overlay layer, when its HTML preview owns a pooled
 // frame — the route-issue callout is teleported there so it paints above the
@@ -1250,14 +1250,14 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
             v-show="!isMobile"
             ref="splitPanelRef"
             class="files-split-panel"
-            :class="{ 'keep-alive-hidden': keepAliveHidden }"
+            :class="{ 'keep-alive-hidden': keepAliveHidden, resizing: splitResizing }"
             :position-in-pixels="treePanelWidth"
             primary="start"
             snap="150px 250px 350px"
             snap-threshold="30"
             @wa-reposition="handleTreeReposition"
         >
-            <wa-icon slot="divider" name="grip-lines-vertical" class="divider-handle"></wa-icon>
+            <span slot="divider" class="panel-grip" aria-hidden="true"></span>
 
             <!-- Empty slots — filled by reparenting -->
             <div ref="desktopTreeSlotRef" slot="start" class="files-tree-slot"></div>
@@ -1342,22 +1342,18 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
         visibility: hidden;
     }
 
+    /* The divider line, like the sidebar's and the layout splitters': at rest the border colour,
+       half accent on hover, full accent while dragging. The touch pill is .panel-grip
+       (styles/surfaces.css), slotted in the divider. */
     &::part(divider) {
         background-color: var(--wa-color-surface-border);
         width: var(--divider-size);
     }
-}
-
-/* Divider handle (visible on touch devices only) */
-.divider-handle {
-    color: var(--wa-color-surface-border);
-    display: none;
-    scale: 3;
-}
-
-@media (pointer: coarse) {
-    .divider-handle {
-        display: inline;
+    &::part(divider):hover {
+        background-color: color-mix(in oklab, var(--wa-color-brand-fill-loud) 50%, transparent);
+    }
+    &.resizing::part(divider) {
+        background-color: var(--wa-color-brand-fill-loud);
     }
 }
 

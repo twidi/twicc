@@ -1453,7 +1453,7 @@ const splitPanelRef = ref(null)
 // Pooled frames are absolutely positioned over the whole content area, so a
 // frame from another pane (e.g. a Browser tab docked beside Git) can sit under
 // this divider's path and would otherwise capture the drag.
-useSplitDividerDragFlag(splitPanelRef)
+const { dragging: splitResizing } = useSplitDividerDragFlag(splitPanelRef)
 
 // Hide the split panel during KeepAlive transitions to prevent the visual
 // glitch where wa-split-panel briefly renders at position 0 before Vue
@@ -1768,14 +1768,14 @@ onMounted(() => {
                     v-show="!isMobile"
                     ref="splitPanelRef"
                     class="git-split-panel"
-                    :class="{ 'keep-alive-hidden': keepAliveHidden }"
+                    :class="{ 'keep-alive-hidden': keepAliveHidden, resizing: splitResizing }"
                     :position-in-pixels="treePanelWidth"
                     primary="start"
                     snap="150px 250px 350px"
                     snap-threshold="30"
                     @wa-reposition="handleTreeReposition"
                 >
-                    <wa-icon slot="divider" name="grip-lines-vertical" class="divider-handle"></wa-icon>
+                    <span slot="divider" class="panel-grip" aria-hidden="true"></span>
 
                     <!-- Empty slots — filled by reparenting -->
                     <div ref="desktopTreeSlotRef" slot="start" class="git-tree-slot"></div>
@@ -2036,22 +2036,18 @@ wa-callout {
         visibility: hidden;
     }
 
+    /* The divider line, like the sidebar's and the layout splitters': at rest the border colour,
+       half accent on hover, full accent while dragging. The touch pill is .panel-grip
+       (styles/surfaces.css), slotted in the divider. */
     &::part(divider) {
         background-color: var(--wa-color-surface-border);
         width: var(--divider-size);
     }
-}
-
-/* Divider handle (visible on touch devices only) */
-.divider-handle {
-    color: var(--wa-color-surface-border);
-    display: none;
-    scale: 3;
-}
-
-@media (pointer: coarse) {
-    .divider-handle {
-        display: inline;
+    &::part(divider):hover {
+        background-color: color-mix(in oklab, var(--wa-color-brand-fill-loud) 50%, transparent);
+    }
+    &.resizing::part(divider) {
+        background-color: var(--wa-color-brand-fill-loud);
     }
 }
 
