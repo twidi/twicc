@@ -515,6 +515,8 @@ function toggleJsonView() {
        cards around it without recolouring what is inside it (the text stays dark in light mode).
        Light: a pale centre, the edges tinted, a faint inner glow. Dark (below): a strong tint. */
     --user-card-solid: var(--surface-solid, var(--wa-color-surface-default));
+    /* Rounded, but for one squared corner (bottom right), in both schemes. */
+    border-radius: 18px 18px 4px 18px;
     border-width: 1.5px;
     border-color: color-mix(in oklab, var(--wa-color-brand-60) 72%, transparent);
     background-color: var(--user-card-solid);
@@ -527,6 +529,22 @@ function toggleJsonView() {
     background-image: linear-gradient(180deg, color-mix(in oklab, var(--wa-color-brand-60) 38%, var(--user-card-solid)), color-mix(in oklab, var(--wa-color-brand-60) 26%, var(--user-card-solid)));
     box-shadow: 0 8px 22px -8px color-mix(in oklab, var(--wa-color-brand-60) 80%, transparent),
         inset 0 1px 0 oklch(1 0 0 / 0.15);
+}
+/* Light only: a solid lit bubble, the accent itself (lighter at the top) with white text: the
+   only filled surface of the chat. Its other content (quotes, code, links) is not adapted yet. */
+html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] {
+    color: #fff;
+    border-color: transparent;
+    background-color: transparent;
+    background-image: linear-gradient(180deg, oklch(from var(--wa-color-brand-60) calc(l + 0.07) c h), oklch(from var(--wa-color-brand-60) calc(l - 0.06) c h));
+    box-shadow: 0 6px 16px -8px color-mix(in oklab, var(--wa-color-brand-60) 80%, transparent),
+        inset 0 1px 0 oklch(1 0 0 / 0.35);
+}
+html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] .markdown-body {
+    color: #fff;
+}
+html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] .message-timestamp {
+    color: oklch(1 0 0 / 0.78);
 }
 /* More room above a user message that follows another item; the first message of the session
    needs none. */
