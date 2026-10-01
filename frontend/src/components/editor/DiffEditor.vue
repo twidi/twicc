@@ -719,11 +719,18 @@ html.wa-dark {
   }
 }
 
-/* Better active line gutter in dark mode */
-html.wa-dark {
-    .cm-editor .cm-activeLineGutter {
-      background: var(--wa-color-surface-lowered) !important;
-    }
+/* Inside a card (the Files, Git and Artifacts tabs) the editor and its gutters show the card, in light
+   as in dark: the CodeMirror light theme paints its own white, and the dark rule above only gets there
+   through the surface token, which is transparent in a card. */
+.panel-card .cm-editor,
+.panel-card .cm-gutters {
+    background: transparent !important;
+}
+
+/* The active line's gutter cell: the accent highlight of the app's highlighted rows, in both schemes
+   (it was the theme's pale blue in light and the lowered surface in dark). */
+.cm-editor .cm-activeLineGutter {
+    background: var(--glass-item-highlight) !important;
 }
 
   

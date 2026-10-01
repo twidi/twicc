@@ -143,3 +143,26 @@ test('7. the Web Awesome controls that read the surface as a colour get it back,
     // After the card rule that makes the token transparent.
     assert.ok(css.indexOf(m[0]) > css.indexOf('--wa-color-surface-default: transparent'), 'after the transparent declaration')
 })
+
+// The code editor (Files, Git and Artifacts tabs) shows the card, not a surface of its own. In dark a rule
+// already gives it the page surface token, which is transparent in a card; in light the CodeMirror theme
+// paints its own white. Inside a card the editor and its gutters are transparent in both schemes.
+test('8. inside a card the code editor and its gutters are transparent', () => {
+    const src = strip(read('../components/editor/DiffEditor.vue'))
+    const style = src.slice(src.indexOf('<style'))
+    const m = style.match(/\.panel-card \.cm-editor,\s*\.panel-card \.cm-gutters\s*\{([^}]*)\}/)
+    assert.ok(m, 'the rule')
+    assert.equal(norm(m[1]), 'background: transparent !important;')
+})
+
+// The active line's gutter cell: the accent highlight of the app's highlighted rows (--glass-item-highlight,
+// defined for both schemes), instead of the CodeMirror theme's pale blue in light and the lowered surface in
+// dark. One rule for both schemes.
+test('9. the active line gutter takes the accent highlight, in light and in dark', () => {
+    const src = strip(read('../components/editor/DiffEditor.vue'))
+    const style = src.slice(src.indexOf('<style'))
+    const m = style.match(/\.cm-editor \.cm-activeLineGutter\s*\{([^}]*)\}/g) ?? []
+    assert.equal(m.length, 1, 'one rule only (no per-scheme duplicate)')
+    assert.equal(norm(m[0].replace(/^[^{]*\{|\}$/g, '')), 'background: var(--glass-item-highlight) !important;')
+    assert.ok(!/html\.wa-dark \{[^}]*\.cm-activeLineGutter/.test(style.replace(/\s+/g, ' ')), 'no dark-only block left')
+})
