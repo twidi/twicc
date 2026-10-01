@@ -53,10 +53,10 @@ test('7. in light the user card is a solid accent gradient with white text', () 
     assert.match(norm(style), /html:not\(\.wa-dark\) \.session-items \.session-item\[data-kind="user_message"\] \.markdown-body \{ color: #fff; \}/)
 })
 
-test('9. in light, links, inline code, rules and tables sitting on the bubble read in white, but not inside the light cards', () => {
+test('9. in light, links, inline code, rules and tables sitting on the bubble read in white, but not inside the light cards (quote, container, `::` line, code block)', () => {
     const n = norm(style)
     const P = 'html:not\\(\\.wa-dark\\) \\.session-items \\.session-item\\[data-kind="user_message"\\] \\.markdown-body'
-    const N = ':not\\(blockquote \\*, \\.md-container \\*, \\.code-tools \\*, pre \\*\\)'
+    const N = ':not\\(blockquote \\*, \\.md-container \\*, \\.md-line \\*, \\.code-tools \\*, pre \\*\\)'
     assert.match(n, new RegExp(P + ' a' + N + ' \\{ color: #fff; text-decoration: underline;'))
     assert.match(n, new RegExp(P + ' code' + N + ' \\{ background: oklch\\(1 0 0 / 0\\.2\\); color: #fff; \\}'))
     assert.match(n, new RegExp(P + ' hr' + N + ' \\{ height: 1px; border: 0; background: oklch\\(1 0 0 / 0\\.45\\); \\}'))
