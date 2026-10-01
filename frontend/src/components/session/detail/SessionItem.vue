@@ -221,7 +221,7 @@ function toggleJsonView() {
                 <wa-icon name="code"></wa-icon>
             </wa-button>
             <AppTooltip :for="`json-toggle-hide-${sessionId}-${lineNum}`">Hide JSON</AppTooltip>
-            <wa-tag :id="`line-number-${sessionId}-${lineNum}`" size="small"  appearance="filled-outlined" variant="brand" class="line-number">{{ lineNum }}</wa-tag>
+            <wa-tag :id="`line-number-${sessionId}-${lineNum}`" size="small" variant="brand" class="line-number">{{ lineNum }}</wa-tag>
             <AppTooltip :for="`line-number-${sessionId}-${lineNum}`">Line number</AppTooltip>
             <div class="json-tree">
                 <JsonViewer

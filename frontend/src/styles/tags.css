@@ -1,0 +1,23 @@
+/* Tags: one look for every wa-tag of the SPA, a glow chip: a flat tint of the variant colour
+   over the opaque surface, a coloured border, and a soft halo of the same colour. The variant
+   gives the colour (--tag-c); the explicit `appearance` attributes were dropped, so every tag is
+   the same kind. The tag's box is its host: its own styles sit in :host, below any rule written
+   here. Unlayered, like callouts.css. --surface-solid, not the surface token: that one is
+   transparent inside cards. */
+wa-tag {
+    --tag-c: var(--wa-color-brand-60);
+    background-color: color-mix(in oklab, var(--tag-c) 13%, var(--surface-solid));
+    border-color: color-mix(in oklab, var(--tag-c) 50%, transparent);
+    box-shadow: 0 0 8px -2px color-mix(in oklab, var(--tag-c) 55%, transparent);
+    color: color-mix(in oklab, var(--tag-c) 60%, var(--wa-color-text-normal));
+}
+wa-tag[variant='success'] { --tag-c: var(--wa-color-success-60); }
+wa-tag[variant='warning'] { --tag-c: var(--wa-color-warning-60); }
+wa-tag[variant='danger'] { --tag-c: var(--wa-color-danger-60); }
+/* Neutral leans toward the accent, like the neutral callout. */
+wa-tag[variant='neutral'] { --tag-c: color-mix(in oklab, var(--wa-color-neutral-60) 55%, var(--wa-color-brand-60)); }
+
+.wa-dark wa-tag {
+    background-color: color-mix(in oklab, var(--tag-c) 20%, var(--surface-solid));
+    color: color-mix(in oklab, var(--tag-c) 55%, white);
+}

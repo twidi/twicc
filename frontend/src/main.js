@@ -29,6 +29,8 @@ import './styles/option-cards.css'
 import './styles/session-state-icons.css'
 // Callouts: the lit gradient look, for every wa-callout (SPA only).
 import './styles/callouts.css'
+// Tags: the lit pill look, for every wa-tag (SPA only).
+import './styles/tags.css'
 import '@awesome.me/webawesome/dist/components/badge/badge.js'
 import '@awesome.me/webawesome/dist/components/button/button.js'
 import '@awesome.me/webawesome/dist/components/button-group/button-group.js'
