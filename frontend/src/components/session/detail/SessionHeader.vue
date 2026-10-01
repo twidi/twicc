@@ -13,6 +13,7 @@ import {
 } from '../../../utils/backgroundWork'
 import { getProviderHelpers, getProviderLabel, getProviderIcon } from '../../../providers'
 import ProviderIcon from '../../ui/ProviderIcon.vue'
+import { compactHeight } from '../../../utils/compactHeight'
 import { getAgentDisplay } from '../../../utils/agentLabel'
 import { isContextRingLive } from '../../../utils/liveStates'
 import { stopSubagent, interruptSession } from '../../../composables/useWebSocket'
@@ -808,7 +809,7 @@ defineExpose({
         </div>
 
         <!-- Collapsible rows: git info + meta (overlay on small viewports) -->
-        <div class="session-collapsible-rows">
+        <div class="session-collapsible-rows" :class="{ 'glass-surface': compactHeight }">
 
             <!-- Git info row: directory @ branch. For a draft, displayDirectory
                  falls back to the project path and there is no branch yet, so
@@ -1469,42 +1470,43 @@ wa-divider {
     display: inline-flex;
 }
 
-/* Collapsible rows become an overlay panel */
+/* Collapsible rows become a glass panel hanging under the title row (the look of the popovers; the
+   glass-surface class is set only at compact height, see the template). It reveals like the other
+   overlays: --twicc-reveal fades the glass layer, its content and its shadow (an opacity on the panel
+   would stop the blur), and the panel itself only moves. */
 :where(html.compact-height) .session-collapsible-rows {
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-xs);
     position: absolute;
     top: 100%;
-    left: 0;
-    right: 0;
+    left: var(--wa-space-xs);
+    right: var(--wa-space-xs);
     z-index: 20;
-    /* On large viewports the last row breathes thanks to the header's own
-       column gap before the divider. The overlay panel has no divider, so
-       it reproduces that space itself. */
-    padding-bottom: var(--wa-space-xs);
-    /* Opaque like the floating cards: the cards let the canvas show through. */
-    background: var(--panel-solid);
-    /* Spans the whole width of .session-view, clipped at the gap: keep the panel budget. */
-    box-shadow: var(--panel-overlay-shadow);
-    border-bottom: solid var(--wa-color-surface-border) var(--divider-size);
+    padding: var(--wa-space-xs) 0;
+    border-radius: var(--wa-border-radius-l);
 
     /* Hidden by default */
-    opacity: 0;
     visibility: hidden;
-    transform: translateY(-8px);
-    transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
+    pointer-events: none;
+    --twicc-reveal: 0;
+    --twicc-reveal-filter: opacity(var(--twicc-reveal));
+    translate: 0 calc(-0.5rem * var(--motion-amount));
+    transition:
+        --twicc-reveal var(--motion-dur-2) ease-in-out,
+        translate var(--motion-dur-2) var(--motion-ease-out),
+        visibility var(--motion-dur-2);
 }
 :where(html.compact-height) .session-header:not([data-session-type="session"]) .session-collapsible-rows {
     z-index: 19;
 }
 
-/* When expanded: reveal the overlay */
+/* When expanded: reveal the panel */
 :where(html.compact-height) .session-header.compact-expanded .session-collapsible-rows {
-    opacity: 1;
     visibility: visible;
-    transform: translateY(0);
-    margin-top: calc(-1 * var(--wa-space-xs));
+    pointer-events: auto;
+    --twicc-reveal: 1;
+    translate: 0 0;
 }
 
 :where(html.compact-height) .session-header.compact-expanded .compact-toggle-button--non-main-session {

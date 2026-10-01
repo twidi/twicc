@@ -3,8 +3,14 @@
 // the browser's default font size, never the font size TwiCC applies to <html> (settings), so
 // the threshold is measured here, against the real root font size, and exposed as a class on
 // <html>. The styles read `:where(html.compact-height)`.
+import { ref } from 'vue'
+
 export const COMPACT_HEIGHT_REM = 56
 export const COMPACT_HEIGHT_CLASS = 'compact-height'
+
+// The same fact as a ref, for a component that must switch a class (a glass surface) on it: the
+// styles read the class on <html>, which Vue cannot watch.
+export const compactHeight = ref(false)
 
 export function isCompactHeight(viewportHeightPx, rootFontSizePx) {
     return viewportHeightPx <= COMPACT_HEIGHT_REM * rootFontSizePx
@@ -14,7 +20,8 @@ export function isCompactHeight(viewportHeightPx, rootFontSizePx) {
 export function updateCompactHeight() {
     const root = document.documentElement
     const fontSize = parseFloat(getComputedStyle(root).fontSize)
-    root.classList.toggle(COMPACT_HEIGHT_CLASS, isCompactHeight(window.innerHeight, fontSize))
+    compactHeight.value = isCompactHeight(window.innerHeight, fontSize)
+    root.classList.toggle(COMPACT_HEIGHT_CLASS, compactHeight.value)
 }
 
 /** Apply it now, and again whenever the viewport is resized. The font size setting calls

@@ -73,10 +73,7 @@ test('3. floating cards are opaque: the canvas colour under the same veil', () =
     assert.ok(!css.slice(css.indexOf('.wa-dark {')).includes('--panel-solid'), 'no dark override of --panel-solid')
     const overlay = strip(read('../components/session/layout/LayoutOverlay.vue'))
     assert.ok(/\.layout-overlay\s*\{[^}]*background: var\(--panel-solid\);/.test(overlay), 'the layout overlay is opaque')
-    for (const file of ['../components/session/detail/SessionHeader.vue', '../components/project/ProjectDetailHeader.vue']) {
-        const src = strip(read(file))
-        assert.ok(/background: var\(--panel-solid\);\s*(?:\/\*[^*]*\*\/\s*)?box-shadow: var\(--panel-overlay-shadow\)/.test(src.replace(/\/\*[\s\S]*?\*\//g, '')), `${file}: the overflow panel is opaque`)
-    }
+    // (the compact panels of the session and project headers are glass now, see compact-header-panel.test.js)
 })
 
 // In dark the backdrop behind the layout overlay was black 20% over an almost black page: no visible

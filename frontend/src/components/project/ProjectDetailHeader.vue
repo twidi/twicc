@@ -16,6 +16,7 @@ import { useWorkspacesStore } from '../../stores/workspaces'
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../utils/workspaceIds'
 import { aggregateWeeklyActivity } from '../../utils/activityAggregation'
 import { formatDate } from '../../utils/date'
+import { compactHeight } from '../../utils/compactHeight'
 import { SESSION_TIME_FORMAT } from '../../constants'
 import ProjectBadge from './ProjectBadge.vue'
 import ProjectDirectoryPath from './ProjectDirectoryPath.vue'
@@ -281,7 +282,7 @@ function handleUnarchive() {
         </div>
 
         <!-- Collapsible rows: sparkline, directory, meta (overlay on small viewports) -->
-        <div class="detail-collapsible-rows">
+        <div class="detail-collapsible-rows" :class="{ 'glass-surface': compactHeight }">
             <!-- Sparkline -->
             <div class="detail-sparkline-row">
                 <span :id="`detail-sparkline-${projectId}`" class="detail-sparkline">
@@ -516,33 +517,40 @@ function handleUnarchive() {
     display: none;
 }
 
-/* Collapsible rows become an overlay panel */
+/* Collapsible rows become a glass panel hanging under the title row, the same as the session header's
+   (the glass-surface class is set only at compact height, see the template). It reveals through
+   --twicc-reveal (the glass layer, its content and its shadow fade) and a small move; an opacity on the
+   panel itself would stop the blur. */
 :where(html.compact-height) .detail-collapsible-rows {
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-m);
     position: absolute;
     top: 100%;
-    left: 0;
-    right: 0;
+    left: var(--wa-space-xs);
+    right: var(--wa-space-xs);
     z-index: 20;
-    background: var(--panel-solid);
-    /* Same token as the session header's overflow panel, so both headers look alike. */
-    box-shadow: var(--panel-overlay-shadow);
-    border-bottom: solid var(--wa-color-surface-border) var(--divider-size);
+    padding: var(--wa-space-xs) 0;
+    border-radius: var(--wa-border-radius-l);
 
     /* Hidden by default */
-    opacity: 0;
     visibility: hidden;
-    transform: translateY(-8px);
-    transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
+    pointer-events: none;
+    --twicc-reveal: 0;
+    --twicc-reveal-filter: opacity(var(--twicc-reveal));
+    translate: 0 calc(-0.5rem * var(--motion-amount));
+    transition:
+        --twicc-reveal var(--motion-dur-2) ease-in-out,
+        translate var(--motion-dur-2) var(--motion-ease-out),
+        visibility var(--motion-dur-2);
 }
 
-/* When expanded: reveal the overlay */
+/* When expanded: reveal the panel */
 :where(html.compact-height) .detail-header.compact-expanded .detail-collapsible-rows {
-    opacity: 1;
     visibility: visible;
-    transform: translateY(0);
+    pointer-events: auto;
+    --twicc-reveal: 1;
+    translate: 0 0;
 }
 
 /* When expanded: hide compact indicators, show full indicators */
