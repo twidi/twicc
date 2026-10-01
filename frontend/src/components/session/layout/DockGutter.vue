@@ -11,6 +11,9 @@ const props = defineProps({
     // resolver gutter: { edge, x, y, w, h, items: [{ dockId, tabs, action, anchor }] }
     gutter: { type: Object, required: true },
     openOverlayEdge: { type: String, default: null },
+    // The tab the open overlay shows (the route's active tab): only the chip of the dock that holds it
+    // reads as open. An edge can hold two docks, each with its own active tab.
+    openOverlayTabId: { type: String, default: null },
     // (item) -> the active tab id of a single rail dock. Marks that dock's active chip, and used by
     // empty-area clicks so they act on it, exactly like clicking the chip itself. See dockActiveTabId.
     resolveActiveTab: { type: Function, default: null },
@@ -144,11 +147,13 @@ function plusTitle(p) {
     return `${p.hidden.length} more: ${p.hidden.map((e) => e.tab.label).join(', ')} — ${verb(p)}`
 }
 
-// The peek is open on THIS chip: its edge holds the open overlay and the chip is its dock's active tab
-// (the overlay shows exactly that tab). Both halves are needed — an edge can hold two docks, and a dock
-// several tabs, all of which would otherwise read as open.
+// The peek is open on THIS chip: its edge holds the open overlay, the chip is its dock's active tab, and
+// the dock holds the tab the overlay shows. All three are needed — an edge can hold two docks (each with
+// its own remembered active tab: the overlay shows the tabs of both but only one is the route's), and a
+// dock several tabs, all of which would otherwise read as open.
 function isOpen(entry) {
     return entry.item.action === 'overlay' && props.openOverlayEdge === props.gutter.edge && entry.active
+        && entry.item.tabs.some((t) => t.id === props.openOverlayTabId)
 }
 function verb(entry) {
     if (entry.item.action === 'swap') return 'show this column'

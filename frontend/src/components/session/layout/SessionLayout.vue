@@ -730,7 +730,7 @@ onBeforeUnmount(() => {
                 v-for="g in render.gutters"
                 :key="g.edge"
                 :gutter="g"
-                :open-overlay-edge="openOverlayEdge"
+                :open-overlay-edge="openOverlayEdge" :open-overlay-tab-id="overlayActive"
                 :resolve-active-tab="(item) => layout.dockActiveTabId(item.dockId, item.tabs)"
                 :tab-href="tabHref"
                 :tab-change-stats="tabChangeStats"
