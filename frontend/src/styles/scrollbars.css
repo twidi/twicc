@@ -1,0 +1,68 @@
+/* Scrollbars (visual refresh retouches). Thin, in the app's colours, with a visible track on
+   purpose: it tells that a zone scrolls before the user moves it. Chrome and Safari have the
+   WebKit pseudo-elements (rounded thumb inset in its track, accent on hover); Firefox has only the
+   standard properties (thin width, thumb + track colours). Chrome would ignore the pseudo-elements
+   as soon as a standard property is set, hence the two exclusive branches.
+   Shadow roots: the standard colour inherits into them, the width does not, and the WebKit
+   pseudo-elements do not cross a boundary; the Web Awesome parts that scroll are listed apart. */
+:root {
+    --scrollbar-thumb: color-mix(in srgb, color-mix(in srgb, var(--wa-color-neutral-50) 45%, var(--wa-color-brand-fill-loud)) 32%, transparent);
+    --scrollbar-thumb-hover: color-mix(in srgb, var(--wa-color-brand-fill-loud) 75%, transparent);
+    --scrollbar-track: color-mix(in srgb, var(--wa-color-neutral-50) 9%, transparent);
+}
+
+@supports selector(::-webkit-scrollbar) {
+    *::-webkit-scrollbar,
+    wa-dialog::part(body)::-webkit-scrollbar,
+    wa-drawer::part(body)::-webkit-scrollbar,
+    wa-select::part(listbox)::-webkit-scrollbar,
+    wa-textarea::part(textarea)::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+
+    *::-webkit-scrollbar-track,
+    wa-dialog::part(body)::-webkit-scrollbar-track,
+    wa-drawer::part(body)::-webkit-scrollbar-track,
+    wa-select::part(listbox)::-webkit-scrollbar-track,
+    wa-textarea::part(textarea)::-webkit-scrollbar-track {
+        background: var(--scrollbar-track);
+    }
+
+    *::-webkit-scrollbar-thumb,
+    wa-dialog::part(body)::-webkit-scrollbar-thumb,
+    wa-drawer::part(body)::-webkit-scrollbar-thumb,
+    wa-select::part(listbox)::-webkit-scrollbar-thumb,
+    wa-textarea::part(textarea)::-webkit-scrollbar-thumb {
+        background-color: var(--scrollbar-thumb);
+        background-clip: padding-box;
+        border: 2px solid transparent;
+        border-radius: 999px;
+    }
+
+    *::-webkit-scrollbar-thumb:hover,
+    wa-dialog::part(body)::-webkit-scrollbar-thumb:hover,
+    wa-drawer::part(body)::-webkit-scrollbar-thumb:hover,
+    wa-select::part(listbox)::-webkit-scrollbar-thumb:hover,
+    wa-textarea::part(textarea)::-webkit-scrollbar-thumb:hover {
+        background-color: var(--scrollbar-thumb-hover);
+    }
+
+    *::-webkit-scrollbar-corner {
+        background: transparent;
+    }
+}
+
+@supports not selector(::-webkit-scrollbar) {
+    * {
+        scrollbar-width: thin;
+        scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+    }
+
+    wa-dialog::part(body),
+    wa-drawer::part(body),
+    wa-select::part(listbox),
+    wa-textarea::part(textarea) {
+        scrollbar-width: thin;
+    }
+}
