@@ -560,6 +560,13 @@ html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] .markd
     background: oklch(1 0 0 / 0.2);
     color: #fff;
 }
+/* The leading /command chip: the same frosted white as inline code, with a thin white border, instead of
+   the pale accent chip of the cards (which read as a hole in the filled bubble). */
+html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] .markdown-body .slash-command-tag:not(blockquote *, .md-container *, .md-line *, .code-tools *, pre *) {
+    background: oklch(1 0 0 / 0.2);
+    border-color: oklch(1 0 0 / 0.45);
+    color: #fff;
+}
 html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] .markdown-body hr:not(blockquote *, .md-container *, .md-line *, .code-tools *, pre *) {
     height: 1px;
     border: 0;

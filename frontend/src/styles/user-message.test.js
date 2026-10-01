@@ -63,6 +63,13 @@ test('9. in light, links, inline code, rules and tables sitting on the bubble re
     assert.match(n, new RegExp(P + ' table' + N + ' tr \\{ background: transparent; \\}'))
 })
 
+test('9b. in light, the leading /command chip sitting on the bubble is a frosted white chip with white text, like inline code', () => {
+    const n = norm(style)
+    const P = 'html:not\\(\\.wa-dark\\) \\.session-items \\.session-item\\[data-kind="user_message"\\] \\.markdown-body'
+    const N = ':not\\(blockquote \\*, \\.md-container \\*, \\.md-line \\*, \\.code-tools \\*, pre \\*\\)'
+    assert.match(n, new RegExp(P + ' \\.slash-command-tag' + N + ' \\{ background: oklch\\(1 0 0 / 0\\.2\\); border-color: oklch\\(1 0 0 / 0\\.45\\); color: #fff; \\}'))
+})
+
 test('10. a user message has a minimum width, capped by the maximum the items share', () => {
     const base = norm(style.match(/\.session-items \.session-item\[data-kind="user_message"\] \{([^}]*)\}/)[1])
     assert.match(base, /min-width: min\(12rem, calc\(var\(--max-card-width\) - var\(--card-spacing\) \* 2\)\);/)
