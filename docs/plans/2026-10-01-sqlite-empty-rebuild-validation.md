@@ -33,3 +33,24 @@ The complete focused suite includes migration process, effects, metadata, schema
 The proof applies only to atomic rebuilds. A row change anywhere during a rebuild prevents acceptance, even when a callback later restores the original data. Existing and populated tables keep global validation. Unsupported authorization shapes fail closed. This work does not remove Django rebuilds or change frozen migrations.
 
 No live database snapshot, migration, server startup, or server restart is performed. The historical broad-suite failures remain outside this task.
+
+## Real copied-database replay
+
+On 2026-10-01 the user snapshots the main database and rolls the disposable worktree copy back to0145. The database file before startup is20,712,083,456 bytes. Read-only preflight verifies0145 as latest applied core migration and13,444 sessions with NULL compute_version.
+
+Normal devctl startup reapplies0146 in1.029560s with scope=none and zero FK-check duration.0147 takes0.040524s, and the148-149 replacement takes0.036964s; both also have scope=none. The prior reverse146 global FK check takes92.841278s. The application starts at08:52:40 and returns HTTP200 on port3502 despite the devctl verification timeout.
+
+The worktree servers stop before cleanup. This evidence records the real startup; it does not claim background recompute completes.
+
+```text
+[2026-10-01 08:34:50,256 -   INFO -      global - twicc.db.migrations] Migration FK check migration=None direction=None scope=global tables=() reason=unproved main-schema effects fk_check_seconds=92.841278 success=True
+[2026-10-01 08:52:37,431 -   INFO -      global - twicc.db.migrations] Migration start migration=core.0146_agent_runs direction=forward fake=False duration_seconds=0.000000
+[2026-10-01 08:52:38,259 -   INFO -      global - twicc.db.migrations] Migration FK check migration=core.0146_agent_runs direction=forward scope=none tables=() reason=no observed relation effects fk_check_seconds=0.000000 success=True
+[2026-10-01 08:52:38,461 -   INFO -      global - twicc.db.migrations] Migration success migration=core.0146_agent_runs direction=forward fake=False duration_seconds=1.029560
+[2026-10-01 08:52:38,461 -   INFO -      global - twicc.db.migrations] Migration start migration=core.0147_session_history_fact direction=forward fake=False duration_seconds=0.000000
+[2026-10-01 08:52:38,495 -   INFO -      global - twicc.db.migrations] Migration FK check migration=core.0147_session_history_fact direction=forward scope=none tables=() reason=no observed relation effects fk_check_seconds=0.000000 success=True
+[2026-10-01 08:52:38,501 -   INFO -      global - twicc.db.migrations] Migration success migration=core.0147_session_history_fact direction=forward fake=False duration_seconds=0.040524
+[2026-10-01 08:52:38,501 -   INFO -      global - twicc.db.migrations] Migration start migration=core.0148_live_contribution_indexes_squashed_0149_remove_redundant_message_index direction=forward fake=False duration_seconds=0.000000
+[2026-10-01 08:52:38,538 -   INFO -      global - twicc.db.migrations] Migration FK check migration=core.0148_live_contribution_indexes_squashed_0149_remove_redundant_message_index direction=forward scope=none tables=() reason=no observed relation effects fk_check_seconds=0.000000 success=True
+[2026-10-01 08:52:38,538 -   INFO -      global - twicc.db.migrations] Migration success migration=core.0148_live_contribution_indexes_squashed_0149_remove_redundant_message_index direction=forward fake=False duration_seconds=0.036964
+```
