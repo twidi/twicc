@@ -2998,7 +2998,7 @@ wa-dropdown-item:hover .row-menu-trigger,
    canvas, so they take an accent-based color. Inherited by the list's section labels
    (SidebarListSeparator) and the quota rows. */
 .sidebar {
-    --sidebar-divider-color: color-mix(in oklab, var(--wa-color-brand-border-normal), var(--wa-color-brand-border-loud));
+    --sidebar-divider-color: oklch(from color-mix(in oklab, var(--wa-color-brand-border-normal), var(--wa-color-brand-border-loud)) l calc(c * 0.5) h);
 }
 
 .sidebar wa-divider {
@@ -3411,14 +3411,10 @@ wa-dropdown-item:hover .row-menu-trigger,
     position: relative;
     height: 6px;
     border-radius: var(--wa-border-radius-pill);
-    /* One step darker than the light canvas the footer now sits on (fill-quiet has the
-       canvas's own lightness and vanished there). */
-    background: var(--wa-color-neutral-fill-normal);
-}
-/* Dark: lift the empty track off the dark footer so the remaining (unfilled)
-   portion of each bar stays readable instead of blending into the background. */
-html.wa-dark .usage-lane {
-    background: var(--wa-color-neutral-border-normal);
+    /* The shared track token (neutral-tint.css): one step darker than the light canvas the
+       footer sits on (fill-quiet has the canvas's own lightness and vanished there), a lifted
+       grey in dark so the unfilled part stays readable on the footer. */
+    background: var(--progress-track);
 }
 
 .usage-lane-fill {

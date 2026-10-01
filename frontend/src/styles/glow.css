@@ -164,11 +164,11 @@
 :where(wa-progress-ring:is(.context-usage-ring, .onode-context-ring))::part(base) {
     filter: drop-shadow(0 0 0.1875rem color-mix(in oklab, var(--indicator-color) 35%, transparent));
 }
-/* Dark: Web Awesome's track (neutral-fill-normal) nearly vanishes on the dark header; the
-   same lifted grey as the quota bars' empty lane (ProjectView). A rule on the host beats
-   the component's own :host declaration. */
+/* The empty track reads the shared token (--progress-track, neutral-tint.css), which in dark is
+   the lifted grey of the quota bars' empty lane: Web Awesome's own track nearly vanishes on the
+   dark header. A rule on the host beats the component's own :host declaration. */
 .wa-dark :where(wa-progress-ring:is(.context-usage-ring, .onode-context-ring)) {
-    --track-color: var(--wa-color-neutral-border-normal);
+    --track-color: var(--progress-track);
 }
 
 /* A checked switch: an accent gradient track with a soft glow. The track's border goes

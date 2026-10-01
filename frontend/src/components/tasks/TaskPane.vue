@@ -110,10 +110,7 @@ const progress = computed(() => countTasks(tasks.value?.items))
 .task-progress-track {
     height: 6px;
     border-radius: var(--wa-border-radius-pill);
-    background: var(--wa-color-neutral-fill-normal);
-}
-html.wa-dark .task-progress-track {
-    background: var(--wa-color-neutral-border-normal);
+    background: var(--progress-track);
 }
 .task-progress-fill {
     height: 100%;

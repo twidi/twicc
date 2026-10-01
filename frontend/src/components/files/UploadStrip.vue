@@ -278,10 +278,7 @@ function onResumeInputChange(event) {
 .upload-progress {
     flex: 0 0 5rem;
     --track-height: 0.375rem;
-    --track-color: var(--wa-color-neutral-fill-normal);
-}
-html.wa-dark .upload-progress {
-    --track-color: var(--wa-color-neutral-border-normal);
+    --track-color: var(--progress-track);
 }
 .upload-progress::part(base) {
     overflow: visible;

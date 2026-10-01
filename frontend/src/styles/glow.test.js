@@ -298,7 +298,7 @@ test('7. context ring: a real colour at every percentage, glow on the base part'
     assert.ok(dark.order > light.order, 'the dark value comes after the light one')
     assert.match(dark.decls['--glow-context-ring'], /^color-mix\(in oklab, var\(--wa-color-brand-50\), /)
     const track = rule(glow, ['.wa-dark :where(wa-progress-ring:is(.context-usage-ring, .onode-context-ring))'], topLevel)
-    assert.equal(track.decls['--track-color'], 'var(--wa-color-neutral-border-normal)')
+    assert.equal(track.decls['--track-color'], 'var(--progress-track)')
 })
 
 test('8. quota bars: the colour as --usage-fill, gradient and glow in CSS', () => {
@@ -663,8 +663,7 @@ test('18c. the upload strip: unfolding, upload icon, lit bar', () => {
     // The bar: the Tasks tab's look in the accent colour, plus a glow (the track no longer clips).
     assertPinned(rule(tree, ['.upload-progress'], topLevel), `flex: 0 0 5rem;
         --track-height: 0.375rem;
-        --track-color: var(--wa-color-neutral-fill-normal);`)
-    assertPinned(rule(tree, ['html.wa-dark .upload-progress'], topLevel), '--track-color: var(--wa-color-neutral-border-normal);')
+        --track-color: var(--progress-track);`)
     assertPinned(rule(tree, ['.upload-progress::part(base)'], topLevel), 'overflow: visible;')
     assertPinned(rule(tree, ['.upload-progress::part(indicator)'], topLevel), `background: linear-gradient(90deg, oklch(from var(--wa-color-brand-60) calc(l + 0.08) c h), var(--wa-color-brand-60));
         border-radius: var(--wa-border-radius-pill);

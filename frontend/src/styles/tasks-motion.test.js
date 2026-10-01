@@ -193,9 +193,8 @@ test('4. TaskPane: progress line rules and keyframes (§6)', () => {
     assertPinned(rule(all, ['.task-progress-track'], topLevel), `
         height: 6px;
         border-radius: var(--wa-border-radius-pill);
-        background: var(--wa-color-neutral-fill-normal);
+        background: var(--progress-track);
     `)
-    assertPinned(rule(all, ['html.wa-dark .task-progress-track'], topLevel), 'background: var(--wa-color-neutral-border-normal);')
     assertPinned(rule(all, ['.task-progress-fill'], topLevel), `
         height: 100%;
         border-radius: inherit;
