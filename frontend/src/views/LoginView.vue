@@ -118,7 +118,7 @@ async function handleSubmit() {
                     </wa-input>
                 </div>
 
-                <wa-callout v-if="error" variant="danger" appearance="filled" size="small" class="login-error">
+                <wa-callout v-if="error" variant="danger" size="small" class="login-error">
                     <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
                     {{ error }}
                 </wa-callout>

@@ -1564,7 +1564,7 @@ onMounted(() => {
 
         <!-- Error state -->
         <div v-else-if="error" class="panel-state">
-            <wa-callout variant="danger" appearance="filled-outlined" class="pane-callout">
+            <wa-callout variant="danger" class="pane-callout">
                 <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
                 <div class="error-content">
                     <div>{{ error }}</div>
@@ -1583,7 +1583,7 @@ onMounted(() => {
 
         <!-- Empty state (no commits) -->
         <div v-else-if="routeIssueMessage && entries.length === 0" class="panel-state">
-            <wa-callout variant="warning" appearance="filled-outlined" class="pane-callout">
+            <wa-callout variant="warning" class="pane-callout">
                 <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
                 <span>{{ routeIssueMessage.before }}</span>
                 <span v-if="routeIssueMessage.detail" class="pane-callout-detail">{{ routeIssueMessage.detail }}</span>
@@ -1615,7 +1615,7 @@ onMounted(() => {
                 <div v-if="routeIssueMessage && !gitLogOpen" class="pane-callout-overlay">
                     <wa-callout
                         variant="warning"
-                        appearance="filled-outlined"
+                       
                         class="pane-callout"
                     >
                         <wa-icon slot="icon" name="circle-exclamation"></wa-icon>

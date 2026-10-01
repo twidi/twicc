@@ -1115,7 +1115,7 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
             <div v-if="routeIssueMessage" class="pane-callout-overlay">
                 <wa-callout
                     variant="warning"
-                    appearance="filled-outlined"
+                   
                     class="pane-callout"
                 >
                     <wa-icon slot="icon" name="circle-exclamation"></wa-icon>

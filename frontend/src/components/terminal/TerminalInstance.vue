@@ -194,7 +194,7 @@ function handleReconnectClick() {
 
         <!-- Disconnect overlay (only covers terminal area, not ExtraKeysBar) -->
         <div v-if="started && !isConnected" class="terminal-overlay">
-            <wa-callout variant="warning" appearance="filled-outlined">
+            <wa-callout variant="warning">
                 <wa-icon slot="icon" name="plug-circle-xmark"></wa-icon>
                 <div class="terminal-overlay-content">
                     <div>Terminal disconnected</div>
@@ -215,7 +215,7 @@ function handleReconnectClick() {
         <!-- Start overlay: the Main terminal with no tmux session to attach to waits for an explicit
              start, so merely viewing (e.g. a docked-by-default terminal) never spawns tmux. -->
         <div v-else-if="!started && active && startMode === 'manual'" class="terminal-overlay">
-            <wa-callout variant="neutral" appearance="filled-outlined">
+            <wa-callout variant="neutral">
                 <wa-icon slot="icon" name="terminal"></wa-icon>
                 <div class="terminal-overlay-content">
                     <div>Terminal not started</div>
@@ -269,10 +269,6 @@ function handleReconnectClick() {
 
 /* filled-outlined keeps the callout opaque over the terminal content; restore the
    stronger border the plain outlined appearance gave it. */
-.terminal-overlay wa-callout {
-    border-color: var(--wa-color-border-loud);
-}
-
 .terminal-overlay-content {
     display: flex;
     flex-direction: column;

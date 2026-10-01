@@ -1643,7 +1643,7 @@ defineExpose({ activeIndex })
         </div>
 
         <div v-if="showUnavailableState" class="terminal-unavailable-state">
-            <wa-callout variant="warning" appearance="filled-outlined" class="terminal-unavailable-callout">
+            <wa-callout variant="warning" class="terminal-unavailable-callout">
                 {{ unavailableRouteMessage }}
             </wa-callout>
         </div>

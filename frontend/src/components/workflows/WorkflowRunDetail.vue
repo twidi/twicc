@@ -327,7 +327,7 @@ function agentsLabel(n) {
 
         <!-- "Completed but not every phase ran" warning (e.g. stopped early on a
              budget cap). Counts come straight from raw_json.phaseCompletion. -->
-        <wa-callout v-if="incompleteRun" variant="warning" appearance="filled-outlined" size="small" class="wf-incomplete">
+        <wa-callout v-if="incompleteRun" variant="warning" size="small" class="wf-incomplete">
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
             This workflow is marked completed, but only
             <strong>{{ phaseCompletion.completed }} of its {{ phaseCompletion.total }} phases</strong>
@@ -338,7 +338,7 @@ function agentsLabel(n) {
              The badge already relays the raw status; this spells out the meaning
              and hints the user can ask the agent to resume it (the engine reuses
              the runId + journal, so a resume continues the same run). -->
-        <wa-callout v-else-if="interruptedRun" variant="warning" appearance="filled-outlined" size="small" class="wf-incomplete">
+        <wa-callout v-else-if="interruptedRun" variant="warning" size="small" class="wf-incomplete">
             <wa-icon slot="icon" name="circle-stop"></wa-icon>
             This workflow was <strong>interrupted</strong> before completing — it did not run to the end.
             You can ask the agent to try resuming it if needed.
@@ -346,7 +346,7 @@ function agentsLabel(n) {
 
         <!-- Phase detection unavailable: the script couldn't be executed to build
              templates, so agents can't be tagged to a phase (all Unassigned). -->
-        <wa-callout v-if="detectionUnavailable" variant="warning" appearance="filled-outlined" size="small" class="wf-incomplete">
+        <wa-callout v-if="detectionUnavailable" variant="warning" size="small" class="wf-incomplete">
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
             Agent <strong>phases couldn't be detected</strong> for this workflow — its agents are grouped under Unassigned.
         </wa-callout>

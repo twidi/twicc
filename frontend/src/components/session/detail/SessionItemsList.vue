@@ -2322,7 +2322,7 @@ defineExpose({
             </template>
             <!-- Stale session banner (replaces message input for stale main sessions) -->
             <div v-else-if="isStale && !parentSessionId" v-footer-enter class="stale-banner">
-                <wa-callout variant="warning" appearance="outlined">
+                <wa-callout variant="warning">
                     <wa-icon slot="icon" name="link-slash" class="session-state-icon session-state-icon--stale"></wa-icon>
                     <div class="stale-banner-content">
                         <strong>Read-only session</strong>
@@ -2332,7 +2332,7 @@ defineExpose({
             </div>
             <!-- Provider disabled banner (replaces message input when the session's provider is disabled) -->
             <div v-else-if="!isProviderEnabled && !parentSessionId" v-footer-enter class="provider-disabled-banner">
-                <wa-callout variant="warning" appearance="outlined">
+                <wa-callout variant="warning">
                     <wa-icon slot="icon" name="circle-pause"></wa-icon>
                     <div class="provider-disabled-content">
                         <strong>{{ providerLabel }} is disabled</strong>

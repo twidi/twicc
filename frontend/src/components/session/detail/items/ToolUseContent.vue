@@ -1064,7 +1064,7 @@ startResultFetch()
                 No input parameters
             </div>
             <!-- Tool error message (shown directly, replaces the Result details unless Bash/Unknown) -->
-            <wa-callout v-if="isToolError" variant="danger" appearance="outlined" class="tool-error-message">
+            <wa-callout v-if="isToolError" variant="danger" class="tool-error-message">
                 <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
                 <MarkdownContent v-if="errorAsMarkdown" :source="toolErrorText" :show-toolbar="false" />
                 <template v-else>{{ toolErrorText }}</template>

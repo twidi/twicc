@@ -139,7 +139,7 @@ function discard() {
     <wa-callout
         v-if="failedSend"
         variant="danger"
-        appearance="outlined"
+       
         size="small"
         class="failed-send-callout"
     >

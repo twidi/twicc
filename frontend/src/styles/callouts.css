@@ -1,0 +1,34 @@
+/* Callouts: one look for every wa-callout of the SPA, the lit gradient of the open sidebar row
+   with a halo around the icon. The variant gives the colour (--callout-c); the explicit
+   `appearance` attributes were dropped, so every callout is the same kind. The callout's box is
+   its host: its own styles sit in :host, below any rule written here. Unlayered, like glow.css.
+   Gradient: the variant colour over the opaque surface (--surface-solid: the surface token is
+   transparent inside cards), fading to the right toward the surface itself: opaque end to end,
+   whatever is behind. */
+wa-callout {
+    --callout-c: var(--wa-color-brand-60);
+    background-color: transparent;
+    background-image: linear-gradient(100deg, color-mix(in oklab, var(--callout-c) 24%, var(--surface-solid)), color-mix(in oklab, var(--callout-c) 5%, var(--surface-solid)));
+    border-color: color-mix(in oklab, var(--callout-c) 45%, transparent);
+    box-shadow: 0 2px 10px -4px color-mix(in oklab, var(--callout-c) 45%, transparent);
+}
+wa-callout[variant='success'] { --callout-c: var(--wa-color-success-60); }
+wa-callout[variant='warning'] { --callout-c: var(--wa-color-warning-60); }
+wa-callout[variant='danger'] { --callout-c: var(--wa-color-danger-60); }
+/* Neutral leans toward the accent: the grey alone reads dull next to the other variants. */
+wa-callout[variant='neutral'] { --callout-c: color-mix(in oklab, var(--wa-color-neutral-60) 55%, var(--wa-color-brand-60)); }
+
+/* The icon wears the variant colour, a touch darker in light so it holds on the pale fill,
+   and a halo. */
+wa-callout > wa-icon[slot='icon'] {
+    color: color-mix(in oklab, var(--callout-c) 78%, var(--wa-color-text-normal));
+    filter: drop-shadow(0 0 5px color-mix(in oklab, var(--callout-c) 55%, transparent));
+}
+
+.wa-dark wa-callout {
+    background-image: linear-gradient(100deg, color-mix(in oklab, var(--callout-c) 30%, var(--surface-solid)), color-mix(in oklab, var(--callout-c) 21%, var(--surface-solid)) 60%, color-mix(in oklab, var(--callout-c) 8%, var(--surface-solid)));
+    box-shadow: 0 2px 14px -3px color-mix(in oklab, var(--callout-c) 55%, transparent);
+}
+.wa-dark wa-callout > wa-icon[slot='icon'] {
+    color: var(--callout-c);
+}

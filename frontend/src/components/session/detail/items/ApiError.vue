@@ -209,7 +209,7 @@ function retry() {
 
 <template>
     <div class="api-error">
-        <wa-callout variant="danger" appearance="outlined" size="small">
+        <wa-callout variant="danger" size="small">
             <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
             <div class="error-content">
                 <div class="error-message">Error from {{ providerLabel }}: {{ errorInfo.message }}</div>

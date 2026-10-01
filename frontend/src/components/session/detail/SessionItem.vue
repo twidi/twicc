@@ -210,7 +210,7 @@ function toggleJsonView() {
         </div>
 
         <!-- JSON view -->
-        <wa-callout appearance="outlined" variant="neutral" v-if="showJson" class="json-view">
+        <wa-callout variant="neutral" v-if="showJson" class="json-view">
             <wa-button
                 :id="`json-toggle-hide-${sessionId}-${lineNum}`"
                 class="json-toggle"

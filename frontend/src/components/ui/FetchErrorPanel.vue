@@ -15,7 +15,7 @@ function handleRetry() {
 
 <template>
     <div class="fetch-error-panel">
-        <wa-callout variant="danger" appearance="filled-outlined">
+        <wa-callout variant="danger">
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
             <div class="error-content">
                 <div class="error-message">
