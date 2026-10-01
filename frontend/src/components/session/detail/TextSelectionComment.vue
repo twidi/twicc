@@ -392,7 +392,7 @@ defineExpose({ isExpanded: expanded })
             @pointerdown="onDragPointerDown"
         >
             <!-- Selected text preview (scrollable) -->
-            <div class="tsc-quote">{{ selectedText }}</div>
+            <div class="tsc-quote quote-card">{{ selectedText }}</div>
 
             <wa-textarea
                 ref="textareaRef"
@@ -483,10 +483,7 @@ defineExpose({ isExpanded: expanded })
 
 .tsc-quote {
     max-height: 6.4em; /* ~4 lines */
-    padding: var(--wa-space-xs) var(--wa-space-xs);
-    border-left: 3px solid var(--wa-color-brand);
-    border-radius: var(--wa-border-radius-s);
-    background: var(--wa-color-surface-lowered);
+    padding: var(--wa-space-xs);
     font-size: var(--wa-font-size-s);
     line-height: 1.4;
     overflow: auto;

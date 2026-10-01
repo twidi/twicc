@@ -1,0 +1,158 @@
+/* Quote cards: one look for everything that quotes: markdown blockquotes, `:::` container blocks
+   and `::` lines of the renderer (MarkdownContent.vue), plus `.quote-card` boxes elsewhere
+   (the Peer inbox rows and review dialog, the text-selection comment).
+   A card rounded on every side: the opaque lit gradient of the callouts (the accent over the
+   solid surface), a coloured hairline, a soft shadow, and a thicker left border in the accent,
+   which follows the card's rounded corners (the rail is the border itself, with a faint glow);
+   the container's label is a glow chip like the tags.
+   Nested quotes alternate a flat lighter card and a stronger one, so they read without relying
+   on the surface colour (transparent inside cards). CSS cannot count depth, hence the
+   enumeration; a container counts as a level of its own.
+   The solid surface is --surface-solid (surfaces.css, SPA only), falling back to the surface
+   token where there is no such thing (the share viewer, where nothing is translucent).
+   Imported by MarkdownContent.vue (inlined in its style block: the order against
+   github-markdown-css matters, same specificity) and by the components that use .quote-card. */
+.markdown-body,
+.quote-card {
+    --quote-c: var(--wa-color-brand-60);
+    --quote-solid: var(--surface-solid, var(--wa-color-surface-default));
+}
+
+.quote-card,
+.markdown-body blockquote,
+.markdown-body .md-container {
+    position: relative;
+    padding: 0.8em 1.1em;
+    border: 1px solid color-mix(in oklab, var(--quote-c) 24%, transparent);
+    border-inline-start: 3px solid var(--quote-c);
+    border-radius: 0.75rem;
+    background-color: transparent;
+    background-image: linear-gradient(100deg, color-mix(in oklab, var(--quote-c) 13%, var(--quote-solid)), color-mix(in oklab, var(--quote-c) 3%, var(--quote-solid)));
+    box-shadow: -2px 0 6px -4px color-mix(in oklab, var(--quote-c) 40%, transparent), 0 2px 10px -5px color-mix(in oklab, var(--quote-c) 45%, transparent);
+    color: var(--wa-color-text-normal);
+}
+.wa-dark .quote-card,
+.wa-dark .markdown-body blockquote,
+.wa-dark .markdown-body .md-container {
+    border-color: color-mix(in oklab, var(--quote-c) 32%, transparent);
+    border-inline-start-color: var(--quote-c);
+    background-image: linear-gradient(100deg, color-mix(in oklab, var(--quote-c) 20%, var(--quote-solid)), color-mix(in oklab, var(--quote-c) 8%, var(--quote-solid)));
+    box-shadow: -2px 0 7px -4px color-mix(in oklab, var(--quote-c) 45%, transparent), 0 2px 14px -5px color-mix(in oklab, var(--quote-c) 55%, transparent);
+}
+
+/* github-markdown-css gives quotes its own margin and muted text. */
+.markdown-body blockquote {
+    margin: 0.9em 0;
+}
+
+/* Nested quotes: a flat lighter card, its rail a shade deeper; every other level is stronger. */
+.markdown-body blockquote blockquote,
+.markdown-body .md-container blockquote:not(.md-container blockquote blockquote) {
+    margin: 0.7em 0 0.2em;
+}
+.markdown-body blockquote blockquote {
+    border-radius: 0.5625rem;
+    background-image: none;
+    background-color: color-mix(in oklab, var(--quote-c) 5%, var(--quote-solid));
+    border-inline-start-color: color-mix(in oklab, var(--quote-c) 70%, var(--wa-color-text-normal));
+    box-shadow: none;
+}
+.wa-dark .markdown-body blockquote blockquote {
+    background-image: none;
+    background-color: color-mix(in oklab, var(--quote-c) 9%, var(--quote-solid));
+    border-inline-start-color: color-mix(in oklab, var(--quote-c) 70%, var(--wa-color-text-normal));
+    box-shadow: none;
+}
+.markdown-body blockquote blockquote blockquote,
+.markdown-body blockquote blockquote blockquote blockquote blockquote {
+    background-color: color-mix(in oklab, var(--quote-c) 13%, var(--quote-solid));
+    border-inline-start-color: var(--quote-c);
+}
+.wa-dark .markdown-body blockquote blockquote blockquote,
+.wa-dark .markdown-body blockquote blockquote blockquote blockquote blockquote {
+    background-color: color-mix(in oklab, var(--quote-c) 18%, var(--quote-solid));
+}
+
+.markdown-body blockquote blockquote blockquote blockquote {
+    background-color: color-mix(in oklab, var(--quote-c) 5%, var(--quote-solid));
+    border-inline-start-color: color-mix(in oklab, var(--quote-c) 70%, var(--wa-color-text-normal));
+}
+.wa-dark .markdown-body blockquote blockquote blockquote blockquote {
+    background-color: color-mix(in oklab, var(--quote-c) 9%, var(--quote-solid));
+}
+
+
+/* The container: its quote is a card of its own, the label a glow chip. */
+.markdown-body .md-container {
+    margin: 1em 0;
+    padding: 0.75em 1em 1em;
+    /* A plain hairline all round: the accent edge belongs to the quotes inside it. */
+    border: 1px solid color-mix(in oklab, var(--quote-c) 34%, transparent);
+}
+.markdown-body .md-container > :first-child {
+    margin-top: 0;
+}
+.markdown-body .md-container > :last-child {
+    margin-bottom: 0;
+}
+.markdown-body .md-container > blockquote {
+    margin: 0.2em 0 0.8em;
+}
+.markdown-body .md-container-label {
+    display: inline-block;
+    margin-bottom: 0.5em;
+    padding: 0.1em 0.65em;
+    border: 1px solid color-mix(in oklab, var(--quote-c) 50%, transparent);
+    border-radius: 7px;
+    background: color-mix(in oklab, var(--quote-c) 13%, var(--quote-solid));
+    box-shadow: 0 0 8px -2px color-mix(in oklab, var(--quote-c) 55%, transparent);
+    color: color-mix(in oklab, var(--quote-c) 60%, var(--wa-color-text-normal));
+    font-size: var(--wa-font-size-s);
+    font-weight: var(--wa-font-weight-semibold);
+}
+.wa-dark .markdown-body .md-container {
+    border-color: color-mix(in oklab, var(--quote-c) 40%, transparent);
+}
+.wa-dark .markdown-body .md-container-label {
+    background: color-mix(in oklab, var(--quote-c) 20%, var(--quote-solid));
+    color: color-mix(in oklab, var(--quote-c) 55%, white);
+}
+
+/* A `::` line: a banner that carries a sentence, so a quiet card, no rail. */
+.markdown-body .md-line {
+    margin: 0 0 0.75em;
+    padding: 0.6em 1em;
+    border: 1px solid color-mix(in oklab, var(--quote-c) 24%, transparent);
+    border-radius: 0.75rem;
+    background-image: linear-gradient(100deg, color-mix(in oklab, var(--quote-c) 13%, var(--quote-solid)), color-mix(in oklab, var(--quote-c) 3%, var(--quote-solid)));
+    box-shadow: 0 2px 10px -5px color-mix(in oklab, var(--quote-c) 45%, transparent);
+    color: color-mix(in oklab, var(--quote-c) 60%, var(--wa-color-text-normal));
+    font-family: var(--wa-font-sans);
+    font-size: var(--wa-font-size-s);
+    line-height: 1.5;
+}
+.wa-dark .markdown-body .md-line {
+    border-color: color-mix(in oklab, var(--quote-c) 32%, transparent);
+    background-image: linear-gradient(100deg, color-mix(in oklab, var(--quote-c) 20%, var(--quote-solid)), color-mix(in oklab, var(--quote-c) 8%, var(--quote-solid)));
+    color: color-mix(in oklab, var(--quote-c) 55%, white);
+}
+
+/* Code blocks of the renderer: the same card, in the neutral colour (a quote is an accent, a
+   block of code is not), with a plain hairline all round. Shiki paints the block and its tokens
+   with the surface token, transparent inside cards: the tokens stay clear so the card shows. */
+.markdown-body pre {
+    --quote-c: color-mix(in oklab, var(--wa-color-neutral-60) 55%, var(--wa-color-brand-60));
+    border: 1px solid color-mix(in oklab, var(--quote-c) 28%, transparent);
+    border-radius: 0.75rem;
+    background-color: transparent !important;
+    background-image: linear-gradient(100deg, color-mix(in oklab, var(--quote-c) 13%, var(--quote-solid)), color-mix(in oklab, var(--quote-c) 3%, var(--quote-solid)));
+    box-shadow: 0 2px 10px -5px color-mix(in oklab, var(--quote-c) 45%, transparent);
+}
+.wa-dark .markdown-body pre {
+    border-color: color-mix(in oklab, var(--quote-c) 36%, transparent);
+    background-image: linear-gradient(100deg, color-mix(in oklab, var(--quote-c) 20%, var(--quote-solid)), color-mix(in oklab, var(--quote-c) 8%, var(--quote-solid)));
+    box-shadow: 0 2px 14px -5px color-mix(in oklab, var(--quote-c) 55%, transparent);
+}
+.markdown-body pre.shiki span {
+    background-color: transparent !important;
+}

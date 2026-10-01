@@ -221,7 +221,7 @@ const timestampSeconds = computed(() =>
         <span v-if="message.title" class="pir__title">{{ message.title }}</span>
 
         <!-- The message itself, alone on its line: it is the content, not metadata. -->
-        <span class="pir__message">{{ message.text_preview }}</span>
+        <span class="pir__message quote-card">{{ message.text_preview }}</span>
 
         <!-- Routing — one labelled line per fact. -->
         <span v-for="route in routes" :key="route.key" class="pir__route">
@@ -312,10 +312,9 @@ const timestampSeconds = computed(() =>
     max-width: 100%;
 }
 
-/* The message is a quotation of someone else's words, so it wears the quote
-   recipe of the markdown renderer (MarkdownContent.vue): quiet brand fill,
-   left accent bar, square on the bar's side. Indented past the labels so it
-   reads as a block inside the row, not as another field of it.
+/* The message is a quotation of someone else's words, so it is a quote card
+   (styles/quote-card.css, the markdown renderer's recipe). Indented past the
+   labels so it reads as a block inside the row, not as another field of it.
    Two lines: enough to recognise the message, never enough to push the
    routing lines off screen. */
 .pir__message {
@@ -327,20 +326,11 @@ const timestampSeconds = computed(() =>
     padding: 0.35em 0.75em;
     min-width: 0;
     max-width: 100%;
-    border-radius: var(--wa-border-radius-m);
-    border-start-start-radius: 0;
-    border-end-start-radius: 0;
-    border-inline-start: 2px solid var(--wa-color-brand-fill-loud);
-    background: var(--wa-color-brand-fill-quiet);
-    color: var(--wa-color-text-normal);
     /* The row is a native button: WA gives it nowrap, which would keep the
        message on one endless line. */
     white-space: normal;
     overflow-wrap: anywhere;
 }
-/* In dark, the quiet brand fill sits almost on top of the surface it covers —
-   the next step up restores a visible tint (same rule as the renderer). */
-.wa-dark .pir__message { background: var(--wa-color-brand-fill-normal); }
 
 /* One fact per line: label, value, and (when local) the project it lives in.
    Wraps instead of truncating on a narrow screen. */

@@ -813,6 +813,11 @@ function handleLinkClick(event) {
 </template>
 
 <style>
+/* The tinted blocks (blockquotes, `:::` containers, `::` lines) and the quote boxes of the Peer
+   inbox and the text-selection comment share styles/quote-card.css. Inlined at the top of this
+   block so it keeps its place after github-markdown-css (same specificity). */
+@import '../../styles/quote-card.css';
+
 /* -------------------------------------------------------------------
    Styles NOT covered by github-markdown-css:
    Shiki syntax highlighting extras + Mermaid diagrams.
@@ -937,92 +942,9 @@ function handleLinkClick(event) {
 }
 
 /* -- Tinted blocks: blockquotes and colon blocks --------------------- */
-/* One recipe for all three (`:::` containers, `::` lines, and plain markdown
-   blockquotes), the same one wa-callout uses: a quiet brand fill, ordinary
-   text, and the colour carried by a saturated accent — here a left bar. A loud
-   fill reads as an alert; this pops without shouting, and every token is
-   theme-aware so it holds in light and dark. The `-<type>` modifier classes of
-   colon blocks are left unstyled for now: one look per shape, not per type. */
-.markdown-body {
-    --md-tint-fill: var(--wa-color-brand-fill-quiet);
-    --md-tint-fill-alt: var(--wa-color-surface-default);
-}
-/* In dark, the quiet brand fill sits almost on top of the surface it covers —
-   the next step up restores a visible tint without turning into an alert. */
-.wa-dark .markdown-body {
-    --md-tint-fill: var(--wa-color-brand-fill-normal);
-}
-
-.markdown-body .md-container,
-.markdown-body .md-line,
-.markdown-body blockquote {
-    border-radius: var(--wa-border-radius-m);
-    /* Square on the bar's side, so the accent reads as a flush rule rather than
-       a rounded outline. Logical radii, to stay paired with border-inline-start. */
-    border-start-start-radius: 0;
-    border-end-start-radius: 0;
-    border-inline-start: 2px solid var(--wa-color-brand-fill-loud);
-    background: var(--md-tint-fill);
-    color: var(--wa-color-text-normal);
-}
-
-/* github-markdown-css gives blockquotes `padding: 0 1em`, no room for a fill.
-   Its grey left rule and muted text are already overridden above (same
-   specificity, declared later). */
-.markdown-body blockquote {
-    padding: 0.5em 1em;
-}
-
-/* Stacked tinted blocks alternate their fill, otherwise a quote inside a quote
-   is invisible. Each level flips between the brand tint and the plain surface;
-   the deepest rule keeps applying below it, well past any realistic nesting.
-   CSS cannot count depth, hence the enumeration — and a container counts as a
-   level of its own, so its quotes start on the opposite phase. */
-.markdown-body blockquote blockquote,
-.markdown-body .md-container blockquote {
-    background: var(--md-tint-fill-alt);
-}
-.markdown-body blockquote blockquote blockquote,
-.markdown-body .md-container blockquote blockquote {
-    background: var(--md-tint-fill);
-}
-.markdown-body blockquote blockquote blockquote blockquote,
-.markdown-body .md-container blockquote blockquote blockquote {
-    background: var(--md-tint-fill-alt);
-}
-.markdown-body blockquote blockquote blockquote blockquote blockquote,
-.markdown-body .md-container blockquote blockquote blockquote blockquote {
-    background: var(--md-tint-fill);
-}
-
-.markdown-body .md-container {
-    margin: 1em 0;
-    padding: 0.75em 1em;
-}
-.markdown-body .md-container > :first-child {
-    margin-top: 0;
-}
-.markdown-body .md-container > :last-child {
-    margin-bottom: 0;
-}
-.markdown-body .md-container-label {
-    margin-bottom: 0.5em;
-    color: var(--wa-color-brand-text);
-    font-size: var(--wa-font-size-s);
-    font-weight: var(--wa-font-weight-semibold);
-}
-
-/* A line block: a quiet banner above the content it introduces. It carries a
-   full sentence, so it stays a band rather than a chip — a tag that wraps over
-   several lines stops reading as a tag. */
-.markdown-body .md-line {
-    margin: 0 0 0.75em;
-    padding: 0.6em 1em;
-    color: var(--wa-color-brand-text);
-    font-family: var(--wa-font-sans);
-    font-size: var(--wa-font-size-s);
-    line-height: 1.5;
-}
+/* One recipe for all three (`:::` containers, `::` lines, plain markdown blockquotes) and for the
+   quote boxes of the Peer inbox and the text-selection comment: styles/quote-card.css, inlined
+   here so it keeps its place after github-markdown-css. */
 /* No box inside the box: an id or a path keeps its monospace, drops its chip
    and inherits the header's text colour (the default would be unreadable on a
    loud fill). */
@@ -1055,7 +977,6 @@ function handleLinkClick(event) {
 /* -- Shiki-generated code blocks ------------------------------------- */
 .markdown-body pre {
     padding: 16px;
-    border-radius: 6px;
     overflow-x: auto;
     margin-top: 1em;
 }

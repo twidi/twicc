@@ -1298,7 +1298,7 @@ function onHide(event) {
 
             <!-- Message body (markdown), quoted like the inbox preview: these
                  are someone else's words, not the app's. -->
-            <div class="pr-quote">
+            <div class="pr-quote quote-card">
                 <div
                     v-if="markdownState === 'ready'"
                     class="pr-body markdown-body"
@@ -1820,18 +1820,11 @@ function onHide(event) {
     overflow-wrap: anywhere;
 }
 
-/* The quote recipe of the markdown renderer (MarkdownContent.vue): quiet
-   brand fill, left accent bar, square on the bar's side. The tint lives on
+/* A quote card (styles/quote-card.css, the markdown renderer's recipe). The card lives on
    the wrapper because `.markdown-body` paints its own background. */
 .pr-quote {
     margin-bottom: var(--wa-space-s);
-    border-radius: var(--wa-border-radius-m);
-    border-start-start-radius: 0;
-    border-end-start-radius: 0;
-    border-inline-start: 2px solid var(--wa-color-brand-fill-loud);
-    background: var(--wa-color-brand-fill-quiet);
 }
-.wa-dark .pr-quote { background: var(--wa-color-brand-fill-normal); }
 .pr-body {
     padding: var(--wa-space-s) var(--wa-space-m);
     max-height: 40vh;
