@@ -20,7 +20,9 @@ Migration 0146 must already be applied.
 
 The script acquires the worktree instance lock for the operation.
 It refuses a running backend, paths outside the worktree, and external symlink targets.
-It verifies the imported package path and uses `twicc.settings_migration`.
+It verifies the imported package path and selects `twicc.settings_migration` after the worktree `.env` loads.
+It validates Django database settings and logging paths before snapshot replacement.
+This temporary command overrides `.env` settings selection; ordinary application `.env` precedence stays unchanged.
 It rejects `TWICC_SQLITE_STANDARD_MIGRATIONS=1`.
 
 The snapshot uses a read-only source connection and `source.backup(target, pages=-1)`.
@@ -64,7 +66,7 @@ Run it from the linked worktree:
 cd /home/twidi/dev/twicc-poc/.worktrees/bugfix-sqlite-empty-rebuilds && TWICC_DATA_DIR=$PWD uv run python .superpowers/test-replay-empty-rebuild.py
 ```
 
-Seven validation groups pass:
+Nine validation groups pass:
 
 - Committed WAL snapshot and unchanged source database/WAL bytes.
 - Direct and symlink path confinement.
@@ -73,9 +75,14 @@ Seven validation groups pass:
 - Actual latest historical migrations through rollback to 0145, with a populated Session.
 - NULL compute-version reset and repeated rollback refusal.
 - Cross-app, forward, and older migration plan refusal before execution.
+- Fresh-process CLI execution with `.env` selecting runtime settings, followed by a real disposable snapshot.
+- CLI backend preflight refusal with unchanged destination database bytes.
 
-The small snapshot takes 0.035 seconds.
-The complete disposable historical migration and rollback test takes 3.775 seconds.
+The CLI fixtures provide synthetic git metadata and copy package files into each confined temporary root.
+The CLI success fixture replaces rollback with a snapshot-content check; the historical test executes the real rollback.
+
+The small snapshot takes 0.014 seconds.
+The complete disposable historical migration and rollback test takes 3.456 seconds.
 These timings do not predict the full snapshot cost.
 The inherited virtual-environment warning is expected; `uv run` selects this worktree's environment.
 No real database snapshot, real rollback, or server startup occurs during validation.
