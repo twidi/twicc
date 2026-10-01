@@ -101,6 +101,24 @@ test('the duration comes from the env, 380 without a document or with an empty t
     }
 })
 
+test('tool arrivals follow the group reveal: a curtain row, or an opened group\'s head; indexed in the batch', async () => {
+    const { items, entrance, scope } = setup()
+    entrance.noteLive([2, 3, 4])
+    items.value = [
+        row(1),
+        row(2, { externallyGrouped: true }),
+        row(3, { externallyGrouped: true }),
+        row(4, { externallyGrouped: true, isGroupHead: true, isExpanded: true }),
+    ]
+    await nextTick()
+    assert.deepEqual(entrance.itemClass(row(2)), ['group-row-growing'])
+    assert.deepEqual(entrance.itemStyle(row(2)), { '--group-index': 0, '--group-count': 3 })
+    assert.deepEqual(entrance.itemStyle(row(3)), { '--group-index': 1, '--group-count': 3 })
+    assert.deepEqual(entrance.itemClass(row(4)), ['group-head-revealing'])
+    assert.deepEqual(entrance.itemStyle(row(4)), { '--group-index': 2, '--group-count': 3 })
+    scope.stop()
+})
+
 test('the variants reach the class', async () => {
     const { items, entrance, scope } = setup()
     entrance.noteLive([2, 3])

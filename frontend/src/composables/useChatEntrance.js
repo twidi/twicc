@@ -85,14 +85,24 @@ export function useChatEntrance({ items, getKey, isRevealed, env = globalThis })
     run(true)
     watch(items, () => run(false), { flush: 'pre' })
 
+    // A tool arrives like the rows of an opened group (the curtain, styles/group-reveal.css, driven by
+    // --group-index and --group-count: the position in the batch and its size); anything else enters with
+    // the chat entrance.
     function itemClass(item) {
         const entry = entering.get(getKey(item))
-        return entry ? ['chat-entering', `is-${entry.variant}`] : null
+        if (!entry) return null
+        if (entry.variant === 'tool') return ['group-row-growing']
+        if (entry.variant === 'tool-head') return ['group-head-revealing']
+        return ['chat-entering', `is-${entry.variant}`]
     }
 
     function itemStyle(item) {
         const entry = entering.get(getKey(item))
-        return entry ? { '--chat-enter-index': entry.index } : null
+        if (!entry) return null
+        if (entry.variant === 'tool' || entry.variant === 'tool-head') {
+            return { '--group-index': entry.index, '--group-count': entering.size }
+        }
+        return { '--chat-enter-index': entry.index }
     }
 
     function noteLive(lineNums) {

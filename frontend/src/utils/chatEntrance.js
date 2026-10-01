@@ -57,6 +57,10 @@ export function shouldNoteViewChange({ listBefore, listAfter, inTurnBefore, inTu
 
 function variantOf(item) {
     if (item?.kind === 'user_message') return 'user'
+    // Tools (display level 2: tool calls, thinking...) all arrive the way an opened group's rows do
+    // (styles/group-reveal.css): a row that is the head of a closed group (only its toggle shows) just fades.
+    if (item?.isGroupHead) return item.isExpanded ? 'tool-head' : 'slice'
+    if (item?.externallyGrouped) return 'tool'
     if (item?.isBlockStart && item?.isBlockEnd) return 'card'
     return 'slice'
 }
@@ -76,7 +80,7 @@ function variantOf(item) {
  * @param {boolean} p.viewChanged              true = a view change caused this update
  * @param {(item) => boolean} p.hasToolBlock   true when the item's parsed content holds a
  *                                             tool_use or tool_result block
- * @returns {{ entering: Array<{ key, index: number, variant: 'user'|'card'|'slice' }>,
+ * @returns {{ entering: Array<{ key, index: number, variant: 'user'|'card'|'slice'|'tool'|'tool-head' }>,
  *             keys: Set<string|number>, streamingKeys: Set<string|number> }}
  */
 export function planChatEntrances({

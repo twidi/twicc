@@ -169,6 +169,19 @@ test('variants and indexes', () => {
     assert.deepEqual(userSep.entering.map((e) => e.variant), ['user', 'user'])
 })
 
+// Every arrival of tools (display level 2, `externallyGrouped`: tool calls, thinking...) follows the group
+// reveal's animation (a curtain and a slide from outside the chat), whatever the display mode.
+test('tool rows (collapsible level) enter as tools; an opened group\'s head enters as a tool head; a closed one fades', () => {
+    const result = plan([row(1)], [
+        row(1),
+        row(2, { externallyGrouped: true }),
+        row(3, { externallyGrouped: true, isGroupHead: true, isExpanded: true }),
+        row(4, { externallyGrouped: true, isGroupHead: true, isExpanded: false, isBlockStart: false, isBlockEnd: false }),
+        row(5),
+    ], { live: [2, 3, 4, 5] })
+    assert.deepEqual(result.entering.map((e) => [e.key, e.variant]), [[2, 'tool'], [3, 'tool-head'], [4, 'slice'], [5, 'card']])
+})
+
 test('more than the batch cap: nothing enters; exactly the cap: all enter', () => {
     const lines = [2, 3, 4, 5, 6, 7, 8]
     const seven = plan([row(1)], [row(1), ...lines.map((l) => tool(l))], { live: lines })
