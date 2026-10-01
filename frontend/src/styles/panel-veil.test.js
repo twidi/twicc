@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const read = (rel) => readFileSync(join(here, rel), 'utf8')
 const strip = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '')
+const norm = (s) => s.replace(/\s+/g, ' ').trim()
 const block = (css, selector) => {
     const m = css.match(new RegExp(`(?:^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([\\s\\S]*?)\\}`))
     assert.ok(m, `block ${selector}`)
@@ -127,4 +128,18 @@ test('6. the session search bar is set off: the floating shadow and the glass bo
     assert.ok(body.includes('border: var(--divider-size) solid var(--glass-border);'), 'glass border')
     assert.ok(body.includes('border-top: 0;'), 'hangs from the top edge: no top border')
     assert.ok(body.includes('box-shadow: var(--panel-overlay-shadow);'), 'the floating shadow')
+})
+
+// Inside a card the page surface token is transparent. Web Awesome's own components that read it as a
+// COLOUR, not as a background, would break there: the switch's thumb vanished (a bare track), the
+// slider's thumb ring and markers, the colour picker's ring, the ring around a button's badge, the
+// button-style radio's fill. They get the opaque value back, on themselves only.
+test('7. the Web Awesome controls that read the surface as a colour get it back, opaque', () => {
+    const css = strip(read('surfaces.css'))
+    const m = css.match(/:where\(\.panel-card\) :is\(([^)]*)\)\s*\{([^}]*)\}/)
+    assert.ok(m, 'the restoring rule')
+    assert.deepEqual(m[1].split(',').map((s) => s.trim()), ['wa-switch', 'wa-slider', 'wa-radio', 'wa-color-picker', 'wa-button'])
+    assert.equal(norm(m[2]), '--wa-color-surface-default: var(--surface-solid);')
+    // After the card rule that makes the token transparent.
+    assert.ok(css.indexOf(m[0]) > css.indexOf('--wa-color-surface-default: transparent'), 'after the transparent declaration')
 })

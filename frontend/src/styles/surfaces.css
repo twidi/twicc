@@ -163,3 +163,12 @@ body::before {
     border-radius: var(--panel-radius);
     box-shadow: var(--panel-shadow);
 }
+
+/* Inside a card the page surface token is transparent. Web Awesome's own components that read it as a
+   COLOUR rather than as a background would break there: the switch's thumb (a bare track was left),
+   the slider's thumb ring and markers, the colour picker's ring, the ring around a button's badge,
+   the button-style radio's fill. They get the opaque value back, on themselves only (the property is
+   inherited by what they contain, which paints no surface). Zero specificity. */
+:where(.panel-card) :is(wa-switch, wa-slider, wa-radio, wa-color-picker, wa-button) {
+    --wa-color-surface-default: var(--surface-solid);
+}
