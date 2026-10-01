@@ -33,6 +33,8 @@ import ChatSkeleton from './ChatSkeleton.vue'
 import { useTextSelectionComment } from '../../../composables/useTextSelectionComment'
 import { useChatNavigation } from '../../../composables/useChatNavigation'
 import { useChatEntrance } from '../../../composables/useChatEntrance.js'
+import { useGroupReveal } from '../../../composables/useGroupReveal.js'
+import { useListExit } from '../../../composables/useListExit.js'
 import { useChatReveal } from '../../../composables/useChatReveal.js'
 import { createSwitchGate, provideFooterMotion } from '../../../composables/useFooterMotion.js'
 import { isInTurnState, shouldNoteViewChange } from '../../../utils/chatEntrance.js'
@@ -472,6 +474,22 @@ const showSkeleton = computed(() => reveal.hidden.value && !unavailableReason.va
 // it. Only while the chat is on screen and revealed.
 const isRevealed = () => sessionActive.value && !isLoading.value && !reveal.hidden.value && showVirtualScroller.value
 const entrance = useChatEntrance({ items: visualItems, getKey: item => item.lineNum, isRevealed })
+
+// Opening or closing a group of hidden elements (visual refresh retouches): the rows it adds enter, the
+// rows it removes fold out (kept in the scroller's list for the length of the exit), and the head's own
+// item enters or folds out. `displayItems` is the visual items plus those exiting rows.
+const groupReveal = useGroupReveal({ items: visualItems, getKey: item => item.lineNum })
+const exits = useListExit({
+    items: visualItems,
+    getKey: item => item.lineNum,
+    isEligible: () => groupReveal.isCollapsing(),
+    scopeKey: () => props.sessionId,
+    getVisibleRange: () => scrollerRef.value?.getVisibleRange() ?? null,
+    getHeight: lineNum => scrollerRef.value?.getItemHeight(lineNum) ?? 0,
+})
+const { displayItems } = exits
+const rowClass = item => exits.exitClass(item) ?? groupReveal.itemClass(item) ?? entrance.itemClass(item)
+const rowStyle = item => exits.exitStyle(item) ?? groupReveal.itemStyle(item) ?? entrance.itemStyle(item)
 
 // Store actions feeding the entrances. Separate from the stream-swap listener below
 // (that one returns early at the bottom or when inactive). Pinia binds these
@@ -1410,6 +1428,9 @@ function onScrollerUpdate({ startIndex, endIndex, visibleStartIndex, visibleEndI
  * Called when clicking on a GroupToggle component.
  */
 function toggleGroup(groupHeadLineNum) {
+    const head = visualItems.value?.find(item => item.lineNum === groupHeadLineNum)
+    const headEl = scrollerRef.value?.$el?.querySelector(`.session-item[data-line-num="${groupHeadLineNum}"]`)
+    groupReveal.noteToggle(groupHeadLineNum, !head?.isExpanded, headEl?.getBoundingClientRect().height ?? 0)
     store.toggleExpandedGroup(props.sessionId, groupHeadLineNum)
 }
 
@@ -2192,15 +2213,15 @@ defineExpose({
             <div v-show="showVirtualScroller" class="chat-scroll-area">
                 <VirtualScroller
                     ref="scrollerRef"
-                    :items="visualItems"
+                    :items="displayItems"
                     :item-key="item => item.lineNum"
                     :item-min-height="streamSwapItemMinHeight"
                     :min-item-height="MIN_ITEM_SIZE"
                     :buffer="5000"
                     :unload-buffer="10000"
                     :prevent-auto-scroll-to-bottom="!!parentSessionId"
-                    :item-class="entrance.itemClass"
-                    :item-style="entrance.itemStyle"
+                    :item-class="rowClass"
+                    :item-style="rowStyle"
                     class="session-items"
                     :class="{ 'initial-scrolling': reveal.hidden.value }"
                     @update="onScrollerUpdate"
@@ -2233,8 +2254,9 @@ defineExpose({
                                 @toggle="toggleGroup(item.lineNum)"
                             />
                             <SessionItem
-                                v-if="item.isExpanded"
-                                :class="{ 'is-block-end': item.isBlockEnd }"
+                                v-if="item.isExpanded || groupReveal.isHeadLeaving(item.lineNum)"
+                                :class="[{ 'is-block-end': item.isBlockEnd }, groupReveal.headLeaveClass(item.lineNum)]"
+                                :style="groupReveal.headLeaveStyle(item.lineNum)"
                                 :content="getParsedContent(item)"
                                 :kind="item.kind"
                                 :synthetic-kind="item.syntheticKind || null"

@@ -19,6 +19,7 @@ import './styles/glass.css'
 import './styles/motion.css'
 // Accent glow tokens and rules (also imported by the share bundle and the artifact shell).
 import './styles/glow.css'
+import './styles/group-reveal.css'
 // Canvas + floating-panel tokens (SPA only — the share bundle does not import it).
 import './styles/surfaces.css'
 // Sidebar list rows, shared by the session and artifact lists (SPA only).
