@@ -506,6 +506,9 @@ function toggleJsonView() {
     padding: var(--card-spacing);
 
     width: max-content;
+    /* A minimum width, never beyond the maximum the items share (--max-card-width, below): a
+       min-width wins over a max-width, so it is capped by the same expression. */
+    min-width: min(12rem, calc(var(--max-card-width) - var(--card-spacing) * 2));
     margin:
         calc(var(--card-spacing) - var(--main-shadow-size))  /* size of box-shadow of previous card */
         var(--card-spacing)

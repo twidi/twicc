@@ -62,3 +62,9 @@ test('9. in light, links, inline code, rules and tables sitting on the bubble re
     assert.match(n, new RegExp(P + ' hr' + N + ' \\{ height: 1px; border: 0; background: oklch\\(1 0 0 / 0\\.45\\); \\}'))
     assert.match(n, new RegExp(P + ' table' + N + ' tr \\{ background: transparent; \\}'))
 })
+
+test('10. a user message has a minimum width, capped by the maximum the items share', () => {
+    const base = norm(style.match(/\.session-items \.session-item\[data-kind="user_message"\] \{([^}]*)\}/)[1])
+    assert.match(base, /min-width: min\(12rem, calc\(var\(--max-card-width\) - var\(--card-spacing\) \* 2\)\);/)
+    assert.match(style, /max-width: calc\(var\(--max-card-width\) - var\(--card-spacing\) \* 2\);/)
+})
