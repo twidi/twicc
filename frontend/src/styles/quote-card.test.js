@@ -39,7 +39,7 @@ test('3. the container keeps a plain hairline; its label is a glow chip', () => 
 })
 
 test('4. a code block is the same card in the neutral colour, with its tokens left clear', () => {
-    const body = norm(css.match(/\n\.markdown-body pre \{([^}]*)\}/)[1])
+    const body = norm(css.match(/\n\.markdown-body pre,\s*\.jhv-pre,\s*\.jhv-markdown \.markdown-body \{([^}]*)\}/)[1])
     assert.match(body, /--quote-c: color-mix\(in oklab, var\(--wa-color-neutral-60\) 55%, var\(--wa-color-brand-60\)\);/)
     assert.match(body, /background-color: transparent !important;/)
     assert.match(css, /\.markdown-body pre\.shiki span \{\s*background-color: transparent !important;/)
@@ -54,4 +54,15 @@ test('5. the renderer inlines the stylesheet first, and the quote boxes of the a
         assert.doesNotMatch(strip(s), /border-inline-start: 2px solid var\(--wa-color-brand-fill-loud\)/, `${f}: no copy of the old recipe`)
     }
     assert.match(read('../main.js'), /import '\.\/styles\/quote-card\.css'/)
+})
+
+test('6. the generic JSON view values are the same neutral card, with no card inside the card', () => {
+    assert.match(css, /\.jhv-markdown \.markdown-body pre \{\s*border: 0;\s*border-radius: 0;\s*box-shadow: none;\s*background-image: none;/)
+    const jhv = strip(read('../components/json/JsonHumanView.vue'))
+    assert.doesNotMatch(jhv, /\.jhv-pre, \.jhv-markdown :deep\(\.markdown-body\) \{[^}]*(background|border-radius)/)
+})
+
+test('7. a JSON view value that is only a code block has no padding of its own around the block', () => {
+    const jhv = strip(read('../components/json/JsonHumanView.vue'))
+    assert.match(norm(jhv), /\.jhv-markdown :deep\(\.markdown-body:has\(> \.markdown-block:only-child > \.code-tools:only-child\)\) \{ padding: 0; \}/)
 })

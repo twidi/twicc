@@ -1209,8 +1209,10 @@ wa-details.item-details {
     margin-top: calc(var(--card-spacing, var(--wa-space-l)) / 2);
 }
 
+/* No bottom padding of its own: the details' content part already ends with the card spacing
+   (16px), the same as the sides, so a result card has equal margins left, right and below. */
 .tool-result-content {
-    padding: var(--wa-space-xs) 0;
+    padding: var(--wa-space-xs) 0 0;
 }
 
 /* The Result's scroller is two levels below its details, so the side spacing (moved out of

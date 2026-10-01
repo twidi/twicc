@@ -1186,11 +1186,16 @@ const readDiffEditorRefs = reactive({})
     word-break: break-word;
 }
 
+/* The card look (background, edge, radius): styles/quote-card.css. */
 .jhv-pre, .jhv-markdown :deep(.markdown-body) {
-    background: var(--wa-color-overlay-inline) !important;
-    border-radius: var(--wa-border-radius-l) !important;
     overflow: auto;
     padding: var(--wa-space-m);
+}
+
+/* A value that is only a code block (a command, an output): the block's own padding is the
+   card's. Both together made a margin twice as big as the card of a dedicated result. */
+.jhv-markdown :deep(.markdown-body:has(> .markdown-block:only-child > .code-tools:only-child)) {
+    padding: 0;
 }
 
 .jhv-markdown {
