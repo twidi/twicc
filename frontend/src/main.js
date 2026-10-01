@@ -38,6 +38,8 @@ import './styles/quote-card.css'
 import './styles/tool-cards.css'
 // Scrollbars: thin, in the app's colours, visible track (SPA only).
 import './styles/scrollbars.css'
+// Scroll-edge shadows: a zone that can still scroll shows a shadow at that edge (SPA only).
+import './styles/scroll-shadow.css'
 import '@awesome.me/webawesome/dist/components/badge/badge.js'
 import '@awesome.me/webawesome/dist/components/button/button.js'
 import '@awesome.me/webawesome/dist/components/button-group/button-group.js'
@@ -90,6 +92,7 @@ import { createPinia } from 'pinia'
 import { createNotivue } from 'notivue'
 import { router } from './router'
 import App from './App.vue'
+import { installScrollEdges, vScrollShadow } from './utils/scrollEdges'
 import { applyDefaultSettings, initSettings } from './stores/settings'
 import { setTwiccLaunchPrefix } from './utils/twiccLaunch'
 import { useAuthStore } from './stores/auth'
@@ -116,6 +119,8 @@ import './styles/robot-working.css'
 const app = createApp(App)
 app.use(createPinia())
 app.use(router)
+app.directive('scroll-shadow', vScrollShadow)
+installScrollEdges()
 
 // Configure Notivue toast system
 const notivue = createNotivue({

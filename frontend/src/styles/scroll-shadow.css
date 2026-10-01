@@ -1,0 +1,72 @@
+/* Scroll-edge shadows (visual refresh retouches). A scrolling zone shows a shadow tinted with the
+   accent at an edge where more is hidden, so the user sees it is not at the end even when the
+   content right at that edge is empty (a fade of the content got lost there). utils/scrollEdges.js
+   writes --scroll-edge-top / --scroll-edge-bottom (1 or 0) on the scrolling element, plus its row
+   gap and side paddings; the shadows are two in-flow sticky pseudo-elements, pulled back over their
+   own height (and the gap) so they take no room, spread over the side paddings and pinned past the top and bottom ones (a sticky box would otherwise stop at the padding), above the content
+   (z-index), curved (full height over the middle, then thinning slowly towards the sides, where about
+   40% remains: a wide ellipse centred on the edge, with a plateau) and fading with the edge numbers (registered, so a change of edge animates). They apply
+   to the scrolling parts of the Web Awesome components (dialog and drawer body) and to any zone
+   carrying `v-scroll-shadow` (data-scroll-shadow); a zone must not use its own ::before/::after.
+   Pseudo-elements only, never a mask or a blur on the scroller: a glass surface (dropdown menu,
+   select listbox, popover body) paints its glass in a layer with a blur behind it, and a mask
+   would make its element a backdrop root, so the layer would blur nothing and the surface would
+   turn transparent. */
+:root {
+    --scroll-shadow: color-mix(in oklab, var(--wa-color-brand-40) 30%, transparent);
+    --scroll-shadow-size: 1.25rem;
+}
+
+@property --scroll-edge-top {
+    syntax: '<number>';
+    inherits: true;
+    initial-value: 0;
+}
+
+@property --scroll-edge-bottom {
+    syntax: '<number>';
+    inherits: true;
+    initial-value: 0;
+}
+
+/* The numbers live on the scroller and are inherited by its pseudo-elements; the transition
+   belongs to the element that owns them. */
+wa-dialog::part(body),
+wa-drawer::part(body),
+[data-scroll-shadow] {
+    transition: --scroll-edge-top 0.2s ease, --scroll-edge-bottom 0.2s ease;
+}
+
+wa-dialog::part(body)::before,
+wa-dialog::part(body)::after,
+wa-drawer::part(body)::before,
+wa-drawer::part(body)::after,
+[data-scroll-shadow]::before,
+[data-scroll-shadow]::after {
+    content: '';
+    display: block;
+    flex-shrink: 0;
+    position: sticky;
+    z-index: 2;
+    height: var(--scroll-shadow-size);
+    margin-inline: calc(-1 * var(--scroll-edge-pad-left, 0px)) calc(-1 * var(--scroll-edge-pad-right, 0px));
+    pointer-events: none;
+}
+
+wa-dialog::part(body)::before,
+wa-drawer::part(body)::before,
+[data-scroll-shadow]::before {
+    top: calc(-1 * var(--scroll-edge-pad-top, 0px));
+    margin-block-end: calc(-1 * (var(--scroll-shadow-size) + var(--scroll-edge-gap, 0px)));
+    background: radial-gradient(ellipse 75% 100% at 50% 0, var(--scroll-shadow) 20%, transparent);
+    opacity: var(--scroll-edge-top);
+}
+
+wa-dialog::part(body)::after,
+wa-drawer::part(body)::after,
+[data-scroll-shadow]::after {
+    bottom: calc(-1 * var(--scroll-edge-pad-bottom, 0px));
+    margin-block-start: calc(-1 * (var(--scroll-shadow-size) + var(--scroll-edge-gap, 0px)));
+    background: radial-gradient(ellipse 75% 100% at 50% 100%, var(--scroll-shadow) 20%, transparent);
+    opacity: var(--scroll-edge-bottom);
+}

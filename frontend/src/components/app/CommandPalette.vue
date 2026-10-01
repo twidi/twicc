@@ -546,7 +546,7 @@ defineExpose({ open, close })
             </div>
             <wa-divider />
             <!-- Command list -->
-            <div ref="listRef" class="palette-list">
+            <div v-scroll-shadow ref="listRef" class="palette-list">
                 <span ref="listInkRef" class="glide-ink" aria-hidden="true"></span>
                 <!-- Root category mode -->
                 <template v-if="!query && !parentCommand">

@@ -188,7 +188,7 @@ function copyHash() {
             class="commit-popover"
             @wa-show="onPopoverShow"
         >
-            <div class="commit-details">
+            <div v-scroll-shadow class="commit-details">
                 <template v-if="commitDetailLoading">
                     <div class="detail-loading">
                         <wa-spinner style="--spinner-size: 1rem;"></wa-spinner>
@@ -343,11 +343,19 @@ function copyHash() {
     --arrow-size: 16px;
 }
 
+/* The scrolling zone fills the whole popover: its scrollbar and its scroll shadows reach the
+   edges. The padding the popover body used to carry is the zone's own, so the content keeps
+   its place. */
+.commit-popover::part(body) {
+    padding: 0;
+}
+
 .commit-details {
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-xs);
-    padding: var(--wa-space-xs);
+    padding: calc(var(--wa-space-l) + var(--wa-space-xs));
+    border-radius: var(--wa-panel-border-radius);
     overflow-y: auto;
     font-size: var(--wa-font-size-m);
     user-select: text;
@@ -371,8 +379,8 @@ function copyHash() {
 }
 
 @media (max-width: 480px) {
-    .commit-popover::part(body) {
-        padding: var(--wa-space-xs);
+    .commit-details {
+        padding: calc(2 * var(--wa-space-xs));
     }
     .detail-row {
         flex-direction: column;

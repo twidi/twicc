@@ -692,7 +692,7 @@ defineExpose({ open })
             </div>
 
             <!-- Results list -->
-            <div v-else-if="results.length > 0" ref="resultsRef" class="search-results">
+            <div v-else-if="results.length > 0" v-scroll-shadow ref="resultsRef" class="search-results">
                 <span ref="resultsInkRef" class="glide-ink" aria-hidden="true"></span>
                 <div
                     v-for="(result, index) in results"

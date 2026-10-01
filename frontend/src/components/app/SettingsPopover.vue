@@ -1265,7 +1265,7 @@ function onChangelogClose() {
         <div class="settings-layout">
             <div class="settings-layout-inner" :class="{ 'showing-content': mobileShowContent }">
                 <!-- Nav: section list -->
-                <nav ref="navRef" class="settings-nav">
+                <nav ref="navRef" v-scroll-shadow class="settings-nav">
                     <span ref="navInkRef" class="glide-ink settings-nav-ink" aria-hidden="true"></span>
                     <button
                         v-for="section in sections"
@@ -1314,7 +1314,7 @@ function onChangelogClose() {
                 <wa-divider class="settings-vertical-divider" orientation="vertical"></wa-divider>
 
                 <!-- Detail: section content -->
-                <div ref="detailRef" class="settings-detail">
+                <div ref="detailRef" v-scroll-shadow class="settings-detail">
                     <div class="settings-detail-header glass-sticky" @click="goBackToNav">
                         <wa-button
                             variant="neutral"
@@ -2475,9 +2475,8 @@ function onChangelogClose() {
            blurs the content scrolling underneath; using padding-bottom (rather
            than margin) extends that blurred area right down to the content, with
            no clear strip. z-index sits above the content and the scroll-shadow
-           pseudo-elements (z-index: 2); the top scroll shadow is hidden on narrow
-           screens (see the scroll shadows below), the stuck row already marks
-           the scroll. The row spreads over the panel's padding (negative margins,
+           pseudo-elements (z-index: 2, styles/scroll-shadow.css): once stuck, the row
+           covers the top scroll shadow, and marks the scroll itself. The row spreads over the panel's padding (negative margins,
            same padding back, stuck at minus that padding) so, once stuck, it covers
            the panel edge to edge: no strip of scrolling content above or beside it. */
         position: sticky;
@@ -2516,83 +2515,6 @@ function onChangelogClose() {
         margin-left: auto;
         font-size: 1.3em;
         color: var(--wa-color-text-quiet);
-    }
-}
-
-/* -- Scroll shadow indicators (progressive enhancement) -- */
-
-@supports (container-type: scroll-state) {
-    .settings-nav,
-    .settings-detail {
-        --_panel-pad: var(--wa-space-m);
-        container-type: scroll-state;
-    }
-
-    .settings-nav::before,
-    .settings-nav::after,
-    .settings-detail::before,
-    .settings-detail::after {
-        --_shadow-color: color-mix(in srgb, var(--wa-color-text-normal) 12%, transparent);
-        content: '';
-        display: block;
-        flex-shrink: 0;
-        position: sticky;
-        height: 16px;
-        margin-inline: calc(-1 * var(--_panel-pad));
-        z-index: 2;
-        pointer-events: none;
-        opacity: 0;
-        transition: opacity 0.2s ease;
-    }
-
-    .settings-nav::before,
-    .settings-detail::before {
-        top: 0;
-        translate: 0 calc(-1 * var(--_panel-pad));
-        background: linear-gradient(to bottom, var(--_shadow-color), transparent);
-    }
-
-    .settings-nav::after,
-    .settings-detail::after {
-        bottom: 0;
-        translate: 0 var(--_panel-pad);
-        background: linear-gradient(to top, var(--_shadow-color), transparent);
-    }
-
-    /* Flex ordering for nav (flex-direction: column) */
-    .settings-nav::before {
-        order: -1;
-    }
-
-    .settings-nav::after {
-        order: 9999;
-    }
-
-    @container scroll-state(scrollable: top) {
-        .settings-nav::before,
-        .settings-detail::before {
-            opacity: 1;
-        }
-    }
-
-    @container scroll-state(scrollable: bottom) {
-        .settings-nav::after,
-        .settings-detail::after {
-            opacity: 1;
-        }
-    }
-
-    @media (width < 640px) {
-        .settings-nav,
-        .settings-detail {
-            --_panel-pad: var(--wa-space-s);
-        }
-        /* The stuck back row (glass, see above) already marks the scroll; the top
-           shadow would show through it as a dark band. Hidden, not removed: it is
-           an in-flow sticky box, removing it would move the back row up. */
-        .settings-detail::before {
-            visibility: hidden;
-        }
     }
 }
 

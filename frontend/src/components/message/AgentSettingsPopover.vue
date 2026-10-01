@@ -491,185 +491,188 @@ onBeforeUnmount(() => {
         placement="top"
         class="settings-popover"
     >
-        <!-- Provider switch blocked by non-image attachments — appears
-             only after the user actually attempts a switch to a
-             provider that doesn't accept the current attachments, so an
-             otherwise-uninterested user never sees the callout. -->
-        <wa-callout
-            v-if="isDraft && blockedSwitchTargetLabel"
-            variant="warning"
-            class="provider-blocked-callout"
-        >
-            <wa-icon name="triangle-exclamation" slot="icon"></wa-icon>
-            {{ blockedSwitchTargetLabel }}
-            cannot accept the {{ nonImageAttachments.length }} non-image
-            attachment{{ nonImageAttachments.length > 1 ? 's' : '' }} on this draft.
-            <a class="settings-action-link" @click.prevent="removeBlockingDocuments">
-                Remove {{ nonImageAttachments.length > 1 ? 'them' : 'it' }} and switch
-            </a>
-        </wa-callout>
-
-        <!-- Reset / Presets (non-scrollable). The provider selector lives in the
-             matrix below now — provider, model and effort are picked there. -->
-        <div class="settings-panel-presets">
-            <!-- Reset / Presets: one dropdown grouped by provider. Each group
-                 leads with a "{provider} default" reset entry, then that
-                 provider's presets. A draft shows every switchable provider
-                 (picking one switches the draft first); a real session lists
-                 only its own. See useSessionAgentSettings.presetGroups. -->
-            <wa-dropdown @wa-select="handlePresetSelect" class="presets-dropdown">
-                <wa-button slot="trigger" size="small" appearance="outlined" :disabled="isStarting" class="presets-trigger">
-                    <span class="presets-trigger-label"><wa-icon name="sliders"></wa-icon> Reset / Presets</span>
-                    <wa-icon slot="end" name="caret-down"></wa-icon>
-                </wa-button>
-                <template v-for="(group, gi) in presetGroups" :key="group.provider">
-                    <wa-divider v-if="gi > 0"></wa-divider>
-                    <!-- Group header: only when more than one provider is shown -->
-                    <wa-dropdown-item v-if="presetGroups.length > 1" disabled class="group-header">
-                        <ProviderIcon
-                            v-if="group.icon"
-                            slot="icon"
-                            :provider="group.provider"
-                        />
-                        {{ group.label }}
-                    </wa-dropdown-item>
-                    <!-- Reset targets: "{provider} default" always, plus the
-                         ancestor / global levels when a project sets its own
-                         defaults. See useSessionAgentSettings.resetTargetsForProvider. -->
-                    <wa-dropdown-item
-                        v-for="(target, ti) in group.resetTargets"
-                        :key="target.key"
-                        :value="`reset:${group.provider}:${ti}`"
-                        :disabled="group.isCurrent && group.resetTargets.length === 1 && !anySettingForced"
-                        class="reset-item"
-                    >
-                        <wa-icon slot="icon" name="arrow-rotate-left"></wa-icon>
-                        <span>{{ target.label }}</span>
-                        <AgentSettingsSummaryView
-                            class="option-description"
-                            :parts="bundleSummaryParts(target.bundle, getProviderHelpers(group.provider), {
-                                current: group.isCurrent ? currentEffective : null,
-                            })"
-                        />
-                    </wa-dropdown-item>
-                    <wa-dropdown-item
-                        v-for="p in group.presets"
-                        :key="p.index"
-                        :value="`preset:${group.provider}:${p.index}`"
-                        class="preset-item"
-                    >
-                        <span>{{ p.preset.name }}</span>
-                        <AgentSettingsSummaryView
-                            class="option-description"
-                            :parts="presetSummaryParts(p.preset, getProviderHelpers(group.provider), {
-                                defaults: group.defaults,
-                                current: group.isCurrent ? currentEffective : null,
-                                untrusted: sessionIsUntrusted,
-                            })"
-                        />
-                    </wa-dropdown-item>
-                </template>
-                <wa-divider></wa-divider>
-                <wa-dropdown-item value="__manage__">
-                    <wa-icon slot="icon" name="pen-to-square"></wa-icon>
-                    Manage presets
-                </wa-dropdown-item>
-            </wa-dropdown>
-        </div>
-
-        <!-- Actions & callouts (non-scrollable) — hidden on drafts since there's no process to apply to -->
-        <div v-if="(!isDraft && hasDropdownsChanged) || startupSettingsWarning || idleSettingsWarning" class="settings-panel-actions">
-            <div v-if="!isDraft && hasDropdownsChanged" class="settings-panel-links">
-                <a class="settings-action-link" @click.prevent="restoreSettings">
-                    <wa-icon name="xmark"></wa-icon>
-                    Discard unsaved changes
-                </a>
-            </div>
-            <wa-callout v-if="!isDraft && hasDropdownsChanged" variant="brand" class="settings-info-callout">
-                <wa-icon name="circle-info" slot="icon"></wa-icon>
-                <template v-if="sendingLocked">Your changes are saved and will apply once you answer the pending request.</template>
-                <template v-else>Click "{{ buttonLabel }}" to apply your changes.</template>
-            </wa-callout>
-            <wa-callout v-if="startupSettingsWarning" variant="warning" class="startup-warning-callout">
-                <wa-icon name="triangle-exclamation" slot="icon"></wa-icon>
-                {{ startupSettingsWarning }}
-            </wa-callout>
-            <wa-callout v-else-if="idleSettingsWarning" variant="warning" class="idle-warning-callout">
-                <wa-icon name="triangle-exclamation" slot="icon"></wa-icon>
-                {{ idleSettingsWarning }}
-            </wa-callout>
-            <!-- Hybrid CLI advisory: TwiCC never reads back TUI-side changes,
-                 so settings must be driven from here. -->
-            <wa-callout v-if="session?.hybrid" variant="neutral" class="hybrid-settings-note">
-                <wa-icon name="terminal" slot="icon"></wa-icon>
-                Hybrid CLI session: change settings here rather than inside the
-                terminal — TwiCC does not read back TUI-side changes. Changes
-                apply on the next message; some restart the CLI.
-            </wa-callout>
-        </div>
-
-        <!-- Settings dropdowns (scrollable) -->
-        <div class="settings-panel">
-            <!-- Heading above the matrix + a link to the score help page. -->
-            <div class="matrix-heading">
-                <span class="setting-label">Model &amp; effort picker</span>
-                <HelpTextLink help-key="model-effort-score" label="What are those numbers?" />
-            </div>
-
-            <!-- Provider × model × effort matrix — owns those three fields. -->
-            <AgentSettingsMatrix
-                :blocks="matrixBlocks"
-                :effort-columns="matrixEffortColumns"
-                @select="onMatrixSelect"
-            />
-
-            <!-- Task controls driving the matrix's benchmark scores. -->
-            <AgentSettingsBenchmarkTask :provider-count="matrixBlocks.length" />
-
-            <!-- Switches (context toggle, thinking, Chrome MCP, fast mode) share
-                 one wrapping flex row; the permission select renders below. -->
-            <AgentSettingsSwitches :rows="switchRows" @change="onSwitchRowChange" />
-
-            <!-- Select rows (permission) — each on its own row, at the end -->
-            <div
-                v-for="row in selectRows"
-                :key="row.field"
-                class="setting-row"
+        <!-- One scrolling zone for the whole popover: its scrollbar and its scroll shadows reach the edges. -->
+        <div v-scroll-shadow class="settings-scroll">
+            <!-- Provider switch blocked by non-image attachments — appears
+                 only after the user actually attempts a switch to a
+                 provider that doesn't accept the current attachments, so an
+                 otherwise-uninterested user never sees the callout. -->
+            <wa-callout
+                v-if="isDraft && blockedSwitchTargetLabel"
+                variant="warning"
+                class="provider-blocked-callout"
             >
-                <label class="setting-label">{{ row.label }}</label>
-                <wa-select
-                    :value.prop="row.value"
-                    @change="onSelectChange(row.field, $event)"
-                    size="small"
-                    :disabled="row.fieldDisabled"
+                <wa-icon name="triangle-exclamation" slot="icon"></wa-icon>
+                {{ blockedSwitchTargetLabel }}
+                cannot accept the {{ nonImageAttachments.length }} non-image
+                attachment{{ nonImageAttachments.length > 1 ? 's' : '' }} on this draft.
+                <a class="settings-action-link" @click.prevent="removeBlockingDocuments">
+                    Remove {{ nonImageAttachments.length > 1 ? 'them' : 'it' }} and switch
+                </a>
+            </wa-callout>
+
+            <!-- Reset / Presets (non-scrollable). The provider selector lives in the
+                 matrix below now — provider, model and effort are picked there. -->
+            <div class="settings-panel-presets">
+                <!-- Reset / Presets: one dropdown grouped by provider. Each group
+                     leads with a "{provider} default" reset entry, then that
+                     provider's presets. A draft shows every switchable provider
+                     (picking one switches the draft first); a real session lists
+                     only its own. See useSessionAgentSettings.presetGroups. -->
+                <wa-dropdown @wa-select="handlePresetSelect" class="presets-dropdown">
+                    <wa-button slot="trigger" size="small" appearance="outlined" :disabled="isStarting" class="presets-trigger">
+                        <span class="presets-trigger-label"><wa-icon name="sliders"></wa-icon> Reset / Presets</span>
+                        <wa-icon slot="end" name="caret-down"></wa-icon>
+                    </wa-button>
+                    <template v-for="(group, gi) in presetGroups" :key="group.provider">
+                        <wa-divider v-if="gi > 0"></wa-divider>
+                        <!-- Group header: only when more than one provider is shown -->
+                        <wa-dropdown-item v-if="presetGroups.length > 1" disabled class="group-header">
+                            <ProviderIcon
+                                v-if="group.icon"
+                                slot="icon"
+                                :provider="group.provider"
+                            />
+                            {{ group.label }}
+                        </wa-dropdown-item>
+                        <!-- Reset targets: "{provider} default" always, plus the
+                             ancestor / global levels when a project sets its own
+                             defaults. See useSessionAgentSettings.resetTargetsForProvider. -->
+                        <wa-dropdown-item
+                            v-for="(target, ti) in group.resetTargets"
+                            :key="target.key"
+                            :value="`reset:${group.provider}:${ti}`"
+                            :disabled="group.isCurrent && group.resetTargets.length === 1 && !anySettingForced"
+                            class="reset-item"
+                        >
+                            <wa-icon slot="icon" name="arrow-rotate-left"></wa-icon>
+                            <span>{{ target.label }}</span>
+                            <AgentSettingsSummaryView
+                                class="option-description"
+                                :parts="bundleSummaryParts(target.bundle, getProviderHelpers(group.provider), {
+                                    current: group.isCurrent ? currentEffective : null,
+                                })"
+                            />
+                        </wa-dropdown-item>
+                        <wa-dropdown-item
+                            v-for="p in group.presets"
+                            :key="p.index"
+                            :value="`preset:${group.provider}:${p.index}`"
+                            class="preset-item"
+                        >
+                            <span>{{ p.preset.name }}</span>
+                            <AgentSettingsSummaryView
+                                class="option-description"
+                                :parts="presetSummaryParts(p.preset, getProviderHelpers(group.provider), {
+                                    defaults: group.defaults,
+                                    current: group.isCurrent ? currentEffective : null,
+                                    untrusted: sessionIsUntrusted,
+                                })"
+                            />
+                        </wa-dropdown-item>
+                    </template>
+                    <wa-divider></wa-divider>
+                    <wa-dropdown-item value="__manage__">
+                        <wa-icon slot="icon" name="pen-to-square"></wa-icon>
+                        Manage presets
+                    </wa-dropdown-item>
+                </wa-dropdown>
+            </div>
+
+            <!-- Actions & callouts (non-scrollable) — hidden on drafts since there's no process to apply to -->
+            <div v-if="(!isDraft && hasDropdownsChanged) || startupSettingsWarning || idleSettingsWarning" class="settings-panel-actions">
+                <div v-if="!isDraft && hasDropdownsChanged" class="settings-panel-links">
+                    <a class="settings-action-link" @click.prevent="restoreSettings">
+                        <wa-icon name="xmark"></wa-icon>
+                        Discard unsaved changes
+                    </a>
+                </div>
+                <wa-callout v-if="!isDraft && hasDropdownsChanged" variant="brand" class="settings-info-callout">
+                    <wa-icon name="circle-info" slot="icon"></wa-icon>
+                    <template v-if="sendingLocked">Your changes are saved and will apply once you answer the pending request.</template>
+                    <template v-else>Click "{{ buttonLabel }}" to apply your changes.</template>
+                </wa-callout>
+                <wa-callout v-if="startupSettingsWarning" variant="warning" class="startup-warning-callout">
+                    <wa-icon name="triangle-exclamation" slot="icon"></wa-icon>
+                    {{ startupSettingsWarning }}
+                </wa-callout>
+                <wa-callout v-else-if="idleSettingsWarning" variant="warning" class="idle-warning-callout">
+                    <wa-icon name="triangle-exclamation" slot="icon"></wa-icon>
+                    {{ idleSettingsWarning }}
+                </wa-callout>
+                <!-- Hybrid CLI advisory: TwiCC never reads back TUI-side changes,
+                     so settings must be driven from here. -->
+                <wa-callout v-if="session?.hybrid" variant="neutral" class="hybrid-settings-note">
+                    <wa-icon name="terminal" slot="icon"></wa-icon>
+                    Hybrid CLI session: change settings here rather than inside the
+                    terminal — TwiCC does not read back TUI-side changes. Changes
+                    apply on the next message; some restart the CLI.
+                </wa-callout>
+            </div>
+
+            <!-- Settings dropdowns -->
+            <div class="settings-panel">
+                <!-- Heading above the matrix + a link to the score help page. -->
+                <div class="matrix-heading">
+                    <span class="setting-label">Model &amp; effort picker</span>
+                    <HelpTextLink help-key="model-effort-score" label="What are those numbers?" />
+                </div>
+
+                <!-- Provider × model × effort matrix — owns those three fields. -->
+                <AgentSettingsMatrix
+                    :blocks="matrixBlocks"
+                    :effort-columns="matrixEffortColumns"
+                    @select="onMatrixSelect"
+                />
+
+                <!-- Task controls driving the matrix's benchmark scores. -->
+                <AgentSettingsBenchmarkTask :provider-count="matrixBlocks.length" />
+
+                <!-- Switches (context toggle, thinking, Chrome MCP, fast mode) share
+                     one wrapping flex row; the permission select renders below. -->
+                <AgentSettingsSwitches :rows="switchRows" @change="onSwitchRowChange" />
+
+                <!-- Select rows (permission) — each on its own row, at the end -->
+                <div
+                    v-for="row in selectRows"
+                    :key="row.field"
+                    class="setting-row"
                 >
-                    <PermissionModeIcon
-                        v-if="row.iconInfo"
-                        slot="start"
-                        :icon="row.iconInfo.icon"
-                        :color="row.iconInfo.color"
-                    />
-                    <wa-option :value="DEFAULT_SENTINEL">Default: {{ row.defaultLabel }}</wa-option>
-                    <small class="select-group-label">Force to:</small>
-                    <wa-option
-                        v-for="opt in row.choices"
-                        :key="opt.value"
-                        :value="opt.value"
-                        :label="opt.labelWithSuffix"
-                        :disabled="opt.disabled"
+                    <label class="setting-label">{{ row.label }}</label>
+                    <wa-select
+                        :value.prop="row.value"
+                        @change="onSelectChange(row.field, $event)"
+                        size="small"
+                        :disabled="row.fieldDisabled"
                     >
                         <PermissionModeIcon
-                            v-if="opt.icon"
-                            :icon="opt.icon"
-                            :color="opt.color"
-                            class="permission-option-icon"
+                            v-if="row.iconInfo"
+                            slot="start"
+                            :icon="row.iconInfo.icon"
+                            :color="row.iconInfo.color"
                         />
-                        <span>{{ opt.labelWithSuffix }}</span>
-                        <span v-if="opt.description" class="option-description">{{ opt.description }}</span>
-                    </wa-option>
-                </wa-select>
-                <span v-if="row.helpText" class="setting-help">{{ row.helpText }}</span>
-                <a v-else-if="row.value !== DEFAULT_SENTINEL" class="reset-setting-link" @click.prevent="resetField(row.field)">Reset to default: {{ row.defaultLabel }}</a>
+                        <wa-option :value="DEFAULT_SENTINEL">Default: {{ row.defaultLabel }}</wa-option>
+                        <small class="select-group-label">Force to:</small>
+                        <wa-option
+                            v-for="opt in row.choices"
+                            :key="opt.value"
+                            :value="opt.value"
+                            :label="opt.labelWithSuffix"
+                            :disabled="opt.disabled"
+                        >
+                            <PermissionModeIcon
+                                v-if="opt.icon"
+                                :icon="opt.icon"
+                                :color="opt.color"
+                                class="permission-option-icon"
+                            />
+                            <span>{{ opt.labelWithSuffix }}</span>
+                            <span v-if="opt.description" class="option-description">{{ opt.description }}</span>
+                        </wa-option>
+                    </wa-select>
+                    <span v-if="row.helpText" class="setting-help">{{ row.helpText }}</span>
+                    <a v-else-if="row.value !== DEFAULT_SENTINEL" class="reset-setting-link" @click.prevent="resetField(row.field)">Reset to default: {{ row.defaultLabel }}</a>
+                </div>
             </div>
         </div>
 
@@ -695,7 +698,20 @@ onBeforeUnmount(() => {
         max-height: calc(100vh - 8rem);
         display: flex;
         flex-direction: column;
+        /* The padding is the scrolling zone's own (.settings-scroll), so its scrollbar and
+           its scroll shadows reach the popover's edges. */
+        padding: 0;
     }
+}
+
+.settings-scroll {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    padding: var(--wa-space-l);
+    border-radius: var(--wa-panel-border-radius);
 }
 
 @media (width <= 400px) {
@@ -703,10 +719,10 @@ onBeforeUnmount(() => {
         /* At phone width, touch both viewport edges instead of retaining the
            desktop gutter. Floating UI's shift middleware pins the panel at 0. */
         --max-width: 100vw;
+    }
 
-        &::part(body) {
-            padding: var(--wa-space-xs);
-        }
+    .settings-scroll {
+        padding: var(--wa-space-xs);
     }
 
     .settings-panel :deep(.matrix-row-header) {
@@ -722,9 +738,6 @@ onBeforeUnmount(() => {
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-m);
-    overflow-y: auto;
-    flex: 1;
-    min-height: 0;
 }
 
 /* Heading above the matrix ("Model & effort" + help link). Pull the matrix up
