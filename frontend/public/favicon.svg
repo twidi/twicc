@@ -1,6 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="body-gradient" gradientUnits="userSpaceOnUse" x1="0" y1="7" x2="0" y2="57">
+      <stop offset="0" stop-color="#07a5c2"/><stop offset="1" stop-color="#0090ad"/>
+    </linearGradient>
+  </defs>
   <g id="tilt" transform="rotate(-10 32 32)">
-    <g id="body" fill="#3178c0"><rect x="5" y="7" width="54" height="50" rx="15"/></g>
+    <g id="body" fill="url(#body-gradient)"><rect x="5" y="7" width="54" height="50" rx="15"/></g>
     <path d="M27.63 23.86 A8 8 0 1 0 27.63 34.14 M48.63 23.86 A8 8 0 1 0 48.63 34.14" fill="none" stroke="#fff" stroke-width="6.5" stroke-linecap="round"/>
     <rect x="26.5" y="45" width="11" height="4.5" rx="2.25" fill="#fff"/>
   </g>

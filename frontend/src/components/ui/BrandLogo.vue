@@ -11,7 +11,13 @@
 // straightening up in the air → lands level and blinks. Antenna and ears follow with a bit of inertia. Disabled for users who
 // ask for reduced motion. With `busy` too (the logo stands for a wait), reduced motion
 // gets a soft opacity pulse instead, so the wait still reads as alive.
-import { computed } from 'vue'
+//
+// Colour: the head wears the light-mode user bubble's gradient (the cyan brand,
+// a little lighter at the top), with the bubble's top-edge highlight and a soft
+// coloured drop shadow. The small artwork keeps the gradient only (the
+// highlight and shadow vanish at that size). The in-app robot ICON
+// (public/icons/robot.svg) is flat brand cyan, on purpose.
+import { computed, useId } from 'vue'
 
 const props = defineProps({
     // Displayed size in CSS pixels (the logo is square).
@@ -21,15 +27,31 @@ const props = defineProps({
 })
 
 const SMALL_LOGO_MAX_SIZE = 24
-const BRAND_COLOR = '#3178c0'
+// Light-mode --wa-color-brand-60 (cyan, #00a3c0) as the user bubble shades it:
+// oklch lightness +0.005 at the top, -0.06 at the bottom.
+const BRAND_COLOR = '#00a3c0'
+const GRADIENT_TOP = '#07a5c2'
+const GRADIENT_BOTTOM = '#0090ad'
+
+// Gradient / filter ids must be unique per instance (several logos can share a page).
+const uid = useId()
+const gradientId = `brand-logo-gradient-${uid}`
+const highlightId = `brand-logo-highlight-${uid}`
+const shadowId = `brand-logo-shadow-${uid}`
 
 const isSmall = computed(() => props.size < SMALL_LOGO_MAX_SIZE)
 </script>
 
 <template>
     <svg v-if="isSmall" class="brand-logo" viewBox="0 0 64 64" :width="size" :height="size" aria-hidden="true">
+        <defs>
+            <linearGradient :id="gradientId" gradientUnits="userSpaceOnUse" x1="0" y1="7" x2="0" y2="57">
+                <stop offset="0" :stop-color="GRADIENT_TOP" />
+                <stop offset="1" :stop-color="GRADIENT_BOTTOM" />
+            </linearGradient>
+        </defs>
         <g transform="rotate(-10 32 32)">
-            <rect x="5" y="7" width="54" height="50" rx="15" :fill="BRAND_COLOR" />
+            <rect x="5" y="7" width="54" height="50" rx="15" :fill="`url(#${gradientId})`" />
             <path
                 d="M27.63 23.86 A8 8 0 1 0 27.63 34.14 M48.63 23.86 A8 8 0 1 0 48.63 34.14"
                 fill="none" stroke="#fff" stroke-width="6.5" stroke-linecap="round"
@@ -48,22 +70,42 @@ const isSmall = computed(() => props.size < SMALL_LOGO_MAX_SIZE)
         <span class="hop">
             <span class="tilt">
                 <svg viewBox="0 0 64 64">
+                    <defs>
+                        <linearGradient :id="gradientId" gradientUnits="userSpaceOnUse" x1="0" y1="2" x2="0" y2="56">
+                            <stop offset="0" :stop-color="GRADIENT_TOP" />
+                            <stop offset="1" :stop-color="GRADIENT_BOTTOM" />
+                        </linearGradient>
+                        <!-- The bubble's lit top edge: white on the head's upper rim, fading out. -->
+                        <linearGradient :id="highlightId" gradientUnits="userSpaceOnUse" x1="0" y1="14" x2="0" y2="30">
+                            <stop offset="0" stop-color="#fff" stop-opacity="0.55" />
+                            <stop offset="1" stop-color="#fff" stop-opacity="0" />
+                        </linearGradient>
+                        <filter :id="shadowId" x="-30%" y="-30%" width="160%" height="170%">
+                            <feDropShadow dx="0" dy="2.2" stdDeviation="2" :flood-color="BRAND_COLOR" flood-opacity="0.55" />
+                        </filter>
+                    </defs>
+                    <g :filter="`url(#${shadowId})`">
                     <g transform="translate(32 36) rotate(-10) scale(0.95) translate(-32 -36)">
-                        <g :fill="BRAND_COLOR">
+                        <g :fill="`url(#${gradientId})`">
                             <rect class="ear-left" x="1" y="28" width="8" height="14" rx="3" />
                             <rect class="ear-right" x="55" y="28" width="8" height="14" rx="3" />
                             <g class="antenna">
-                                <path d="M32 15V6" :stroke="BRAND_COLOR" stroke-width="4" stroke-linecap="round" />
+                                <path d="M32 15V6" :stroke="`url(#${gradientId})`" stroke-width="4" stroke-linecap="round" />
                                 <circle cx="32" cy="6" r="4" />
                             </g>
                             <rect x="9" y="14" width="46" height="42" rx="12" />
                         </g>
+                        <rect
+                            x="10" y="15" width="44" height="40" rx="11"
+                            fill="none" :stroke="`url(#${highlightId})`" stroke-width="1.6"
+                        />
                         <path
                             class="eyes"
                             d="M27.98 29.82 A6.5 6.5 0 1 0 27.98 38.18 M45.48 29.82 A6.5 6.5 0 1 0 45.48 38.18"
                             fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round"
                         />
                         <rect x="26" y="46" width="12" height="4" rx="2" fill="#fff" />
+                    </g>
                     </g>
                 </svg>
             </span>

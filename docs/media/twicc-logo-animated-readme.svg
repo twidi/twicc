@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="-12 -16 88 77" width="48" height="42">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-12 -16 88 82" width="48" height="45">
   <title>TwiCC</title>
   <style>
-    /* README variant: no ground shadow, frame cut right under the feet so the robot
+    /* README variant: no ground shadow, frame cut just under the feet (room for the drop shadow) so the robot
        sits on the heading's baseline. Same animation as
        frontend/src/components/ui/BrandLogo.vue (5.2s loop).
        Lengths are in user units of the 64-unit logo grid (1 unit = 1/64 of the logo). */
@@ -67,20 +67,34 @@
       .tilt, .hop, .antenna, .eyes, .ear-left, .ear-right { animation: none; }
     }
   </style>
+  <defs>
+    <linearGradient id="twicc-logo-gradient" gradientUnits="userSpaceOnUse" x1="0" y1="2" x2="0" y2="56">
+      <stop offset="0" stop-color="#07a5c2"/><stop offset="1" stop-color="#0090ad"/>
+    </linearGradient>
+    <linearGradient id="twicc-logo-highlight" gradientUnits="userSpaceOnUse" x1="0" y1="14" x2="0" y2="30">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="twicc-logo-shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="2.2" stdDeviation="2" flood-color="#00a3c0" flood-opacity="0.55"/>
+    </filter>
+  </defs>
   <g class="hop">
     <g class="tilt">
+      <g filter="url(#twicc-logo-shadow)">
       <g transform="translate(32 36) rotate(-10) scale(0.95) translate(-32 -36)">
-        <g fill="#3178c0">
+        <g fill="url(#twicc-logo-gradient)">
           <rect class="ear-left" x="1" y="28" width="8" height="14" rx="3"/>
           <rect class="ear-right" x="55" y="28" width="8" height="14" rx="3"/>
           <g class="antenna">
-            <path d="M32 15V6" stroke="#3178c0" stroke-width="4" stroke-linecap="round"/>
+            <path d="M32 15V6" stroke="url(#twicc-logo-gradient)" stroke-width="4" stroke-linecap="round"/>
             <circle cx="32" cy="6" r="4"/>
           </g>
           <rect x="9" y="14" width="46" height="42" rx="12"/>
         </g>
+        <rect x="10" y="15" width="44" height="40" rx="11" fill="none" stroke="url(#twicc-logo-highlight)" stroke-width="1.6"/>
         <path class="eyes" d="M27.98 29.82 A6.5 6.5 0 1 0 27.98 38.18 M45.48 29.82 A6.5 6.5 0 1 0 45.48 38.18" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round"/>
         <rect x="26" y="46" width="12" height="4" rx="2" fill="#fff"/>
+      </g>
       </g>
     </g>
   </g>
