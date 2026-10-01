@@ -10,7 +10,7 @@
    in the tree would leave them at their desktop values. */
 
 :root {
-    --canvas-color: color-mix(in oklab, var(--wa-color-brand-95) 30%, var(--wa-color-neutral-95));
+    --canvas-color: color-mix(in oklab, var(--wa-color-brand-95) 30%, var(--wa-color-gray-95));
     --canvas-aura-start: color-mix(in oklab, var(--wa-color-brand-90) 60%, transparent);
     --canvas-aura-end: oklch(from var(--wa-color-brand-90) l c calc(h + 70) / 0.45);
     --canvas-aura-start-size: 55rem 38rem;

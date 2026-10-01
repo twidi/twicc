@@ -67,6 +67,17 @@
     box-shadow: var(--depth-inset), 0 0 0.75rem -0.25rem color-mix(in oklab, var(--glow-accent) 45%, transparent);
 }
 
+/* Hover, the shared system (the pressed colour, below, takes the same step twice): the
+   button's own colour darkened by half the press step (--hover-color). For the fills that
+   darken on hover in Web Awesome (filled, accent: its mix with black 10%). Not plain and
+   outlined buttons: their quiet fill is already their own colour. Before the lit brand
+   buttons' block, which overrides it on those by order (same specificity): they brighten. */
+@media (hover: hover) {
+    :where(wa-button:not([appearance='plain'], [appearance='outlined'], [disabled], [loading], .fake-disabled):hover)::part(base) {
+        background-color: var(--hover-color);
+    }
+}
+
 /* Solid brand buttons. Not: buttons of an inverted box and the layout window buttons (as
    depth.css), the dock's Restore window button (its top bar clips overflow), the
    transcript's small corner toggle, disabled and fake-disabled buttons (they keep the
@@ -91,11 +102,33 @@
         box-shadow: var(--depth-button), inset 0 1px 0 oklch(1 0 0 / 0.3), var(--glow-button-hover);
     }
 }
-/* Press: Web Awesome's press mix again, without the brightening. After the hover block
+/* Press: the shared pressed colour (below), without the brightening. After the hover block
    (same specificity), so it wins while both match. */
 :where(wa-button[variant='brand'][appearance='accent']:not(.wa-invert wa-button, .layout-winbtn, .dock-winbtn, .detail-toggle, [disabled], .fake-disabled, [loading]):active)::part(base) {
-    background-color: color-mix(in oklab, var(--wa-color-fill-loud), var(--wa-color-mix-active));
+    background-color: var(--press-color);
     filter: none;
+}
+
+/* The pressed colour, one system for every button (with the press-in of motion.css): the
+   button's own colour darkened a little. --press-from is the fill Web Awesome paints for the
+   button's appearance (loud for the default and accent, normal for filled, quiet at hover for
+   outlined and plain); --press-color takes a fixed step of lightness off it and keeps its hue
+   and chroma, so a tinted neutral stays tinted instead of going grey, in light and in dark.
+   Web Awesome's own pressed mix (its fill with black) is replaced: an outer ::part() rule wins
+   over the component's own styles. After the brand hover block above (same specificity). */
+:where(wa-button) {
+    --press-from: var(--wa-color-fill-loud, var(--wa-color-neutral-fill-loud));
+    --press-color: oklch(from var(--press-from) calc(l - 0.07) c h);
+    --hover-color: oklch(from var(--press-from) calc(l - 0.035) c h);
+}
+:where(wa-button:is([appearance='filled'], [appearance='filled-outlined'])) {
+    --press-from: var(--wa-color-fill-normal, var(--wa-color-neutral-fill-normal));
+}
+:where(wa-button:is([appearance='outlined'], [appearance='plain'])) {
+    --press-from: var(--wa-color-fill-quiet, var(--wa-color-neutral-fill-quiet));
+}
+:where(wa-button:not([disabled], [loading], .fake-disabled):active)::part(base) {
+    background-color: var(--press-color);
 }
 
 /* Sheen: a light band parked off the left edge; on hover it sweeps to the right in 700ms.

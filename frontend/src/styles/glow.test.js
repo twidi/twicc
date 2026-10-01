@@ -107,7 +107,8 @@ const BRAND = "wa-button[variant='brand'][appearance='accent']"
 const EXCLUDED = ".wa-invert wa-button, .layout-winbtn, .dock-winbtn, .detail-toggle, [disabled], .fake-disabled"
 const LIT = `${BRAND}:not(${EXCLUDED})`
 const LIVE = `${BRAND}:not(${EXCLUDED}, [loading])`
-const FILL_LOUD_ACTIVE = 'color-mix(in oklab, var(--wa-color-fill-loud), var(--wa-color-mix-active))'
+// The pressed colour of every button (the system of test 4b); the lit brand buttons use it too.
+const PRESS_COLOR = 'var(--press-color)'
 
 test('1. glow.css is imported right after motion.css in the three entry files', () => {
     for (const [file, prefix] of [['../main.js', './styles/'], ['../share-session/main.js', '../styles/'], ['../artifact-shell/main.js', '../styles/']]) {
@@ -148,7 +149,15 @@ test('3. focus ring tokens and glow tokens', () => {
 test('4. solid brand buttons: target, exclusions, rest / hover / press', () => {
     // Every button rule targets the solid brand buttons with the full exclusion list, except
     // the reduced-motion rule, which hides the sheen on every one of them.
-    for (const r of glow.filter((x) => x.head.includes('wa-button'))) {
+    // (The pressed-colour system of test 4b targets every button on purpose: it is skipped here.)
+    const PRESS_SYSTEM = new Set([
+        ':where(wa-button)',
+        ":where(wa-button:is([appearance='filled'], [appearance='filled-outlined']))",
+        ":where(wa-button:is([appearance='outlined'], [appearance='plain']))",
+        ':where(wa-button:not([disabled], [loading], .fake-disabled):active)::part(base)',
+        ":where(wa-button:not([appearance='plain'], [appearance='outlined'], [disabled], [loading], .fake-disabled):hover)::part(base)",
+    ])
+    for (const r of glow.filter((x) => x.head.includes('wa-button') && !x.selectors.every((sel) => PRESS_SYSTEM.has(sel)))) {
         if (inReduced(r)) {
             assert.deepEqual(r.selectors, [`:where(${BRAND})::part(base)::after`])
             continue
@@ -168,7 +177,7 @@ test('4. solid brand buttons: target, exclusions, rest / hover / press', () => {
     assert.match(hover.decls['box-shadow'], /var\(--glow-button-hover\)$/)
 
     const press = rule(glow, [`:where(${LIVE}:active)::part(base)`], topLevel)
-    assert.equal(press.decls['background-color'], FILL_LOUD_ACTIVE)
+    assert.equal(press.decls['background-color'], PRESS_COLOR)
     assert.equal(press.decls.filter, 'none')
     assert.ok(press.order > hover.order, 'the press rule comes after the hover block')
 
@@ -185,6 +194,40 @@ test('4. solid brand buttons: target, exclusions, rest / hover / press', () => {
             assert.ok(closed, `compound split over lines: ${line.trim()}`)
         }
     }
+})
+
+test('4b. the pressed colour: one system for every button, its own colour darkened a little', () => {
+    // --press-from is the button's own colour for its appearance (the fill Web Awesome paints at
+    // rest or on hover); --press-color is that colour darkened by a fixed step of lightness,
+    // keeping its hue and chroma (so a tinted neutral stays tinted, in light and in dark).
+    const base = rule(glow, [':where(wa-button)'], topLevel)
+    assertPinned(base, `--press-from: var(--wa-color-fill-loud, var(--wa-color-neutral-fill-loud));
+        --press-color: oklch(from var(--press-from) calc(l - 0.07) c h);
+        --hover-color: oklch(from var(--press-from) calc(l - 0.035) c h);`)
+    assertPinned(
+        rule(glow, [":where(wa-button:is([appearance='filled'], [appearance='filled-outlined']))"], topLevel),
+        '--press-from: var(--wa-color-fill-normal, var(--wa-color-neutral-fill-normal));',
+    )
+    assertPinned(
+        rule(glow, [":where(wa-button:is([appearance='outlined'], [appearance='plain']))"], topLevel),
+        '--press-from: var(--wa-color-fill-quiet, var(--wa-color-neutral-fill-quiet));',
+    )
+    const press = rule(glow, [':where(wa-button:not([disabled], [loading], .fake-disabled):active)::part(base)'], topLevel)
+    assertPinned(press, 'background-color: var(--press-color);')
+    // After the lit brand buttons' hover block (same specificity: the press must win while both match).
+    const hover = rule(glow, [`:where(${LIVE}:hover)::part(base)`], inHover)
+    assert.ok(press.order > hover.order, 'after the brand hover block')
+    // Hover: half the step, for the fills that darken on hover (filled, accent). Plain and outlined
+    // buttons keep Web Awesome's quiet fill (it is their own colour already). The lit brand buttons
+    // keep their brightening: the shared hover comes BEFORE their block, which then wins by order.
+    const HOVER = ":where(wa-button:not([appearance='plain'], [appearance='outlined'], [disabled], [loading], .fake-disabled):hover)::part(base)"
+    const sharedHover = rule(glow, [HOVER], inHover)
+    assertPinned(sharedHover, 'background-color: var(--hover-color);')
+    assert.ok(sharedHover.order < hover.order, 'before the lit brand hover block')
+    assert.ok(sharedHover.order < press.order, 'before the press rule')
+    // The tinted pressed mix of the neutral-tint sheet stays for the consumers of the token
+    // (Web Awesome's own inner buttons, the keys of the terminal bar...).
+    assert.ok(read('neutral-tint.css').includes('--wa-color-mix-active'), 'the mix token is still tinted')
 })
 
 test('5. the sheen: positioned band under the content, sweep on hover, off under reduced motion', () => {

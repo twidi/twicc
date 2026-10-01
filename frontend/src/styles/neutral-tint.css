@@ -1,0 +1,33 @@
+/* Tinted neutrals (visual refresh retouches). The light steps of the Web Awesome neutral
+   scale lean to the accent hue instead of being near-pure greys, so every flat grey background
+   of the app (--wa-color-surface-lowered, --wa-color-neutral-fill-*, ...) picks the tint up
+   without being touched one by one. Same lightness as the original steps, a little chroma at
+   the hue of the brand (cyan). The dark steps (50 to 05) keep the theme's own values: they
+   already carry a blue tint.
+
+   Web Awesome declares its scale inside a cascade layer, so these unlayered declarations win
+   whatever the specificity. To go back to plain greys, drop the import in main.js.
+   The light canvas is computed from the original gray-95 (surfaces.css), not from this scale:
+   it was tuned by hand and must not move. */
+:root {
+    --neutral-tint-hue: 217;
+    --wa-color-neutral-95: oklch(96.07% 0.011 var(--neutral-tint-hue));
+    --wa-color-neutral-90: oklch(92.23% 0.015 var(--neutral-tint-hue));
+    --wa-color-neutral-80: oklch(83.64% 0.019 var(--neutral-tint-hue));
+    --wa-color-neutral-70: oklch(75.18% 0.021 var(--neutral-tint-hue));
+    --wa-color-neutral-60: oklch(66.86% 0.022 var(--neutral-tint-hue));
+    /* The pressed state of every button: Web Awesome mixes the button's fill with this
+       (`color-mix(in oklab, <fill>, var(--wa-color-mix-active))`). Its own value is pure black
+       (20%), which turns a quiet fill into a flat grey; a tinted near-black keeps the cast. Used
+       by the lit solid buttons too (glow.css), which still darken. */
+    --wa-color-mix-active: oklch(14% 0.05 var(--neutral-tint-hue)) 20%;
+}
+
+/* Dark scheme: the "lowered" surface was a near-black (the page colour mixed 20% with black).
+   It takes the colour of the neutral callouts' fill instead (neutral-10, #1b1d26), a touch
+   lighter than the page, so what sits "below" a surface reads as a soft slab, not a hole.
+   The pressed mix is darker and tinted too (a lighter one would not darken a dark fill). */
+.wa-dark {
+    --wa-color-surface-lowered: var(--wa-color-neutral-10);
+    --wa-color-mix-active: oklch(8% 0.03 var(--neutral-tint-hue)) 16%;
+}
