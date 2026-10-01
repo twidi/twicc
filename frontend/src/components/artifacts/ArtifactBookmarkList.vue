@@ -21,6 +21,7 @@ import { useDataStore } from '../../stores/data'
 import { useWorkspacesStore } from '../../stores/workspaces'
 import { useSettingsStore } from '../../stores/settings'
 import { useListCascade } from '../../composables/useListCascade'
+import { useListExit } from '../../composables/useListExit'
 import { useGlideInk } from '../../composables/useGlideInk'
 import { visibleIndexRange } from '../../utils/listCascade'
 import { computeArtifactBookmarkList } from '../../utils/sidebarArtifactBookmarks'
@@ -491,6 +492,26 @@ const cascade = useListCascade({
     getVisibleRange: visibleEntryRange,
 })
 
+// Exits (visual refresh retouches): a bookmark removed while its entry is on screen stays for its
+// exit animation (it fades, slides out and folds its height), so the entries below glide up. Not for
+// a scope or search change: those lists just swap. The entries are plain DOM children (no virtual
+// scroller): the height is read from the entry itself.
+const exits = useListExit({
+    items: list,
+    getKey: (b) => b.id,
+    isEligible: () => true,
+    scopeKey: () => [props.showAllArtifacts ? 'all' : (props.effectiveProjectId ?? ''), props.searchQuery].join('|'),
+    getVisibleRange: visibleEntryRange,
+    getHeight: (id) => {
+        const index = exits.displayItems.value.findIndex((b) => b.id === id)
+        const entries = [...(listRef.value?.children ?? [])].filter((child) => child.classList.contains('bookmark-entry'))
+        return entries[index]?.getBoundingClientRect().height ?? 0
+    },
+})
+const { displayItems } = exits
+const entryClass = (b) => exits.exitClass(b) ?? cascade.itemClass(b)
+const entryStyle = (b) => exits.exitStyle(b) ?? cascade.itemStyle(b)
+
 // Gliding open-row fill (visual refresh step 6a-bis, design:
 // docs/plans/2026-09-29-sidebar-row-glide-design.md): the open row's lit look is an ink,
 // the list's first child, that glides from row to row (styles/sidebar-rows.css). It takes
@@ -547,7 +568,7 @@ defineExpose({ handleKeyNavigation })
 
 <template>
     <div class="bookmark-list-container">
-        <div v-if="list.length === 0" class="empty-state">
+        <div v-if="displayItems.length === 0" class="empty-state">
             <template v-if="searchQuery.trim()">No artifacts in this scope match your filter.</template>
             <template v-else>
                 <div>No bookmarked artifacts in this scope yet — bookmark an artifact from a session's Artifacts tab.</div>
@@ -569,11 +590,11 @@ defineExpose({ handleKeyNavigation })
             <!-- One element per bookmark, holding its separator and its row, so
                  both enter together (the cascade's classes land here). -->
             <div
-                v-for="(b, index) in list"
+                v-for="(b, index) in displayItems"
                 :key="b.id"
                 class="bookmark-entry"
-                :class="cascade.itemClass(b)"
-                :style="cascade.itemStyle(b)"
+                :class="entryClass(b)"
+                :style="entryStyle(b)"
             >
             <SidebarListSeparator
                 v-if="separatorBeforeIds.has(b.id)"

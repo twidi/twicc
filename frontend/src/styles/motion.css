@@ -304,6 +304,28 @@ wa-details[data-motion-loading]:not(:has(> :not([slot])))::part(content)::after 
     animation-delay: calc(var(--list-enter-index, 0) * 22ms);
 }
 
+/* Sidebar list exit (retouches): a row whose session was archived stays for the length of this
+   animation (utils/listExit.js, composables/useListExit.js sets the class and --list-leave-h, the
+   row's measured height): it fades, slides left and folds its height, so the rows below glide up.
+   The fold needs the explicit start height (a height cannot animate from auto). The slide is
+   multiplied by --motion-amount: reduced motion keeps the fade and the fold. 260ms matches
+   LIST_EXIT_DURATION_MS. */
+@keyframes list-leave {
+    from {
+        height: var(--list-leave-h);
+    }
+    to {
+        height: 0;
+        opacity: 0;
+        translate: calc(-0.75rem * var(--motion-amount)) 0;
+    }
+}
+.list-leaving {
+    overflow: hidden;
+    pointer-events: none;
+    animation: list-leave 260ms var(--motion-ease-out) forwards;
+}
+
 /* Home card cascade (step 7b). The class and --home-card-index are set by
    useHomeCardCascade on the card; the timings match utils/homeCardCascade.js.
    Movement × --motion-amount: reduced motion keeps the fade only. */

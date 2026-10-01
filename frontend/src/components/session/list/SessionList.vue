@@ -16,6 +16,7 @@ import { computeSidebarSessionBlocks } from '../../../utils/sidebarSessions'
 import { matchQuery } from '../../../utils/textFilter'
 import { dateBucketSeparator } from '../../../utils/datePresets'
 import { useListCascade } from '../../../composables/useListCascade'
+import { useListExit } from '../../../composables/useListExit'
 import { useGlideInk } from '../../../composables/useGlideInk'
 import { activeRowBase, entranceOffset, revealBands, revealMargins } from '../../../utils/sidebarRows'
 import VirtualScroller from '../../virtual-scroller/VirtualScroller.vue'
@@ -234,6 +235,22 @@ const cascade = useListCascade({
     scopeKey: () => props.projectId,
     getVisibleRange: () => scrollerRef.value?.getVisibleRange() ?? null,
 })
+
+// Exits (visual refresh retouches): a row that was on screen and leaves the list because its session
+// was archived stays for its exit animation (it fades, slides out and folds its height), so the rows
+// below glide up instead of jumping. Not for a scope, search or filter change: those lists just swap.
+const exits = useListExit({
+    items: sessions,
+    getKey: (s) => s.id,
+    isEligible: (s) => !!store.sessions[s.id]?.archived,
+    scopeKey: () => [props.projectId, props.searchQuery, props.showArchived, props.showArchivedProjects,
+        props.showActiveAcrossFilters, activeWorkspaceId.value].join('|'),
+    getVisibleRange: () => scrollerRef.value?.getVisibleRange() ?? null,
+    getHeight: (key) => scrollerRef.value?.getItemHeight(key) ?? 0,
+})
+const { displayItems } = exits
+const rowClass = (session) => exits.exitClass(session) ?? cascade.itemClass(session)
+const rowStyle = (session) => exits.exitStyle(session) ?? cascade.itemStyle(session)
 
 // Gliding open-row fill (visual refresh step 6a-bis, design:
 // docs/plans/2026-09-29-sidebar-row-glide-design.md): the open row's lit look is an ink in
@@ -674,7 +691,7 @@ defineExpose({
         </div>
 
         <!-- Empty state: no matching sessions (search returned nothing) -->
-        <div v-else-if="sessions.length === 0 && !isLoading" class="empty-state">
+        <div v-else-if="displayItems.length === 0 && !isLoading" class="empty-state">
             No matching sessions
         </div>
 
@@ -683,10 +700,10 @@ defineExpose({
             v-else
             ref="scrollerRef"
             :key="projectId"
-            :items="sessions"
+            :items="displayItems"
             :item-key="session => session.id"
-            :item-class="cascade.itemClass"
-            :item-style="cascade.itemStyle"
+            :item-class="rowClass"
+            :item-style="rowStyle"
             :min-item-height="minSessionHeight"
             :buffer="SCROLLER_BUFFER"
             :unload-buffer="SCROLLER_BUFFER * 1.5"

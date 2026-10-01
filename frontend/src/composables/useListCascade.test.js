@@ -415,8 +415,11 @@ test('14. SessionList.vue wiring', () => {
     assert.ok(composableAt < firstSessionIdWatch, 'the composable exists before the sessionId watchers')
 
     const scroller = template.match(/<VirtualScroller\b(?:[^>"]|"[^"]*")*>/)[0]
-    assert.match(scroller, /:item-class="cascade\.itemClass"/)
-    assert.match(scroller, /:item-style="cascade\.itemStyle"/)
+    // The scroller's row class and style are the cascade's, composed with the exit's (useListExit).
+    assert.match(scroller, /:item-class="rowClass"/)
+    assert.match(scroller, /:item-style="rowStyle"/)
+    assert.match(script, /const rowClass = \(session\) => exits\.exitClass\(session\) \?\? cascade\.itemClass\(session\)/)
+    assert.match(script, /const rowStyle = \(session\) => exits\.exitStyle\(session\) \?\? cascade\.itemStyle\(session\)/)
 
     // The scrolling watcher (flush: 'post', immediate) holds the cascade's target.
     const watchers = script.split('watch(() => props.sessionId').slice(1)
@@ -464,9 +467,13 @@ test('15. ArtifactBookmarkList.vue wiring', () => {
     // One element per bookmark carries the cascade's class and style.
     const entry = template.match(/<div\b(?:[^>"]|"[^"]*")*class="bookmark-entry"(?:[^>"]|"[^"]*")*>/)
     assert.ok(entry, 'a .bookmark-entry element')
-    assert.match(entry[0], /v-for="\(b, index\) in list"/)
-    assert.match(entry[0], /:class="cascade\.itemClass\(b\)"/)
-    assert.match(entry[0], /:style="cascade\.itemStyle\(b\)"/)
+    // The entries come from the displayed items (the real list plus the exiting rows, useListExit);
+    // the class and style are the cascade's, composed with the exit's.
+    assert.match(entry[0], /v-for="\(b, index\) in displayItems"/)
+    assert.match(entry[0], /:class="entryClass\(b\)"/)
+    assert.match(entry[0], /:style="entryStyle\(b\)"/)
+    assert.match(flat(script), /const entryClass = \(b\) => exits\.exitClass\(b\) \?\? cascade\.itemClass\(b\)/)
+    assert.match(flat(script), /const entryStyle = \(b\) => exits\.exitStyle\(b\) \?\? cascade\.itemStyle\(b\)/)
 
     // scrollRowIntoView selects the entries and returns the promise it scrolls in.
     const scrollFn = script.slice(script.indexOf('function scrollRowIntoView('), script.indexOf('\n}', script.indexOf('function scrollRowIntoView(')))
