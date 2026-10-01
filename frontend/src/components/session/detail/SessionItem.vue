@@ -530,13 +530,13 @@ function toggleJsonView() {
     box-shadow: 0 8px 22px -8px color-mix(in oklab, var(--wa-color-brand-60) 80%, transparent),
         inset 0 1px 0 oklch(1 0 0 / 0.15);
 }
-/* Light only: a solid lit bubble, the accent itself (lighter at the top) with white text: the
+/* Light only: a solid lit bubble, the accent itself (a little lighter at the top) with white text: the
    only filled surface of the chat. Its other content (quotes, code, links) is not adapted yet. */
 html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] {
     color: #fff;
     border-color: transparent;
     background-color: transparent;
-    background-image: linear-gradient(180deg, oklch(from var(--wa-color-brand-60) calc(l + 0.07) c h), oklch(from var(--wa-color-brand-60) calc(l - 0.06) c h));
+    background-image: linear-gradient(180deg, oklch(from var(--wa-color-brand-60) calc(l + 0.005) c h), oklch(from var(--wa-color-brand-60) calc(l - 0.06) c h));
     box-shadow: 0 6px 16px -8px color-mix(in oklab, var(--wa-color-brand-60) 80%, transparent),
         inset 0 1px 0 oklch(1 0 0 / 0.35);
 }
@@ -545,6 +545,31 @@ html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] .markd
 }
 html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] .message-timestamp {
     color: oklch(1 0 0 / 0.78);
+}
+/* What sits directly on the filled bubble (not in a quote, a container or a code block, which are
+   light cards with their own colours): links, inline code, rules and tables read in white. */
+html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] .markdown-body a:not(blockquote *, .md-container *, .code-tools *, pre *) {
+    color: #fff;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] .markdown-body code:not(blockquote *, .md-container *, .code-tools *, pre *) {
+    background: oklch(1 0 0 / 0.2);
+    color: #fff;
+}
+html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] .markdown-body hr:not(blockquote *, .md-container *, .code-tools *, pre *) {
+    height: 1px;
+    border: 0;
+    background: oklch(1 0 0 / 0.45);
+}
+html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] .markdown-body table:not(blockquote *, .md-container *, .code-tools *, pre *) tr {
+    background: transparent;
+}
+html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] .markdown-body table:not(blockquote *, .md-container *, .code-tools *, pre *) tr:nth-child(2n) {
+    background: oklch(1 0 0 / 0.1);
+}
+html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] .markdown-body table:not(blockquote *, .md-container *, .code-tools *, pre *) :is(th, td) {
+    border-color: oklch(1 0 0 / 0.35);
 }
 /* More room above a user message that follows another item; the first message of the session
    needs none. */
