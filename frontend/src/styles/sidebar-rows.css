@@ -55,6 +55,15 @@
     text-align: left;
 }
 
+/* Dark: a row is a plain neutral button, whose text is Web Awesome's "on quiet" colour,
+   neutral-60 (67% lightness): it reads faded. The normal text colour (96%) is brighter than
+   the open row's brand cyan (88%): the rows take 40% of it over that grey (about 78%): livelier
+   than before, still quieter than the open row. Zero specificity: the open row keeps its brand
+   colour, which is set by a rule that wins. */
+:where(.wa-dark .sidebar-row)::part(base) {
+    color: color-mix(in oklab, var(--wa-color-text-normal) 40%, var(--wa-color-neutral-60));
+}
+
 /* Compact mode: tighter padding. */
 .sidebar-row-wrapper--compact .sidebar-row::part(base) {
     padding-block: var(--wa-space-2xs);
@@ -85,9 +94,9 @@
     color: var(--wa-color-brand-on-quiet);
 }
 html.wa-dark .sidebar-row--active::part(base) {
-    border-color: oklch(from var(--wa-color-brand-60) 0.6 0.11 h / 0.45);
-    background-image: linear-gradient(100deg, oklch(from var(--wa-color-brand-60) 0.32 0.07 h), oklch(from var(--wa-color-brand-60) 0.25 0.05 h / 0.6));
-    box-shadow: 0 2px 12px -4px oklch(from var(--wa-color-brand-60) 0.6 0.13 h / 0.5);
+    border-color: oklch(from var(--wa-color-brand-60) 0.72 0.12 h / 0.7);
+    background-image: linear-gradient(100deg, oklch(from var(--wa-color-brand-60) 0.46 0.1 h), oklch(from var(--wa-color-brand-60) 0.34 0.07 h / 0.7));
+    box-shadow: 0 2px 14px -3px oklch(from var(--wa-color-brand-60) 0.65 0.14 h / 0.6);
     color: oklch(from var(--wa-color-brand-60) 0.88 0.08 h);
 }
 /* Open and multi-selected: the selection has no other marker than its fill, so it shows
@@ -100,7 +109,7 @@ html.wa-dark .sidebar-row--active::part(base) {
 html.wa-dark .sidebar-row-wrapper--selected .sidebar-row--active::part(base) {
     border-color: var(--wa-color-brand-60);
     box-shadow: inset 0 0 0 1px var(--wa-color-brand-60),
-        0 2px 12px -4px oklch(from var(--wa-color-brand-60) 0.6 0.13 h / 0.5);
+        0 2px 14px -3px oklch(from var(--wa-color-brand-60) 0.65 0.14 h / 0.6);
 }
 
 /* Lists with a gliding ink (step 6a-bis, docs/plans/2026-09-29-sidebar-row-glide-design.md):
@@ -124,15 +133,15 @@ html.wa-dark .sidebar-row-wrapper--selected .sidebar-row--active::part(base) {
     --sidebar-row-reveal-bottom: 5rem;
 }
 html.wa-dark .sidebar-row-list {
-    --glide-ink-bg: linear-gradient(100deg, oklch(from var(--wa-color-brand-60) 0.32 0.07 h), oklch(from var(--wa-color-brand-60) 0.25 0.05 h / 0.6));
+    --glide-ink-bg: linear-gradient(100deg, oklch(from var(--wa-color-brand-60) 0.46 0.1 h), oklch(from var(--wa-color-brand-60) 0.34 0.07 h / 0.7));
 }
 .sidebar-row-list > .glide-ink {
     box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--wa-color-brand-60) 45%, transparent),
         0 2px 10px -4px color-mix(in oklab, var(--wa-color-brand-60) 45%, transparent);
 }
 html.wa-dark .sidebar-row-list > .glide-ink {
-    box-shadow: inset 0 0 0 1px oklch(from var(--wa-color-brand-60) 0.6 0.11 h / 0.45),
-        0 2px 12px -4px oklch(from var(--wa-color-brand-60) 0.6 0.13 h / 0.5);
+    box-shadow: inset 0 0 0 1px oklch(from var(--wa-color-brand-60) 0.72 0.12 h / 0.7),
+        0 2px 14px -3px oklch(from var(--wa-color-brand-60) 0.65 0.14 h / 0.6);
 }
 /* In a list with an ink, the open row hands its marker over at once: without this, the
    buttons' 120ms border and box-shadow transition (motion.css) would fade the row's own

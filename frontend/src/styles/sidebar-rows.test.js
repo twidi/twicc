@@ -114,9 +114,9 @@ test('3. the moved rules, with their values, in order', () => {
         color: 'var(--wa-color-brand-on-quiet)',
     })
     assert.deepEqual(rule(rules, ['html.wa-dark .sidebar-row--active::part(base)']).decls, {
-        'border-color': 'oklch(from var(--wa-color-brand-60) 0.6 0.11 h / 0.45)',
-        'background-image': 'linear-gradient(100deg, oklch(from var(--wa-color-brand-60) 0.32 0.07 h), oklch(from var(--wa-color-brand-60) 0.25 0.05 h / 0.6))',
-        'box-shadow': '0 2px 12px -4px oklch(from var(--wa-color-brand-60) 0.6 0.13 h / 0.5)',
+        'border-color': 'oklch(from var(--wa-color-brand-60) 0.72 0.12 h / 0.7)',
+        'background-image': 'linear-gradient(100deg, oklch(from var(--wa-color-brand-60) 0.46 0.1 h), oklch(from var(--wa-color-brand-60) 0.34 0.07 h / 0.7))',
+        'box-shadow': '0 2px 14px -3px oklch(from var(--wa-color-brand-60) 0.65 0.14 h / 0.6)',
         color: 'oklch(from var(--wa-color-brand-60) 0.88 0.08 h)',
     })
     const menu = rule(rules, ['.sidebar-row-menu'])
@@ -196,7 +196,7 @@ test('6. lists with an ink: the ink carries the lit look, the open row hands it 
     })
     const darkVars = rule(rules, ['html.wa-dark .sidebar-row-list'])
     assert.deepEqual(darkVars.decls, {
-        '--glide-ink-bg': 'linear-gradient(100deg, oklch(from var(--wa-color-brand-60) 0.32 0.07 h), oklch(from var(--wa-color-brand-60) 0.25 0.05 h / 0.6))',
+        '--glide-ink-bg': 'linear-gradient(100deg, oklch(from var(--wa-color-brand-60) 0.46 0.1 h), oklch(from var(--wa-color-brand-60) 0.34 0.07 h / 0.7))',
     })
     // The lit row's values (rule 3): its gradient, its ring as a 1px inset shadow, its shadow.
     const lit = rule(rules, ['.sidebar-row--active::part(base)', '.sidebar-row-wrapper--selected .sidebar-row--active::part(base)'])
