@@ -113,56 +113,54 @@ def _check_hidden_invariants(session) -> list[SessionVisibilityError]:
 # ---------------------------------------------------------------------------
 
 
-async def _apply_flip(session, *, new_hidden: bool) -> None:
-    """Save the flag, recompute counters, reindex FTS — all in async hops."""
-    from twicc.search import reindex_session
+def _apply_visibility_flag(session_id: str, new_hidden: bool):
+    """Commit eligibility and all affected activity buckets together."""
+    from django.db import transaction
+    from twicc.core.models import Session
+    from twicc.providers.live_aggregates import apply_contribution_changes, session_contribution
 
-    @sync_to_async
-    def _save_flag():
-        # Step 1: Toggle the flag and persist. Must succeed; if it raises we abort.
+    with transaction.atomic():
+        session = Session.objects.get(id=session_id)
+        before = session_contribution(session)
         session.hidden = new_hidden
-        session.save(update_fields=["hidden"])
+        session.save(update_fields=['hidden'])
+        apply_contribution_changes([], [], before_sessions=[before],
+            after_sessions=[session_contribution(session)], repair=True)
+        session.refresh_from_db()
+    return session
+
+
+async def _apply_flip(session, *, new_hidden: bool) -> None:
+    """Commit visibility and counters, then refresh search and broadcasts."""
+    from twicc.search import reindex_session
+    from twicc.providers.compute_executor import run_compute_sync
+    from twicc.providers.db_writer import run_under_db_write_lock
 
     @sync_to_async
     def _recompute():
-        # Steps 2-4: best-effort. A failure here leaves the flag set but counters/FTS
-        # slightly stale; the next refresh / restart will heal.
+        # Project metadata and search remain best-effort after the commit.
         try:
             # 2. Recompute sessions_count on the Project.
             #    update_project_metadata takes project_id (str), not a Project instance.
             from twicc.projects import update_project_metadata
             update_project_metadata(session.project_id)
 
-            # 3. Collect dates impacted by the session's items, then recompute
-            #    PeriodicActivity for each (DailyActivity + WeeklyActivity,
-            #    per-project + global).
-            from twicc.core.models import SessionItem, PeriodicActivity
-            from twicc.core.enums import Provider
-
-            days = {
-                d for d, in SessionItem.objects
-                .filter(session=session, timestamp__isnull=False)
-                .values_list("timestamp__date")
-                .distinct()
-            }
-            if days:
-                provider_enum = Provider(session.provider)
-                PeriodicActivity.recalculate_for_days(
-                    session.project_id, days, provider_enum,
-                )
-
-            # 4. Reindex the session document — the `hidden` Tantivy field
-            #    is now stale.
+            # Activity aggregates already committed with the hidden flag.
             reindex_session(session.id)
         except Exception:
             logger.exception(
                 "session_visibility flip side-effects failed for session %s "
-                "(hidden=%s). The DB flag is set; counters/FTS may be stale "
+                "(hidden=%s). Project metadata/search may be stale "
                 "until next refresh.",
                 session.id, new_hidden,
             )
 
-    await _save_flag()
+    saved = await run_under_db_write_lock(lambda: run_compute_sync(_apply_visibility_flag, session.id, new_hidden))
+    session.hidden = saved.hidden
+    session.user_message_count = saved.user_message_count
+    session.self_cost = saved.self_cost
+    session.subagents_cost = saved.subagents_cost
+    session.total_cost = saved.total_cost
 
     # Silence (or restore) the live agent's own broadcasts the instant the flag
     # is durable — before the recompute below, which reindexes the whole session

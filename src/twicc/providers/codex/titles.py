@@ -57,7 +57,7 @@ def _apply_sync_session_titles_job(job: SyncSessionTitlesJob) -> list[dict]:
     """Apply the title map; return the serialized sessions whose title changed.
 
     Sync — runs inside ``transaction.atomic`` on a worker thread via
-    ``sync_to_async`` inside :func:`db_writer._settle_async_job`. Reads
+    ``run_compute_sync`` inside :func:`db_writer._settle_async_job`. Reads
     the Codex sessions named in the map, updates the rows whose title
     actually differs in a single ``bulk_update``, and returns them
     serialised so the helper can broadcast ``session_updated`` for each.

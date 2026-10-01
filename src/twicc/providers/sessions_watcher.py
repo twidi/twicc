@@ -23,13 +23,14 @@ import asyncio
 import logging
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 from watchfiles import Change, awatch
 
 from twicc import search
+from twicc.core.agent_runs import late_tree_rule_payloads
 from twicc.core.enums import ItemKind
 from twicc.core.models import Project, Session, SessionItem, SessionType
 from twicc.core.session_queries import SpawnRef, spawn_display_names
@@ -48,15 +49,89 @@ from twicc.projects import (
     register_project,
     update_project_metadata as _update_project_metadata_sync,
 )
+from twicc.providers.compute_executor import run_compute_sync
+from twicc.providers.live_sync import LiveSyncLimits
+from twicc.providers.session_change_queue import MigrationRelease, PathDrainTarget, SessionChangeQueue
 from twicc.providers.db_writer import run_under_db_write_lock
+from twicc.sync_diagnostics import log_slow, sync_timing_context
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
 from twicc.providers.subagent_roots import resolve_flat_parent_id
 from twicc.workspaces import auto_add_project_to_workspaces
 
 if TYPE_CHECKING:
-    from twicc.providers.compute_base import BaseSessionCompute, ToolResultUpdate
+    from twicc.providers.compute_base import AgentStoppedUpdate, BaseSessionCompute, ToolResultUpdate
 
 logger = logging.getLogger(__name__)
+
+
+def _sync_live_session_items(compute: BaseSessionCompute, session_id: str, path: Path, limits: LiveSyncLimits):
+    """Load the ORM row and apply one live batch on the compute worker."""
+    return compute.sync_session_slice(session_id, path, limits=limits)
+
+
+class SessionChangeResult(NamedTuple):
+    """Queue disposition is independent of whether search needs an update."""
+    disposition: Literal['drained', 'ready', 'deferred', 'failed']
+    source_generation: object | None = None
+    end_offset: int = 0
+    indexing: IndexingRequest | None = None
+
+
+class _SourceSnapshot(NamedTuple):
+    identity: tuple[int, int]
+    size: int
+    prefix: bytes
+    suffix: bytes
+    end_offset: int
+
+
+class _SourceObservation(NamedTuple):
+    snapshot: _SourceSnapshot
+    replaced: bool
+
+
+class _PendingSourceRelease(NamedTuple):
+    release: MigrationRelease
+    event_token: int
+
+
+def _read_source_snapshot(path: Path, previous: _SourceSnapshot | None) -> _SourceObservation:
+    """Capture a watermark and compare bounded evidence from the same file handle.
+
+    Metadata-only changes do not establish replacement. Compare the previous
+    suffix at its original offset, so appends preserve the source generation.
+    This samples append-only history; it cannot detect arbitrary interior edits.
+    """
+    import os
+    with path.open('rb') as source:
+        stat = os.fstat(source.fileno())
+        size = stat.st_size
+        prefix = source.read(min(size, 4096))
+        source.seek(max(0, size - 4096))
+        suffix = source.read(min(size, 4096))
+        identity = (stat.st_dev, stat.st_ino)
+        replaced = previous is not None and (
+            previous.identity != identity or size < previous.size
+            or not prefix.startswith(previous.prefix)
+        )
+        if previous is not None and not replaced:
+            if size == previous.size:
+                previous_suffix = suffix
+            else:
+                source.seek(previous.size - len(previous.suffix))
+                previous_suffix = source.read(len(previous.suffix))
+            replaced = previous_suffix != previous.suffix
+        end = size
+        while end:
+            start = max(0, end - 65536)
+            source.seek(start)
+            block = source.read(end - start)
+            newline = block.rfind(b'\n')
+            if newline >= 0:
+                end = start + newline + 1
+                break
+            end = start
+        return _SourceObservation(_SourceSnapshot(identity, size, prefix, suffix, end), replaced)
 
 
 # Polling intervals (seconds) for the "waiting for projects dir" phase.
@@ -234,6 +309,43 @@ async def broadcast_message(channel_layer, message: dict) -> None:
     )
 
 
+async def broadcast_agent_run_outcome(
+    channel_layer,
+    *,
+    root_session_id: str,
+    project_id: str,
+    run_state_payloads: list[dict],
+    stopped_updates: list[AgentStoppedUpdate],
+) -> None:
+    """Broadcast the output of one stop step (design §6.3).
+
+    ``agent_run_state`` for each payload, always; then, for each stopped
+    agent whose ``last_stopped_at`` was stamped, the child's
+    ``session_updated`` (unless hidden) and ``agent_stopped``. An unstamped
+    update (guard refusal, null stop time) changed nothing to broadcast.
+    The caller fires the stop hook itself when it needs it (the watcher
+    does, the Stop-button handler does not). Sends through this module's
+    ``broadcast_message``, looked up at call time.
+    """
+    for payload in run_state_payloads:
+        await broadcast_message(channel_layer, {**payload, "type": "agent_run_state", "project_id": project_id})
+    for stopped in stopped_updates:
+        if not stopped.stamped:
+            continue
+        stopped_session = await get_session_by_id(stopped.agent_session_id)
+        if stopped_session and not stopped_session.hidden:
+            await broadcast_message(channel_layer, {
+                "type": "session_updated",
+                "session": serialize_session(stopped_session),
+            })
+        await broadcast_message(channel_layer, {
+            "type": "agent_stopped",
+            "agent_session_id": stopped.agent_session_id,
+            "stopped_at": stopped.stopped_at.isoformat(),
+            "root_session_id": root_session_id,
+        })
+
+
 class BaseSessionsWatcher:
     """Provider-agnostic file watcher for JSONL session files.
 
@@ -261,6 +373,16 @@ class BaseSessionsWatcher:
         # (:meth:`process_path`): one file event is processed at a time.
         self._change_lock = asyncio.Lock()
         self._channel_layer = None
+        self._queue = SessionChangeQueue()
+        self._consumer_task: asyncio.Task | None = None
+        self._wake_tasks: set[asyncio.Task] = set()
+        self._source_lock = asyncio.Lock()
+        self._sources: dict[Path, _SourceSnapshot] = {}
+        self._replaced_paths: set[Path] = set()
+        self._parsed_paths: dict[Path, ParsedSessionFile] = {}
+        self._deleted_parsed_paths: dict[Path, ParsedSessionFile] = {}
+        self._pending_source_releases: dict[Path, dict[str, _PendingSourceRelease]] = {}
+        self._line_limits: dict[Path, int] = {}
 
     # ------------------------------------------------------------------
     # Provider extension surface — overridden by each subclass
@@ -286,7 +408,7 @@ class BaseSessionsWatcher:
         Used for:
 
         - new-line ingestion via
-          :meth:`~twicc.providers.compute_base.BaseSessionCompute.sync_session_items_from_file`,
+          :meth:`~twicc.providers.compute_base.BaseSessionCompute.sync_session_slice`,
         - reading provider metadata (:attr:`provider`,
           :attr:`compute_version`) when creating fresh ``Session`` rows
           and when looking up the matching helpers for search indexing.
@@ -339,17 +461,35 @@ class BaseSessionsWatcher:
     async def _after_agents_stopped(
         self, session_id: str, stopped_agent_ids: list[str],
     ) -> None:
-        """Hook fired when subagents of ``session_id`` naturally finished.
+        """Hook fired when a live batch stopped subagents of the tree rooted at ``session_id``.
 
-        ``stopped_agent_ids`` are the subagent session ids whose
-        ``last_stopped_at`` was just stamped by
-        ``check_agent_naturally_stopped`` while syncing the parent's file.
-        Default implementation is a no-op. Codex overrides this to release
-        a live parent parked in the subagent hold — a spawned subagent's
-        completion never reaches the parent's SDK stream, so this watcher
-        signal is the only release channel. Live incremental-sync path
-        only; implementations must never block the ingest path on agent
-        locks (fire-and-forget a task instead).
+        ``session_id`` is the tree root's id, whatever file was synced (only
+        the root has a live process; a rule-5 stop comes from the child's own
+        file). ``stopped_agent_ids`` are the agents for which the batch's
+        stop step (``run_stop_step``) closed a run and that no longer run —
+        whether or not their ``last_stopped_at`` was stamped. Default
+        implementation is a no-op. Codex overrides this to drop the children
+        from a live root's set of running subagents and release its subagent
+        hold. Live incremental-sync path only; implementations must never
+        block the ingest path on agent locks (fire-and-forget a task
+        instead).
+        """
+        return
+
+    async def _after_agents_resumed(
+        self, session_id: str, agents: list[tuple[str, str]],
+    ) -> None:
+        """Hook fired when a live batch resumed subagents of the tree rooted at ``session_id``.
+
+        ``session_id`` is the tree root's id, whatever file was synced (only
+        the root has a live process). ``agents`` are the ``(agent_id,
+        agent_path)`` pairs of the interactions the batch created with
+        ``opens_run`` (a Codex ``followup_task`` on an idle agent). Fired in
+        the broadcast block before :meth:`_after_agents_stopped`. Default
+        implementation is a no-op. Codex overrides this so a live root puts
+        a resumed child back in its set of running subagents. Live
+        incremental-sync path only; implementations must never block the
+        ingest path on agent locks (fire-and-forget a task instead).
         """
         return
 
@@ -367,6 +507,21 @@ class BaseSessionsWatcher:
         the just-computed items. Live incremental-sync path only, like
         :meth:`_after_compaction_synced`. Implementations must never block
         the ingest path on agent locks (fire-and-forget a task instead).
+        """
+        return
+
+    async def _after_any_new_lines_synced(
+        self,
+        session: Session,
+        new_line_nums: list[int],
+    ) -> None:
+        """Hook fired once per live batch of fresh lines, subagent files included.
+
+        Unlike :meth:`_after_new_lines_synced` (top-level files only), this
+        one also sees subagent transcripts — for signals whose owner is a live
+        agent whatever file carries them (Codex: a subagent's background
+        shell exiting, written to the subagent's own rollout). Default:
+        no-op. Same rules: live path only, never block the ingest path.
         """
         return
 
@@ -424,6 +579,9 @@ class BaseSessionsWatcher:
         """Signal this watcher instance to stop."""
         if self._stop_event is not None:
             self._stop_event.set()
+        self._queue.close(cancel_pending=self._consumer_task is None)
+        for task in self._wake_tasks:
+            task.cancel()
         # Wake the polling loop if it's currently sleeping.
         if self._boost_event is not None:
             self._boost_event.set()
@@ -558,18 +716,16 @@ class BaseSessionsWatcher:
         parsed: ParsedSessionFile,
         change_type: Change,
         channel_layer,
-    ) -> IndexingRequest | None:
+    ) -> SessionChangeResult:
         """
         Handle a session or subagent file change.
 
         Synchronizes with the database and broadcasts updates via WebSocket.
         Empty files (0 lines) are ignored and not created in the database.
 
-        Returns an :class:`IndexingRequest` when the caller should run a
-        Tantivy indexing pass for this event AFTER releasing the DB write
-        lock — Tantivy I/O is unrelated to the SQLite DB the lock protects.
-        Returns ``None`` when no indexing is needed (subagent, no new items,
-        or no user messages yet).
+        Returns the committed disposition and checkpoint independently of
+        the optional IndexingRequest. Tantivy runs after the DB write lock
+        is released, including when this slice leaves ready backlog.
 
         Callers MUST resolve ``parsed.title`` for brand-new sessions
         (out-of-band title fetches like Codex's state DB read) BEFORE
@@ -587,7 +743,7 @@ class BaseSessionsWatcher:
             root_id = await sync_to_async(resolve_flat_parent_id)(parsed.parent_session_id)
             if root_id is None:
                 logger.debug("Skipping subagent %s: unresolved root ancestry", parsed.session_id)
-                return
+                return SessionChangeResult('failed')
             parsed.parent_session_id = root_id
             parent_session = await get_session_by_id(parsed.parent_session_id)
             if parent_session is None:
@@ -596,7 +752,7 @@ class BaseSessionsWatcher:
                     f"Skipping subagent {parsed.session_id}: "
                     f"parent session {parsed.parent_session_id} not found"
                 )
-                return
+                return SessionChangeResult('failed')
 
         if change_type == Change.deleted:
             # File deleted - mark as stale
@@ -618,7 +774,7 @@ class BaseSessionsWatcher:
                         "type": "project_updated",
                         "project": serialize_project(project),
                     })
-            return
+            return SessionChangeResult('drained')
 
         # Check if session already exists in DB
         session = await get_session_by_id(parsed.session_id)
@@ -629,11 +785,11 @@ class BaseSessionsWatcher:
         if session is None:
             has_content = await check_file_has_content_async(path)
             if not has_content:
-                return
+                return SessionChangeResult('failed')
 
         # Ensure project exists. ``register_project`` broadcasts
         # ``project_added`` on creation. Auto-add is deferred until after
-        # ``sync_session_items_from_file`` has resolved the directory from
+        # ``sync_session_slice`` has resolved the directory from
         # the JSONL body — see the explicit call at the end of this method.
         project, project_created = await register_project(parsed.project_id)
 
@@ -666,9 +822,31 @@ class BaseSessionsWatcher:
             )
 
         old_title = session.title
-        new_line_nums, modified_line_nums, agent_link_updates, workflow_link_updates, tool_result_updates, agent_stopped_updates, found_compact_summary = await sync_to_async(
-            compute.sync_session_items_from_file
-        )(session, path)
+        bounded = session.compute_version == compute.compute_version
+        limit = self._line_limits.get(path, 500) if bounded else 500
+        with sync_timing_context(compute.provider, session.id):
+            result = await run_compute_sync(_sync_live_session_items, compute, session.id, path, LiveSyncLimits(limit))
+            log_slow('slice', result.elapsed_ms, lines=result.lines_processed,
+                     bytes=result.bytes_consumed, backlog=result.has_more)
+        updates = result.updates
+        if bounded and result.has_more:
+            if result.elapsed_ms > 100:
+                self._line_limits[path] = max(1, limit // 2)
+            elif result.elapsed_ms < 50:
+                self._line_limits[path] = min(500, limit * 2)
+        else:
+            self._line_limits.pop(path, None)
+        new_line_nums = updates.new_line_nums
+        modified_line_nums = updates.modified_line_nums
+        agent_link_updates = updates.agent_link_updates
+        workflow_link_updates = updates.workflow_link_updates
+        tool_result_updates = updates.tool_result_updates
+        agent_stopped_updates = updates.agent_stopped_updates
+        found_compact_summary = updates.found_compact_summary
+        agent_interaction_updates = updates.agent_interaction_updates
+        agent_run_state_updates = updates.agent_run_state_updates
+        agents_resumed = updates.agents_resumed
+        session = await refresh_session(session)
         title_changed = session.title != old_title
 
         # Live-only signal: a freshly-ingested COMPACT_SUMMARY line means a
@@ -710,6 +888,9 @@ class BaseSessionsWatcher:
                 await self._after_new_lines_synced(
                     session, list(new_line_nums), list(tool_result_updates),
                 )
+            # Signals that may come from any transcript, a subagent's
+            # included (Codex background shells).
+            await self._after_any_new_lines_synced(session, list(new_line_nums))
 
             # Refresh session to get computed values
             session = await refresh_session(session)
@@ -780,6 +961,16 @@ class BaseSessionsWatcher:
                     "project": serialize_project(project),
                 })
 
+                # Late tree rule (design §7.3): each ``agent_link_created`` is
+                # followed by the interactions targeting or owned by its agent,
+                # which failed the tree rule (or the share relay's descendant
+                # filter) until now. Keys of this batch's own updates, sent
+                # right after, and keys already re-sent are skipped.
+                root_session_id = session.parent_session_id or session.id
+                sent_interactions = {
+                    (payload["owner_session_id"], payload["tool_use_id"]) for payload in agent_interaction_updates
+                }
+
                 # Broadcast agent link state changes (subagent linked).
                 # ``agent_slug`` carries the spawned subagent's nickname
                 # (Codex's ``agent_nickname`` persisted as
@@ -811,7 +1002,7 @@ class BaseSessionsWatcher:
                         await broadcast_message(channel_layer, {
                             "type": "agent_link_created",
                             "parent_session_id": update.parent_session_id,
-                            "root_session_id": session.parent_session_id or session.id,
+                            "root_session_id": root_session_id,
                             "agent_session_id": update.agent_id,
                             "agent_slug": slugs_by_id.get(update.agent_id),
                             "display_name": display_names.get(
@@ -823,6 +1014,23 @@ class BaseSessionsWatcher:
                             "started_at": update.started_at.isoformat() if update.started_at else None,
                             "project_id": parsed.project_id,
                         })
+                        late_payloads = await sync_to_async(late_tree_rule_payloads)(
+                            root_session_id, update.agent_id,
+                        )
+                        for payload in late_payloads:
+                            key = (payload["owner_session_id"], payload["tool_use_id"])
+                            if key in sent_interactions:
+                                continue
+                            sent_interactions.add(key)
+                            await broadcast_message(channel_layer, {
+                                **payload, "type": "agent_interaction", "project_id": parsed.project_id,
+                            })
+
+                # Interactions this batch created or whose ``opens_run`` changed.
+                for payload in agent_interaction_updates:
+                    await broadcast_message(channel_layer, {
+                        **payload, "type": "agent_interaction", "project_id": parsed.project_id,
+                    })
 
                 # Broadcast workflow tool-link state changes (a Workflow tool_use
                 # paired with its run via toolUseResult.runId). Powers the in-chat
@@ -850,23 +1058,24 @@ class BaseSessionsWatcher:
                     })
                     await self._after_tool_result_broadcast(update)
 
-                # Broadcast session_updated for subagents that naturally finished
-                for stopped in agent_stopped_updates:
-                    stopped_session = await get_session_by_id(stopped.agent_session_id)
-                    if stopped_session and not stopped_session.hidden:
-                        await broadcast_message(channel_layer, {
-                            "type": "session_updated",
-                            "session": serialize_session(stopped_session),
-                        })
-                    await broadcast_message(channel_layer, {
-                        "type": "agent_stopped",
-                        "agent_session_id": stopped.agent_session_id,
-                        "stopped_at": stopped.stopped_at.isoformat(),
-                        "root_session_id": session.parent_session_id or session.id,
-                    })
+                # The stop step's outcome: run states, then the stamped stops.
+                # The hooks get the tree root id (only the root has a live
+                # process): the resume hook the agents a run-opening
+                # interaction resumed, then the stop hook every agent the
+                # batch stopped, stamped or not (resume before stop, so a
+                # resume and its end in one batch settle on the end).
+                await broadcast_agent_run_outcome(
+                    channel_layer,
+                    root_session_id=root_session_id,
+                    project_id=parsed.project_id,
+                    run_state_payloads=agent_run_state_updates,
+                    stopped_updates=agent_stopped_updates,
+                )
+                if agents_resumed:
+                    await self._after_agents_resumed(root_session_id, list(agents_resumed))
                 if agent_stopped_updates:
                     await self._after_agents_stopped(
-                        session.id,
+                        root_session_id,
                         [u.agent_session_id for u in agent_stopped_updates],
                     )
 
@@ -905,7 +1114,7 @@ class BaseSessionsWatcher:
         # Auto-add the project to workspaces whose patterns match its
         # directory. Deferred to here (rather than into ``register_project``
         # above) because the directory is only resolved by
-        # ``sync_session_items_from_file`` — at creation time the watcher
+        # ``sync_session_slice`` — at creation time the watcher
         # only knows ``project_id``, not the cwd. Gated on the directory
         # having been unknown BEFORE this sync (not on ``project_created``):
         # the event that creates the project often syncs only cwd-less header
@@ -920,7 +1129,10 @@ class BaseSessionsWatcher:
                 await auto_add_project_to_workspaces(project.id, project.directory)
                 await ensure_worktree_link(project.id, project.directory)
 
-        return indexing_request
+        return SessionChangeResult(
+            'ready' if result.has_more else 'drained',
+            self._queue.source_generation(path), session.last_offset, indexing_request,
+        )
 
     async def _process_parsed_session_change(
         self,
@@ -928,8 +1140,23 @@ class BaseSessionsWatcher:
         parsed: ParsedSessionFile,
         change_type: Change,
         channel_layer,
-    ) -> None:
+    ) -> SessionChangeResult:
         """Run one complete callback after a provider identifies its session."""
+
+        session = None
+        if change_type != Change.deleted:
+            session = await get_session_by_id(parsed.session_id)
+            if session is not None and session.last_offset:
+                size = (await asyncio.to_thread(path.stat)).st_size
+                if path in self._replaced_paths or size < session.last_offset:
+                    if path not in self._replaced_paths:
+                        # Initial sync can precede the watcher's first snapshot.
+                        # Its committed checkpoint still detects truncation.
+                        self._replaced_paths.add(path)
+                        self._queue.observe_source(path, object())
+                    logger.error('Session source replaced without a provider rebuild handler: %s', path)
+                    return SessionChangeResult('failed')
+            self._replaced_paths.discard(path)
 
         # Out-of-band initial-title fetch runs outside the DB write lock but
         # inside the provider's complete callback context.
@@ -942,23 +1169,26 @@ class BaseSessionsWatcher:
         ):
             parsed.title = await self._fetch_initial_title(parsed)
 
-        indexing = await run_under_db_write_lock(
-            lambda: self.sync_and_broadcast(path, parsed, change_type, channel_layer)
-        )
+        with sync_timing_context(getattr(session, "provider", None), parsed.session_id):
+            result = await run_under_db_write_lock(
+                lambda: self.sync_and_broadcast(path, parsed, change_type, channel_layer)
+            )
+
+        indexing = result.indexing
 
         # Tantivy work stays outside the DB write lock. The provider callback
         # context remains active so migration cannot replace history midway.
         if indexing is None:
-            return
+            return result
 
         indexed_session = await get_session_by_id(indexing.session_id)
         if indexed_session is None:
-            return
+            return result
         if not session_compute_ready(indexed_session):
             if search.is_initialized():
                 await asyncio.to_thread(search.delete_session_documents, indexing.session_id)
                 await asyncio.to_thread(search.commit)
-            return
+            return result
 
         try:
             if indexing.title_changed:
@@ -985,6 +1215,8 @@ class BaseSessionsWatcher:
                 "Error marking session %s as search-indexed",
                 indexing.session_id,
             )
+
+        return result
 
     # ------------------------------------------------------------------
     # Polling phase + entry point
@@ -1027,6 +1259,28 @@ class BaseSessionsWatcher:
                 return False
         return True
 
+    def prepare_start(self) -> None:
+        """Open the next lifecycle before its coordinator can publish releases.
+
+        The previous lifecycle must have drained. Preparation admits pending
+        notifications without starting a consumer before search is ready.
+        Calling this again at watcher startup preserves those notifications.
+        """
+        if not self._queue.closed:
+            return
+        if (not self._queue.idle or self._channel_layer is not None
+                or (self._consumer_task is not None and not self._consumer_task.done())
+                or any(not task.done() for task in self._wake_tasks)):
+            raise RuntimeError('Cannot prepare watcher before shutdown drains')
+        self._queue = SessionChangeQueue()
+        self._consumer_task = None
+        self._sources.clear()
+        self._replaced_paths.clear()
+        self._parsed_paths.clear()
+        self._deleted_parsed_paths.clear()
+        self._pending_source_releases.clear()
+        self._line_limits.clear()
+
     async def start_watcher(self) -> None:
         """
         Start the file watcher for this provider's :attr:`projects_dir`.
@@ -1048,54 +1302,167 @@ class BaseSessionsWatcher:
         # it cannot leak into sibling tasks.
         current_provider.set(self.get_compute().provider.value)
 
-        channel_layer = get_channel_layer()
-        self._channel_layer = channel_layer
-        projects_dir = self.projects_dir
-        stop_event = self.get_stop_event()
-        # Reset the stop event so a hot-restart (provider toggled off then
-        # back on) doesn't see the leftover ``set()`` from the previous
-        # ``stop_watcher()`` call and exit on the first ``is_set()`` check.
-        stop_event.clear()
+        self.prepare_start()
+        try:
+            channel_layer = get_channel_layer()
+            self._channel_layer = channel_layer
+            projects_dir = self.projects_dir
+            stop_event = self.get_stop_event()
+            # Reset the stop event so a hot-restart (provider toggled off then
+            # back on) doesn't see the leftover ``set()`` from the previous
+            # ``stop_watcher()`` call and exit on the first ``is_set()`` check.
+            stop_event.clear()
 
-        catch_up = False
-        if not projects_dir.exists():
-            logger.info(
-                "Projects directory does not exist yet: %s — waiting for it to appear",
-                projects_dir,
-            )
-            appeared = await self._wait_for_projects_dir()
-            if not appeared:
-                logger.info("Watcher stopped while waiting for projects directory")
-                return
-            logger.info("Projects directory appeared: %s", projects_dir)
-            catch_up = True
+            catch_up = False
+            if not projects_dir.exists():
+                logger.info(
+                    "Projects directory does not exist yet: %s — waiting for it to appear",
+                    projects_dir,
+                )
+                appeared = await self._wait_for_projects_dir()
+                if not appeared:
+                    logger.info("Watcher stopped while waiting for projects directory")
+                    return
+                logger.info("Projects directory appeared: %s", projects_dir)
+                catch_up = True
 
-        # Load project caches at startup
-        await sync_to_async(load_project_directories)()
-        await sync_to_async(load_project_git_roots)()
+            # Load project caches at startup
+            await sync_to_async(load_project_directories)()
+            await sync_to_async(load_project_git_roots)()
 
-        logger.info(f"Starting file watcher on: {projects_dir}")
+            logger.info(f"Starting file watcher on: {projects_dir}")
 
-        if catch_up:
-            await self._catch_up_existing_files(channel_layer)
+            if not self._queue.idle:
+                self._ensure_consumer()
+            if catch_up:
+                await self._catch_up_existing_files(channel_layer)
+            async for changes in awatch(projects_dir, stop_event=stop_event):
+                # Deletions invalidate the previous source before recreation.
+                for change_type, path_str in sorted(changes, key=lambda change: change[0] != Change.deleted):
+                    self._enqueue(Path(path_str), change_type)
+        finally:
+            self.stop_watcher()
+            try:
+                await self._drain_changes()
+            finally:
+                self._channel_layer = None
 
-        async for changes in awatch(projects_dir, stop_event=stop_event):
-            for change_type, path_str in changes:
-                async with self._change_lock:
-                    await self._process_change(change_type, path_str, channel_layer)
+    async def _drain_changes(self) -> None:
+        """Shield admitted callbacks from repeated producer cancellation."""
+        for task in self._wake_tasks:
+            task.cancel()
+        tasks = list(self._wake_tasks)
+        if self._consumer_task is not None:
+            tasks.append(self._consumer_task)
+        if not tasks:
+            self._pending_source_releases.clear()
+            return
+        drain = asyncio.gather(*tasks, return_exceptions=True)
+        cancelled = False
+        while not drain.done():
+            try:
+                await asyncio.shield(drain)
+            except asyncio.CancelledError:
+                cancelled = True
+        drain.result()
+        self._pending_source_releases.clear()
+        if cancelled:
+            raise asyncio.CancelledError
+
+    def _ensure_consumer(self) -> None:
+        if self._consumer_task is None or self._consumer_task.done():
+            self._consumer_task = asyncio.create_task(self._consume_changes(), name='session-change-consumer')
+
+    def _enqueue(self, path: Path, change: Change) -> None:
+        self._queue.enqueue(path, change)
+        if change == Change.deleted:
+            self._invalidate_parsed_path(path)
+            if path in self._sources:
+                self._replaced_paths.add(path)
+            self._sources.pop(path, None)
+            self._line_limits.pop(path, None)
+        self._ensure_consumer()
+
+    def _invalidate_parsed_path(self, path: Path) -> None:
+        parsed = self._parsed_paths.pop(path, None)
+        if parsed is not None:
+            # A deleted turn still needs the old identity to mark it stale.
+            # This metadata must never drive a recreated source's exclusion.
+            self._deleted_parsed_paths[path] = parsed
+
+    async def _observe_source(self, path: Path) -> PathDrainTarget:
+        async with self._source_lock:
+            previous = self._sources.get(path)
+            snapshot, replaced = await asyncio.to_thread(_read_source_snapshot, path, previous)
+            if previous is None or replaced:
+                if previous is not None:
+                    self._replaced_paths.add(path)
+                self._invalidate_parsed_path(path)
+                self._queue.observe_source(path, object())
+                self._line_limits.pop(path, None)
+            self._sources[path] = snapshot
+            return PathDrainTarget(self._queue.source_generation(path), snapshot.end_offset)
+
+    async def _consume_changes(self) -> None:
+        while not self._queue.idle:
+            turn = await self._queue.next_change()
+            async with self._change_lock:
+                result = await self._process_change(
+                    turn.change, str(turn.path), self._channel_layer or get_channel_layer(),
+                )
+            if result.source_generation is not None:
+                self._queue.committed(turn.path, PathDrainTarget(result.source_generation, result.end_offset))
+            self._queue.finish(turn, has_more=result.disposition == 'ready',
+                               deferred=result.disposition == 'deferred', failed=result.disposition == 'failed')
+            if result.disposition != 'ready':
+                self._line_limits.pop(turn.path, None)
+            # Also yield when a no-op callback performed no asynchronous work.
+            await asyncio.sleep(0)
+
+    def notify_migration_released(self, release: MigrationRelease, *, event_token: int | None = None) -> None:
+        if release.path is None or release.release_token <= self._queue.release_token(release.path):
+            return
+        parsed = self._parsed_paths.get(release.path)
+        if parsed is not None and parsed.session_id != release.session_id:
+            # A recreated path can belong to a different session entirely.
+            return
+        if (parsed is None and self._queue.has_pending_change(release.path)
+                and self._queue.current_change(release.path) != Change.deleted):
+            # First observation and recreation can both await identification.
+            # Keep the admitted event until parsing can attribute its outcome.
+            # Closing admission still drains that identification and must apply
+            # its terminal outcome before any checkpoint can settle waiters.
+            pending = self._pending_source_releases.setdefault(release.path, {})
+            previous = pending.get(release.session_id)
+            if previous is None or release.release_token > previous.release.release_token:
+                pending[release.session_id] = _PendingSourceRelease(
+                    release, self._queue.event_token(release.path) if event_token is None else event_token,
+                )
+                self._queue.resume_pending_change(release.path)
+                if self._channel_layer is not None or self._consumer_task is not None:
+                    self._ensure_consumer()
+            return
+        if not self._queue.notify_migration_released(release, event_token=event_token):
+            return
+        if release.outcome == 'ready' and release.replay and release.path is not None:
+            # Replacement owns a fresh byte coordinate system. A replay captures
+            # its own target instead of comparing the old target to this source.
+            self._sources.pop(release.path, None)
+            self._replaced_paths.discard(release.path)
+            self._queue.observe_source(release.path, object())
+        if not self._queue.idle and (self._channel_layer is not None or self._consumer_task is not None):
+            self._ensure_consumer()
 
     async def process_path(self, path: Path) -> None:
-        """Replay one session file as if a ``modified`` event had arrived.
-
-        Used by a provider after it rebuilt a session it had asked the
-        watcher to defer (see :meth:`defer_session_change`): the incremental
-        read starts at the stored ``last_offset``, so an unchanged file is a
-        cheap no-op. Serialised with the live loop through the same lock.
-        """
-
-        channel_layer = self._channel_layer or get_channel_layer()
-        async with self._change_lock:
-            await self._process_change(Change.modified, str(path), channel_layer)
+        """Wait for the complete records present at admission, independently of later appends."""
+        try:
+            target = await self._observe_source(path)
+        except OSError:
+            logger.exception('Error capturing watcher drain target for %s', path)
+            self._queue.observe_source(path, object())
+            return
+        self._enqueue(path, Change.modified)
+        await self._queue.wait_drained(path, target=target)
 
     async def _catch_up_existing_files(self, channel_layer) -> None:
         """Process every session file already present under :attr:`projects_dir`.
@@ -1117,9 +1484,9 @@ class BaseSessionsWatcher:
             return
         logger.info("Catching up %d existing session file(s) under %s", len(existing), projects_dir)
         for path in existing:
-            await self._process_change(Change.added, str(path), channel_layer)
+            self._enqueue(path, Change.added)
 
-    async def _process_change(self, change_type: Change, path_str: str, channel_layer) -> None:
+    async def _process_change(self, change_type: Change, path_str: str, channel_layer) -> SessionChangeResult:
         """Handle one filesystem change (the body of the watch loop; errors are logged, never raised)."""
         try:
             path = Path(path_str)
@@ -1136,28 +1503,52 @@ class BaseSessionsWatcher:
                     self.maybe_handle_special_change(p, ct, cl)
             )
             if handled:
-                return
+                return SessionChangeResult('failed')
 
             # Skip non-jsonl files
             if not path_str.endswith(".jsonl"):
-                return
+                return SessionChangeResult('failed')
 
             # Parse path to determine type (session or subagent).
             # Read-only (FS only, no DB) — runs outside the lock.
-            parsed = await self.parse_session_file(path)
+            if change_type != Change.deleted:
+                await self._observe_source(path)
+                cached = self._parsed_paths.get(path)
+                if cached is not None and await self.defer_session_change(cached):
+                    return SessionChangeResult('deferred')
+                parsed = await self.parse_session_file(path)
+            else:
+                parsed = (self._deleted_parsed_paths.get(path) or self._parsed_paths.pop(path, None)
+                          or await self.parse_session_file(path))
             if parsed is None:
                 # Invalid path — silently skip
-                return
+                return SessionChangeResult('failed')
 
+            if change_type != Change.deleted:
+                self._parsed_paths[path] = parsed
+                self._deleted_parsed_paths.pop(path, None)
+                pending = self._pending_source_releases.pop(path, {})
+                selected = pending.get(parsed.session_id)
+                if selected is not None:
+                    self.notify_migration_released(selected.release, event_token=selected.event_token)
+                    if selected.release.outcome != 'ready':
+                        return SessionChangeResult('deferred')
             if await self.defer_session_change(parsed):
                 logger.debug(
                     "Watcher: deferring %s on %s (session %s is being rebuilt)",
                     change_type, path_str, parsed.session_id,
                 )
-                return
+                return SessionChangeResult('deferred')
 
-            await self._process_parsed_session_change(
+            generation = self._queue.source_generation(path)
+            result = await self._process_parsed_session_change(
                 path, parsed, change_type, channel_layer,
             )
+            if change_type == Change.deleted and result.disposition != 'deferred':
+                self._deleted_parsed_paths.pop(path, None)
+            if result.source_generation is not None:
+                result = result._replace(source_generation=generation)
+            return result
         except Exception:
             logger.exception("Error processing watcher change %s on %s", change_type, path_str)
+            return SessionChangeResult('failed')

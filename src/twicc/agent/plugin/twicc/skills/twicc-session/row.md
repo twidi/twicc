@@ -39,12 +39,13 @@ $TWICC session <SESSION_ID|self|parent> [--slim|--full]
   "artifacts_dir": "/home/twidi/.twicc/artifacts/abc123-def456",
   "scratch_dir": "/home/twidi/.twicc/scratch/abc123-def456",
   "orchestration_scratch_dir": null,
-  "process": {"id": 5847, "state": "assistant_turn", "started_at": "2026-09-20T10:43:57.327194+00:00",
+  "process": {"id": 5847, "state": "assistant_turn", "background_work_in_progress": null,
+              "started_at": "2026-09-20T10:43:57.327194+00:00",
               "last_state_change_at": "2026-09-20T10:44:45.240981+00:00", "pid": 3501299}
 }
 ```
 
-`--slim` returns the row `sessions` returns (example in `list.md` of the `twicc-sessions` skill), with `process: {state}`.
+`--slim` returns the row `sessions` returns (example in `list.md` of the `twicc-sessions` skill), with `process: {state, background_work_in_progress}`.
 
 ### Key fields
 
@@ -65,6 +66,10 @@ $TWICC session <SESSION_ID|self|parent> [--slim|--full]
 - `scratch_dir` — the session's own scratch folder. `orchestration_scratch_dir` — the orchestration tree's shared one, `null` outside an orchestration.
 - Agent settings (`permission_mode`, `selected_model`, `effort`, `thinking_enabled`, `claude_in_chrome`, `fast_mode`, `context_max`, `question_widget`) — effective values: stored, else the current default (`question_widget`: `true` when never chosen). On a subagent: stored values, mostly `null`.
 - `process.state` — `starting`, `assistant_turn`, `awaiting_user_input` (blocked on a human), `user_turn` or `dead`. `dead` = TwiCC runs no process for it — the usual state, since most indexed sessions were never started from TwiCC — also when stopped, or when no backend runs. `process` is `null` on a subagent.
+- `process.background_work_in_progress` — what still runs behind the agent, **whatever `state` says**; `null` when nothing does (always on `dead`). Else `{"subagents": N, "shells": N, "monitors": N, "scheduled_wakeup_at": ISO-8601 or null, "goal": bool}`:
+  - `subagents` — live subagents. `shells` — shell commands still running, the session's or its subagents'; Claude Code counts only backgrounded ones, Codex every command whose process has not exited (one it is still polling mid-turn included; a subagent's once its first output reports it running). `monitors` — Claude Code `Monitor` tools. `scheduled_wakeup_at` — a pending Claude Code `ScheduleWakeup`. `goal` — a Codex `/goal` continuation.
+  - `user_turn` with `shells > 0`: the turn is over, a shell still runs. TwiCC never auto-stops an idle session in that case (stopping it would kill the shell).
+  - `assistant_turn` while the agent itself is silent: TwiCC keeps a turn open for live subagents, Monitors or a pending wake-up. The final answer may already be written; the agent may speak again when they finish.
 
 ## Examples
 

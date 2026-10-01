@@ -10,6 +10,7 @@ optional hooks (state-change extras, timeout policy, extra monitors).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
@@ -23,6 +24,14 @@ from twicc.providers.db_writer import run_under_db_write_lock
 
 from .base_agent import BaseAgent
 from . import ephemeral as ephemeral_runs
+from .shell_notice import (
+    SHELL_NOTICE_DELAY_SECONDS,
+    SHELL_NOTICE_STALE_SECONDS,
+    build_shell_notice,
+    earliest_delay_start,
+    resolve_shell_owners,
+    select_concerned_shells,
+)
 from .states import AgentInfo, AgentState
 
 if TYPE_CHECKING:
@@ -568,6 +577,7 @@ class BaseAgentManager:
 
         session_id = agent.session_id
         self._agents[session_id] = agent
+        agent._background_work_callback = self._persist_background_work
         ephemeral_runs.mark_registered(session_id)
 
         now = timezone.now()
@@ -646,6 +656,13 @@ class BaseAgentManager:
         if not getattr(agent, "ephemeral", False):
             await self._persist_process_run_transition(agent, info.state)
         await self._broadcast_info(info)
+        # The broadcast carried this snapshot. If the work changed while the
+        # persist was awaited (a refresh may even have published the newer
+        # value, which the broadcast just overwrote on the front), publish
+        # the current one again.
+        agent.note_background_work_published(info.background_work_in_progress)
+        if agent.background_work_snapshot() != info.background_work_in_progress:
+            agent._schedule_background_work_refresh()
         if info.state == AgentState.DEAD:
             # Cancel any background pending-title work, if any: once the
             # agent is gone there's nothing left to converge on the provider
@@ -957,6 +974,57 @@ class BaseAgentManager:
         except Exception as e:
             logger.error("Error broadcasting state change: %s", type(e).__name__ if info.extra and info.extra.get("ephemeral") else e)
 
+    async def _persist_background_work(
+        self, agent: BaseAgent, snapshot: dict | None,
+    ) -> None:
+        """Mirror a background-work change onto the agent's ProcessRun row.
+
+        The agent's refresh path (:meth:`BaseAgent._publish_background_work`)
+        calls this between state transitions — a shell ending in ``USER_TURN``
+        changes nothing else. Only ``background_work_in_progress`` is written:
+        a full :meth:`_persist_process_run_transition` would bump
+        ``last_state_change_at`` for a state that did not change. The value
+        written is the agent's snapshot read once the lock is held, not
+        ``snapshot``: writes queue behind the lock, and a queued older value
+        must not land after a newer one. No-op without a row (ephemeral run,
+        or a DEAD row already deleted).
+        """
+        if agent.process_run is None or getattr(agent, "ephemeral", False):
+            return
+
+        from twicc.core.models import ProcessRun
+        from twicc.logging_context import provider_log_context
+
+        pr_pk = agent.process_run.pk
+
+        async def _persist() -> None:
+            current = agent.background_work_snapshot()
+            await asyncio.to_thread(
+                lambda: ProcessRun.objects.filter(pk=pr_pk).update(
+                    background_work_in_progress=current,
+                )
+            )
+            if agent.process_run is not None:
+                agent.process_run.background_work_in_progress = current
+
+        with provider_log_context(agent.provider):
+            try:
+                await run_under_db_write_lock(_persist)
+            except Exception as e:
+                logger.error(
+                    "Error persisting background work on process run %s for session %s: %s",
+                    pr_pk, agent.session_id, e,
+                )
+            await self._after_background_work_change(agent)
+
+    async def _after_background_work_change(self, agent: BaseAgent) -> None:
+        """Hook run after a background-work change was persisted between transitions.
+
+        Default: nothing. Claude Code applies the startup settings a
+        background shell held back once the last one ends.
+        """
+        return
+
     async def _persist_process_run_transition(
         self, agent: BaseAgent, state: AgentState,
     ) -> None:
@@ -988,6 +1056,11 @@ class BaseAgentManager:
         explicit state transitions and on pending-request add/remove,
         because :meth:`BaseAgent._await_pending_request` invokes
         ``_notify_state_change`` at both moments.
+
+        ``background_work_in_progress`` receives the agent's background-work
+        snapshot read once the lock is held (forced to ``None`` on ``DEAD``).
+        Between transitions, :meth:`_persist_background_work` keeps it
+        current.
 
         The helper read + write are grouped under a single
         ``run_under_db_write_lock`` acquire so no other writer can race
@@ -1025,12 +1098,14 @@ class BaseAgentManager:
         with provider_log_context(agent.provider):
             if state != AgentState.DEAD:
                 async def _persist_update() -> None:
+                    background_work = agent.background_work_snapshot()
                     await asyncio.to_thread(
                         lambda: ProcessRun.objects.filter(pk=pr_pk).update(
                             state=state_value,
                             last_state_change_at=now,
                             agent_pid=agent_pid,
                             awaiting_user_input=awaiting,
+                            background_work_in_progress=background_work,
                         )
                     )
                     if agent.process_run is not None:
@@ -1038,6 +1113,7 @@ class BaseAgentManager:
                         agent.process_run.last_state_change_at = now
                         agent.process_run.agent_pid = agent_pid
                         agent.process_run.awaiting_user_input = awaiting
+                        agent.process_run.background_work_in_progress = background_work
 
                 try:
                     await run_under_db_write_lock(_persist_update)
@@ -1059,12 +1135,15 @@ class BaseAgentManager:
                     )
                 )
                 if keep:
+                    # A dead agent's children died with it.
+                    background_work = None
                     await asyncio.to_thread(
                         lambda: ProcessRun.objects.filter(pk=pr_pk).update(
                             state=state_value,
                             last_state_change_at=now,
                             agent_pid=agent_pid,
                             awaiting_user_input=awaiting,
+                            background_work_in_progress=background_work,
                         )
                     )
                     if agent.process_run is not None:
@@ -1072,6 +1151,7 @@ class BaseAgentManager:
                         agent.process_run.last_state_change_at = now
                         agent.process_run.agent_pid = agent_pid
                         agent.process_run.awaiting_user_input = awaiting
+                        agent.process_run.background_work_in_progress = background_work
                 else:
                     await asyncio.to_thread(lambda: agent.process_run.delete())
                     agent.process_run = None
@@ -1263,6 +1343,13 @@ class BaseAgentManager:
         for session_id, agent in list(self._agents.items()):
             decision = await self._check_agent_timeout(agent, current_time)
             if decision is None:
+                try:
+                    await self._shell_notice_step(agent)
+                except Exception:
+                    logger.warning(
+                        "Background shell notice step failed for session %s",
+                        session_id, exc_info=True,
+                    )
                 continue
             reason, elapsed, timeout = decision
 
@@ -1274,6 +1361,101 @@ class BaseAgentManager:
                 killed.append(session_id)
 
         return killed
+
+    def _send_gate(self, session_id: str) -> contextlib.AbstractAsyncContextManager:
+        """Per-session gate taken before ``self._lock`` by a send (spec §7 step 1).
+
+        A no-op by default; the Codex manager returns its migration gate, in
+        the same order as ``send_to_session``.
+        """
+        return contextlib.nullcontext()
+
+    async def _shell_notice_step(self, agent: BaseAgent) -> None:
+        """One tick of the background shell notice for ``agent`` (spec §4)."""
+        state = agent.shell_notice_state()
+        if state is None:
+            return
+        now = time.time()
+        if not state.idle:
+            agent._shell_notice_idle_since = None
+            return
+        if agent._shell_notice_idle_since is None:
+            agent._shell_notice_idle_since = now
+        task = agent._shell_notice_task
+        if task is not None and not task.done():
+            return
+        idle_since = agent._shell_notice_idle_since
+        notified = agent._shell_notice_notified
+        candidates = {
+            shell.key for shell in state.shells
+            if shell.key not in notified
+            and earliest_delay_start(shell, idle_since) <= now - SHELL_NOTICE_DELAY_SECONDS
+        }
+        if not candidates:
+            return
+        lookups = agent.shell_notice_lookups(candidates, now)
+        if lookups:
+            facts = await sync_to_async(resolve_shell_owners)(agent.session_id, lookups)
+            agent.store_shell_resolutions(facts, now)
+            state = agent.shell_notice_state()
+            now = time.time()
+            if state is None or not state.idle:
+                return
+        if not select_concerned_shells(state, idle_since=idle_since, notified=notified, now=now):
+            return
+        agent._shell_notice_task = asyncio.create_task(
+            self.send_shell_notice(agent, now),
+            name=f"shell-notice-{agent.session_id}",
+        )
+
+    async def send_shell_notice(self, agent: BaseAgent, now: float) -> None:
+        """Send the notice to ``agent`` if it still applies (spec §7).
+
+        Never ``send_to_session``: no agent start, no settings, no steer.
+        """
+        async with self._send_gate(agent.session_id), self._lock:
+            try:
+                await self._send_shell_notice_locked(agent, now)
+            except Exception:
+                logger.warning("Background shell notice failed for session %s", agent.session_id, exc_info=True)
+
+    async def _send_shell_notice_locked(self, agent: BaseAgent, now: float) -> None:
+        """Body of ``send_shell_notice``, run under the send gate and the lock."""
+        if self._agents.get(agent.session_id) is not agent:
+            return
+        if time.time() - now > SHELL_NOTICE_STALE_SECONDS:
+            return
+        state = agent.shell_notice_state()
+        idle_since = agent._shell_notice_idle_since
+        if state is None or not state.idle or idle_since is None:
+            return
+        current = time.time()
+        shells = select_concerned_shells(
+            state, idle_since=idle_since, notified=agent._shell_notice_notified, now=current,
+        )
+        if not shells:
+            return
+        text = build_shell_notice(shells, now=current)
+        keys = [shell.key for shell in shells]
+        try:
+            result = await agent.send(text, shell_notice=True)
+        except Exception:
+            logger.warning(
+                "Background shell notice failed for session %s (%s)",
+                agent.session_id, ", ".join(keys), exc_info=True,
+            )
+            return
+        if result is False:
+            logger.warning(
+                "Background shell notice not delivered for session %s (%s)",
+                agent.session_id, ", ".join(keys),
+            )
+            return
+        agent.mark_shells_noticed(keys)
+        logger.info(
+            "Background shell notice sent to session %s (%s)",
+            agent.session_id, ", ".join(keys),
+        )
 
     def _state_based_timeout(
         self, agent: BaseAgent, current_time: float,
@@ -1293,6 +1475,10 @@ class BaseAgentManager:
 
         - ``STARTING``: ``PROCESS_TIMEOUT_STARTING`` (default 60s) — stuck startup.
         - ``USER_TURN``: ``PROCESS_TIMEOUT_USER_TURN`` (default 30min) — idle.
+          Never while a background shell still runs: stopping the agent kills
+          its process tree, shell included — whatever the
+          agent left running on purpose. The countdown restarts from the last
+          activity once the last shell ends.
         - ``ASSISTANT_TURN``: ``PROCESS_TIMEOUT_ASSISTANT_TURN`` (default 3h)
           of inactivity. There is deliberately NO cap on a turn's total
           duration: a turn that keeps producing SDK events is working, and
@@ -1316,6 +1502,8 @@ class BaseAgentManager:
             return None
 
         if agent.state == AgentState.USER_TURN:
+            if agent.background_shell_count():
+                return None
             timeout = getattr(settings, "PROCESS_TIMEOUT_USER_TURN", 30 * 60)
             elapsed = current_time - agent.last_activity
             if elapsed > timeout:

@@ -18,6 +18,10 @@ import { DOCK_ICONS, DOCK_LABELS } from './dockMeta'
 const props = defineProps({
     layout: { type: Object, required: true },       // the useSessionLayout() return
     tabHref: { type: Function, required: true },
+    // (tabId) -> change counts ({ modified, added, deleted, conflicted }) shown next to a tab's label, or null.
+    tabChangeStats: { type: Function, default: null },
+    // (tabId) -> upload status ({ count, percent, allStalled }) shown next to a tab's label, or null.
+    tabUploadStatus: { type: Function, default: null },
     registerTarget: { type: Function, required: true },
     unregisterTarget: { type: Function, required: true },
 })
@@ -685,6 +689,8 @@ onBeforeUnmount(() => {
             :active-tab-id="layout.regionActiveTabId(maximizedDockRegion)"
             :focused-tab-id="focusedTabId"
             :tab-href="tabHref"
+            :tab-change-stats="tabChangeStats"
+            :tab-upload-status="tabUploadStatus"
             :maximized="true"
             :register-target="registerTarget"
             :unregister-target="unregisterTarget"
@@ -707,6 +713,8 @@ onBeforeUnmount(() => {
                 :active-tab-id="layout.regionActiveTabId(r)"
                 :focused-tab-id="focusedTabId"
                 :tab-href="tabHref"
+                :tab-change-stats="tabChangeStats"
+                :tab-upload-status="tabUploadStatus"
                 :register-target="registerTarget"
                 :unregister-target="unregisterTarget"
                 @select="(id) => emit('select-tab', id)"
@@ -725,6 +733,8 @@ onBeforeUnmount(() => {
                 :open-overlay-edge="openOverlayEdge"
                 :resolve-active-tab="(item) => layout.dockActiveTabId(item.dockId, item.tabs)"
                 :tab-href="tabHref"
+                :tab-change-stats="tabChangeStats"
+                :tab-upload-status="tabUploadStatus"
                 @action="onGutterAction"
             />
 
@@ -747,6 +757,8 @@ onBeforeUnmount(() => {
                 :insets="overlayInsets"
                 :active-tab-id="overlayActive"
                 :tab-href="tabHref"
+                :tab-change-stats="tabChangeStats"
+                :tab-upload-status="tabUploadStatus"
                 :dock-of="layout.dockOf"
                 :register-target="registerTarget"
                 :unregister-target="unregisterTarget"

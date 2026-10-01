@@ -5,6 +5,7 @@ from __future__ import annotations
 import typer
 
 from twicc.cli._drop_request.help_strings import NO_EXPAND_HELP, PROMPT_INCLUDE_HINT
+from twicc.cli._wait_reply import WAIT_BACKGROUND_HELP
 
 
 def send_message_cmd(
@@ -90,6 +91,11 @@ def send_message_cmd(
             "Requires --wait-reply."
         ),
     ),
+    wait_background: bool = typer.Option(
+        False,
+        "--wait-background",
+        help=WAIT_BACKGROUND_HELP + " Requires --wait-reply.",
+    ),
     timeout: int = typer.Option(
         30,
         "--timeout",
@@ -121,6 +127,8 @@ def send_message_cmd(
     is not returned in its place. That is the way to collect an answer; to
     check whether the session is still running, read `process.state` from
     "twicc session <SESSION_ID>" or "twicc sessions get <SESSION_ID>...".
+    With --wait-background, a final message read while background work runs
+    does not count: the first one read once that work has ended is.
     """
     # Lazy imports to keep --help fast (no Django setup until we need it).
     import os
@@ -157,7 +165,8 @@ def send_message_cmd(
     wait_errors: list[ValidationError] = []
     if not wait_reply:
         for flag, given in (("--wait-timeout", wait_timeout is not None),
-                            ("--no-reply-text", no_reply_text)):
+                            ("--no-reply-text", no_reply_text),
+                            ("--wait-background", wait_background)):
             if given:
                 wait_errors.append(ValidationError(
                     flag, "requires_wait_reply", f"{flag} requires --wait-reply.",
@@ -329,6 +338,7 @@ def send_message_cmd(
             since_line_num=final.get("last_line") or 0,
             timeout=wait_timeout,
             want_text=not no_reply_text,
+            wait_background=wait_background,
         )
         emit_json(final)
         raise typer.Exit(0)

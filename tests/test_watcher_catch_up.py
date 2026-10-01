@@ -27,10 +27,10 @@ def test_catch_up_processes_every_existing_jsonl_as_added(provider_home, monkeyp
 
     seen: list[tuple[Change, str]] = []
 
-    async def fake_process(change_type, path_str, channel_layer):
-        seen.append((change_type, path_str))
+    def enqueue(path, change_type):
+        seen.append((change_type, str(path)))
 
-    monkeypatch.setattr(watcher, "_process_change", fake_process)
+    monkeypatch.setattr(watcher, "_enqueue", enqueue)
     asyncio.run(watcher._catch_up_existing_files(channel_layer=None))
 
     assert seen == [

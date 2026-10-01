@@ -5,7 +5,7 @@ Wait until a session answers, or blocks on a human. MCP tool: `mcp__twicc__sessi
 ## Usage
 
 ```bash
-$TWICC session '<SESSION_ID>' wait-reply [--from N] [--since INSTANT] [--wait-timeout N] [--no-reply-text]
+$TWICC session '<SESSION_ID>' wait-reply [--from N] [--since INSTANT] [--wait-timeout N] [--no-reply-text] [--wait-background]
 ```
 
 The wait that `--wait-reply` runs on the commands that send, for a session **you did not just message**: spawned earlier, steered from the UI, messaged by someone else, or messaged by you without `--wait-reply`.
@@ -28,6 +28,7 @@ Only a line strictly past the cursor counts; an answer already past it is return
 
 - `--wait-timeout` (default 300 s) — caps the wait. An idle session with no answer past the cursor ends with `ended`, but only after a ~5 s flush window: below that, the wait can only report `timeout`.
 - `--no-reply-text` — drop the answer's `text` from the result.
+- `--wait-background` — a final message read while background work runs behind the agent (`background_work_in_progress` not `null`: a subagent, background shell, Monitor, scheduled wake-up or goal) does not count; the first final message read once that work has ended is the answer. A wait started or resumed after the work ended therefore counts the final messages already written. An idle agent with that work still running keeps the wait open; once a final message was ignored, an alive idle agent keeps it open until the next one comes, however late; a dead agent ends it (`ended`, carrying the ignored answer). Claude Code reopens a turn when a background shell ends. Codex answers after a process ends only if the agent waited for it within its turn: a process it left running on purpose brings no new answer, so such a wait ends in `timeout` with the last answer attached. On `timeout`, the last ignored final message comes back (`line_num`, `text` unless `--no-reply-text`) with the current `background_work_in_progress`; to wait for the next answer, resume with `--from <its line_num> --wait-background` (from that `line_num`, not `since_line_num`). A pending request still ends the wait at once and carries no ignored final message: resuming from its `since_line_num` re-reads the final messages already written.
 - A session just spawned, with no indexed transcript yet, is waited on from line 0 (or `--from`); `--since` does not apply to it.
 - `session self wait-reply` is refused (exit 1): your own answer cannot come while you wait.
 - `--since` exists here and on `sessions wait-reply`; `--from` only here. The sending commands read their cursor server-side.
@@ -35,6 +36,12 @@ Only a line strictly past the cursor counts; an answer already past it is return
 ## Output format
 
 `{"session_id": ..., "reply": {...}}`. The `reply` block is the one `--wait-reply` returns: `outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, `text` (unless `--no-reply-text`), `error` (on `wait_failed`).
+
+With `--wait-background`, a `timeout` that ignored a final message carries the last one (`line_num`, `is_final`, `text`) plus `background_work_in_progress`, what still ran at the deadline. Resume from that `line_num` to wait for the next answer:
+
+```json
+{"session_id": "4a8352fb-...", "reply": {"outcome": "timeout", "line_num": 42, "is_final": true, "since_line_num": 30, "waited_seconds": 120.0, "text": "done", "background_work_in_progress": {"subagents": 0, "shells": 1, "monitors": 0, "scheduled_wakeup_at": null, "goal": false}}}
+```
 
 `outcome`:
 
@@ -54,7 +61,7 @@ No flag chooses between an answer and a pending request, and a block is an `outc
 
 ## Known limit (Claude Code)
 
-A message sent while a Claude session is busy is queued and recorded as a queued command, not a user message. Every wait for an answer — a send's own `--wait-reply` included, with `--from` or the default cursor — then returns the running turn's closing message. It usually covers the queued message; rarely, the queued message runs as a turn of its own afterwards, and the wait returned an answer that does not cover it. In an orchestration, message a session once it has finished.
+A message sent while a Claude session is busy is queued and recorded as a queued command, not a user message. Every wait for an answer — a send's own `--wait-reply` included, with `--from` or the default cursor — then returns the running turn's closing message (with `--wait-background`, the first one read once the background work has ended). It usually covers the queued message; rarely, the queued message runs as a turn of its own afterwards, and the wait returned an answer that does not cover it. In an orchestration, message a session once it has finished.
 
 ## Examples
 
@@ -65,6 +72,8 @@ $TWICC session 4a8352fb-... wait-reply --from 42 --wait-timeout 60
 # Resumes past the answer just read: only a later line counts.
 $TWICC session 4a8352fb-... wait-reply --since 2026-09-19T05:38:20+00:00
 # Anything said after that moment, without knowing a line number.
+$TWICC session 4a8352fb-... wait-reply --wait-background --wait-timeout 300
+# The first answer read once the background work has ended.
 ```
 
 ## Related commands
@@ -78,5 +87,5 @@ $TWICC session 4a8352fb-... wait-reply --since 2026-09-19T05:38:20+00:00
 
 1. `replied` — give the answer's `text`, or its summary.
 2. `awaiting_user_input` — say the session is blocked on a human, then read what it asks (`questions.md`).
-3. `timeout` — say the session is still working; keep the cursor to resume from.
+3. `timeout` — say the session is still working; keep the cursor to resume from. With `--wait-background`, give the last ignored answer, if any, and what still runs; resume from its `line_num`.
 4. Any other outcome — name it and what it means.

@@ -12,7 +12,17 @@ import orjson
 from django.db import transaction
 
 from twicc.core.enums import Provider
-from twicc.core.models import AgentLink, Session, SessionItem, Share, ToolResultLink
+from twicc.core.models import (
+    AgentInteraction,
+    AgentLink,
+    AgentRunEnd,
+    AgentRunEndSource,
+    Session,
+    SessionHistoryFact,
+    SessionItem,
+    Share,
+    ToolResultLink,
+)
 from twicc.provider_homes import codex_home
 
 from .bin import make_codex_config, resolve_codex_command
@@ -330,9 +340,8 @@ def _apply_clear_snapshot_anchors_job(job: ClearSnapshotAnchorsJob) -> int:
 
 
 # Rows inserted per transaction by the history replacement. Each slice is
-# its own ``sync_to_async`` call, so a 500 MB rollout does not hold the shared
-# thread-sensitive executor (and every REST view, WebSocket connect and
-# watcher write behind it) for the whole rebuild.
+# its own compute-worker call and transaction. The writer lease spans the
+# whole rebuild, while the event loop remains available.
 REPLACE_HISTORY_CHUNK_SIZE = 2000
 
 
@@ -347,13 +356,30 @@ def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
     or only some of the new rows — is repaired by the next start instead of
     being computed as a complete history.
     """
-    Session.objects.select_for_update().get(id=job.session_id)
+    from .agent.original_files_cache import clear_session
+    from .compute import get_compute
+
+    from twicc.providers.live_aggregates import apply_contribution_changes, item_contributions, session_contribution
+
+    session = Session.objects.select_for_update().get(id=job.session_id)
+    before_session = session_contribution(session)
+    before_items = item_contributions(SessionItem.objects.filter(session_id=job.session_id))
+    # Clear only after deletion commits. A rolled-back replacement keeps retry evidence.
+    transaction.on_commit(lambda: clear_session(job.session_id))
+    transaction.on_commit(lambda: get_compute().end_session_compute(job.session_id))
     ToolResultLink.objects.filter(session_id=job.session_id).delete()
     AgentLink.objects.filter(session_id=job.session_id).delete()
+    # Stale run rows would keep their old lines and keep closing runs (rule 4).
+    AgentInteraction.objects.filter(session_id=job.session_id).delete()
+    AgentRunEnd.objects.filter(session_id=job.session_id, source=AgentRunEndSource.TRANSCRIPT).delete()
+    SessionHistoryFact.objects.filter(session_id=job.session_id).delete()
     SessionItem.objects.filter(session_id=job.session_id).delete()
     Session.objects.filter(id=job.session_id).update(
-        last_offset=0, last_line=0, tasks={}, search_version=None,
+        last_offset=0, last_line=0, tasks={}, search_version=None, compute_version=None,
     )
+    session.refresh_from_db()
+    apply_contribution_changes(before_items, [], before_sessions=[before_session],
+        after_sessions=[session_contribution(session)], repair=True)
 
 
 @transaction.atomic
@@ -388,15 +414,16 @@ def _apply_replace_codex_history_job(job: ReplaceCodexHistoryJob) -> int:
 
 
 async def apply_replace_codex_history_job_in_slices(job: ReplaceCodexHistoryJob) -> int:
-    """The DB writer's form: one ``sync_to_async`` call per slice."""
-    from asgiref.sync import sync_to_async
+    """The DB writer's form: one compute-worker call per slice."""
+    from twicc.providers.compute_executor import run_compute_sync
 
-    await sync_to_async(_begin_replace_codex_history)(job)
+    await run_compute_sync(_begin_replace_codex_history, job)
     for start in range(0, len(job.items), REPLACE_HISTORY_CHUNK_SIZE):
-        await sync_to_async(_insert_replace_codex_history_chunk)(
+        await run_compute_sync(
+            _insert_replace_codex_history_chunk,
             job.session_id, job.items[start:start + REPLACE_HISTORY_CHUNK_SIZE],
         )
-    return await sync_to_async(_finish_replace_codex_history)(job)
+    return await run_compute_sync(_finish_replace_codex_history, job)
 
 
 def _apply_mark_session_unavailable_job(job: MarkSessionUnavailableJob) -> int:

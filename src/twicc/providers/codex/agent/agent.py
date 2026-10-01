@@ -22,10 +22,11 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import Collection
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, NamedTuple
 
 from openai_codex import (
     AsyncTurnHandle,
@@ -49,15 +50,24 @@ from openai_codex.generated.v2_all import (
     ThreadTokenUsageUpdatedNotification,
 )
 
+import psutil
 from asgiref.sync import sync_to_async
 
 from twicc.agent import AgentState, BaseAgent, PendingRequest, SendDeliveryError, StateChangeCallback
+from twicc.agent.shell_notice import (
+    ShellInfo,
+    ShellLookup,
+    ShellNoticeState,
+    ShellOwner,
+    merge_resolution,
+    needs_lookup,
+)
+from twicc.agent.states import build_background_work
 from twicc.context_injection import apply_pending_context
 from twicc.core.enums import Provider
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
 
 from ..permission_modes import resolve_codex_turn_overrides
-from ..provider_errors import CodexProviderError, build_provider_error_marker
 from ..sdk_wrappers import TwiccAsyncCodex, TwiccAsyncThread, service_tier_from_fast_mode
 from ..streaming_registry import get_streamed_item_registry
 from .approvals import (
@@ -109,6 +119,14 @@ _AUTO_REVIEW_RETRY_PROMPT = "Retry the exact action I just approved."
 # prompt — the exact text the official Codex TUI submits for "Yes, implement
 # this plan" (codex-rs/tui/src/chatwidget/plan_implementation.rs).
 _PLAN_IMPLEMENTATION_MESSAGE = "Implement the plan."
+
+
+class _TrackedShell(NamedTuple):
+    """One live unified-exec process (spec §5.4)."""
+
+    started_at: float
+    command: str | None
+
 
 _GUARDIAN_ACTION_TYPES_TO_CORE = {
     "command": "command",
@@ -267,9 +285,73 @@ def _agent_message_item(payload: Any) -> Any | None:
 _SUB_AGENT_ACTIVITY_ITEM_TYPE = "subAgentActivity"
 _COLLAB_AGENT_TOOL_CALL_ITEM_TYPE = "collabAgentToolCall"
 _COLLAB_WAIT_TOOL = "wait"
+# How long a relayed process end keeps a late announcement of the same
+# process from reviving it (see ``CodexAgent._recently_ended_shells``).
+_RECENTLY_ENDED_SHELL_SECONDS = 60.0
+
+
+# Long-lived app-server helpers that may start after the first command and
+# never end with one (the code-mode host starts with the first ``exec``):
+# never taken for a command's process.
+_APP_SERVER_HELPER_MARKERS = ("codex-code-mode-host",)
+# A tracked shell younger than this is never reconciled away: its process
+# may not be spawned yet.
+_SHELL_RECONCILE_MIN_AGE_SECONDS = 10.0
+# Slack before the first shell's start when looking for command processes:
+# psutil's creation times are rounded to the whole boot second, and Codex
+# may stamp ``startedAtMs`` after the spawn.
+_SHELL_PROBE_MARGIN_SECONDS = 5.0
+# A relayed subagent start is only known from the output announcing it,
+# written after the spawn plus the call's yield (up to ~30 s) plus the relay
+# lag: its process is assumed to have started this long before.
+_RELAYED_SHELL_START_MARGIN_SECONDS = 60.0
+
+
+def command_processes_may_run(app_server_pid: int, since: float) -> bool | None:
+    """Whether any process may still run a unified-exec command.
+
+    Codex runs each command as a direct child of its app-server (``bash -lc
+    <cmd>``, or ``<cmd>`` itself once bash exec'ed it), next to MCP servers
+    started before any command and a few helpers. A candidate is a live,
+    non-helper direct child created at or after ``since`` — the first
+    tracked shell's start. ``False`` proves every tracked shell is gone;
+    ``True`` proves nothing (the candidate may be one of them, or a
+    subagent's late MCP server), so the caller keeps them all. ``None`` on a
+    process-table error, and ``True`` on a child it may not inspect: a doubt
+    keeps the shells. Blocking (``psutil``): run it in a thread.
+
+    A command that backgrounds a process and exits (``bash -lc 'server &'``)
+    leaves no direct child behind, but no tracked shell either: Codex writes
+    its end the moment bash exits (observed: ~50 ms, exit code 0), and the
+    backgrounded process does not survive its session (observed with and
+    without output redirection). Known limit, on the safe side: any later
+    non-helper child (a subagent's MCP server) keeps the probe at ``True``
+    for the agent's lifetime, disabling this safety net.
+    """
+    try:
+        children = psutil.Process(app_server_pid).children(recursive=False)
+    except psutil.Error:
+        return None
+    for child in children:
+        try:
+            if child.create_time() < since or child.status() == psutil.STATUS_ZOMBIE:
+                continue
+            if any(marker in " ".join(child.cmdline()) for marker in _APP_SERVER_HELPER_MARKERS):
+                continue
+        except psutil.NoSuchProcess:
+            continue
+        except psutil.Error:
+            return True
+        return True
+    return False
+
+
 _SUB_AGENT_STARTED_KIND = "started"
 _SUB_AGENT_INTERRUPTED_KIND = "interrupted"
 _SUB_AGENT_COMPLETED_KIND = "completed"
+_SUB_AGENT_INTERACTED_KIND = "interacted"
+# Delay before the one retry of a stop relay whose run-model read failed.
+_STOPPED_RELAY_RETRY_DELAY = 1.0
 
 
 def _enum_value(value: Any) -> Any:
@@ -284,24 +366,54 @@ def _is_collab_wait_call(inner: Any) -> bool:
     return _enum_value(getattr(inner, "tool", None)) == _COLLAB_WAIT_TOOL
 
 
-def _stopped_subagent_ids(session_ids: list[str]) -> list[str]:
-    """Return, among ``session_ids``, those whose subagent session has finished.
+def _stopped_subagent_ids(root_id: str, session_ids: list[str]) -> list[str]:
+    """Return, among ``session_ids``, the subagents of ``root_id`` that are known and not running.
 
-    A spawned subagent's completion never reaches the parent's SDK stream
-    (Codex emits no item for the ``FINAL_ANSWER`` it hands back), so the
-    live view of "which children are still running" comes from the
-    watcher instead: it stamps ``Session.last_stopped_at`` when the
-    subagent's completion pairs with its ``spawn_agent``
-    (``check_agent_naturally_stopped``). Blocking ORM call — wrap in
+    The root's SDK stream carries a ``completed`` item for most run ends,
+    but not for every one (a run ending with a ``FINAL_ANSWER`` only, a
+    child's own turn end, an owner abort), so the live view of "which
+    children are still running" is checked against the run model
+    (``agent_run_states``). A child with no run yet (its spawn link not
+    written by the watcher) is not known, so it is kept. A subagent's
+    ``last_stopped_at`` is a display value, never read here. A missing
+    root row returns ``[]`` (keep everything). Blocking ORM call — wrap in
     ``sync_to_async``.
     """
+    from twicc.core.agent_runs import agent_run_states
     from twicc.core.models import Session
 
-    return list(
-        Session.objects.filter(
-            id__in=session_ids, last_stopped_at__isnull=False,
-        ).values_list("id", flat=True)
+    root = Session.objects.filter(id=root_id).first()
+    if root is None:
+        return []
+    states = agent_run_states(root, session_ids)
+    return [
+        session_id for session_id in session_ids
+        if states[session_id].known and not states[session_id].running
+    ]
+
+
+def _running_first_level_subagent_ids(root_id: str, session_ids: list[str]) -> list[str]:
+    """Return, among ``session_ids``, the running subagents whose spawn link ``root_id`` owns.
+
+    Only first-level children are tracked by the root's live set: the root's
+    SDK stream carries no item for a nested agent (spawned by a subagent),
+    so a nested agent was never in the set and is never added. A missing
+    root row returns ``[]``. Blocking ORM call — wrap in ``sync_to_async``.
+    """
+    from twicc.core.agent_runs import agent_run_states
+    from twicc.core.models import AgentLink, Session
+
+    root = Session.objects.filter(id=root_id).first()
+    if root is None:
+        return []
+    states = agent_run_states(root, session_ids)
+    running = [session_id for session_id in session_ids if states[session_id].running]
+    if not running:
+        return []
+    owned = set(
+        AgentLink.objects.filter(session_id=root_id, agent_id__in=running).values_list("agent_id", flat=True)
     )
+    return [session_id for session_id in running if session_id in owned]
 
 
 class CodexAgent(BaseAgent):
@@ -420,10 +532,17 @@ class CodexAgent(BaseAgent):
         # collaboration tools, ``agent_thread_id -> agent_path``. Fed by
         # the ``subAgentActivity`` items Codex routes on the *parent's*
         # stream (``started`` adds, ``interrupted``/``completed`` remove)
-        # and pruned against the watcher's view of which ones already
-        # finished (see :func:`_stopped_subagent_ids`) — in practice the
-        # SDK stream carries no per-agent completion item, so the watcher
-        # is the reliable end-of-child source.
+        # and kept in step with the run model by the watcher relays: a
+        # resumed child comes back (:meth:`notify_subagents_resumed` — the
+        # stream cannot tell ``followup_task`` from ``send_message``), a
+        # stopped one leaves (:meth:`notify_subagents_stopped`, and the
+        # prune, see :func:`_stopped_subagent_ids`). The stream carries a
+        # ``completed`` item for most run ends but not for every one (a
+        # ``FINAL_ANSWER`` only, a child's own turn end, an owner abort), so
+        # the watcher stays the reliable end-of-child source. An ephemeral
+        # agent has no watcher rows: it reads its children's thread status
+        # instead. Every change outside the stream goes through
+        # ``_subagent_set_lock``.
         #
         # Two consumers:
         # - the "waiting for N subagents" label while the parent blocks
@@ -434,6 +553,51 @@ class CodexAgent(BaseAgent):
         #   ``_run_turn`` keeps ASSISTANT_TURN instead of settling idle —
         #   the Codex mirror of Claude Code's background-agents hold.
         self._live_subagents: dict[str, str] = {}
+        self._init_codex_shell_notice_state()
+        # Serializes the three changes to ``_live_subagents`` that read the
+        # run state: the resume relay, the stop relay and the prune. The
+        # relays are fire-and-forget tasks and may run out of order; each
+        # reads the state inside the lock, so the last one applies the
+        # latest committed state. Not re-entrant: none of the three calls
+        # another.
+        self._subagent_set_lock = asyncio.Lock()
+        # The delayed retries of stop relays whose run-model read failed
+        # (strong references, so a pending retry is never collected).
+        self._subagent_stop_retry_tasks: set[asyncio.Task[None]] = set()
+        # Unified-exec processes still running, ``(thread_id, process_id) ->
+        # _TrackedShell`` (start time in epoch seconds, and the command).
+        # Codex runs every shell command as a process the model may leave
+        # behind — its ``exec_command`` call returns after a short yield, and
+        # the process keeps running, across turn ends too. So this counts
+        # every process in flight, including a command the agent is still
+        # polling within its turn. Sources:
+        #
+        # - our own thread: the live ``commandExecution`` items
+        #   (``item/started`` adds, ``item/completed`` removes);
+        # - a subagent's thread (same app-server process, so its shells die
+        #   with ours too — hence the thread id in the key): its items never
+        #   reach our stream (the SDK routes them to the subagent's own turn),
+        #   so the watcher relays the outputs of its rollout that announce a
+        #   running process (:meth:`notify_shells_started`);
+        # - any thread, a process that exits after its turn: only the rollout
+        #   records it, the watcher relays its ``CommandExecution`` end
+        #   (:meth:`notify_shells_exited`).
+        #
+        # A process killed without an end event (an interrupt, Codex's own
+        # process cap) is dropped once the app-server runs no command process
+        # at all any more (:meth:`drop_gone_shells`, from the manager's idle
+        # check). Never holds
+        # ASSISTANT_TURN; reported as background work and blocks the idle
+        # auto-stop.
+        self._live_shells: dict[tuple[str, str], _TrackedShell] = {}
+        # Start of the first shell this agent ever tracked: app-server
+        # children older than that (MCP servers) are never a command's
+        # process (see :func:`command_processes_may_run`).
+        self._first_shell_started_at: float | None = None
+        # Keys whose end was relayed recently, ``key -> monotonic time``: a
+        # subagent's announcement written just after its process's end (it
+        # exited between yield and output write) must not revive it.
+        self._recently_ended_shells: dict[tuple[str, str], float] = {}
         # True while the "waiting for N subagents" process label is the
         # one on screen. Set when a ``wait`` collaboration call starts,
         # cleared when it completes. A ``process_state`` broadcast (turn
@@ -543,6 +707,7 @@ class CodexAgent(BaseAgent):
         live by the time we get here; the agent comes up idle and runs the
         command instead of scheduling a turn. See :meth:`run_hardcoded_command`.
         """
+        self._note_external_send()
         self._state_change_callback = on_state_change
         # Whether this run is a (cold) resume of an existing thread rather than a
         # brand-new session. Read by ``CodexAgentManager._on_state_change`` to
@@ -610,6 +775,9 @@ class CodexAgent(BaseAgent):
           a silent tool execution).
         - ``DEAD``: refuse.
 
+        ``shell_notice=True`` marks TwiCC's own background shell notice: it
+        opens a turn like any send, but is not an external send (spec §3.2).
+
         ``turn/steer`` carries only the input — model / effort / sandbox /
         approval overrides are NOT applied to the active turn. Settings
         changed during ``ASSISTANT_TURN`` are refreshed on the agent by the
@@ -617,6 +785,10 @@ class CodexAgent(BaseAgent):
         """
         if self.state == AgentState.DEAD:
             raise SendDeliveryError("Cannot send message: agent is dead", code="agent_dead")
+
+        if not kwargs.get("shell_notice"):
+            self._note_external_send()
+        self._note_main_turn_opening()
 
         if self.state == AgentState.ASSISTANT_TURN:
             monitor = getattr(self, "_goal_monitor", None)
@@ -687,6 +859,7 @@ class CodexAgent(BaseAgent):
         await self._notify_state_change()
 
         self._schedule_turn(text, images)
+        return True
 
     def _schedule_turn(self, text: str, images: list[dict] | None) -> None:
         """Spawn the background task that drives one turn end-to-end."""
@@ -759,11 +932,14 @@ class CodexAgent(BaseAgent):
         clean shutdown when ``kill_reason`` is already set (i.e. the manager
         killed us on purpose) — no error toast in that case.
         """
+        self._note_main_turn_opening()
         # A real TwiCC-driven turn supersedes any parked ``/goal`` continuation
         # or subagent hold: from here ``_run_turn`` owns the state, so drop the
         # flags (the watcher signals must not flip us out of this turn). The
         # hold re-decides at this turn's own end.
-        self._goal_continuation_active = False
+        if self._goal_continuation_active:
+            self._goal_continuation_active = False
+            self._schedule_background_work_refresh()
         self._subagent_hold_active = False
         # Each turn decides anew whether it delivered a plan (see
         # ``_prompt_plan_implementation``).
@@ -935,6 +1111,7 @@ class CodexAgent(BaseAgent):
         ``KNOWN_COMMANDS``, so the trailing ``else`` is a defensive guard
         against parser/dispatch drift, not a user-reachable path.
         """
+        self._note_external_send()
         if command.name == "compact":
             await self.compact()
         elif command.name == "goal":
@@ -946,26 +1123,243 @@ class CodexAgent(BaseAgent):
                 f"No handler for hardcoded command {command.name!r}",
             )
 
+    def _init_codex_shell_notice_state(self) -> None:
+        """Codex maps of the background shell notice (spec §5.4)."""
+        self._subagent_paths: dict[str, str] = {}
+        self._subagent_run_ended_at: dict[str, float] = {}
+
+    def _note_subagent_run_end(self, thread_id: str) -> None:
+        self._subagent_run_ended_at[thread_id] = time.time()
+
     def _note_sub_agent_activity(self, inner: Any) -> None:
         """Update the live-subagent set from one ``subAgentActivity`` item.
 
         ``started`` is the spawn (the only kind whose ``event_id`` is a
         ``spawn_agent`` call), ``interrupted``/``completed`` end the child
-        (``completed`` is defensive — the runtimes observed so far never
-        route it on the parent's stream, the watcher signal covers the
-        gap), and ``interacted`` is just a message passing through — it
-        must not change the set. Idempotent: the SDK emits the same item
-        on ``item/started`` and ``item/completed``.
+        (``completed`` reaches the parent's stream for most run ends, not
+        for every one — the watcher's stop relay covers the rest), and
+        ``interacted`` is a ``send_message`` or a ``followup_task``, which
+        the stream cannot tell apart: for a watcher-backed agent it does not
+        change the set (the watcher's resume relay re-adds a resumed child);
+        an ephemeral agent has no watcher, so it re-adds the child, and its
+        ``thread_read`` checks drop it again once idle. Idempotent: the SDK
+        emits the same item on ``item/started`` and ``item/completed``.
         """
         thread_id = getattr(inner, "agent_thread_id", None)
         if not isinstance(thread_id, str) or not thread_id:
             return
         kind = _enum_value(getattr(inner, "kind", None))
-        if kind == _SUB_AGENT_STARTED_KIND:
+        if kind == _SUB_AGENT_STARTED_KIND or (
+            kind == _SUB_AGENT_INTERACTED_KIND and getattr(self, "ephemeral", False)
+        ):
             agent_path = getattr(inner, "agent_path", None)
             self._live_subagents[thread_id] = agent_path if isinstance(agent_path, str) else ""
+            self._subagent_paths[thread_id] = self._live_subagents[thread_id]
+            self._schedule_background_work_refresh()
         elif kind in (_SUB_AGENT_INTERRUPTED_KIND, _SUB_AGENT_COMPLETED_KIND):
-            self._live_subagents.pop(thread_id, None)
+            if self._live_subagents.pop(thread_id, None) is not None:
+                self._note_subagent_run_end(thread_id)
+                self._schedule_background_work_refresh()
+
+    def _note_command_execution(self, method: str, payload: Any) -> None:
+        """Update the live-shell set from one ``commandExecution`` item event.
+
+        Our own thread's items only: a subagent's never reach this stream
+        (see ``_live_shells``). Items without a ``processId`` never started a
+        process and are ignored.
+        """
+        if method not in ("item/started", "item/completed"):
+            return
+        item = getattr(payload, "item", None)
+        if item is None:
+            return
+        inner = getattr(item, "root", item)
+        if getattr(inner, "type", None) != "commandExecution":
+            return
+        process_id = getattr(inner, "process_id", None)
+        if process_id is None or process_id == "":
+            return
+        if getattr(payload, "thread_id", None) not in (None, self.session_id):
+            return
+        key = (self.session_id, str(process_id))
+        if method == "item/started":
+            started_at_ms = getattr(payload, "started_at_ms", None)
+            started_at = started_at_ms / 1000 if isinstance(started_at_ms, (int, float)) else time.time()
+            command = getattr(inner, "command", None)
+            self._track_shell(key, started_at, command if isinstance(command, str) else None)
+            self._schedule_background_work_refresh()
+        elif self._forget_shell(key):
+            self._schedule_background_work_refresh()
+
+    def _forget_shell(self, key: tuple[str, str]) -> bool:
+        self._drop_shell_notice_key(f"{key[0]}:{key[1]}")
+        return self._live_shells.pop(key, None) is not None
+
+    def _track_shell(self, key: tuple[str, str], started_at: float, command: str | None = None) -> None:
+        self._live_shells[key] = _TrackedShell(started_at, command)
+        if self._first_shell_started_at is None or started_at < self._first_shell_started_at:
+            self._first_shell_started_at = started_at
+
+    def _prune_recently_ended_shells(self) -> None:
+        cutoff = time.monotonic() - _RECENTLY_ENDED_SHELL_SECONDS
+        for key, ended_at in list(self._recently_ended_shells.items()):
+            if ended_at < cutoff:
+                del self._recently_ended_shells[key]
+
+    async def notify_shells_started(self, thread_id: str, processes: dict[str, float]) -> None:
+        """Relay from the watcher: a subagent's outputs announced these processes.
+
+        ``processes`` maps each process id to the epoch time of the output
+        announcing it; the start is taken as
+        ``_RELAYED_SHELL_START_MARGIN_SECONDS`` before, so the process-table
+        probe never takes the real, earlier spawn for someone else's.
+        Idempotent: a
+        poll re-announcing a tracked process changes nothing, and a process
+        whose end was relayed a moment ago stays gone.
+        """
+        self._prune_recently_ended_shells()
+        added = []
+        for process_id, announced_at in processes.items():
+            key = (thread_id, process_id)
+            if key in self._live_shells or key in self._recently_ended_shells:
+                continue
+            self._track_shell(key, announced_at - _RELAYED_SHELL_START_MARGIN_SECONDS)
+            added.append(process_id)
+        if added:
+            self._logger.debug(
+                "Codex session %s: background shell(s) %s of subagent %s started (%d live)",
+                self.session_id, ", ".join(added), thread_id, len(self._live_shells),
+            )
+            self._schedule_background_work_refresh()
+
+    async def notify_shells_exited(self, thread_id: str, process_ids: list[str]) -> None:
+        """Relay from the watcher: these processes of ``thread_id`` exited.
+
+        The only end signal for a process that outlives its turn (Codex writes
+        its completed ``CommandExecution`` item to the rollout, but no stream
+        is listening any more), and for any subagent's process. Recorded even
+        for a process not tracked (yet): its announcement may be written
+        just after. Idempotent — the live ``item/completed`` of an in-turn
+        exit already dropped the entry.
+        """
+        self._prune_recently_ended_shells()
+        now = time.monotonic()
+        changed = False
+        for process_id in process_ids:
+            key = (thread_id, process_id)
+            self._recently_ended_shells[key] = now
+            if self._forget_shell(key):
+                changed = True
+        if changed:
+            self._logger.debug(
+                "Codex session %s: background shell(s) %s of thread %s exited (%d live)",
+                self.session_id, ", ".join(process_ids), thread_id, len(self._live_shells),
+            )
+            self._schedule_background_work_refresh()
+
+    def has_live_shells(self) -> bool:
+        """Whether any unified-exec process is still tracked as running."""
+        return bool(self._live_shells)
+
+    def shell_probe(self) -> tuple[int, float] | None:
+        """``(app_server_pid, since)`` for :func:`command_processes_may_run`, or ``None``.
+
+        Read on the loop; the probe itself runs in a thread.
+        """
+        pid = self.get_pid()
+        if pid is None or not self._live_shells or self._first_shell_started_at is None:
+            return None
+        return pid, self._first_shell_started_at - _SHELL_PROBE_MARGIN_SECONDS
+
+    def drop_gone_shells(self, probed_at: float, keys: Collection[tuple[str, str]] | None = None) -> bool:
+        """Drop the shells a probe at ``probed_at`` proved gone; on the loop only.
+
+        The safety net for a process killed without an end event (an
+        interrupt, Codex's own cap on open processes): the probe found no
+        candidate process at all, so none of the shells tracked by then can
+        still run. A shell started less than
+        ``_SHELL_RECONCILE_MIN_AGE_SECONDS`` before the probe is kept (its
+        process may not be spawned yet), and so is one tracked after it.
+        ``keys`` is the snapshot of the tracked keys taken before the probe
+        (spec §5.4): a shell tracked while the probe ran is never dropped.
+        Returns whether anything was dropped; the caller publishes.
+        """
+        cutoff = probed_at - _SHELL_RECONCILE_MIN_AGE_SECONDS
+        dropped = [
+            key for key, tracked in list(self._live_shells.items())
+            if tracked.started_at <= cutoff and (keys is None or key in keys)
+        ]
+        for key in dropped:
+            self._forget_shell(key)
+        if dropped:
+            self._logger.info(
+                "Codex session %s: dropped %d tracked shell(s), no command process runs any more (%s)",
+                self.session_id, len(dropped), ", ".join(f"{t}:{p}" for t, p in dropped),
+            )
+        return bool(dropped)
+
+    def live_shell_keys(self) -> set[tuple[str, str]]:
+        return set(self._live_shells)
+
+    def _shell_notice_live_keys(self) -> set[str]:
+        return {f"{thread_id}:{process_id}" for thread_id, process_id in self._live_shells}
+
+    def _shell_notice_idle(self) -> bool:
+        """Spec §3.1, Codex predicate."""
+        return (
+            (self.state == AgentState.USER_TURN or self.in_subagent_hold())
+            and not self.in_goal_continuation()
+            and not self._manual_compaction
+            and not self.pending_requests
+        )
+
+    def shell_notice_state(self) -> ShellNoticeState | None:
+        if self.state == AgentState.DEAD or getattr(self, "ephemeral", False):
+            return None
+        now = time.time()
+        shells: list[ShellInfo] = []
+        for (thread_id, process_id), tracked in self._live_shells.items():
+            key = f"{thread_id}:{process_id}"
+            if thread_id == self.session_id:
+                owner, owner_ref, running, ended = ShellOwner.MAIN, None, False, None
+            elif thread_id in self._subagent_paths:
+                owner = ShellOwner.SUBAGENT
+                owner_ref = self._subagent_paths[thread_id] or thread_id
+                running = thread_id in self._live_subagents
+                ended = self._subagent_run_ended_at.get(thread_id)
+            else:
+                owner, owner_ref, running, ended = ShellOwner.UNRESOLVED, None, False, None
+            raw = ShellInfo(
+                key=key, shell_id=process_id, tool_use_id=None, owner=owner, owner_ref=owner_ref,
+                owner_label=None, owner_spawner_ref=None, owner_run_ended_at=ended, owner_running=running,
+                description=None, command=tracked.command, output_path=None, started_at=tracked.started_at,
+            )
+            merged = merge_resolution(raw, self._shell_notice_resolutions.get(key), now=now, claude_live=None)
+            if merged is not None:
+                shells.append(merged)
+        return ShellNoticeState(
+            idle=self._shell_notice_idle(),
+            shells=shells,
+            any_subagent_running=bool(self._live_subagents),
+            last_subagent_run_end=max(self._subagent_run_ended_at.values(), default=0.0),
+        )
+
+    def shell_notice_lookups(self, keys: Collection[str], now: float) -> list[ShellLookup]:
+        lookups = []
+        for thread_id, process_id in self._live_shells:
+            key = f"{thread_id}:{process_id}"
+            if key not in keys or thread_id == self.session_id or thread_id in self._subagent_paths:
+                continue
+            if needs_lookup(self._shell_notice_resolutions.get(key), codex=True, now=now):
+                lookups.append(ShellLookup(key=key, tool_use_id=None, owner_id=thread_id, codex=True))
+        return lookups
+
+    def current_background_work(self) -> dict | None:
+        return build_background_work(
+            subagents=len(self._live_subagents),
+            shells=len(self._live_shells),
+            goal=self._goal_continuation_active,
+        )
 
     async def _refresh_subagent_wait_label(self) -> None:
         """Say the parent blocks on ``wait_agent``, with a count when there is one.
@@ -977,8 +1371,8 @@ class CodexAgent(BaseAgent):
         wait. Same channel and wording as Claude Code's
         ``_refresh_waiting_label``.
 
-        The count is the spawns seen on this run's stream minus the ones
-        the watcher already saw finish, so a sequence of one-agent waits
+        The count is the tracked children minus the ones the run model
+        already reads as finished, so a sequence of one-agent waits
         reads "1 subagent" each time instead of accumulating. With nothing
         live the label drops the count and reads a bare "waiting" — a
         stale count would be worse than none, and both ways to get there
@@ -1016,10 +1410,14 @@ class CodexAgent(BaseAgent):
         self._subagent_wait_label_active = False
         await self._broadcast_process_label("")
 
-    async def _ephemeral_finished_subagents(self) -> list[str]:
-        """Read child runtime state; ephemeral children have no watcher rows."""
+    async def _ephemeral_finished_subagents(self, child_ids: list[str] | None = None) -> list[str]:
+        """Read child runtime state; ephemeral children have no watcher rows.
+
+        Returns, among ``child_ids`` (default: every tracked child), the
+        children whose thread is no longer active.
+        """
         stopped = []
-        for child_id in tuple(self._live_subagents):
+        for child_id in tuple(self._live_subagents if child_ids is None else child_ids):
             response = await self._codex._client.thread_read(child_id)
             status = _enum_value(response.thread.status.root.type)
             if status in {"idle", "systemError", "notLoaded"}:
@@ -1039,29 +1437,39 @@ class CodexAgent(BaseAgent):
             await self._handle_error("Could not observe ephemeral subagents", exc=exc)
 
     async def _prune_finished_subagents(self) -> None:
-        """Forget the children the watcher already saw finish.
+        """Forget the children that no longer run.
 
-        One indexed query per ``wait`` call — the only moment the count
-        is read. Failures are swallowed: an over-count in a status label
-        is not worth breaking a turn over.
+        Called on each ``wait`` call and before each hold decision.
+        Watcher-backed: drops the children the run model knows and reads
+        as not running (:func:`_stopped_subagent_ids`), so a resumed child
+        stays while its run is open and a child with no link yet stays too.
+        Ephemeral: drops the children its ``thread_read`` reports idle, no
+        DB read. Under ``_subagent_set_lock``, like both relays. Failures
+        are swallowed: an over-count in a status label is not worth
+        breaking a turn over.
         """
-        if not self._live_subagents:
-            return
-        if getattr(self, "ephemeral", False):
-            stopped = await self._ephemeral_finished_subagents()
-            for child_id in stopped:
-                self._live_subagents.pop(child_id, None)
-            return
-        try:
-            stopped = await sync_to_async(_stopped_subagent_ids)(list(self._live_subagents))
-        except Exception:
-            self._logger.warning(
-                "Codex: failed to prune finished subagents for session %s",
-                self.session_id, exc_info=True,
-            )
-            return
-        for session_id in stopped:
-            self._live_subagents.pop(session_id, None)
+        async with self._subagent_set_lock:
+            if not self._live_subagents:
+                return
+            if getattr(self, "ephemeral", False):
+                stopped = await self._ephemeral_finished_subagents()
+                for child_id in stopped:
+                    if self._live_subagents.pop(child_id, None) is not None:
+                        self._note_subagent_run_end(child_id)
+                return
+            try:
+                stopped = await sync_to_async(_stopped_subagent_ids)(self.session_id, list(self._live_subagents))
+            except Exception:
+                self._logger.warning(
+                    "Codex: failed to prune finished subagents for session %s",
+                    self.session_id, exc_info=True,
+                )
+                return
+            for session_id in stopped:
+                if self._live_subagents.pop(session_id, None) is not None:
+                    self._note_subagent_run_end(session_id)
+            if stopped:
+                self._schedule_background_work_refresh()
 
     async def _try_arm_subagent_hold(self) -> bool:
         """Hold ASSISTANT_TURN at an idle boundary when spawned subagents still run.
@@ -1117,57 +1525,149 @@ class CodexAgent(BaseAgent):
         return self._subagent_hold_active
 
     async def notify_subagents_stopped(self, agent_ids: list[str]) -> None:
-        """Relay from the watcher: these spawned subagents have finished.
+        """Relay from the watcher: runs of these spawned subagents ended.
 
-        The end-of-child signal never reaches the parent's SDK stream (the
-        ``FINAL_ANSWER`` lands only in the parent's rollout), so the watcher
-        forwards it here when ``check_agent_naturally_stopped`` stamps
-        ``last_stopped_at``. Drops the ids from the live set, then:
+        The root's SDK stream carries a ``completed`` item for most run
+        ends, but not for every one (a ``FINAL_ANSWER`` only, a child's own
+        turn end, an owner abort), so the watcher forwards the batch's stop
+        step here. Under ``_subagent_set_lock``, like the resume relay and
+        the prune. Watcher-backed: the payload is re-checked against the run
+        model read inside the lock, and only the tracked children that are
+        known and not running leave (an older stop relay that runs after a
+        newer resume keeps the resumed child). When that read fails, one
+        delayed retry of the same relay is scheduled (the child is never
+        dropped on an error: it may still run). Ephemeral (no watcher rows):
+        the ids come from ``thread_read`` (:meth:`_watch_ephemeral_subagents`)
+        and leave as given, no DB read — except an id whose thread reads
+        active again under the lock (an ``interacted`` item re-added it
+        between the poll and this relay). Then:
 
         - a real turn is running → it owns the state; just refresh the
           in-turn ``wait_agent`` label's count if one is shown;
         - parked in the hold with children left → refresh the label count;
         - parked in the hold with nothing left → release: settle USER_TURN.
         """
-        changed = False
-        for agent_id in agent_ids:
-            if self._live_subagents.pop(agent_id, None) is not None:
-                changed = True
-        if not changed or self.state == AgentState.DEAD:
-            return
+        await self._apply_subagents_stopped(agent_ids, retry_on_error=True)
 
-        if self._current_turn is not None:
-            if self._subagent_wait_label_active:
+    async def _retry_subagents_stopped(self, agent_ids: list[str]) -> None:
+        """The one delayed retry of a stop relay whose run-model read failed."""
+        await asyncio.sleep(_STOPPED_RELAY_RETRY_DELAY)
+        await self._apply_subagents_stopped(agent_ids, retry_on_error=False)
+
+    async def _apply_subagents_stopped(self, agent_ids: list[str], *, retry_on_error: bool) -> None:
+        """Body of :meth:`notify_subagents_stopped`, under ``_subagent_set_lock``."""
+        async with self._subagent_set_lock:
+            tracked = [agent_id for agent_id in dict.fromkeys(agent_ids) if agent_id in self._live_subagents]
+            if not tracked:
+                return
+            if getattr(self, "ephemeral", False):
+                # Re-check under the lock: an ``interacted`` item may have
+                # re-added a child the poll saw idle, and it now runs again.
+                stopped = await self._ephemeral_finished_subagents(tracked)
+            else:
+                try:
+                    stopped = await sync_to_async(_stopped_subagent_ids)(self.session_id, tracked)
+                except Exception:
+                    self._logger.warning(
+                        "Codex: failed to check stopped subagents for session %s%s",
+                        self.session_id, " — retrying once" if retry_on_error else "", exc_info=True,
+                    )
+                    if retry_on_error:
+                        task = asyncio.create_task(
+                            self._retry_subagents_stopped(tracked),
+                            name=f"subagents-stopped-retry-{self.session_id}",
+                        )
+                        self._subagent_stop_retry_tasks.add(task)
+                        task.add_done_callback(self._subagent_stop_retry_tasks.discard)
+                    return
+            changed = False
+            for agent_id in stopped:
+                if self._live_subagents.pop(agent_id, None) is not None:
+                    self._note_subagent_run_end(agent_id)
+                    changed = True
+            if not changed or self.state == AgentState.DEAD:
+                return
+            self._schedule_background_work_refresh()
+
+            if self._current_turn is not None:
+                if self._subagent_wait_label_active:
+                    label = self.current_status_label()
+                    if label is not None:
+                        await self._broadcast_process_label(label)
+                return
+
+            if self._manual_compaction or self._goal_continuation_active:
+                # A manual ``/compact`` or a ``/goal`` continuation owns the
+                # state right now (both park ASSISTANT_TURN without a
+                # ``_current_turn``). Its own settle — ``notify_compacted`` /
+                # ``notify_goal_continuation_stopped`` — re-runs the hold
+                # decision and will find the pruned set.
+                return
+
+            if not self._subagent_hold_active:
+                return
+
+            if self._live_subagents:
                 label = self.current_status_label()
                 if label is not None:
                     await self._broadcast_process_label(label)
-            return
+                return
 
-        if self._manual_compaction or self._goal_continuation_active:
-            # A manual ``/compact`` or a ``/goal`` continuation owns the
-            # state right now (both park ASSISTANT_TURN without a
-            # ``_current_turn``). Its own settle — ``notify_compacted`` /
-            # ``notify_goal_continuation_stopped`` — re-runs the hold
-            # decision and will find the pruned set.
-            return
+            self._logger.info(
+                "Codex session %s: last held subagent finished — back to USER_TURN",
+                self.session_id,
+            )
+            self._subagent_hold_active = False
+            self._set_state(AgentState.USER_TURN)
+            self.last_activity = time.time()
+            await self._notify_state_change()
 
-        if not self._subagent_hold_active:
-            return
+    async def notify_subagents_resumed(self, agents: list[tuple[str, str]]) -> None:
+        """Relay from the watcher: run-opening interactions resumed these subagents.
 
-        if self._live_subagents:
-            label = self.current_status_label()
-            if label is not None:
-                await self._broadcast_process_label(label)
+        The stream's ``interacted`` item cannot tell a ``followup_task``
+        from a ``send_message``, so only the watcher knows a child runs
+        again. ``agents`` are ``(agent_id, agent_path)`` pairs. Under
+        ``_subagent_set_lock``, the run model is read inside the lock and
+        only the first-level children still running come back
+        (:func:`_running_first_level_subagent_ids`): a nested agent never
+        reaches the root's stream, and a child whose resumed run already
+        ended is not added. On an add, the background work is refreshed and
+        the status label too when one is shown (the in-turn ``wait_agent``
+        label, or the hold label). The hold itself is never armed here: a
+        child resumed after the turn ended counts in the background work
+        only. Ephemeral: no-op (no watcher relay fires for it; its
+        ``interacted`` items re-add the child).
+        """
+        if getattr(self, "ephemeral", False):
             return
-
-        self._logger.info(
-            "Codex session %s: last held subagent finished — back to USER_TURN",
-            self.session_id,
-        )
-        self._subagent_hold_active = False
-        self._set_state(AgentState.USER_TURN)
-        self.last_activity = time.time()
-        await self._notify_state_change()
+        async with self._subagent_set_lock:
+            if self.state == AgentState.DEAD:
+                return
+            paths: dict[str, str] = {}
+            for agent_id, agent_path in agents:
+                if agent_id not in self._live_subagents:
+                    paths[agent_id] = agent_path if isinstance(agent_path, str) else ""
+            if not paths:
+                return
+            try:
+                running = await sync_to_async(_running_first_level_subagent_ids)(self.session_id, list(paths))
+            except Exception:
+                self._logger.warning(
+                    "Codex: failed to check resumed subagents for session %s",
+                    self.session_id, exc_info=True,
+                )
+                return
+            if not running:
+                return
+            for agent_id in running:
+                self._live_subagents[agent_id] = paths[agent_id]
+                self._subagent_paths[agent_id] = paths[agent_id]
+            self._schedule_background_work_refresh()
+            if self._subagent_wait_label_active or self._subagent_hold_active:
+                label = self.current_status_label()
+                if label is not None:
+                    await self._broadcast_process_label(label)
 
     async def compact(self) -> None:
         """Kick off a server-side context compaction on the live thread.
@@ -1189,6 +1689,7 @@ class CodexAgent(BaseAgent):
         only re-renders the new label thanks to ``workingStatusKey`` (see
         ``recomputeVisualItems``), since the stabilizer ignores ``_parsedContent``.
         """
+        self._note_main_turn_opening()
         self._logger.info(
             "Codex /compact: starting manual compaction for session %s", self.session_id,
         )
@@ -1396,6 +1897,7 @@ class CodexAgent(BaseAgent):
 
     async def _run_goal_continuation(self, monitor: GoalContinuation) -> None:
         """Stream physical goal turns without starting or interrupting them."""
+        self._note_main_turn_opening()
         stream = monitor.stream()
         try:
             async for event in stream:
@@ -1627,6 +2129,11 @@ class CodexAgent(BaseAgent):
             )
         await self._settle_after_command(AgentState.USER_TURN, "plan_command_done")
 
+    async def _run_plan_implementation_turn(self) -> None:
+        """The plan prompt's "implement" answer: a human decision, so an external send (spec §3.2)."""
+        self._note_external_send()
+        await self._run_turn(_PLAN_IMPLEMENTATION_MESSAGE, None)
+
     async def _prompt_plan_implementation(self) -> None:
         """Post-plan prompt: ask whether to implement the plan just delivered.
 
@@ -1689,7 +2196,7 @@ class CodexAgent(BaseAgent):
                 "starting the implement turn",
                 self.session_id,
             )
-            await self._run_turn(_PLAN_IMPLEMENTATION_MESSAGE, None)
+            await self._run_plan_implementation_turn()
             return
 
         # ``stay`` / ``newSession`` (or a malformed response resolved to the
@@ -2143,6 +2650,8 @@ class CodexAgent(BaseAgent):
         if payload_thread_id is not None and payload_thread_id != self.session_id:
             return
 
+        self._note_command_execution(method, payload)
+
         if method == "thread/tokenUsage/updated":
             if self.ephemeral and isinstance(payload, ThreadTokenUsageUpdatedNotification):
                 await self._record_ephemeral_cost(payload)
@@ -2188,35 +2697,9 @@ class CodexAgent(BaseAgent):
                     payload.error.codex_error_info,
                 )
 
-                # Codex exposes the terminal error only on the live app-server
-                # stream; unlike Claude Code it writes no error item to the
-                # rollout. Persist a private no-turn item before closing the
-                # transport so the watcher can rewrite it into a durable
-                # ``api_error`` transcript row with one-click recovery. The RPC
-                # is local and normally immediate, but error teardown must not
-                # hang if the app-server is already unhealthy.
-                error_info = payload.error.codex_error_info
-                error_type = (
-                    error_info.model_dump(mode="json", by_alias=True)
-                    if error_info is not None
-                    else None
-                )
-                marker = build_provider_error_marker(CodexProviderError(
-                    turn_id=payload.turn_id,
-                    message=payload.error.message,
-                    error_type=error_type,
-                ))
-                try:
-                    await asyncio.wait_for(
-                        self._thread.inject_user_message(marker),
-                        timeout=5,
-                    )
-                except Exception:
-                    self._logger.warning(
-                        "Could not persist terminal Codex error for session %s",
-                        self.session_id,
-                        exc_info=True,
-                    )
+            # The rollout's task_complete.error carries the durable callout.
+            # Do not inject a second error into the model-visible history:
+            # Codex can acknowledge that RPC without persisting it on failure.
 
             # Mirror Claude's order of ops on ``authentication_failed``:
             # cancel pending futures → set DEAD → notify → (auth only:

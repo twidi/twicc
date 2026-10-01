@@ -1,10 +1,11 @@
 <script setup>
 /**
  * StopProcessConfirmDialog - Confirmation dialog shown when stopping a process
- * that has active crons.
+ * that has active crons and/or background shells.
  *
- * Warns the user that active cron jobs will no longer trigger, and asks for
- * explicit confirmation before proceeding. Supports two modes:
+ * Warns the user that active cron jobs will no longer trigger, and that
+ * background shells the agent left running will be killed,
+ * and asks for explicit confirmation before proceeding. Supports two modes:
  * - 'stop': just stop the process
  * - 'archive': stop the process and archive the session
  *
@@ -12,16 +13,29 @@
  * receives `confirm` / `cancel` events. There is typically a single instance
  * mounted globally in App.vue.
  */
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { backgroundShellsKillSentence, stopConfirmationTitle } from '../../utils/backgroundWork'
 
 const props = defineProps({
     open: { type: Boolean, default: false },
     mode: { type: String, default: 'stop' },       // 'stop' | 'archive'
     cronCount: { type: Number, default: 0 },
+    shellCount: { type: Number, default: 0 },
 })
 const emit = defineEmits(['confirm', 'cancel'])
 
 const dialogRef = ref(null)
+
+// Counts shown, frozen while the dialog closes: the parent resets its props
+// to 0 as soon as it closes, which would otherwise swap the title and drop
+// the callouts during the hide animation.
+const shown = ref({ cronCount: 0, shellCount: 0 })
+watch(() => [props.open, props.cronCount, props.shellCount], ([isOpen, cronCount, shellCount]) => {
+    if (isOpen) shown.value = { cronCount, shellCount }
+}, { immediate: true })
+
+const title = computed(() => stopConfirmationTitle(shown.value))
+const shellsSentence = computed(() => backgroundShellsKillSentence(shown.value.shellCount))
 
 // Set synchronously by handleConfirm / handleCancel so the subsequent
 // wa-hide event (fired when the dialog closes in reaction to props.open
@@ -60,15 +74,18 @@ function handleCancel() {
 <template>
     <wa-dialog
         ref="dialogRef"
-        label="Active crons will be lost"
+        :label="title"
         class="stop-confirm-dialog"
         @wa-hide="onWaHide"
     >
         <div class="dialog-content">
-            <wa-callout variant="warning" size="small" open>
+            <wa-callout v-if="shown.shellCount > 0" variant="warning" size="small" open>
+                <p>{{ shellsSentence }}</p>
+            </wa-callout>
+            <wa-callout v-if="shown.cronCount > 0" variant="warning" size="small" open>
                 <p>
                     This session has
-                    <strong>{{ cronCount }} active cron{{ cronCount > 1 ? 's' : '' }}</strong>.
+                    <strong>{{ shown.cronCount }} active cron{{ shown.cronCount > 1 ? 's' : '' }}</strong>.
                 </p>
                 <p>
                     Stopping the process manually will cancel all active crons. They will not be

@@ -20,7 +20,7 @@
  * for the exec_command family.
  */
 
-import { PROVIDER, PROCESS_STATE } from '../../constants'
+import { PROVIDER } from '../../constants'
 import { BaseToolHelpers } from '../baseHelpers'
 import { capitalize } from '../utils/format'
 import { formatRelativePath, fileIconFor, resolveAbsolutePath } from '../utils/path'
@@ -34,6 +34,8 @@ import {
     summarizeCodeModeCalls,
 } from './codeModeDisplay'
 import { parseApplyPatchEnvelope } from './parsePatch'
+import { isExecChainRunning } from './execRunning'
+import { agentControlHeaderLabel, agentControlExpectedCount, maskEncryptedMessage } from './agentControlTools'
 import { getTodoDescription } from '../../utils/todoList'
 import { formatToolNameForHeader, humanizeToolSegment } from '../../utils/toolNames'
 
@@ -968,6 +970,13 @@ export class CodexToolHelpers extends BaseToolHelpers {
         // McpToolCall item for the Result section.
         if (typeof name === 'string' && name.startsWith(MCP_TOOL_NAME_PREFIX)) return 2
 
+        // A control card's own rule: ``followup_task`` that opens a run
+        // expects the ack and the run's end signal (2); every other
+        // control call (a merged follow-up, ``send_message``,
+        // ``interrupt_agent``) expects 1.
+        const controlCount = agentControlExpectedCount(name, options?.agentInteraction)
+        if (controlCount !== null) return controlCount
+
         const wrapperType = options?.wrapperType
         if (wrapperType === 'function_call') {
             // Shell-family tools (``FUNCTION_CALL_EXEC_TOOLS``): the
@@ -985,10 +994,10 @@ export class CodexToolHelpers extends BaseToolHelpers {
             // the ``<subagent_notification>`` user message Codex
             // injects when the subagent finalises (see the
             // ``SPAWN_AGENT_TOOL_NAME`` block at the top of this
-            // module for the full shape). Counted here so the shell's
-            // ``isToolRunning`` flips to done only once the
-            // notification arrives, matching the agent-running
-            // semantics the View-Agent UI relies on.
+            // module for the full shape). Counted here so the card
+            // fetches the notification row once it lands; the agent's
+            // running state itself comes from the backend (design §8.1),
+            // not from this count.
             if (isSpawnAgentTool(name)) return 2
             return FUNCTION_CALL_TOOLS_WITH_COMPLETED_ITEM.has(name) ? 2 : 1
         }
@@ -1018,6 +1027,10 @@ export class CodexToolHelpers extends BaseToolHelpers {
     }
 
     getRequiredResultCountForDisplay(name, input, options) {
+        // Control cards always display at 1 row, even when their expected
+        // count is 2, so the ack shows at once instead of hiding behind
+        // "Result not yet available" for the whole run.
+        if (options?.agentInteraction) return 1
         // Shell tools — and code-mode ``exec`` — render progressively
         // from a single chunk (the aggregation helpers concatenate
         // whatever is in the store), so 1 is enough; everything else
@@ -1044,32 +1057,14 @@ export class CodexToolHelpers extends BaseToolHelpers {
         // set on ``ToolResultLink.extra``. ``Max``-aggregated across
         // links so any closing chunk flips the whole tool to "done".
         if (FUNCTION_CALL_EXEC_TOOLS.has(name) || name === CODE_MODE_EXEC_TOOL_NAME) {
-            const extra = options?.toolState?.extra
-            if (extra) {
-                // ``extra`` is the JSON string set by
-                // :meth:`compute_link_extra` — parse defensively so the
-                // shell never crashes on unexpected shapes (live race,
-                // malformed payload).
-                try {
-                    const parsed = typeof extra === 'string' ? JSON.parse(extra) : extra
-                    if (parsed?.is_terminated) return false
-                } catch {
-                    // Malformed extra → fall through to the liveness gate.
-                }
-            }
-            // No ``is_terminated`` signal yet. A chained ``exec_command``
-            // only advances while the agent is working: each ``write_stdin``
-            // poll runs inside the same ASSISTANT_TURN. Once the session is
-            // back to USER_TURN — turn finished or soft-interrupted — no
-            // closing ``Process exited`` / ``aborted by user`` chunk will
-            // ever come (an interrupt mid-chain leaves the last chunk
-            // reporting ``Process running``), so the tool can't be running
-            // anymore; without this gate the spinner spins forever. We only
-            // trust an explicit USER_TURN — null/unknown (process not yet
-            // synced, or dead/historical, which ``isStaleToolUse`` already
-            // handles) keeps the prior "assume running" behaviour.
-            if (options?.processState === PROCESS_STATE.USER_TURN) return false
-            return true
+            // Status from the chain's closing link (``extra.is_terminated``,
+            // set by ``compute_link_extra``), gated on the session's
+            // liveness — see ``isExecChainRunning``.
+            return isExecChainRunning({
+                extra: options?.toolState?.extra,
+                processState: options?.processState,
+                backgroundShells: options?.backgroundShells,
+            })
         }
         return super.isToolRunning(name, input, options)
     }
@@ -1086,6 +1081,11 @@ export class CodexToolHelpers extends BaseToolHelpers {
     }
 
     getHeaderLabel(name, input, options) {
+        // A control card (``followup_task`` / ``send_message`` /
+        // ``interrupt_agent`` targeting an agent) reads its action label
+        // first — the branches below never match those names.
+        const controlLabel = agentControlHeaderLabel(name, options?.agentInteraction)
+        if (controlLabel) return controlLabel
         // ``apply_patch`` is the model's verb, not the user-facing
         // operation. Mirror Claude Code's ``Edit`` header so users see
         // the same word regardless of provider.
@@ -1777,6 +1777,11 @@ export class CodexToolHelpers extends BaseToolHelpers {
 
     getDisplayInputObject(name, input) {
         if (!input || Object.keys(input).length === 0) return null
+        // The ``message`` argument of ``followup_task`` / ``send_message``
+        // is Codex ciphertext, never a rendered field — mask it here
+        // (never through ``getInputRendering``: a non-null input rendering
+        // hides the Result section, which control cards must keep).
+        input = maskEncryptedMessage(name, input)
         // ``apply_patch`` only has the raw v4a envelope as input; the
         // ``ApplyPatchContent`` renderer takes over the full body, so
         // there's nothing useful left for the JSON fallback.
@@ -1874,18 +1879,6 @@ export class CodexToolHelpers extends BaseToolHelpers {
         // ``../helpers.js``) since the stop plumbing belongs to the
         // provider, not to a specific tool name.
         return isSpawnAgentTool(name)
-    }
-
-    agentRunEndsOnSubagentIdle() {
-        // Multi-agent v2 has no reliable "the subagent finished" signal in the
-        // parent thread: the `FINAL_ANSWER` message that pairs as the spawn's
-        // second result only exists when the subagent ends its turn with a
-        // final answer. One that reports through `send_message` and stays
-        // alive (Codex still lists it as `running` — an agent is "running"
-        // until closed) would otherwise pulse forever. Its own transcript is
-        // authoritative instead: `task_complete` ends the turn, which the
-        // backend maps onto `Session.last_stopped_at`.
-        return true
     }
 
     getDisplayName(name, input) {

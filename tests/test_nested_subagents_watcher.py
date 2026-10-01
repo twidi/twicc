@@ -11,6 +11,8 @@ from twicc.core.models import AgentLink, Project, Session, SessionType
 from twicc.providers import sessions_watcher
 from twicc.providers.claude_code.sessions_watcher import ClaudeCodeSessionsWatcher
 
+pytestmark = pytest.mark.usefixtures("compute_executor_started")
+
 
 @pytest.mark.django_db(transaction=True)
 def test_nested_launch_and_root_queue_completion_broadcast(provider_home, monkeypatch):

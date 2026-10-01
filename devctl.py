@@ -895,6 +895,9 @@ def get_process_config(backend_port: int, frontend_port: int) -> dict:
                 # - Never prune old Codex runtimes: ~/.cache/twicc/codex-runtime/ is shared
                 #   with the main instance, and a worktree bumping CODEX_VERSION would delete
                 #   the version that instance is running on. It still downloads its own.
+                # - Default the tips toggle to OFF: agents drive the worktree UI to inspect
+                #   their work, and a tip toast popping over it disturbs them. A browser
+                #   that already chose (Settings > Tips) keeps its choice.
                 # - Let a DIRECT LOOPBACK request past the instance password: a worktree's
                 #   database dies with the checkout, so its login session never survives a
                 #   re-creation, and an agent that starts one has no reason to know the
@@ -911,6 +914,7 @@ def get_process_config(backend_port: int, frontend_port: int) -> dict:
                     "TWICC_NO_SESSION_DIRS_CLEANUP": "1",
                     "TWICC_NO_TELEMETRY": "1",
                     "TWICC_NO_CODEX_RUNTIME_CLEANUP": "1",
+                    "TWICC_TIPS_DEFAULT_OFF": "1",
                 } if is_git_worktree() else {}),
             },
         },

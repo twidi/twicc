@@ -99,6 +99,27 @@ def agent_message_phase(record: dict) -> str | None:
     return phase if isinstance(phase, str) and phase else None
 
 
+def ended_command_process_id(record: dict) -> str | None:
+    """Return the unified-exec process id a ``CommandExecution`` item closes.
+
+    Codex writes one completed ``CommandExecution`` item when a command's
+    process exits — whether the turn that started it is still running or not
+    (a background process that outlives its turn gets its line afterwards,
+    under the original ``turn_id``). ``process_id`` is the id the model sees
+    as ``session_id`` in the ``exec_command`` / ``write_stdin`` outputs.
+
+    ``None`` for any other record, for a still-running status, and for an
+    item without a process id.
+    """
+    item = _item_of_type(record, "CommandExecution")
+    if item is None or item.get("status") in ("in_progress", "inProgress"):
+        return None
+    process_id = item.get("process_id")
+    if isinstance(process_id, int) and not isinstance(process_id, bool):
+        return str(process_id)
+    return process_id if isinstance(process_id, str) and process_id else None
+
+
 def canonical_result_item(record: dict) -> dict | None:
     item = completed_item(record)
     if item is None or item.get("type") not in {"FileChange", "McpToolCall"}:

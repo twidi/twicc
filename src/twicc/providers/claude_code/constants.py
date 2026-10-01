@@ -323,9 +323,25 @@ MODEL_VERSIONS: list[ModelVersion] = [
     ),
     ModelVersion(
         provider=Provider.CLAUDE_CODE,
-        model="sonnet", version="5", full_name="claude-sonnet-5",
+        model="sonnet", version="5.5", full_name="claude-sonnet-5-5",
         retirement_date=None,
         latest=True,
+        weight=40,
+        # ``supports_thinking_disabled=False``: unlike Sonnet 5, Sonnet 5.5
+        # rejects ``thinking:{type:disabled}`` — the CLI model catalog flags it
+        # ``rejects_disabled_thinking``, as it does for Opus 5.5 and the fable
+        # family. No fast mode (no ``fast_mode`` capability in the catalog).
+        provider_extra=ClaudeCodeModelExtra(
+            supports_1m=True, supports_effort_xhigh=True, supports_effort_max=True,
+            supports_fast=False, supports_permission_auto=True,
+            supports_highres_images=True, supports_thinking_disabled=False,
+        ),
+    ),
+    ModelVersion(
+        provider=Provider.CLAUDE_CODE,
+        model="sonnet", version="5", full_name="claude-sonnet-5",
+        retirement_date=None,
+        latest=False,
         weight=30,
         provider_extra=ClaudeCodeModelExtra(
             supports_1m=True, supports_effort_xhigh=True, supports_effort_max=True,

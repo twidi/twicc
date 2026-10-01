@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
+from typing import NamedTuple
 
 import orjson
 from asgiref.sync import sync_to_async
@@ -39,12 +41,15 @@ from twicc.providers.db_writer import submit_async_job
 from twicc.providers.sessions_watcher import (
     BaseSessionsWatcher,
     ParsedSessionFile,
+    SessionChangeResult,
     get_session_by_id,
 )
 
+from .canonical import ended_command_process_id
+from .compute import announced_running_process_id, rollout_line_epoch
 from .compute import get_compute as _get_compute
 from .initial_sync import extract_session_meta, is_session_file
-from .migration_gate import is_migrating, request_rebuild
+from .migration_gate import gate_for, is_migrating, request_rebuild
 from .rollout_migration import (
     HistoryMode,
     MarkSessionRebuildJob,
@@ -53,6 +58,11 @@ from .rollout_migration import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _GateWakeTarget(NamedTuple):
+    source_generation: object
+    release_token: int
 
 
 class CodexSessionsWatcher(BaseSessionsWatcher):
@@ -75,6 +85,8 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         # rewrite check (legacy in DB, paginated on disk) is skipped for
         # them, so a live paginated session costs no extra DB read per event.
         self._paginated_in_db: set[str] = set()
+        self._gate_wakes: dict[str, asyncio.Task] = {}
+        self._gate_wake_targets: dict[str, dict[Path, _GateWakeTarget]] = {}
 
     async def defer_session_change(self, parsed: ParsedSessionFile) -> bool:
         # The coordinator is rewriting this session's history: skip the
@@ -87,10 +99,70 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         parsed: ParsedSessionFile,
         change_type: Change,
         channel_layer,
+    ) -> SessionChangeResult:
+        if is_migrating(parsed.session_id):
+            return SessionChangeResult('deferred')
+        # Order: provider callback lock -> session gate -> DB writer lease.
+        # The coordinator never acquires the callback lock while holding a gate.
+        gate = gate_for(parsed.session_id)
+        wake_target = _GateWakeTarget(self._queue.source_generation(path), self._queue.release_token(path))
+        try:
+            # Free acquisition does not suspend. A queued gate cannot stall
+            # the consumer, even before its future migration owner marks it.
+            async with asyncio.timeout(0):
+                await gate.acquire()
+        except TimeoutError:
+            self._wake_after_gate(parsed.session_id, path, gate, wake_target)
+            return SessionChangeResult('deferred')
+        try:
+            if is_migrating(parsed.session_id):
+                return SessionChangeResult('deferred')
+            if change_type != Change.deleted and await self._rewrite_detected(parsed, path):
+                self._queue.observe_source(path, object())
+                return SessionChangeResult('deferred')
+            return await super()._process_parsed_session_change(path, parsed, change_type, channel_layer)
+        finally:
+            gate.release()
+
+    def _wake_after_gate(
+        self, session_id: str, path: Path, gate: asyncio.Lock, target: _GateWakeTarget,
     ) -> None:
-        if change_type != Change.deleted and await self._rewrite_detected(parsed, path):
+        if self._queue.closed:
             return
-        await super()._process_parsed_session_change(path, parsed, change_type, channel_layer)
+        targets = self._gate_wake_targets.setdefault(session_id, {})
+        # Coalesce the task, but retain responsibility for each latest admitted
+        # source. A replacement can defer while the original wake still waits.
+        # The callback captured this before awaiting the gate. A terminal
+        # outcome received during that await must still invalidate its wake.
+        targets[path] = target
+        if session_id in self._gate_wakes:
+            return
+
+        async def wake():
+            try:
+                async with gate:
+                    pass
+                # A coordinator outcome or a replacement wins over this older
+                # gate wake. Never turn a failed migration into an implicit retry.
+                for source, (generation, release_token) in targets.items():
+                    if (not self._queue.closed
+                            and generation is self._queue.source_generation(source)
+                            and release_token == self._queue.release_token(source)):
+                        self._enqueue(source, Change.modified)
+            finally:
+                self._gate_wakes.pop(session_id, None)
+                self._gate_wake_targets.pop(session_id, None)
+
+        task = asyncio.create_task(wake(), name=f'session-gate-wake-{session_id}')
+        self._gate_wakes[session_id] = task
+        self._wake_tasks.add(task)
+        def forget(done):
+            self._wake_tasks.discard(done)
+            if self._gate_wakes.get(session_id) is done:
+                self._gate_wakes.pop(session_id, None)
+                self._gate_wake_targets.pop(session_id, None)
+
+        task.add_done_callback(forget)
 
     async def _rewrite_detected(self, parsed: ParsedSessionFile, path: Path) -> bool:
         """Whether the rollout was rewritten under TwiCC (not appended to).
@@ -118,7 +190,7 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
             size = path.stat().st_size
         except OSError:
             return False
-        rewritten = size < session.last_offset
+        rewritten = size < session.last_offset or path in self._replaced_paths
         if not rewritten and parsed.compute_ready_on_create and session.id not in self._paginated_in_db:
             try:
                 database_mode = await get_db_history_mode(session.id)
@@ -136,6 +208,7 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
             session.id, size, session.last_offset,
         )
         self._paginated_in_db.discard(session.id)
+        self._replaced_paths.add(path)
         future = asyncio.get_running_loop().create_future()
         await submit_async_job(MarkSessionRebuildJob(Provider.CODEX, session.id, future))
         request_rebuild(session.id)
@@ -204,16 +277,41 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
             return
         await manager.notify_compacted(session_id)
 
+    async def _after_agents_resumed(
+        self, session_id: str, agents: list[tuple[str, str]],
+    ) -> None:
+        # The batch created run-opening interactions (a ``followup_task`` on
+        # an idle child): the live stream cannot tell it from a
+        # ``send_message``, so only the watcher knows the child runs again.
+        # ``session_id`` is the tree root, the only session with a live
+        # agent: the relay puts the children that still run back in its
+        # running set. Fire-and-forget, like the stop relay below; the agent
+        # re-reads the run state under its own lock, so the two relays may
+        # run in any order.
+        from .agent.manager import get_codex_agent_manager
+        try:
+            manager = get_codex_agent_manager()
+        except KeyError:
+            return
+        asyncio.create_task(
+            manager.notify_subagents_resumed(session_id, list(agents)),
+            name=f"subagents-resumed-relay-{session_id}",
+        )
+
     async def _after_agents_stopped(
         self, session_id: str, stopped_agent_ids: list[str],
     ) -> None:
-        # A spawned subagent's completion never reaches the parent's SDK
-        # stream (Codex emits no per-agent completion item there), so this
-        # watcher signal — ``last_stopped_at`` just stamped off the
-        # ``FINAL_ANSWER`` landing in the parent's rollout — is what
-        # releases a live parent parked in the subagent hold (or refreshes
-        # the "waiting for N subagents" count). Fire-and-forget: the
-        # ingest path never blocks on agent state settles.
+        # The batch's stop step closed a run of these children and they no
+        # longer run (``agent_run_states``), whatever the stamp and whatever
+        # file carried the evidence — the root's rollout, or the child's own
+        # turn end (rule 5). ``session_id`` is the tree root, the only
+        # session with a live agent: the relay drops the children from its
+        # running set and releases the subagent hold (or refreshes the
+        # "waiting for N subagents" count). The root's stream sees a
+        # ``completed`` item for most runs, but not every run end (a
+        # ``FINAL_ANSWER`` only, rule 5, an owner abort), so this relay stays
+        # the reliable end-of-child source. Fire-and-forget: the ingest path
+        # never blocks on agent state settles.
         from .agent.manager import get_codex_agent_manager
         try:
             manager = get_codex_agent_manager()
@@ -244,6 +342,87 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
             self._check_goal_continuation_end(manager, session.id, list(new_line_nums)),
             name=f"goal-continuation-check-{session.id}",
         )
+
+    async def _after_any_new_lines_synced(self, session, new_line_nums) -> None:
+        # Background shells the SDK stream cannot report, read off the
+        # rollout of the thread that ran them — the session's own, or a
+        # subagent's (it runs in its parent's app-server, and its items only
+        # ever reach its own turn's stream):
+        # - any thread: a completed ``CommandExecution`` item, the end of a
+        #   process that may have outlived its turn (the stream has stopped
+        #   listening by then) — gated on any agent tracking a live shell;
+        # - a subagent's thread: the outputs announcing a process still
+        #   running, the only start signal its parent can get — gated on the
+        #   parent agent being live.
+        # Fire-and-forget like the goal check.
+        if not new_line_nums:
+            return
+        from .agent.manager import get_codex_agent_manager
+        try:
+            manager = get_codex_agent_manager()
+        except KeyError:
+            return
+        parent_id = getattr(session, "parent_session_id", None)
+        owner_id = parent_id if parent_id and manager.has_agent(parent_id) else None
+        if owner_id is None and not manager.has_live_shells():
+            return
+        asyncio.create_task(
+            self._relay_shell_events(manager, session.id, owner_id, list(new_line_nums)),
+            name=f"shell-events-relay-{session.id}",
+        )
+
+    async def _relay_shell_events(
+        self, manager, session_id: str, owner_id: str | None, new_line_nums: list[int],
+    ) -> None:
+        """Relay the processes these lines announce as running or as ended.
+
+        Starts are read only when ``owner_id`` (the live parent of this
+        subagent session) is given. Starts go out before ends: a process
+        announced and ended within the same batch nets out, whatever order
+        Codex wrote the two lines in.
+        """
+        def _events() -> tuple[dict[str, float], list[str]]:
+            started: dict[str, float] = {}
+            ended: list[str] = []
+            rows = SessionItem.objects.filter(
+                session_id=session_id, line_num__in=new_line_nums,
+            ).order_by("line_num").values_list("content", flat=True)
+            for content in rows:
+                if not content:
+                    continue
+                is_end = '"CommandExecution"' in content
+                # Cheap pre-filter on the three shapes announcing a process.
+                is_start = owner_id is not None and (
+                    "session_id" in content or "SESSION_ID=" in content
+                    or "Process running with session ID" in content
+                )
+                if not (is_end or is_start):
+                    continue
+                try:
+                    parsed = orjson.loads(content)
+                except orjson.JSONDecodeError:
+                    continue
+                if is_end and (process_id := ended_command_process_id(parsed)) is not None:
+                    ended.append(process_id)
+                    continue
+                if not is_start:
+                    continue
+                announced = announced_running_process_id(parsed)
+                if announced is None or str(announced) in started:
+                    continue
+                # When the announcement was written: the start came shortly
+                # before, which bounds where the agent looks for its process.
+                started[str(announced)] = rollout_line_epoch(parsed) or time.time()
+            return started, ended
+
+        try:
+            started, ended = await sync_to_async(_events)()
+            if started and owner_id is not None:
+                await manager.notify_shells_started(owner_id, session_id, started)
+            if ended:
+                await manager.notify_shells_exited(session_id, ended)
+        except Exception:
+            logger.exception("Shell events relay failed for session %s", session_id)
 
     async def _check_goal_continuation_end(self, manager, session_id: str, new_line_nums: list[int]) -> None:
         """Settle a parked ``/goal`` continuation if any fresh line is a goal stop.

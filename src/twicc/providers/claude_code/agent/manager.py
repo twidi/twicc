@@ -107,6 +107,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         # the agent must be killed and restarted, and this content is sent after
         # cron restart (if any) or directly with the new agent.
         self._pending_after_restart: dict[str, dict] = {}  # session_id -> {text, images, documents}
+        # Settings a background shell held back, applied once the last one
+        # ends (see ``_after_background_work_change``); cancelled at shutdown.
+        self._deferred_settings_tasks: dict[str, asyncio.Task[None]] = {}
 
     # ------------------------------------------------------------------
     # Public API (Claude Code–specific signatures)
@@ -138,8 +141,12 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         - startup (effort, thinking_enabled, claude_in_chrome, fast_mode): require agent stop
 
         When startup settings change during USER_TURN, the agent is killed
-        (reason="apply-settings") and restarted. During ASSISTANT_TURN, the
-        changes are saved to DB and applied on the next USER_TURN transition.
+        (reason="apply-settings") and restarted — unless background shells
+        still run: a restart would kill them, so the change waits like during
+        ASSISTANT_TURN, applied once the last shell ends
+        (``_after_background_work_change``) or the process is stopped. During
+        ASSISTANT_TURN, the changes are saved to DB and applied on the next
+        USER_TURN transition.
 
         Returns:
             ``True`` when a message was synchronously accepted for delivery
@@ -178,6 +185,26 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                         categories=self._settings_categories_for(agent),
                     )
                     has_startup_changes = bool(changes[AgentSettingCategory.STARTUP])
+
+                    if has_startup_changes and agent.background_shell_count():
+                        # A restart would kill the background shells (a dev
+                        # server…): defer it like during ASSISTANT_TURN. The
+                        # caller already saved the settings; they apply once
+                        # the last shell ends (``_after_background_work_change``)
+                        # or when the process is stopped. What applies without
+                        # a restart (permission, model, context) applies now —
+                        # the agent is idle — and the message goes through.
+                        logger.info(
+                            "Startup settings changed for session %s (%s) while %d "
+                            "background shell(s) run — deferring the restart",
+                            session_id, changes[AgentSettingCategory.STARTUP],
+                            agent.background_shell_count(),
+                        )
+                        await agent.apply_live_settings(settings)
+                        delivered = False
+                        if has_content:
+                            delivered = await agent.send(text, images=images, documents=documents)
+                        return delivered
 
                     if has_startup_changes:
                         # Startup settings changed → must kill and restart
@@ -663,6 +690,8 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             logger.info("Cancelling %d cron restart task(s)", len(self._cron_restart_tasks))
             for session_id in list(self._cron_restart_tasks):
                 self._cancel_cron_restart_task(session_id)
+        for task in list(self._deferred_settings_tasks.values()):
+            task.cancel()
 
     async def _check_agent_timeout(
         self, agent: BaseAgent, current_time: float,
@@ -1178,6 +1207,62 @@ class ClaudeCodeAgentManager(BaseAgentManager):
     # Settings hot-reload
     # ------------------------------------------------------------------
 
+    # Delay before applying settings a background shell held back: the end of
+    # a shell wakes the CLI up (a task notification), and the turn it may
+    # start must win over a restart.
+    DEFERRED_SETTINGS_GRACE_SECONDS: ClassVar[float] = 3.0
+
+    async def _after_background_work_change(self, agent: BaseAgent) -> None:
+        """Apply settings a background shell held back, once the last one ends.
+
+        A startup-settings change made while shells run is deferred (a
+        restart would kill them). When an idle agent's last shell ends, apply
+        what is still pending — in its own task (the restart it may trigger
+        must not run inside the agent's own publication task), after a grace
+        delay, under the manager lock like any send, and only if the agent is
+        still the live, idle, shell-less one.
+        """
+        if agent.state != AgentState.USER_TURN or agent.background_shell_count():
+            return
+        running = self._deferred_settings_tasks.get(agent.session_id)
+        if running is not None and not running.done():
+            if running.get_name() == self._deferred_settings_task_name(agent):
+                return
+            # A previous agent's task, still in its grace delay: it would find
+            # the agent replaced and apply nothing. This agent's own check wins.
+            running.cancel()
+
+        async def _apply() -> None:
+            try:
+                await asyncio.sleep(self.DEFERRED_SETTINGS_GRACE_SECONDS)
+                async with self._lock:
+                    if (
+                        self._agents.get(agent.session_id) is not agent
+                        or agent.state != AgentState.USER_TURN
+                        or agent.background_shell_count()
+                    ):
+                        return
+                    await self._apply_pending_settings(agent)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(
+                    "Error applying pending settings for session %s: %s", agent.session_id, e,
+                )
+            finally:
+                current = self._deferred_settings_tasks.get(agent.session_id)
+                if current is asyncio.current_task():
+                    del self._deferred_settings_tasks[agent.session_id]
+
+        self._deferred_settings_tasks[agent.session_id] = asyncio.create_task(
+            _apply(), name=self._deferred_settings_task_name(agent),
+        )
+
+    @staticmethod
+    def _deferred_settings_task_name(agent: BaseAgent) -> str:
+        """Per-agent task name: a new agent on the same session is a new check."""
+        return f"deferred-settings-{agent.session_id}-{id(agent)}"
+
     async def _apply_pending_settings(self, agent: ClaudeCodeAgent) -> None:
         """Check DB settings vs agent settings and apply/restart on USER_TURN.
 
@@ -1212,6 +1297,26 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             categories=self._settings_categories_for(agent),
         )
         if not any(changes.values()):
+            return
+
+        if agent.state != AgentState.USER_TURN:
+            # The DB read above yielded: a turn may have started meanwhile
+            # (a shell's end notification wakes the CLI up). It owns the
+            # agent now; the next USER_TURN transition re-runs this.
+            return
+
+        if changes[AgentSettingCategory.STARTUP] and agent.background_shell_count():
+            # A restart would kill the background shells: keep the startup
+            # settings pending until the last one ends
+            # (``_after_background_work_change`` re-runs this) or the process
+            # is stopped. What needs no restart applies now.
+            logger.info(
+                "Pending startup settings for session %s (%s) wait for %d background shell(s)",
+                agent.session_id, changes[AgentSettingCategory.STARTUP],
+                agent.background_shell_count(),
+            )
+            if changes[AgentSettingCategory.LIVE] or changes[AgentSettingCategory.IDLE]:
+                await agent.apply_live_settings(requested_settings)
             return
 
         if changes[AgentSettingCategory.STARTUP]:

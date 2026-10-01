@@ -40,12 +40,41 @@ wait. ``session <id> wait-reply`` takes ``--from`` / ``--since``, ``sessions
 wait-reply`` takes ``--since`` only (a line number belongs to one transcript);
 both default to :func:`default_wait_cursors` (after the last user message, the
 current ``last_line`` while the compute is not current).
+
+``wait_background`` (``--wait-background``) changes one thing: a final
+message read while the session's ``background_work_in_progress`` is not null
+does not count. It is ignored as if it did not exist — the cursor moves past
+it — and the first final message read while the snapshot is null ends the
+wait ``replied``, exactly as without the flag. "Read while" is the snapshot
+taken in the same tick as the scan that returned the line, and taken
+**after** that scan: a final message written just after the work ended is
+read with a snapshot that already says so, and counts. The judgement is on
+the reading, not the writing: a wait started or resumed after the work ended
+counts the final messages already written, the one ignored before included —
+which is why a resume that wants the *next* answer starts from the ignored
+message's ``line_num``.
+
+The backstop changes to match. An idle agent with work still running behind
+it is not a finished turn (a shell left running in ``user_turn``), so it
+keeps the wait open like a working agent does. And once a final message was
+ignored, the next one is owed: an alive idle agent keeps the wait open until
+it comes, whether 1 s or 50 s after the work ended — Claude Code reopens the
+turn only on the model's first output, and no fixed window covers that. What
+the work's end brings depends on the provider — Claude Code reopens a turn
+when a background shell ends, Codex answers after a process ends only if the
+agent waited for it within its turn — so a wait on work that brings no new
+answer ends in ``timeout``, carrying the last ignored final message and the
+snapshot. Everything else is untouched: a pending request, a provider error,
+and the dead-agent backstop (a dead agent has no background work; its
+``ended`` carries the ignored final message). With no final message ignored,
+the idle backstop is the original one.
 """
 
 from __future__ import annotations
 
 import os
 import time
+from typing import NamedTuple
 
 
 POLL_INTERVAL_SECONDS = 0.25
@@ -98,6 +127,36 @@ PENDING = "pending"                # batch only: --wait-first ended the wait bef
 TIMEOUT = "timeout"                # the deadline passed, the session keeps running
 BACKEND_GONE = "backend_gone"      # TwiCC stopped or restarted: nothing can be observed
 WAIT_FAILED = "wait_failed"        # the wait itself broke; the session is unaffected
+
+# ``--wait-background`` help, shared by the five commands that wait. The three
+# that send append " Requires --wait-reply."; the two wait commands use it as
+# is. Kept here, beside the rule it describes, so the five cannot drift.
+WAIT_BACKGROUND_HELP = (
+    "A final message read while background work runs behind the agent "
+    "(`background_work_in_progress` not null: a subagent, background shell, "
+    "Monitor, scheduled wake-up or goal) does not count; the first final "
+    "message read once that work has ended is the answer, so a wait started or "
+    "resumed after the work ended counts the final messages already written. "
+    "Once a final message was ignored, an idle agent keeps the wait open until "
+    "the next one comes, however late (a dead agent ends it, 'ended'). Claude "
+    "Code reopens a turn when a background shell ends; Codex answers after a "
+    "process ends only if the agent waited for it within its turn, so a "
+    "process it left running on purpose brings no new answer and such a wait "
+    "ends in 'timeout'. On 'timeout', the last ignored final message is "
+    "returned with the current `background_work_in_progress`: to wait for the "
+    "next answer, resume with `session <ID> wait-reply --from <its line_num> "
+    "--wait-background`. A pending request still ends the wait at once and "
+    "carries no ignored final message."
+)
+
+
+class _Activity(NamedTuple):
+    """What the process side says about one session, read once per tick."""
+
+    working: bool         # starting / assistant_turn, or blocked inside a turn
+    awaiting: bool        # blocked on a pending request
+    background: dict | None  # ``background_work_in_progress``; None when nothing runs
+    alive: bool           # any state but dead: the agent can still write
 
 
 def degraded_reply(cursor: int, waited: float, exc: BaseException) -> dict:
@@ -159,6 +218,7 @@ def wait_for_reply_or_degrade(
     since_line_num: int,
     timeout: float,
     want_text: bool,
+    wait_background: bool = False,
 ) -> dict:
     """:func:`wait_for_reply`, unable to take its caller's payload down with it.
 
@@ -177,7 +237,7 @@ def wait_for_reply_or_degrade(
     try:
         return wait_for_reply(
             session_id, since_line_num=since_line_num, timeout=timeout,
-            want_text=want_text,
+            want_text=want_text, wait_background=wait_background,
         )
     except BaseException as exc:  # noqa: BLE001 - deliberate, see above
         return degraded_reply(since_line_num, time.monotonic() - started, exc)
@@ -215,8 +275,12 @@ def _error_text(parsed: dict, item, helpers) -> str:
     return helpers.extract_indexable_text(item)
 
 
-def _agent_activity(session_id: str, twicc_pid: int | None) -> tuple[bool, bool]:
-    """``(is it working, is it blocked on a click)`` for one session.
+def _agent_activity(session_id: str, twicc_pid: int | None) -> _Activity:
+    """Is it working, is it blocked on a click, and what runs behind it.
+
+    ``background`` is the agent's ``background_work_in_progress`` — the same
+    snapshot the ``process`` block exposes, ``None`` when nothing runs and
+    always ``None`` for a dead agent.
 
     Read from the **in-memory agent registry** when this runs inside the
     backend — over MCP or ``/rpc/`` the command executes in the very process
@@ -239,14 +303,21 @@ def _agent_activity(session_id: str, twicc_pid: int | None) -> tuple[bool, bool]
 
         info = get_agent_manager_registry().get_agent_info(session_id)
         if info is None:
-            return False, False
+            return _Activity(False, False, None, False)
         awaiting = bool(info.pending_requests)
         # The ``or awaiting`` mirrors the DB branch below rather than relying on
         # "a pending request implies ASSISTANT_TURN" holding forever: a request
         # blocks *inside* a running turn, so the agent is working either way.
-        return awaiting or info.state in working_states, awaiting
+        return _Activity(
+            awaiting or info.state in working_states, awaiting,
+            info.background_work_in_progress or None, True,
+        )
 
-    from twicc.cli._process_state import AWAITING_VIRTUAL_STATE, project_virtual_state
+    from twicc.cli._process_state import (
+        AWAITING_VIRTUAL_STATE,
+        DEAD_VIRTUAL_STATE,
+        project_virtual_state,
+    )
     from twicc.core.models import ProcessRun
 
     row = (
@@ -264,7 +335,12 @@ def _agent_activity(session_id: str, twicc_pid: int | None) -> tuple[bool, bool]
     working = awaiting or virtual in (
         AgentState.STARTING.value, AgentState.ASSISTANT_TURN.value,
     )
-    return working, awaiting
+    # Same projection as ``serialize_compact_process``: a DEAD row may still
+    # hold the last snapshot it was written with, and a dead agent runs nothing.
+    background = (
+        row.background_work_in_progress if virtual != DEAD_VIRTUAL_STATE else None
+    ) or None
+    return _Activity(working, awaiting, background, virtual != DEAD_VIRTUAL_STATE)
 
 
 def _watcher_is_behind(session) -> bool:
@@ -331,19 +407,25 @@ class _SessionWait:
     """
 
     def __init__(self, session_id: str, since_line_num: int, *, started: float,
-                 twicc_pid, want_text: bool):
+                 twicc_pid, want_text: bool, wait_background: bool = False):
         self.session_id = session_id
         self.since_line_num = since_line_num
         self.scanned_up_to = since_line_num
         self.started = started
         self.twicc_pid = twicc_pid
         self.want_text = want_text
+        self.wait_background = wait_background
         # Read once and kept: ``provider`` and ``file_path`` never change, and
         # ``last_offset`` is refreshed below only where it is actually used.
         self.session = None
         self.stopped_since = None
         self.confirming = False
         self.last_message = None
+        # ``wait_background`` only: the last final message ignored because
+        # background work ran when it was read, and the latest snapshot. Both
+        # stay ``None`` without the flag, so every ending keeps its shape.
+        self.last_ignored = None
+        self.background = None
 
     def build(self, outcome: str, message=None, *, line_num=None) -> dict:
         block = {
@@ -356,6 +438,23 @@ class _SessionWait:
         if self.want_text and message is not None:
             block["text"] = message.text
         return block
+
+    def build_cut_short(self, outcome: str) -> dict:
+        """The block of a wait stopped from outside: ``timeout`` or ``pending``.
+
+        The last thing the session said, as always — except that under
+        ``wait_background`` an answer may have been ignored because work ran
+        behind it. The caller gets that answer and what still ran, so a
+        timeout on a long background job does not throw the answer away. The
+        cursor is untouched: resuming from ``since_line_num`` reads that answer
+        again and judges it on the snapshot of that new reading; resuming from
+        its ``line_num`` waits for the next one.
+        """
+        if self.last_ignored is None:
+            return self.build(outcome, self.last_message)
+        return self.build(outcome, self.last_ignored) | {
+            "background_work_in_progress": self.background,
+        }
 
     def step(self) -> dict | None:
         """One poll for this session. Returns its ending, or ``None`` to go on."""
@@ -374,6 +473,7 @@ class _SessionWait:
                 .first()
             )
 
+        activity = None
         if self.session is not None:
             new_items = list(
                 SessionItem.objects
@@ -392,12 +492,22 @@ class _SessionWait:
                 messages = helpers.get_indexable_messages(
                     [item for item in new_items if item.kind == ItemKind.ASSISTANT_MESSAGE]
                 )
-                for message in messages:
+                finals = [message for message in messages if message.is_final is True]
+                if finals and self.wait_background:
+                    # Read AFTER the scan, in the same tick: a final message
+                    # written just after the work ended meets a snapshot that
+                    # already says so. One that meets running work is
+                    # ignored — the cursor has moved past it all the same.
+                    activity = _agent_activity(self.session_id, self.twicc_pid)
+                    self.background = activity.background
+                    if activity.background is not None:
+                        self.last_ignored = finals[-1]
+                        finals = []
+                if finals:
                     # The *first* final message past the cursor is the answer to
                     # what the caller just sent. A later one would belong to a
                     # turn the caller did not trigger.
-                    if message.is_final is True:
-                        return self.build(REPLIED, message)
+                    return self.build(REPLIED, finals[0])
                 if messages:
                     self.last_message = messages[-1]
 
@@ -420,18 +530,30 @@ class _SessionWait:
                         block["text"] = _error_text(parsed, item, helpers)
                     return block
 
-        working, awaiting = _agent_activity(self.session_id, self.twicc_pid)
+        if activity is None:
+            activity = _agent_activity(self.session_id, self.twicc_pid)
+            self.background = activity.background
 
-        if awaiting:
+        if activity.awaiting:
             # Checked AFTER the transcript scan above, so a turn that both
             # answered and then blocked reports the answer: an arrived reply is
             # always the better ending.
             return self.build(AWAITING)
 
-        if working:
+        if activity.working or (self.wait_background and (
+            activity.background is not None
+            or (self.last_ignored is not None and activity.alive)
+        )):
             # A fresh turn (a cron, a wake-up, a subagent finishing) restarts
             # the count from zero: whatever was being waited out no longer
-            # describes the session.
+            # describes the session. Under ``wait_background``, two more
+            # things keep an idle agent's wait open: work running behind it (a
+            # shell left running in ``user_turn``), and — once a final message
+            # was ignored — the next final message still owed, however long
+            # it takes to come (Claude Code reopens the turn only on the
+            # model's first output, seconds later). Only a new final message,
+            # a pending request, a provider error, the agent dying or the
+            # deadline end that wait.
             self.stopped_since = None
             self.confirming = False
             return None
@@ -460,8 +582,10 @@ class _SessionWait:
                         # wrote is indexed, and a scan since then found no
                         # answer: none is coming. A crash, an interruption, or a
                         # closing message whose text was empty (extraction drops
-                        # those).
-                        return self.build(ENDED, self.last_message)
+                        # those). Under ``wait_background`` only a dead agent
+                        # gets here with an ignored final message, which it
+                        # carries: nothing more will come after it.
+                        return self.build(ENDED, self.last_ignored or self.last_message)
         elif (
             stopped_for >= AGENT_FLUSH_SECONDS
             and time.monotonic() - self.started >= SESSION_ROW_GRACE_SECONDS
@@ -482,6 +606,7 @@ def wait_for_replies(
     timeout: float,
     want_text: bool,
     first: bool = False,
+    wait_background: bool = False,
 ) -> dict:
     """Wait on one or more sessions; return one reply block per id.
 
@@ -497,6 +622,10 @@ def wait_for_replies(
     for an answer.
     Sessions still waiting when that happens get ``outcome: "pending"``, the
     word ``processes wait`` already uses for the same situation.
+
+    ``wait_background`` applies the rule of the module docstring to every
+    session alike: a final message counts only when it is read while nothing
+    runs behind that session.
 
     Never raises for a business outcome: every ending is an ``outcome`` value,
     because the send or the creation it follows already succeeded and must not
@@ -515,7 +644,7 @@ def wait_for_replies(
     waiting = {
         session_id: _SessionWait(
             session_id, cursor, started=started, twicc_pid=twicc_pid,
-            want_text=want_text,
+            want_text=want_text, wait_background=wait_background,
         )
         for session_id, cursor in cursors.items()
     }
@@ -545,7 +674,7 @@ def wait_for_replies(
             del waiting[session_id]
             if first and block["outcome"] in (REPLIED, AWAITING):
                 return results | {
-                    other_id: other.build(PENDING, other.last_message)
+                    other_id: other.build_cut_short(PENDING)
                     for other_id, other in waiting.items()
                 }
 
@@ -554,7 +683,7 @@ def wait_for_replies(
 
         if time.monotonic() >= deadline:
             return results | {
-                session_id: waiter.build(TIMEOUT, waiter.last_message)
+                session_id: waiter.build_cut_short(TIMEOUT)
                 for session_id, waiter in waiting.items()
             }
 
@@ -567,6 +696,7 @@ def wait_for_reply(
     since_line_num: int,
     timeout: float,
     want_text: bool,
+    wait_background: bool = False,
 ) -> dict:
     """Poll until the session answers, blocks on a human, the turn ends, or
     ``timeout`` elapses.
@@ -579,5 +709,5 @@ def wait_for_reply(
     """
     return wait_for_replies(
         {session_id: since_line_num},
-        timeout=timeout, want_text=want_text,
+        timeout=timeout, want_text=want_text, wait_background=wait_background,
     )[session_id]

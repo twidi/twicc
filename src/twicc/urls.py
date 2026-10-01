@@ -13,6 +13,7 @@ from .share import session_views as share_session_views
 from .share import views_assets as share_views_assets
 from .peer import inbound_views as peer_inbound_views
 from .peer import owner_views as peer_owner_views
+from .uploads import views as upload_views
 
 from .mcp.owner_views import management as mcp_management
 
@@ -45,6 +46,10 @@ urlpatterns = [
     path("api/file-delete/", views.standalone_file_delete),
     path("api/file-move/", views.standalone_file_move),
     path("api/file-create/", views.standalone_file_create),
+    # Browser file uploads: GET lists, POST creates (standalone scope).
+    path("api/uploads/", upload_views.uploads_root),
+    # tus transfer of one upload: HEAD (offset), PATCH (append), DELETE (cancel).
+    path("api/uploads/<str:upload_id>/", upload_views.upload_detail),
     path("api/home-directory/", views.home_directory),
     path("api/artifact-bookmarks/", views.artifact_bookmark_list),
     path("api/artifact-bookmarks/<int:bookmark_id>/", views.artifact_bookmark_detail),
@@ -78,6 +83,7 @@ urlpatterns = [
     path("api/projects/<str:project_id>/file-delete/", views.file_delete),
     path("api/projects/<str:project_id>/file-move/", views.file_move),
     path("api/projects/<str:project_id>/file-create/", views.file_create),
+    path("api/projects/<str:project_id>/uploads/", upload_views.upload_create),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/user-messages/", views.user_messages),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/", views.session_detail),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/items/", views.session_items),
@@ -127,6 +133,7 @@ urlpatterns = [
     path("api/projects/<str:project_id>/sessions/<str:session_id>/file-delete/", views.file_delete),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/file-move/", views.file_move),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/file-create/", views.file_create),
+    path("api/projects/<str:project_id>/sessions/<str:session_id>/uploads/", upload_views.upload_create),
     # Session-scoped artifact serving. Not nested under ``/api/`` because
     # this is a media endpoint rather than a JSON API; not nested under any
     # project/session SPA path because no project ownership is implied.

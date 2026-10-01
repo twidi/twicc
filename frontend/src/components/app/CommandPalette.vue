@@ -28,6 +28,7 @@ import { useCommandRegistry } from '../../composables/useCommandRegistry'
 import { fuzzyMatch } from '../../utils/fuzzyMatch'
 import { splitDrillDownQuery } from '../../utils/paletteDrillDown'
 import { useGlideInk } from '../../composables/useGlideInk'
+import { userTurnBackgroundShellCount } from '../../utils/backgroundWork'
 import ProcessIndicator from '../ui/ProcessIndicator.vue'
 import ProjectMark from '../project/ProjectMark.vue'
 import PermissionModeIcon from '../ui/PermissionModeIcon.vue'
@@ -763,6 +764,7 @@ defineExpose({ open, close })
                                         v-if="itemActivity(item).processState"
                                         :state="itemActivity(item).processState.state"
                                         :has-active-crons="((itemActivity(item).processState.active_crons?.length) || 0) > 0"
+                                        :background-shells="userTurnBackgroundShellCount(itemActivity(item).processState)"
                                         size="small"
                                         class="palette-process-indicator"
                                     />

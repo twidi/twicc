@@ -8,6 +8,8 @@ messages for sending messages to agent sessions (any provider).
 
 import asyncio
 import logging
+from time import perf_counter
+from datetime import datetime
 from urllib.parse import parse_qs
 
 from asgiref.sync import sync_to_async
@@ -20,7 +22,9 @@ from channels.sessions import SessionMiddlewareStack
 from django.conf import settings
 from django.core.asgi import get_asgi_application
 from django.urls import path
+from django.utils import timezone
 
+from twicc.sync_diagnostics import log_slow
 from twicc.agent import AgentInfo, serialize_agent_info
 from twicc.auth.local_access import scope_remote_access_blocked
 from twicc.auth.access import scope_allowed
@@ -65,6 +69,7 @@ from twicc.providers_status import acknowledge_incident, broadcast_providers_sta
 from twicc.tips_manifest import manifest_to_dict
 from twicc.terminal_config import read_terminal_config, write_terminal_config
 from twicc.terminal import terminal_application
+from twicc.websocket_transport import HeartbeatTransport
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +87,20 @@ TITLE_CAPABLE_PROVIDERS = tuple(dict.fromkeys(TITLE_SUGGESTION_MODEL_PROVIDERS.v
 # WebSocket close code for authentication failure.
 # 4000-4999 range is reserved for application use by the WebSocket spec.
 WS_CLOSE_AUTH_FAILURE = 4001
+
+
+def _apply_ui_stop(root_id: str, agent_id: str, ended_at: datetime):
+    """Write the Stop-button ``ui_stopped`` row and run the stop step; ``(project_id, StopStepResult)``.
+
+    ``None`` when the root row is gone (nothing to attach the row to).
+    """
+    from twicc.core.agent_runs import record_ui_stop
+    from twicc.core.models import Session
+
+    project_id = Session.objects.filter(id=root_id).values_list("project_id", flat=True).first()
+    if project_id is None:
+        return None
+    return project_id, record_ui_stop(root_id, agent_id, ended_at)
 
 
 @sync_to_async
@@ -446,6 +465,43 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             key: cls(self) for key, cls in self.PROVIDER_HANDLERS.items()
         }
 
+    async def __call__(self, scope, receive, send):
+        self._heartbeat_transport = HeartbeatTransport(receive, send, self.encode_json)
+        self._connection_cleanup_task = None
+        consumer_call = super().__call__
+
+        async def application(transport_receive, transport_send):
+            try:
+                await consumer_call(scope, transport_receive, transport_send)
+            finally:
+                await self._cleanup_connection()
+
+        await self._heartbeat_transport.run(application)
+
+    async def _cleanup_connection(self) -> None:
+        """Remove group membership once, including partial connect and cancellation."""
+        transport = getattr(self, "_heartbeat_transport", None)
+        if transport is not None:
+            transport.disable_heartbeat()
+        layer = getattr(self, "channel_layer", None)
+        channel_name = getattr(self, "channel_name", None)
+        if layer is None or channel_name is None:
+            return
+        task = getattr(self, "_connection_cleanup_task", None)
+        if task is None:
+            task = self._connection_cleanup_task = asyncio.create_task(
+                layer.group_discard("updates", channel_name), name="websocket-group-cleanup",
+            )
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+        task.result()
+        if cancelled:
+            raise asyncio.CancelledError
+
     async def connect(self):
         """Accept connection, add to updates group, and send active processes.
 
@@ -458,6 +514,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         When set, only messages whose ``type`` matches the list are sent.
         When absent, all messages are sent (backward compatible).
         """
+        handshake_started = perf_counter()
         # Unprotected instance (no password): refuse non-local connections —
         # there's nothing to authenticate against. No-op when a password is
         # configured or the operator opted out (see twicc.auth.local_access).
@@ -506,6 +563,9 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
         await self.channel_layer.group_add("updates", self.channel_name)
         await self.accept()
+        self._heartbeat_transport.enable_heartbeat()
+        log_slow('websocket_handshake', (perf_counter() - handshake_started) * 1000,
+                 threshold_ms=1000, connection=id(self))
 
         # Send server version to the client (used for auto-reload on version change)
         if self._should_send("server_version"):
@@ -755,7 +815,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
     async def disconnect(self, close_code):
         """Remove from the updates group on disconnect."""
-        await self.channel_layer.group_discard("updates", self.channel_name)
+        await self._cleanup_connection()
 
     async def receive_json(self, content, **kwargs):
         """Handle incoming messages from clients.
@@ -1432,6 +1492,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             )
             return
 
+        # Read before the request, outside any lock: a resume whose ack lands
+        # during the stop round trip or the lock wait starts after it, so the
+        # ui row does not close it (design §5.2).
+        ended_at = timezone.now()
         stopped = await manager.stop_subagent(session_id, subagent_id)
         if not stopped:
             logger.error(
@@ -1439,6 +1503,41 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 subagent_id,
                 session_id,
             )
+            return
+
+        # ``session_id`` is the tree root (the manager checks the subagent's
+        # parent is that session). The row, the stop step and its broadcasts
+        # share one critical section, so no watcher batch can send a newer
+        # ``agent_run_state`` in between.
+        try:
+            await run_under_db_write_lock(
+                lambda: self._record_and_broadcast_ui_stop(session_id, subagent_id, ended_at)
+            )
+        except Exception:
+            logger.exception(
+                "stop_subagent: could not record the stop of subagent %s in session %s", subagent_id, session_id,
+            )
+
+    async def _record_and_broadcast_ui_stop(self, root_id: str, agent_id: str, ended_at: datetime) -> None:
+        """Record a Stop-button stop as run evidence, then broadcast the stop step's outcome.
+
+        Runs under the DB write lock: the transaction commits before the
+        broadcasts. No ``_after_agents_stopped`` hook: it is a watcher method,
+        and only Claude has a Stop button, whose hook is the base no-op.
+        """
+        from twicc.providers.sessions_watcher import broadcast_agent_run_outcome
+
+        applied = await sync_to_async(_apply_ui_stop)(root_id, agent_id, ended_at)
+        if applied is None:
+            return
+        project_id, outcome = applied
+        await broadcast_agent_run_outcome(
+            self.channel_layer,
+            root_session_id=root_id,
+            project_id=project_id,
+            run_state_payloads=outcome.run_state_payloads,
+            stopped_updates=outcome.stopped,
+        )
 
     async def _handle_interrupt_session(self, content: dict) -> None:
         """Handle interrupt_session request from client.

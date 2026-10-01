@@ -597,7 +597,8 @@ def test_inside_the_backend_the_agent_state_comes_from_memory(project, monkeypat
     jsonl(session, size=0)
     process(session, AgentState.USER_TURN.value)  # the DB says: stopped
 
-    live = type("Info", (), {"state": AgentState.ASSISTANT_TURN, "pending_requests": ()})()
+    live = type("Info", (), {"state": AgentState.ASSISTANT_TURN, "pending_requests": (),
+                          "background_work_in_progress": None})()
     monkeypatch.setattr(transport, "_in_backend", lambda: True)
     monkeypatch.setattr(AgentManagerRegistry, "get_agent_info", lambda self, sid: live)
 
@@ -623,7 +624,8 @@ def test_a_working_session_costs_one_query_per_tick(project, monkeypatch, jsonl)
     jsonl(session, size=0)
     process(session, AgentState.ASSISTANT_TURN.value)
 
-    live = type("Info", (), {"state": AgentState.ASSISTANT_TURN, "pending_requests": ()})()
+    live = type("Info", (), {"state": AgentState.ASSISTANT_TURN, "pending_requests": (),
+                          "background_work_in_progress": None})()
     monkeypatch.setattr(transport, "_in_backend", lambda: True)
     monkeypatch.setattr(AgentManagerRegistry, "get_agent_info", lambda self, sid: live)
 
@@ -946,6 +948,7 @@ def run_cli(*args):
     # The documented default, spelled out: comparing against the value instead
     # of "was it passed" would let this one through silently.
     (["--wait-timeout", "300"], "--wait-timeout"),
+    (["--wait-background"], "--wait-background"),
 ])
 def test_the_wait_flags_are_refused_without_the_wait(args, flag):
     result = run_cli("hello", *args)
@@ -1016,6 +1019,7 @@ def run_send_cli(*args):
     (["--wait-timeout", "42"], "--wait-timeout"),
     (["--no-reply-text"], "--no-reply-text"),
     (["--wait-timeout", "300"], "--wait-timeout"),
+    (["--wait-background"], "--wait-background"),
 ])
 def test_send_message_refuses_the_wait_flags_without_the_wait(args, flag):
     result = run_send_cli(*args)
@@ -1074,7 +1078,8 @@ def test_a_command_with_no_cursor_does_not_grow_a_null_one():
 
 
 def _run_send_message(monkeypatch, status_data: dict, *,
-                      wait_timeout=None, no_reply_text: bool = False) -> dict:
+                      wait_timeout=None, no_reply_text: bool = False,
+                      wait_background: bool = False) -> dict:
     """Drive ``send_message_cmd --wait-reply`` over a stubbed transport.
 
     Everything the command does before the send is real (prompt resolution,
@@ -1118,11 +1123,12 @@ def _run_send_message(monkeypatch, status_data: dict, *,
 
     seen: dict = {}
 
-    def _probe(session_id, *, since_line_num, timeout, want_text):
+    def _probe(session_id, *, since_line_num, timeout, want_text, wait_background=False):
         seen["session_id"] = session_id
         seen["since_line_num"] = since_line_num
         seen["timeout"] = timeout
         seen["want_text"] = want_text
+        seen["wait_background"] = wait_background
         return {"outcome": REPLIED}
 
     monkeypatch.setattr(wait_reply_module, "wait_for_reply_or_degrade", _probe)
@@ -1131,7 +1137,7 @@ def _run_send_message(monkeypatch, status_data: dict, *,
         send_message_cmd(
             session_id=session.id, prompt="hello", no_expand=False, attach=[],
             wait_reply=True, wait_timeout=wait_timeout, no_reply_text=no_reply_text,
-            timeout=30,
+            wait_background=wait_background, timeout=30,
         )
     return seen
 
@@ -1504,6 +1510,8 @@ def test_send_message_drops_the_text_when_asked(monkeypatch):
     ([], "timeout", 300.0),
     (["--wait-timeout", "12"], "timeout", 12.0),
     (["--no-reply-text"], "want_text", False),
+    ([], "wait_background", False),
+    (["--wait-background"], "wait_background", True),
 ])
 def test_create_session_hands_its_wait_arguments_over(monkeypatch, tmp_path, args, key, expected):
     """Same wiring on the other singular command, and its cursor with it:
@@ -1514,8 +1522,9 @@ def test_create_session_hands_its_wait_arguments_over(monkeypatch, tmp_path, arg
 
     seen: dict = {}
 
-    def _probe(session_id, *, since_line_num, timeout, want_text):
-        seen.update(since_line_num=since_line_num, timeout=timeout, want_text=want_text)
+    def _probe(session_id, *, since_line_num, timeout, want_text, wait_background=False):
+        seen.update(since_line_num=since_line_num, timeout=timeout, want_text=want_text,
+                    wait_background=wait_background)
         return {"outcome": REPLIED}
 
     class _Sub:
@@ -1652,3 +1661,14 @@ def test_a_block_is_read_every_tick_and_not_only_at_the_start(project, on_tick):
     reply = wait(session, timeout=30.0)
 
     assert reply["outcome"] == "awaiting_user_input"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("wait_background", [False, True])
+def test_send_message_hands_wait_background_to_the_wait(monkeypatch, wait_background):
+    seen = _run_send_message(monkeypatch, {
+        "session_id": "cursor-wiring-session", "provider": "claude_code",
+        "project_id": "cursor-wiring-project", "last_line": 3,
+    }, wait_background=wait_background)
+
+    assert seen["wait_background"] is wait_background

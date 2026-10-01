@@ -38,6 +38,11 @@ TITLE_MAX_CHARS = 80
 # :func:`has_sender_header`.
 SENDER_HEADER_PREFIX = ":: message from "
 
+# The opening of the notice TwiCC itself sends an agent (a background shell
+# outliving its owner, see ``twicc.agent.shell_notice``). Defined here, next to
+# the other header, so this module never imports the agent package.
+SHELL_NOTICE_HEADER = ":: notice from TwiCC"
+
 _WHITESPACE_RUN_RE = re.compile(r"\s+")
 
 # The title is arbitrary text dropped into a bold span on the header line. Only
@@ -106,8 +111,9 @@ def prefix_sender_header(
 
 
 def has_sender_header(text: str) -> bool:
-    """Tell whether ``text`` is an inter-session message (agent to agent).
+    """Tell whether ``text`` was written by an agent or by TwiCC, not the human.
 
+    Covers inter-session messages (agent to agent) and TwiCC's own notices.
     The header always opens the message, so a prefix test is enough. It reads
     the text as stored on the ``SessionItem`` -- already scrubbed of the
     ``<twicc:context>`` / ``<twicc:instruction>`` blocks at ingestion (see
@@ -116,4 +122,4 @@ def has_sender_header(text: str) -> bool:
     Two shapes are deliberately NOT covered, because they carry no header: a
     session messaging itself, and the initial prompt of a spawned session.
     """
-    return text.lstrip().startswith((SENDER_HEADER_PREFIX, ":: message via "))
+    return text.lstrip().startswith((SENDER_HEADER_PREFIX, ":: message via ", SHELL_NOTICE_HEADER))

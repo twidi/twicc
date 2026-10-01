@@ -10,6 +10,7 @@ import { COLOR_SCHEME, PROCESS_STATE } from './constants'
 import { useFavicon } from './composables/useFavicon'
 import { useTipScheduler } from './composables/useTipScheduler'
 import { toast } from './composables/useToast'
+import { markAppNavigation } from './utils/appNavigation'
 import ProviderAuthToastContent from './components/app/ProviderAuthToastContent.vue'
 import { getRegisteredProviders, getProviderHelpers } from './providers'
 import { reconcileProviderStatusToasts } from './providers/serviceStatusToast'
@@ -118,7 +119,11 @@ watch(displayMode, (newMode) => {
 // Auto-reload when backend version changes
 watch(versionMismatchDetected, (mismatch) => {
     if (mismatch) {
-        setTimeout(() => window.location.reload(), 3000)
+        setTimeout(() => {
+            // An app-initiated reload: the uploads `beforeunload` handler must not ask to confirm it.
+            markAppNavigation()
+            window.location.reload()
+        }, 3000)
     }
 })
 
@@ -817,6 +822,7 @@ const toastTheme = computed(() => {
         :open="pendingConfirmation !== null"
         :mode="pendingConfirmation?.mode ?? 'stop'"
         :cron-count="pendingConfirmation?.cronCount ?? 0"
+        :shell-count="pendingConfirmation?.shellCount ?? 0"
         @confirm="confirmPendingStop"
         @cancel="cancelPendingStop"
     />

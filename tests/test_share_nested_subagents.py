@@ -45,10 +45,16 @@ def test_include_off_hides_all_depths(tree):
 
 def test_snapshot_state_does_not_read_post_freeze_root_completion(tree):
     root, launcher, child = tree
-    queue(root, child, line=150)
+    queue(root, child, line=150)  # also seeds the root's AgentRunEnd at line 150
     share = share_for(root, mode="snapshot", frozen_at_line=120, include_subagents=True)
     rows = asyncio.run(AsyncClient().get(f"/share/{share.token}/api/subagents/")).json()
-    assert next(row for row in rows if row["agent_id"] == child.id)["stopped_at"] is None
+    row = next(row for row in rows if row["agent_id"] == child.id)
+    assert row["stopped_at"] is None
+    assert row["running"] is True
+    # The same end closes the run once the freeze is past it.
+    share = share_for(root, mode="snapshot", frozen_at_line=150, include_subagents=True)
+    rows = asyncio.run(AsyncClient().get(f"/share/{share.token}/api/subagents/")).json()
+    assert next(row for row in rows if row["agent_id"] == child.id)["stopped_at"] == NOW.isoformat()
 
 
 def test_deep_snapshot_and_unreachable_cycle(tree, settings):

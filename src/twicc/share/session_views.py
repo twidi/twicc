@@ -19,7 +19,7 @@ from twicc.core.session_queries import (
     visible_tree_agent_ids,
     tool_results_payload,
 )
-from twicc.share.display import filtered_items_qs, is_descendant_of
+from twicc.share.display import display_ceiling, filtered_items_qs, is_descendant_of
 from twicc.share.headers import apply_share_headers
 from twicc.share.html import share_page_response
 from twicc.share.resolver import SharePasswordRequired, password_required_response, resolve_or_404
@@ -240,7 +240,10 @@ async def share_session_subagents(request, token):
     frozen = ctx.options.get("frozen_at_line") if ctx.options.get("mode") == "snapshot" else None
     if ctx.options.get("mode") == "snapshot" and frozen is None:
         frozen = ctx.session.last_line
-    payload = await sync_to_async(build_subagents_state)(ctx.session, frozen_at_line=frozen)
+    ceiling = display_ceiling(ctx.options.get("max_display_mode", "normal"))
+    payload = await sync_to_async(build_subagents_state)(
+        ctx.session, frozen_at_line=frozen, display_ceiling=ceiling,
+    )
     return _json(payload, safe=False)
 
 

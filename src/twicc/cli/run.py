@@ -61,8 +61,8 @@ get_provider_helpers_registry().purge_env_vars(os.environ)
 # (e.g. its ``manage.py`` would load twicc's settings instead of its own).
 #
 # Safe to drop here: ``django.setup()`` above has already cached the settings
-# for this process, and the in-process uvicorn / migrations never re-read the
-# env var. The one process that still needs it — the spawned compute worker
+# for this process, and in-process uvicorn never re-reads the env var.
+# The migration child selects settings with --settings. The compute worker
 # (multiprocessing "spawn") — sets it itself before its own ``django.setup()``
 # (see ``twicc.providers.background_compute_task.compute_worker_main``), so it
 # no longer relies on inheriting it from here.
@@ -78,7 +78,7 @@ _startup_console.setFormatter(logging.Formatter("%(message)s"))
 logging.getLogger("twicc").addHandler(_startup_console)
 
 # Now we can import Django-dependent modules
-from django.core.management import call_command  # noqa: E402
+from twicc.db.migration_process import run_migrations  # noqa: E402
 
 from twicc.instance_lock import InstanceAlreadyRunning, InstanceLock  # noqa: E402
 from twicc.log_retention import log_trim_enabled, trim_log_file  # noqa: E402
@@ -89,6 +89,7 @@ from twicc.quota_wakeup_task import start_quota_wakeup_task  # noqa: E402
 from twicc.session_dirs_cleanup_task import start_session_dirs_cleanup_task  # noqa: E402
 from twicc.peer_purge_task import start_peer_purge_task  # noqa: E402
 from twicc.tmux_cleanup_task import start_tmux_cleanup_task  # noqa: E402
+from twicc.upload_cleanup_task import start_upload_cleanup_task  # noqa: E402
 from twicc.auth.tokens import start_last_used_flush_task  # noqa: E402
 from twicc.share.view_tracking import start_share_view_flush_task  # noqa: E402
 from twicc.artifacts.denial_tracking import start_denial_flush_task  # noqa: E402
@@ -309,6 +310,7 @@ async def run_server(port: int):
     session_dirs_cleanup_task = asyncio.create_task(start_session_dirs_cleanup_task(shutdown_event))
     peer_purge_task = asyncio.create_task(start_peer_purge_task(shutdown_event))
     tmux_cleanup_task = asyncio.create_task(start_tmux_cleanup_task(shutdown_event))
+    upload_cleanup_task = asyncio.create_task(start_upload_cleanup_task(shutdown_event))
     last_used_flush_task = asyncio.create_task(start_last_used_flush_task(shutdown_event))
     share_view_flush_task = asyncio.create_task(start_share_view_flush_task(shutdown_event))
     denial_flush_task = asyncio.create_task(start_denial_flush_task(shutdown_event))
@@ -404,6 +406,9 @@ async def run_server(port: int):
 
         logger.info("Stopping tmux reaper task...")
         await _cancel_task(tmux_cleanup_task, "tmux reaper task")
+
+        logger.info("Stopping upload cleanup task...")
+        await _cancel_task(upload_cleanup_task, "Upload cleanup task")
 
         logger.info("Stopping token last-used flush task...")
         await _cancel_task(last_used_flush_task, "Token last-used flush task")
@@ -557,7 +562,7 @@ def main():
             logger.info("First run in this data dir: no database yet")
 
         # Migrations auto
-        call_command("migrate", verbosity=0)
+        run_migrations()
         logger.info("Migrations applied")
 
         # Backfill Project.worktree_of from strong filesystem signals. Must run

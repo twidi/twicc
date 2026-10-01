@@ -21,12 +21,21 @@ export const useTipsStore = defineStore('tips', () => {
     // dismiss to (now + TIP_COOLDOWN_MS). In-memory, per-tab.
     const nextEligibleTime = ref(0)
 
-    // Per-device on/off, persisted in localStorage. Default ON.
+    // Per-device on/off, persisted in localStorage. Default ON, unless the
+    // backend says otherwise at bootstrap (see applyDefaultEnabled).
     const lsEnabled = localStorage.getItem(LS_ENABLED_KEY)
     const enabled = ref(lsEnabled === null ? true : lsEnabled === 'true')
 
     function applyManifest(remote) {
         manifest.value = remote || {}
+    }
+
+    // Backend-provided default (OFF in a devctl worktree). Only applies while
+    // this device has made no explicit choice; never persisted, so the device
+    // follows the backend default until the user toggles it.
+    function applyDefaultEnabled(defaultEnabled) {
+        if (localStorage.getItem(LS_ENABLED_KEY) !== null) return
+        enabled.value = defaultEnabled !== false
     }
 
     function applySeenTips(remote) {
@@ -77,7 +86,7 @@ export const useTipsStore = defineStore('tips', () => {
 
     return {
         manifest, seenTips, currentToastTipKey, nextEligibleTime, enabled,
-        applyManifest, applySeenTips, setEnabled,
+        applyManifest, applyDefaultEnabled, applySeenTips, setEnabled,
         markSeen, resetAllSeen,
         getAvailableTips, getCandidates, pickRandom,
     }

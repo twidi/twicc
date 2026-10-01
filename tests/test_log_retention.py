@@ -184,9 +184,10 @@ def test_short_tail_of_old_activity_does_not_trigger(log):
 
 
 def test_default_now_is_the_current_time(log):
-    log.write_bytes(one_per_day(0, 60))
+    today = date.today()  # the real clock, unlike ``TODAY``: the log must be built relative to it
+    log.write_bytes(build(*(header(today - timedelta(days=n)) for n in range(60, -1, -1))))
     assert trim_log_file(log).trimmed
-    assert log.read_bytes().startswith(header(date.today() - timedelta(days=KEEP_DAYS)))
+    assert log.read_bytes().startswith(header(today - timedelta(days=KEEP_DAYS)))
 
 
 # --- Undated blocks -------------------------------------------------------------

@@ -5,8 +5,8 @@ Codex SDK has no ``PreToolUse`` hook the way Claude Code does, but it
 streams an ``item/started`` notification carrying a ``FileChangeThreadItem``
 **before** the patch hits disk. ``CodexAgent._handle_stream_event`` reads
 the listed paths synchronously at that point and stores their contents
-here, keyed by ``(session_id, call_id)``. The compute pass later pops the
-entry when it sees the matching ``event_msg.patch_apply_end`` line and
+here, keyed by ``(session_id, call_id)``. The compute pass later borrows the
+entry when it sees the matching canonical ``FileChange`` completion and
 splices the contents into the persisted JSON so the frontend can render
 full-file diffs even though Codex only persists a ``unified_diff``.
 
@@ -14,15 +14,13 @@ The value is a ``{abs_path: content}`` mapping because a single
 ``apply_patch`` can touch multiple files — one cache entry per call,
 not per file.
 
-Thread safety: all access is from the same asyncio event loop (single
-process), matching ``claude_code/agent/original_file_cache.py``.
+Thread safety: the agent writes on the event loop; live compute borrows on its
+database worker. The shared cache locks capture, reservation, and cleanup operations.
 """
 
 import asyncio
-import logging
-import time
 
-logger = logging.getLogger(__name__)
+from twicc.providers.enrichment_cache import ENTRY_TTL, EnrichmentCache
 
 _cleanup_stop_event: asyncio.Event | None = None
 
@@ -31,80 +29,30 @@ _cleanup_stop_event: asyncio.Event | None = None
 # stays bounded even on a multi-file patch.
 MAX_FILE_SIZE = 100_000  # 100 KB
 
-# TTL for cache entries (seconds). Entries older than this are cleaned up
-# to avoid unbounded growth from orphaned entries (e.g. patch refused by
-# the user, agent crash between ``item/started`` and ``patch_apply_end``).
-ENTRY_TTL = 300  # 5 minutes
-
-# Cache: (session_id, call_id) → ({abs_path: content}, timestamp)
-_cache: dict[tuple[str, str], tuple[dict[str, str], float]] = {}
+# The shared cache owns the lock, capture TTL, and exact-record retry reservations.
+_cache: EnrichmentCache[dict[str, str]] = EnrichmentCache()
 
 
-def cache_original_files(
-    session_id: str, call_id: str, files: dict[str, str],
-) -> None:
-    """Store file contents captured before an apply_patch execution.
-
-    Overwrites any existing entry for the same ``(session_id, call_id)``
-    — duplicate ``item/started`` notifications for the same call are not
-    expected from the SDK, but if they ever happen the latest wins.
-    No-op when ``files`` is empty (e.g. the patch only adds new files,
-    nothing to capture).
-    """
+def cache_original_files(session_id: str, call_id: str, files: dict[str, str]) -> None:
+    """Store pre-execution contents without replacing a claimed capture."""
     if not files:
         return
-    _cache[(session_id, call_id)] = (files, time.monotonic())
+    _cache.put((session_id, call_id), files)
 
 
-def pop_original_files(
-    session_id: str, call_id: str,
-) -> dict[str, str] | None:
-    """Retrieve and remove cached contents for an apply_patch execution.
-
-    Returns the ``{abs_path: content}`` mapping if found and not expired,
-    ``None`` otherwise. Always consumes the entry whether it's used or
-    not (so a stale entry never lingers past its first lookup).
-    """
-    entry = _cache.pop((session_id, call_id), None)
-    if entry is None:
-        return None
-    files, ts = entry
-    if time.monotonic() - ts > ENTRY_TTL:
-        return None
-    return files
+def pop_original_files(session_id: str, call_id: str) -> dict[str, str] | None:
+    """Consume an unclaimed capture for a nontransactional caller."""
+    return _cache.pop((session_id, call_id))
 
 
 def clear_session(session_id: str) -> None:
-    """Drop every entry belonging to ``session_id``.
-
-    Called from ``CodexAgent.interrupt_or_kill`` so an interrupted turn
-    doesn't leave its in-flight captures sitting in memory until the TTL
-    expires. The session id is the second part of the key tuple, hence
-    the linear scan — there are at most a handful of in-flight calls per
-    session, so the cost is negligible.
-    """
-    keys = [k for k in _cache if k[0] == session_id]
-    for k in keys:
-        del _cache[k]
-    if keys:
-        logger.debug(
-            "original_files_cache: cleared %d entries for session %s",
-            len(keys), session_id,
-        )
+    """Invalidate current captures and retries, including outstanding borrows."""
+    _cache.clear_session(session_id)
 
 
 def cleanup_expired() -> None:
-    """Remove all expired entries."""
-    if not _cache:
-        return
-    now = time.monotonic()
-    expired = [key for key, (_, ts) in _cache.items() if now - ts > ENTRY_TTL]
-    for key in expired:
-        del _cache[key]
-    if expired:
-        logger.debug(
-            "original_files_cache: cleaned up %d expired entries", len(expired),
-        )
+    """Remove expired captures and unused reservations; keep active borrows pinned."""
+    _cache.cleanup_expired()
 
 
 async def start_cleanup_task() -> None:

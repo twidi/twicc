@@ -19,6 +19,8 @@ from twicc.providers.codex.sessions_watcher import CodexSessionsWatcher
 from twicc.providers.db_writer import CreateSessionPayload
 from twicc.providers.subagent_roots import resolve_flat_parent_id
 
+pytestmark = pytest.mark.usefixtures("compute_executor_started")
+
 
 def rollout(provider_home, session_id, parent=None, cwd="/tmp/root-project"):
     path = provider_home.codex / "sessions" / "2026" / "09" / "07" / f"rollout-{session_id}.jsonl"

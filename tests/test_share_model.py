@@ -167,7 +167,14 @@ def test_hide_emits_no_share_event_and_next_snapshot_hides_creator(
     )
     monkeypatch.setattr(session_visibility, "get_channel_layer", lambda: RecordingLayer())
 
-    result = _run(session_visibility.hide_session(creator))
+    async def hide_with_writer():
+        from twicc.providers import db_writer
+        db_writer.start_db_writer()
+        try:
+            return await session_visibility.hide_session(creator)
+        finally:
+            await db_writer.stop_db_writer()
+    result = asyncio.run(hide_with_writer())
     assert result.success
     assert sent == ["session_removed", "project_updated"]
     assert _serialized(share)["created_by"] == {"kind": "agent", "session": None}

@@ -393,6 +393,82 @@ export function insertDaySeparators(visualItems) {
     return result
 }
 
+// Live placeholders that can close an assistant block while the agent works.
+// They carry no timestamp, so the block would show no time at all.
+const LIVE_PLACEHOLDER_KINDS = new Set([
+    SYNTHETIC_ITEM.STARTING_ASSISTANT_MESSAGE.kind,
+    SYNTHETIC_ITEM.STREAMING_BLOCK.kind,
+    SYNTHETIC_ITEM.WORKING_ASSISTANT_MESSAGE.kind,
+])
+
+/**
+ * While the agent works, the last block ends with a live placeholder (starting,
+ * streaming or working message) that has no timestamp. Flag the last real item
+ * of that block rendered as a message (`isLiveTimestampAnchor`), so it shows its
+ * own time in place of the missing block-end time. When the turn ends, the flag
+ * disappears and the time moves back to the real block-end.
+ *
+ * Collapsed group heads are skipped: their toggle renders no message, hence no
+ * time. The walk stops at the block start (never crosses a user message).
+ *
+ * Requires the `syntheticKind` tags and the block flags to already be set.
+ *
+ * @param {Array} visualItems - Flagged visual items (mutated in place).
+ */
+export function markLiveTimestampAnchor(visualItems) {
+    const last = visualItems?.[visualItems.length - 1]
+    if (!last || last.kind === 'user_message' || !LIVE_PLACEHOLDER_KINDS.has(last.syntheticKind)) return
+
+    for (let i = visualItems.length - 1; i >= 0; i--) {
+        const vi = visualItems[i]
+        if (vi.kind === 'user_message') return
+        if (vi.lineNum >= 0 && !(vi.isGroupHead && !vi.isExpanded)) {
+            vi.isLiveTimestampAnchor = true
+            return
+        }
+        if (vi.isBlockStart) return
+    }
+}
+
+/**
+ * Build the static status line shown at the very bottom of a USER_TURN session
+ * (background shells still running, active crons) as a ready-made visual item.
+ *
+ * Appended AFTER computeVisualItems, the block flags and the day separators on
+ * purpose: it is visible in every display mode (conversation included), never
+ * takes a conversation detail toggle, and never changes the flags of the item
+ * above it — the last message keeps its `isBlockEnd`, hence its timestamp. The
+ * card styling (SessionItem.vue) draws it as the closing row of the last
+ * assistant block, or as its own card right after a user message.
+ *
+ * `backgroundStatusKey` is a top-level signature of the lines: the stabilizer
+ * (visualItemEqual) skips `_parsedContent`, so without it a count change would
+ * reuse the cached item and never re-render.
+ *
+ * @param {Array<{kind: string, text: string}>} lines - From buildBackgroundWorkStatusLines.
+ * @param {Object|null} previousItem - The visual item it follows, if any.
+ * @returns {Object|null} The visual item, or null when there are no lines.
+ */
+export function makeBackgroundWorkStatusItem(lines, previousItem) {
+    if (!lines?.length) return null
+    const { lineNum, kind: syntheticKind } = SYNTHETIC_ITEM.BACKGROUND_WORK_STATUS
+    const item = {
+        lineNum,
+        content: null,
+        kind: 'assistant_message',
+        syntheticKind,
+        groupHead: null,
+        groupTail: null,
+        externallyGrouped: false,
+        timestamp: null,
+        isBlockStart: !previousItem || previousItem.kind === 'user_message' || !!previousItem.isDaySeparator,
+        isBlockEnd: true,
+        backgroundStatusKey: JSON.stringify(lines),
+    }
+    setParsedContent(item, { type: 'assistant', syntheticKind, lines })
+    return item
+}
+
 export function visualItemEqual(a, b) {
     if (a === b) return true
     if (!a || !b) return false

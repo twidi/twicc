@@ -57,9 +57,9 @@ def batch(monkeypatch, two_sessions):
 
     seen: dict = {}
 
-    def fake_wait(cursors, *, timeout, want_text, first):
+    def fake_wait(cursors, *, timeout, want_text, first, wait_background=False):
         seen.update(cursors=dict(cursors), timeout=timeout, want_text=want_text,
-                    first=first)
+                    first=first, wait_background=wait_background)
         return {
             sid: {"outcome": "replied", "line_num": 9, "text": "ok"}
             for sid in cursors
@@ -90,6 +90,7 @@ def run(capsysbinary, **kwargs):
     kwargs.setdefault("wait_timeout", None)
     kwargs.setdefault("no_reply_text", False)
     kwargs.setdefault("wait_first", False)
+    kwargs.setdefault("wait_background", False)
     import typer
 
     try:
@@ -184,10 +185,20 @@ def test_the_text_is_kept_by_default(batch, capsysbinary):
     assert batch["seen"]["want_text"] is True
 
 
+@pytest.mark.parametrize("wait_background", [False, True])
+def test_wait_background_reaches_the_loop(batch, capsysbinary, wait_background):
+    batch["statuses"].update(alpha=sent("alpha", 1), beta=sent("beta", 1))
+
+    run(capsysbinary, wait_background=wait_background)
+
+    assert batch["seen"]["wait_background"] is wait_background
+
+
 @pytest.mark.parametrize("kwargs, message", [
     ({"wait_timeout": 5.0}, "--wait-timeout requires --wait-reply."),
     ({"no_reply_text": True}, "--no-reply-text requires --wait-reply."),
     ({"wait_first": True}, "--wait-first requires --wait-reply."),
+    ({"wait_background": True}, "--wait-background requires --wait-reply."),
 ])
 def test_the_modifiers_are_refused_without_the_wait(batch, capsysbinary, kwargs, message):
     """Four flags that only mean something under `--wait-reply`, and a whole

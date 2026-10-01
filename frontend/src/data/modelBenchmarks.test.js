@@ -16,13 +16,13 @@ const isNumOrNull = v => v === null || (typeof v === 'number' && Number.isFinite
 test('carries the source metadata', () => {
     assert.equal(data.source, 'Artificial Analysis')
     assert.equal(data.url, 'https://artificialanalysis.ai/')
-    assert.equal(data.retrieved_at, '2026-09-23')
+    assert.equal(data.retrieved_at, '2026-09-30')
 })
 
-test('holds the 56 rows of the spec, with unique keys', () => {
-    assert.equal(data.rows.length, 56)
+test('holds the 65 rows of the snapshot, with unique keys', () => {
+    assert.equal(data.rows.length, 65)
     const keys = new Set(data.rows.map(r => `${r.provider} ${r.model} ${r.effort}`))
-    assert.equal(keys.size, 56)
+    assert.equal(keys.size, 65)
     for (const r of data.rows) {
         assert.ok(['claude_code', 'codex'].includes(r.provider), r.provider)
         assert.ok(['low', 'medium', 'high', 'xhigh', 'max'].includes(r.effort), r.effort)
@@ -41,14 +41,14 @@ test('every row has exactly the 10 evaluations with numeric or null values', () 
     }
 })
 
-test('the only nulls are the times of claude-opus-5-5 max', () => {
+test('the only nulls are the times of gpt-6-sol medium and gpt-6-luna medium', () => {
     for (const r of data.rows) {
         for (const k of EVAL_KEYS) {
             const e = r.evals[k]
-            const opusMax = r.model === 'claude-opus-5-5' && r.effort === 'max'
+            const noTime = ['gpt-6-sol', 'gpt-6-luna'].includes(r.model) && r.effort === 'medium'
             assert.equal(e.score === null, false)
             assert.equal(e.cost_usd === null, false)
-            assert.equal(e.time_s === null, opusMax, `${r.model} ${r.effort} ${k}`)
+            assert.equal(e.time_s === null, noTime, `${r.model} ${r.effort} ${k}`)
         }
     }
 })

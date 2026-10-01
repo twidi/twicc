@@ -12,7 +12,9 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from django.db.models import Count, Max, Q
+from django.db.models import Count, Max, Min, Q
+
+from twicc.core.enums import Provider
 
 # The four aggregates that define a tool call's completion state. Kept as a single
 # spec so every site that summarizes ``ToolResultLink`` rows stays in lockstep: the
@@ -156,6 +158,23 @@ def tree_agent_links(root):
     return list(AgentLink.objects.filter(Q(session_id=root.id) | Q(session_id__in=owners)).exclude(agent_id=root.id).order_by("id"))
 
 
+def frozen_tree_links(root, links, frozen_at_line):
+    """Keep the tree links visible at a share's freeze, and return the visible agent ids.
+
+    A root-owned link counts when its call line is at or before the freeze; a
+    link owned by an agent counts when that agent is visible. The snapshot and
+    the run model (``core.agent_runs``) share this one filter.
+    """
+    allowed = {link.agent_id for link in links
+               if link.session_id == root.id and link.tool_use_line_num <= frozen_at_line}
+    visible = visible_tree_agent_ids(root.id, links, allowed)
+    links = [link for link in links if link.agent_id in visible and (
+        (link.session_id in visible) if link.session_id != root.id
+        else link.tool_use_line_num <= frozen_at_line
+    )]
+    return links, visible
+
+
 class SpawnRef(NamedTuple):
     """The three fields :func:`spawn_display_names` needs of a link.
 
@@ -197,66 +216,113 @@ def spawn_display_names(links, helpers) -> dict[tuple[str, str], str]:
     return names
 
 
-def build_subagents_state(root, *, frozen_at_line=None, include_metrics=False):
-    """Build the shared owner/share tree payload with one completion scan.
+def build_subagents_state(root, *, frozen_at_line=None, include_metrics=False, display_ceiling=None):
+    """Build the shared owner/share tree payload: one entry per spawn link (design §7.2).
 
-    ``include_metrics`` adds each agent's cost, turns and context usage — owner
-    surfaces only. A share link never carries them.
+    Each entry carries its agent's run state (``core.agent_runs``) and the
+    interactions targeting it that pass the tree rule. ``frozen_at_line``
+    (frozen share) applies the link filter to links and interactions alike.
+    ``display_ceiling`` (share only) drops the interactions whose call item
+    is above it. ``include_metrics`` adds each agent's cost, turns and
+    context usage — owner surfaces only. A share link never carries them.
     """
-    from twicc.core.models import SessionItem, ToolResultLink
+    from twicc.core.agent_runs import agent_run_states
     from twicc.providers.helpers import get_provider_helpers
 
     links = tree_agent_links(root)
+    visible = None
+    frozen_links = None
     if frozen_at_line is not None:
-        allowed = {link.agent_id for link in links
-                   if link.session_id == root.id and link.tool_use_line_num <= frozen_at_line}
-        visible = visible_tree_agent_ids(root.id, links, allowed)
-        links = [link for link in links if link.agent_id in visible and (
-            (link.session_id in visible) if link.session_id != root.id
-            else link.tool_use_line_num <= frozen_at_line
-        )]
-    owners = {link.session_id for link in links}
-    results = ToolResultLink.objects.filter(session_id__in=owners)
-    if frozen_at_line is not None:
-        results = results.filter(~Q(session_id=root.id) | Q(tool_result_line_num__lte=frozen_at_line))
-    counts = {(row["session_id"], row["tool_use_id"]): row["count"]
-              for row in results.values("session_id", "tool_use_id").annotate(count=Count("id"))}
+        links, visible = frozen_links = frozen_tree_links(root, links, frozen_at_line)
+    agent_ids = {link.agent_id for link in links}
     helpers = get_provider_helpers(root.provider)
-    queue_items = SessionItem.objects.filter(session_id=root.id, content__contains="queue-operation")
-    if frozen_at_line is not None:
-        queue_items = queue_items.filter(line_num__lte=frozen_at_line)
-    completions = {}
-    for child_id, tool_id, timestamp in helpers.get_queue_completions(queue_items.only("content", "timestamp")):
-        key = (child_id, tool_id)
-        if timestamp is not None and (key not in completions or timestamp > completions[key]):
-            completions[key] = timestamp
     return serialize_agent_links(
-        links, completions=completions, result_counts=counts,
-        trust_agent_stopped=helpers.subagent_idle_trusted, root_cutoff=root.cutoff,
+        links,
+        run_states=agent_run_states(root, agent_ids, frozen_at_line=frozen_at_line, frozen_links=frozen_links),
+        interactions=tree_interactions(
+            root, agent_ids, frozen_at_line=frozen_at_line, visible=visible, display_ceiling=display_ceiling,
+        ),
         root_session_id=root.id, include_metrics=include_metrics,
         display_names=spawn_display_names(links, helpers),
     )
 
 
-def serialize_agent_links(
-    links, *, completions=None, result_counts=None, trust_agent_stopped=False,
-    root_cutoff=None, root_session_id=None, include_metrics=False, display_names=None,
-) -> list[dict]:
-    """Serialize links with distinct persisted-completion and provider-idle evidence.
+def tree_interactions(root, agent_ids, *, frozen_at_line=None, visible=None, display_ceiling=None):
+    """The interactions targeting ``agent_ids`` that pass the tree rule, grouped by target.
 
-    Child idle may be mtime-derived during recompute. Only providers whose
-    parent result stream cannot conclude opt into that signal. Queue completion
-    is keyed by both child and tool id and never derives from child idle.
+    Owned by the root or by a subagent of the tree (design §5.1), in one
+    query. Frozen (``visible`` = the agents the link filter keeps): a
+    root-owned interaction counts when its call line is at or before the
+    freeze, one owned by a visible agent is kept, others are dropped; a kept
+    root-owned run interaction decided after the freeze is listed with
+    ``opens_run`` false (the predicate ``agent_run_states`` applies).
+    """
+    from twicc.core.agent_runs import deciding_line, opens_run_at_freeze, owner_filter
+    from twicc.core.models import AgentInteraction, ToolResultLink
+
+    if not agent_ids:
+        return {}
+    rows = list(
+        AgentInteraction.objects.filter(
+            owner_filter(root.id), agent_id__in=agent_ids,
+        ).order_by("session_id", "tool_use_line_num", "tool_use_id")
+    )
+    first_results = {}
+    if frozen_at_line is not None:
+        rows = [
+            row for row in rows
+            if (row.tool_use_line_num <= frozen_at_line if row.session_id == root.id else row.session_id in visible)
+        ]
+        root_runs = {row.tool_use_id for row in rows if row.session_id == root.id and row.opens_run}
+        if root_runs:
+            first_results = dict(
+                ToolResultLink.objects.filter(session_id=root.id, tool_use_id__in=root_runs)
+                .values("tool_use_id").annotate(line=Min("tool_result_line_num")).values_list("tool_use_id", "line")
+            )
+    if display_ceiling is not None and display_ceiling < 3:
+        from twicc.share.display import visible_call_lines
+
+        shown = visible_call_lines([(row.session_id, row.tool_use_line_num) for row in rows], display_ceiling)
+        rows = [row for row in rows if (row.session_id, row.tool_use_line_num) in shown]
+    is_codex = root.provider == Provider.CODEX
+    grouped = {}
+    for row in rows:
+        decided_at = None
+        if row.session_id == root.id:
+            decided_at = deciding_line(row, first_results.get(row.tool_use_id), is_codex=is_codex)
+        grouped.setdefault(row.agent_id, []).append({
+            "owner_session_id": row.session_id,
+            "tool_use_id": row.tool_use_id,
+            "tool_use_line_num": row.tool_use_line_num,
+            "kind": row.kind,
+            "opens_run": opens_run_at_freeze(row, decided_at, root_id=root.id, frozen_at_line=frozen_at_line),
+            "started_at": row.started_at.isoformat() if row.started_at else None,
+        })
+    return grouped
+
+
+def serialize_agent_links(
+    links, *, run_states=None, interactions=None, root_session_id=None,
+    include_metrics=False, display_names=None,
+) -> list[dict]:
+    """Serialize links with their agent's run state and interactions (design §7.2).
+
+    ``run_states`` maps an agent id to its ``AgentRunState``
+    (``core.agent_runs.agent_run_states``); an agent absent from it reads
+    as not running, with no runs. ``interactions`` maps an agent id to its
+    serialized interactions (:func:`tree_interactions`). ``agent_stopped_at``
+    (the agent's ``last_stopped_at``) is a display value only.
 
     ``include_metrics`` adds the agent's own cost, turns and context usage, read
     from the same row this already loads for the slug. Off by default: the share
     view builds the very same payload and must not expose them.
     """
+    from twicc.core.agent_runs import UNKNOWN_STATE, serialize_runs
     from twicc.core.models import Session
 
     links = list(links)
-    completions = completions or {}
-    result_counts = result_counts or {}
+    run_states = run_states or {}
+    interactions = interactions or {}
     display_names = display_names or {}
     subagents = {
         row[0]: row[1:]
@@ -268,10 +334,7 @@ def serialize_agent_links(
         slug, agent_stopped, total_cost, turns, context_usage = subagents.get(
             link.agent_id, (None, None, None, 0, None)
         )
-        stopped = completions.get((link.agent_id, link.tool_use_id))
-        before_cutoff = root_cutoff is not None and (
-            link.started_at is None or link.started_at < root_cutoff
-        )
+        state = run_states.get(link.agent_id, UNKNOWN_STATE)
         metrics = {} if not include_metrics else {
             "total_cost": float(total_cost) if total_cost is not None else None,
             "user_message_count": turns,
@@ -287,13 +350,15 @@ def serialize_agent_links(
             "owner_session_id": link.session_id,
             "root_session_id": root_session_id,
             "agent_stopped_at": agent_stopped.isoformat() if agent_stopped else None,
-            "stopped_at": stopped.isoformat() if stopped else None,
+            "stopped_at": state.stopped_at.isoformat() if state.stopped_at else None,
             "tool_use_id": link.tool_use_id,
             "tool_use_line_num": link.tool_use_line_num,
             "is_background": link.is_background,
             "started_at": link.started_at.isoformat() if link.started_at else None,
-            "running": not before_cutoff and stopped is None
-            and result_counts.get((link.session_id, link.tool_use_id), 0) < (2 if link.is_background else 1)
-            and not (trust_agent_stopped and agent_stopped is not None),
+            "running": state.running,
+            "run_started_at": state.run_started_at.isoformat() if state.run_started_at else None,
+            "run_background": state.run_background,
+            "runs": serialize_runs(state),
+            "interactions": interactions.get(link.agent_id, []),
         })
     return result

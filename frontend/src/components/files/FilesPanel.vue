@@ -5,6 +5,7 @@ import { useContainerBreakpoint } from '../../composables/useContainerBreakpoint
 import { usePanelContentFocus } from '../../composables/usePanelContentFocus'
 import FileTreePanel from './FileTreePanel.vue'
 import FilePane from './FilePane.vue'
+import UploadStrip from './UploadStrip.vue'
 import ArtifactBookmarkTree from '../artifacts/ArtifactBookmarkTree.vue'
 import ProjectBadge from '../project/ProjectBadge.vue'
 import { useCodeCommentsStore, buildCommentedPathsSet } from '../../stores/codeComments'
@@ -12,6 +13,8 @@ import { useSettingsStore } from '../../stores/settings'
 import { useDataStore } from '../../stores/data'
 import { deriveFileRoots, getWorktreeParent } from '../../utils/projectRoots'
 import { useSplitDividerDragFlag } from '../../composables/useSplitDividerDragFlag'
+import { useUploadsStore } from '../../stores/uploads'
+import { createDirRefresher } from '../../utils/uploads/tree'
 
 const emit = defineEmits(['navigate'])
 
@@ -128,6 +131,12 @@ const props = defineProps({
     frameElevated: {
         type: Boolean,
         default: false,
+    },
+    // Where an upload started from this panel belongs (`{ panel, key }`, spec
+    // §6.7): drives the in-tab strip and is stored with each new upload.
+    uploadOrigin: {
+        type: Object,
+        default: null,
     },
 })
 
@@ -607,6 +616,34 @@ async function reloadAll() {
 
 onBeforeUnmount(() => {
     if (artifactFlushTimer) clearTimeout(artifactFlushTimer)
+})
+
+// ─── Refresh on upload completion (spec §6.10) ──────────────────────────────
+
+// On every completed upload (from any panel, tab or device), refresh in place
+// only the node of its target directory, when this panel's current tree root
+// contains the final file. No scroll, no focus, no change to the selection or
+// the open file. `refreshTreeSoft()` is not used: it replaces the whole tree,
+// and the backend returns lazily loaded directories as stubs. A KeepAlive-cached
+// panel stays subscribed (it is unmounted only when really destroyed).
+const uploadRefresher = createDirRefresher({
+    fetchListing: lazyLoadDir,
+    // The tree on screen and its root; `loadedDirectory` is the directory the
+    // tree was fetched for (null while another root loads).
+    getTree: () => {
+        if (!started.value || !tree.value || !loadedDirectory.value) return null
+        return { tree: tree.value, rootPath: loadedDirectory.value }
+    },
+})
+let unsubscribeUploadCompleted = null
+onMounted(() => {
+    unsubscribeUploadCompleted = useUploadsStore().onCompleted(record => {
+        uploadRefresher.completed(record)
+    })
+})
+onBeforeUnmount(() => {
+    unsubscribeUploadCompleted?.()
+    unsubscribeUploadCompleted = null
 })
 
 // ─── File selection ──────────────────────────────────────────────────────────
@@ -1089,6 +1126,10 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
             </div>
         </Teleport>
 
+        <!-- In-tab upload indicator (spec §6.7): above both layouts, outside the
+             reparented tree owner. -->
+        <UploadStrip :origin="uploadOrigin" :root-path="directory" />
+
         <!-- ═══ Hidden owners: single instances that get reparented ═══ -->
         <div ref="treeOwnerRef" class="reparent-owner">
             <FileTreePanel
@@ -1104,6 +1145,7 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
                 :session-id="sessionId"
                 :is-draft="isDraft"
                 :root-restriction="rootRestriction"
+                :upload-origin="uploadOrigin"
                 :extra-query="optionsQuery()"
                 :show-refresh="true"
                 :is-mobile="isMobile"
@@ -1274,6 +1316,9 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .mobile-layout {
+    /* Positioned: the mobile tree overlay anchors here, below the upload strip,
+       instead of `.files-panel`. */
+    position: relative;
     display: flex;
     flex-direction: column;
     flex: 1;

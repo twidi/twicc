@@ -515,6 +515,63 @@ test('18. the breathing unread eye: five rules, six sites (§6)', () => {
     }
 })
 
+// After the merge of main (background shells): the terminal icon of a shell the agent left
+// running breathes like the unread eye, wherever it shows (ProcessIndicator feeds the session
+// list, the switcher, the palette and the aggregated indicator; the orchestration tree has its own).
+test('18b. the breathing terminal icon of a background shell', () => {
+    // Same 2.4s as the eye, a deeper breath (1 → 0.2 instead of 1 → 0.45): the icon is quiet already.
+    const PULSE = 'motion-status-pulse-deep 2.4s ease-in-out infinite'
+    const motion = parseCss(read('motion.css'))
+    assert.deepEqual(rule(motion, ['0%', '100%'], inKeyframes('motion-status-pulse-deep')).decls, { opacity: '1' })
+    assert.deepEqual(rule(motion, ['50%'], inKeyframes('motion-status-pulse-deep')).decls, { opacity: '0.2' })
+    const indicator = read('../components/ui/ProcessIndicator.vue')
+    assert.ok(collapse(templateOf(indicator)).includes(`'process-indicator__icon--shell': effectiveIconName === 'terminal'`), 'ProcessIndicator binds the class to the terminal icon')
+    assert.equal(rule(parseCss(styleOf(indicator)), ['.process-indicator__icon--shell'], topLevel).decls.animation, PULSE)
+
+    const node = read('../components/orchestration/OrchestrationNode.vue')
+    assert.ok(collapse(node).includes(`icon: 'terminal', pulse: 'shell'`), 'OrchestrationNode flags the terminal status')
+    assert.equal(rule(parseCss(read('../components/orchestration/treeNode.css')), ['.orch-status-icon--pulse-shell'], topLevel).decls.animation, PULSE)
+
+    // The USER_TURN status line reads like the working line, without its movement: the phrase
+    // keeps the resting (quiet) colour of the shimmer.
+    const status = read('../components/session/detail/items/BackgroundWorkStatus.vue')
+    assert.ok(collapse(templateOf(status)).includes('<span class="background-work-status__phrase">{{ line.text }}'), 'phrase span')
+    assert.equal(rule(parseCss(styleOf(status)), ['.background-work-status__phrase'], topLevel).decls.color, 'var(--wa-color-text-quiet)')
+
+    // A running shell shows the working line's three bouncing dots (same rules, own class names);
+    // a cron line, which waits, does not.
+    const statusTemplate = collapse(templateOf(status))
+    assert.ok(statusTemplate.includes('{{ line.text }}<span v-if="line.kind === \'shells\'" class="background-work-status__dots" aria-hidden="true"><i></i><i></i><i></i></span></span>'), 'dots after the shells phrase, no space')
+    const dots = parseCss(styleOf(status))
+    assertPinned(rule(dots, ['.background-work-status__dots'], topLevel), `display: inline-flex;
+        gap: 0.1875rem;
+        margin-inline-start: 0.3em;
+        color: var(--wa-color-text-quiet);`)
+    assertPinned(rule(dots, ['.background-work-status__dots i'], topLevel), `display: block;
+        width: 0.25rem;
+        height: 0.25rem;
+        border-radius: 50%;
+        background: currentColor;
+        animation: glow-live-dot 1.4s var(--motion-ease-out) infinite;
+        animation-fill-mode: backwards;`)
+    assert.equal(rule(dots, ['.background-work-status__dots i:nth-child(2)'], topLevel).decls['animation-delay'], '0.15s')
+    assert.equal(rule(dots, ['.background-work-status__dots i:nth-child(3)'], topLevel).decls['animation-delay'], '0.3s')
+})
+
+// The upload strip's bar takes the look of the Tasks tab's progress bar, in the accent colour.
+test('18c. the upload progress bar: neutral track, accent gradient, no movement under reduced motion', () => {
+    const tree = parseCss(styleOf(read('../components/files/UploadStrip.vue')))
+    assertPinned(rule(tree, ['.upload-progress'], topLevel), `flex: 0 0 5rem;
+        --track-height: 0.375rem;
+        --track-color: var(--wa-color-neutral-fill-normal);`)
+    assertPinned(rule(tree, ['html.wa-dark .upload-progress'], topLevel), '--track-color: var(--wa-color-neutral-border-normal);')
+    assertPinned(
+        rule(tree, ['.upload-progress::part(indicator)'], topLevel),
+        'background: linear-gradient(90deg, oklch(from var(--wa-color-brand-60) calc(l + 0.08) c h), var(--wa-color-brand-60));',
+    )
+    assertPinned(rule(tree, ['.upload-progress::part(indicator)'], inReduced), 'transition: none;')
+})
+
 test('19. the gap above the pill: on the card, after a text block (§5.4)', () => {
     const sfc = read('../components/session/detail/SessionItem.vue')
     const unscoped = [...sfc.matchAll(/<style>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n')

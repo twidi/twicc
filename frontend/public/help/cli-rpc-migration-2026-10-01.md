@@ -101,7 +101,7 @@ ones and the ones of no use to a caller.
 | `session <id> agents` | reduced projection |
 | `session <id>` | reduced projection |
 | `whoami` | the `session self` payload, reduced (see below) |
-| `topology` | sessions already reduced; the `process` block of each node becomes `{"state": …}` |
+| `topology` | sessions already reduced; the `process` block of each node becomes `{"state": …, "background_work_in_progress": …}` |
 
 The reduced projection keeps: `id`, `project_id`, `provider`, `title`,
 `annotations`, `parent_session_id`, `spawned_by`, `spawn_root`, `created_at`,
@@ -113,8 +113,8 @@ The reduced projection keeps: `id`, `project_id`, `provider`, `title`,
 `orchestration_scratch_dir`, `compacted`, `hybrid`, the agent settings
 (`permission_mode`, `selected_model`, `effort`, `thinking_enabled`,
 `claude_in_chrome`, `fast_mode`, `question_widget`), and a `process` block
-reduced to `{"state": …}` (`null` on a subagent row, which has no process of
-its own).
+reduced to `{"state": …, "background_work_in_progress": …}` (`null` on a
+subagent row, which has no process of its own).
 
 It drops: `mtime`, `last_started_at`, `last_updated_at`, `last_stopped_at`,
 `last_viewed_at`, `slug`, `compute_version_up_to_date`, `self_cost`,
@@ -128,7 +128,7 @@ block.
   and the flag does nothing.
 - `--slim` and `--full` together exit `2`.
 - **`topology`:** `--full` gives every node its full session and its
-  five-field `process` block. `--full-sessions` still works, as an alias of
+  six-field `process` block. `--full-sessions` still works, as an alias of
   `--full`.
 - **One session:** `twicc session <id>` takes `--slim` and `--full` too,
   before or after the id (`session <id> --full` or `session --full <id>`),
@@ -151,9 +151,10 @@ block.
   - `agent_settings.<field>` → `<field>` (effective values)
   - `session.<field>` → `<field>` (with `--full` for the fields the reduced
     projection drops)
-  - `process` (nine fields) → `process`: `{"state": …}`, or five fields
-    (`id`, `state`, `started_at`, `last_state_change_at`, `pid`) with
-    `--full`; `provider`, `session_id`, `session_title`, `project_id` are the
+  - `process` (nine fields) → `process`: `{"state": …,
+    "background_work_in_progress": …}`, or six fields (`id`, `state`,
+    `background_work_in_progress`, `started_at`, `last_state_change_at`,
+    `pid`) with `--full`; `provider`, `session_id`, `session_title`, `project_id` are the
     row's own `provider`, `id`, `title`, `project_id`
 
   So `whoami | jq .process.pid` needs `--full`.
@@ -202,7 +203,8 @@ its parent's process.
 ### Reading state
 
 - `process <id>` exited `1` when nothing ran. `session <id>` exits `0` and
-  reports `"process": {"state": "dead"}` (from October 1 without `--full`;
+  reports `"process": {"state": "dead", "background_work_in_progress": null}`
+  (from October 1 without `--full`;
   `--full` adds `id`, the timestamps and `pid`). Test `process.state`, not
   the exit code.
 - A session spawned seconds ago may not be in the database yet (no session

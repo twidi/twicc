@@ -56,6 +56,7 @@
     "penpal": "^7.0.6",
     "pinia": "^3.0.4",
     "shiki": "^3.21.0",
+    "tus-js-client": "^4.3.1",
     "vue": "^3.5.27",
     "vue-router": "^4.6.4",
     "vue3-calendar-heatmap": "^2.0.5"

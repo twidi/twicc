@@ -18,8 +18,8 @@ long-lived install, so compute must recognise them by shape:
 Both must produce the same two artefacts: one ``AgentLink`` (parent
 tool_use ↔ subagent session) and two ``ToolResultLink`` rows on the
 spawn call (ack + completion), the second being what stops the
-frontend's "agent running" state and what
-``check_agent_naturally_stopped`` counts.
+frontend's "agent running" state and what the run rules
+(``agent_run_states``) count.
 
 Covered here for the batch (recompute) path and the live (watcher) path,
 which resolve the same links through different machinery.
@@ -27,9 +27,12 @@ which resolve the same links through different machinery.
 
 from __future__ import annotations
 
+from tests.live_sync_helpers import drain_live_sync
+
 import json
 import queue
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import orjson
 import pytest
@@ -210,52 +213,33 @@ def _run_batch_compute(session: Session) -> None:
             compute.apply_session_complete(msg)
 
 
-def _run_live_sync_collecting(session: Session, lines: list[str]) -> tuple[list, list]:
+def _run_live_sync_collecting(session: Session, lines: list[str], tmp_path: Path) -> tuple[list, list]:
     """Same as :func:`_run_live_sync`, returning the broadcast payloads.
 
-    The hooks' return values are exactly what the watcher turns into the
-    ``agent_link_created`` / ``tool_state`` WS messages, which drive both
-    spinners in the frontend: the synthetic process state of the subagent
-    tab, and the tool card's ``isAgentRunning`` (``result_count`` vs the
-    background threshold).
+    The live result's link and tool-result updates are exactly what the
+    watcher turns into the ``agent_link_created`` / ``tool_state`` WS
+    messages, which drive both spinners in the frontend: the synthetic
+    process state of the subagent tab, and the tool card's
+    ``isAgentRunning`` (``result_count`` vs the background threshold).
     """
-    compute = get_compute()
-    agent_updates, tool_updates = [], []
-    for line_num, content in enumerate(lines, start=1):
-        item = SessionItem.objects.create(
-            session=session, line_num=line_num, content=content, timestamp=_NOW,
-        )
-        parsed = orjson.loads(content)
-        if compute.is_tool_result_item(parsed):
-            if link_update := compute.create_agent_link_from_tool_result(session.id, item, parsed):
-                agent_updates.append(link_update)
-            if update := compute.create_tool_result_link_live(session.id, item, parsed):
-                tool_updates.append(update)
-                compute.check_agent_naturally_stopped(session.id, update)
-    return agent_updates, tool_updates
+    outcome = _run_live_sync(session, lines, tmp_path)
+    return outcome.agent_link_updates, outcome.tool_result_updates
 
 
-def _run_live_sync(session: Session, lines: list[str]) -> None:
-    """Replay ``lines`` through the live hooks, one item at a time.
+def _run_live_sync(session: Session, lines: list[str], tmp_path: Path) -> tuple:
+    """Write ``lines`` to the session's rollout and run one live sync; return the named updates.
 
-    Mirrors the watcher loop's ordering: each item is persisted, then the
-    agent link is created before the tool_result link (same order as
-    ``compute_base``'s incremental path), so a hook that needs a prior
-    line finds it in the DB exactly like it would in production.
+    Each line gets its own timestamp (``_NOW`` + its index in seconds): with
+    one shared time the ack and the ``FINAL_ANSWER`` would count as a single
+    distinct result (rule 1) and keep a background agent running.
     """
-    compute = get_compute()
-    for line_num, content in enumerate(lines, start=1):
-        # ``timestamp`` is set by the watcher before these hooks run; the
-        # agent-stopped check reads it through ``ToolResultLink.tool_result_at``.
-        item = SessionItem.objects.create(
-            session=session, line_num=line_num, content=content, timestamp=_NOW,
-        )
-        parsed = orjson.loads(content)
-        if compute.is_tool_result_item(parsed):
-            compute.create_agent_link_from_tool_result(session.id, item, parsed)
-            update = compute.create_tool_result_link_live(session.id, item, parsed)
-            if update:
-                compute.check_agent_naturally_stopped(session.id, update)
+    path = tmp_path / f"rollout-{session.id}.jsonl"
+    with path.open("ab") as handle:
+        for index, content in enumerate(lines):
+            entry = orjson.loads(content)
+            entry["timestamp"] = (_NOW + timedelta(seconds=index)).isoformat()
+            handle.write(orjson.dumps(entry) + b"\n")
+    return drain_live_sync(get_compute(), session, path)
 
 
 def _links(session: Session, tool_use_id: str) -> list[ToolResultLink]:
@@ -396,20 +380,20 @@ class TestBatchSubagentLinks:
 
 
 class TestLiveSubagentLinks:
-    def test_v1_live_sequence(self, parent_session):
+    def test_v1_live_sequence(self, parent_session, tmp_path):
         call_id = "call_live_v1"
         agent_id = "019e2cab-be94-71a0-a790-0864c5d82d83"
         _run_live_sync(parent_session, [
             _spawn_call_v1(call_id),
             _spawn_ack_v1(call_id, agent_id),
             _subagent_notification_v1(agent_id),
-        ])
+        ], tmp_path)
 
         link = AgentLink.objects.get(session=parent_session)
         assert (link.agent_id, link.tool_use_id) == (agent_id, call_id)
         assert [r.tool_result_line_num for r in _links(parent_session, call_id)] == [2, 3]
 
-    def test_v2_live_sequence(self, parent_session):
+    def test_v2_live_sequence(self, parent_session, tmp_path):
         call_id = "call_live_v2"
         agent_id = "01a003c9-adec-79a2-b236-131c185aeaf9"
         agent_path = "/root/display_test"
@@ -426,7 +410,7 @@ class TestLiveSubagentLinks:
             _sub_agent_activity(call_id, agent_id, agent_path),
             _spawn_ack_v2(call_id, agent_path),
             _final_answer_v2(agent_path),
-        ])
+        ], tmp_path)
 
         link = AgentLink.objects.get(session=parent_session)
         assert (link.agent_id, link.tool_use_id) == (agent_id, call_id)
@@ -441,7 +425,7 @@ class TestLiveSubagentLinks:
             "subagent would stay 'running' forever in the parent's tool card"
         )
 
-    def test_v2_live_broadcasts_drive_both_spinners(self, parent_session):
+    def test_v2_live_broadcasts_drive_both_spinners(self, parent_session, tmp_path):
         """The spawn turns both spinners on, the FINAL_ANSWER turns them off.
 
         Frontend contract (``useWebSocket.js``):
@@ -461,7 +445,7 @@ class TestLiveSubagentLinks:
             _sub_agent_activity(call_id, agent_id, agent_path),
             _spawn_ack_v2(call_id, agent_path),
             _final_answer_v2(agent_path),
-        ])
+        ], tmp_path)
 
         assert len(agent_updates) == 1, "exactly one agent_link_created broadcast"
         spawn_broadcast = agent_updates[0]
@@ -476,11 +460,11 @@ class TestLiveSubagentLinks:
             "FINAL_ANSWER must take it to the threshold that stops both spinners"
         )
 
-    def test_v2_live_final_answer_of_unknown_agent_stays_unpaired(self, parent_session):
+    def test_v2_live_final_answer_of_unknown_agent_stays_unpaired(self, parent_session, tmp_path):
         """No spawn event for that path → no rebind, and no bogus link."""
         _run_live_sync(parent_session, [
             _final_answer_v2("/root/never_spawned"),
-        ])
+        ], tmp_path)
 
         assert not ToolResultLink.objects.filter(session=parent_session).exists()
         assert not AgentLink.objects.filter(session=parent_session).exists()
@@ -526,7 +510,7 @@ class TestSubagentIdleness:
         rollout = tmp_path / f"rollout-{session.id}.jsonl"
         with rollout.open("a", encoding="utf-8") as handle:
             handle.writelines(f"{line}\n" for line in lines)
-        get_compute().sync_session_items_from_file(session, rollout)
+        drain_live_sync(get_compute(), session, rollout)
 
     def test_turn_end_marks_the_subagent_stopped(self, parent_session, tmp_path):
         subagent = self._subagent(parent_session)
@@ -676,7 +660,7 @@ class TestSubagentOpeningPrompt:
         rollout = tmp_path / "rollout-prompt-live.jsonl"
         rollout.write_text(f"{_task_started()}\n{_new_task_v2()}\n", encoding="utf-8")
 
-        get_compute().sync_session_items_from_file(subagent, rollout)
+        drain_live_sync(get_compute(), subagent, rollout)
 
         subagent.refresh_from_db()
         assert subagent.user_message_count == 1
@@ -690,7 +674,7 @@ class TestSubagentOpeningPrompt:
             f"{_new_task_v2()}\n{_new_task_v2('/root/second_round')}\n", encoding="utf-8",
         )
 
-        get_compute().sync_session_items_from_file(subagent, rollout)
+        drain_live_sync(get_compute(), subagent, rollout)
 
         subagent.refresh_from_db()
         assert subagent.user_message_count == 2

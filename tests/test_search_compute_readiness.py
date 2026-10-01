@@ -162,7 +162,7 @@ def test_watcher_removes_obsolete_session_without_indexing_or_marking(monkeypatc
     )
 
     async def sync_and_broadcast(*_args):
-        return IndexingRequest(stale.id, [1], False)
+        return watcher_module.SessionChangeResult('drained', indexing=IndexingRequest(stale.id, [1], False))
 
     async def unlocked(factory):
         return await factory()

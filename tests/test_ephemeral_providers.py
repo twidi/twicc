@@ -198,16 +198,20 @@ def test_codex_ephemeral_hold_uses_runtime_status_without_watcher():
     agent.session_id = "parent"
     agent.state = AgentState.ASSISTANT_TURN
     agent._live_subagents = {"child": "/root/child"}
+    agent._subagent_set_lock = asyncio.Lock()
     agent._subagent_hold_active = False
     agent._ephemeral_subagent_task = None
     agent._current_turn = None
     agent._manual_compaction = False
     agent._goal_continuation_active = False
     agent._subagent_wait_label_active = False
+    agent._init_shell_notice_state()
+    agent._init_codex_shell_notice_state()
     agent._set_state = lambda state: setattr(agent, "state", state)
     agent._notify_state_change = AsyncMock()
     agent._broadcast_process_label = AsyncMock()
-    statuses = iter(["active", "idle"])
+    # The watch loop's polls, then the stop relay's re-check under the lock.
+    statuses = iter(["active", "idle", "idle"])
 
     async def read(child_id):
         return SimpleNamespace(

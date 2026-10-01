@@ -1,5 +1,6 @@
 """Pytest configuration for Django tests."""
 
+import asyncio
 from pathlib import Path
 from typing import NamedTuple
 
@@ -8,6 +9,18 @@ import pytest
 from django.conf import settings
 
 from twicc import provider_homes
+
+
+@pytest.fixture
+def compute_executor_started():
+    """Give direct watcher and compute-adapter tests their runtime worker."""
+    from twicc.providers.compute_executor import start_compute_executor, stop_compute_executor
+
+    start_compute_executor()
+    try:
+        yield
+    finally:
+        asyncio.run(stop_compute_executor())
 
 
 def pytest_configure():

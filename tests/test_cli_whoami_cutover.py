@@ -84,7 +84,7 @@ def test_a_flag_is_session_self_on_both_sides(monkeypatch, me, capsysbinary, fla
 def test_after_no_flag_is_session_self_reduced(after, me, capsysbinary):
     data, err = run(capsysbinary)
     assert data == session_self(capsysbinary)
-    assert set(data["process"]) == {"state"}
+    assert set(data["process"]) == {"state", "background_work_in_progress"}
     assert err == ""
 
 

@@ -12,7 +12,9 @@ from datetime import datetime, UTC
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections import OrderedDict
+from collections.abc import AsyncIterator, Callable, Collection, Coroutine
+from dataclasses import dataclass
 from typing import Any
 
 from claude_agent_sdk import (
@@ -23,7 +25,7 @@ from claude_agent_sdk import (
     PermissionResultAllow,
     PermissionResultDeny,
     ResultMessage, StreamEvent, SystemMessage, ThinkingConfigAdaptive, ThinkingConfigDisabled,
-    ToolPermissionContext, UserMessage,
+    ToolPermissionContext, ToolResultBlock, ToolUseBlock, UserMessage,
 )
 
 from asgiref.sync import sync_to_async
@@ -33,6 +35,16 @@ import orjson
 
 from twicc.agent import AgentInfo, AgentState, BaseAgent, PendingRequest, StateChangeCallback
 from twicc.agent.plugin import get_plugin_dir
+from twicc.agent.shell_notice import (
+    ClaudeLiveOwners,
+    ShellInfo,
+    ShellLookup,
+    ShellNoticeState,
+    ShellOwner,
+    merge_resolution,
+    needs_lookup,
+)
+from twicc.agent.states import build_background_work
 from twicc.context_injection import apply_goal_instruction, apply_pending_context
 from twicc.core.enums import Provider
 from twicc.core.models import Session
@@ -73,6 +85,25 @@ _RG_REPLACE_DENY_REASON = (
 )
 
 _MONITOR_STARTED_RE = re.compile(r"\bMonitor started \(task ([^,\s)]+),", re.IGNORECASE)
+# "Output is being written to: <path>." in a background Bash tool result.
+_BASH_OUTPUT_PATH_RE = re.compile(r"Output is being written to: (\S+?)\.?(?:\s|$)")
+# Bound of the tool_use id -> (parent, command) map (spec §5.2).
+_TOOL_USE_PARENTS_MAX = 1024
+
+
+@dataclass(slots=True)
+class _ShellTask:
+    """One live Claude shell task (spec §5.2). Mutable: backgrounding and the
+    output path arrive after the start."""
+
+    backgrounded: bool
+    tool_use_id: str | None
+    owner: ShellOwner
+    owner_ref: str | None
+    description: str | None
+    command: str | None
+    output_path: str | None
+    started_at: float
 
 
 def _rg_replace_trap(command: str) -> bool:
@@ -224,6 +255,29 @@ class ClaudeCodeAgent(BaseAgent):
         # pipeline's task_id -> tool_use_id map, which only correlates timeline
         # result fragments for rendering.
         self._live_monitor_tasks: set[str] = set()
+        # Live shell tasks (``task_type == "local_bash"`` minus Monitors),
+        # task_id -> ``_ShellTask`` record (backgrounded flag, owner, command,
+        # output path, start time). Every Bash call is a task, foreground
+        # ones included; only the backgrounded ones (``run_in_background``,
+        # or a foreground command the CLI later backgrounds through a
+        # ``task_updated`` patch) count as background work. Subagents' shells
+        # stream through the parent too (``owned_by_subagent``) and are
+        # tracked the same way: they die with this process just as well.
+        # Unlike agents and Monitors they never hold ASSISTANT_TURN — a dev
+        # server may run for the whole conversation — but they do block the
+        # idle auto-stop (see ``BaseAgentManager._state_based_timeout``).
+        # Fed and drained by ``_update_live_tasks``; in-memory only, the
+        # shells are children of the CLI process.
+        self._live_shell_tasks: dict[str, _ShellTask] = {}
+        # Task ids of the last ``background_tasks_changed`` list — the CLI's
+        # own view of its live background tasks, used to drop a shell whose
+        # terminal event went missing (see ``_reconcile_background_shells``).
+        self._listed_background_tasks: set[str] = set()
+        self._init_claude_shell_notice_state()
+        # Timer publishing the background work when a pending ScheduleWakeup
+        # comes due: nothing else happens at that moment until the wake-up
+        # turn starts, and the snapshot must stop announcing it.
+        self._wakeup_refresh_handle: asyncio.TimerHandle | None = None
         # True while a "waiting" process label is what the frontend shows —
         # either "waiting for N subagents" (live background agents),
         # "monitoring" (live Monitor tools), or "waiting for scheduled wakeup
@@ -424,6 +478,14 @@ class ClaudeCodeAgent(BaseAgent):
         return super().get_info()._replace(
             active_tools=tuple(self._serialize_active_tools()),
             last_started_tool_id=self._last_started_tool_id,
+        )
+
+    def current_background_work(self) -> dict | None:
+        return build_background_work(
+            subagents=len(self._live_background_tasks),
+            shells=sum(1 for record in self._live_shell_tasks.values() if record.backgrounded),
+            monitors=len(self._live_monitor_tasks),
+            scheduled_wakeup_at=self._pending_wakeup_at if self._has_pending_wakeup() else None,
         )
 
     async def discard_active_tool(self, tool_use_id: str) -> bool:
@@ -868,6 +930,8 @@ class ClaudeCodeAgent(BaseAgent):
             raise RuntimeError("Process already started")
 
         self._state_change_callback = on_state_change
+        self._note_external_send()
+        self._open_main_turn()
 
         self._logger.debug(
             "Starting process for session %s (resume=%s)", self.session_id, resume
@@ -1070,6 +1134,14 @@ class ClaudeCodeAgent(BaseAgent):
             env_option = {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}
             if _mcp_on:
                 env_option["MCP_TOOL_TIMEOUT"] = "600000"
+            # Claude Code 2.1.285 stops a background Bash command after 30 minutes
+            # by default and 2 hours at most — before, it ran until it ended. Lift
+            # the ceiling the agent may request (foreground and background alike)
+            # to the timer maximum, ~24.8 days, so it can keep a long-running shell
+            # alive on purpose. The defaults stay (2 minutes foreground, 30 minutes
+            # background): raising them would let a hung foreground command block
+            # the turn just as long.
+            env_option["BASH_MAX_TIMEOUT_MS"] = "2147483647"
             # Configured provider homes (CLAUDE_CONFIG_DIR & co): explicit even
             # though os.environ inheritance would carry them — the invariant
             # that a launched process never touches another home must not
@@ -1255,8 +1327,11 @@ class ClaudeCodeAgent(BaseAgent):
         # The CLI's terminal task_notification also clears this entry; the
         # eager pop just makes sure a stopped agent can never keep the parent
         # pinned in ASSISTANT_TURN if that notification goes missing.
-        if self._live_background_tasks.pop(subagent_id, None) is not None and self._waiting_label_active:
-            await self._refresh_waiting_label()
+        if self._live_background_tasks.pop(subagent_id, None) is not None:
+            self._subagent_run_ended_at[subagent_id] = time.time()
+            self._schedule_background_work_refresh()
+            if self._waiting_label_active:
+                await self._refresh_waiting_label()
 
     async def interrupt(self) -> None:
         """Send an interrupt signal to the CLI (equivalent to Ctrl+C).
@@ -1430,36 +1505,211 @@ class ClaudeCodeAgent(BaseAgent):
             and not ClaudeCodeAgent._is_settings_change_ack(msg)
         )
 
+    def _init_claude_shell_notice_state(self) -> None:
+        """Claude maps of the background shell notice (spec §5.2)."""
+        # Open between a main turn's first sign (init, main message, send) and
+        # its ResultMessage; the idle predicate reads it.
+        self._main_turn_open = False
+        self._agent_by_tool_use: dict[str, str] = {}
+        self._agent_labels: dict[str, str] = {}
+        self._tool_use_parents: OrderedDict[str, tuple[str | None, str | None]] = OrderedDict()
+        self._subagent_run_ended_at: dict[str, float] = {}
+
+    def _open_main_turn(self) -> None:
+        self._main_turn_open = True
+        self._note_main_turn_opening()
+
+    def _forget_shell_task(self, task_id: str) -> _ShellTask | None:
+        """The only way a record leaves ``_live_shell_tasks`` (spec §5.2)."""
+        record = self._live_shell_tasks.pop(task_id, None)
+        self._drop_shell_notice_key(task_id)
+        return record
+
+    def _shell_notice_live_keys(self) -> set[str]:
+        return set(self._live_shell_tasks)
+
+    def _new_shell_task(self, task_id: str, data: dict, backgrounded: bool) -> _ShellTask:
+        """Owner resolution at the shell ``task_started`` (spec §5.2)."""
+        tool_use_id = data.get("tool_use_id") if isinstance(data.get("tool_use_id"), str) else None
+        parent, command = self._tool_use_parents.pop(tool_use_id, (None, None)) if tool_use_id else (None, None)
+        agent_id = self._agent_by_tool_use.get(parent) if parent else None
+        if agent_id:
+            owner, owner_ref = ShellOwner.SUBAGENT, agent_id
+        elif data.get("owned_by_subagent") is True:
+            owner, owner_ref = ShellOwner.UNRESOLVED, None
+        else:
+            owner, owner_ref = ShellOwner.MAIN, None
+        description = data.get("description")
+        return _ShellTask(
+            backgrounded=backgrounded,
+            tool_use_id=tool_use_id,
+            owner=owner,
+            owner_ref=owner_ref,
+            description=description if isinstance(description, str) and description else None,
+            command=command,
+            output_path=None,
+            started_at=time.time(),
+        )
+
+    def _note_shell_notice_stream(self, msg: object) -> None:
+        """Main turn openings, tool_use parents and output paths (spec §5.2)."""
+        if (isinstance(msg, SystemMessage) and msg.subtype == "init") or (
+            isinstance(msg, (AssistantMessage, StreamEvent)) and msg.parent_tool_use_id is None
+        ):
+            self._open_main_turn()
+        elif isinstance(msg, ResultMessage):
+            self._main_turn_open = False
+
+        if isinstance(msg, AssistantMessage):
+            for block in msg.content:
+                if isinstance(block, ToolUseBlock):
+                    tool_input = block.input if isinstance(block.input, dict) else {}
+                    command = tool_input.get("command") if block.name == "Bash" else None
+                    self._tool_use_parents[block.id] = (
+                        msg.parent_tool_use_id, command if isinstance(command, str) else None,
+                    )
+                    while len(self._tool_use_parents) > _TOOL_USE_PARENTS_MAX:
+                        self._tool_use_parents.popitem(last=False)
+        elif isinstance(msg, UserMessage) and isinstance(msg.content, list):
+            for block in msg.content:
+                if not isinstance(block, ToolResultBlock):
+                    continue
+                # A string, or a list of {"type": "text", "text": ...} parts.
+                if isinstance(block.content, str):
+                    text = block.content
+                elif isinstance(block.content, list):
+                    text = "\n".join(
+                        part["text"]
+                        for part in block.content
+                        if isinstance(part, dict) and isinstance(part.get("text"), str)
+                    )
+                else:
+                    text = ""
+                match = _BASH_OUTPUT_PATH_RE.search(text)
+                if match is None:
+                    continue
+                for record in self._live_shell_tasks.values():
+                    if record.tool_use_id == block.tool_use_id:
+                        record.output_path = match.group(1)
+
+    def _set_state(self, new_state: AgentState) -> None:
+        super()._set_state(new_state)
+        if new_state == AgentState.DEAD:
+            self._main_turn_open = False
+
+    def _shell_notice_idle(self) -> bool:
+        """Spec §3.1, Claude predicate."""
+        return (
+            self.state in (AgentState.USER_TURN, AgentState.ASSISTANT_TURN)
+            and not self._main_turn_open
+            and not self._live_monitor_tasks
+            and not self._has_pending_wakeup()
+            and not self.pending_requests
+        )
+
+    def shell_notice_state(self) -> ShellNoticeState | None:
+        if self.state == AgentState.DEAD or getattr(self, "ephemeral", False):
+            return None
+        now = time.time()
+        live = ClaudeLiveOwners(
+            labels=self._agent_labels,
+            running=self._live_background_tasks.keys(),
+            ended=self._subagent_run_ended_at,
+        )
+        shells: list[ShellInfo] = []
+        for task_id, record in self._live_shell_tasks.items():
+            if not record.backgrounded:
+                continue
+            owner_ref = record.owner_ref
+            raw = ShellInfo(
+                key=task_id,
+                shell_id=task_id,
+                tool_use_id=record.tool_use_id,
+                owner=record.owner,
+                owner_ref=owner_ref,
+                owner_label=self._agent_labels.get(owner_ref) if owner_ref else None,
+                owner_spawner_ref=None,
+                owner_run_ended_at=self._subagent_run_ended_at.get(owner_ref) if owner_ref else None,
+                owner_running=bool(owner_ref) and owner_ref in self._live_background_tasks,
+                description=record.description,
+                command=record.command,
+                output_path=record.output_path,
+                started_at=record.started_at,
+            )
+            merged = merge_resolution(raw, self._shell_notice_resolutions.get(task_id), now=now, claude_live=live)
+            if merged is not None:
+                shells.append(merged)
+        return ShellNoticeState(
+            idle=self._shell_notice_idle(),
+            shells=shells,
+            any_subagent_running=bool(self._live_background_tasks),
+            last_subagent_run_end=max(self._subagent_run_ended_at.values(), default=0.0),
+        )
+
+    def shell_notice_lookups(self, keys: Collection[str], now: float) -> list[ShellLookup]:
+        lookups = []
+        for task_id in keys:
+            record = self._live_shell_tasks.get(task_id)
+            if record is None or record.owner is not ShellOwner.UNRESOLVED:
+                continue
+            if needs_lookup(self._shell_notice_resolutions.get(task_id), codex=False, now=now):
+                lookups.append(ShellLookup(key=task_id, tool_use_id=record.tool_use_id, owner_id=None, codex=False))
+        return lookups
+
     async def _update_live_tasks(self, msg: SystemMessage) -> None:
-        """Track live background subagents and drain Monitors, from CLI events.
+        """Track live subagents and shells, and drain Monitors, from CLI events.
 
-        The CLI streams ``task_started`` when a background task launches,
-        ``task_updated`` patches (``{"status": "completed", ...}``) and a
-        terminal ``task_notification`` each time the task stops. Only
-        ``task_type == "local_agent"`` entries are *tracked* here: agents are
-        conversations with a bounded lifetime and a guaranteed terminal
-        notification, whereas other task types (e.g. a ``run_in_background``
-        Bash command) may legitimately outlive the whole conversation (dev
-        servers, tails) and must not pin the session in ASSISTANT_TURN.
+        The CLI streams ``task_started`` when a task launches, ``task_updated``
+        patches (``{"status": "completed", ...}``, ``{"is_backgrounded":
+        true}``) and a terminal ``task_notification`` each time the task
+        stops. Two task types are *tracked* here:
 
-        A terminal event *releases* both collections, whatever the task type:
-        a Monitor is a ``local_bash`` task, tracked from its own tool_result in
-        ``_update_live_monitor_tasks``, and this system event is the only signal
-        the CLI emits when it ends on its own (stream over, timeout reached).
-        Missing it pins the session in ASSISTANT_TURN forever.
+        - ``local_agent``: agents are conversations with a bounded lifetime
+          and a guaranteed terminal notification — they hold ASSISTANT_TURN.
+        - ``local_bash``: every Bash call, kept as a ``_ShellTask`` record
+          (``backgrounded`` flag, owner, command) in ``_live_shell_tasks``. A
+          background shell may legitimately outlive the whole conversation,
+          so it never holds ASSISTANT_TURN; it is reported as background work
+          and blocks the idle auto-stop. A Monitor is a ``local_bash`` task
+          too, but has its own collection (see ``_update_live_monitor_tasks``)
+          and is kept out of this one.
+
+        A terminal event *releases* every collection, whatever the task type:
+        this system event is the only signal the CLI emits when a Monitor or a
+        background shell ends on its own (stream over, timeout reached, exit).
+        Missing it pins the session in ASSISTANT_TURN forever (Monitors), or
+        shields it from the idle auto-stop forever (shells).
         """
         data = msg.data if isinstance(msg.data, dict) else {}
+        if msg.subtype == "background_tasks_changed":
+            self._reconcile_background_shells(data.get("tasks"))
+            return
         task_id = data.get("task_id")
         if not isinstance(task_id, str) or not task_id:
             return
 
         if msg.subtype == "task_started":
-            if data.get("task_type") == "local_agent":
+            task_type = data.get("task_type")
+            if task_type == "local_agent":
                 self._live_background_tasks[task_id] = data.get("description") or ""
+                self._agent_labels[task_id] = data.get("description") or ""
+                agent_tool_use_id = data.get("tool_use_id")
+                if isinstance(agent_tool_use_id, str) and agent_tool_use_id:
+                    self._agent_by_tool_use[agent_tool_use_id] = task_id
                 self._logger.debug(
                     "Session %s: background agent %s started (%d live)",
                     self.session_id, task_id, len(self._live_background_tasks),
                 )
+                self._schedule_background_work_refresh()
+            elif task_type == "local_bash" and task_id not in self._live_monitor_tasks:
+                backgrounded = data.get("is_backgrounded") is True
+                self._live_shell_tasks[task_id] = self._new_shell_task(task_id, data, backgrounded)
+                if backgrounded:
+                    self._logger.debug(
+                        "Session %s: background shell %s started",
+                        self.session_id, task_id,
+                    )
+                    self._schedule_background_work_refresh()
             return
 
         # ``task_notification`` fires on every stop (completed, failed,
@@ -1470,11 +1720,34 @@ class ClaudeCodeAgent(BaseAgent):
             patch = data.get("patch")
             status = patch.get("status") if isinstance(patch, dict) else None
             terminal = isinstance(status, str) and status not in ("pending", "queued", "running", "in_progress")
+            # A foreground command the CLI moves to the background mid-run.
+            record = self._live_shell_tasks.get(task_id)
+            if (
+                isinstance(patch, dict)
+                and patch.get("is_backgrounded") is True
+                and record is not None
+                and not record.backgrounded
+            ):
+                record.backgrounded = True
+                self._logger.debug(
+                    "Session %s: shell %s moved to the background",
+                    self.session_id, task_id,
+                )
+                self._schedule_background_work_refresh()
         if not terminal:
             return
 
+        record = self._forget_shell_task(task_id)
+        if record is not None and record.backgrounded:
+            self._logger.debug(
+                "Session %s: background shell %s stopped",
+                self.session_id, task_id,
+            )
+            self._schedule_background_work_refresh()
+
         released = self._live_background_tasks.pop(task_id, None) is not None
         if released:
+            self._subagent_run_ended_at[task_id] = time.time()
             self._logger.debug(
                 "Session %s: background agent %s stopped (%d live)",
                 self.session_id, task_id, len(self._live_background_tasks),
@@ -1486,8 +1759,39 @@ class ClaudeCodeAgent(BaseAgent):
                 "Session %s: Monitor %s stopped (%d live)",
                 self.session_id, task_id, len(self._live_monitor_tasks),
             )
-        if released and self._waiting_label_active:
-            await self._refresh_waiting_label()
+        if released:
+            self._schedule_background_work_refresh()
+            if self._waiting_label_active:
+                await self._refresh_waiting_label()
+
+    def _reconcile_background_shells(self, tasks: Any) -> None:
+        """Drop background shells the CLI's own task list no longer carries.
+
+        ``background_tasks_changed`` carries the full list of the CLI's live
+        background tasks. It is the safety net for a shell whose terminal
+        event went missing. Only a shell this list already carried once and
+        now omits is dropped: a shell may start before any list mentions it,
+        so an absence alone proves nothing.
+        """
+        if not isinstance(tasks, list):
+            return
+        listed = {
+            task.get("task_id") for task in tasks
+            if isinstance(task, dict) and isinstance(task.get("task_id"), str)
+        }
+        gone = [
+            task_id for task_id, record in self._live_shell_tasks.items()
+            if record.backgrounded and task_id in self._listed_background_tasks and task_id not in listed
+        ]
+        for task_id in gone:
+            self._forget_shell_task(task_id)
+        self._listed_background_tasks = listed
+        if gone:
+            self._logger.debug(
+                "Session %s: background shell(s) %s left the CLI task list",
+                self.session_id, ", ".join(gone),
+            )
+            self._schedule_background_work_refresh()
 
     @staticmethod
     def _message_content_text(content: Any) -> str:
@@ -1525,10 +1829,14 @@ class ClaudeCodeAgent(BaseAgent):
             task_id = tool_use_result.get("taskId")
             if isinstance(task_id, str) and _MONITOR_STARTED_RE.search(text):
                 self._live_monitor_tasks.add(task_id)
+                # Its ``local_bash`` task_started came first: a Monitor is not
+                # a shell, it has its own count.
+                self._forget_shell_task(task_id)
                 self._logger.debug(
                     "Session %s: Monitor %s started (%d live)",
                     self.session_id, task_id, len(self._live_monitor_tasks),
                 )
+                self._schedule_background_work_refresh()
                 return
 
         stopped_task_id = tool_use_result.get("task_id") if isinstance(tool_use_result, dict) else None
@@ -1546,6 +1854,7 @@ class ClaudeCodeAgent(BaseAgent):
                 "Session %s: Monitor %s stopped by TaskStop (%d live)",
                 self.session_id, stopped_task_id, len(self._live_monitor_tasks),
             )
+            self._schedule_background_work_refresh()
             if self._waiting_label_active:
                 await self._refresh_waiting_label()
 
@@ -1648,6 +1957,23 @@ class ClaudeCodeAgent(BaseAgent):
             self.session_id, self._format_wakeup_time(),
         )
 
+    def _arm_wakeup_refresh(self) -> None:
+        """Publish the background work once the pending wake-up comes due.
+
+        The snapshot stops announcing the wake-up the moment its deadline
+        passes, but nothing else happens then (the wake-up turn follows only
+        when the harness fires it). Re-armed on every deadline change.
+        """
+        if self._wakeup_refresh_handle is not None:
+            self._wakeup_refresh_handle.cancel()
+            self._wakeup_refresh_handle = None
+        if not self._has_pending_wakeup():
+            return
+        delay = self._pending_wakeup_at - time.time() + 1.0
+        self._wakeup_refresh_handle = asyncio.get_running_loop().call_later(
+            delay, self._schedule_background_work_refresh,
+        )
+
     def _has_pending_wakeup(self) -> bool:
         """True while the last-seen ScheduleWakeup is still due to fire."""
         return self._pending_wakeup_at is not None and self._pending_wakeup_at > time.time()
@@ -1690,6 +2016,7 @@ class ClaudeCodeAgent(BaseAgent):
         *,
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
+        shell_notice: bool = False,
     ) -> bool:
         """Send a follow-up message to the process.
 
@@ -1697,6 +2024,8 @@ class ClaudeCodeAgent(BaseAgent):
             text: The message text to send
             images: Optional list of SDK ImageBlockParam objects
             documents: Optional list of SDK DocumentBlockParam objects
+            shell_notice: ``True`` for TwiCC's background shell notice: the
+                notice does not start a new notice episode
 
         Returns:
             ``True`` once the message was handed to the SDK (accepted for
@@ -1711,6 +2040,10 @@ class ClaudeCodeAgent(BaseAgent):
 
         if self.state not in (AgentState.USER_TURN, AgentState.ASSISTANT_TURN):
             raise RuntimeError(f"Cannot send message in state {self.state}")
+
+        if not shell_notice:
+            self._note_external_send()
+        self._open_main_turn()
 
         self._logger.debug("Sending message to session %s", self.session_id)
 
@@ -1820,6 +2153,15 @@ class ClaudeCodeAgent(BaseAgent):
                 if msg is None:
                     continue
 
+                # Bookkeeping only: a malformed message must never end the
+                # loop (and with it the agent).
+                try:
+                    self._note_shell_notice_stream(msg)
+                except Exception:
+                    self._logger.warning(
+                        "Session %s: background shell notice bookkeeping failed", self.session_id, exc_info=True,
+                    )
+
                 # Keep the live-background-agents set and the live-Monitors set
                 # current on every task lifecycle event — consumed by the
                 # ResultMessage branch below to hold ASSISTANT_TURN while either
@@ -1834,7 +2176,11 @@ class ClaudeCodeAgent(BaseAgent):
                 # minute early). Recorded so the ResultMessage branch can hold
                 # ASSISTANT_TURN until it fires.
                 if isinstance(msg, UserMessage) and isinstance(msg.tool_use_result, dict):
+                    previous_wakeup_at = self._pending_wakeup_at
                     self._note_schedule_wakeup(msg.tool_use_result)
+                    if self._pending_wakeup_at != previous_wakeup_at:
+                        self._schedule_background_work_refresh()
+                        self._arm_wakeup_refresh()
 
                 if isinstance(msg, UserMessage):
                     await self._update_live_monitor_tasks(msg)

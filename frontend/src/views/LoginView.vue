@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { markAppNavigation } from '../utils/appNavigation'
 import BrandLogo from '../components/ui/BrandLogo.vue'
 
 const authStore = useAuthStore()
@@ -23,6 +24,8 @@ const passwordInput = ref(null)
  */
 function redirectAway() {
     const redirect = router.currentRoute.value.query.redirect || '/'
+    // An app-initiated page load: the uploads `beforeunload` handler must not ask to confirm it.
+    markAppNavigation()
     window.location.href = redirect
 }
 

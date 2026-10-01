@@ -180,3 +180,10 @@ def test_has_sender_header_is_false_for_a_human_message():
 
 def test_has_sender_header_tolerates_leading_whitespace():
     assert has_sender_header("\n  :: message from another session `a`\n\nbody")
+
+
+def test_has_sender_header_matches_a_twicc_notice():
+    from twicc.cli._drop_request.sender_header import SHELL_NOTICE_HEADER
+    assert SHELL_NOTICE_HEADER == ":: notice from TwiCC"
+    assert has_sender_header(":: notice from TwiCC: background shell(s) still running\n\nbody")
+    assert not has_sender_header(":: notice something else")

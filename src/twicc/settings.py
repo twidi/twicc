@@ -409,8 +409,8 @@ LOGGING = {
 # Bump the relevant constant when the corresponding provider's parsing/compute
 # rules change to trigger recomputation. ``None`` declares "no compute pipeline
 # yet" — sessions of that provider are reported up-to-date as-is.
-CLAUDE_CODE_COMPUTE_VERSION = 109  # 109: nested links and queue completions; 108: dedup task tool_use replay against compaction-duplicated JSONL lines + repair corrupted twiccTasksData snapshots (107 = repair agent links wrongly flipped to background by SendMessage-continuation notifications, 106 = plan_paths from subagent writes too, 105 = Session.plan_paths backfill)
-CODEX_COMPUTE_VERSION = 49  # 49: TwiCC-injected commands and plan answers classified from the rewritten item (48: canonical paginated history with automatic legacy rollout migration, 47: multi-agent v2 NEW_TASK opening message, 46: multi-agent v2 subagent linkage)
+CLAUDE_CODE_COMPUTE_VERSION = 112  # 112: exact aggregate baselines; 111: indexed historical resolution; 110: agent control calls and run ends; 109: nested links and queue completions; 108: dedup task tool_use replay against compaction-duplicated JSONL lines + repair corrupted twiccTasksData snapshots (107 = repair agent links wrongly flipped to background by SendMessage-continuation notifications, 106 = plan_paths from subagent writes too, 105 = Session.plan_paths backfill)
+CODEX_COMPUTE_VERSION = 53  # 53: native task_complete errors become visible API errors; 52: exact aggregate baselines; 51: indexed historical resolution; 50: agent control calls and run ends; 49: TwiCC-injected commands and plan answers classified from the rewritten item (48: canonical paginated history with automatic legacy rollout migration, 47: multi-agent v2 NEW_TASK opening message, 46: multi-agent v2 subagent linkage)
 
 # Search index version
 # Bumped when the schema or document layout changes — forces a full
@@ -475,6 +475,13 @@ TELEMETRY_ENDPOINT = (
 # Idempotent once the key exists, so user toggles from Settings are preserved.
 # Used by devctl in worktree mode so dev servers come up without prompting.
 AUTO_ENABLE_PROVIDERS = os.environ.get("TWICC_AUTO_ENABLE_PROVIDERS", "").strip().lower() in ("1", "true", "yes")
+
+# Default of the per-device tips toggle (Settings > Tips)
+# Set TWICC_TIPS_DEFAULT_OFF=1 to turn tips OFF for a browser that never chose.
+# An explicit choice (stored in the browser's localStorage) always wins.
+# Used by devctl in worktree mode: agents inspect their work there, and a tip
+# toast popping over the UI disturbs them.
+TIPS_DEFAULT_ENABLED = os.environ.get("TWICC_TIPS_DEFAULT_OFF", "").strip().lower() not in ("1", "true", "yes")
 
 # Hybrid Claude CLI mode (feature flag, default OFF)
 # Set TWICC_CLAUDE_HYBRID_ENABLED=1 to un-gate the whole hybrid mode feature:

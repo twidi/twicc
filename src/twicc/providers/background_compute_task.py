@@ -430,6 +430,7 @@ def compute_worker_main(
     worker_logger = logging.getLogger(__name__)
 
     compute = _resolve_factory(compute_factory)()
+    compute.enable_batch_queue_cache()
     provider_value = compute.provider.value
     # Tag every subsequent log line emitted by this worker process with
     # the provider this worker was spawned for. The worker process has a

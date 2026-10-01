@@ -42,11 +42,11 @@ import logging
 import multiprocessing
 import queue
 import threading
+from time import perf_counter
 from collections import defaultdict
 from collections.abc import Callable, Coroutine
 from contextlib import suppress
 from dataclasses import dataclass, field
-from datetime import date as date_cls
 from typing import Any, Literal, NamedTuple, TypeVar
 
 import orjson
@@ -54,8 +54,11 @@ from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 from django.db import transaction
 
+from twicc.sync_diagnostics import log_slow, sync_timing_context
+
 from twicc.core.enums import Provider
 from twicc.logging_context import provider_log_context
+from twicc.providers.compute_executor import run_compute_sync, start_compute_executor, stop_compute_executor
 from twicc.startup_progress import broadcast_startup_progress
 from twicc.workspaces import auto_add_project_to_workspaces
 
@@ -63,8 +66,6 @@ logger = logging.getLogger(__name__)
 
 # Throttle: broadcast project_updated every N normal sessions during compute.
 PROJECT_BROADCAST_INTERVAL = 5
-# Batch size for activity recalculation flushes (per provider).
-BATCH_ACTIVITY_COUNT = 50
 
 # Bounded-queue capacities. Both boot-time producers (initial-sync threads,
 # compute subprocesses) can parse far faster than the DB writer commits to
@@ -75,10 +76,8 @@ BATCH_ACTIVITY_COUNT = 50
 INITIAL_SYNC_QUEUE_MAXSIZE = 200
 COMPUTE_QUEUE_MAXSIZE = 200
 # A compute result carrying more item writes than this is applied in slices
-# of this size, each in its own ``sync_to_async`` call and transaction, so a
-# giant session (hundreds of thousands of items) cannot hold the shared
-# thread-sensitive executor — and with it every REST view, WebSocket
-# connect and watcher write of the process — for minutes.
+# of this size, each in its own compute-worker call and transaction. The
+# writer lease spans the complete message; the event loop remains available.
 COMPUTE_APPLY_CHUNK_SIZE = 2000
 
 # "spawn" context — the compute result queue is created here and passed to
@@ -452,11 +451,12 @@ class _ComputeProviderState:
     run_id: int
     display_session_ids: set[str] | None
     total_display: int
-    pending_activity_days: dict[str, set] = field(default_factory=lambda: defaultdict(set))
     pending_project_ids: set[str] = field(default_factory=set)
+    # A bucket enters this set only after its exact repair transaction commits.
+    # Later sessions in this run can maintain it with their persisted deltas.
+    repaired_activity_buckets: set[tuple] = field(default_factory=set)
     auto_added_project_ids: set[str] = field(default_factory=set)
     sessions_since_project_broadcast: int = 0
-    sessions_since_activities_flush: int = 0
     completed_count: int = 0
     failed_count: int = 0
     abandoned: bool = False
@@ -600,6 +600,7 @@ def start_db_writer() -> None:
     if _db_writer_task is not None:
         raise RuntimeError("DB writer already started")
 
+    start_compute_executor()
     _thread_queue = queue.Queue(maxsize=INITIAL_SYNC_QUEUE_MAXSIZE)
     _subprocess_queue = _mp_ctx.Queue(maxsize=COMPUTE_QUEUE_MAXSIZE)
     _async_queue = asyncio.Queue()
@@ -706,6 +707,12 @@ async def stop_db_writer() -> None:
                     exc_info=exc,
                 ),
             )
+        # Every admitted writer has released its lease. The compute worker
+        # can now close its own connections and join without blocking the loop.
+        try:
+            await stop_compute_executor()
+        except asyncio.CancelledError:
+            cancelled = True
     finally:
         # Reset the entire lifecycle bundle once the writer task is done
         # AND in-flight external lock holders have released. Same-process
@@ -1361,7 +1368,9 @@ async def _run_under_db_write_lock(
         # :func:`get_db_write_lock` (RuntimeError, not AssertionError) and
         # survives ``python -O``.
         raise RuntimeError("DB writer not started")
+    waiting = perf_counter()
     async with lock:
+        log_slow('writer_lock', (perf_counter() - waiting) * 1000)
         # Install a fresh lease and admit the current Task to its
         # drive-task set BEFORE the drive. The drive will wrap the user
         # factory in a coroutine that self-admits its inner Task as its
@@ -1646,7 +1655,10 @@ async def _drain_one() -> bool:
         except Exception:
             logger.error(f"Failed to deserialize compute message: {raw!r:.500}")
         else:
-            with provider_log_context(_provider_from_compute_message(msg)):
+            with (
+                provider_log_context(_provider_from_compute_message(msg)),
+                sync_timing_context(_provider_from_compute_message(msg), msg.get('session_id')),
+            ):
                 try:
                     await _run_under_db_write_lock(lambda: _process_compute_message(msg))
                 except Exception as exc:
@@ -1889,7 +1901,7 @@ async def _settle_async_job(job, apply_fn, label: str) -> None:
     """Run a periodic-task job's sync apply, then settle its Future.
 
     ``apply_fn`` is a synchronous function (it runs in ``transaction.atomic``
-    on a worker thread via ``sync_to_async``) that takes the job and returns
+    on the compute worker via ``run_compute_sync``) that takes the job and returns
     the value the caller awaits. Any exception is logged and forwarded to the
     Future as an exception result, so the producer sees a real failure rather
     than a stranded ``await``.
@@ -1904,7 +1916,7 @@ async def _settle_async_job(job, apply_fn, label: str) -> None:
     provider value.
     """
     try:
-        result = await sync_to_async(apply_fn)(job)
+        result = await run_compute_sync(apply_fn, job)
     except Exception as exc:
         logger.error(
             f"Error applying {label} job: {exc}",
@@ -1978,10 +1990,10 @@ async def _apply_compute_items_in_chunks(msg: dict) -> tuple[dict, str]:
     """Pre-apply a large result's item writes in slices; return the trimmed message.
 
     Small results are returned untouched (``apply_session_complete`` writes
-    their items itself). For large ones every slice runs as its own
-    ``sync_to_async`` call, so other thread-sensitive callers interleave,
-    and re-checks the revision guard; the first non-``ok`` outcome stops the
-    apply and is returned so the caller reports it exactly as
+    their items itself). For large ones every slice runs in a separate
+    compute-worker call and transaction, and re-checks the revision guard.
+    The writer lease remains held across all slices. The first non-``ok``
+    outcome stops the apply and is returned so the caller reports it as
     ``apply_session_complete`` would have.
     """
     from twicc.providers.compute_base import BaseSessionCompute
@@ -1994,18 +2006,21 @@ async def _apply_compute_items_in_chunks(msg: dict) -> tuple[dict, str]:
     session_id = msg['session_id']
     observed_last_offset = msg.get('observed_last_offset')
     item_fields = msg.get('item_fields') or []
-    apply_chunk = sync_to_async(BaseSessionCompute.apply_session_items_chunk)
     for start in range(0, len(item_updates), COMPUTE_APPLY_CHUNK_SIZE):
-        outcome = await apply_chunk(
+        outcome = await run_compute_sync(
+            BaseSessionCompute.apply_session_items_chunk,
             session_id, observed_last_offset, item_fields,
             item_updates[start:start + COMPUTE_APPLY_CHUNK_SIZE], [],
+            msg.get('_repaired_activity_buckets'),
         )
         if outcome != "ok":
             return msg, outcome
     for start in range(0, len(content_overrides), COMPUTE_APPLY_CHUNK_SIZE):
-        outcome = await apply_chunk(
+        outcome = await run_compute_sync(
+            BaseSessionCompute.apply_session_items_chunk,
             session_id, observed_last_offset, [], [],
             content_overrides[start:start + COMPUTE_APPLY_CHUNK_SIZE],
+            msg.get('_repaired_activity_buckets'),
         )
         if outcome != "ok":
             return msg, outcome
@@ -2050,6 +2065,7 @@ async def _process_compute_message(msg: dict) -> None:
         return
 
     # session_complete — the heavy path.
+    received_at = perf_counter()
     state = _compute_states.get(run_id)
     if state is None or state.abandoned:
         # No live state for this run_id: either the run was never tracked / its
@@ -2067,14 +2083,25 @@ async def _process_compute_message(msg: dict) -> None:
         )
         return
 
+    apply_started = perf_counter()
     try:
         from twicc.providers.compute_base import BaseSessionCompute, ComputeApplyResult
 
+        msg['_repaired_activity_buckets'] = state.repaired_activity_buckets
+        line_count = len(msg.get('item_updates', []))
         msg, chunk_outcome = await _apply_compute_items_in_chunks(msg)
         if chunk_outcome != "ok":
             result = ComputeApplyResult(chunk_outcome)
         else:
-            result = await sync_to_async(BaseSessionCompute.apply_session_complete)(msg)
+            with sync_timing_context(_provider_from_compute_message(msg), msg.get('session_id'),
+                                     items=msg.get('source_item_count'), updated_items=line_count,
+                                     bytes=msg.get('observed_last_offset'),
+                                     facts=len(msg.get('history_facts', []))):
+                started = perf_counter()
+                try:
+                    result = await run_compute_sync(BaseSessionCompute.apply_session_complete, msg)
+                finally:
+                    log_slow('final_apply', (perf_counter() - started) * 1000)
     except Exception as e:
         logger.exception("Error applying session_complete")
         state.failed_count += 1
@@ -2082,6 +2109,19 @@ async def _process_compute_message(msg: dict) -> None:
             state.applied_queue.put_nowait(ComputeApplied(msg["session_id"], "failed", str(e)))
         return
 
+    compute_ms = msg.get('compute_ms')
+    completed_at = msg.get('compute_completed_at')
+    queue_ms = (received_at - completed_at) * 1000 if completed_at is not None else None
+    apply_ms = (perf_counter() - apply_started) * 1000
+    logger.info(
+        "Session compute result: session=%s type=%s outcome=%s compute_ms=%s queue_ms=%s "
+        "apply_ms=%.1f items=%s bytes=%s updated_items=%d facts=%d",
+        msg['session_id'], msg.get('session_type'), result.outcome,
+        f'{compute_ms:.1f}' if compute_ms is not None else None,
+        f'{queue_ms:.1f}' if queue_ms is not None else None,
+        apply_ms, msg.get('source_item_count'), msg.get('observed_last_offset'),
+        line_count, len(msg.get('history_facts', [])),
+    )
     if state.applied_queue is not None:
         state.applied_queue.put_nowait(ComputeApplied(msg["session_id"], result.outcome))
     if result.outcome != "applied":
@@ -2127,26 +2167,12 @@ async def _process_compute_message(msg: dict) -> None:
             state.pending_project_ids.clear()
             state.sessions_since_project_broadcast = 0
 
-    affected_days = msg.get("affected_days")
-    if project_id and affected_days:
-        state.pending_activity_days[project_id].update(
-            date_cls.fromisoformat(d) for d in affected_days
-        )
-        state.sessions_since_activities_flush += 1
-
-    if state.sessions_since_activities_flush >= BATCH_ACTIVITY_COUNT:
-        try:
-            await _flush_pending_activities(provider, state.pending_activity_days)
-        except Exception as e:
-            logger.error(f"Error flushing activity recalculations: {e}", exc_info=True)
-        state.pending_activity_days.clear()
-        state.sessions_since_activities_flush = 0
 
 
 async def _finalize_compute_run(run_id: int | None, provider: Provider) -> None:
     """Drain-time finalisation when a compute run's worker is done.
 
-    Flushes the run's pending broadcasts + activities, resolves its completion
+    Flushes the run's pending project broadcasts, resolves its completion
     Future with the run's failed-session count, and drops its state so the
     next run starts clean. A 'done' for an untracked ``run_id`` (a stale
     message from a cancelled run) is ignored — it must not touch a live run.
@@ -2168,12 +2194,6 @@ async def _finalize_compute_run(run_id: int | None, provider: Provider) -> None:
                 await _broadcast_project_updated(pid)
             except Exception as e:
                 logger.error(f"Error in final project broadcast for {pid}: {e}")
-        if state.pending_activity_days:
-            try:
-                await _flush_pending_activities(provider, state.pending_activity_days)
-            except Exception as e:
-                logger.error(f"Error in final activity flush: {e}", exc_info=True)
-
     # Resolve the completion Future with the run's failed-session count; the
     # compute orchestrator (start_background_compute_task) logs the summary.
     if future is not None and not future.done():
@@ -2181,24 +2201,10 @@ async def _finalize_compute_run(run_id: int | None, provider: Provider) -> None:
 
 
 async def _finalize_abandoned_run(run_id: int, provider: Provider) -> None:
-    """DB writer-side finalization of a compute run abandoned at shutdown.
+    """Drain project broadcasts and discard abandoned run bookkeeping.
 
-    Runs inside the DB writer task (dispatched via ``_async_queue`` by
-    :func:`abandon_compute_run`), so the activity-recalculation flush is
-    serialized with every other DB writer write — the single-writer guarantee
-    holds. The DB writer handles one message at a time, so any in-flight
-    ``session_complete`` for the run, and its post-apply bookkeeping, has
-    already finished by the time this runs: ``state.pending_activity_days``
-    and ``state.pending_project_ids`` are final.
-
-    Flushes the run's batched project broadcasts and activity recalculations
-    for the sessions applied before the abandon — without this, those
-    already-applied sessions would keep their ``compute_version`` current (so
-    the next start does not recompute them) yet leave their ``PeriodicActivity``
-    rows stale — then drops the run state. Unlike :func:`_finalize_compute_run`
-    it does not resolve the completion Future: the orchestrator that armed the
-    run is shutting the provider down and cancels the compute task that
-    awaited it.
+    Every committed item/final apply already maintains its activities. Run
+    finalization performs no aggregate work and never resolves its Future.
     """
     state = _compute_states.pop(run_id, None)
     _compute_done_events.pop(run_id, None)
@@ -2219,11 +2225,6 @@ async def _finalize_abandoned_run(run_id: int, provider: Provider) -> None:
             await _broadcast_project_updated(pid)
         except Exception as e:
             logger.error(f"Error in abandoned-run project broadcast for {pid}: {e}")
-    if state.pending_activity_days:
-        try:
-            await _flush_pending_activities(provider, state.pending_activity_days)
-        except Exception as e:
-            logger.error(f"Error in abandoned-run activity flush: {e}", exc_info=True)
 
 
 async def broadcast_session_updated(session_id: str) -> None:
@@ -2296,19 +2297,6 @@ async def _broadcast_project_updated(project_id: str) -> None:
         logger.error(f"Error broadcasting project_updated for {project_id}: {e}")
 
 
-@sync_to_async
-def _flush_pending_activities(provider: Provider, pending_activity_days: dict[str, set]) -> None:
-    """Flush accumulated activity recalculations for all projects."""
-    from twicc.core.models import PeriodicActivity
-
-    # One atomic batch for the whole flush, like every other DB writer write.
-    with transaction.atomic():
-        for project_id, days in pending_activity_days.items():
-            PeriodicActivity.recalculate_for_days(project_id, days, provider=provider, do_global=False)
-        days = set.union(*pending_activity_days.values())
-        PeriodicActivity.recalculate_for_days(None, days, provider=provider, do_global=True)
-
-
 # =============================================================================
 # Initial-sync message handling
 # =============================================================================
@@ -2336,7 +2324,7 @@ async def _process_thread_message(msg) -> None:
 
     try:
         if isinstance(msg, CreateSessionPayload):
-            project, created, adopted = await sync_to_async(_apply_create_session_payload)(msg)
+            project, created, adopted = await run_compute_sync(_apply_create_session_payload, msg)
             if project is not None:
                 # Post-commit side effects, kept out of transaction.atomic so
                 # a project is never announced before it commits. Workspace
@@ -2360,11 +2348,11 @@ async def _process_thread_message(msg) -> None:
                 # counted separately, but still surfaced in the run summary.
                 _initial_sync_orphan_skips[msg.provider] += 1
         elif isinstance(msg, UpdateSessionPayload):
-            await sync_to_async(_apply_update_session_payload)(msg)
+            await run_compute_sync(_apply_update_session_payload, msg)
         elif isinstance(msg, MarkSessionsStalePayload):
-            await sync_to_async(_apply_mark_sessions_stale_payload)(msg)
+            await run_compute_sync(_apply_mark_sessions_stale_payload, msg)
         elif isinstance(msg, DeleteSessionsPayload):
-            deleted_ids = await sync_to_async(_apply_delete_sessions_payload)(msg)
+            deleted_ids = await run_compute_sync(_apply_delete_sessions_payload, msg)
             if deleted_ids:
                 from twicc import search
 
@@ -2373,11 +2361,11 @@ async def _process_thread_message(msg) -> None:
                         await asyncio.to_thread(search.delete_session_documents, session_id)
                     await asyncio.to_thread(search.commit)
         elif isinstance(msg, UpdateProjectMetadataPayload):
-            await sync_to_async(_apply_update_project_metadata_payload)(msg)
+            await run_compute_sync(_apply_update_project_metadata_payload, msg)
         elif isinstance(msg, ResolveProjectGitRootsPayload):
-            await sync_to_async(_apply_resolve_git_roots_payload)(msg)
+            await run_compute_sync(_apply_resolve_git_roots_payload, msg)
         elif isinstance(msg, UpsertWorkflowPayload):
-            await sync_to_async(_apply_upsert_workflow_payload)(msg)
+            await run_compute_sync(_apply_upsert_workflow_payload, msg)
         else:
             logger.error(
                 f"Unexpected initial-sync message type: {type(msg).__name__} => {msg!r:.300}"
@@ -2407,6 +2395,7 @@ def _apply_create_session_payload(payload: CreateSessionPayload) -> tuple[object
     rather than cascading into an opaque IntegrityError on the parent_session
     FK.
     """
+    from twicc.providers.live_aggregates import apply_contribution_changes, session_contribution
     from twicc.core.models import Session, SessionItem
     from twicc.projects import register_project_db_only
 
@@ -2436,14 +2425,19 @@ def _apply_create_session_payload(payload: CreateSessionPayload) -> tuple[object
         payload.session.last_line = payload.last_line
         payload.session.mtime = payload.mtime
         payload.session.save(update_fields=["last_offset", "last_line", "mtime"])
+        apply_contribution_changes([], [], before_sessions=[],
+            after_sessions=[session_contribution(payload.session)], repair=True)
     return project, created, adopted
 
 
 def _apply_update_session_payload(payload: UpdateSessionPayload) -> None:
     """Append items to an existing session and update tracking fields, atomically."""
+    from twicc.providers.live_aggregates import apply_contribution_changes, needs_repair, session_contribution
     from twicc.core.models import SessionItem
 
     with transaction.atomic():
+        payload.session.refresh_from_db()
+        before_session = session_contribution(payload.session)
         if payload.items:
             SessionItem.objects.bulk_create(
                 [SessionItem(session=payload.session, line_num=ln, content=ct)
@@ -2461,6 +2455,8 @@ def _apply_update_session_payload(payload: UpdateSessionPayload) -> None:
             payload.session.compute_version = None
             update_fields.append("compute_version")
         payload.session.save(update_fields=update_fields)
+        apply_contribution_changes([], [], before_sessions=[before_session],
+            after_sessions=[session_contribution(payload.session)], repair=needs_repair(payload.session))
 
 
 def _compute_project_mtime(project_id: str) -> float:
@@ -2512,50 +2508,30 @@ def _apply_mark_sessions_stale_payload(payload: MarkSessionsStalePayload) -> Non
 
 
 def _apply_delete_sessions_payload(payload: DeleteSessionsPayload) -> list[str]:
-    """Delete ignored internal sessions and repair their derived aggregates."""
-    from collections import defaultdict
-
-    from twicc.core.models import DailyActivity, Session, SessionItem
+    """Delete sessions and their descendants with exact aggregate repair."""
+    from twicc.providers.live_aggregates import apply_contribution_changes, item_contributions, session_contribution
+    from twicc.core.models import Session, SessionItem
     from twicc.projects import update_project_metadata
 
     if not payload.session_ids:
         return []
-
-    rows = list(
-        Session.objects.filter(id__in=payload.session_ids, provider=payload.provider)
-        .values("id", "project_id", "created_at")
-    )
-    if not rows:
-        return []
-
-    deleted_ids = [row["id"] for row in rows]
-    project_days: dict[str, set[date_cls]] = defaultdict(set)
-    project_by_session = {row["id"]: row["project_id"] for row in rows}
-    for row in rows:
-        if row["created_at"] is not None:
-            project_days[row["project_id"]].add(row["created_at"].date())
-    for session_id, timestamp in SessionItem.objects.filter(
-        session_id__in=deleted_ids,
-        timestamp__isnull=False,
-    ).values_list("session_id", "timestamp"):
-        project_days[project_by_session[session_id]].add(timestamp.date())
-
     with transaction.atomic():
-        Session.objects.filter(id__in=deleted_ids, provider=payload.provider).delete()
-        for project_id in {row["project_id"] for row in rows}:
+        ids = set(Session.objects.filter(id__in=payload.session_ids, provider=payload.provider)
+                  .values_list('id', flat=True))
+        pending = ids
+        while pending:
+            children = set(Session.objects.filter(parent_session_id__in=pending).values_list('id', flat=True)) - ids
+            ids.update(children)
+            pending = children
+        if not ids:
+            return []
+        before_sessions = [session_contribution(s) for s in Session.objects.filter(id__in=ids)]
+        before_items = item_contributions(SessionItem.objects.filter(session_id__in=ids))
+        Session.objects.filter(id__in=ids).delete()
+        apply_contribution_changes(before_items, [], before_sessions=before_sessions, after_sessions=[], repair=True)
+        for project_id in {s.project_id for s in before_sessions}:
             update_project_metadata(project_id)
-
-        all_days: set[date_cls] = set()
-        for project_id, days in project_days.items():
-            DailyActivity.recalculate_for_days(
-                project_id, days, payload.provider, do_global=False,
-            )
-            all_days.update(days)
-        DailyActivity.recalculate_for_days(
-            None, all_days, payload.provider, do_global=False,
-        )
-
-    return deleted_ids
+    return sorted(ids)
 
 
 def _apply_update_project_metadata_payload(payload: UpdateProjectMetadataPayload) -> None:
@@ -2679,7 +2655,7 @@ def _apply_upsert_workflow_payload(payload: UpsertWorkflowPayload) -> None:
 # Periodic-task job handlers (commands, usage, model retirement, pricing)
 # =============================================================================
 #
-# Each handler runs synchronously on a worker thread (via ``sync_to_async`` in
+# Each handler runs synchronously on the compute worker (via ``run_compute_sync`` in
 # :func:`_settle_async_job`) inside its own ``transaction.atomic``, like
 # every other DB writer write. The producer side prepared everything that does
 # not touch DB (HTTP fetches, filesystem scans, parsing); only the actual

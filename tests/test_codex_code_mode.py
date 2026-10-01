@@ -18,6 +18,8 @@ Covers, per ``docs/plans/2026-07-10-codex-code-mode-display-design.md`` §9:
 
 from __future__ import annotations
 
+from tests.live_sync_helpers import drain_live_sync
+
 import json
 import queue
 from datetime import datetime, UTC
@@ -270,6 +272,14 @@ def _wait_call_line(call_id: str, cell_id: str) -> str:
     )
 
 
+def _function_call_line(call_id: str, name: str, arguments: dict) -> str:
+    """A direct (pre-code-mode) ``function_call``, e.g. ``exec_command``."""
+    return _codex_line(
+        "response_item",
+        {"type": "function_call", "call_id": call_id, "name": name, "arguments": json.dumps(arguments)},
+    )
+
+
 def _function_output_line(call_id: str, output) -> str:
     return _codex_line(
         "response_item",
@@ -355,9 +365,14 @@ def _run_batch_compute(session) -> None:
 @pytest.fixture
 def codex_session(db):
     project = Project.objects.create(id="test-project-code-mode")
-    return Session.objects.create(
+    session = Session.objects.create(
         id="test-session-code-mode", project=project, provider=Provider.CODEX,
     )
+    # The compute is a process singleton: drop what an earlier test left in
+    # its per-session in-memory maps (live paths never reset them).
+    get_compute().end_session_compute(session.id)
+    yield session
+    get_compute().end_session_compute(session.id)
 
 
 def _create_items(session, lines: list[str]) -> None:
@@ -490,7 +505,7 @@ class TestCodeModeTasks:
             encoding="utf-8",
         )
 
-        get_compute().sync_session_items_from_file(codex_session, rollout)
+        drain_live_sync(get_compute(), codex_session, rollout)
 
         codex_session.refresh_from_db()
         assert codex_session.tasks["provider"] == "codex"
@@ -578,7 +593,9 @@ class TestCodeModeCompute:
         ]
         assert [link.tool_use_line_num for link in links] == [1, 1, 1]
         assert [link.tool_name for link in links] == ["exec", "exec", "exec"]
-        assert json.loads(links[0].extra) == {"is_terminated": True}
+        # The script completed, but its body announces the nested process
+        # as still running: the chain stays open until the wait closes it.
+        assert links[0].extra is None
         assert links[1].extra is None
         assert json.loads(links[2].extra) == {"is_terminated": True}
 
@@ -1142,3 +1159,299 @@ class TestPre56Regression:
         assert link.tool_name == "exec_command"
         assert link.error == "Exit code 1"
         assert json.loads(link.extra) == {"is_terminated": True}
+
+
+# ---------------------------------------------------------------------------
+# Background processes: a process outliving its call, and its own end event
+# ---------------------------------------------------------------------------
+
+# The raw nested result a script prints with ``text(r)`` (real GPT-6 shape):
+# ``session_id`` while the process runs, ``exit_code`` once it exited.
+_RUNNING_JSON_OUTPUT = [
+    {"type": "input_text", "text": "Script completed\nWall time 1.2 seconds\nOutput:\n"},
+    {"type": "input_text", "text": '{"chunk_id":"31c280","wall_time_seconds":1.0,"session_id":97625,"output":""}'},
+]
+_EXITED_JSON_OUTPUT = [
+    {"type": "input_text", "text": "Script completed\nWall time 26.0 seconds\nOutput:\n"},
+    {"type": "input_text", "text": '{"chunk_id":"326905","wall_time_seconds":25.9,"exit_code":0,"output":"tail\\n"}'},
+]
+
+
+def _command_execution_line(
+    process_id: str, *, exit_code: int = 0, item_id: str = "exec-9f33e356", secs: int = 1,
+) -> str:
+    return _completed_item_line({
+        "type": "CommandExecution",
+        "id": item_id,
+        "process_id": process_id,
+        "command": ["/bin/bash", "-lc", "sleep 30"],
+        "source": "unified_exec_startup",
+        "status": "completed" if exit_code == 0 else "failed",
+        "exit_code": exit_code,
+        "duration": {"secs": secs, "nanos": 0},
+    })
+
+
+class TestBackgroundProcessEnd:
+    def test_running_process_ids_are_read_from_every_body_shape(self):
+        from twicc.providers.codex.compute import _code_mode_exec_command_id_from_output
+
+        header = "Script completed\nWall time 1.0 seconds\nOutput:\n"
+        assert _code_mode_exec_command_id_from_output(_RUNNING_JSON_OUTPUT) == 97625
+        assert _code_mode_exec_command_id_from_output(_EXITED_JSON_OUTPUT) is None
+        assert _code_mode_exec_command_id_from_output(header + "SESSION_ID=7\n") == 7
+        assert _code_mode_exec_command_id_from_output(
+            header + "Process running with session ID 12\nOutput:\n"
+        ) == 12
+        assert _code_mode_exec_command_id_from_output(
+            header + "Process exited with code 0\nOutput:\n"
+        ) is None
+        # Pretty-printed JSON is still one object.
+        assert _code_mode_exec_command_id_from_output(
+            header + '{\n  "session_id": 3,\n  "output": ""\n}'
+        ) == 3
+        assert _code_mode_exec_command_id_from_output(header + "plain text\n") is None
+
+    def test_completed_script_keeps_open_only_the_owner_of_the_process(self):
+        compute = get_compute()
+        compute.begin_session_compute("s-owner")
+        try:
+            line = orjson.loads(_custom_output_line("call_exec", _RUNNING_JSON_OUTPUT))
+            # The remap hook registers the resolved owner before the extra is computed.
+            assert compute.remap_tool_result_id(line, "call_exec", session_id="s-owner", tool_use_map={}) == "call_exec"
+            assert compute.compute_link_extra(line, "exec", session_id="s-owner", tool_use_id="call_exec") is None
+            # Any other card announcing the same process closes: nothing would close it later.
+            other = orjson.loads(_custom_output_line("call_other", _RUNNING_JSON_OUTPUT))
+            compute.remap_tool_result_id(other, "call_other", session_id="s-owner", tool_use_map={})
+            assert json.loads(compute.compute_link_extra(
+                other, "exec", session_id="s-owner", tool_use_id="call_other",
+            )) == {"is_terminated": True}
+            exited = orjson.loads(_custom_output_line("call_exec", _EXITED_JSON_OUTPUT))
+            assert json.loads(compute.compute_link_extra(
+                exited, "exec", session_id="s-owner", tool_use_id="call_exec",
+            )) == {"is_terminated": True}
+        finally:
+            compute.end_session_compute("s-owner")
+
+    def test_command_execution_closes_a_process_left_running_past_its_turn(self, codex_session):
+        """Nobody polls the process: its own end event closes the card."""
+        _create_items(codex_session, [
+            _exec_call_line("call_exec", 'const r = await tools.exec_command({cmd:"sleep 60",yield_time_ms:1000}); text(r);'),
+            _custom_output_line("call_exec", _RUNNING_JSON_OUTPUT),
+            _command_execution_line("97625"),
+        ])
+        _run_batch_compute(codex_session)
+
+        links = list(
+            ToolResultLink.objects.filter(session=codex_session).order_by("tool_result_line_num")
+        )
+        assert [(link.tool_use_id, link.tool_result_line_num) for link in links] == [
+            ("call_exec", 2), ("call_exec", 3),
+        ]
+        assert links[0].extra is None
+        assert json.loads(links[1].extra) == {"is_terminated": True}
+        assert links[1].error is None
+        # The end event is not a visible row.
+        assert SessionItem.objects.get(session=codex_session, line_num=3).kind == ItemKind.SYSTEM
+
+    def test_the_poll_written_after_the_end_event_still_rebinds(self, codex_session):
+        """Codex writes the end event a few ms before the final poll's output."""
+        _create_items(codex_session, [
+            _exec_call_line("call_exec", 'const r = await tools.exec_command({cmd:"sleep 30",yield_time_ms:1000}); text(r);'),
+            _custom_output_line("call_exec", _RUNNING_JSON_OUTPUT),
+            _exec_call_line("call_stdin", 'const r = await tools.write_stdin({session_id:97625,chars:"",yield_time_ms:30000}); text(r);'),
+            _command_execution_line("97625"),
+            _custom_output_line("call_stdin", _EXITED_JSON_OUTPUT),
+        ])
+        _run_batch_compute(codex_session)
+
+        links = list(
+            ToolResultLink.objects.filter(session=codex_session).order_by("tool_result_line_num")
+        )
+        assert [(link.tool_use_id, link.tool_result_line_num) for link in links] == [
+            ("call_exec", 2), ("call_exec", 4), ("call_exec", 5),
+        ]
+        assert links[0].extra is None
+        assert json.loads(links[1].extra) == {"is_terminated": True}
+        assert json.loads(links[2].extra) == {"is_terminated": True}
+
+    def test_a_failed_process_flags_the_card(self, codex_session):
+        _create_items(codex_session, [
+            _exec_call_line("call_exec", 'const r = await tools.exec_command({cmd:"false"}); text(r);'),
+            _custom_output_line("call_exec", _RUNNING_JSON_OUTPUT),
+            _command_execution_line("97625", exit_code=2),
+        ])
+        _run_batch_compute(codex_session)
+
+        link = ToolResultLink.objects.get(session=codex_session, tool_result_line_num=3)
+        assert link.error == "Exit code 2"
+
+    def test_an_unannounced_process_end_links_nothing(self, codex_session):
+        """A process that exited inside its own call: no output named it."""
+        _create_items(codex_session, [
+            _exec_call_line("call_exec", 'const r = await tools.exec_command({cmd:"ls"}); text(r.output);'),
+            _custom_output_line("call_exec", _COMPLETED_ARRAY),
+            _command_execution_line("555"),
+        ])
+        _run_batch_compute(codex_session)
+
+        assert list(
+            ToolResultLink.objects.filter(session=codex_session).values_list("tool_result_line_num", flat=True)
+        ) == [2]
+
+    def test_live_remap_resolves_the_end_event_and_the_json_poll(self, codex_session):
+        _create_items(codex_session, [
+            _exec_call_line("call_exec", 'const r = await tools.exec_command({cmd:"sleep 30",yield_time_ms:1000}); text(r);'),
+            _exec_call_line("call_stdin", 'const r = await tools.write_stdin({session_id:97625,chars:"",yield_time_ms:30000}); text(r);'),
+        ])
+        compute = get_compute()
+        # The announcing output goes through the live hook first, as in a real sync.
+        output_item = SessionItem.objects.create(
+            session=codex_session, line_num=3, content=_custom_output_line("call_exec", _RUNNING_JSON_OUTPUT),
+        )
+        assert compute.remap_tool_result_id_live(
+            orjson.loads(output_item.content), "call_exec", session_id=codex_session.id, item=output_item,
+        ) == "call_exec"
+        end_item = SessionItem.objects.create(
+            session=codex_session, line_num=4, content=_command_execution_line("97625"),
+        )
+        end_info = compute.extract_tool_result_info(orjson.loads(end_item.content), session_id=codex_session.id)
+        assert end_info.tool_use_id == "exec-9f33e356"
+        assert compute.remap_tool_result_id_live(
+            orjson.loads(end_item.content), end_info.tool_use_id,
+            session_id=codex_session.id, item=end_item,
+        ) == "call_exec"
+
+        poll_item = SessionItem.objects.create(
+            session=codex_session, line_num=5, content=_custom_output_line("call_stdin", _EXITED_JSON_OUTPUT),
+        )
+        assert compute.remap_tool_result_id_live(
+            orjson.loads(poll_item.content), "call_stdin",
+            session_id=codex_session.id, item=poll_item,
+        ) == "call_exec"
+
+    def test_the_end_of_an_unannounced_process_links_nothing_live(self, codex_session):
+        """No output named it: no link search at all (and no DB scan)."""
+        _create_items(codex_session, [
+            _exec_call_line("call_exec", 'const r = await tools.exec_command({cmd:"ls"}); text(r.output);'),
+            _custom_output_line("call_exec", _COMPLETED_ARRAY),
+        ])
+        end_line = orjson.loads(_command_execution_line("9762"))
+        end_line["timestamp"] = datetime.now(UTC).isoformat()  # ran within this backend's life
+        assert get_compute().extract_tool_result_info(end_line, session_id=codex_session.id) is None
+
+    def test_an_end_written_before_its_announcement_opens_nothing(self, codex_session):
+        """The process exited between the nested yield and the output write."""
+        _create_items(codex_session, [
+            _exec_call_line("call_exec", 'const r = await tools.exec_command({cmd:"sleep 1",yield_time_ms:1000}); text(r);'),
+            _command_execution_line("97625"),
+            _custom_output_line("call_exec", _RUNNING_JSON_OUTPUT),
+        ])
+        _run_batch_compute(codex_session)
+
+        link = ToolResultLink.objects.get(session=codex_session, tool_result_line_num=3)
+        assert json.loads(link.extra) == {"is_terminated": True}
+
+    def test_a_multi_call_script_polling_another_process_closes(self, codex_session):
+        """Only the owner of a process waits for its end event."""
+        poll_two = (
+            'const a = await tools.write_stdin({session_id:97625,chars:""}); text(a);\n'
+            'const b = await tools.exec_command({cmd:"ls"}); text(b.output);'
+        )
+        _create_items(codex_session, [
+            _exec_call_line("call_exec", 'const r = await tools.exec_command({cmd:"sleep 60",yield_time_ms:1000}); text(r);'),
+            _custom_output_line("call_exec", _RUNNING_JSON_OUTPUT),
+            _exec_call_line("call_multi", poll_two),
+            _custom_output_line("call_multi", _RUNNING_JSON_OUTPUT),
+        ])
+        _run_batch_compute(codex_session)
+
+        owner = ToolResultLink.objects.get(session=codex_session, tool_result_line_num=2)
+        multi = ToolResultLink.objects.get(session=codex_session, tool_result_line_num=4)
+        assert (owner.tool_use_id, owner.extra) == ("call_exec", None)
+        assert multi.tool_use_id == "call_multi"
+        assert json.loads(multi.extra) == {"is_terminated": True}
+
+    def test_a_reused_process_id_rebinds_to_its_newest_owner_live(self, codex_session):
+        """Codex reuses process ids: a poll talks about the latest process."""
+        _create_items(codex_session, [
+            _function_call_line("call_first", "exec_command", {"cmd": "sleep 1"}),
+            _function_output_line("call_first", "Process running with session ID 97625\nOutput:\n"),
+            _function_output_line("call_first", "Process exited with code 0\nOutput:\n"),
+            _function_call_line("call_second", "exec_command", {"cmd": "sleep 60"}),
+            _function_output_line("call_second", "Process running with session ID 97625\nOutput:\n"),
+            _function_call_line("call_poll", "write_stdin", {"session_id": 97625, "chars": ""}),
+        ])
+        poll_item = SessionItem.objects.create(
+            session=codex_session, line_num=7,
+            content=_function_output_line("call_poll", "Process running with session ID 97625\nOutput:\n"),
+        )
+        assert get_compute().remap_tool_result_id_live(
+            orjson.loads(poll_item.content), "call_poll", session_id=codex_session.id, item=poll_item,
+        ) == "call_second"
+
+    def test_a_process_id_prefix_does_not_cross_match_live(self, codex_session):
+        _create_items(codex_session, [
+            _function_call_line("call_long", "exec_command", {"cmd": "sleep 60"}),
+            _function_output_line("call_long", "Process running with session ID 97625\nOutput:\n"),
+            _function_call_line("call_poll", "write_stdin", {"session_id": 9762, "chars": ""}),
+        ])
+        poll_item = SessionItem.objects.create(
+            session=codex_session, line_num=4,
+            content=_function_output_line("call_poll", "Process running with session ID 9762\nOutput:\n"),
+        )
+        assert get_compute().remap_tool_result_id_live(
+            orjson.loads(poll_item.content), "call_poll", session_id=codex_session.id, item=poll_item,
+        ) == "call_poll"
+
+    def test_a_running_poll_after_the_end_does_not_register_again(self):
+        compute = get_compute()
+        compute.begin_session_compute("s-late")
+        try:
+            output = orjson.loads(_custom_output_line("call_exec", _RUNNING_JSON_OUTPUT))
+            compute.remap_tool_result_id(output, "call_exec", session_id="s-late", tool_use_map={})
+            end = orjson.loads(_command_execution_line("97625"))
+            assert compute.remap_tool_result_id(end, "exec-9f33e356", session_id="s-late", tool_use_map={}) == "call_exec"
+            late = orjson.loads(_custom_output_line("call_exec", _RUNNING_JSON_OUTPUT))
+            compute.remap_tool_result_id(late, "call_exec", session_id="s-late", tool_use_map={})
+            assert not compute.has_process_owner("s-late", 97625)
+        finally:
+            compute.end_session_compute("s-late")
+
+    def test_the_owner_is_released_when_its_own_chain_reports_the_exit(self):
+        """No end event (killed on an interrupt): the exit poll still frees it."""
+        compute = get_compute()
+        compute.begin_session_compute("s-exit")
+        try:
+            output = orjson.loads(_custom_output_line("call_exec", _RUNNING_JSON_OUTPUT))
+            compute.remap_tool_result_id(output, "call_exec", session_id="s-exit", tool_use_map={})
+            assert compute.has_process_owner("s-exit", 97625)
+            exited = orjson.loads(_custom_output_line("call_exec", _EXITED_JSON_OUTPUT))
+            compute.remap_tool_result_id(exited, "call_exec", session_id="s-exit", tool_use_map={})
+            assert not compute.has_process_owner("s-exit", 97625)
+        finally:
+            compute.end_session_compute("s-exit")
+
+    def test_after_a_restart_an_older_process_end_falls_back_to_the_db(self, codex_session):
+        """The in-memory owners died with the previous backend."""
+        _create_items(codex_session, [
+            _exec_call_line("call_exec", 'const r = await tools.exec_command({"cmd":"sleep 60","yield_time_ms":1000});\ntext(r.output);\nif (r.session_id) text(`SESSION_ID=${r.session_id}`);'),
+            _custom_output_line("call_exec", [
+                {"type": "input_text", "text": "Script completed\nWall time 1.0 seconds\nOutput:\n"},
+                {"type": "input_text", "text": "SESSION_ID=97625\n"},
+            ]),
+        ])
+        compute = get_compute()
+        # A process started after this backend: its owner would be in memory.
+        recent = orjson.loads(_command_execution_line("97625", secs=1))
+        recent["timestamp"] = datetime.now(UTC).isoformat()
+        assert compute.extract_tool_result_info(recent, session_id=codex_session.id) is None
+        end_item = SessionItem.objects.create(
+            session=codex_session, line_num=3, content=_command_execution_line("97625", secs=59),
+        )
+        long_end = orjson.loads(end_item.content)
+        info = compute.extract_tool_result_info(long_end, session_id=codex_session.id)
+        assert info is not None
+        assert compute.remap_tool_result_id_live(
+            long_end, info.tool_use_id, session_id=codex_session.id, item=end_item,
+        ) == "call_exec"

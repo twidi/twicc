@@ -94,9 +94,10 @@ def build_topology(
     requested, the live TwiCC sidecar is resolved; if unavailable, topology is
     still returned with process data marked unavailable.
 
-    ``slim_processes`` reduces each read ``process`` block to ``{state}``. Its
-    default keeps the five fields, which the REST view relies on: only the CLI
-    resolves it from ``--slim`` / ``--full`` and the cutover.
+    ``slim_processes`` reduces each read ``process`` block to ``{state,
+    background_work_in_progress}``. Its default keeps the six fields, which the
+    REST view relies on: only the CLI resolves it from ``--slim`` / ``--full``
+    and the cutover.
 
     ``annotation_filters`` preserves the full tree but enriches every node with
     a ``matches_annotations`` flag when provided.

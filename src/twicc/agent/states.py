@@ -138,6 +138,14 @@ class AgentInfo(NamedTuple):
     # that connects (or reconnects, or reloads) afterwards would otherwise
     # see a session working on nothing, with no explanation.
     label: str | None = None
+    # What still runs behind the agent's back, whatever ``state`` says: live
+    # subagents, background shells, Monitors, a pending scheduled wake-up, a
+    # ``/goal`` continuation. ``None`` when nothing does. Orthogonal to
+    # ``state`` on purpose — a background shell keeps running in
+    # ``USER_TURN``. Built by :meth:`BaseAgent.current_background_work`
+    # (see :func:`build_background_work` for the shape), recomputed on every
+    # read like ``label``.
+    background_work_in_progress: dict | None = None
 
     @property
     def memory_rss_human(self) -> str | None:
@@ -187,4 +195,49 @@ def serialize_agent_info(info: AgentInfo) -> dict:
         data["stopping"] = True
     if info.label:
         data["label"] = info.label
+    if info.background_work_in_progress:
+        data["background_work_in_progress"] = info.background_work_in_progress
     return data
+
+
+def build_background_work(
+    *,
+    subagents: int = 0,
+    shells: int = 0,
+    monitors: int = 0,
+    scheduled_wakeup_at: float | None = None,
+    goal: bool = False,
+) -> dict | None:
+    """Build the provider-agnostic ``background_work_in_progress`` snapshot.
+
+    One fixed shape for every provider, so a consumer never has to know which
+    provider it reads: a provider without a given kind of work leaves it at its
+    zero value. ``None`` when nothing runs — the same "absent means none"
+    convention as ``label``.
+
+    - ``subagents``: live subagents spawned by this session.
+    - ``shells``: shell commands still running in the background. Claude Code:
+      a ``Bash`` run with ``run_in_background`` (or backgrounded later), by the
+      session or one of its subagents. Codex: a unified-exec process of the
+      session or one of its subagents that has not exited yet — one the
+      agent is still polling mid-turn included (Codex draws no line between
+      a long foreground command and a background one).
+    - ``monitors``: live Claude Code ``Monitor`` tools.
+    - ``scheduled_wakeup_at``: ISO-8601 UTC time of a pending Claude Code
+      ``ScheduleWakeup``, ``None`` when there is none (or it is past).
+    - ``goal``: a Codex ``/goal`` continuation is running.
+    """
+    if not (subagents or shells or monitors or scheduled_wakeup_at is not None or goal):
+        return None
+    wakeup_iso = None
+    if scheduled_wakeup_at is not None:
+        from datetime import UTC, datetime
+
+        wakeup_iso = datetime.fromtimestamp(scheduled_wakeup_at, tz=UTC).isoformat()
+    return {
+        "subagents": subagents,
+        "shells": shells,
+        "monitors": monitors,
+        "scheduled_wakeup_at": wakeup_iso,
+        "goal": goal,
+    }

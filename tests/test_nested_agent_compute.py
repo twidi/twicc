@@ -1,4 +1,6 @@
 """Nested Claude agent evidence across live ingestion and background compute."""
+
+from tests.live_sync_helpers import drain_live_sync
 from datetime import UTC, datetime
 from queue import Queue
 
@@ -6,7 +8,7 @@ import orjson
 import pytest
 
 from twicc.core.enums import Provider
-from twicc.core.models import AgentLink, Project, Session, SessionItem, SessionType
+from twicc.core.models import AgentLink, Project, Session, SessionItem, SessionType, SessionHistoryFact
 from twicc.providers.claude_code.compute import get_compute
 
 NOW = datetime(2026, 8, 8, 12, tzinfo=UTC)
@@ -63,7 +65,7 @@ def live(session, home, *entries):
     with path.open("ab") as f:
         for parsed in entries:
             f.write(orjson.dumps(parsed) + b"\n")
-    return get_compute().sync_session_items_from_file(session, path)
+    return drain_live_sync(get_compute(), session, path)
 
 
 def compute(session, apply=True):
@@ -84,7 +86,7 @@ def test_live_sidecar_then_ack_upgrades_before_stop(tree):
     assert AgentLink.objects.get(agent_id=child.id).session_id == owner.id
     result = live(owner, home, ack())
     assert AgentLink.objects.get(agent_id=child.id).is_background
-    assert result[5] == []
+    assert result.agent_stopped_updates == []
 
 
 def test_authoritative_sidecar_waits_for_exact_tool(tree):
@@ -144,8 +146,9 @@ def test_live_queue_only_completion_and_missing_child_transport(tree):
     live(owner, home, spawn())
     child.delete()
     result = live(root, home, queue_entry())
-    assert result[2][0].parent_session_id == owner.id
-    assert result[5][0].agent_session_id == "ad123"
+    assert result.agent_link_updates[0].parent_session_id == owner.id
+    assert result.agent_stopped_updates[0].agent_session_id == "ad123"
+    assert not result.agent_stopped_updates[0].stamped  # the recovered link is created already closed; no child row to stamp
     assert not Session.objects.filter(id="ad123").exists()
 
 
@@ -153,10 +156,10 @@ def test_live_queue_rejects_foreign_child_and_nonterminal(tree):
     root, owner, child, home = tree
     child.parent_session = None
     child.save(update_fields=["parent_session"])
-    assert live(root, home, queue_entry())[5] == []
+    assert live(root, home, queue_entry()).agent_stopped_updates == []
     child.parent_session = root
     child.save(update_fields=["parent_session"])
-    assert live(root, home, queue_entry(status="running"))[5] == []
+    assert live(root, home, queue_entry(status="running")).agent_stopped_updates == []
 
 
 def test_sidecar_cannot_claim_existing_foreign_child(tree):
@@ -242,6 +245,145 @@ def test_queue_backfill_reads_uncomputed_launcher_history(tree):
     assert AgentLink.objects.get().session_id == owner.id
 
 
+def test_root_recompute_reads_each_launcher_once_for_queue_backfill(tree, monkeypatch):
+    from twicc.providers import compute_base
+    from twicc.core.models import HistoryFactKind
+
+    root, owner, _child, _home = tree
+    expected = set()
+    for n in range(8):
+        agent_id = f"ae{n:03x}"
+        tool_id = f"tool_{n}"
+        Session.objects.create(
+            id=agent_id, project=root.project, provider=Provider.CLAUDE_CODE,
+            type=SessionType.SUBAGENT, parent_session=root,
+            file_path=f"nested-project/nested-root/subagents/agent-{agent_id}.jsonl",
+        )
+        seed(owner, spawn(tool_id, f"work {n}"))
+        seed(root, queue_entry(agent_id, tool_id))
+        expected.add(agent_id)
+
+    original = compute_base.iter_resolver_items
+    launcher_reads = 0
+
+    def counted(session_id, kind, key=None, **kwargs):
+        nonlocal launcher_reads
+        if session_id == owner.id and kind == HistoryFactKind.TOOL_CALL:
+            launcher_reads += 1
+        return original(session_id, kind, key, **kwargs)
+
+    monkeypatch.setattr(compute_base, "iter_resolver_items", counted)
+    message = compute(root, apply=False)
+    assert {link["agent_id"] for link in message["agent_links_backfill"]} == expected
+    assert launcher_reads == 1
+
+
+def test_root_recompute_uses_exact_fact_lookup_for_current_launcher(tree, monkeypatch):
+    from twicc.providers import compute_base
+    from twicc.core.models import HistoryFactKind
+
+    root, owner, child, _home = tree
+    seed(owner, spawn())
+    compute(owner)
+    seed(root, queue_entry(child.id))
+    original = compute_base.iter_resolver_items
+    keys = []
+
+    def counted(session_id, kind, key=None, **kwargs):
+        if session_id == owner.id and kind == HistoryFactKind.TOOL_CALL:
+            keys.append(key)
+        return original(session_id, kind, key, **kwargs)
+
+    monkeypatch.setattr(compute_base, "iter_resolver_items", counted)
+    message = compute(root, apply=False)
+    assert message["agent_links_backfill"][0]["agent_id"] == child.id
+    assert keys == ["tool_nested"]
+
+
+def test_batch_reuses_root_queue_completions_until_root_changes(tree, monkeypatch):
+    from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
+
+    root, owner, child, _home = tree
+    seed(owner, spawn())
+    seed(root, queue_entry(child.id))
+    root.last_line = 1
+    root.save(update_fields=["last_line"])
+    worker = ClaudeCodeSessionCompute()
+    worker.enable_batch_queue_cache()
+    original = worker._tree_queue_completions
+    scans = 0
+
+    def counted(root_id):
+        nonlocal scans
+        scans += 1
+        return original(root_id)
+
+    monkeypatch.setattr(worker, "_tree_queue_completions", counted)
+    worker.compute_session_metadata(root.id, Queue(), 1)
+    worker.compute_session_metadata(owner.id, Queue(), 1)
+    assert scans == 0
+
+    seed(root, queue_entry("ae999", "missing"))
+    root.last_line = 2
+    root.save(update_fields=["last_line"])
+    worker.compute_session_metadata(owner.id, Queue(), 1)
+    assert scans == 1
+
+
+def test_batch_does_not_cache_root_evidence_added_during_its_pass(tree, monkeypatch):
+    from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
+
+    root, owner, child, _home = tree
+    seed(owner, spawn())
+    seed(root, queue_entry(child.id))
+    root.last_line = 1
+    root.save(update_fields=["last_line"])
+    worker = ClaudeCodeSessionCompute()
+    worker.enable_batch_queue_cache()
+    original_end = worker.end_session_compute
+    original_scan = worker._tree_queue_completions
+    scans = 0
+
+    def advance_after_root(session_id):
+        original_end(session_id)
+        if session_id == root.id:
+            seed(root, queue_entry("ae999", "missing"))
+            Session.objects.filter(id=root.id).update(last_line=2)
+
+    def counted(root_id):
+        nonlocal scans
+        scans += 1
+        return original_scan(root_id)
+
+    monkeypatch.setattr(worker, "end_session_compute", advance_after_root)
+    monkeypatch.setattr(worker, "_tree_queue_completions", counted)
+    worker.compute_session_metadata(root.id, Queue(), 1)
+    worker.compute_session_metadata(owner.id, Queue(), 1)
+    assert scans == 1
+
+
+def test_batch_prompt_recovery_does_not_revisit_own_items(tree, monkeypatch):
+    from twicc.providers import compute_base
+    from twicc.core.models import HistoryFactKind
+
+    _root, owner, child, _home = tree
+    seed(owner, spawn())
+    seed(child, entry("user", "nested work"))
+    original = compute_base.iter_resolver_items
+    own_reads = 0
+
+    def counted(session_id, kind, key=None, **kwargs):
+        nonlocal own_reads
+        if session_id == owner.id and kind == HistoryFactKind.TOOL_CALL:
+            own_reads += 1
+        return original(session_id, kind, key, **kwargs)
+
+    monkeypatch.setattr(compute_base, "iter_resolver_items", counted)
+    message = compute(owner, apply=False)
+    assert message["agent_links_to_create"][0]["agent_id"] == child.id
+    assert own_reads == 0
+
+
 def test_full_sidecar_sync_result_marks_child_stopped(tree):
     root, owner, child, home = tree
     meta(tree)
@@ -258,7 +400,7 @@ def test_queue_upgrades_existing_matching_launch_only(tree):
     assert not AgentLink.objects.get().is_background
     result = live(root, home, queue_entry())
     assert AgentLink.objects.get().is_background
-    assert result[2][0].is_background
+    assert result.agent_link_updates[0].is_background
 
 
 def test_live_queue_ignores_stale_stop_after_child_activity(tree):
@@ -266,19 +408,37 @@ def test_live_queue_ignores_stale_stop_after_child_activity(tree):
     root, owner, child, home = tree
     child.last_updated_at = NOW + timedelta(seconds=10)
     child.save(update_fields=["last_updated_at"])
-    assert live(root, home, queue_entry())[5] == []
+    assert live(root, home, queue_entry()).agent_stopped_updates == []
+    child.refresh_from_db()
+    assert child.last_stopped_at is None
+
+
+def test_live_queue_stale_stop_of_a_linked_child_is_returned_unstamped(tree):
+    """The run closes, the guard refuses the stamp: the update still carries the stop (for the hook)."""
+    from datetime import timedelta
+
+    from twicc.providers.compute_base import AgentStoppedUpdate
+    root, owner, child, home = tree
+    live(owner, home, spawn(), ack())
+    assert AgentLink.objects.get(agent_id=child.id).is_background
+    child.last_updated_at = NOW + timedelta(seconds=10)
+    child.save(update_fields=["last_updated_at"])
+    assert live(root, home, queue_entry()).agent_stopped_updates == [AgentStoppedUpdate("ad123", NOW, stamped=False)]
     child.refresh_from_db()
     assert child.last_stopped_at is None
 
 
 def test_queue_sendmessage_stops_without_creating_or_upgrading_launch(tree):
+    """A SendMessage with no first result opens no run: its queue end closes nothing."""
+    from twicc.core.models import AgentRunEnd
     root, owner, child, home = tree
     AgentLink.objects.create(session=owner, agent_id=child.id, tool_use_id="original", tool_use_line_num=1)
     data = entry("assistant", [{"type": "tool_use", "id": "continuation", "name": "SendMessage", "input": {"to": child.id}}])
     live(owner, home, data)
     result = live(root, home, queue_entry(tool="continuation"))
-    assert len(result[5]) == 1
-    assert result[2] == []
+    assert result.agent_stopped_updates == []
+    assert AgentRunEnd.objects.filter(agent_id=child.id, tool_use_id="continuation").exists()
+    assert result.agent_link_updates == []
     assert AgentLink.objects.count() == 1
     assert not AgentLink.objects.get().is_background
 
@@ -298,7 +458,7 @@ def test_child_live_prompt_rejects_same_prompt_siblings(tree):
     seed(root, spawn("root_tool"))
     seed(sibling, entry("user", "nested work"))
     result = live(child, home, entry("user", "nested work", agentId=child.id))
-    assert result[2] == []
+    assert result.agent_link_updates == []
     assert not AgentLink.objects.exists()
     compute(root)
     assert not AgentLink.objects.exists()
@@ -308,7 +468,7 @@ def test_launcher_live_prompt_rejects_same_prompt_tools_in_batch(tree):
     root, owner, child, home = tree
     seed(child, entry("user", "nested work"))
     result = live(root, home, spawn("first_tool"), spawn("second_tool"))
-    assert result[2] == []
+    assert result.agent_link_updates == []
     assert not AgentLink.objects.exists()
     compute(root)
     assert not AgentLink.objects.exists()
@@ -325,3 +485,18 @@ def test_child_live_authoritative_tool_wins_same_prompt_sibling(tree):
     compute(root)
     assert AgentLink.objects.get().agent_id == child.id
     assert AgentLink.objects.get().tool_use_id == "root_tool"
+
+
+@pytest.mark.parametrize("per_line", [True, False])
+def test_claude_history_facts_batch_live_parity(tree, per_line):
+    root, owner, child, home = tree
+    records = [spawn(), ack(), queue_entry()]
+    if per_line:
+        for record in records:
+            live(owner, home, record)
+    else:
+        live(owner, home, *records)
+    persisted = list(SessionHistoryFact.objects.filter(session=owner)
+                     .order_by('line_num', 'kind', 'key').values('line_num', 'kind', 'key', 'data'))
+    assert persisted
+    assert compute(owner, apply=False)['history_facts'] == persisted

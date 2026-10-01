@@ -37,7 +37,7 @@ from .workflow_synthesis import (
 from twicc.providers.compute_base import BaseSessionCompute, ToolResultUpdate
 from twicc.providers.sessions_watcher import (
     BaseSessionsWatcher,
-    IndexingRequest,
+    SessionChangeResult,
     ParsedSessionFile,
     broadcast_message,
     get_project_by_id,
@@ -348,7 +348,7 @@ class ClaudeCodeSessionsWatcher(BaseSessionsWatcher):
         parsed: ParsedSessionFile,
         change_type: Change,
         channel_layer,
-    ) -> IndexingRequest | None:
+    ) -> SessionChangeResult:
         """Base sync, then surface a newly-spawned workflow agent in its run's
         live STATE 1 view the instant the agent's first message syncs.
 

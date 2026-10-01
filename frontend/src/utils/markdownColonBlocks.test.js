@@ -172,3 +172,9 @@ test('an indented colon run is left to the code-block rule', () => {
     assert.doesNotMatch(html, /md-container/)
     assert.match(html, /<pre><code>/)
 })
+
+test('a TwiCC notice header renders as a notice line block', () => {
+    const md = makeMd()
+    const html = md.render(':: notice from TwiCC: background shell(s) still running\n\nbody')
+    assert.match(html, /<div class="md-line md-line-notice">notice from TwiCC: background shell\(s\) still running<\/div>/)
+})

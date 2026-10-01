@@ -220,7 +220,7 @@ Thumbs.db
 # =========================
 
 # Data directory (database, search index, SDK logs) — used in worktrees
-db/
+/db/
 # tmux reaper sentinel, written at the data dir root (the worktree root in worktree mode)
 .tmux-reaper-grandfathered
 search-index/
@@ -231,11 +231,12 @@ search-index/
 # match there, never a source directory that happens to share the name. No
 # trailing slash: in worktree mode devctl symlinks artifacts/scratch to the main
 # data dir, and git treats a symlink as a file — a dir-only pattern (trailing /)
-# would NOT ignore the link. (shares/ is a real per-worktree dir, not symlinked,
-# but follows the same anchoring rule.)
+# would NOT ignore the link. (shares/ and uploads/ — the upload staging area —
+# are real per-worktree dirs, not symlinked, but follow the same anchoring rule.)
 /artifacts
 /scratch
 /shares
+/uploads
 
 # Another data-dir subdirectory surfacing at the worktree root when the data dir
 # is the worktree itself: the project icon files (a real per-worktree dir, never

@@ -17,6 +17,7 @@ import { computed, ref, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useDataStore } from '../../stores/data'
 import { isSessionUnread } from '../../utils/sessions'
+import { userTurnBackgroundShellCount } from '../../utils/backgroundWork'
 import { getProviderIcon } from '../../providers'
 import ProcessIndicator from '../ui/ProcessIndicator.vue'
 import ProjectMark from '../project/ProjectMark.vue'
@@ -151,6 +152,7 @@ useGlideInk({
                                     v-else-if="row.state.kind === 'process'"
                                     :state="row.state.processState.state"
                                     :has-active-crons="row.state.processState.active_crons?.length > 0"
+                                    :background-shells="userTurnBackgroundShellCount(row.state.processState)"
                                     size="small"
                                 />
                             </span>

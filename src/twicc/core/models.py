@@ -53,6 +53,22 @@ class SessionType(models.TextChoices):
     SUBAGENT = "subagent", "Subagent"
 
 
+class HistoryFactKind(models.TextChoices):
+    """Historical evidence computed from provider session items."""
+
+    TOOL_CALL = "tool_call", "Tool call"
+    PROCESS_START = "process_start", "Process start"
+    CODE_CELL = "code_cell", "Code cell"
+    AGENT_SPAWN = "agent_spawn", "Agent spawn"
+    TURN_START = "turn_start", "Turn start"
+    CODE_EXEC_TARGET = "code_exec_target", "Code exec target"
+    TURN_CONTEXT = "turn_context", "Turn context"
+    PLAN_MARKER = "plan_marker", "Plan marker"
+    GOAL_CONTEXT = "goal_context", "Goal context"
+    GOAL_UPDATE = "goal_update", "Goal update"
+    TOKEN_USAGE = "token_usage", "Token usage"
+
+
 class PinMode(models.TextChoices):
     """Pin visibility scope for a session."""
     PROJECT = "project", "Project"
@@ -658,6 +674,8 @@ class Session(models.Model):
     class Meta:
         ordering = ["-mtime"]
         indexes = [
+            models.Index(fields=["parent_session"], name="idx_session_parent_cost",
+                         condition=models.Q(self_cost__isnull=False)),
             # Covers all "list sessions by project+type" queries (listing + count + sync)
             models.Index(fields=["project", "type", "-mtime"], name="idx_session_project_type_mtime"),
             # Covers API session listing and project sessions_count (most frequent queries)
@@ -826,6 +844,25 @@ class SessionItem(models.Model):
         return f"{self.session_id}:{self.line_num}"
 
 
+class SessionHistoryFact(models.Model):
+    """Compact historical evidence, keyed by its exact source occurrence."""
+
+    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="history_facts", db_index=False)
+    line_num = models.PositiveIntegerField()
+    kind = models.CharField(max_length=32, choices=HistoryFactKind.choices)
+    key = models.TextField()
+    data = models.JSONField()
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=Q(line_num__gte=1), name="history_fact_positive_line"),
+            models.UniqueConstraint(
+                fields=["session", "kind", "key", "line_num"],
+                name="uniq_history_fact_source",
+            ),
+        ]
+
+
 class ToolResultLink(models.Model):
     """Links one tool_use to one tool_result within a session.
 
@@ -862,6 +899,10 @@ class ToolResultLink(models.Model):
             models.Index(
                 fields=["session", "tool_name"],
                 name="idx_tool_result_link_by_name",
+            ),
+            models.Index(
+                fields=["session", "tool_use_id"],
+                name="idx_tool_result_link_by_tool",
             ),
         ]
 
@@ -900,10 +941,116 @@ class AgentLink(models.Model):
                 fields=["session", "tool_use_id"],
                 name="idx_agent_link_lookup",
             ),
+            models.Index(
+                fields=["agent_id"],
+                name="idx_agent_link_agent",
+            ),
         ]
 
     def __str__(self):
         return f"{self.session_id}:{self.tool_use_line_num} -> agent {self.agent_id} ({self.tool_use_id})"
+
+
+class AgentInteractionKind(models.TextChoices):
+    """Action a control-tool call performs on a targeted agent."""
+    MESSAGE = "message"
+    RESUME = "resume"
+    STOP = "stop"
+    OUTPUT = "output"
+
+
+class AgentInteraction(models.Model):
+    """One control-tool call that targets one agent.
+
+    App-centric and provider-agnostic: Claude's ``SendMessage`` /
+    ``TaskStop`` / ``TaskOutput`` and Codex's ``interacted`` /
+    ``interrupted`` events both populate this table as calls that message,
+    resume, stop, or read the output of a subagent. See design
+    ``docs/plans/2026-09-26-subagent-runs-and-control-tools-design.md`` §5.1
+    for the full write-time and read-time rules (duplicates, the tree rule,
+    ``opens_run``/``started_at`` semantics).
+    """
+
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.CASCADE,
+        related_name="agent_interactions",
+    )
+    tool_use_line_num = models.PositiveIntegerField()  # Line of the call
+    event_line_num = models.PositiveIntegerField()  # Line where the row is decided (see design §5.1)
+    tool_use_id = models.CharField(max_length=255)  # The call id
+    agent_id = models.CharField(max_length=255)  # The targeted session id
+    kind = models.CharField(max_length=20, choices=AgentInteractionKind.choices)
+    opens_run = models.BooleanField(default=False)  # True when the call started a new run of the agent
+    started_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["session", "tool_use_id"],
+                name="uniq_agent_interaction_call",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["agent_id"],
+                name="idx_agent_interaction_agent",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.session_id}:{self.tool_use_line_num} -> agent {self.agent_id} ({self.kind})"
+
+
+class AgentRunEndSource(models.TextChoices):
+    """Where an ``AgentRunEnd`` row came from."""
+    TRANSCRIPT = "transcript"
+    UI = "ui"
+
+
+class AgentRunEnd(models.Model):
+    """One run-end signal that must not, or cannot, become a `ToolResultLink`.
+
+    App-centric and provider-agnostic: Claude `<task-notification>` forms,
+    Claude agent-level interrupts, the TwiCC Stop button, Codex
+    `SubAgentActivity` completions, Codex agent-level turn ends, and Codex
+    owner-turn aborts all populate this table. See design
+    ``docs/plans/2026-09-26-subagent-runs-and-control-tools-design.md`` §5.2
+    for the full write-time rules per signal kind and the meaning of each
+    field per case.
+    """
+
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.CASCADE,
+        related_name="agent_run_ends",
+    )
+    line_num = models.PositiveIntegerField(null=True, blank=True)  # null for a ui row
+    source = models.CharField(
+        max_length=20, choices=AgentRunEndSource.choices, default=AgentRunEndSource.TRANSCRIPT,
+    )
+    agent_id = models.CharField(max_length=255)
+    tool_use_id = models.CharField(max_length=255, default="")
+    ended_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=32, null=True, blank=True)  # free-form, see design §5.2
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["session", "line_num", "tool_use_id"],
+                condition=Q(source=AgentRunEndSource.TRANSCRIPT),
+                name="uniq_agent_run_end_transcript",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["agent_id", "tool_use_id"],
+                name="idx_agent_run_end_agent_tool",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.session_id}:{self.line_num} -> agent {self.agent_id} ({self.status})"
 
 
 class Workflow(models.Model):
@@ -1356,6 +1503,16 @@ class ProcessRun(models.Model):
     # disambiguates. Maintained by :meth:`BaseAgentManager._persist_process_run_transition`
     # via ``bool(agent.pending_requests)``, forced to ``False`` on ``DEAD``.
     awaiting_user_input = models.BooleanField(default=False)
+    # What still runs behind the agent, whatever ``state`` says — live
+    # subagents, background shells, Monitors, a pending scheduled wake-up, a
+    # Codex ``/goal`` continuation — as built by
+    # :func:`twicc.agent.states.build_background_work`. ``None`` when nothing
+    # does. Orthogonal to ``state``: a background shell keeps running in
+    # ``USER_TURN``. Written on every state transition by
+    # :meth:`BaseAgentManager._persist_process_run_transition` and between
+    # transitions by :meth:`BaseAgentManager._persist_background_work`;
+    # forced to ``None`` on ``DEAD``.
+    background_work_in_progress = models.JSONField(null=True, blank=True, default=None)
 
     class Meta:
         indexes = [
@@ -1416,14 +1573,27 @@ class SessionCron(models.Model):
         return f"Cron[{self.provider}] {self.cron_id} ({kind}) on session {self.session_id}"
 
     def serialize(self) -> dict:
-        """Serialize for WebSocket transmission (matches the format expected by the frontend)."""
+        """Serialize for WebSocket transmission (matches the format expected by the frontend).
+
+        ``next_fire`` is the UPCOMING run: the stored column is the first fire,
+        written at creation and never moved forward, so for a recurring cron
+        the next occurrence after now is computed here.
+        """
+        next_fire = self.next_fire
+        if self.recurring:
+            try:
+                next_fire = next(cron_occurrences(self.cron_expr, datetime.now(UTC)))
+            except Exception:
+                # Same leniency as ``last_fire``: an unparsable expression
+                # keeps the stored first fire.
+                pass
         return {
             "id": self.cron_id,
             "cron_expr": self.cron_expr,
             "recurring": self.recurring,
             "prompt": self.prompt,
             "created_at": self.created_at.timestamp(),
-            "next_fire": self.next_fire.timestamp(),
+            "next_fire": next_fire.timestamp(),
         }
 
     JITTER_SAFETY_MARGIN = timedelta(minutes=1)

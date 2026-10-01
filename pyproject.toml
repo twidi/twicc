@@ -27,7 +27,7 @@ dependencies = [
     "apprise~=1.11",
     "blacknoise~=1.2.0",
     "channels~=4.3.2",
-    "claude-agent-sdk==0.2.159",
+    "claude-agent-sdk==0.2.162",
     "cronsim~=2.7",
     "daphne~=4.2.1",
     "django~=6.0.4",
@@ -63,7 +63,7 @@ twicc = "twicc:main"
 
 [tool.hatch.build.targets.wheel]
 # Two top-level packages ship inside the wheel: the TwiCC app itself, and the
-# vendored Codex Python SDK (extracted from openai/codex tag rust-v0.156.1 —
+# vendored Codex Python SDK (extracted from openai/codex tag rust-v0.159.2 —
 # see hatch_build.py). The SDK is vendored rather than pulled from PyPI
 # because the PyPI release `openai-codex` pins an older runtime version and
 # we want to ride a known-good combination with the matching upstream tag.
@@ -167,6 +167,8 @@ ignore = [
 # of it. Both are false here, and only here.
 "tests/test_mcp_abuse.py" = ["F401", "F811"]
 "tests/test_mcp_oauth_compatibility.py" = ["F401", "F811"]
+# Same pattern: `fast_loop` and `live_twicc` from `test_wait_reply.py` are autouse.
+"tests/test_wait_background.py" = ["F401", "F811"]
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "twicc.settings_test"

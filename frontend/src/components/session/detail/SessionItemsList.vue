@@ -830,7 +830,8 @@ watch([() => props.sessionId, session], async ([newSessionId, newSession], [oldS
         if (isFirstLoad) {
             await loadSessionData(lastLine)
 
-            // Fetch tool states first (needed by fetchSubagentsState to determine agent running status)
+            // Fetch tool states first (the /subagents/ snapshot itself carries the
+            // agent run state; the order of the two fetches stays as-is)
             await store.fetchToolStates(props.projectId, newSessionId)
 
             // For parent sessions, fetch all subagent states.
@@ -2264,6 +2265,7 @@ defineExpose({
                             :is-block-start="item.isBlockStart || false"
                             :is-block-end="item.isBlockEnd || false"
                             @toggle-suffix="toggleGroup(item.suffixGroupHead)"
+                            :is-live-timestamp-anchor="item.isLiveTimestampAnchor || false"
                         />
                     </template>
                 </VirtualScroller>

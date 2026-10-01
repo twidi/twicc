@@ -220,19 +220,6 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
 
         return build_question_response(pending, action=action, answers=answers)
 
-    def get_queue_completions(self, items):
-        from .notifications import parse_queue_completion
-
-        completions = []
-        for item in items:
-            try:
-                parsed = orjson.loads(item.content)
-            except orjson.JSONDecodeError:
-                continue
-            if isinstance(parsed, dict) and (completion := parse_queue_completion(parsed)) is not None:
-                completions.append((completion.task_id, completion.tool_use_id, item.timestamp))
-        return completions
-
     def get_spawn_display_name(self, item, tool_use_id) -> str | None:
         """``Explore — Map session pinning system`` from the ``Task``/``Agent`` call.
 
@@ -588,8 +575,8 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
 
         ``False`` ⇒ adaptive thinking is always on and
         ``thinking:{type:disabled}`` is rejected by the API (the fable
-        family, Opus 5.5), so ``thinking_enabled`` is forced on for that
-        model.
+        family, Opus 5.5, Sonnet 5.5), so ``thinking_enabled`` is forced on
+        for that model.
         """
         mv = self.find_model(selected_model) if selected_model else None
         if mv is None:
@@ -672,8 +659,9 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
            the model doesn't support auto (Opus 4.5 / Sonnet 4.5 and
            earlier are rejected by the SDK / CLI).
         6. Forces ``thinking_enabled`` on when the model can't disable
-           thinking (fable family, Opus 5.5: adaptive thinking is always
-           on and ``thinking:{type:disabled}`` is rejected by the API).
+           thinking (fable family, Opus 5.5, Sonnet 5.5: adaptive thinking
+           is always on and ``thinking:{type:disabled}`` is rejected by the
+           API).
         """
         settings = super().enforce_agent_settings_consistency(settings)
 

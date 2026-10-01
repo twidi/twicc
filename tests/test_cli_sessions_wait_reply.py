@@ -62,9 +62,9 @@ def loop(monkeypatch):
     """Record what reaches the shared loop, and answer without polling."""
     seen: dict = {}
 
-    def fake(cursors, *, timeout, want_text, first):
+    def fake(cursors, *, timeout, want_text, first, wait_background=False):
         seen.update(cursors=dict(cursors), timeout=timeout,
-                    want_text=want_text, first=first)
+                    want_text=want_text, first=first, wait_background=wait_background)
         return {sid: {"outcome": "replied", "line_num": 9, "since_line_num": c}
                 for sid, c in cursors.items()}
 
@@ -217,6 +217,8 @@ def test_the_instant_wins_over_the_last_line(project, capsysbinary, loop):
     ({"timeout": 5.0}, "first", False),
     ({"timeout": 5.0, "want_text": False}, "want_text", False),
     ({"timeout": 5.0}, "want_text", True),
+    ({"timeout": 5.0, "wait_background": True}, "wait_background", True),
+    ({"timeout": 5.0}, "wait_background", False),
 ])
 def test_the_flags_reach_the_loop(project, capsysbinary, loop, kwargs, key, expected):
     """A flag that stops at the command is a flag that does nothing, and the
@@ -302,7 +304,7 @@ def test_the_flags_travel_from_the_command_line(project, monkeypatch):
 
     result = CliRunner().invoke(app, [
         "sessions", "wait-reply", "a", "b", "--since", "2026-09-20",
-        "--wait-timeout", "7", "--wait-first", "--no-reply-text",
+        "--wait-timeout", "7", "--wait-first", "--no-reply-text", "--wait-background",
         "--spawned-by", "s", "--annotation", "k=v", "--provider", "codex",
         "--state", "user_turn",
     ])
@@ -313,6 +315,7 @@ def test_the_flags_travel_from_the_command_line(project, monkeypatch):
     assert seen["timeout"] == 7.0
     assert seen["first"] is True
     assert seen["want_text"] is False
+    assert seen["wait_background"] is True
     assert seen["spawned_by"] == "s"
     assert seen["annotation"] == ["k=v"]
     assert seen["provider"] == "codex"

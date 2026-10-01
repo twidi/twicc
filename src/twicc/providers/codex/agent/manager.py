@@ -15,7 +15,9 @@ from the user's ``permission_mode`` preset via :func:`resolve_codex_policy`
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import time
 from typing import Any, ClassVar
 
 from asgiref.sync import sync_to_async
@@ -33,7 +35,7 @@ from ..bin import make_codex_config
 from ..migration_gate import gate_for, wake_migration_scheduler
 from ..permission_modes import resolve_codex_policy, resolve_codex_turn_overrides
 from ..sdk_wrappers import TwiccAsyncCodex, service_tier_from_fast_mode
-from .agent import CodexAgent
+from .agent import CodexAgent, command_processes_may_run
 from .hardcoded_commands import HardcodedCommand, parse_hardcoded_command
 from .sdk_logger import attach_stderr_logging
 
@@ -196,6 +198,10 @@ class CodexAgentManager(BaseAgentManager):
                 "Codex has no protocol for documents — dropping them silently.",
                 session_id, len(documents),
             )
+
+    def _send_gate(self, session_id: str) -> contextlib.AbstractAsyncContextManager:
+        """Same order as ``send_to_session``: the migration gate, then the lock."""
+        return gate_for(session_id)
 
     async def send_to_session(
         self,
@@ -443,17 +449,76 @@ class CodexAgentManager(BaseAgentManager):
     ) -> None:
         """Relay a "these subagents finished" signal from the watcher.
 
-        Fired when ``check_agent_naturally_stopped`` stamps
-        ``last_stopped_at`` on subagents of ``session_id`` — the only
-        reliable end-of-child signal (nothing reaches the parent's SDK
-        stream). The agent drops the ids from its live set and, when parked
-        in the subagent hold with nothing left running, settles back to
-        USER_TURN. No live agent → no-op.
+        Fired when a live batch's stop step closed a run of subagents of the
+        tree rooted at ``session_id`` and they no longer run. The root's SDK
+        stream carries a ``completed`` item for most run ends, but not for
+        every one (a ``FINAL_ANSWER`` only, a child's own turn end, an owner
+        abort), so this relay is the reliable end-of-child signal. The agent
+        drops the children that are no longer running from its live set
+        and, when parked in the subagent hold with nothing left running,
+        settles back to USER_TURN. No live agent → no-op.
         """
         agent = self._agents.get(session_id)
         if agent is None:
             return
         await agent.notify_subagents_stopped(agent_ids)
+
+    async def notify_subagents_resumed(
+        self, session_id: str, agents: list[tuple[str, str]],
+    ) -> None:
+        """Relay a "these subagents run again" signal from the watcher.
+
+        Fired when a live batch created a run-opening interaction (a
+        ``followup_task`` on an idle child) in the tree rooted at
+        ``session_id``. ``agents`` are ``(agent_id, agent_path)`` pairs. The
+        agent puts back in its live set the first-level children that still
+        run. No live agent → no-op.
+        """
+        agent = self._agents.get(session_id)
+        if agent is None:
+            return
+        await agent.notify_subagents_resumed(agents)
+
+    def has_live_shells(self) -> bool:
+        """Whether any live agent still tracks a running unified-exec process.
+
+        Cheap gate for the watcher: it only scans fresh lines for ended
+        ``CommandExecution`` items when this returns ``True``.
+        """
+        return any(agent.has_live_shells() for agent in self._agents.values())
+
+    def has_agent(self, session_id: str) -> bool:
+        """Whether a live agent runs ``session_id``."""
+        return session_id in self._agents
+
+    async def notify_shells_started(
+        self, session_id: str, thread_id: str, processes: dict[str, float],
+    ) -> None:
+        """Relay "a subagent's outputs announced these running processes".
+
+        ``session_id`` is the live parent agent: the subagent runs in its
+        app-server, and its shell items never reach the parent's stream, so
+        its rollout is the only source. No live agent → no-op.
+        """
+        agent = self._agents.get(session_id)
+        if agent is None:
+            return
+        await agent.notify_shells_started(thread_id, processes)
+
+    async def notify_shells_exited(self, thread_id: str, process_ids: list[str]) -> None:
+        """Relay "these processes of ``thread_id`` exited" from the watcher.
+
+        ``thread_id`` is the session whose rollout carried the lines: the
+        agent's own, or one of its subagents' (their processes run in the
+        parent's app-server). Every live agent gets the relay and drops only
+        the ``(thread_id, process_id)`` pairs it tracks — cheaper than
+        resolving the subagent's parent, and exact. Even an agent tracking
+        nothing gets it: it remembers the end, so a subagent's announcement
+        written just after (in a later watcher batch) does not revive the
+        process.
+        """
+        for agent in list(self._agents.values()):
+            await agent.notify_shells_exited(thread_id, process_ids)
 
     def has_goal_continuation(self, session_id: str) -> bool:
         """Whether a live agent for ``session_id`` is parked in a ``/goal``
@@ -870,7 +935,30 @@ class CodexAgentManager(BaseAgentManager):
         every provider that calls into it. No equivalent of Claude's
         ``SessionCron`` check because :class:`SessionCron` is Claude
         Code-specific.
+
+        One Codex-specific step first: an idle agent — ``USER_TURN`` or the
+        subagent hold — still counting background shells gets them reconciled
+        against its real process table (see :func:`command_processes_may_run`
+        — probed in a thread, applied here on the loop), so a process killed
+        without an end event cannot shield the session from the idle auto-stop
+        forever. The tracked keys are snapshotted before the probe, so a shell
+        tracked while it ran is kept.
         """
+        in_idle_state = agent.state == AgentState.USER_TURN or agent.in_subagent_hold()
+        if in_idle_state and agent.has_live_shells():
+            try:
+                probe = agent.shell_probe()
+                if probe is not None:
+                    keys = agent.live_shell_keys()
+                    probed_at = time.time()
+                    may_run = await asyncio.to_thread(command_processes_may_run, *probe)
+                    if may_run is False and agent.drop_gone_shells(probed_at, keys=keys):
+                        agent._schedule_background_work_refresh()
+            except Exception:
+                logger.warning(
+                    "Codex: shell reconciliation failed for session %s",
+                    agent.session_id, exc_info=True,
+                )
         return self._state_based_timeout(agent, current_time)
 
 

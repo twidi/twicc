@@ -7,6 +7,7 @@ import { useWebSocket as useVueWebSocket, useDebounceFn, useThrottleFn } from '@
 import { useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { applySessionItemsAdded } from './wsSessionItems'
+import { applyBackgroundWork } from './wsProcessState'
 import { useSharesStore } from '../stores/shares'
 import { useAuthStore } from '../stores/auth'
 import { useReconciliation } from './useReconciliation'
@@ -21,7 +22,7 @@ import { truncateTitle } from '../utils/truncate'
 import { peerMessageRouting, peerRoutingText } from '../utils/peerMessageRouting'
 import { toWorkspaceProjectId } from '../utils/workspaceIds'
 import { compareVersions } from '../utils/version'
-import { getProcessStateNotificationEffects } from '../utils/processStateNotifications.js'
+import { getProcessStateNotificationEffects, getUserTurnNotificationText } from '../utils/processStateNotifications.js'
 import { buildTitleSuggestionRequest } from '../utils/titleSuggestion.js'
 
 // Lazy (async) toast body for peer events — toast.custom detects a component
@@ -784,7 +785,13 @@ function notifyProcessStateChange(msg, previousState, route) {
     const providerLabel = getProviderLabel(msg.provider)
     const ephemeral = msg.extra?.ephemeral === true
     const localSession = ephemeral ? useDataStore().getSession(sessionId) : null
-    const finishedTitle = ephemeral ? 'Ephemeral session finished' : `${providerLabel} finished working`
+    // A background shell left running turns "finished working"
+    // into "finished its turn", plus a detail line counting what still runs.
+    const { title: finishedTitle, detail: finishedDetail } = getUserTurnNotificationText({
+        providerLabel,
+        backgroundShells: msg.background_work_in_progress?.shells,
+        ephemeral,
+    })
     if (ephemeral && !localSession) return
     if (localSession) msg = { ...msg, session_title: localSession.title || 'Ephemeral session' }
     const isViewingSession = route?.params?.sessionId === sessionId
@@ -809,6 +816,7 @@ function notifyProcessStateChange(msg, previousState, route) {
         toast.session(sessionId, {
             type: 'info',
             title: finishedTitle,
+            detail: finishedDetail,
             duration: 15000,
             dismissOnVisit: true,
             dismissOnRead: true,
@@ -824,7 +832,7 @@ function notifyProcessStateChange(msg, previousState, route) {
     if (effects.sendUserTurnBrowser) {
         sendBrowserNotification(
             finishedTitle,
-            buildNotificationBody(msg),
+            finishedDetail ? `${buildNotificationBody(msg)}\n${finishedDetail}` : buildNotificationBody(msg),
         )
     }
 
@@ -1281,6 +1289,14 @@ export function useWebSocket() {
             case 'mcp_updated':
                 window.dispatchEvent(new CustomEvent('twicc:mcp-updated'))
                 break
+            case 'upload_state': {
+                // One upload's server record (spec §6.3). Lazy import: the
+                // uploads store never imports useWebSocket.
+                import('../stores/uploads').then(({ useUploadsStore }) => {
+                    useUploadsStore().applyServerRecord(msg.upload, { fromWs: true })
+                })
+                break
+            }
             case 'peers_updated': {
                 // Full snapshot pushed on WS connect (share precedent).
                 // Lazy import to avoid a useWebSocket ↔ store cycle.
@@ -1483,6 +1499,7 @@ export function useWebSocket() {
                     extra: msg.extra,
                     stopping: msg.stopping,
                     label: msg.label,
+                    background_work_in_progress: msg.background_work_in_progress,
                 })
                 // Ensure the session is present in data.sessions so the cross-filter
                 // active block (sessions with a running process) can surface it
@@ -1508,6 +1525,15 @@ export function useWebSocket() {
                 }
                 break
             }
+            case 'process_background_work':
+                // Recompute only when the USER_TURN bottom status line
+                // changes, and only for a rendered list (a recompute would
+                // otherwise materialise an empty entry).
+                if (applyBackgroundWork(store.processStates, msg)
+                    && store.localState.sessionVisualItems[msg.session_id]) {
+                    store.recomputeVisualItems(msg.session_id)
+                }
+                break
             case 'manual_compaction_done': {
                 // Codex finished a manually-triggered /compact. No real
                 // user_message JSONL line is ever produced for the command, so
@@ -1548,7 +1574,9 @@ export function useWebSocket() {
                 break
             }
             case 'agent_link_created':
-            case 'agent_stopped': {
+            case 'agent_stopped':
+            case 'agent_interaction':
+            case 'agent_run_state': {
                 handleAgentEvent(store, msg)
                 break
             }
@@ -1565,17 +1593,9 @@ export function useWebSocket() {
                 break
             }
             case 'tool_state': {
-                // Update tool state for spinner/running display
+                // Update tool state for spinner/running display. No agent decision
+                // here any more: run state comes from agent_run_state (§8.1).
                 store.setToolState(msg.session_id, msg.tool_use_id, msg.result_count, msg.completed_at, msg.error || null, msg.extra || null, Array.isArray(msg.tool_result_line_nums) ? msg.tool_result_line_nums : [])
-
-                // For agent tools: remove synthetic process state when done
-                const agentLink = store.getAgentLink(msg.session_id, msg.tool_use_id)
-                if (agentLink) {
-                    const requiredCount = agentLink.isBackground ? 2 : 1
-                    if (msg.result_count >= requiredCount) {
-                        store.markAgentStopped(agentLink.agentId, msg.completed_at || null, agentLink.rootSessionId)
-                    }
-                }
                 break
             }
             case 'active_processes':
@@ -1918,6 +1938,12 @@ export function useWebSocket() {
             const isReconnection = wasConnected
             console.log(`WebSocket ${isReconnection ? 'reconnected' : 'connected'}, starting reconciliation...`)
             onReconnected(currentProjectId, currentSessionId, isReconnection)
+            // Uploads: reconcile with the server list, then restart the
+            // network-paused uploads (spec §6.3, §6.5). Every connection, the
+            // first one included. Lazy import (no useWebSocket ↔ store cycle).
+            import('../stores/uploads').then(({ useUploadsStore }) => {
+                useUploadsStore().reconnected()
+            })
             // After a real reconnection, the reconciliation re-syncs session
             // payloads (so presence flags like has_artifacts / has_plan are
             // fresh), but the transient tool-pane content events

@@ -39,8 +39,12 @@ import AppTooltip from '../components/ui/AppTooltip.vue'
 import TabBar from '../components/ui/TabBar.vue'
 import ProcessIndicator from '../components/ui/ProcessIndicator.vue'
 import CodeCommentsIndicator from '../components/ui/CodeCommentsIndicator.vue'
+import GitChangeStats from '../components/git/GitChangeStats.vue'
+import UploadTabStatus from '../components/files/UploadTabStatus.vue'
 import { useCodeCommentsStore } from '../stores/codeComments'
 import { useFramePoolStore } from '../stores/framePool'
+import { useUploadsStore } from '../stores/uploads'
+import { originKey } from '../utils/uploads/rules'
 import {
     buildFilesRouteParams,
     buildGitRouteParams,
@@ -71,6 +75,7 @@ const layoutsStore = useLayoutsStore()
 const settingsStore = useSettingsStore()
 const helpStore = useHelpStore()
 const codeCommentsStore = useCodeCommentsStore()
+const uploadsStore = useUploadsStore()
 const { registerCommands, unregisterCommands } = useCommandRegistry()
 
 // Reference to session header for opening rename dialog
@@ -400,6 +405,14 @@ const artifactsExternalRoots = computed(() =>
     artifactsDir.value ? [{ key: 'artifacts', label: 'Artifacts', path: artifactsDir.value }] : []
 )
 
+// Where an upload started from the Files / Artifacts tab belongs (upload spec §6.7).
+const filesUploadOrigin = computed(() =>
+    session.value?.id ? { panel: 'files', key: `session:${session.value.id}` } : null
+)
+const artifactsUploadOrigin = computed(() =>
+    session.value?.id ? { panel: 'artifacts', key: `session:${session.value.id}` } : null
+)
+
 // `sessionLoadError` drives the "not found" / "error" fallback in the template:
 // - `null`: still loading, loaded successfully, or redirecting via draft alias
 // - `'not-found'`: backend returned 404 — the session ID does not exist
@@ -507,6 +520,20 @@ const filesCommentsCount = computed(() =>
 const gitCommentsCount = computed(() =>
     codeCommentsStore.countBySource(projectId.value, sessionId.value, 'git')
 )
+// Uncommitted-changes counts of the git root selected in the Git tab, reported by GitPanel
+// (which keeps them fresh even while hidden) and shown next to the tab's label.
+const gitIndexStatus = ref(null)
+function toolTabChangeStats(tabId) {
+    return tabId === 'git' ? gitIndexStatus.value : null
+}
+// Upload status of the Files / Artifacts tab (spec §6.11): the aggregate of the uploads started
+// from that panel of this session, shown next to the tab's label.
+function toolTabUploadStatus(tabId) {
+    const origin = tabId === 'files' ? filesUploadOrigin.value
+        : tabId === 'artifacts' ? artifactsUploadOrigin.value
+        : null
+    return origin ? uploadsStore.statusByOrigin[originKey(origin)] || null : null
+}
 const chatCommentsCount = computed(() =>
     codeCommentsStore.getCommentsBySession(projectId.value, sessionId.value)
         .filter(c => c.source === 'tool' && !c.subagentSessionId).length
@@ -2294,6 +2321,8 @@ onBeforeUnmount(() => {
             ref="sessionLayoutRef"
             :layout="layout"
             :tab-href="sessionTabHref"
+            :tab-change-stats="toolTabChangeStats"
+            :tab-upload-status="toolTabUploadStatus"
             :register-target="registerLayoutTarget"
             :unregister-target="unregisterLayoutTarget"
             @select-tab="onLayoutSelectTab"
@@ -2376,6 +2405,8 @@ onBeforeUnmount(() => {
                 <SessionTabLink :href="sessionTabHref(tab.id)">
                     <wa-icon :name="tab.icon"></wa-icon>
                     {{ tab.label }}
+                    <GitChangeStats :stats="toolTabChangeStats(tab.id)" />
+                    <UploadTabStatus :status="toolTabUploadStatus(tab.id)" />
                     <CodeCommentsIndicator
                         v-if="toolTabCommentsCount(tab.id) !== null"
                         :count="toolTabCommentsCount(tab.id)"
@@ -2521,6 +2552,7 @@ onBeforeUnmount(() => {
                         :focus-request="panelFocusRequests.files"
                         :is-draft="session?.draft === true"
                         :frame-elevated="filesFrameElevated"
+                        :upload-origin="filesUploadOrigin"
                         @navigate="onFilesNavigate"
                     />
                 </div>
@@ -2540,9 +2572,11 @@ onBeforeUnmount(() => {
                         :route-file-path="activeTabId === 'git' ? gitRouteFilePath : undefined"
                         :route-owner="ownsRoute('git')"
                         :active="isActive && isToolTabShown('git')"
+                        :session-active="isActive"
                         :focus-request="panelFocusRequests.git"
                         :is-draft="session?.draft === true"
                         @navigate="onGitNavigate"
+                        @index-status="gitIndexStatus = $event"
                     />
                 </div>
             </Teleport>
@@ -2609,6 +2643,7 @@ onBeforeUnmount(() => {
                         :active="isActive && isToolTabShown('artifacts')"
                         :focus-request="panelFocusRequests.artifacts"
                         :frame-elevated="artifactsFrameElevated"
+                        :upload-origin="artifactsUploadOrigin"
                         @navigate="onArtifactsNavigate"
                     />
                 </div>

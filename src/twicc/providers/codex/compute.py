@@ -29,10 +29,11 @@ are migrated to the same shape). The readers live in :mod:`.canonical`.
   Codex writes no "the user asked" rollout line of its own) is likewise
   rewritten into a private canonical ``UserMessage`` carrying that command.
   Same ``twiccOriginalContent`` preservation.
-- A ``response_item.message`` carrying TwiCC's terminal provider-error marker
+- A failed ``event_msg.task_complete`` carries a durable ``error``. It becomes
+  ``API_ERROR`` (→ ``ALWAYS``) with normalized frontend error fields, while its
+  native wrapper and payload remain available for subagent run-end attribution.
+- A legacy ``response_item.message`` carrying TwiCC's terminal provider-error marker
   is rewritten into ``twicc_provider_error`` → ``API_ERROR`` (→ ``ALWAYS``).
-  Codex only emits these errors on its live app-server stream, so the agent
-  injects the marker before teardown to make the recovery block durable.
 - A ``UserMessage`` starting with ``<twicc-resume>`` is TwiCC's hidden
   mid-turn recovery instruction → ``SYSTEM`` (→ ``DEBUG_ONLY``).
 - ``item_completed`` / ``FileChange`` and ``McpToolCall`` → kind stays
@@ -45,7 +46,12 @@ are migrated to the same shape). The readers live in :mod:`.canonical`.
   intentionally not a result — see the ``response_item.web_search_call``
   rule below. Every other completed item (``Reasoning``,
   ``CommandExecution``, ``Plan``, ``FunctionCallOutput``, …) duplicates a
-  raw ``response_item`` TwiCC already reads and stays ``SYSTEM``.
+  raw ``response_item`` TwiCC already reads and stays ``SYSTEM``. One
+  exception keeps its ``SYSTEM`` kind but also acts as a tool result: the
+  ``CommandExecution`` of an exited unified-exec process, rebound by its
+  ``process_id`` to the call that started it and closing its chain (the
+  only end signal of a process left running past its turn — see
+  :func:`_command_execution_end`).
 - ``item_completed`` / ``ImageGeneration`` (native hosted call) or
   ``Extension`` with ``kind == "image_gen.generation"`` (what the migration
   emits) → ``IMAGE`` (-> ``ALWAYS``). Codex writes it right after
@@ -179,6 +185,8 @@ import html
 import logging
 import os
 import re
+import sys
+import time
 from datetime import datetime
 from typing import ClassVar, NamedTuple
 
@@ -186,27 +194,64 @@ import orjson
 from django.db.models import Q
 
 from twicc.core.enums import ItemKind, Provider
-from twicc.core.models import SessionItem
+from twicc.core.models import (
+    AgentInteraction,
+    AgentInteractionKind,
+    AgentLink,
+    AgentRunEnd,
+    AgentRunEndSource,
+    SessionItem,
+    SessionType,
+    ToolResultLink,
+)
 from twicc.paths import get_artifacts_dir
 from twicc.pricing import calculate_line_context_usage
 from twicc.providers.goals import GOAL_STATE_ACTIVE, GOAL_STATE_COMPLETED, GoalEvent
 from twicc.providers.helpers import humanize_identifier
 from twicc.providers.plan_docs import DocEditEvent, extract_shell_write_targets, is_plan_doc_path
+from twicc.providers.history_facts import HistoryFact, HistoryFactContext, HistoryFactKind, iter_resolver_items
 from twicc.providers.compute_base import (
     _EMPTY_ANALYSIS,
     _EMPTY_FILE_PATHS,
     _EMPTY_TASK_TOOL_USES,
     _EMPTY_TOOL_USE_ENTRIES,
     BaseSessionCompute,
+    BatchAgentSignals,
+    BatchAgentState,
     ContentAnalysis,
     INSERT_SCREENSHOT_TAG_RE,
+    LiveAgentSignals,
     ToolResultInfo,
     ToolUseEntry,
     parse_timestamp_to_datetime,
     substitute_insert_screenshot_tags,
 )
 
-from .agent.original_files_cache import pop_original_files
+from .agent import original_files_cache
+from .agent_runs import (
+    END_STATUS_COMPLETED,
+    END_STATUS_OWNER_TURN_ABORTED,
+    END_STATUS_TURN_COMPLETE,
+    INTERACTION_KIND_BY_TOOL,
+    RUN_KIND_RESUME,
+    RUN_KIND_SPAWN,
+    FileEvidence,
+    FileRun,
+    ForkFields,
+    SubAgentActivity,
+    agents_with_file_runs,
+    attribute_completed,
+    attribute_final_answer,
+    evidence_from_batch_state,
+    file_open_runs,
+    fork_fields,
+    is_copied_history,
+    is_task_complete,
+    owner_abort_cut_runs,
+    owner_turn_abort_turn_id,
+    parse_sub_agent_activity,
+    task_started_turn_id,
+)
 from .canonical import (
     agent_message_text,
     build_twicc_agent_message,
@@ -214,6 +259,7 @@ from .canonical import (
     canonical_call_id,
     canonical_result_item,
     completed_item,
+    ended_command_process_id,
     image_generation,
     user_message_is_visible,
     user_message_text,
@@ -513,6 +559,16 @@ _SPAWN_AGENT_TOOL_NAMES = frozenset({
 # signal is addressed by.
 _SUB_AGENT_ACTIVITY_ITEM_TYPE = "SubAgentActivity"
 _SUB_AGENT_ACTIVITY_STARTED_KIND = "started"
+# The other kinds, read by the agent-run hook (design §6.2): ``completed``
+# ends a run; ``interacted`` / ``interrupted`` mark a control call reaching
+# its target (their ``id`` is that call's ``call_id``).
+_SUB_AGENT_ACTIVITY_COMPLETED_KIND = "completed"
+_SUB_AGENT_ACTIVITY_CONTROL_KINDS = frozenset({"interacted", "interrupted"})
+
+# Reference line of the batch ``FINAL_ANSWER`` attribution: after every row
+# the loop built so far (all from earlier lines when the rebind runs), so the
+# §5.6 rules answer exactly as at the answer's own line.
+_AFTER_BATCH_ROWS = sys.maxsize
 
 # Envelope of an inter-agent message, as persisted in the *receiving*
 # thread (``response_item.agent_message``, multi-agent v2). The first
@@ -1025,9 +1081,11 @@ def _event_msg_call_id(parsed_json: dict) -> str | None:
     Only ``FileChange`` and ``McpToolCall`` qualify (see
     :func:`canonical.canonical_result_item`); ``CommandExecution`` is
     excluded because shell transcripts are rebuilt from the
-    ``function_call_output`` chain. ``response_item`` lines are filtered
-    out at the wrapper level. Returns the call_id for a matching item,
-    else ``None``.
+    ``function_call_output`` chain — an exited process's item is still a
+    result, but a closing marker paired by ``process_id``, not by call_id
+    (see :func:`_command_execution_end`). ``response_item`` lines are
+    filtered out at the wrapper level. Returns the call_id for a matching
+    item, else ``None``.
     """
     return canonical_call_id(parsed_json)
 
@@ -1114,22 +1172,174 @@ _CODE_MODE_EXEC_COMMAND_ID_RE = re.compile(r"(?:^|\n)SESSION_ID=(\d+)(?=\n|$)")
 
 
 def _code_mode_exec_command_id_from_output(output: object) -> int | None:
-    """Extract the nested unified-exec id printed by the canonical wrapper.
+    """Extract the id of a nested unified-exec process still running.
 
-    The GPT-5.6 wrapper prints ``SESSION_ID=<id>`` when nested
-    ``exec_command`` returned a background process. The line lives in the
-    code-mode output body, after the ``Script ...`` header.
+    Returns the id the code-mode output body announces for a process the
+    nested ``exec_command`` / ``write_stdin`` left running, ``None`` when
+    it announces none (or an exited one). The script's own status header is
+    irrelevant here: a script ``completed`` as soon as the nested call
+    yielded, while its process may run on. Three body shapes are read:
+
+    - ``SESSION_ID=<id>`` on its own line: GPT-5.6's canonical wrapper.
+    - The nested result printed raw (``text(r)``): a single JSON object
+      whose ``session_id`` announces a running process. An exited one
+      carries ``exit_code`` instead.
+    - The direct-call trailer ``Process running with session ID <id>``,
+      when the script printed the nested output text.
     """
     parsed = parse_code_mode_output(output)
     if parsed is None:
         return None
     matches = list(_CODE_MODE_EXEC_COMMAND_ID_RE.finditer(parsed.body))
-    if not matches:
+    if matches:
+        try:
+            return int(matches[-1].group(1))
+        except ValueError:
+            return None
+    body = parsed.body.strip()
+    if body.startswith("{"):
+        try:
+            nested = orjson.loads(body)
+        except orjson.JSONDecodeError:
+            nested = None
+        if isinstance(nested, dict):
+            session_id = nested.get("session_id")
+            if (
+                isinstance(session_id, int)
+                and not isinstance(session_id, bool)
+                and nested.get("exit_code") is None
+            ):
+                return session_id
+            return None
+    status = parse_exec_command_status(parsed.body)
+    if status.exec_command_id is not None and not status.is_terminated:
+        return status.exec_command_id
+    return None
+
+
+# How far apart, in seconds, an owner-less process end and a later output
+# announcing the same process may be for the announcement to count as stale
+# (see ``CodexSessionCompute._ended_processes``). The real gap is a few
+# milliseconds; the margin covers slow writes, not id reuse (minutes apart).
+_ENDED_PROCESS_WINDOW_SECONDS = 30.0
+# Cap on the processes tracked per session: a process killed without an end
+# event would otherwise stay forever. Far above any real concurrency.
+_MAX_TRACKED_PROCESSES = 500
+
+
+def rollout_line_epoch(parsed_json: dict) -> float | None:
+    """Epoch seconds of a rollout line's ``timestamp``, or ``None``."""
+    timestamp = parsed_json.get("timestamp")
+    if not isinstance(timestamp, str) or not timestamp:
         return None
     try:
-        return int(matches[-1].group(1))
+        return datetime.fromisoformat(timestamp).timestamp()
     except ValueError:
         return None
+
+
+def announced_running_process_id(parsed_json: dict) -> int | None:
+    """Return the unified-exec process a tool output announces as still running.
+
+    Reads a ``response_item`` ``function_call_output`` /
+    ``custom_tool_call_output``: a code-mode output through
+    :func:`_code_mode_exec_command_id_from_output`, a direct ``exec_command``
+    / ``write_stdin`` output through its ``Process running with session ID
+    <id>`` trailer. ``None`` for any other line, and for an output reporting
+    an exit.
+    """
+    if parsed_json.get("type") != _TYPE_RESPONSE_ITEM:
+        return None
+    payload = _payload(parsed_json)
+    if payload is None or payload.get("type") not in _TOOL_RESULT_PAYLOAD_TYPES:
+        return None
+    output = payload.get("output")
+    if parse_code_mode_output(output) is not None:
+        return _code_mode_exec_command_id_from_output(output)
+    if not isinstance(output, str):
+        return None
+    status = parse_exec_command_status(output)
+    if status.is_terminated:
+        return None
+    return status.exec_command_id
+
+
+def _output_reports_process_exit(parsed_json: dict) -> bool:
+    """Whether a tool output reports that its unified-exec process exited.
+
+    A direct ``exec_command`` / ``write_stdin`` trailer ``Process exited with
+    code N``, or a code-mode body carrying the nested result's ``exit_code``
+    (raw JSON) or that same trailer.
+    """
+    if parsed_json.get("type") != _TYPE_RESPONSE_ITEM:
+        return False
+    payload = _payload(parsed_json)
+    if payload is None or payload.get("type") not in _TOOL_RESULT_PAYLOAD_TYPES:
+        return False
+    output = payload.get("output")
+    parsed = parse_code_mode_output(output)
+    if parsed is None:
+        return isinstance(output, str) and parse_exec_command_status(output).is_terminated
+    body = parsed.body.strip()
+    if body.startswith("{"):
+        try:
+            nested = orjson.loads(body)
+        except orjson.JSONDecodeError:
+            nested = None
+        if isinstance(nested, dict):
+            exit_code = nested.get("exit_code")
+            return isinstance(exit_code, int) and not isinstance(exit_code, bool)
+    return parse_exec_command_status(parsed.body).is_terminated
+
+
+# When this process (the backend) started. The live owner map starts empty
+# with it, so an owner-less end of a process that started BEFORE may have an
+# owner this map never saw — the only case worth a DB lookup.
+_PROCESS_STARTED_AT = time.time()
+
+
+def _command_execution_predates_backend(parsed_json: dict) -> bool:
+    """Whether the process an end event closes started before this backend.
+
+    Start = the line's timestamp minus the item's ``duration``. ``False``
+    when either is missing: the DB lookup is then skipped, as for the
+    thousands of short commands that exited inside their own call.
+    """
+    ended_at = rollout_line_epoch(parsed_json)
+    item = completed_item(parsed_json) or {}
+    duration = item.get("duration")
+    secs = duration.get("secs") if isinstance(duration, dict) else None
+    if ended_at is None or not isinstance(secs, (int, float)) or isinstance(secs, bool):
+        return False
+    return ended_at - secs < _PROCESS_STARTED_AT
+
+
+def _command_execution_end(parsed_json: dict) -> tuple[str, int, int | None] | None:
+    """Return ``(item_id, process_id, exit_code)`` for an ended ``CommandExecution``.
+
+    Codex writes this canonical item when a unified-exec process exits —
+    also long after the turn that started it ended, when nobody polls it
+    any more. Its ``id`` is a synthesized ``exec-<uuid>`` that pairs with
+    no tool call; its ``process_id`` is the ``session_id`` the owning call's
+    output announced, which is how :meth:`CodexSessionCompute.remap_tool_result_id`
+    (and its live twin) rebind it to that call, as the result that closes it.
+    ``None`` for any other line, and for an item without a usable id.
+    """
+    process_id = ended_command_process_id(parsed_json)
+    if process_id is None:
+        return None
+    try:
+        process_id_int = int(process_id)
+    except ValueError:
+        return None
+    item = completed_item(parsed_json) or {}
+    item_id = item.get("id")
+    if not isinstance(item_id, str) or not item_id:
+        return None
+    exit_code = item.get("exit_code")
+    if not isinstance(exit_code, int) or isinstance(exit_code, bool):
+        exit_code = None
+    return item_id, process_id_int, exit_code
 
 
 def _subagent_notification_text(parsed_json: dict) -> str | None:
@@ -1341,6 +1551,21 @@ def _injected_provider_error(parsed_json: dict) -> CodexProviderError | None:
     if not isinstance(text, str) or PROVIDER_ERROR_MARKER not in text:
         return None
     return parse_provider_error_marker(text)
+
+
+def _native_provider_error(parsed_json: dict) -> CodexProviderError | None:
+    """Read the durable error on a failed native turn completion."""
+    if not is_task_complete(parsed_json):
+        return None
+    payload = _payload(parsed_json)
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    message = error.get("message")
+    turn_id = payload.get("turn_id")
+    if not isinstance(message, str) or not message.strip() or not isinstance(turn_id, str) or not turn_id:
+        return None
+    return CodexProviderError(turn_id, message, error.get("codex_error_info"))
 
 
 def _is_internal_resume_message(parsed_json: dict) -> bool:
@@ -1571,6 +1796,18 @@ class _SubAgentSpawn(NamedTuple):
     agent_path: str
 
 
+class _SpawnTarget(NamedTuple):
+    """What a subagent's completion line rebinds to, in the batch side-table.
+
+    - ``call_id``: the originating ``spawn_agent`` call.
+    - ``agent_id``: the subagent's thread id, so the batch names the agent
+      the way live does (from the spawn event), spawn link or not.
+    """
+
+    call_id: str
+    agent_id: str
+
+
 def _parse_sub_agent_activity_started(parsed_json: dict) -> _SubAgentSpawn | None:
     """Decode the multi-agent **v2** spawn event.
 
@@ -1583,23 +1820,14 @@ def _parse_sub_agent_activity_started(parsed_json: dict) -> _SubAgentSpawn | Non
     never produce an :class:`~twicc.core.models.AgentLink`.
 
     Returns ``(spawn_call_id, agent_thread_id, agent_path)``, or ``None``
-    for any other line shape / kind / malformed payload.
+    for any other line shape / kind / malformed payload. The shape checks
+    live in :func:`~twicc.providers.codex.agent_runs.parse_sub_agent_activity`
+    (all four kinds); this function keeps only the ``started`` filter.
     """
-    payload = completed_item(parsed_json)
-    if payload is None or payload.get("type") != "SubAgentActivity":
+    activity = parse_sub_agent_activity(parsed_json)
+    if activity is None or activity.kind != _SUB_AGENT_ACTIVITY_STARTED_KIND:
         return None
-    if payload.get("kind") != _SUB_AGENT_ACTIVITY_STARTED_KIND:
-        return None
-    call_id = payload.get("id")
-    agent_id = payload.get("agent_thread_id")
-    agent_path = payload.get("agent_path")
-    if not isinstance(call_id, str) or not call_id:
-        return None
-    if not isinstance(agent_id, str) or not agent_id:
-        return None
-    if not isinstance(agent_path, str) or not agent_path:
-        return None
-    return _SubAgentSpawn(call_id, agent_id, agent_path)
+    return _SubAgentSpawn(activity.event_id, activity.agent_id, activity.agent_path)
 
 
 class _InterAgentMessage(NamedTuple):
@@ -1906,6 +2134,148 @@ def _data_url_image(value: object) -> tuple[str, str] | None:
     return media_type, data
 
 
+class _FileRunRows(NamedTuple):
+    """The DB rows of one file the §5.6 evidence reads, below a line, each in its builder's order.
+
+    - ``links``: ``(agent_id, tool_use_id, tool_use_line_num)``;
+    - ``interactions``: ``(agent_id, tool_use_id, tool_use_line_num,
+      event_line_num, kind, opens_run)``, ``resume`` and ``stop`` only;
+    - ``results``: ``(tool_use_id, tool_result_line_num, tool_result_at,
+      error)`` of the run and stop calls;
+    - ``ends``: ``(agent_id, tool_use_id, line_num, status)``, the
+      ``completed`` / ``owner_turn_aborted`` transcript rows.
+    """
+
+    links: list[tuple[str, str, int]]
+    interactions: list[tuple[str, str, int, int, str, bool]]
+    results: list[tuple[str, int, datetime | None, str | None]]
+    ends: list[tuple[str, str, int, str]]
+
+
+def _file_run_rows_from_db(session_id: str, before_line: int, agent_id: str | None = None) -> _FileRunRows:
+    """Load the :class:`_FileRunRows` of ``session_id`` below ``before_line``: at most four queries.
+
+    ``agent_id`` limits the rows to that agent; ``None`` loads every agent's
+    rows at once (the owner abort walks them all).
+    """
+    agent_filter = {} if agent_id is None else {'agent_id': agent_id}
+    links = list(AgentLink.objects.filter(
+        session_id=session_id, tool_use_line_num__lt=before_line, **agent_filter,
+    ).order_by('tool_use_line_num', 'id').values_list('agent_id', 'tool_use_id', 'tool_use_line_num'))
+    interactions = list(AgentInteraction.objects.filter(
+        session_id=session_id,
+        event_line_num__lt=before_line,
+        kind__in=(AgentInteractionKind.RESUME, AgentInteractionKind.STOP),
+        **agent_filter,
+    ).order_by('event_line_num', 'id').values_list(
+        'agent_id', 'tool_use_id', 'tool_use_line_num', 'event_line_num', 'kind', 'opens_run',
+    ))
+    # The calls whose results the rules read: every run call (spawn, run-opening
+    # resume) and every stop call.
+    result_ids = {tool_use_id for _, tool_use_id, _ in links}
+    result_ids.update(
+        tool_use_id for _, tool_use_id, _, _, kind, opens_run in interactions
+        if kind == AgentInteractionKind.STOP or opens_run
+    )
+    results = []
+    if result_ids:
+        results = list(ToolResultLink.objects.filter(
+            session_id=session_id, tool_use_id__in=result_ids, tool_result_line_num__lt=before_line,
+        ).order_by('tool_result_line_num', 'id').values_list(
+            'tool_use_id', 'tool_result_line_num', 'tool_result_at', 'error',
+        ))
+    ends = list(AgentRunEnd.objects.filter(
+        session_id=session_id,
+        source=AgentRunEndSource.TRANSCRIPT,
+        line_num__lt=before_line,
+        status__in=(END_STATUS_COMPLETED, END_STATUS_OWNER_TURN_ABORTED),
+        **agent_filter,
+    ).order_by('line_num', 'id').values_list('agent_id', 'tool_use_id', 'line_num', 'status'))
+    return _FileRunRows(links, interactions, results, ends)
+
+
+def _evidence_from_rows(rows: _FileRunRows, agent_id: str) -> FileEvidence:
+    """Build the :class:`FileEvidence` of ``agent_id`` from loaded rows (no query).
+
+    The one builder of :func:`evidence_from_db` and of the owner abort's
+    all-agents walk, so both give the rules the same input.
+    """
+    runs = [
+        FileRun(tool_use_id, call_line, None, RUN_KIND_SPAWN)
+        for link_agent, tool_use_id, call_line in rows.links if link_agent == agent_id
+    ]
+    stop_rows: list[tuple[str, int]] = []
+    for row_agent, tool_use_id, call_line, event_line, kind, opens_run in rows.interactions:
+        if row_agent != agent_id:
+            continue
+        if kind == AgentInteractionKind.RESUME:
+            if opens_run:
+                runs.append(FileRun(tool_use_id, call_line, event_line, RUN_KIND_RESUME))
+        else:
+            stop_rows.append((tool_use_id, event_line))
+
+    results: dict[str, list[tuple[int, datetime | None]]] = {run.tool_use_id: [] for run in runs}
+    # Stop call id -> its first non-error result line.
+    first_ok_lines: dict[str, int] = {}
+    stop_ids = {tool_use_id for tool_use_id, _ in stop_rows}
+    for tool_use_id, line, result_at, error in rows.results:
+        if tool_use_id in results:
+            results[tool_use_id].append((line, result_at))
+        if error is None and tool_use_id in stop_ids:
+            first_ok_lines.setdefault(tool_use_id, line)
+
+    completed_lines: dict[str, list[int]] = {}
+    aborted_lines: dict[str, list[int]] = {}
+    for end_agent, tool_use_id, line, status in rows.ends:
+        if end_agent != agent_id:
+            continue
+        target = completed_lines if status == END_STATUS_COMPLETED else aborted_lines
+        target.setdefault(tool_use_id, []).append(line)
+
+    return FileEvidence(
+        runs=tuple(runs),
+        stops=tuple((event_line, first_ok_lines.get(tool_use_id)) for tool_use_id, event_line in stop_rows),
+        completed_lines={tool_use_id: tuple(lines) for tool_use_id, lines in completed_lines.items()},
+        aborted_lines={tool_use_id: tuple(lines) for tool_use_id, lines in aborted_lines.items()},
+        results={tool_use_id: tuple(rows) for tool_use_id, rows in results.items()},
+    )
+
+
+def evidence_from_db(session_id: str, agent_id: str, before_line: int) -> FileEvidence:
+    """Build the :class:`FileEvidence` of ``agent_id`` in ``session_id`` from the DB rows below ``before_line``.
+
+    Live twin of :func:`~twicc.providers.codex.agent_runs.evidence_from_batch_state`,
+    with the same filters, so the §5.6 rules take the same decisions:
+
+    - spawns: the ``AgentLink`` rows of the file (``tool_use_line_num``);
+    - the ``resume`` interactions with ``opens_run`` (runs) and the ``stop``
+      interactions, read by their stored ``event_line_num`` (§5.1: never
+      the call line), each stop with its first non-error result line;
+    - the ``completed`` / ``owner_turn_aborted`` transcript run ends (``line_num``);
+    - the results of every run call, error rows included (``tool_result_line_num``).
+
+    Every row is owned by ``session_id``, targets ``agent_id`` and sits on a
+    line below ``before_line``. Batch holds the earlier lines only (plus the
+    current line's result link, which the rules skip as not before their
+    line), so both builders give the rules the same input.
+    """
+    return _evidence_from_rows(_file_run_rows_from_db(session_id, before_line, agent_id), agent_id)
+
+
+def _agents_with_file_runs_in_rows(rows: _FileRunRows) -> list[str]:
+    """Live twin of :func:`~twicc.providers.codex.agent_runs.agents_with_file_runs`, over loaded rows.
+
+    The agents with a spawn link or a run-opening ``resume``, sorted (the
+    batch walks them sorted too).
+    """
+    agents = {agent_id for agent_id, _, _ in rows.links}
+    agents.update(
+        agent_id for agent_id, _, _, _, kind, opens_run in rows.interactions
+        if kind == AgentInteractionKind.RESUME and opens_run
+    )
+    return sorted(agents)
+
+
 class CodexSessionCompute(BaseSessionCompute):
     """Concrete :class:`BaseSessionCompute` for Codex sessions.
 
@@ -1923,6 +2293,20 @@ class CodexSessionCompute(BaseSessionCompute):
     """
 
     provider: ClassVar[Provider] = Provider.CODEX
+
+    live_state_maps = (
+        "_exec_command_maps",
+        "_code_cell_maps",
+        "_code_exec_targets",
+        "_process_owners",
+        "_ended_processes",
+        "_spawn_targets",
+        "_turn_started_lines",
+        "_fork_fields",
+        "_prev_total_tokens",
+        "_plan_prefix_states",
+        "_goal_context_states",
+    )
 
     def __init__(self) -> None:
         super().__init__()
@@ -1959,10 +2343,28 @@ class CodexSessionCompute(BaseSessionCompute):
         # / MCP tool name), recency as fallback. Bounded (last 50
         # entries) and freed in :meth:`end_session_compute`.
         self._code_exec_targets: dict[str, list[tuple[str, CodeModeScriptTargets]]] = {}
+        # {session_id: {process_id: owner_call_id}}. For every unified-exec
+        # process an output announced as still running, the call that owns
+        # it — the FIRST one to announce it, resolved through the remap
+        # hooks (a poll rebound to its exec keeps the exec as owner). That
+        # call's card stays open until the process's own ``CommandExecution``
+        # end event, which this map rebinds to it by exact key (see
+        # :meth:`_note_process_announcement` / :meth:`_take_process_owner`).
+        # Evicted when the end event lands. Kept in memory on both paths,
+        # batch and live: a process never outlives the backend that runs its
+        # agent, so a restart losing the live copy loses nothing.
+        self._process_owners: dict[str, dict[int, str]] = {}
+        # {session_id: {process_id: ended_at (epoch seconds)}}. End events
+        # that found no owner: Codex may write one a few milliseconds BEFORE
+        # the output announcing the process (it exited between the nested
+        # call's yield and the output write). An announcement close enough
+        # in time to such an end is already stale and opens nothing.
+        self._ended_processes: dict[str, dict[int, float]] = {}
         # {session_id: {completion key: spawn_agent_call_id}}. Batch-only
         # side-table letting the subagent's completion line rebind onto
         # the originating ``spawn_agent`` ``ToolResultLink`` chain
-        # without a DB lookup. The key is whatever that completion line
+        # without a DB lookup; the value is a :class:`_SpawnTarget` (the
+        # spawn call id and the agent id). The key is whatever that completion line
         # addresses the agent by, which differs per protocol generation
         # (the two key spaces can't collide — a UUID never starts with
         # ``/``):
@@ -1978,13 +2380,25 @@ class CodexSessionCompute(BaseSessionCompute):
         # Live mode ignores this map: v1 falls back to
         # ``AgentLink.objects`` (the row is already persisted from the
         # prior sync that processed the spawn ack) and v2 to
-        # :meth:`_lookup_spawn_call_id_for_agent_path` (no model column
+        # :meth:`_lookup_spawn_for_agent_path` (no model column
         # carries an agent path).
         # Initialised by :meth:`begin_session_compute`, freed by
         # :meth:`end_session_compute`. Lazily created on first access in
-        # :meth:`_agent_id_map` to tolerate the live path that never
+        # :meth:`_spawn_target_map` to tolerate the live path that never
         # calls ``begin_session_compute``.
-        self._agent_id_to_spawn_call_id: dict[str, dict[str, str]] = {}
+        self._spawn_targets: dict[str, dict[str, _SpawnTarget]] = {}
+        # Batch-only file facts of the agent-run hook
+        # (:meth:`collect_agent_run_signals`, design §6.2), filled as the
+        # loop passes the lines; the live twin reads the same facts from
+        # the ``SessionItem`` rows. Initialised by
+        # :meth:`begin_session_compute`, freed by :meth:`end_session_compute`.
+        # - {session_id: {turn_id: line of its ``task_started``}}: finds the
+        #   aborted turn's start for the owner-abort cut (§5.2). A turn id
+        #   seen twice keeps its newest line.
+        # - {session_id: ForkFields}: the line-1 ``session_meta`` fork fields
+        #   of the copied-history gate (§5.2).
+        self._turn_started_lines: dict[str, dict[str, int]] = {}
+        self._fork_fields: dict[str, ForkFields] = {}
         # {session_id: last seen ``info.total_token_usage.total_tokens``}.
         # Updated by :meth:`compute_item_cost_and_usage` on every
         # billable token_count event. The cumulative total advances only
@@ -2037,15 +2451,15 @@ class CodexSessionCompute(BaseSessionCompute):
         """
         return self._code_exec_targets.setdefault(session_id, [])
 
-    def _agent_id_map(self, session_id: str) -> dict[str, str]:
-        """Return the per-session ``{completion key: spawn_agent_call_id}`` map.
+    def _spawn_target_map(self, session_id: str) -> dict[str, _SpawnTarget]:
+        """Return the per-session ``{completion key: _SpawnTarget}`` map.
 
         Lazily creates the map on first access for the same reason as
         :meth:`_proc_map`. The live path doesn't actually consult this
         map (it queries ``AgentLink`` instead), so a missing entry there
         is harmless.
         """
-        return self._agent_id_to_spawn_call_id.setdefault(session_id, {})
+        return self._spawn_targets.setdefault(session_id, {})
 
     def _plan_prefix_state(self, session_id: str) -> _PlanPrefixState:
         """Return the per-session ``/plan``-prefix scan state.
@@ -2072,7 +2486,11 @@ class CodexSessionCompute(BaseSessionCompute):
         self._exec_command_maps[session_id] = {}
         self._code_cell_maps[session_id] = {}
         self._code_exec_targets[session_id] = []
-        self._agent_id_to_spawn_call_id[session_id] = {}
+        self._process_owners[session_id] = {}
+        self._ended_processes[session_id] = {}
+        self._spawn_targets[session_id] = {}
+        self._turn_started_lines[session_id] = {}
+        self._fork_fields[session_id] = ForkFields(None, None)
         self._prev_total_tokens[session_id] = 0
         self._plan_prefix_states[session_id] = _PlanPrefixState(last_mode="default")
         self._goal_context_states[session_id] = _GoalContextState(initialized=True)
@@ -2087,10 +2505,88 @@ class CodexSessionCompute(BaseSessionCompute):
         self._exec_command_maps.pop(session_id, None)
         self._code_cell_maps.pop(session_id, None)
         self._code_exec_targets.pop(session_id, None)
-        self._agent_id_to_spawn_call_id.pop(session_id, None)
+        self._process_owners.pop(session_id, None)
+        self._ended_processes.pop(session_id, None)
+        self._spawn_targets.pop(session_id, None)
+        self._turn_started_lines.pop(session_id, None)
+        self._fork_fields.pop(session_id, None)
         self._prev_total_tokens.pop(session_id, None)
         self._plan_prefix_states.pop(session_id, None)
         self._goal_context_states.pop(session_id, None)
+
+    def _note_process_announcement(
+        self, session_id: str, parsed_json: dict, owner_call_id: str,
+    ) -> None:
+        """Record ``owner_call_id`` as the owner of the process this output announces.
+
+        Called by both remap hooks with the RESOLVED owner, so a poll rebound
+        to the call that started its process names that call. The first
+        announcer wins: later polls of the same process change nothing. An
+        announcement that follows an owner-less end of the same process
+        closely is stale (the process is already gone) and records nothing.
+        """
+        process_id = announced_running_process_id(parsed_json)
+        if process_id is None or not owner_call_id:
+            return
+        ended = self._ended_processes.get(session_id)
+        if ended:
+            ended_at = ended.pop(process_id, None)
+            if ended_at is not None:
+                announced_at = rollout_line_epoch(parsed_json)
+                if announced_at is None or abs(announced_at - ended_at) <= _ENDED_PROCESS_WINDOW_SECONDS:
+                    return
+        owners = self._process_owners.setdefault(session_id, {})
+        if process_id in owners:
+            return
+        owners[process_id] = owner_call_id
+        if len(owners) > _MAX_TRACKED_PROCESSES:
+            owners.pop(next(iter(owners)))
+
+    def _take_process_owner(self, session_id: str, parsed_json: dict) -> str | None:
+        """Pop the owner of the process an end event closes, or record the end.
+
+        ``None`` for a line that is not an ended ``CommandExecution``, and for
+        a process no output announced — most of them: a command that exited
+        inside its own call. That end is remembered for a while, in case the
+        announcing output is written just after it (see
+        ``_ended_processes``).
+        """
+        end = _command_execution_end(parsed_json)
+        if end is None:
+            return None
+        process_id = end[1]
+        owner = self._process_owners.get(session_id, {}).pop(process_id, None)
+        # Remembered whether it had an owner or not: an output still saying
+        # "running" written just after the end must not register it again.
+        ended_at = rollout_line_epoch(parsed_json) or time.time()
+        ended = self._ended_processes.setdefault(session_id, {})
+        for stale_id, stale_at in list(ended.items()):
+            if ended_at - stale_at > _ENDED_PROCESS_WINDOW_SECONDS:
+                del ended[stale_id]
+        ended[process_id] = ended_at
+        return owner
+
+    def _release_process_owner_on_exit(
+        self, session_id: str, parsed_json: dict, owner_call_id: str,
+    ) -> None:
+        """Forget ``owner_call_id``'s processes when its own chain reports an exit.
+
+        The output of the poll that observed the exit carries no process id,
+        only the exit. Without this, a process that ended with no
+        ``CommandExecution`` item (killed on an interrupt) would keep a stale
+        owner, and a later process reusing its id would bind to the old card.
+        """
+        if not _output_reports_process_exit(parsed_json):
+            return
+        owners = self._process_owners.get(session_id)
+        if not owners:
+            return
+        for process_id in [pid for pid, owner in owners.items() if owner == owner_call_id]:
+            del owners[process_id]
+
+    def has_process_owner(self, session_id: str, process_id: int) -> bool:
+        """Whether an output of ``session_id`` announced ``process_id`` as running."""
+        return process_id in self._process_owners.get(session_id, {})
 
     def _release_exec_command_for_call(
         self, session_id: str, call_id: str
@@ -2132,6 +2628,27 @@ class CodexSessionCompute(BaseSessionCompute):
         *,
         session_id: str,
         tool_use_map: dict[str, ToolUseEntry],
+        batch_state: BatchAgentState | None = None,
+    ) -> str:
+        """Resolve the owning call (:meth:`_resolve_tool_result_id`), then note
+        the process the output announces as running against that owner (see
+        :meth:`_note_process_announcement`)."""
+        resolved = self._resolve_tool_result_id(
+            parsed_json, naive_tool_use_id, session_id=session_id, tool_use_map=tool_use_map,
+            batch_state=batch_state,
+        )
+        self._release_process_owner_on_exit(session_id, parsed_json, resolved)
+        self._note_process_announcement(session_id, parsed_json, resolved)
+        return resolved
+
+    def _resolve_tool_result_id(
+        self,
+        parsed_json: dict,
+        naive_tool_use_id: str,
+        *,
+        session_id: str,
+        tool_use_map: dict[str, ToolUseEntry],
+        batch_state: BatchAgentState | None = None,
     ) -> str:
         """Rebind a write_stdin / wait function_call_output OR a subagent notification.
 
@@ -2150,7 +2667,7 @@ class CodexSessionCompute(BaseSessionCompute):
         - the subagent completion line — a ``<subagent_notification>``
           user message on multi-agent v1, a ``FINAL_ANSWER`` agent
           message on v2: rebound to the originating ``spawn_agent`` via
-          ``self._agent_id_to_spawn_call_id``, populated by
+          ``self._spawn_targets``, populated by
           :meth:`analyze_content` when it saw the spawn ack output
           ``{"agent_id": ...}`` (v1) / the ``SubAgentActivity`` spawn
           event (v2). Falls back to identity when no mapping is
@@ -2163,15 +2680,34 @@ class CodexSessionCompute(BaseSessionCompute):
         map AFTER we resolved the parent_call_id, so analyze_content's
         reading order stays correct (it had already populated / read the
         map by the time we got here).
+
+        The v2 ``FINAL_ANSWER`` goes further when ``batch_state`` (the
+        batch loop's view, ``None`` outside it) is given: the map entry
+        names the agent (from its ``started`` event, as live reads it,
+        spawn link or not), and the file-local attribution of §5.6 picks
+        the run it ends — a follow-up's answer lands on its
+        ``followup_task`` call. The rebind runs before the line's own
+        result link and hook, so every ``batch_state`` row is from an
+        earlier line: :data:`_AFTER_BATCH_ROWS` as the reference line
+        gives the rules the answer of the line itself. No run found → the
+        spawn, as without ``batch_state``.
         """
-        if (
-            _subagent_notification_text(parsed_json) is not None
-            or _parse_agent_final_answer(parsed_json) is not None
-        ):
-            agent_map = self._agent_id_to_spawn_call_id.get(session_id)
-            if not agent_map:
+        if _subagent_notification_text(parsed_json) is not None:
+            agent_map = self._spawn_targets.get(session_id)
+            target = agent_map.get(naive_tool_use_id) if agent_map else None
+            return target.call_id if target is not None else naive_tool_use_id
+        if _parse_agent_final_answer(parsed_json) is not None:
+            agent_map = self._spawn_targets.get(session_id)
+            target = agent_map.get(naive_tool_use_id) if agent_map else None
+            if target is None:
                 return naive_tool_use_id
-            return agent_map.get(naive_tool_use_id, naive_tool_use_id)
+            if batch_state is not None:
+                run = attribute_final_answer(
+                    evidence_from_batch_state(batch_state, session_id, target.agent_id), _AFTER_BATCH_ROWS,
+                )
+                if run is not None:
+                    return run.tool_use_id
+            return target.call_id
         parent = tool_use_map.get(naive_tool_use_id)
         if parent is None:
             # A ``FileChange`` / ``McpToolCall`` from a
@@ -2208,6 +2744,311 @@ class CodexSessionCompute(BaseSessionCompute):
                 proc_map.pop(exec_command_id, None)
         return parent_call_id
 
+    def collect_agent_run_signals(
+        self,
+        session_id: str,
+        item: SessionItem,
+        parsed: dict,
+        batch_state: BatchAgentState,
+    ) -> BatchAgentSignals:
+        """Codex agent-run rows of one line, in the batch recompute (design §5.2, §5.6, §6.2).
+
+        - Line 1 and each ``task_started``: kept as file facts (fork fields,
+          ``turn_id`` → line) for the checks below.
+        - ``SubAgentActivity`` ``interacted`` / ``interrupted``: one
+          interaction, ``completed``: one run end on the call §5.6 picks.
+        - Owner turn abort: one ``owner_turn_aborted`` row per file-open run
+          opened in the aborted turn.
+        - ``task_complete`` in a subagent's own file (outside a forked
+          child's copied history): one agent-level ``turn_complete`` row.
+        Every decision reads ``batch_state`` (earlier lines, plus this
+        line's result link), the same evidence the live twin reads from the
+        DB rows below the line.
+        """
+        line = item.line_num
+        at = item.timestamp.isoformat() if item.timestamp else None
+        if line == 1:
+            self._fork_fields[session_id] = fork_fields(parsed)
+        turn_id = task_started_turn_id(parsed)
+        if turn_id is not None:
+            self._turn_started_lines.setdefault(session_id, {})[turn_id] = line
+            return BatchAgentSignals()
+        activity = parse_sub_agent_activity(parsed)
+        if activity is not None:
+            return self._collect_activity_signals(session_id, line, at, activity, batch_state)
+        run_ends: list[dict] = []
+        abort_turn_id = owner_turn_abort_turn_id(parsed)
+        if abort_turn_id is not None:
+            run_ends.extend(self._owner_abort_run_ends(session_id, line, at, abort_turn_id, batch_state))
+        if (
+            batch_state.session_type == SessionType.SUBAGENT
+            and is_task_complete(parsed)
+            and not is_copied_history(self._fork_fields.get(session_id, ForkFields(None, None)), parsed)
+        ):
+            run_ends.append({
+                'session_id': session_id,
+                'line_num': line,
+                'tool_use_id': '',
+                'agent_id': session_id,
+                'ended_at': at,
+                'status': END_STATUS_TURN_COMPLETE,
+            })
+        return BatchAgentSignals(run_ends=tuple(run_ends))
+
+    def _collect_activity_signals(
+        self,
+        session_id: str,
+        line: int,
+        at: str | None,
+        activity: SubAgentActivity,
+        batch_state: BatchAgentState,
+    ) -> BatchAgentSignals:
+        """Rows of a ``SubAgentActivity`` line (``started`` writes none: its link is the spawn)."""
+        if activity.kind == _SUB_AGENT_ACTIVITY_COMPLETED_KIND:
+            run = attribute_completed(evidence_from_batch_state(batch_state, session_id, activity.agent_id), line)
+            if run is None:
+                return BatchAgentSignals()
+            return BatchAgentSignals(run_ends=({
+                'session_id': session_id,
+                'line_num': line,
+                'tool_use_id': run.tool_use_id,
+                'agent_id': activity.agent_id,
+                'ended_at': at,
+                'status': END_STATUS_COMPLETED,
+            },))
+        if activity.kind not in _SUB_AGENT_ACTIVITY_CONTROL_KINDS:
+            return BatchAgentSignals()
+        # A duplicated event line: the first one's row stands.
+        if activity.event_id in batch_state.all_agent_interactions:
+            return BatchAgentSignals()
+        # The call in the file, by its qualified name (``wait_agent`` never
+        # enters ``tool_use_map``); no call or another tool → no row.
+        entry = batch_state.tool_use_map.get(activity.event_id)
+        if entry is None:
+            return BatchAgentSignals()
+        kind = INTERACTION_KIND_BY_TOOL.get(entry.tool_name)
+        if kind is None or activity.agent_id in (session_id, batch_state.root_session_id):
+            return BatchAgentSignals()
+        # A resume opens a run when the agent has no file-open run here.
+        opens_run = kind == AgentInteractionKind.RESUME and not file_open_runs(
+            evidence_from_batch_state(batch_state, session_id, activity.agent_id), line,
+        )
+        return BatchAgentSignals(interactions=({
+            'session_id': session_id,
+            'tool_use_line_num': entry.line_num,
+            'event_line_num': line,
+            'tool_use_id': activity.event_id,
+            'agent_id': activity.agent_id,
+            'kind': kind,
+            'opens_run': opens_run,
+            'started_at': at,
+        },))
+
+    def _owner_abort_run_ends(
+        self,
+        session_id: str,
+        line: int,
+        at: str | None,
+        turn_id: str,
+        batch_state: BatchAgentState,
+    ) -> list[dict]:
+        """``owner_turn_aborted`` rows: the file-open runs whose call follows the turn's ``task_started``.
+
+        No ``task_started`` for the turn in this file → no run is cut (§5.2).
+        """
+        started_line = self._turn_started_lines.get(session_id, {}).get(turn_id)
+        if started_line is None:
+            return []
+        rows = []
+        for agent_id in sorted(agents_with_file_runs(batch_state, session_id)):
+            evidence = evidence_from_batch_state(batch_state, session_id, agent_id)
+            rows.extend(
+                {
+                    'session_id': session_id,
+                    'line_num': line,
+                    'tool_use_id': run.tool_use_id,
+                    'agent_id': agent_id,
+                    'ended_at': at,
+                    'status': END_STATUS_OWNER_TURN_ABORTED,
+                }
+                for run in owner_abort_cut_runs(evidence, line, started_line)
+            )
+        return rows
+
+    def apply_agent_run_signals(
+        self,
+        session_id: str,
+        item: SessionItem,
+        parsed: dict,
+        *,
+        result_tool_name: str | None = None,  # noqa: ARG002 (Codex decides from its own events)
+    ) -> LiveAgentSignals:
+        """Codex agent-run rows of one line, in the live sync (design §5.2, §5.6, §6.2).
+
+        Live twin of :meth:`collect_agent_run_signals`, line by line, with
+        the same pure rules: every decision reads :func:`evidence_from_db`
+        (the rows of this file below the line, this line's result link
+        included in the DB but skipped by the rules), and the two file
+        facts come from ``SessionItem`` rows — the aborted turn's
+        ``task_started`` by a scan of this session, the fork fields from
+        line 1 (bulk-created before this pass). The rows are written here,
+        at once, so a later line of the same batch sees them.
+        """
+        if task_started_turn_id(parsed) is not None:
+            return LiveAgentSignals()
+        activity = parse_sub_agent_activity(parsed)
+        if activity is not None:
+            return self._apply_activity_signals(session_id, item, activity)
+        run_end_ids: list[int] = []
+        affected: list[str] = []
+        abort_turn_id = owner_turn_abort_turn_id(parsed)
+        if abort_turn_id is not None:
+            for agent_id, tool_use_id in self._owner_abort_cuts_live(session_id, item.line_num, abort_turn_id):
+                end_id = self._write_run_end(session_id, item, tool_use_id, agent_id, END_STATUS_OWNER_TURN_ABORTED)
+                if end_id is not None:
+                    run_end_ids.append(end_id)
+                    affected.append(agent_id)
+        # ``item.session`` is the synced session the live loop built the item with (no query).
+        if (
+            item.session.type == SessionType.SUBAGENT
+            and is_task_complete(parsed)
+            and not is_copied_history(self._live_fork_fields(session_id), parsed)
+        ):
+            end_id = self._write_run_end(session_id, item, '', session_id, END_STATUS_TURN_COMPLETE)
+            if end_id is not None:
+                run_end_ids.append(end_id)
+                affected.append(session_id)
+        return LiveAgentSignals(run_end_ids=tuple(run_end_ids), affected_agent_ids=tuple(affected))
+
+    def _apply_activity_signals(
+        self,
+        session_id: str,
+        item: SessionItem,
+        activity: SubAgentActivity,
+    ) -> LiveAgentSignals:
+        """Rows of a ``SubAgentActivity`` line, live (``started`` writes none: its link is the spawn)."""
+        line = item.line_num
+        if activity.kind == _SUB_AGENT_ACTIVITY_COMPLETED_KIND:
+            run = attribute_completed(evidence_from_db(session_id, activity.agent_id, line), line)
+            if run is None:
+                return LiveAgentSignals()
+            end_id = self._write_run_end(session_id, item, run.tool_use_id, activity.agent_id, END_STATUS_COMPLETED)
+            if end_id is None:
+                return LiveAgentSignals()
+            return LiveAgentSignals(run_end_ids=(end_id,), affected_agent_ids=(activity.agent_id,))
+        if activity.kind not in _SUB_AGENT_ACTIVITY_CONTROL_KINDS:
+            return LiveAgentSignals()
+        # A target that is the owner or its root never gets a row (§5.1):
+        # the free check first, before any lookup.
+        session = item.session
+        if activity.agent_id in (session_id, session.parent_session_id or session_id):
+            return LiveAgentSignals()
+        # A duplicated event line: the first one's row stands.
+        if AgentInteraction.objects.filter(session_id=session_id, tool_use_id=activity.event_id).exists():
+            return LiveAgentSignals()
+        # The call in the file, by its qualified name (live can find a
+        # ``wait_agent`` call batch drops: the map gives it no kind either).
+        found = self._lookup_tool_call(session_id, line, activity.event_id)
+        if found is None:
+            return LiveAgentSignals()
+        payload, call_line = found
+        kind = INTERACTION_KIND_BY_TOOL.get(_tool_use_name(payload))
+        if kind is None:
+            return LiveAgentSignals()
+        # A resume opens a run when the agent has no file-open run here.
+        opens_run = kind == AgentInteractionKind.RESUME and not file_open_runs(
+            evidence_from_db(session_id, activity.agent_id, line), line,
+        )
+        _, created = AgentInteraction.objects.get_or_create(
+            session_id=session_id,
+            tool_use_id=activity.event_id,
+            defaults={
+                'tool_use_line_num': call_line,
+                'event_line_num': line,
+                'agent_id': activity.agent_id,
+                'kind': kind,
+                'opens_run': opens_run,
+                'started_at': item.timestamp,
+            },
+        )
+        if not created:
+            return LiveAgentSignals()
+        key = (session_id, activity.event_id)
+        # A Codex stop's result can precede its ``interrupted`` line (§5.6):
+        # the row is then a stop record from its creation.
+        is_stop_record = kind == AgentInteractionKind.STOP and ToolResultLink.objects.filter(
+            session_id=session_id,
+            tool_use_id=activity.event_id,
+            tool_result_line_num__lt=line,
+            error__isnull=True,
+        ).exists()
+        return LiveAgentSignals(
+            changed_interactions=(key,),
+            run_interactions=(key,) if opens_run else (),
+            stop_records=(key,) if is_stop_record else (),
+            affected_agent_ids=(activity.agent_id,),
+            agents_resumed=((activity.agent_id, activity.agent_path),) if opens_run else (),
+        )
+
+    def _owner_abort_cuts_live(self, session_id: str, line: int, turn_id: str) -> list[tuple[str, str]]:
+        """``(agent_id, run call id)`` of the runs an owner abort at ``line`` cuts, from the DB (§5.2).
+
+        The aborted turn's start is the newest ``task_started`` of ``turn_id``
+        below the line (the batch map keeps the newest line too); none → no cut.
+        """
+        started_line = self._lookup_task_started_line(session_id, line, turn_id)
+        if started_line is None:
+            return []
+        # Every agent's rows in one load, then each evidence in memory.
+        rows = _file_run_rows_from_db(session_id, line)
+        return [
+            (agent_id, run.tool_use_id)
+            for agent_id in _agents_with_file_runs_in_rows(rows)
+            for run in owner_abort_cut_runs(_evidence_from_rows(rows, agent_id), line, started_line)
+        ]
+
+    def _lookup_task_started_line(self, session_id: str, max_line_num: int, turn_id: str) -> int | None:
+        """The newest ``task_started`` line of ``turn_id`` below ``max_line_num`` in the session, or ``None``."""
+        candidates = iter_resolver_items(
+            session_id, HistoryFactKind.TURN_START, turn_id, before_line=max_line_num,
+        )
+        for candidate in candidates:
+            try:
+                parsed = orjson.loads(candidate.content)
+            except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            if task_started_turn_id(parsed) == turn_id:
+                return candidate.line_num
+        return None
+
+    def _live_fork_fields(self, session_id: str) -> ForkFields:
+        """The session's line-1 ``session_meta`` fork fields, read from its ``SessionItem``."""
+        content = SessionItem.objects.filter(
+            session_id=session_id, line_num=1,
+        ).values_list('content', flat=True).first()
+        if content is None:
+            return ForkFields(None, None)
+        try:
+            parsed = orjson.loads(content)
+        except orjson.JSONDecodeError:
+            return ForkFields(None, None)
+        return fork_fields(parsed) if isinstance(parsed, dict) else ForkFields(None, None)
+
+    def _write_run_end(
+        self, session_id: str, item: SessionItem, tool_use_id: str, agent_id: str, status: str,
+    ) -> int | None:
+        """Write one transcript ``AgentRunEnd`` at the item's line; its id when created, else ``None``."""
+        end, created = AgentRunEnd.objects.get_or_create(
+            session_id=session_id,
+            line_num=item.line_num,
+            tool_use_id=tool_use_id,
+            source=AgentRunEndSource.TRANSCRIPT,
+            defaults={'agent_id': agent_id, 'ended_at': item.timestamp, 'status': status},
+        )
+        return end.id if created else None
+
     def _remap_orphan_end_event(
         self,
         parsed_json: dict,
@@ -2240,6 +3081,9 @@ class CodexSessionCompute(BaseSessionCompute):
            run their nested calls synchronously, so recency is right in
            practice).
 
+        An exited process's ``CommandExecution`` needs no heuristic: its
+        ``process_id`` is an exact key into ``_process_owners``.
+
         Falls back to identity when the line isn't such an event, the
         call_id doesn't carry the nested ``exec-`` prefix, or nothing is
         registered.
@@ -2251,6 +3095,10 @@ class CodexSessionCompute(BaseSessionCompute):
         payload = completed_item(parsed_json)
         if payload is None:
             return naive_tool_use_id
+        if _command_execution_end(parsed_json) is not None:
+            # Exact key this time: the process id the owning call's output
+            # announced (see ``_process_owners``).
+            return self._take_process_owner(session_id, parsed_json) or naive_tool_use_id
         records = self._code_exec_targets.get(session_id)
         if not records:
             return naive_tool_use_id
@@ -2320,7 +3168,25 @@ class CodexSessionCompute(BaseSessionCompute):
         session_id: str,
         item: SessionItem,
     ) -> str:
-        """Live equivalent of :meth:`remap_tool_result_id` (no in-memory map).
+        """Live twin of :meth:`remap_tool_result_id`: resolve the owning call
+        (:meth:`_resolve_tool_result_id_live`), then note the process the
+        output announces as running against that owner."""
+        resolved = self._resolve_tool_result_id_live(
+            parsed_json, naive_tool_use_id, session_id=session_id, item=item,
+        )
+        self._release_process_owner_on_exit(session_id, parsed_json, resolved)
+        self._note_process_announcement(session_id, parsed_json, resolved)
+        return resolved
+
+    def _resolve_tool_result_id_live(
+        self,
+        parsed_json: dict,
+        naive_tool_use_id: str,
+        *,
+        session_id: str,
+        item: SessionItem,
+    ) -> str:
+        """Live equivalent of :meth:`_resolve_tool_result_id` (DB lookups).
 
         Three unrelated chains converge here, mirroring the batch hook:
 
@@ -2336,8 +3202,11 @@ class CodexSessionCompute(BaseSessionCompute):
         - ``FINAL_ANSWER`` agent message (multi-agent v2): same rebind,
           but the naive id is an agent *path* no model column carries,
           so it goes through
-          :meth:`_lookup_spawn_call_id_for_agent_path` (newest
-          ``SubAgentActivity`` announcing that path).
+          :meth:`_lookup_spawn_for_agent_path` (newest
+          ``SubAgentActivity`` announcing that path), then the §5.6
+          attribution over :func:`evidence_from_db` picks the run it
+          ends (a follow-up's answer lands on its ``followup_task``);
+          no run → the spawn.
         - ``write_stdin`` ``function_call_output``: resolves the parent
           ``exec_command`` through two DB lookups (write_stdin
           arguments → exec_command_id → function_call_output that
@@ -2352,12 +3221,15 @@ class CodexSessionCompute(BaseSessionCompute):
           custom_tool_call via :meth:`_lookup_orphan_end_exec_call_id`
           (declared-target match on the statically-extracted script —
           patch paths / MCP tool name — recency fallback).
+        - an exited process's ``CommandExecution`` (``exec-`` prefixed
+          too): rebound by its ``process_id`` through the in-memory
+          ``_process_owners`` map — the call whose output announced that
+          process as running (no DB lookup).
 
         Falls back to identity at every step that can't be resolved so
         other tools' result rows are unaffected.
         """
         if _subagent_notification_text(parsed_json) is not None:
-            from twicc.core.models import AgentLink
             link = AgentLink.objects.filter(
                 session_id=session_id, agent_id=naive_tool_use_id,
             ).only("tool_use_id").first()
@@ -2367,14 +3239,35 @@ class CodexSessionCompute(BaseSessionCompute):
         if _parse_agent_final_answer(parsed_json) is not None:
             # v2: the naive id is an agent *path*, which no model column
             # carries — resolve it through the ``SubAgentActivity``
-            # line that announced the spawn (it holds both the path and
-            # the spawning call_id).
-            return self._lookup_spawn_call_id_for_agent_path(
-                session_id, item.line_num, naive_tool_use_id,
+            # line that announced the spawn (it holds the path, the
+            # spawning call_id and the agent id). No spawn for the path →
+            # the naive id, so the caller still creates a link (under it)
+            # instead of dropping the result.
+            spawn = self._lookup_spawn_for_agent_path(session_id, item.line_num, naive_tool_use_id)
+            if spawn is None:
+                return naive_tool_use_id
+            # §5.6: the run this answer ends, from the DB rows below the
+            # line (this line's own link is not written yet, like batch).
+            run = attribute_final_answer(
+                evidence_from_db(session_id, spawn.agent_id, item.line_num), item.line_num,
             )
+            return run.tool_use_id if run is not None else spawn.call_id
         if parsed_json.get("type") == _TYPE_EVENT_MSG:
             payload = completed_item(parsed_json)
             if payload is not None and naive_tool_use_id.startswith("exec-"):
+                command_end = _command_execution_end(parsed_json)
+                if command_end is not None:
+                    # Same in-memory owner map as the batch path. Only a
+                    # process started before this backend (whose announcement
+                    # the fresh map never saw) pays a DB lookup;
+                    # ``extract_tool_result_info`` already dropped the others
+                    # nobody announced.
+                    owner = self._take_process_owner(session_id, parsed_json)
+                    if owner is not None:
+                        return owner
+                    return self._lookup_exec_command_call_id(
+                        session_id, item.line_num, command_end[1], naive_tool_use_id,
+                    )
                 if payload.get("type") == "FileChange":
                     return self._lookup_orphan_end_exec_call_id(
                         session_id, item.line_num, naive_tool_use_id,
@@ -2426,20 +3319,27 @@ class CodexSessionCompute(BaseSessionCompute):
     def _lookup_tool_call_payload(
         self, session_id: str, max_line_num: int, naive_tool_use_id: str
     ) -> dict | None:
-        """Find the tool-call payload owning ``naive_tool_use_id``.
+        """Find the tool-call payload owning ``naive_tool_use_id`` (:meth:`_lookup_tool_call` without its line)."""
+        found = self._lookup_tool_call(session_id, max_line_num, naive_tool_use_id)
+        return found[0] if found is not None else None
+
+    def _lookup_tool_call(
+        self, session_id: str, max_line_num: int, call_id: str
+    ) -> tuple[dict, int] | None:
+        """Find the tool call owning ``call_id`` below ``max_line_num``: ``(payload, line_num)``.
 
         Direct ``function_call`` and code-mode ``custom_tool_call`` shapes
-        qualify; text merely containing the id is rejected.
+        qualify; text merely containing the id is rejected. Newest line first.
         """
-        candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=max_line_num,
-            content__contains=naive_tool_use_id,
-        ).order_by('-line_num')
-        for candidate in candidates.iterator(chunk_size=10):
+        candidates = iter_resolver_items(
+            session_id, HistoryFactKind.TOOL_CALL, call_id, before_line=max_line_num,
+        )
+        for candidate in candidates:
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             if parsed.get("type") != _TYPE_RESPONSE_ITEM:
                 continue
@@ -2448,41 +3348,40 @@ class CodexSessionCompute(BaseSessionCompute):
                 continue
             if payload.get("type") not in _TOOL_CALL_PAYLOAD_TYPES:
                 continue
-            if payload.get("call_id") != naive_tool_use_id:
+            if payload.get("call_id") != call_id:
                 continue
-            return payload
+            return payload, candidate.line_num
         return None
 
-    def _lookup_spawn_call_id_for_agent_path(
+    def _lookup_spawn_for_agent_path(
         self,
         session_id: str,
         max_line_num: int,
         agent_path: str,
-    ) -> str:
-        """Resolve a multi-agent v2 agent path to its ``spawn_agent`` call_id.
+    ) -> _SubAgentSpawn | None:
+        """Resolve a multi-agent v2 agent path to the spawn that announced it.
 
-        Live counterpart of the batch ``_agent_id_to_spawn_call_id``
+        Live counterpart of the batch ``_spawn_targets``
         side-table: walks back to the canonical ``SubAgentActivity`` item
         line that announced the spawn (newest first — an agent path can
         be reused by a later spawn once the previous holder is gone) and
-        returns the ``event_id`` it carries. Returns ``agent_path``
-        unchanged when nothing matches, so the caller still creates a
-        link (just under the naive id) instead of dropping the result.
+        returns its spawn call id and agent id. ``None`` when nothing
+        matches.
         """
-        candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=max_line_num,
-            content__contains=_SUB_AGENT_ACTIVITY_ITEM_TYPE,
-        ).filter(content__contains=agent_path).order_by('-line_num')
-        for candidate in candidates.iterator(chunk_size=10):
+        candidates = iter_resolver_items(
+            session_id, HistoryFactKind.AGENT_SPAWN, agent_path, before_line=max_line_num,
+        )
+        for candidate in candidates:
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
                 continue
+            if not isinstance(parsed, dict):
+                continue
             spawn = _parse_sub_agent_activity_started(parsed)
             if spawn is not None and spawn.agent_path == agent_path:
-                return spawn.call_id
-        return agent_path
+                return spawn
+        return None
 
     def _lookup_orphan_end_exec_call_id(
         self,
@@ -2497,7 +3396,7 @@ class CodexSessionCompute(BaseSessionCompute):
         """Live equivalent of :meth:`_remap_orphan_end_event`.
 
         Walks the preceding code-mode ``exec`` custom_tool_calls (newest
-        first, textual pre-filter on ``"name":"exec"``), re-extracts each
+        first, through target facts or bounded stale raw pages), re-extracts each
         script, and returns the first whose declared targets match the
         event — patch paths against ``changes`` for ``FileChange``,
         the exact ``mcp_qualified`` name for ``McpToolCall``; the
@@ -2510,15 +3409,15 @@ class CodexSessionCompute(BaseSessionCompute):
             [p for p in changes if isinstance(p, str)] if isinstance(changes, dict) else []
         )
         recency_fallback: str | None = None
-        candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=max_line_num,
-            content__contains='"name":"exec"',
-        ).order_by('-line_num')
-        for candidate in candidates.iterator(chunk_size=10):
+        candidates = iter_resolver_items(
+            session_id, HistoryFactKind.CODE_EXEC_TARGET, "patch" if is_patch else "mcp", before_line=max_line_num,
+        )
+        for candidate in candidates:
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             if parsed.get("type") != _TYPE_RESPONSE_ITEM:
                 continue
@@ -2557,24 +3456,25 @@ class CodexSessionCompute(BaseSessionCompute):
         Code-mode counterpart of :meth:`_lookup_exec_command_call_id`:
         searches for the ``custom_tool_call_output`` line whose status
         header announced ``Script running with cell ID <cell_id>`` —
-        that line's ``call_id`` IS the owning ``exec``'s call_id. The
-        textual pre-filter can over-match (``cell ID 2`` is a prefix of
-        ``cell ID 23``, and a still-running ``wait`` output repeats the
-        same header on a ``function_call_output``), so each candidate is
-        re-verified by parsing its output and comparing the exact cell
-        id. Returns ``fallback`` when nothing matches, so the live link
-        is still created (just under the naive id).
+        that line's ``call_id`` IS the owning ``exec``'s call_id. Current
+        sessions select fact pointers; outdated sessions read bounded raw
+        pages. Each source must be a ``custom_tool_call_output`` whose
+        parsed output announces the exact cell id. This rejects id prefixes
+        and repeated headers on a wait's ``function_call_output``.
+        The NEWEST match wins: cell ids are small counters a new
+        app-server run starts over, and a ``wait`` polls the latest cell to
+        carry its id. Returns ``fallback`` when nothing matches, so the live
+        link is still created (just under the naive id).
         """
-        marker = f"Script running with cell ID {cell_id}"
-        candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=max_line_num,
-            content__contains=marker,
-        ).order_by('line_num')
-        for candidate in candidates.iterator(chunk_size=10):
+        candidates = iter_resolver_items(
+            session_id, HistoryFactKind.CODE_CELL, cell_id, before_line=max_line_num,
+        )
+        for candidate in candidates:
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             if parsed.get("type") != _TYPE_RESPONSE_ITEM:
                 continue
@@ -2601,24 +3501,28 @@ class CodexSessionCompute(BaseSessionCompute):
         """Resolve the exec_command call_id that owns ``exec_command_id``.
 
         Searches either a direct output's ``Process running with session ID
-        <id>`` marker or a code-mode output's canonical ``SESSION_ID=<id>``
-        line. The latter is accepted only when its call_id belongs to a
-        tier-1 ``exec`` wrapper around ``exec_command``.
-        Returns ``fallback`` when nothing is found, so the live link is
-        still created (just under the naive id).
+        <id>`` marker or a code-mode output announcing ``<id>`` as still
+        running (any shape :func:`_code_mode_exec_command_id_from_output`
+        reads: ``SESSION_ID=<id>``, the raw nested JSON result, the direct
+        trailer). Either is accepted only when its call_id belongs to the
+        call that STARTED the process — a direct ``exec_command``, or a tier-1
+        ``exec`` wrapper around it — never to a poll (``write_stdin``) that
+        merely reports it still running.
+
+        The NEWEST announcement before ``max_line_num`` wins: Codex reuses
+        process ids within a session, and the latest process to carry this id
+        is the one a later line talks about. Returns ``fallback`` when nothing
+        is found, so the live link is still created (just under the naive id).
         """
-        direct_marker = f"Process running with session ID {exec_command_id}"
-        code_mode_marker = f"SESSION_ID={exec_command_id}"
-        candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=max_line_num,
-        ).filter(
-            Q(content__contains=direct_marker) | Q(content__contains=code_mode_marker)
-        ).order_by('line_num')
-        for candidate in candidates.iterator(chunk_size=10):
+        candidates = iter_resolver_items(
+            session_id, HistoryFactKind.PROCESS_START, str(exec_command_id), before_line=max_line_num,
+        )
+        for candidate in candidates:
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             if parsed.get("type") != _TYPE_RESPONSE_ITEM:
                 continue
@@ -2631,8 +3535,17 @@ class CodexSessionCompute(BaseSessionCompute):
             if not isinstance(call_id, str) or not call_id:
                 continue
             output = payload.get("output")
-            if isinstance(output, str) and direct_marker in output:
-                return call_id
+            if isinstance(output, str) and parse_code_mode_output(output) is None:
+                # Anchored trailer match (a bare substring test would take
+                # ``… ID 9762`` for ``… ID 97625``), then the owner check.
+                status = parse_exec_command_status(output)
+                if status.exec_command_id == exec_command_id and not status.is_terminated:
+                    owner_payload = self._lookup_tool_call_payload(
+                        session_id, candidate.line_num, call_id
+                    )
+                    if owner_payload is not None and _tool_use_name(owner_payload) == "exec_command":
+                        return call_id
+                    continue
             if _code_mode_exec_command_id_from_output(output) != exec_command_id:
                 continue
             owner_payload = self._lookup_tool_call_payload(
@@ -2819,11 +3732,21 @@ class CodexSessionCompute(BaseSessionCompute):
             if isinstance(goal, dict):
                 self._note_goal_status(session_id, line_num, goal.get("status"))
 
-        # Terminal provider error → canonical visible API-error item. Codex
-        # only emits the error on its live notification stream, so the agent
-        # persists this private ``thread/inject_items`` marker before teardown.
-        # Keep the native injected payload for debugging while exposing one
-        # provider-neutral shape to the frontend.
+        # Native turn errors are durable even when thread/inject_items silently
+        # drops an error marker after a failed turn. Preserve the event wrapper
+        # and payload: subagent run-end attribution still reads task_complete.
+        native_error = _native_provider_error(parsed_json)
+        if native_error is not None:
+            parsed_json["provider"] = Provider.CODEX.value
+            parsed_json["isApiErrorMessage"] = True
+            parsed_json["turnId"] = native_error.turn_id
+            parsed_json["error"] = {
+                "type": native_error.error_type,
+                "message": native_error.message,
+            }
+            return orjson.dumps(parsed_json).decode("utf-8")
+
+        # Legacy injected errors remain readable for existing histories.
         provider_error = _injected_provider_error(parsed_json)
         if provider_error is not None:
             parsed_json["twiccOriginalContent"] = parsed_json.get("payload")
@@ -3044,15 +3967,15 @@ class CodexSessionCompute(BaseSessionCompute):
         """
         prev_mode = "default"
         prev_tc_line = 0
-        candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=current_line_num,
-            content__contains='"type":"turn_context"',
-        ).order_by('-line_num')
-        for candidate in candidates.iterator(chunk_size=10):
+        candidates = iter_resolver_items(
+            session_id, HistoryFactKind.TURN_CONTEXT, "context", before_line=current_line_num,
+        )
+        for candidate in candidates:
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             mode = _turn_context_collaboration_mode(parsed)
             if mode is None:
@@ -3060,21 +3983,17 @@ class CodexSessionCompute(BaseSessionCompute):
             prev_mode = mode
             prev_tc_line = candidate.line_num
             break
-        marker_candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__gt=prev_tc_line,
-            line_num__lt=current_line_num,
-            # The relabelled marker serialises a canonical text entry
-            # ``{"type":"text","text":"/plan","text_elements":[]}`` (plus
-            # the raw source under ``twiccOriginalContent``). A prefixed
-            # inline prompt ("/plan foo") never contains the closed
-            # string; candidates are still parse-verified below.
-            content__contains='"text":"/plan"',
-        ).order_by('-line_num')
-        for candidate in marker_candidates.iterator(chunk_size=10):
+        marker_candidates = iter_resolver_items(
+            session_id, HistoryFactKind.PLAN_MARKER, "context", before_line=current_line_num,
+        )
+        for candidate in marker_candidates:
+            if candidate.line_num <= prev_tc_line:
+                break
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             if user_message_text(parsed) == "/plan":
                 return prev_mode, True
@@ -3115,19 +4034,19 @@ class CodexSessionCompute(BaseSessionCompute):
 
         Only two facts matter: the most recent internal context (if any), and
         whether a newer ``thread_goal_updated`` line activated another goal
-        boundary. Both scans parse-verify their cheap text-filter candidates.
+        boundary. Both scans validate indexed source pointers or stale raw pages.
         """
         state = _GoalContextState(initialized=True)
         context_line = 0
-        context_candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=current_line_num,
-            content__contains="codex_internal_context",
-        ).order_by("-line_num")
-        for candidate in context_candidates.iterator(chunk_size=10):
+        context_candidates = iter_resolver_items(
+            session_id, HistoryFactKind.GOAL_CONTEXT, "context", before_line=current_line_num,
+        )
+        for candidate in context_candidates:
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             objective = _goal_context_objective(parsed)
             if objective is None:
@@ -3137,16 +4056,17 @@ class CodexSessionCompute(BaseSessionCompute):
             context_line = candidate.line_num
             break
 
-        update_candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__gt=context_line,
-            line_num__lt=current_line_num,
-            content__contains='"type":"thread_goal_updated"',
-        ).order_by("-line_num")
-        for candidate in update_candidates.iterator(chunk_size=10):
+        update_candidates = iter_resolver_items(
+            session_id, HistoryFactKind.GOAL_UPDATE, "context", before_line=current_line_num,
+        )
+        for candidate in update_candidates:
+            if candidate.line_num <= context_line:
+                break
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             if parsed.get("type") != _TYPE_EVENT_MSG:
                 continue
@@ -3252,7 +4172,7 @@ class CodexSessionCompute(BaseSessionCompute):
         wrapper_type = parsed_json.get("type")
         payload = _payload(parsed_json)
 
-        if wrapper_type == _TYPE_TWICC_PROVIDER_ERROR:
+        if wrapper_type == _TYPE_TWICC_PROVIDER_ERROR or _native_provider_error(parsed_json) is not None:
             return ItemKind.API_ERROR
 
         # ``compacted`` is the top-level wrapper Codex CLI writes when
@@ -3291,7 +4211,9 @@ class CodexSessionCompute(BaseSessionCompute):
             # ``is_tool_result_item`` branch (-> DEBUG_ONLY). Every other
             # completed item (Reasoning, CommandExecution, Plan, WebSearch,
             # …) duplicates a raw ``response_item`` TwiCC already reads
-            # and stays SYSTEM.
+            # and stays SYSTEM — an exited process's CommandExecution
+            # included: SYSTEM is DEBUG_ONLY too, and its role as the
+            # closing result of a shell chain is ``is_tool_result_item``'s.
             if _event_msg_call_id(parsed_json) is not None:
                 return None
 
@@ -3597,15 +4519,15 @@ class CodexSessionCompute(BaseSessionCompute):
         :meth:`begin_session_compute`. The scan stops at the first hit,
         so it costs at most one row read on a healthy session.
         """
-        candidates = SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=current_line_num,
-            content__contains='"type":"token_count"',
-        ).order_by('-line_num')
-        for candidate in candidates.iterator(chunk_size=10):
+        candidates = iter_resolver_items(
+            session_id, HistoryFactKind.TOKEN_USAGE, "context", before_line=current_line_num,
+        )
+        for candidate in candidates:
             try:
                 parsed = orjson.loads(candidate.content)
             except orjson.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
                 continue
             if parsed.get("type") != _TYPE_EVENT_MSG:
                 continue
@@ -3657,6 +4579,12 @@ class CodexSessionCompute(BaseSessionCompute):
         #   :meth:`create_agent_link_from_tool_result` the lines it
         #   considers tool_result-ish — this is the gate that lets the
         #   v2 ``(call_id, agent_id)`` pair through to the AgentLink.
+        # - canonical ``CommandExecution`` item of an exited process (see
+        #   :func:`_command_execution_end`): the closing result of the call
+        #   that started the process, rebound to it by ``process_id``. The
+        #   only end signal of a process left running past its turn. An
+        #   unresolvable one (a process that exited inside its own call,
+        #   whose id no output announced) simply creates no link.
         # All of them are routed to DEBUG_ONLY; the front uses the tool's
         # ``isToolRunning`` hook to know when the chain is complete.
         wrapper_type = parsed_json.get("type")
@@ -3673,8 +4601,16 @@ class CodexSessionCompute(BaseSessionCompute):
         if wrapper_type == _TYPE_EVENT_MSG:
             if _parse_sub_agent_activity_started(parsed_json) is not None:
                 return True
+            if _command_execution_end(parsed_json) is not None:
+                return True
             return canonical_result_item(parsed_json) is not None
         return False
+
+    def extract_history_facts(
+        self, parsed: dict, *, line_num: int, history: HistoryFactContext,
+    ) -> list[HistoryFact]:
+        from .history_facts import extract_history_facts
+        return extract_history_facts(parsed, line_num=line_num, history=history)
 
     def extract_tool_use_entries(
         self,
@@ -3799,9 +4735,26 @@ class CodexSessionCompute(BaseSessionCompute):
                 # (the ``Script failed`` status header).
                 error_text = _code_mode_output_error(output)
         elif wrapper_type == _TYPE_EVENT_MSG:
-            call_id = _event_msg_call_id(parsed_json)
-            item = canonical_result_item(parsed_json)
-            error_text = _event_msg_payload_error(item or {})
+            command_end = _command_execution_end(parsed_json)
+            if command_end is not None:
+                # An exited process's closing result: the naive id is the
+                # synthesized ``exec-<uuid>``, rebound by ``process_id``.
+                call_id, process_id, exit_code = command_end
+                if (
+                    not self.has_process_owner(session_id, process_id)
+                    and not _command_execution_predates_backend(parsed_json)
+                ):
+                    # Nobody announced it (it exited inside its own call —
+                    # the common case): nothing to close, so skip the link
+                    # search and its scans. Remembered in case its
+                    # announcement is written just after.
+                    self._take_process_owner(session_id, parsed_json)
+                    return None
+                error_text = f"Exit code {exit_code}" if exit_code else None
+            else:
+                call_id = _event_msg_call_id(parsed_json)
+                item = canonical_result_item(parsed_json)
+                error_text = _event_msg_payload_error(item or {})
         else:
             return None
         if not isinstance(call_id, str) or not call_id:
@@ -4169,11 +5122,14 @@ class CodexSessionCompute(BaseSessionCompute):
         tool_name: str,
         *,
         session_id: str | None = None,
+        tool_use_id: str | None = None,
     ) -> str | None:
         """Return the JSON ``ToolResultLink.extra`` payload for this result.
 
-        Three shapes contribute today:
+        Four shapes contribute today:
 
+        - An exited process's ``CommandExecution`` item, rebound to the
+          call that started it: always ``{"is_terminated": true}``.
         - ``exec_command`` / ``write_stdin`` ``function_call_output``
           rows whose trailer reports ``Process exited`` produce
           ``{"is_terminated": true}``. Other rows in the same chain
@@ -4184,7 +5140,8 @@ class CodexSessionCompute(BaseSessionCompute):
         - Code-mode ``exec`` result rows (the exec's own output plus
           rebound ``wait`` chunks) follow the same chained logic, keyed
           on the script status header instead of the unified-exec
-          trailer.
+          trailer — unless the body announces a nested process still
+          running, which keeps the chain open.
         - ``apply_patch`` canonical ``FileChange`` item rows produce
           ``{"lines_added": N, "lines_removed": M, "files": [...]}``
           so the front can show the per-tool badge.
@@ -4231,6 +5188,12 @@ class CodexSessionCompute(BaseSessionCompute):
         per-tool ``+N -M`` summary badge; the per-file breakdown is
         provided for future surfaces (it is not consumed yet today).
         """
+        # An exited process's ``CommandExecution``, rebound to the call that
+        # started it (``exec`` in code mode, ``exec_command`` otherwise):
+        # the process is gone, whatever any earlier chunk said.
+        if _command_execution_end(parsed_json) is not None:
+            return orjson.dumps({"is_terminated": True}).decode()
+
         # ``spawn_agent``: ``is_terminated`` is flagged either on the
         # ``<subagent_notification>`` user message (the canonical
         # end-of-spawn signal — emitted whether the subagent
@@ -4321,6 +5284,17 @@ class CodexSessionCompute(BaseSessionCompute):
         # user termination, same signal-based check as exec_command —
         # flips ``is_terminated``; a ``Script running with cell ID <id>``
         # header keeps the spinner on until a wait chunk closes the cell.
+        # A final script status is not enough when the body announces a
+        # nested process still running: the script ended once the nested
+        # ``exec_command`` / ``write_stdin`` yielded, the process did not.
+        # Its end comes later — a poll reporting an exit, or the process's
+        # own ``CommandExecution`` item (handled at the top). Only for the
+        # card that event will reach, though: the registered owner of that
+        # process (see ``_process_owners``, filled by the remap hooks just
+        # before this runs). Any other card announcing it (a multi-call
+        # script polling someone else's process, an already-ended process)
+        # closes on its script status as before — nothing would close it
+        # later.
         if tool_name == _CODE_MODE_EXEC_TOOL:
             if parsed_json.get("type") != _TYPE_RESPONSE_ITEM:
                 return None
@@ -4334,8 +5308,17 @@ class CodexSessionCompute(BaseSessionCompute):
                 and _user_terminated_tool_reason(session_id, call_id) is not None
             )
             if not user_terminated:
-                parsed = parse_code_mode_output(payload.get("output"))
+                output = payload.get("output")
+                parsed = parse_code_mode_output(output)
                 if parsed is None or parsed.status == "running":
+                    return None
+                process_id = _code_mode_exec_command_id_from_output(output)
+                if (
+                    process_id is not None
+                    and session_id is not None
+                    and tool_use_id is not None
+                    and self._process_owners.get(session_id, {}).get(process_id) == tool_use_id
+                ):
                     return None
             return orjson.dumps({"is_terminated": True}).decode()
 
@@ -4434,7 +5417,7 @@ class CodexSessionCompute(BaseSessionCompute):
         # CodexAgent captures pre-patch file contents when it sees a
         # ``FileChangeThreadItem`` arrive on ``item/started`` (the SDK's
         # equivalent of Claude's PreToolUse hook). When the matching
-        # canonical ``FileChange`` item lands here, we pop the captured
+        # canonical ``FileChange`` item lands here, we borrow the captured
         # contents and splice them into the item under
         # ``original_files`` so the frontend can render a full-file diff
         # (``EditContent.vue``-style) instead of only the ``unified_diff``
@@ -4446,8 +5429,8 @@ class CodexSessionCompute(BaseSessionCompute):
         if payload is None or payload.get("type") != "FileChange":
             return None
 
-        # Always pop from the cache (consume the entry whether we use it or not).
-        cached = pop_original_files(session_id, call_id)
+        # Consume only after commit, even when the source already has enrichment.
+        cached = self.borrow_enrichment(original_files_cache._cache, session_id, call_id, line_num)
         if not cached:
             return None
 
@@ -4565,7 +5548,7 @@ class CodexSessionCompute(BaseSessionCompute):
                 spawn = _parse_sub_agent_activity_started(parsed_json)
                 if spawn is None:
                     return _EMPTY_ANALYSIS
-                self._agent_id_map(session_id)[spawn.agent_path] = spawn.call_id
+                self._spawn_target_map(session_id)[spawn.agent_path] = _SpawnTarget(spawn.call_id, spawn.agent_id)
                 return ContentAnalysis(
                     has_visible_content=False,
                     text_content=None,
@@ -4611,6 +5594,27 @@ class CodexSessionCompute(BaseSessionCompute):
                     has_tool_result=True,
                     tool_result_id=event_call_id,
                     tool_result_error=_event_msg_payload_error(item or {}),
+                    tool_use_entries=_EMPTY_TOOL_USE_ENTRIES,
+                    task_tool_uses=_EMPTY_TASK_TOOL_USES,
+                    file_paths=_EMPTY_FILE_PATHS,
+                    has_prefix=False,
+                    has_suffix=False,
+                    tool_result_agent_info=None,
+                )
+
+            # An exited process's ``CommandExecution``: the result closing
+            # the call that started it, rebound by ``process_id`` in
+            # :meth:`remap_tool_result_id` (naive id: its ``exec-<uuid>``).
+            command_end = _command_execution_end(parsed_json)
+            if command_end is not None:
+                item_id, _process_id, exit_code = command_end
+                return ContentAnalysis(
+                    has_visible_content=False,
+                    text_content=None,
+                    is_system_xml=False,
+                    has_tool_result=True,
+                    tool_result_id=item_id,
+                    tool_result_error=f"Exit code {exit_code}" if exit_code else None,
                     tool_use_entries=_EMPTY_TOOL_USE_ENTRIES,
                     task_tool_uses=_EMPTY_TASK_TOOL_USES,
                     file_paths=_EMPTY_FILE_PATHS,
@@ -4745,6 +5749,7 @@ class CodexSessionCompute(BaseSessionCompute):
                 # ``FileChange`` / ``McpToolCall`` can be
                 # rebound to them (see _remap_orphan_end_event). Bounded
                 # to the last 50 records per session.
+                targets = None
                 if sub_type == "custom_tool_call" and name == _CODE_MODE_EXEC_TOOL:
                     targets = _script_targets(payload.get("input"))
                     if targets.has_patch or targets.mcp_tools:
@@ -4760,6 +5765,7 @@ class CodexSessionCompute(BaseSessionCompute):
                 else:
                     task_tool_uses = _EMPTY_TASK_TOOL_USES
                 return ContentAnalysis(
+                    history_evidence={"tool_name": name, "code_exec_targets": targets},
                     has_visible_content=True,
                     text_content=None,
                     is_system_xml=False,
@@ -4812,7 +5818,7 @@ class CodexSessionCompute(BaseSessionCompute):
                 # path skips this and queries ``AgentLink`` instead.
                 if tool_result_agent_info is not None:
                     spawn_call_id, agent_id, _is_async = tool_result_agent_info
-                    self._agent_id_map(session_id)[agent_id] = spawn_call_id
+                    self._spawn_target_map(session_id)[agent_id] = _SpawnTarget(spawn_call_id, agent_id)
                 return ContentAnalysis(
                     has_visible_content=False,
                     text_content=None,
@@ -4832,7 +5838,7 @@ class CodexSessionCompute(BaseSessionCompute):
 
     # compute_session_metadata + apply_session_complete: inherited from base.
     # The base orchestrates DB I/O and dispatches every parsing hook
-    # declared above. ``sync_session_items_from_file`` (also inherited) is
+    # declared above. ``sync_session_slice`` (also inherited) is
     # driven by ``CodexSessionsWatcher`` for live updates.
 
 

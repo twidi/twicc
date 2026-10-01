@@ -104,17 +104,41 @@ def read_one(capsysbinary):
 # ---------------------------------------------------------------------------
 
 
-def test_slim_carries_the_state_alone(project, live_backend, capsysbinary):
+def test_slim_carries_the_state_and_the_background_work(project, live_backend, capsysbinary):
     make_session(project)
     make_run("s1")
 
     cli_sessions.main(project=project.id, slim=True)
 
-    assert read(capsysbinary)[0]["process"] == {"state": "assistant_turn"}
+    assert read(capsysbinary)[0]["process"] == {"state": "assistant_turn", "background_work_in_progress": None}
 
 
-def test_the_full_block_carries_the_five_non_redundant_fields(project, live_backend, capsysbinary):
-    """Five, not nine: the session payload already names the session.
+@pytest.mark.parametrize("projection", [{"slim": True}, {"full": True}])
+def test_background_work_rides_the_block_whatever_the_state(project, live_backend, capsysbinary, projection):
+    """A shell left running shows on a ``user_turn`` row, in both projections."""
+    work = {"subagents": 0, "shells": 1, "monitors": 0, "scheduled_wakeup_at": None, "goal": False}
+    make_session(project)
+    make_run("s1", state=AgentState.USER_TURN, background_work_in_progress=work)
+
+    cli_sessions.main(project=project.id, **projection)
+
+    block = read(capsysbinary)[0]["process"]
+    assert block["state"] == "user_turn"
+    assert block["background_work_in_progress"] == work
+
+
+def test_a_dead_row_reports_no_background_work(project, live_backend, capsysbinary):
+    """A row kept DEAD (Claude crons) cannot carry live work, whatever it holds."""
+    make_session(project)
+    make_run("s1", state=AgentState.DEAD, background_work_in_progress={"shells": 1})
+
+    cli_sessions.main(project=project.id, slim=True)
+
+    assert read(capsysbinary)[0]["process"] == {"state": "dead", "background_work_in_progress": None}
+
+
+def test_the_full_block_carries_the_six_non_redundant_fields(project, live_backend, capsysbinary):
+    """Six, not nine: the session payload already names the session.
 
     ``provider``, ``session_id``, ``session_title`` and ``project_id`` — which
     ``serialize_process_row`` returns for the ``processes`` family — would be
@@ -126,7 +150,7 @@ def test_the_full_block_carries_the_five_non_redundant_fields(project, live_back
     cli_sessions.main(project=project.id, full=True)
 
     block = read(capsysbinary)[0]["process"]
-    assert set(block) == {"id", "state", "started_at", "last_state_change_at", "pid"}
+    assert set(block) == {"id", "state", "background_work_in_progress", "started_at", "last_state_change_at", "pid"}
     assert block["pid"] == 777
     assert block["state"] == "assistant_turn"
 
@@ -159,7 +183,7 @@ def test_no_backend_is_dead_like_any_other_absence(project, no_backend, capsysbi
 
     cli_sessions.main(project=project.id, slim=True)
 
-    assert read(capsysbinary)[0]["process"] == {"state": "dead"}
+    assert read(capsysbinary)[0]["process"] == {"state": "dead", "background_work_in_progress": None}
 
 
 def test_a_blocked_agent_surfaces_as_awaiting_user_input(project, live_backend, capsysbinary):
@@ -174,7 +198,7 @@ def test_a_blocked_agent_surfaces_as_awaiting_user_input(project, live_backend, 
 
     cli_sessions.main(project=project.id, slim=True)
 
-    assert read(capsysbinary)[0]["process"] == {"state": "awaiting_user_input"}
+    assert read(capsysbinary)[0]["process"] == {"state": "awaiting_user_input", "background_work_in_progress": None}
 
 
 def test_a_subagent_has_no_process_of_its_own(project, live_backend, capsysbinary):
@@ -204,7 +228,7 @@ def test_a_row_from_another_instance_is_ignored(project, live_backend, capsysbin
 
     cli_sessions.main(project=project.id, slim=True)
 
-    assert read(capsysbinary)[0]["process"] == {"state": "dead"}
+    assert read(capsysbinary)[0]["process"] == {"state": "dead", "background_work_in_progress": None}
 
 
 @pytest.mark.django_db
@@ -248,7 +272,7 @@ def test_a_just_started_session_reports_its_process_before_it_is_known(project, 
 
     entry = read(capsysbinary)[0]
     assert entry["known"] is False
-    assert entry["process"] == {"state": "assistant_turn"}
+    assert entry["process"] == {"state": "assistant_turn", "background_work_in_progress": None}
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +358,7 @@ def test_the_newest_row_answers_even_when_it_is_the_dead_one(project, live_backe
 
     cli_sessions.main(project=project.id, slim=True)
 
-    assert read(capsysbinary)[0]["process"] == {"state": "dead"}
+    assert read(capsysbinary)[0]["process"] == {"state": "dead", "background_work_in_progress": None}
 
 
 def test_an_older_dead_row_does_not_hide_the_live_one(project, live_backend, capsysbinary):
@@ -345,7 +369,7 @@ def test_an_older_dead_row_does_not_hide_the_live_one(project, live_backend, cap
 
     cli_sessions.main(project=project.id, slim=True)
 
-    assert read(capsysbinary)[0]["process"] == {"state": "user_turn"}
+    assert read(capsysbinary)[0]["process"] == {"state": "user_turn", "background_work_in_progress": None}
 
 
 def test_a_subagent_is_null_in_full_mode_too(project, live_backend, capsysbinary):

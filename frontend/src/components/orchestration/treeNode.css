@@ -157,6 +157,12 @@
     50% { opacity: 0.3; }
 }
 
+/* The terminal of a shell the agent left running breathes like the unread eye (opacity only:
+   kept under reduced motion). */
+.orch-status-icon--pulse-shell {
+    animation: motion-status-pulse-deep 2.4s ease-in-out infinite;
+}
+
 .orch-title {
     font-weight: 600;
 }

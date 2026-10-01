@@ -132,7 +132,7 @@ def test_after_the_flagless_call_is_reduced(after, rows, capsysbinary):
     out, err = capsysbinary.readouterr()
     row = orjson.loads(out)
     assert "layout" not in row
-    assert set(row["process"]) == {"state"}
+    assert set(row["process"]) == {"state", "background_work_in_progress"}
     assert err == b""
 
 
@@ -186,7 +186,7 @@ def test_full_is_the_full_payload_on_both_sides(monkeypatch, rows, capsysbinary,
     out, err = capsysbinary.readouterr()
     row = orjson.loads(out)
     assert "layout" in row and "slug" in row and "mtime" in row
-    assert set(row["process"]) == {"id", "state", "started_at", "last_state_change_at", "pid"}
+    assert set(row["process"]) == {"id", "state", "background_work_in_progress", "started_at", "last_state_change_at", "pid"}
     assert err == b""
 
 

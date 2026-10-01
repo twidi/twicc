@@ -350,7 +350,7 @@ def test_after_the_date_whoami_full_carries_the_session_s_own_identity(
     )
     whoami_cmd(slim=False, full=True)
     data = orjson.loads(capsysbinary.readouterr().out)
-    assert set(data["process"]) == {"id", "state", "started_at", "last_state_change_at", "pid"}
+    assert set(data["process"]) == {"id", "state", "background_work_in_progress", "started_at", "last_state_change_at", "pid"}
     assert {"provider", "id", "title", "project_id"} <= set(data)
     assert data["id"] == session.id
 
@@ -455,7 +455,7 @@ def test_no_other_mcp_text_teaches_a_retired_command():
 def seen_cursors(monkeypatch):
     seen: dict = {}
 
-    def fake(cursors, *, timeout, want_text, first):
+    def fake(cursors, *, timeout, want_text, first, wait_background=False):
         seen.update(cursors)
         return {sid: {"outcome": "replied", "line_num": 9, "since_line_num": c}
                 for sid, c in cursors.items()}
@@ -493,7 +493,7 @@ def test_p1_singular_waits_from_zero(live_backend, project, monkeypatch, capsysb
     _live_run("rm-new")
     seen = {}
 
-    def fake(session_id, *, since_line_num, timeout, want_text):
+    def fake(session_id, *, since_line_num, timeout, want_text, wait_background=False):
         seen.update(session_id=session_id, cursor=since_line_num)
         return {"outcome": "replied", "line_num": 4, "since_line_num": since_line_num}
 

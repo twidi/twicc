@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 from watchfiles import Change
 
@@ -157,8 +156,11 @@ def test_codex_watcher_defers_events_of_a_migrating_session():
     asyncio.run(scenario())
 
 
-def test_watcher_skips_a_deferred_change_and_replays_it_on_demand(monkeypatch):
+def test_watcher_skips_a_deferred_change_and_replays_it_on_demand(monkeypatch, tmp_path):
     """A deferred event never blocks the loop; ``process_path`` replays the file."""
+
+    path = tmp_path / "rollout.jsonl"
+    path.write_bytes(b"{}\n")
 
     async def scenario():
         watcher = CodexSessionsWatcher()
@@ -173,7 +175,9 @@ def test_watcher_skips_a_deferred_change_and_replays_it_on_demand(monkeypatch):
             return deferring
 
         async def process(path, _parsed, change_type, _channel_layer):
+            from twicc.providers.sessions_watcher import SessionChangeResult
             processed.append((str(path), change_type))
+            return SessionChangeResult('drained', watcher._queue.source_generation(path), 3)
 
         async def special(*_args):
             return False
@@ -185,12 +189,14 @@ def test_watcher_skips_a_deferred_change_and_replays_it_on_demand(monkeypatch):
         monkeypatch.setattr("twicc.providers.sessions_watcher.run_under_db_write_lock", lambda fn: fn())
         monkeypatch.setattr("twicc.providers.sessions_watcher.get_channel_layer", lambda: object())
 
-        await watcher._process_change(Change.modified, "/tmp/rollout.jsonl", object())
+        await watcher._process_change(Change.modified, str(path), object())
         assert processed == []
 
         deferring = False
-        await watcher.process_path(Path("/tmp/rollout.jsonl"))
-        assert processed == [("/tmp/rollout.jsonl", Change.modified)]
+        await watcher.process_path(path)
+        assert processed == [(str(path), Change.modified)]
+        watcher.stop_watcher()
+        await watcher._consumer_task
 
     asyncio.run(scenario())
 

@@ -11,6 +11,12 @@
 export const SPONSOR_URL = 'https://github.com/sponsors/twidi'
 
 /**
+ * Public (GitHub) URL of the Browser tab help page — put in the agent setup
+ * instructions the Browser tab generates: an agent can't open TwiCC's in-app help.
+ */
+export const BROWSER_TAB_HELP_PUBLIC_URL = 'https://github.com/twidi/twicc/blob/main/frontend/public/help/browser-tab.md'
+
+/**
  * Number of items to load at start (first N and last N) when viewing a session.
  * Also used during reconciliation to limit how many new items we fetch at once.
  */
@@ -101,6 +107,8 @@ export const SYNTHETIC_ITEM = {
     STREAMING_BLOCK: { baseLineNum: -1000, kind: 'streaming-block' },
     WORKING_ASSISTANT_MESSAGE: { lineNum: -500, kind: 'working-assistant-message' },
     EPHEMERAL_RESULT: { lineNum: -400, kind: 'ephemeral-result' },
+    // Static USER_TURN status line (background shells, active crons), always last.
+    BACKGROUND_WORK_STATUS: { lineNum: -300, kind: 'background-work-status' },
 }
 
 /**

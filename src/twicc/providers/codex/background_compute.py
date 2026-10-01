@@ -50,10 +50,12 @@ import time
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from itertools import count
 from pathlib import Path
 from typing import Literal, NamedTuple
 
 from asgiref.sync import sync_to_async
+from django.db.models import Q
 
 from twicc import search
 from twicc.agent import AgentState
@@ -72,6 +74,7 @@ from twicc.providers.db_writer import (
     arm_compute_completion,
     submit_async_job,
 )
+from twicc.providers.session_change_queue import MigrationRelease
 from twicc.startup_progress import broadcast_startup_progress
 
 from .agent import get_codex_agent_manager
@@ -117,6 +120,8 @@ _SUMMARY_EVERY_SECONDS = 30.0
 # Called after a session's gate is released, with its rollout path, so the
 # owner (the orchestrator) can replay the file through the watcher.
 SessionReleasedCallback = Callable[[str, Path], Awaitable[None]]
+MigrationReleasedCallback = Callable[[MigrationRelease], None]
+_release_tokens = count(1)
 
 
 class CodexComputeCandidate(NamedTuple):
@@ -160,11 +165,14 @@ class _RolloutMissing(RolloutMigrationError):
     """The session's rollout is gone from disk."""
 
 
-async def _load_stale_candidates(compute_version: int) -> list[CodexComputeCandidate]:
+async def _load_stale_candidates(
+    compute_version: int, *, forced_ids: frozenset[str] = frozenset(),
+) -> list[CodexComputeCandidate]:
+    """Include forced histories even when an older compute restored their version."""
     rows = await sync_to_async(
         lambda: list(
             Session.objects.filter(provider=Provider.CODEX)
-            .exclude(compute_version=compute_version)
+            .filter(~Q(compute_version=compute_version) | Q(id__in=forced_ids))
             .order_by("-mtime")
             .values_list("id", "file_path", "type", "last_offset")
         )
@@ -201,10 +209,13 @@ class CodexComputeCoordinator:
         ctx: ComputeContext,
         initial_done: asyncio.Event,
         on_session_released: SessionReleasedCallback | None = None,
+        on_migration_released: MigrationReleasedCallback | None = None,
     ) -> None:
         self.ctx = ctx
         self.initial_done = initial_done
         self.on_session_released = on_session_released
+        self.on_migration_released = on_migration_released
+        self._replays: set[asyncio.Task] = set()
         self.runner = CodexMigrationRunner()
         self.applied_queue: asyncio.Queue[ComputeApplied] = asyncio.Queue()
         self.events: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
@@ -216,6 +227,7 @@ class CodexComputeCoordinator:
         self.failures: dict[str, FailedCandidate] = {}
         self.migration_leases: dict[str, asyncio.Lock] = {}
         self.migration_paths: dict[str, Path] = {}
+        self._forced_rebuild: set[str] = set()
         self.migrated_history: set[str] = set()
         self.worker_errors: dict[str, str] = {}
         self.in_flight: str | None = None
@@ -333,7 +345,8 @@ class CodexComputeCoordinator:
             # only part of its rows.
             size = _file_size(candidate.file_path)
             truncated = (size is not None and size < candidate.last_offset) or candidate.last_offset == 0
-            if truncated and preparation == MigrationPreparation.COMPUTE_ONLY:
+            self._absorb_rebuild_requests()
+            if (truncated or session_id in self._forced_rebuild) and preparation == MigrationPreparation.COMPUTE_ONLY:
                 preparation = MigrationPreparation.REPLACE_ONLY
 
             needs_gate = preparation != MigrationPreparation.COMPUTE_ONLY or anchors_existed
@@ -350,9 +363,10 @@ class CodexComputeCoordinator:
             source_mode = await self._source_mode(candidate.file_path, session_id)
             database_mode = await self._database_mode(candidate)
             preparation = migration_preparation(source_mode, database_mode)
-            if truncated and preparation == MigrationPreparation.COMPUTE_ONLY:
-                preparation = MigrationPreparation.REPLACE_ONLY
             anchors_existed = await _has_snapshot_anchor(session_id)
+            self._absorb_rebuild_requests()
+            if (truncated or session_id in self._forced_rebuild) and preparation == MigrationPreparation.COMPUTE_ONLY:
+                preparation = MigrationPreparation.REPLACE_ONLY
             if self._is_agent_active(session_id):
                 self._release_lease(session_id, replay=False)
                 return DeferredCandidate(session_id, "active")
@@ -403,7 +417,7 @@ class CodexComputeCoordinator:
                     if outcome.failure_reason in ROLLOUT_UNREADABLE_REASONS:
                         return await self._condemn(
                             session_id, phase, error, lease,
-                            reason=f"codex_migration_failed:{outcome.failure_reason}",
+                            reason=f"codex_migration_failed:{outcome.failure_reason}", path=candidate.file_path,
                         )
                     raise RolloutMigrationError(error)
 
@@ -419,6 +433,10 @@ class CodexComputeCoordinator:
                     history.last_line,
                     history.mtime,
                 )
+                # Only successful gated reconstruction consumes the request.
+                # A classification, active-session deferral, or failed write
+                # must not downgrade the next attempt to metadata-only compute.
+                self._forced_rebuild.discard(session_id)
                 if search.is_initialized():
                     phase = "search invalidation"
                     await asyncio.to_thread(search.delete_session_documents, session_id)
@@ -430,30 +448,35 @@ class CodexComputeCoordinator:
                 registered=registered,
             )
         except asyncio.CancelledError:
-            await self.runner.stop()
-            if lease is not None and lease.locked():
-                self._release_lease(session_id, replay=False)
+            try:
+                await self.runner.stop()
+            finally:
+                self._release_lease(session_id, replay=False, outcome='cancelled', fallback_path=candidate.file_path)
             raise
         except _RolloutMissing as error:
-            return await self._condemn(session_id, phase, str(error), lease, reason=UNAVAILABLE_ROLLOUT_MISSING)
+            return await self._condemn(
+                session_id, phase, str(error), lease, reason=UNAVAILABLE_ROLLOUT_MISSING, path=candidate.file_path,
+            )
         except Exception as error:  # noqa: BLE001 - one session failure must not stop the coordinator
-            if lease is not None and lease.locked():
-                self._release_lease(session_id, replay=False)
+            self._release_lease(
+                session_id, replay=False, outcome='failed', error=str(error), fallback_path=candidate.file_path,
+            )
             return FailedCandidate(session_id, phase, str(error))
 
     async def _condemn(
         self, session_id: str, phase: str, error: str, lease: asyncio.Lock | None, *, reason: str,
+        path: Path | None = None,
     ) -> FailedCandidate:
         """Fail a candidate whose rollout cannot be shown, recording why for the UI."""
 
         try:
             await self._submit_job(MarkSessionUnavailableJob, session_id, reason)
         except asyncio.CancelledError:
+            self._release_lease(session_id, replay=False, outcome='cancelled', fallback_path=path)
             raise
         except Exception:
             logger.exception("Could not flag Codex session %s as unavailable", session_id)
-        if lease is not None and lease.locked():
-            self._release_lease(session_id, replay=False)
+        self._release_lease(session_id, replay=False, outcome='failed', error=error, fallback_path=path)
         return FailedCandidate(session_id, phase, error, unavailable_reason=reason)
 
     # ------------------------------------------------------------------
@@ -595,7 +618,11 @@ class CodexComputeCoordinator:
         self._final_summary_pending = False
         self._log_summary(force=True, label="Codex rollout migration: initial pass complete")
 
-    def _release_lease(self, session_id: str, *, replay: bool = True) -> None:
+    def _release_lease(
+        self, session_id: str, *, replay: bool = True,
+        outcome: Literal['ready', 'failed', 'cancelled'] = 'ready', error: str | None = None,
+        fallback_path: Path | None = None,
+    ) -> None:
         """Release a session's gate and migrating flag; replay its file when asked.
 
         ``replay`` schedules the watcher catch-up (through
@@ -603,15 +630,21 @@ class CodexComputeCoordinator:
         the session are ingested. Not needed when nothing was replaced.
         """
 
+        path = self.migration_paths.pop(session_id, None)
         lease = self.migration_leases.pop(session_id, None)
         gate = gate_for(session_id)
-        if gate.locked() and (lease is None or lease is gate):
+        if gate.locked() and (lease is gate or (lease is None and path is not None)):
             gate.release()
         unmark_migrating(session_id)
         self.migrated_history.discard(session_id)
-        path = self.migration_paths.pop(session_id, None)
-        if replay and path is not None and self.on_session_released is not None:
-            asyncio.get_running_loop().create_task(self._replay(session_id, path))
+        if self.on_migration_released is not None:
+            self.on_migration_released(MigrationRelease(
+                session_id, path or fallback_path, outcome, replay, error, next(_release_tokens),
+            ))
+        if outcome == 'ready' and replay and path is not None and self.on_session_released is not None:
+            task = asyncio.get_running_loop().create_task(self._replay(session_id, path))
+            self._replays.add(task)
+            task.add_done_callback(self._replays.discard)
 
     async def _replay(self, session_id: str, path: Path) -> None:
         try:
@@ -627,7 +660,7 @@ class CodexComputeCoordinator:
         self.failed_this_run.add(failure.session_id)
         self.failures[failure.session_id] = failure
         self.deferred.discard(failure.session_id)
-        self._release_lease(failure.session_id, replay=False)
+        self._release_lease(failure.session_id, replay=False, outcome='failed', error=failure.error)
         self._prepared.pop(failure.session_id, None)
         self._record_outcome(failure.session_id, "unavailable" if failure.unavailable_reason else "failed")
         await self._classify_initial(failure.session_id)
@@ -738,9 +771,10 @@ class CodexComputeCoordinator:
         return tally, legacy_ids
 
     def _absorb_rebuild_requests(self) -> None:
-        """A rewrite detected by the watcher lifts the per-run exclusions."""
+        """Retain forced reconstruction intent and lift per-run exclusions."""
 
         for session_id in take_rebuild_requests():
+            self._forced_rebuild.add(session_id)
             self.failed_this_run.discard(session_id)
             self.failures.pop(session_id, None)
             self.deferred.discard(session_id)
@@ -801,7 +835,10 @@ class CodexComputeCoordinator:
     # ------------------------------------------------------------------
 
     async def run(self) -> None:
-        initial_candidates = await _load_stale_candidates(self.ctx.compute_version)
+        self._absorb_rebuild_requests()
+        initial_candidates = await _load_stale_candidates(
+            self.ctx.compute_version, forced_ids=frozenset(self._forced_rebuild),
+        )
         await self._initialize_progress(initial_candidates)
         if initial_candidates:
             sources, self._legacy_ids = await asyncio.to_thread(self._classify_sources, initial_candidates)
@@ -831,7 +868,9 @@ class CodexComputeCoordinator:
         try:
             while not self.ctx.stop_event.is_set():
                 self._absorb_rebuild_requests()
-                candidates = await _load_stale_candidates(self.ctx.compute_version)
+                candidates = await _load_stale_candidates(
+                    self.ctx.compute_version, forced_ids=frozenset(self._forced_rebuild),
+                )
                 stale_ids = {candidate.session_id for candidate in candidates}
                 for session_id in self.initial_ids - stale_ids:
                     await self._classify_initial(session_id)
@@ -912,8 +951,12 @@ class CodexComputeCoordinator:
                 self._status_pump.cancel()
                 with suppress(Exception, asyncio.CancelledError):
                     await self._status_pump
-            for session_id in list(self.migration_leases):
-                self._release_lease(session_id, replay=False)
+            for session_id in set(self.migration_leases) | set(self.migration_paths):
+                self._release_lease(session_id, replay=False, outcome='cancelled')
+            for task in self._replays:
+                task.cancel()
+            if self._replays:
+                await asyncio.gather(*self._replays, return_exceptions=True)
             await stop_background_task(self.ctx)
             if not self.initial_done.is_set():
                 self.initial_done.set()
@@ -931,7 +974,8 @@ async def start_codex_background_compute_task(
     ctx: ComputeContext,
     initial_done: asyncio.Event,
     on_session_released: SessionReleasedCallback | None = None,
+    on_migration_released: MigrationReleasedCallback | None = None,
 ) -> None:
     """Run the migration-aware Codex coordinator for the provider's lifetime."""
 
-    await CodexComputeCoordinator(ctx, initial_done, on_session_released).run()
+    await CodexComputeCoordinator(ctx, initial_done, on_session_released, on_migration_released).run()

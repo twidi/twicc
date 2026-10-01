@@ -18,6 +18,7 @@ import { clearTabRouteParams } from '../utils/granularRoutes'
 import { sessionRouteLocation } from '../utils/sessionRoute'
 import { computeSidebarSessionBlocks } from '../utils/sidebarSessions'
 import { isSessionUnread } from '../utils/sessions'
+import { userTurnBackgroundShellCount } from '../utils/backgroundWork'
 import { worktreeLabel } from '../utils/worktree'
 import { resolveProjectIconUrl } from '../utils/projectIcon'
 import { toWorkspaceProjectId } from '../utils/workspaceIds'
@@ -175,10 +176,12 @@ const PROCESS_STATE_PRIORITY = { starting: 3, assistant_turn: 2, user_turn: 1 }
 /**
  * Build a per-project activity index in a single pass over all sessions.
  *
- * Returns a Map keyed by `project_id` whose values fold two things, mirroring
+ * Returns a Map keyed by `project_id` whose values fold three things, mirroring
  * the sidebar's "what needs attention first" rules:
  *   - the highest-priority active process state among the project's own
- *     sessions (starting → assistant_turn → user_turn; `dead` ignored), and
+ *     sessions (starting → assistant_turn → user_turn; `dead` ignored),
+ *   - what still runs behind them: their active crons, and the background
+ *     shells of their user_turn sessions (as AggregatedProcessIndicator), and
  *   - whether any of them reads as unread (shared `isSessionUnread` predicate:
  *     content added after last view, excluding drafts/archived/subagents/
  *     hidden, and not while the agent is working).
@@ -195,7 +198,7 @@ function buildProjectActivityMap(data) {
         if (s.parent_session_id || s.draft || s.archived) continue
         let entry = map.get(s.project_id)
         if (!entry) {
-            entry = { state: null, priority: -1, hasUnread: false }
+            entry = { state: null, priority: -1, hasUnread: false, crons: [], shells: 0 }
             map.set(s.project_id, entry)
         }
         const ps = processStates[s.id]
@@ -205,6 +208,8 @@ function buildProjectActivityMap(data) {
                 entry.state = ps.state
                 entry.priority = priority
             }
+            if (ps.active_crons?.length) entry.crons.push(...ps.active_crons)
+            entry.shells += userTurnBackgroundShellCount(ps)
         }
         if (!entry.hasUnread && isSessionUnread(s, ps)) entry.hasUnread = true
     }
@@ -215,13 +220,16 @@ function buildProjectActivityMap(data) {
  * Fold the per-project entries of `buildProjectActivityMap` over a set of
  * project ids into a single `{ processState, hasUnread }` summary — used for a
  * workspace (its visible members + their worktrees, via `getVisibleProjectIds`)
- * or a project + its worktrees. The highest-priority state wins; unread is the
- * logical OR.
+ * or a project + its worktrees. The highest-priority state wins; crons and
+ * user_turn background shells add up (shaped like a real process state, for
+ * ProcessIndicator); unread is the logical OR.
  */
 function aggregateActivity(activityMap, projectIds) {
     let state = null
     let priority = -1
     let hasUnread = false
+    const crons = []
+    let shells = 0
     for (const id of projectIds || []) {
         const entry = activityMap.get(id)
         if (!entry) continue
@@ -230,8 +238,13 @@ function aggregateActivity(activityMap, projectIds) {
             priority = entry.priority
         }
         if (entry.hasUnread) hasUnread = true
+        crons.push(...entry.crons)
+        shells += entry.shells
     }
-    return { processState: state ? { state } : null, hasUnread }
+    const processState = state
+        ? { state, active_crons: crons, background_work_in_progress: shells ? { shells } : null }
+        : null
+    return { processState, hasUnread }
 }
 
 /**

@@ -5,58 +5,41 @@ The PreToolUse hook reads file contents before the tool modifies them.
 The watcher injects cached contents into tool_result items that lack originalFile.
 This gives the frontend full-file diffs even when the SDK omits originalFile.
 
-Thread safety: all access is from the same asyncio event loop (single process).
+Thread safety: the agent writes on the event loop; live compute borrows on its
+database worker. The shared cache locks capture, reservation, and cleanup operations.
 """
 
 import asyncio
-import logging
-import time
 
-logger = logging.getLogger(__name__)
+from twicc.providers.enrichment_cache import ENTRY_TTL, EnrichmentCache
 
 _cleanup_stop_event: asyncio.Event | None = None
 
 # Maximum file size to cache (bytes). Files larger than this are skipped.
 MAX_FILE_SIZE = 100_000  # 100 KB
 
-# TTL for cache entries (seconds). Entries older than this are cleaned up
-# to avoid unbounded growth from orphaned entries (e.g. process crash).
-ENTRY_TTL = 300  # 5 minutes
-
-# Cache: (session_id, tool_use_id) → (file_content, timestamp)
-_cache: dict[tuple[str, str], tuple[str, float]] = {}
+# The shared cache owns the lock, capture TTL, and exact-record retry reservations.
+_cache: EnrichmentCache[str] = EnrichmentCache()
 
 
 def cache_original_file(session_id: str, tool_use_id: str, content: str) -> None:
-    """Store file content captured before a tool execution."""
-    _cache[(session_id, tool_use_id)] = (content, time.monotonic())
+    """Store pre-execution contents without replacing a claimed capture."""
+    _cache.put((session_id, tool_use_id), content)
 
 
 def pop_original_file(session_id: str, tool_use_id: str) -> str | None:
-    """Retrieve and remove cached file content for a tool execution.
+    """Consume an unclaimed capture for a nontransactional caller."""
+    return _cache.pop((session_id, tool_use_id))
 
-    Returns the file content if found, None otherwise.
-    """
-    entry = _cache.pop((session_id, tool_use_id), None)
-    if entry is None:
-        return None
-    content, ts = entry
-    # Check TTL
-    if time.monotonic() - ts > ENTRY_TTL:
-        return None
-    return content
+
+def clear_session(session_id: str) -> None:
+    """Invalidate current captures and retries, including outstanding borrows."""
+    _cache.clear_session(session_id)
 
 
 def cleanup_expired() -> None:
-    """Remove all expired entries."""
-    if not _cache:
-        return
-    now = time.monotonic()
-    expired = [key for key, (_, ts) in _cache.items() if now - ts > ENTRY_TTL]
-    for key in expired:
-        del _cache[key]
-    if expired:
-        logger.debug("original_file_cache: cleaned up %d expired entries", len(expired))
+    """Remove expired captures and unused reservations; keep active borrows pinned."""
+    _cache.cleanup_expired()
 
 
 async def start_cleanup_task() -> None:

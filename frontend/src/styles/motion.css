@@ -85,6 +85,13 @@
     50% { opacity: 0.45; }
 }
 
+/* The same breath, deeper: for an icon that is already quiet (the terminal of a background
+   shell the agent left running). */
+@keyframes motion-status-pulse-deep {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.2; }
+}
+
 /* Button press: sinks in 60ms, springs back on release. The property list repeats Web
    Awesome's own list on .button (a ::part() rule replaces it) and adds scale, and filter
    for the lit brand buttons of glow.css.

@@ -150,6 +150,39 @@ def _is_misrouted_task_result(stripped_xml: str) -> bool:
     return _parse_task_notification(xml_str).is_task_result
 
 
+class TaskNotificationText(NamedTuple):
+    """The routing fields of a raw ``<task-notification>`` text, status recovered."""
+    task_id: str | None
+    tool_use_id: str | None
+    status: str | None
+    is_task_result: bool
+
+
+_RE_STATUS = re.compile(r"<status>([^<]+)</status>")
+
+
+def read_task_notification_text(text: str) -> TaskNotificationText | None:
+    """Parse a raw notification text (queue content, user content, attachment prompt).
+
+    Returns ``None`` when ``text`` (after ``lstrip``) does not start with the
+    ``<task-notification>`` tag or has no closing tag. The manual XML
+    fallback of :func:`_parse_task_notification` drops ``<status>``; it is
+    recovered here by regex, so malformed payload XML cannot turn a
+    ``running`` event terminal.
+    """
+    content = text.lstrip()
+    if not content.startswith(_TASK_NOTIFICATION_TAG):
+        return None
+    end = content.rfind(_TASK_NOTIFICATION_CLOSE_TAG)
+    if end < 0:
+        return None
+    xml = content[:end + len(_TASK_NOTIFICATION_CLOSE_TAG)]
+    note = _parse_task_notification(xml)
+    status_match = _RE_STATUS.search(xml)
+    status = note.status or (status_match.group(1).strip() if status_match else None)
+    return TaskNotificationText(note.task_id, note.tool_use_id, status, note.is_task_result)
+
+
 class QueueCompletion(NamedTuple):
     """Terminal queue evidence, independent of compute and database modules."""
     task_id: str
@@ -162,18 +195,12 @@ def parse_queue_completion(parsed_json: dict) -> QueueCompletion | None:
     if parsed_json.get("type") != "queue-operation" or parsed_json.get("operation") != "enqueue":
         return None
     content = parsed_json.get("content")
-    if not isinstance(content, str) or not content.lstrip().startswith(_TASK_NOTIFICATION_TAG):
+    if not isinstance(content, str):
         return None
-    content = content.lstrip()
-    end = content.rfind(_TASK_NOTIFICATION_CLOSE_TAG)
-    if end < 0:
+    note = read_task_notification_text(content)
+    if note is None:
         return None
-    xml = content[:end + len(_TASK_NOTIFICATION_CLOSE_TAG)]
-    note = _parse_task_notification(xml)
-    # The legacy fallback deliberately omits status for rewrite compatibility.
-    # Recover it here so malformed payload XML cannot turn a running event terminal.
-    status_match = re.search(r"<status>([^<]+)</status>", xml)
-    status = note.status or (status_match.group(1).strip() if status_match else None)
+    status = note.status
     if status is not None and status not in {"completed", "failed", "stopped", "cancelled", "canceled"}:
         return None
     if not note.task_id or not note.tool_use_id or not (status or note.is_task_result):

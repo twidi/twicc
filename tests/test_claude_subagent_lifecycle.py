@@ -12,9 +12,9 @@ consequences covered here:
   session, so its notification carries no ``<tool-use-id>`` — the launching
   tool_use is recovered from the ``agent-<task_id>.meta.json`` sidecar
   (orphan rewrite), else the entry classifies as SYSTEM via ``origin.kind``;
-- the parent-side counting rule (``check_agent_naturally_stopped``) must not
-  re-freeze as "stopped" a subagent whose own file already recorded newer
-  activity (monotonic guard).
+- the live stop step (``run_stop_step``) must not re-freeze as "stopped" a
+  subagent whose own file already recorded newer activity (monotonic guard);
+  it still reports the stop, unstamped.
 """
 
 from __future__ import annotations
@@ -24,11 +24,13 @@ from datetime import UTC, datetime
 import orjson
 import pytest
 
+from twicc.core.agent_runs import RunStateExclude, run_stop_step
 from twicc.core.enums import ItemKind, Provider
-from twicc.core.models import AgentLink, Project, Session
+from twicc.core.models import AgentLink, Project, Session, ToolResultLink
 from twicc.providers.claude_code.compute import get_compute
-from twicc.providers.compute_base import ToolResultUpdate
+from twicc.providers.compute_base import AgentStoppedUpdate
 
+_T_SPAWN = datetime(2026, 1, 1, 11, 55, 0, tzinfo=UTC)
 _T0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 _T1 = datetime(2026, 1, 1, 12, 5, 0, tzinfo=UTC)
 _T2 = datetime(2026, 1, 1, 12, 10, 0, tzinfo=UTC)
@@ -265,16 +267,8 @@ class TestTaskNotificationOriginClassification:
         assert self.compute.compute_item_kind(parsed) == ItemKind.CONTENT_ITEMS
 
 
-class TestNaturallyStoppedMonotonicGuard:
-    """A stale parent-side stop must not overwrite newer subagent activity."""
-
-    def _update(self, session_id: str, completed_at: datetime) -> ToolResultUpdate:
-        return ToolResultUpdate(
-            session_id=session_id,
-            tool_use_id='toolu_guard_1',
-            result_count=2,
-            completed_at=completed_at,
-        )
+class TestStopStepMonotonicGuard:
+    """A stale parent-side stop must not overwrite newer subagent activity (``run_stop_step``)."""
 
     @pytest.fixture
     def agent_session(self, parent_session):
@@ -284,6 +278,7 @@ class TestNaturallyStoppedMonotonicGuard:
             tool_use_id='toolu_guard_1',
             agent_id='agent-guard',
             is_background=True,
+            started_at=_T_SPAWN,
         )
         return Session.objects.create(
             id='agent-guard',
@@ -295,25 +290,36 @@ class TestNaturallyStoppedMonotonicGuard:
             ),
         )
 
+    def _stop_step(self, parent_session, stop_at):
+        """The background spawn's ack, then its closing result at ``stop_at`` written by this batch."""
+        ToolResultLink.objects.create(
+            session=parent_session, tool_use_line_num=10, tool_result_line_num=11,
+            tool_use_id='toolu_guard_1', tool_name='Agent', tool_result_at=_T_SPAWN,
+        )
+        closing = ToolResultLink.objects.create(
+            session=parent_session, tool_use_line_num=10, tool_result_line_num=12,
+            tool_use_id='toolu_guard_1', tool_name='Agent', tool_result_at=stop_at,
+        )
+        return run_stop_step(
+            parent_session.id, ['agent-guard'], RunStateExclude(tool_result_link_ids=frozenset({closing.id})),
+        ).stopped
+
     def test_stop_newer_than_agent_activity_stamps(self, parent_session, agent_session):
         Session.objects.filter(id=agent_session.id).update(last_updated_at=_T0)
-        stopped = get_compute().check_agent_naturally_stopped(
-            parent_session.id, self._update(parent_session.id, _T1)
-        )
-        assert stopped is not None
+        stopped = self._stop_step(parent_session, _T1)
+        assert stopped == [AgentStoppedUpdate('agent-guard', _T1, stamped=True)]
         agent_session.refresh_from_db()
         assert agent_session.last_stopped_at == _T1
 
-    def test_stale_stop_after_a_wake_is_skipped(self, parent_session, agent_session):
+    def test_stale_stop_after_a_wake_is_not_stamped(self, parent_session, agent_session):
         # The subagent's own sync recorded newer activity (it re-woke and
-        # works again): the older notification must not re-freeze it.
+        # works again): the older notification must not re-freeze it. The
+        # update is still returned, unstamped, so the stop hook fires.
         Session.objects.filter(id=agent_session.id).update(
             last_updated_at=_T2, last_stopped_at=None,
         )
-        stopped = get_compute().check_agent_naturally_stopped(
-            parent_session.id, self._update(parent_session.id, _T1)
-        )
-        assert stopped is None
+        stopped = self._stop_step(parent_session, _T1)
+        assert stopped == [AgentStoppedUpdate('agent-guard', _T1, stamped=False)]
         agent_session.refresh_from_db()
         assert agent_session.last_stopped_at is None
 
@@ -321,7 +327,5 @@ class TestNaturallyStoppedMonotonicGuard:
         # Equality must stamp: the historical flow can write both with the
         # same second-resolution timestamp.
         Session.objects.filter(id=agent_session.id).update(last_updated_at=_T1)
-        stopped = get_compute().check_agent_naturally_stopped(
-            parent_session.id, self._update(parent_session.id, _T1)
-        )
-        assert stopped is not None
+        stopped = self._stop_step(parent_session, _T1)
+        assert stopped == [AgentStoppedUpdate('agent-guard', _T1, stamped=True)]

@@ -41,6 +41,7 @@ CROSS_REFERENCES = {"--from", "--wait-reply"}
 #: bumped to match whatever the code does.
 WAIT_OPTIONS = {
     "--since", "--wait-timeout", "--wait-first", "--wait-all", "--no-reply-text",
+    "--wait-background",
 }
 
 #: Legitimate in *prose*, never in something copyable: the documents name the
@@ -140,6 +141,7 @@ def test_the_full_signature_shows_exactly_the_wait_options():
         shown = set(FLAG.findall(span))
         assert shown == {
             "--since", "--wait-first", "--wait-all", "--wait-timeout", "--no-reply-text",
+            "--wait-background",
         }, (label, number, shown)
 
 

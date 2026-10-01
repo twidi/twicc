@@ -233,13 +233,16 @@ class CodexOrchestrator(BaseOrchestrator):
                 )
                 await done_future
 
-        # Watcher (may not have started yet — depends on initial sync + search index ready)
+        # Preparation already owns a queue even before search readiness starts
+        # the producer. Close it in both cases; unstarted work cannot run yet.
+        watcher = get_watcher()
+        watcher.stop_watcher()
         if self._watcher_task is not None:
             logger.info("Stopping Codex watcher...")
-            get_watcher().stop_watcher()
             await _cancel_task(self._watcher_task, "Codex watcher")
         else:
-            logger.info("Codex watcher was not started, skipping")
+            await watcher._drain_changes()
+            logger.info("Codex watcher stopped before startup")
 
         # Background compute (may not have started yet — depends on initial sync)
         if self._compute_task is not None:
@@ -511,6 +514,10 @@ class CodexOrchestrator(BaseOrchestrator):
         except Exception as e:
             logger.warning("Codex title sync at boot failed: %s", e)
 
+        # This singleton can still own the previous lifecycle's closed queue.
+        # Open the new lifecycle before compute emits any migration outcomes.
+        watcher = get_watcher()
+        watcher.prepare_start()
         self._compute_ctx = ComputeContext(
             provider=self.provider,
             compute_version=settings.CODEX_COMPUTE_VERSION,
@@ -519,11 +526,13 @@ class CodexOrchestrator(BaseOrchestrator):
         async def _replay_after_migration(session_id: str, path: Path) -> None:
             # The watcher skipped this session's events while the coordinator
             # rebuilt it; replay the file so appended lines are ingested.
-            await get_watcher().process_path(path)
+            await self.search_index_ready.wait()
+            await watcher.process_path(path)
 
         self._compute_task = self._create_task(
             start_codex_background_compute_task(
                 self._compute_ctx, self.compute_done, on_session_released=_replay_after_migration,
+                on_migration_released=watcher.notify_migration_released,
             )
         )
         self._compute_task.add_done_callback(lambda _t: self.compute_done.set())
@@ -531,6 +540,6 @@ class CodexOrchestrator(BaseOrchestrator):
 
         assert self.search_index_ready is not None, "search_index_ready must be set by start()"
         await self.search_index_ready.wait()
-        self._watcher_task = self._create_task(get_watcher().start_watcher())
+        self._watcher_task = self._create_task(watcher.start_watcher())
         self._watcher_task.add_done_callback(_on_watcher_done)
         logger.info("Codex watcher started (after initial sync + search index ready)")

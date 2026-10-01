@@ -40,7 +40,7 @@ Commands that accept `self` resolve the calling session on their own. On `$TWICC
 
 ## Output format
 
-With `--slim` or `--full` — usable now — and from 2026-10-01 without a flag, it returns the `session self` payload: the session row (reduced, or in full with `--full`) with its `process` block inside, exactly what `$TWICC session self` returns with the same flag. **Until 2026-10-01 a call with neither flag keeps its current object**: `session_id`, `title`, `project_id`, `project_directory`, `current_working_directory` (resolved from tool_use activity — may differ from `project_directory` when working in a worktree or another repo), `artifacts_dir` and `scratch_dir` (the session's own working directories, already joined with the session id), `orchestration_scratch_dir` (the shared scratch folder, present only when the session is part of an orchestration tree), the resolved `agent_settings`, the `session` sub-object (the serializer payload of the session), and the matching `process` row — nine fields (`id`, `provider`, `session_id`, `session_title`, `project_id`, `state`, `started_at`, `last_state_change_at`, `pid`), not that block's compact five. That flagless call prints a one-line notice on stderr in a terminal (never on MCP).
+With `--slim` or `--full` — usable now — and from 2026-10-01 without a flag, it returns the `session self` payload: the session row (reduced, or in full with `--full`) with its `process` block inside, exactly what `$TWICC session self` returns with the same flag. **Until 2026-10-01 a call with neither flag keeps its current object**: `session_id`, `title`, `project_id`, `project_directory`, `current_working_directory` (resolved from tool_use activity — may differ from `project_directory` when working in a worktree or another repo), `artifacts_dir` and `scratch_dir` (the session's own working directories, already joined with the session id), `orchestration_scratch_dir` (the shared scratch folder, present only when the session is part of an orchestration tree), the resolved `agent_settings`, the `session` sub-object (the serializer payload of the session), and the matching `process` row — nine fields (`id`, `provider`, `session_id`, `session_title`, `project_id`, `state`, `started_at`, `last_state_change_at`, `pid`), not that block's compact six. That flagless call prints a one-line notice on stderr in a terminal (never on MCP).
 
 Where the old keys are read from in the new shape:
 
@@ -50,7 +50,15 @@ Where the old keys are read from in the new shape:
 - `current_working_directory` → `git_directory`
 - `agent_settings.<field>` → `<field>` (effective: the stored value, else the current default)
 - `session.<field>` → `<field>` (with `--full` for the fields the reduced projection drops)
-- `process` (nine fields) → `process`: `{state}`, or five fields (`id`, `state`, `started_at`, `last_state_change_at`, `pid`) with `--full`; `provider`, `session_id`, `session_title`, `project_id` are the row's own `provider`, `id`, `title`, `project_id`
+- `process` (nine fields) → `process`: `{state, background_work_in_progress}`, or six fields (`id`, `state`, `background_work_in_progress`, `started_at`, `last_state_change_at`, `pid`) with `--full`; `provider`, `session_id`, `session_title`, `project_id` are the row's own `provider`, `id`, `title`, `project_id`
+
+The `process` block of the new shape:
+
+- `process.state` — `starting`, `assistant_turn`, `awaiting_user_input` (blocked on a human), `user_turn` or `dead`.
+- `process.background_work_in_progress` — what still runs behind the agent, **whatever `state` says**; `null` when nothing does (always on `dead`). Else `{"subagents": N, "shells": N, "monitors": N, "scheduled_wakeup_at": ISO-8601 or null, "goal": bool}`:
+  - `subagents` — live subagents. `shells` — shell commands still running, the session's or its subagents'; Claude Code counts only backgrounded ones, Codex every command whose process has not exited (one it is still polling mid-turn included; a subagent's once its first output reports it running). `monitors` — Claude Code `Monitor` tools. `scheduled_wakeup_at` — a pending Claude Code `ScheduleWakeup`. `goal` — a Codex `/goal` continuation.
+  - `user_turn` with `shells > 0`: the turn is over, a shell still runs. TwiCC never auto-stops an idle session in that case (stopping it would kill the shell).
+  - `assistant_turn` while the agent itself is silent: TwiCC keeps a turn open for live subagents, Monitors or a pending wake-up. The final answer may already be written; the agent may speak again when they finish.
 
 ### Exit codes
 

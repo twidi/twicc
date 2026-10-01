@@ -45,6 +45,9 @@ import ArtifactBookmarkButton from '../artifacts/ArtifactBookmarkButton.vue'
 import { useDataStore } from '../../stores/data'
 import { isRenderableArtifactPath } from '../../utils/artifactBookmark'
 import { useFocusRetry } from '../../composables/useFocusRetry'
+import { useUploadsStore } from '../../stores/uploads'
+import { collapseLeadingSlashes } from '../../utils/uploads/paths'
+import { takePickedFiles } from '../../utils/uploads/display'
 
 const props = defineProps({
     tree: {
@@ -189,6 +192,14 @@ const props = defineProps({
     searchPlaceholder: {
         type: String,
         default: 'Filter files...',
+    },
+    /**
+     * Where an upload started from this tree belongs (`{ panel, key }`, spec
+     * §6.7). Null: the "Upload files…" menu item does nothing.
+     */
+    uploadOrigin: {
+        type: Object,
+        default: null,
     },
 })
 
@@ -1213,6 +1224,37 @@ function handleCreateFolder() {
     })
 }
 
+// ─── Upload files (spec §6.6) ───────────────────────────────────────────────
+
+const uploadInputRef = ref(null)
+let uploadTargetDir = null
+
+/**
+ * "Upload files…": remember the target directory, then open the file picker.
+ * The `click()` stays synchronous (no `await` before it): iOS opens a picker
+ * only inside the user gesture, and the menu emits inside the item click.
+ */
+function handleUploadFiles() {
+    const input = uploadInputRef.value
+    if (!input || !props.uploadOrigin) return
+    uploadTargetDir = collapseLeadingSlashes(contextMenu.value.path)
+    input.click()
+}
+
+function onUploadInputChange(event) {
+    const files = takePickedFiles(event.target)
+    const targetDir = uploadTargetDir
+    uploadTargetDir = null
+    if (!files.length || !targetDir || !props.uploadOrigin) return
+    useUploadsStore().startUploads({
+        files,
+        targetDir,
+        apiPrefix: apiPrefix.value,
+        root: props.rootRestriction,
+        origin: { panel: props.uploadOrigin.panel, key: props.uploadOrigin.key },
+    })
+}
+
 function onCreated({ newPath }) {
     emit('refresh', { scrollTo: newPath })
 }
@@ -1432,6 +1474,7 @@ defineExpose({
                 :full-path="computeFullPath(contextMenu.path)"
                 :writable="contextMenu.writable"
                 :writable-loading="contextMenu.writableLoading"
+                :can-upload="!!uploadOrigin"
                 :mode="contextMenuMode"
                 :staged-status="contextMenu.stagedStatus"
                 :unstaged-status="contextMenu.unstagedStatus"
@@ -1439,6 +1482,7 @@ defineExpose({
                 @close="closeContextMenu"
                 @create-file="handleCreateFile"
                 @create-folder="handleCreateFolder"
+                @upload-files="handleUploadFiles"
                 @rename="handleRename"
                 @move="handleMove"
                 @delete="handleDelete"
@@ -1451,6 +1495,15 @@ defineExpose({
                 @download="handleDownload"
                 @download-diff="handleDownloadDiff"
             />
+            <input
+                ref="uploadInputRef"
+                type="file"
+                multiple
+                class="upload-input"
+                tabindex="-1"
+                aria-hidden="true"
+                @change="onUploadInputChange"
+            >
             <FileRenameDialog
                 v-if="apiPrefix"
                 ref="renameDialogRef"
@@ -1483,6 +1536,21 @@ defineExpose({
 </template>
 
 <style scoped>
+/* Hidden file input of "Upload files…". Visually hidden rather than
+   `display: none`: some mobile browsers refuse a programmatic click() on a
+   non-rendered file input. */
+.upload-input {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
+    clip-path: inset(50%);
+}
+
 .file-tree-panel {
     height: 100%;
     overflow: hidden;

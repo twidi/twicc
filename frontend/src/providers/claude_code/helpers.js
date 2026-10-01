@@ -4,6 +4,7 @@ import { PROVIDER, SYNTHETIC_ITEM } from '../../constants'
 import { CONTEXT_MAX, EFFORT, PERMISSION_MODE, UNTRUSTED_PERMISSION_MODES } from './constants'
 import { useClaudeCodeStore } from './store'
 import { getTwiccLaunchPrefix } from '../../utils/twiccLaunch'
+import { startupSettingsDeferredText } from '../../utils/backgroundWork'
 import {
     SUPPORTED_DOCUMENT_TYPES,
     SUPPORTED_IMAGE_TYPES,
@@ -488,7 +489,7 @@ export class ClaudeCodeHelpers extends BaseProviderHelpers {
      *    (post-upgrade) model doesn't support auto (only Opus 4.6+ /
      *    Sonnet 4.6+).
      * 6. Force ``thinkingEnabled`` on when the (post-upgrade) model can't
-     *    disable thinking (fable family, Opus 5.5: adaptive thinking is always on).
+     *    disable thinking (fable family, Opus 5.5, Sonnet 5.5: adaptive thinking is always on).
      *
      * Fields not in the input are left absent in the output.
      * ``claudeInChrome`` is passed through.
@@ -685,6 +686,27 @@ export class ClaudeCodeHelpers extends BaseProviderHelpers {
         const def = state?.defaults ?? {}
         const effectiveContextMax = sel.context_max ?? def.context_max
         return effectiveContextMax === CONTEXT_MAX.EXTENDED ? '[1m]' : ''
+    }
+
+    /**
+     * A startup-settings change stops and restarts the process — at once in
+     * USER_TURN, at the end of the turn in ASSISTANT_TURN — but not while
+     * background shells run: the restart would kill them, so
+     * the backend defers it until the last shell ends or the process is
+     * stopped. ``context.backgroundShells`` carries the count; without shells
+     * the base wording stays.
+     */
+    getStartupWarningText(context) {
+        const state = context?.processStateName
+        if ((state === 'user_turn' || state === 'assistant_turn') && context.backgroundShells > 0) {
+            return startupSettingsDeferredText({
+                label: this.constructor.label,
+                shellCount: context.backgroundShells,
+                hasMessageText: Boolean(context.hasMessageText),
+                working: state === 'assistant_turn',
+            })
+        }
+        return super.getStartupWarningText(context)
     }
 
     isSummaryContextForced(state) {

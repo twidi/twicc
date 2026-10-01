@@ -4,9 +4,7 @@ import AppTooltip from '../ui/AppTooltip.vue'
 import MarkdownContent from '../ui/MarkdownContent.vue'
 import { vPopoverFocusFix } from '../../directives/vPopoverFocusFix'
 import { toast } from '../../composables/useToast'
-import pencilIcon from './GitLog/assets/pencil.svg'
-import plusIcon from './GitLog/assets/plus.svg'
-import minusIcon from './GitLog/assets/minus.svg'
+import GitChangeStats from './GitChangeStats.vue'
 
 const props = defineProps({
     /** The currently selected commit object (or null/undefined). */
@@ -65,12 +63,6 @@ const commitShortHash = computed(() => {
         return null
     }
     return props.selectedCommit.hash?.substring(0, 7)
-})
-
-const hasStats = computed(() => {
-    if (!props.stats) return false
-    const s = props.stats
-    return s.modified > 0 || s.added > 0 || s.deleted > 0 || s.conflicted > 0
 })
 
 // ---------------------------------------------------------------------------
@@ -168,39 +160,7 @@ function copyHash() {
                 <wa-spinner style="--spinner-size: 0.75rem;"></wa-spinner>
             </div>
 
-            <div v-else-if="hasStats" class="status-badges">
-                <span
-                    v-if="stats.modified > 0"
-                    class="status-badge modified"
-                >
-                    <span class="status-count">{{ stats.modified }}</span>
-                    <img :src="pencilIcon" class="status-icon" alt="modified">
-                </span>
-
-                <span
-                    v-if="stats.added > 0"
-                    class="status-badge added"
-                >
-                    <span class="status-count">{{ stats.added }}</span>
-                    <img :src="plusIcon" class="status-icon" alt="added">
-                </span>
-
-                <span
-                    v-if="stats.deleted > 0"
-                    class="status-badge deleted"
-                >
-                    <span class="status-count">{{ stats.deleted }}</span>
-                    <img :src="minusIcon" class="status-icon" alt="deleted">
-                </span>
-
-                <span
-                    v-if="stats.conflicted > 0"
-                    class="status-badge conflicted"
-                >
-                    <span class="status-count">{{ stats.conflicted }}</span>
-                    <wa-icon name="triangle-exclamation" class="status-icon" label="conflicts"></wa-icon>
-                </span>
-            </div>
+            <GitChangeStats v-else :stats="stats" />
 
             <wa-tag v-if="selectedBranch" :id="branchTagId" variant="neutral" class="branch-tag clickable-tag" @click="copyBranch">
                 {{ selectedBranch }}
@@ -359,50 +319,12 @@ function copyHash() {
     min-width: 0;
 }
 
-/* ----- Status badges (M / A / D counts) ----- */
+/* ----- Status badges loading placeholder (the counts render in GitChangeStats) ----- */
 
 .status-badges {
     display: flex;
     align-items: center;
-    gap: var(--wa-space-xs);
     flex-shrink: 0;
-}
-
-.status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.125rem;
-}
-
-.status-count {
-    font-size: var(--wa-font-size-xs);
-    font-variant-numeric: tabular-nums;
-}
-
-.status-icon {
-    height: 0.7rem;
-    width: 0.7rem;
-}
-
-.status-badge.modified .status-count {
-    color: #e5a935;
-}
-
-.status-badge.added .status-count {
-    color: #5dc044;
-}
-
-.status-badge.deleted .status-count {
-    color: #FF757C;
-}
-
-.status-badge.conflicted .status-count {
-    color: #ff5c5c;
-}
-
-.status-badge.conflicted .status-icon {
-    color: #ff5c5c;
-    font-size: 0.7rem;
 }
 
 /* ----- Chevron ----- */

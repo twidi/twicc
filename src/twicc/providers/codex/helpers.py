@@ -57,8 +57,10 @@ logger = logging.getLogger(__name__)
 #   the LLM-facing output string of a standard / custom function call.
 # - ``event_msg.item_completed`` carrying a canonical ``FileChange`` or
 #   ``McpToolCall`` item (see :mod:`.canonical`). ``CommandExecution``
-#   items are intentionally not results: we reconstruct shell transcripts
-#   from the chain of function_call_output rows instead.
+#   items are intentionally not *returned* as results: we reconstruct shell
+#   transcripts from the chain of function_call_output rows instead. An
+#   exited process's item is linked to its call (it closes the chain, see
+#   ``codex.compute._command_execution_end``) but carries no body to show.
 _TYPE_RESPONSE_ITEM = "response_item"
 _TYPE_EVENT_MSG = "event_msg"
 _RESPONSE_TOOL_RESULT_PAYLOAD_TYPES = frozenset({"function_call_output", "custom_tool_call_output"})
@@ -175,7 +177,6 @@ class CodexHelpers(BaseProviderHelpers):
         task_name = arguments.get("task_name")
         return humanize_identifier(task_name) or None if isinstance(task_name, str) else None
 
-    subagent_idle_trusted: ClassVar[bool] = True
     provider: ClassVar[Provider] = Provider.CODEX
     LABEL: ClassVar[str] = "Codex"
     SYSTEM_PROMPT_STATIC_ADDENDUM: ClassVar[str] = _SYSTEM_PROMPT_STATIC_ADDENDUM
@@ -279,10 +280,10 @@ class CodexHelpers(BaseProviderHelpers):
             cache_write_5m_price=Decimal(0),
             cache_write_1h_price=Decimal(0),
         ),
-        "gpt-sol": FamilyPrices(  # gpt-6-sol pricing
+        "gpt-sol": FamilyPrices(  # gpt-6.1-sol pricing (gpt-6-sol reads cache at 0.20)
             input_price=Decimal("2.00"),
             output_price=Decimal("10.00"),
-            cache_read_price=Decimal("0.20"),
+            cache_read_price=Decimal("0.10"),
             cache_write_5m_price=Decimal("2.50"),
             cache_write_1h_price=Decimal("2.50"),
         ),
@@ -924,8 +925,8 @@ class CodexHelpers(BaseProviderHelpers):
             await settle_async_job(job, _apply_clear_snapshot_anchors_job, "Codex snapshot anchor cleanup")
             return True
         if isinstance(job, ReplaceCodexHistoryJob):
-            # Sliced: several short transactions on the shared thread-sensitive
-            # executor rather than one long one (see REPLACE_HISTORY_CHUNK_SIZE).
+            # Sliced: several short transactions on the compute worker rather
+            # than one long one (see REPLACE_HISTORY_CHUNK_SIZE).
             try:
                 count = await apply_replace_codex_history_job_in_slices(job)
             except Exception as exc:

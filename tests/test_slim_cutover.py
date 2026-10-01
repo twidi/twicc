@@ -30,7 +30,7 @@ PAST = datetime(2000, 1, 1)     # noqa: DTZ001 — naive, like the constant
 FUTURE = datetime(2200, 1, 1)   # noqa: DTZ001 — naive, like the constant
 
 TWICC_PID = 4343
-FULL_PROCESS_KEYS = {"id", "state", "started_at", "last_state_change_at", "pid"}
+FULL_PROCESS_KEYS = {"id", "state", "background_work_in_progress", "started_at", "last_state_change_at", "pid"}
 SLIM_KEYS = set(SESSION_LISTING_FIELDS) | {"process"}
 TOPOLOGY_SLIM_KEYS = set(TOPOLOGY_SESSION_FIELDS) | {"directory"}
 
@@ -134,7 +134,7 @@ def assert_slim(name, rows):
         if name == "session agents":
             assert row["process"] is None
         else:
-            assert set(row["process"]) == {"state"}
+            assert set(row["process"]) == {"state", "background_work_in_progress"}
 
 
 # --- the three listings -----------------------------------------------------
@@ -220,14 +220,14 @@ def test_topology_before_keeps_its_shape_and_announces(before, tree, capsysbinar
 def test_topology_after_reduces_the_process_block(after, tree, capsysbinary):
     nodes, err = run_topology(capsysbinary)
     assert set(nodes["slim-root"]["session"]) == TOPOLOGY_SLIM_KEYS
-    assert nodes["slim-root"]["process"] == {"state": "assistant_turn"}
-    assert nodes["slim-worker"]["process"] == {"state": "dead"}
+    assert nodes["slim-root"]["process"] == {"state": "assistant_turn", "background_work_in_progress": None}
+    assert nodes["slim-worker"]["process"] == {"state": "dead", "background_work_in_progress": None}
     assert err == ""
 
 
 def test_topology_slim_before_is_the_new_shape_already(before, tree, capsysbinary):
     nodes, err = run_topology(capsysbinary, slim=True)
-    assert nodes["slim-root"]["process"] == {"state": "assistant_turn"}
+    assert nodes["slim-root"]["process"] == {"state": "assistant_turn", "background_work_in_progress": None}
     assert TOPOLOGY_NOTICE not in err
 
 
@@ -425,4 +425,4 @@ def test_the_reduced_projection_keeps_everything_but_the_dropped_fields(tree, ca
     full_rows, _ = listing("sessions", tree, capsysbinary, full=True)
     for slim_row, full_row in zip(slim_rows, full_rows, strict=True):
         assert set(full_row) - set(slim_row) == DROPPED_FIELDS
-        assert set(slim_row["process"]) == {"state"}
+        assert set(slim_row["process"]) == {"state", "background_work_in_progress"}

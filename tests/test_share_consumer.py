@@ -388,3 +388,199 @@ def test_password_change_gates_new_connects_on_new_fingerprint(session):
         await fresh.disconnect()
 
     _run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# Subagent runs: share_agent_run_state / share_agent_interaction (design §7.3)
+# ---------------------------------------------------------------------------
+
+RUN_STATE_KEYS = {
+    "type", "root_session_id", "agent_session_id", "running", "run_started_at", "run_background", "runs",
+}
+INTERACTION_KEYS = {
+    "type", "root_session_id", "owner_session_id", "agent_session_id", "tool_use_id", "tool_use_line_num",
+    "kind", "opens_run", "started_at",
+}
+
+
+def _subagent(session, agent_id):
+    return Session.objects.create(
+        id=agent_id, project=session.project, provider=session.provider, type=SessionType.SUBAGENT,
+        parent_session=session, file_path=f"{agent_id}.jsonl", compute_version=session.compute_version,
+    )
+
+
+def _run_state(root_id, agent_id="sub-a"):
+    return {
+        "type": "agent_run_state", "root_session_id": root_id, "agent_session_id": agent_id,
+        "running": True, "run_started_at": "2026-09-27T10:00:00+00:00", "run_background": True,
+        "runs": [{"owner_session_id": root_id, "tool_use_id": "tu-spawn", "started_at": "2026-09-27T10:00:00+00:00",
+                  "open": True, "closed_at": None}],
+        "project_id": "-tmp-cons",
+    }
+
+
+def _interaction(root_id, owner_id, agent_id="sub-a", line_num=2, tool_use_id="tu-send"):
+    return {
+        "type": "agent_interaction", "root_session_id": root_id, "owner_session_id": owner_id,
+        "agent_session_id": agent_id, "tool_use_id": tool_use_id, "tool_use_line_num": line_num,
+        "kind": "message", "opens_run": True, "started_at": "2026-09-27T10:00:05+00:00",
+        "project_id": "-tmp-cons",
+    }
+
+
+def _relayed(data):
+    """The flat share message an app payload becomes: its keys minus ``project_id``."""
+    kind = {"agent_run_state": "share_agent_run_state", "agent_interaction": "share_agent_interaction"}
+    return {**{key: value for key, value in data.items() if key != "project_id"}, "type": kind[data["type"]]}
+
+
+async def _send(data):
+    await get_channel_layer().group_send("updates", {"type": "broadcast", "data": data})
+
+
+def test_agent_run_state_relayed_flat_for_its_root_only(session):
+    share = _share(session, options={"mode": "live", "include_subagents": True})
+    sid = session.id
+
+    async def scenario():
+        comm = _communicator(share.token)
+        assert (await comm.connect())[0]
+        await _send(_run_state("other-root"))
+        assert await comm.receive_nothing(timeout=0.1)
+        await _send(_run_state(sid))
+        msg = await comm.receive_json_from(timeout=2)
+        assert set(msg) == RUN_STATE_KEYS
+        assert msg == _relayed(_run_state(sid))
+        await comm.disconnect()
+
+    _run(scenario())
+
+
+def test_agent_run_state_not_relayed_when_subagents_disabled(session):
+    share = _share(session, options={"mode": "live", "include_subagents": False})
+    sid = session.id
+
+    async def scenario():
+        comm = _communicator(share.token)
+        assert (await comm.connect())[0]
+        await _send(_run_state(sid))
+        await _send(_interaction(sid, sid))
+        assert await comm.receive_nothing(timeout=0.2)
+        await comm.disconnect()
+
+    _run(scenario())
+
+
+def test_agent_interaction_relay_filters(session):
+    from twicc.core.models import SessionItem
+
+    share = _share(session, options={"mode": "live", "max_display_mode": "normal", "include_subagents": True})
+    sid = session.id
+    _subagent(session, "sub-a")
+    owner = _subagent(session, "sub-b")
+    SessionItem.objects.create(session=session, line_num=2, content="{}", display_level=1, kind="assistant_message")
+    SessionItem.objects.create(session=session, line_num=4, content="{}", display_level=3, kind="assistant_message")
+    SessionItem.objects.create(session=owner, line_num=6, content="{}", display_level=2, kind="assistant_message")
+    SessionItem.objects.create(session=owner, line_num=8, content="{}", display_level=3, kind="assistant_message")
+
+    async def scenario():
+        comm = _communicator(share.token)
+        assert (await comm.connect())[0]
+        for dropped in (
+            _interaction("other-root", sid),                    # another root
+            _interaction(sid, sid, agent_id="unknown-agent"),   # target not a descendant
+            _interaction(sid, "unknown-owner"),                 # owner neither the root nor a descendant
+            _interaction(sid, sid, line_num=4),                 # call over the display ceiling
+            _interaction(sid, sid, line_num=3),                 # call item not synced: not visible
+            _interaction(sid, "sub-b", line_num=8),             # subagent call over the ceiling
+        ):
+            await _send(dropped)
+        assert await comm.receive_nothing(timeout=0.2)
+        for kept in (_interaction(sid, sid), _interaction(sid, "sub-b", line_num=6, tool_use_id="tu-sub")):
+            await _send(kept)
+            msg = await comm.receive_json_from(timeout=2)
+            assert set(msg) == INTERACTION_KEYS
+            assert msg == _relayed(kept)
+        await comm.disconnect()
+
+    _run(scenario())
+
+
+def test_agent_interaction_relay_debug_ceiling_skips_the_item_check(session):
+    share = _share(session, options={"mode": "live", "max_display_mode": "debug", "include_subagents": True})
+    sid = session.id
+    _subagent(session, "sub-a")
+
+    async def scenario():
+        comm = _communicator(share.token)
+        assert (await comm.connect())[0]
+        await _send(_interaction(sid, sid, line_num=99))
+        assert await comm.receive_json_from(timeout=2) == _relayed(_interaction(sid, sid, line_num=99))
+        await comm.disconnect()
+
+    _run(scenario())
+
+
+@pytest.mark.parametrize("new_agent_is", ["target", "owner"])
+def test_late_interaction_passes_after_agent_link_created(session, new_agent_is):
+    """§9: the re-send after ``agent_link_created`` passes the descendant filter.
+
+    The viewer connects before the new agent has a ``Session`` row or a link,
+    so the agent is not a descendant; its interaction is dropped until the
+    ``agent_link_created`` relay adds it.
+    """
+    from asgiref.sync import sync_to_async
+
+    from twicc.core.models import SessionItem
+
+    share = _share(session, options={"mode": "live", "max_display_mode": "normal", "include_subagents": True})
+    sid = session.id
+    known = _subagent(session, "sub-known")
+    SessionItem.objects.create(session=known, line_num=2, content="{}", display_level=1, kind="assistant_message")
+    if new_agent_is == "target":
+        late = _interaction(sid, "sub-known", agent_id="sub-new")
+    else:
+        late = _interaction(sid, "sub-new", agent_id="sub-known", line_num=5)
+
+    def new_agent_rows():
+        new = _subagent(session, "sub-new")
+        SessionItem.objects.create(session=new, line_num=5, content="{}", display_level=1, kind="assistant_message")
+
+    async def scenario():
+        comm = _communicator(share.token)
+        assert (await comm.connect())[0]
+        await sync_to_async(new_agent_rows)()
+        await _send(late)
+        assert await comm.receive_nothing(timeout=0.2)
+        await _send({"type": "agent_link_created", "parent_session_id": sid, "root_session_id": sid,
+                     "agent_session_id": "sub-new", "tool_use_id": "tu-spawn-new", "tool_use_line_num": 9,
+                     "is_background": True, "started_at": None, "project_id": "-tmp-cons"})
+        assert (await comm.receive_json_from(timeout=2))["type"] == "share_agent_link"
+        await _send(late)
+        assert await comm.receive_json_from(timeout=2) == _relayed(late)
+        await comm.disconnect()
+
+    _run(scenario())
+
+
+def test_relay_seeded_with_links_whose_agent_has_no_session_row(session):
+    """§9 "Share relay seeding": a link synced before its agent's ``Session`` row."""
+    from twicc.core.models import AgentLink, SessionItem
+
+    share = _share(session, options={"mode": "live", "max_display_mode": "normal", "include_subagents": True})
+    sid = session.id
+    AgentLink.objects.create(session=session, agent_id="sub-rowless", tool_use_id="tu-spawn",
+                             tool_use_line_num=1, started_at=djtz.now())
+    SessionItem.objects.create(session=session, line_num=2, content="{}", display_level=1, kind="assistant_message")
+    assert not Session.objects.filter(id="sub-rowless").exists()
+    interaction = _interaction(sid, sid, agent_id="sub-rowless")
+
+    async def scenario():
+        comm = _communicator(share.token)
+        assert (await comm.connect())[0]
+        await _send(interaction)
+        assert await comm.receive_json_from(timeout=2) == _relayed(interaction)
+        await comm.disconnect()
+
+    _run(scenario())

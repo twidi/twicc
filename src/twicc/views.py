@@ -3629,6 +3629,7 @@ async def bootstrap(request):
         "message_snippets": message_snippets,
         "seen_tips": seen_tips,
         "tips_manifest": tips_manifest,
+        "tips_default_enabled": settings.TIPS_DEFAULT_ENABLED,
         "seen_help": seen_help,
         "help_manifest": help_manifest,
         "providers": providers_data,

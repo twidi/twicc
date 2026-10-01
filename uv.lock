@@ -279,7 +279,7 @@ wheels = [
 
 [[package]]
 name = "claude-agent-sdk"
-version = "0.2.159"
+version = "0.2.162"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -287,13 +287,12 @@ dependencies = [
     { name = "mcp" },
     { name = "sniffio" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/db/b2/81eb389ace55434f0119b99b62c10a7ac206def6c92ee0768eb389b0c900/claude_agent_sdk-0.2.159.tar.gz", hash = "sha256:e1905e2637b27971bb561bb6ad317aeb3d50619be5261bfa7ff2e9c2be0f0fd1", size = 354571, upload-time = "2026-09-23T20:26:37.386Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/78/a3/d31886d0723593228797c96eb54d07a19e561931a2771ed40b4a105bedc9/claude_agent_sdk-0.2.162.tar.gz", hash = "sha256:e4cf92f04f934d3b87d42be9ecbeb75c1a3d487a8dc8a299f7fed1ad9d0b476f", size = 365167, upload-time = "2026-09-29T20:06:54.593Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ec/06/87d76aced98f7b71cede2ebf4ae7808e52df9d3819c7f4c7b8c3d2a225b6/claude_agent_sdk-0.2.159-py3-none-macosx_11_0_arm64.whl", hash = "sha256:ba7f152560dca5001a0bc46ed13b7da14eb14b419faed25bb1af821bfa95d3de", size = 91937244, upload-time = "2026-09-23T20:26:41.375Z" },
-    { url = "https://files.pythonhosted.org/packages/f4/cf/c65a1f2419fa4b2085a53e91cef41569fde4910057c3709b8ab4303be1fd/claude_agent_sdk-0.2.159-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:87f553fda74e2f57e00f2bcb1705ab9311a937f97571f4f9eceea2bd411b6e32", size = 96294436, upload-time = "2026-09-23T20:26:45.117Z" },
-    { url = "https://files.pythonhosted.org/packages/f1/20/f01e211524f3d8edfe7c2ea26ac595d21afab443810cbedeca5c76f7ead0/claude_agent_sdk-0.2.159-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:b03683d12d217b0b6c189c88a3d260a045171e7fdc9f23e2d0dfb05ff3276834", size = 101405973, upload-time = "2026-09-23T20:26:48.799Z" },
-    { url = "https://files.pythonhosted.org/packages/bf/d5/de876f9b05c2a94c1d03222b6a5908b1d27f695cf862b237f04d92008d62/claude_agent_sdk-0.2.159-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:d3ba57c187b07c87702b94e2b62dd7c61ed874899defcbb35bb5cef4cb94ace1", size = 101764831, upload-time = "2026-09-23T20:26:53.25Z" },
-    { url = "https://files.pythonhosted.org/packages/5f/f2/b315c307a4199cb698a6b6f9e0e90cb8da4b0c8b3d00c68e9007c4a778d1/claude_agent_sdk-0.2.159-py3-none-win_amd64.whl", hash = "sha256:cc1b92ae56f42ade2d083ef2d2e5edb4aa8c7a6d856818a9b8f60cf6ae746f3a", size = 104353298, upload-time = "2026-09-23T20:26:57.913Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/b6/ec37e32cb0782977e80cd00338f5073f150d6ecfa568e9fa1a1dd5c9eed3/claude_agent_sdk-0.2.162-py3-none-macosx_11_0_arm64.whl", hash = "sha256:a0d5ad6185a8bcaaff05f5648036e2484cab28bd1c2ccc474fc8969555b386f7", size = 92700771, upload-time = "2026-09-29T20:06:59.661Z" },
+    { url = "https://files.pythonhosted.org/packages/92/c4/1165688243cbf90d3532f509ea65bc337c3ba7f8229e26d7297e00a6ec2b/claude_agent_sdk-0.2.162-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:faab97b03f04f9c3deb58ad85a0410404d40b6efb5547c9defc4fa986642fced", size = 97130408, upload-time = "2026-09-29T20:07:06.243Z" },
+    { url = "https://files.pythonhosted.org/packages/05/41/f0addb831c3aefbc02c811ef7415e89e889d1bc2ae976eb935c508c91c0d/claude_agent_sdk-0.2.162-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:332cfb5eb9190fc8de1ad427753417d7c345264e9d2bd2ffa312afcc2f5cf766", size = 102183342, upload-time = "2026-09-29T20:07:14.279Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/33/8a7acd75405d0cfde96c26219dbbac050aa23416ceefd5f62cf7aecfc22d/claude_agent_sdk-0.2.162-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:673598c9916f5f4d03ff49ab3128f856f0c6508135e8e258838fc3b6f7aafa49", size = 102525631, upload-time = "2026-09-29T20:07:23.411Z" },
 ]
 
 [[package]]
@@ -1553,7 +1552,7 @@ requires-dist = [
     { name = "apprise", specifier = "~=1.11" },
     { name = "blacknoise", specifier = "~=1.2.0" },
     { name = "channels", specifier = "~=4.3.2" },
-    { name = "claude-agent-sdk", specifier = "==0.2.159" },
+    { name = "claude-agent-sdk", specifier = "==0.2.162" },
     { name = "cronsim", specifier = "~=2.7" },
     { name = "daphne", specifier = "~=4.2.1" },
     { name = "django", specifier = "~=6.0.4" },

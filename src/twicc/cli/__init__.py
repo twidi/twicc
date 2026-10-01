@@ -29,6 +29,7 @@ from twicc.cli._output import (  # noqa: E402
     limit_help, listing_cutover_passed, refuse_if_removed, removal_help, removed_command,
 )
 from twicc.cli._session_group import HELP_REQUESTED, SessionGroup  # noqa: E402
+from twicc.cli._wait_reply import WAIT_BACKGROUND_HELP  # noqa: E402
 from twicc.version import get_version  # noqa: E402
 
 # Ensure Django settings are discoverable for all subcommands that call django.setup().
@@ -518,6 +519,16 @@ def _sessions_wait_reply(
             "each `line_num` is still there to fetch one."
         ),
     ),
+    wait_background: bool = typer.Option(
+        False, "--wait-background",
+        help=(
+            WAIT_BACKGROUND_HELP
+            + " Applied to each session on its own; with --wait-first, the "
+            "first session to conclude under that rule ends the batch, and a "
+            "'pending' session carries its last ignored final message like a "
+            "'timeout' one."
+        ),
+    ),
     project: str = typer.Option(None, "--project", help="Restrict to a project (id or directory path)."),
     workspace: str = typer.Option(None, "--workspace", help="Restrict to a workspace id."),
     provider: str = typer.Option(None, "--provider", help="Restrict to a backend provider."),
@@ -564,7 +575,10 @@ def _sessions_wait_reply(
 
     Each concludes the same two ways the singular does — an answer, the
     message closing a turn, or a pending request only a human can clear — and
-    an answer arriving in the same poll wins.
+    an answer arriving in the same poll wins. --wait-background applies the
+    singular's rule to each session: a final message read while background
+    work runs behind it does not count, and the first one read once that work
+    has ended is returned.
 
     Selection takes the listing's filters — --project, --workspace, --provider,
     --state, --active, --only-hidden, --spawned-by, --spawn-tree, --descendants,
@@ -612,7 +626,8 @@ def _sessions_wait_reply(
     sessions_wait_reply_main(
         list(session_ids or []),
         since=since, timeout=wait_timeout, first=wait_first,
-        want_text=not no_reply_text, active=active, only_hidden=only_hidden,
+        want_text=not no_reply_text, wait_background=wait_background,
+        active=active, only_hidden=only_hidden,
         # Same normalisation the listing applies: the help promises a
         # directory path works, and an un-normalised one matches nothing.
         project=derive_project_id(project)[0] if project is not None else None,
@@ -826,6 +841,9 @@ def _session_wait_reply(
             "`line_num` is still there to fetch it."
         ),
     ),
+    wait_background: bool = typer.Option(
+        False, "--wait-background", help=WAIT_BACKGROUND_HELP,
+    ),
 ) -> None:
     # The MCP tool uses a short description instead: twicc/mcp/descriptions.py (keep in sync).
     """Block until this session concludes, past the cursor.
@@ -840,6 +858,21 @@ def _session_wait_reply(
     It ends on an answer — the message closing a turn — or on a pending
     request, a tool approval or a question only a human can clear. Both are
     "it is no longer my turn to wait"; an answer wins a tie.
+
+    --wait-background: a final message read while background work runs
+    behind the agent (`background_work_in_progress` not null) does not count;
+    the first final message read once that work has ended is the answer, so a
+    wait started or resumed after the work ended counts the final messages
+    already written. An idle agent with that work still running keeps the wait
+    open; once a final message was ignored, an alive idle agent keeps it open
+    until the next one comes, however late (a dead agent ends it, `ended`).
+    Claude Code reopens a turn when a background shell ends; Codex answers
+    after a process ends only if the agent waited for it within its turn, so
+    a process it left running on purpose brings no new answer and the wait
+    ends in `timeout`. A `timeout` then carries the last ignored final
+    message, with the current `background_work_in_progress`: resume with
+    --from its `line_num` and the flag to wait for the next answer. A pending
+    request still ends the wait at once and carries no ignored final message.
 
     Exit 0 when it answered or blocked, 5 when neither came, 2 when TwiCC
     stopped, 1 on a local refusal (a bad --from or --since, the two cursors
@@ -873,7 +906,7 @@ def _session_wait_reply(
 
     session_wait_reply(
         ctx.obj, from_line=from_line, since=since, timeout=wait_timeout,
-        want_text=not no_reply_text,
+        want_text=not no_reply_text, wait_background=wait_background,
     )
 
 
