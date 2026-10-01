@@ -509,24 +509,29 @@ function toggleJsonView() {
     margin:
         calc(var(--card-spacing) - var(--main-shadow-size))  /* size of box-shadow of previous card */
         var(--card-spacing)
-        var(--card-spacing)
+        calc(var(--card-spacing) * 2)
         auto;
-    --user-card-bg-color: oklch(from var(--user-card-base-color) calc(l * 1.00) c h);
-    --user-card-border-color: oklch(from var(--user-card-bg-color) calc(l / 1.05) c h);
-    background-color: var(--user-card-bg-color);
-    border-color: var(--user-card-border-color);
-    box-shadow: var(--depth-card), var(--depth-edge);
+    /* A lifted bubble: a firm accent border and a shadow that floats it; it stands out of the
+       cards around it without recolouring what is inside it (the text stays dark in light mode).
+       Light: a pale centre, the edges tinted, a faint inner glow. Dark (below): a strong tint. */
+    --user-card-solid: var(--surface-solid, var(--wa-color-surface-default));
+    border-width: 1.5px;
+    border-color: color-mix(in oklab, var(--wa-color-brand-60) 72%, transparent);
+    background-color: var(--user-card-solid);
+    background-image: radial-gradient(120% 140% at 50% 45%, color-mix(in oklab, var(--wa-color-brand-60) 4%, var(--user-card-solid)) 40%, color-mix(in oklab, var(--wa-color-brand-60) 15%, var(--user-card-solid)));
+    box-shadow: 0 8px 22px -8px color-mix(in oklab, var(--wa-color-brand-60) 45%, transparent),
+        inset 0 0 18px -6px color-mix(in oklab, var(--wa-color-brand-60) 18%, transparent);
 }
-
-/* Tinted blocks (quotes, colon blocks) alternate their fill with depth (MarkdownContent.vue).
-   The user card is itself accent-tinted, so in it the alternation starts one step later:
-   the first level sits on the plain surface, the next one takes the tint. */
-.session-items .session-item[data-kind="user_message"] .markdown-body {
-    --md-tint-fill: var(--wa-color-surface-default);
-    --md-tint-fill-alt: var(--wa-color-brand-fill-quiet);
+.wa-dark .session-items .session-item[data-kind="user_message"] {
+    border-color: color-mix(in oklab, var(--wa-color-brand-60) 70%, transparent);
+    background-image: linear-gradient(180deg, color-mix(in oklab, var(--wa-color-brand-60) 38%, var(--user-card-solid)), color-mix(in oklab, var(--wa-color-brand-60) 26%, var(--user-card-solid)));
+    box-shadow: 0 8px 22px -8px color-mix(in oklab, var(--wa-color-brand-60) 80%, transparent),
+        inset 0 1px 0 oklch(1 0 0 / 0.15);
 }
-.wa-dark .session-items .session-item[data-kind="user_message"] .markdown-body {
-    --md-tint-fill-alt: var(--wa-color-brand-fill-normal);
+/* More room above a user message that follows another item; the first message of the session
+   needs none. */
+.session-items .virtual-scroller-item + .virtual-scroller-item .session-item[data-kind="user_message"] {
+    margin-top: calc(var(--card-spacing) * 2.25 - var(--main-shadow-size));
 }
 
 .session-items {

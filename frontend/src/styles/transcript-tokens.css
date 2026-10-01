@@ -4,8 +4,6 @@
    tree depends on globally must live here, not in App.vue's scoped-file <style>. */
 :root {
     --base-user-assistant-card-color: var(--wa-color-gray-95);
-    /* User messages carry a faint accent tint, so they read apart from the agent's cards. */
-    --user-card-base-color: color-mix(in oklab, var(--wa-color-brand-fill-quiet) 70%, white);
     /* Light: the agent's cards sit on the raised surface (white), set apart by their border
        and soft shadow. Dark keeps the lifted-surface formula below. */
     --assistant-card-base-color: var(--wa-color-surface-raised);
@@ -18,7 +16,6 @@
 }
 .wa-dark {
     --base-user-assistant-card-color: var(--wa-color-surface-raised);
-    --user-card-base-color: color-mix(in oklab, var(--wa-color-brand-fill-quiet) 55%, var(--wa-color-surface-raised));
     --assistant-card-base-color: oklch(from var(--base-user-assistant-card-color) calc(l + 0.03) c h);
 }
 
