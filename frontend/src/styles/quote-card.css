@@ -2,9 +2,9 @@
    and `::` lines of the renderer (MarkdownContent.vue), plus `.quote-card` boxes elsewhere
    (the Peer inbox rows and review dialog, the text-selection comment).
    A card rounded on every side: the opaque lit gradient of the callouts (the accent over the
-   solid surface), a coloured hairline, a soft shadow, and a thicker left border in the accent,
+   solid surface), a coloured hairline, a soft shadow, and a left border in the accent,
    which follows the card's rounded corners (the rail is the border itself, with a faint glow);
-   the container's label is a glow chip like the tags.
+   the container's label is a plain accent-coloured title.
    Nested quotes alternate a flat lighter card and a stronger one, so they read without relying
    on the surface colour (transparent inside cards). CSS cannot count depth, hence the
    enumeration; a container counts as a level of its own.
@@ -25,7 +25,7 @@
     position: relative;
     padding: 0.8em 1.1em;
     border: 1px solid color-mix(in oklab, var(--quote-c) 24%, transparent);
-    border-inline-start: 3px solid var(--quote-c);
+    border-inline-start: 1px solid var(--quote-c);
     border-radius: 0.75rem;
     background-color: transparent;
     background-image: linear-gradient(100deg, color-mix(in oklab, var(--quote-c) 13%, var(--quote-solid)), color-mix(in oklab, var(--quote-c) 3%, var(--quote-solid)));
@@ -47,8 +47,7 @@
 }
 
 /* Nested quotes: a flat lighter card, its rail a shade deeper; every other level is stronger. */
-.markdown-body blockquote blockquote,
-.markdown-body .md-container blockquote:not(.md-container blockquote blockquote) {
+.markdown-body blockquote blockquote {
     margin: 0.7em 0 0.2em;
 }
 .markdown-body blockquote blockquote {
@@ -83,7 +82,8 @@
 }
 
 
-/* The container: its quote is a card of its own, the label a glow chip. */
+/* The container: its quote is a card of its own, the label a plain title in the accent colour
+   (a chip would add one more bubble in the stack: message, container, quote). */
 .markdown-body .md-container {
     margin: 1em 0;
     padding: 0.75em 1em 1em;
@@ -97,25 +97,15 @@
     margin-bottom: 0;
 }
 .markdown-body .md-container > blockquote {
-    margin: 0.2em 0 0.8em;
+    margin: 0.2em 0 1em;
 }
 .markdown-body .md-container-label {
-    display: inline-block;
     margin-bottom: 0.5em;
-    padding: 0.1em 0.65em;
-    border: 1px solid color-mix(in oklab, var(--quote-c) 50%, transparent);
-    border-radius: 7px;
-    background: color-mix(in oklab, var(--quote-c) 13%, var(--quote-solid));
-    box-shadow: 0 0 8px -2px color-mix(in oklab, var(--quote-c) 55%, transparent);
     color: color-mix(in oklab, var(--quote-c) 60%, var(--wa-color-text-normal));
     font-size: var(--wa-font-size-s);
     font-weight: var(--wa-font-weight-semibold);
 }
-.wa-dark .markdown-body .md-container {
-    border-color: color-mix(in oklab, var(--quote-c) 40%, transparent);
-}
 .wa-dark .markdown-body .md-container-label {
-    background: color-mix(in oklab, var(--quote-c) 20%, var(--quote-solid));
     color: color-mix(in oklab, var(--quote-c) 55%, white);
 }
 
@@ -130,6 +120,7 @@
     color: color-mix(in oklab, var(--quote-c) 60%, var(--wa-color-text-normal));
     font-family: var(--wa-font-sans);
     font-size: var(--wa-font-size-s);
+    font-weight: var(--wa-font-weight-semibold);
     line-height: 1.5;
 }
 .wa-dark .markdown-body .md-line {

@@ -17,7 +17,7 @@ test('1. a quote is a rounded opaque gradient card whose left border is the acce
     assert.ok(m, 'the card rule')
     const body = norm(m[1])
     assert.match(body, /border: 1px solid color-mix\(in oklab, var\(--quote-c\) 24%, transparent\);/)
-    assert.match(body, /border-inline-start: 3px solid var\(--quote-c\);/)
+    assert.match(body, /border-inline-start: 1px solid var\(--quote-c\);/)
     assert.match(body, /border-radius: 0\.75rem;/)
     assert.match(body, /linear-gradient\(100deg, color-mix\(in oklab, var\(--quote-c\) 13%, var\(--quote-solid\)\), color-mix\(in oklab, var\(--quote-c\) 3%, var\(--quote-solid\)\)\)/)
     assert.match(body, /box-shadow: -2px 0 6px -4px/)
@@ -33,9 +33,12 @@ test('2. nested quotes alternate a flat lighter card and a stronger one, by bord
     assert.match(css, /--quote-solid: var\(--surface-solid, var\(--wa-color-surface-default\)\);/)
 })
 
-test('3. the container keeps a plain hairline; its label is a glow chip', () => {
+test('3. the container keeps a plain hairline; its label is a plain accent title', () => {
     assert.match(norm(css), /\.markdown-body \.md-container \{ margin: 1em 0; padding: 0\.75em 1em 1em;[^}]*border: 1px solid color-mix\(in oklab, var\(--quote-c\) 34%, transparent\);/)
-    assert.match(norm(css), /\.markdown-body \.md-container-label \{ display: inline-block;/)
+    // The label is a plain title, not a chip: no border, background or shadow of its own.
+    const label = norm(css.match(/\n\.markdown-body \.md-container-label \{([^}]*)\}/)[1])
+    assert.doesNotMatch(label, /border|background|box-shadow|padding/)
+    assert.match(label, /color: color-mix\(in oklab, var\(--quote-c\) 60%, var\(--wa-color-text-normal\)\);/)
 })
 
 test('4. a code block is the same card in the neutral colour, with its tokens left clear', () => {
@@ -65,4 +68,17 @@ test('6. the generic JSON view values are the same neutral card, with no card in
 test('7. a JSON view value that is only a code block has no padding of its own around the block', () => {
     const jhv = strip(read('../components/json/JsonHumanView.vue'))
     assert.match(norm(jhv), /\.jhv-markdown :deep\(\.markdown-body:has\(> \.markdown-block:only-child > \.code-tools:only-child\)\) \{ padding: 0; \}/)
+})
+
+test('8. a `::` line and a container title share the same semibold weight', () => {
+    const line = norm(css.match(/\n\.markdown-body \.md-line \{([^}]*)\}/)[1])
+    const label = norm(css.match(/\n\.markdown-body \.md-container-label \{([^}]*)\}/)[1])
+    assert.match(line, /font-weight: var\(--wa-font-weight-semibold\);/)
+    assert.match(label, /font-weight: var\(--wa-font-weight-semibold\);/)
+})
+
+test('9. the quote of a container keeps its own margins: room below it before the comment', () => {
+    assert.match(css, /\.markdown-body \.md-container > blockquote \{\s*margin: 0\.2em 0 1em;/)
+    // A rule that matched this quote with a higher specificity used to shrink the margin to 0.2em.
+    assert.doesNotMatch(css, /\.md-container blockquote:not\(/)
 })
