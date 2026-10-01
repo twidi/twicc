@@ -558,18 +558,76 @@ test('18b. the breathing terminal icon of a background shell', () => {
     assert.equal(rule(dots, ['.background-work-status__dots i:nth-child(3)'], topLevel).decls['animation-delay'], '0.3s')
 })
 
-// The upload strip's bar takes the look of the Tasks tab's progress bar, in the accent colour.
-test('18c. the upload progress bar: neutral track, accent gradient, no movement under reduced motion', () => {
-    const tree = parseCss(styleOf(read('../components/files/UploadStrip.vue')))
+// The upload strip in the Signature spirit: a band that unfolds (height + fade
+// like the footer blocks), lines that rise in, a lit gradient bar with a glow, the percent in
+// the accent colour.
+test('18c. the upload strip: unfolding, upload icon, lit bar', () => {
+    const sfc = read('../components/files/UploadStrip.vue')
+    const tree = parseCss(styleOf(sfc))
+    const template = collapse(templateOf(sfc))
+    assert.ok(template.includes('<Transition name="upload-strip"> <div v-if="lines.length" class="upload-strip"> <div class="upload-strip-inner"> <div class="upload-lines">'), 'Transition > strip > inner > lines')
+
+    assertPinned(rule(tree, ['.upload-strip'], topLevel), `--upload-line-height: 1.9rem;
+        flex: 0 0 auto;
+        display: grid;
+        grid-template-rows: 1fr;
+        border-bottom: 1px solid color-mix(in oklab, var(--glow-accent) 18%, var(--wa-color-surface-border));
+        background: var(--wa-color-surface-lowered);
+        font-size: var(--wa-font-size-s);`)
+    assert.ok(!tree.some((r) => r.selectors.includes('html.wa-dark .upload-strip')), 'no dark tint: the grey backgrounds get their own pass')
+    assertPinned(rule(tree, ['.upload-strip-inner'], topLevel), `min-height: 0;
+        max-height: calc(4 * var(--upload-line-height) + 2 * var(--wa-space-2xs));
+        overflow: auto;`)
+    assertPinned(rule(tree, ['.upload-lines'], topLevel), 'padding: var(--wa-space-2xs) var(--wa-space-s);')
+
+    // Unfolds and folds: the row track and the border go with the fade (no overflow flash).
+    assertPinned(rule(tree, ['.upload-strip-enter-active', '.upload-strip-leave-active'], topLevel), `transition:
+            grid-template-rows var(--motion-dur-3) var(--motion-ease-out-height),
+            border-bottom-width var(--motion-dur-3) var(--motion-ease-out-height),
+            opacity var(--motion-dur-2) ease-in-out;`)
+    assertPinned(rule(tree, ['.upload-strip-enter-from', '.upload-strip-leave-to'], topLevel), `grid-template-rows: 0fr;
+        border-bottom-width: 0;
+        opacity: 0;`)
+    assertPinned(rule(tree, ['.upload-strip-enter-active .upload-strip-inner', '.upload-strip-leave-active .upload-strip-inner'], topLevel), 'overflow: hidden;')
+
+    // The upload icon of the tab status leads each line: it breathes while the file goes up, then
+    // gives way to a green check (the colour of a finished turn) on the line kept for a moment.
+    assert.ok(template.includes(`<wa-icon :name="line.done ? 'check' : 'upload'" class="upload-icon" :class="{ 'upload-icon--done': line.done }" aria-hidden="true"></wa-icon> <div class="upload-names">`), 'upload / check icon before the names')
+    assertPinned(rule(tree, ['.upload-icon'], topLevel), `flex: 0 0 auto;
+        font-size: var(--wa-font-size-s);
+        animation: motion-status-pulse 2.4s ease-in-out infinite;`)
+    assertPinned(rule(tree, ['.upload-icon--done'], topLevel), `color: var(--wa-color-success-60);
+        animation: none;`)
+    assertPinned(rule(tree, ['.upload-line--done'], topLevel), 'animation: none;')
+    const script = collapse(sfc.slice(sfc.indexOf('<script'), sfc.indexOf('</script>')))
+    assert.ok(script.includes('const DONE_VISIBLE_MS = 1800'), 'a finished line stays 1.8s')
+    assert.ok(script.includes('uploads.onCompleted(record => {'), 'finished lines come from the completion event')
+    assert.ok(script.includes('originKey(record.origin) !== originKey(props.origin)'), 'only the panel\'s own uploads')
+    // Only a line that was live in this panel: the controller replays `completed` for the uploads
+    // already finished on the server at each reload, which must not bring lines back.
+    assert.ok(script.includes('uploads.entriesForOrigin(props.origin).find(e => e.key === record.id || (record.client_id && e.clientId === record.client_id))'), 'a live line only')
+    // Removal by key, not by identity: the ref's array hands out proxies, never the raw object.
+    assert.ok(script.includes('finished.value = finished.value.filter(l => l.entry.key !== line.entry.key)'), 'removed by key')
+    assert.ok(!script.includes('l !== line'), 'no identity comparison')
+    assert.ok(script.includes('unsubscribeCompleted?.()') && script.includes('clearTimeout(timer)'), 'cleanup on unmount')
+    assert.ok(template.includes(`:class="{ 'upload-line--done': line.done }"`), 'done line class')
+
+    // A line rises in (movement × --motion-amount: reduced motion keeps the fade).
+    assert.equal(rule(tree, ['.upload-line'], topLevel).decls.animation, 'upload-line-in var(--motion-dur-2) var(--motion-ease-out) backwards')
+    assertPinned(rule(tree, ['from'], (r) => r.ancestors.length === 1 && r.ancestors[0] === '@keyframes upload-line-in'), `opacity: 0;
+        translate: 0 calc(0.375rem * var(--motion-amount));`)
+
+    // The bar: the Tasks tab's look in the accent colour, plus a glow (the track no longer clips).
     assertPinned(rule(tree, ['.upload-progress'], topLevel), `flex: 0 0 5rem;
         --track-height: 0.375rem;
         --track-color: var(--wa-color-neutral-fill-normal);`)
     assertPinned(rule(tree, ['html.wa-dark .upload-progress'], topLevel), '--track-color: var(--wa-color-neutral-border-normal);')
-    assertPinned(
-        rule(tree, ['.upload-progress::part(indicator)'], topLevel),
-        'background: linear-gradient(90deg, oklch(from var(--wa-color-brand-60) calc(l + 0.08) c h), var(--wa-color-brand-60));',
-    )
+    assertPinned(rule(tree, ['.upload-progress::part(base)'], topLevel), 'overflow: visible;')
+    assertPinned(rule(tree, ['.upload-progress::part(indicator)'], topLevel), `background: linear-gradient(90deg, oklch(from var(--wa-color-brand-60) calc(l + 0.08) c h), var(--wa-color-brand-60));
+        border-radius: var(--wa-border-radius-pill);
+        box-shadow: 0 0 0.25rem color-mix(in oklab, var(--wa-color-brand-60) 40%, transparent);`)
     assertPinned(rule(tree, ['.upload-progress::part(indicator)'], inReduced), 'transition: none;')
+    assert.equal(rule(tree, ['.upload-percent'], topLevel).decls.color, 'var(--wa-color-brand)')
 })
 
 test('19. the gap above the pill: on the card, after a text block (§5.4)', () => {
