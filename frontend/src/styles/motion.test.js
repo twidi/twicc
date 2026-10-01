@@ -659,9 +659,10 @@ test('28. color-scheme circle: the full --twicc-scheme-* names, SCHEME_REVEAL_MS
     })
 })
 
-test('39. tab crossfade and overlay slide (step 5c §12.6)', () => {
-    const OLD = ['html.twicc-vt-tab::view-transition-old(root)', 'html.twicc-vt-overlay::view-transition-old(root)']
-    const NEW = ['html.twicc-vt-tab::view-transition-new(root)', 'html.twicc-vt-overlay::view-transition-new(root)']
+test('39. tab crossfade, session switch and overlay slide (step 5c §12.6)', () => {
+    // The session switch (retouches) shares the tab's crossfade.
+    const OLD = ['html.twicc-vt-tab::view-transition-old(root)', 'html.twicc-vt-session::view-transition-old(root)', 'html.twicc-vt-overlay::view-transition-old(root)']
+    const NEW = ['html.twicc-vt-tab::view-transition-new(root)', 'html.twicc-vt-session::view-transition-new(root)', 'html.twicc-vt-overlay::view-transition-new(root)']
     assert.deepEqual(findRule(topRules, OLD).decls, { animation: 'none', 'mix-blend-mode': 'normal' })
     assert.deepEqual(findRule(topRules, NEW).decls, {
         animation: 'twicc-vt-fade-in 250ms ease-in-out both',

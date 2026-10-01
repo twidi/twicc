@@ -366,14 +366,16 @@ html.twicc-vt-fade::view-transition-new(root) {
     mix-blend-mode: normal;
 }
 
-/* Tab crossfade and overlay (step 5c §12). The old image stays opaque under the new one,
-   which fades in (the UA crossfade's plus-lighter blend collapsed on Firefox Android). */
+/* Tab crossfade, session switch and overlay (step 5c §12, retouches). The old image stays opaque under the
+   new one, which fades in (the UA crossfade's plus-lighter blend collapsed on Firefox Android). */
 html.twicc-vt-tab::view-transition-old(root),
+html.twicc-vt-session::view-transition-old(root),
 html.twicc-vt-overlay::view-transition-old(root) {
     animation: none;
     mix-blend-mode: normal;
 }
 html.twicc-vt-tab::view-transition-new(root),
+html.twicc-vt-session::view-transition-new(root),
 html.twicc-vt-overlay::view-transition-new(root) {
     animation: twicc-vt-fade-in 250ms ease-in-out both;
     mix-blend-mode: normal;

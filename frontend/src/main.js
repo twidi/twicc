@@ -94,6 +94,7 @@ import { createNotivue } from 'notivue'
 import { router } from './router'
 import App from './App.vue'
 import { installScrollEdges, vScrollShadow } from './utils/scrollEdges'
+import { installSessionSwitchTransition } from './utils/sessionSwitchTransition'
 import { applyDefaultSettings, initSettings } from './stores/settings'
 import { setTwiccLaunchPrefix } from './utils/twiccLaunch'
 import { useAuthStore } from './stores/auth'
@@ -122,6 +123,8 @@ app.use(createPinia())
 app.use(router)
 app.directive('scroll-shadow', vScrollShadow)
 installScrollEdges()
+// Moving from one session to another crossfades (a draft swapped for its real session does not).
+installSessionSwitchTransition(router, { isDraft: (id) => !!useDataStore().sessions[id]?.draft })
 
 // Configure Notivue toast system
 const notivue = createNotivue({
