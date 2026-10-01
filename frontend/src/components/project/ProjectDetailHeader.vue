@@ -4,7 +4,7 @@
 // directory path, meta info (sessions count, cost, last activity),
 // and manages the edit/manage dialogs.
 //
-// On small viewports (max-height: 900px), collapses to a single compact row
+// On small viewports (compact height, utils/compactHeight.js), collapses to a single compact row
 // with a chevron to expand the full details as an overlay — same pattern as
 // SessionHeader.vue.
 
@@ -473,100 +473,103 @@ function handleUnarchive() {
     flex-shrink: 0;
 }
 
-@media (max-height: 900px) {
-    /* Show chevron */
-    .compact-toggle-chevron {
-        display: inline-flex;
-    }
+/* compact height: see utils/compactHeight.js */
+/* Show chevron */
+:where(html.compact-height) .compact-toggle-chevron {
+    display: inline-flex;
+}
 
-    /* Make toggle zone a clickable flex row */
-    .compact-toggle-zone {
-        display: flex;
-        align-items: center;
-        gap: var(--wa-space-s);
-        min-width: 0;
-        cursor: pointer;
-        flex: 1;
-    }
+/* Make toggle zone a clickable flex row */
+:where(html.compact-height) .compact-toggle-zone {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-s);
+    min-width: 0;
+    cursor: pointer;
+    flex: 1;
+}
 
-    .compact-toggle-zone:hover .compact-toggle-chevron {
-        opacity: 1;
-    }
+:where(html.compact-height) .compact-toggle-zone:hover .compact-toggle-chevron {
+    opacity: 1;
+}
 
-    /* In compact collapsed mode: show compact indicators, hide full indicators */
-    .detail-header.compact-collapsed .compact-indicator {
-        display: inline-flex;
-    }
+/* In compact collapsed mode: show compact indicators, hide full indicators */
+:where(html.compact-height) .detail-header.compact-collapsed .compact-indicator {
+    display: inline-flex;
+}
 
-    .detail-header.compact-collapsed {
-        border-bottom: solid var(--wa-color-surface-border) var(--divider-size);
-        gap: 0;
-        padding-block: 0;
-        padding-inline: var(--wa-space-xs);
-    }
+:where(html.compact-height) .detail-header.compact-collapsed {
+    border-bottom: solid var(--wa-color-surface-border) var(--divider-size);
+    gap: 0;
+    padding-block: 0;
+    padding-inline: var(--wa-space-xs);
+}
 
-    /* In compact collapsed mode: hide the action buttons (archive/edit), like
-       the session header — they reappear when the header is expanded. */
-    .detail-header.compact-collapsed .detail-title-actions {
-        display: none;
-    }
+/* In compact collapsed mode: hide the action buttons (archive/edit), like
+   the session header — they reappear when the header is expanded. */
+:where(html.compact-height) .detail-header.compact-collapsed .detail-title-actions {
+    display: none;
+}
 
-    /* Hide full indicators in compact mode (they live inside the collapsible rows) */
-    .detail-header.compact-collapsed .full-indicator {
-        display: none;
-    }
+/* Hide full indicators in compact mode (they live inside the collapsible rows) */
+:where(html.compact-height) .detail-header.compact-collapsed .full-indicator {
+    display: none;
+}
 
-    /* Collapsible rows become an overlay panel */
-    .detail-collapsible-rows {
-        display: flex;
-        flex-direction: column;
-        gap: var(--wa-space-m);
-        position: absolute;
-        top: 100%;
-        left: 0;
-        right: 0;
-        z-index: 20;
-        background: var(--panel-solid);
-        /* Same token as the session header's overflow panel, so both headers look alike. */
-        box-shadow: var(--panel-overlay-shadow);
-        border-bottom: solid var(--wa-color-surface-border) var(--divider-size);
+/* Collapsible rows become an overlay panel */
+:where(html.compact-height) .detail-collapsible-rows {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-m);
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    background: var(--panel-solid);
+    /* Same token as the session header's overflow panel, so both headers look alike. */
+    box-shadow: var(--panel-overlay-shadow);
+    border-bottom: solid var(--wa-color-surface-border) var(--divider-size);
 
-        /* Hidden by default */
-        opacity: 0;
-        visibility: hidden;
-        transform: translateY(-8px);
-        transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
-    }
+    /* Hidden by default */
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-8px);
+    transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
+}
 
-    /* When expanded: reveal the overlay */
-    .detail-header.compact-expanded .detail-collapsible-rows {
-        opacity: 1;
-        visibility: visible;
-        transform: translateY(0);
-    }
+/* When expanded: reveal the overlay */
+:where(html.compact-height) .detail-header.compact-expanded .detail-collapsible-rows {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
 
-    /* When expanded: hide compact indicators, show full indicators */
-    .detail-header.compact-expanded .compact-indicator {
-        display: none;
-    }
+/* When expanded: hide compact indicators, show full indicators */
+:where(html.compact-height) .detail-header.compact-expanded .compact-indicator {
+    display: none;
+}
 
-    .detail-header.compact-expanded .full-indicator {
-        display: inline-flex;
-    }
+:where(html.compact-height) .detail-header.compact-expanded .full-indicator {
+    display: inline-flex;
+}
 
-    .detail-title-row {
-        padding-block: var(--wa-space-xs);
-    }
+:where(html.compact-height) .detail-title-row {
+    padding-block: var(--wa-space-xs);
+}
 
-    .detail-meta, .detail-nav-list {
-        padding-bottom: 0 !important;
-    }
-    .detail-sparkline-row {
-        padding-top: var(--wa-space-s);
-    }
+:where(html.compact-height) .detail-meta,
+:where(html.compact-height) .detail-nav-list {
+    padding-bottom: 0 !important;
+}
+:where(html.compact-height) .detail-sparkline-row {
+    padding-top: var(--wa-space-s);
+}
 
-    .detail-meta, .detail-sparkline-row, .detail-directory, .detail-nav-list {
-        padding-inline: var(--wa-space-m);
-    }
+:where(html.compact-height) .detail-meta,
+:where(html.compact-height) .detail-sparkline-row,
+:where(html.compact-height) .detail-directory,
+:where(html.compact-height) .detail-nav-list {
+    padding-inline: var(--wa-space-m);
 }
 </style>

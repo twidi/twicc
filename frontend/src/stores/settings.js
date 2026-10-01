@@ -23,6 +23,7 @@ import { effectiveSchemeFor, runSchemeTransition, takeNextSchemeOrigin } from '.
 import { validateWorktreeTemplate } from '../utils/worktreePath'
 import { usablePublicOrigin } from '../utils/publicOrigin'
 import { ORIGIN_SETTING_KEYS } from '../utils/originSettingsForm'
+import { updateCompactHeight, watchCompactHeight } from '../utils/compactHeight'
 
 const STORAGE_KEY = 'twicc-settings'
 
@@ -1196,6 +1197,7 @@ export function initSettings() {
 
     // Apply initial font size (theme is already applied in main.js)
     document.documentElement.style.fontSize = `${store.fontSize}px`
+    watchCompactHeight()
 
     // Build the union of settings (generic + each provider's synced subset)
     // for the localStorage and outgoing-sync watchers. The function is invoked
@@ -1337,6 +1339,7 @@ export function initSettings() {
     // Watch for font size changes
     watch(() => store.fontSize, (size) => {
         document.documentElement.style.fontSize = `${size}px`
+        updateCompactHeight()
     })
 
     // Watch synced settings and send to backend when changed by the user.

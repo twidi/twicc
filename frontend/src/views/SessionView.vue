@@ -2706,10 +2706,9 @@ onBeforeUnmount(() => {
 .session-view > .session-header :deep(wa-divider) {
     visibility: hidden;
 }
-@media (max-height: 900px) {
-    .session-view > .session-header.compact-collapsed {
-        border-bottom-color: transparent;
-    }
+/* compact height: see utils/compactHeight.js */
+:where(html.compact-height) .session-view > .session-header.compact-collapsed {
+    border-bottom-color: transparent;
 }
 
 .session-view > wa-divider {

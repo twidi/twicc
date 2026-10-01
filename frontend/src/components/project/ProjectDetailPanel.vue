@@ -588,24 +588,23 @@ wa-divider {
     display: none;
 }
 
-@media (max-height: 900px) {
-    .project-detail-panel {
-        padding-top: 0;
-    }
+/* compact height: see utils/compactHeight.js */
+:where(html.compact-height) .project-detail-panel {
+    padding-top: 0;
+}
 
-    /* Hide the divider (the tab bar now stays inline in the content) */
-    wa-divider {
-        display: none;
-    }
+/* Hide the divider (the tab bar now stays inline in the content) */
+:where(html.compact-height) wa-divider {
+    display: none;
+}
 
-    .stats-nav-list {
-        display: flex;
-        padding: var(--wa-space-s) var(--wa-space-m);
-    }
-    .stats-nav-list-divider {
-        display: block;
-        --spacing: 0;
-        --width: var(--divider-size);
-    }
+:where(html.compact-height) .stats-nav-list {
+    display: flex;
+    padding: var(--wa-space-s) var(--wa-space-m);
+}
+:where(html.compact-height) .stats-nav-list-divider {
+    display: block;
+    --spacing: 0;
+    --width: var(--divider-size);
 }
 </style>

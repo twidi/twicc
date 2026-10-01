@@ -1404,121 +1404,117 @@ wa-divider {
     display: contents;
 }
 
-@media (max-height: 900px) {
-    /* Show the compact toggle chevron */
-    .compact-toggle-chevron {
-        display: inline-flex;
-    }
-
-    /* Show the compact toggle button for non-main sessions */
-    .compact-toggle-button {
-        display: inline-flex;
-    }
-
-    /* Make the toggle zone a clickable flex row */
-    .compact-toggle-zone {
-        display: flex;
-        align-items: center;
-        gap: var(--wa-space-s);
-        min-width: 0;
-        cursor: pointer;
-        flex: 1;
-    }
-
-    .compact-toggle-zone:hover .compact-toggle-chevron {
-        opacity: 1;
-    }
-
-    .draft-tag {
-        margin-bottom: var(--wa-space-xs);
-    }
-
-    .session-header.compact-collapsed {
-        border-bottom: solid var(--wa-color-surface-border) var(--divider-size);
-    }
-
-    /* In compact collapsed mode: hide the status tags (revealed on expand).
-       They carry state, not actions, and the compact row has no room for them.
-       The action cluster stays: compact is about height, so the actions — or
-       the single overflow toggle standing in for them — remain one click away
-       without expanding the header first. */
-    .session-header.compact-collapsed .session-title-tags {
-        display: none;
-    }
-
-    .session-header.compact-collapsed .archived-compact-icon {
-        display: inline-flex;
-    }
-
-    /* Dont show divider when compact mode is active */
-    .session-header wa-divider {
-        display: none;
-    }
-
-    /* Add some padding on the bottom of the first line */
-    .session-header .session-title {
-        padding-bottom: var(--wa-space-xs);
-    }
-
-    /* Show the compact context ring when not expanded */
-    .session-header.compact-collapsed .compact-context-ring {
-        display: inline-flex;
-        margin-block: -0.25rem;
-    }
-
-    /* Show the compact process indicator when not expanded */
-    .session-header.compact-collapsed .compact-process-indicator {
-        display: inline-flex;
-    }
-
-    /* Show the compact provider icon when not expanded */
-    .session-header.compact-collapsed .compact-provider-icon {
-        display: inline-flex;
-    }
-
-    /* Collapsible rows become an overlay panel */
-    .session-collapsible-rows {
-        display: flex;
-        flex-direction: column;
-        gap: var(--wa-space-xs);
-        position: absolute;
-        top: 100%;
-        left: 0;
-        right: 0;
-        z-index: 20;
-        /* On large viewports the last row breathes thanks to the header's own
-           column gap before the divider. The overlay panel has no divider, so
-           it reproduces that space itself. */
-        padding-bottom: var(--wa-space-xs);
-        /* Opaque like the floating cards: the cards let the canvas show through. */
-        background: var(--panel-solid);
-        /* Spans the whole width of .session-view, clipped at the gap: keep the panel budget. */
-        box-shadow: var(--panel-overlay-shadow);
-        border-bottom: solid var(--wa-color-surface-border) var(--divider-size);
-
-        /* Hidden by default */
-        opacity: 0;
-        visibility: hidden;
-        transform: translateY(-8px);
-        transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
-    }
-    .session-header:not([data-session-type="session"]) .session-collapsible-rows {
-        z-index: 19;
-    }
-
-
-    /* When expanded: reveal the overlay */
-    .session-header.compact-expanded .session-collapsible-rows {
-        opacity: 1;
-        visibility: visible;
-        transform: translateY(0);
-        margin-top: calc(-1 * var(--wa-space-xs));
-    }
-
-    .session-header.compact-expanded .compact-toggle-button--non-main-session {
-        bottom: -100%;
-    }
-
+/* compact height: see utils/compactHeight.js */
+/* Show the compact toggle chevron */
+:where(html.compact-height) .compact-toggle-chevron {
+    display: inline-flex;
 }
 
+/* Show the compact toggle button for non-main sessions */
+:where(html.compact-height) .compact-toggle-button {
+    display: inline-flex;
+}
+
+/* Make the toggle zone a clickable flex row */
+:where(html.compact-height) .compact-toggle-zone {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-s);
+    min-width: 0;
+    cursor: pointer;
+    flex: 1;
+}
+
+:where(html.compact-height) .compact-toggle-zone:hover .compact-toggle-chevron {
+    opacity: 1;
+}
+
+:where(html.compact-height) .draft-tag {
+    margin-bottom: var(--wa-space-xs);
+}
+
+:where(html.compact-height) .session-header.compact-collapsed {
+    border-bottom: solid var(--wa-color-surface-border) var(--divider-size);
+}
+
+/* In compact collapsed mode: hide the status tags (revealed on expand).
+   They carry state, not actions, and the compact row has no room for them.
+   The action cluster stays: compact is about height, so the actions — or
+   the single overflow toggle standing in for them — remain one click away
+   without expanding the header first. */
+:where(html.compact-height) .session-header.compact-collapsed .session-title-tags {
+    display: none;
+}
+
+:where(html.compact-height) .session-header.compact-collapsed .archived-compact-icon {
+    display: inline-flex;
+}
+
+/* Dont show divider when compact mode is active */
+:where(html.compact-height) .session-header wa-divider {
+    display: none;
+}
+
+/* Add some padding on the bottom of the first line */
+:where(html.compact-height) .session-header .session-title {
+    padding-bottom: var(--wa-space-xs);
+}
+
+/* Show the compact context ring when not expanded */
+:where(html.compact-height) .session-header.compact-collapsed .compact-context-ring {
+    display: inline-flex;
+    margin-block: -0.25rem;
+}
+
+/* Show the compact process indicator when not expanded */
+:where(html.compact-height) .session-header.compact-collapsed .compact-process-indicator {
+    display: inline-flex;
+}
+
+/* Show the compact provider icon when not expanded */
+:where(html.compact-height) .session-header.compact-collapsed .compact-provider-icon {
+    display: inline-flex;
+}
+
+/* Collapsible rows become an overlay panel */
+:where(html.compact-height) .session-collapsible-rows {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-xs);
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    /* On large viewports the last row breathes thanks to the header's own
+       column gap before the divider. The overlay panel has no divider, so
+       it reproduces that space itself. */
+    padding-bottom: var(--wa-space-xs);
+    /* Opaque like the floating cards: the cards let the canvas show through. */
+    background: var(--panel-solid);
+    /* Spans the whole width of .session-view, clipped at the gap: keep the panel budget. */
+    box-shadow: var(--panel-overlay-shadow);
+    border-bottom: solid var(--wa-color-surface-border) var(--divider-size);
+
+    /* Hidden by default */
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-8px);
+    transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
+}
+:where(html.compact-height) .session-header:not([data-session-type="session"]) .session-collapsible-rows {
+    z-index: 19;
+}
+
+/* When expanded: reveal the overlay */
+:where(html.compact-height) .session-header.compact-expanded .session-collapsible-rows {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+    margin-top: calc(-1 * var(--wa-space-xs));
+}
+
+:where(html.compact-height) .session-header.compact-expanded .compact-toggle-button--non-main-session {
+    bottom: -100%;
+}
 </style>
