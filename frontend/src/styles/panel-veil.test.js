@@ -93,3 +93,38 @@ test('4. the layout overlay backdrop dims in dark: black 70%', () => {
     const decls = dark[1].split(';').map((d) => d.trim().replace(/\s+/g, ' ')).filter(Boolean)
     assert.deepEqual(decls, ['background: rgba(0, 0, 0, 0.7)'])
 })
+
+// Inside a card the page surface token is transparent: whatever used it as an OPAQUE backing, to cover
+// what is under it (a fullscreen layer, an absolute overlay, a sticky bar), would show that content
+// through. They paint --panel-solid, the flat colour of a card, opaque.
+test('5. opaque layers inside a card paint --panel-solid, not the transparent token', () => {
+    const LAYERS = [
+        ['../components/git/GitPanel.vue', '.gitlog-overlay'],
+        ['../components/browser/BrowserPane.vue', '.browser-pane--fullscreen'],
+        ['../components/files/FilePane.vue', '.file-pane-preview--fullscreen'],
+        ['../components/files/FileTreePanel.vue', '.file-tree-panel--mobile > .file-tree-panel-content'],
+        ['../components/session/list/SessionSearchBar.vue', '.session-search-bar'],
+        ['../components/activity/ContributionGraphs.vue', '.provider-filter'],
+    ]
+    for (const [file, selector] of LAYERS) {
+        const src = strip(read(file))
+        const style = src.slice(src.indexOf('<style'))
+        const at = style.indexOf(`${selector} {`)
+        assert.ok(at >= 0, `${file}: ${selector}`)
+        const body = style.slice(at, style.indexOf('}', at))
+        assert.ok(/background(?:-color)?: var\(--panel-solid\);/.test(body), `${file} ${selector}: paints --panel-solid`)
+        assert.ok(!/background(?:-color)?: var\(--wa-color-surface-default/.test(body), `${file} ${selector}: no transparent token`)
+    }
+})
+
+// The session search bar floats at the top of the chat, on the card's own colour: a neutral hairline and
+// no shadow made it vanish. It reuses what the floating surfaces have: their shadow and the glass border.
+test('6. the session search bar is set off: the floating shadow and the glass border', () => {
+    const src = strip(read('../components/session/list/SessionSearchBar.vue'))
+    const style = src.slice(src.indexOf('<style'))
+    const at = style.indexOf('.session-search-bar {')
+    const body = style.slice(at, style.indexOf('}', at))
+    assert.ok(body.includes('border: var(--divider-size) solid var(--glass-border);'), 'glass border')
+    assert.ok(body.includes('border-top: 0;'), 'hangs from the top edge: no top border')
+    assert.ok(body.includes('box-shadow: var(--panel-overlay-shadow);'), 'the floating shadow')
+})

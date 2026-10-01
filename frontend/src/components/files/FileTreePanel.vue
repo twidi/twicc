@@ -1753,7 +1753,7 @@ defineExpose({
     top: 2rem;
     z-index: 10;
     overflow: hidden;
-    background: var(--wa-color-surface-default);
+    background: var(--panel-solid);
     display: flex;
     flex-direction: column;
 }

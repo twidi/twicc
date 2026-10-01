@@ -2105,15 +2105,18 @@ defineExpose({
             <span v-if="session.ephemeralResult?.duration_ms != null"> · {{ (session.ephemeralResult.duration_ms / 1000).toFixed(1) }} s</span>
         </wa-callout>
 
-        <!-- In-session search bar (Ctrl+F) -->
-        <SessionSearchBar
-            v-if="showSessionSearch"
-            ref="sessionSearchRef"
-            :session-id="sessionId"
-            @close="closeSessionSearch"
-            @navigate="handleSearchNavigate"
-            @update:terms="handleSearchTerms"
-        />
+        <!-- In-session search bar (Ctrl+F): it slides down from the top edge of this list, which
+             clips what is above it (overflow: hidden), and back up when it closes. -->
+        <Transition name="session-search">
+            <SessionSearchBar
+                v-if="showSessionSearch"
+                ref="sessionSearchRef"
+                :session-id="sessionId"
+                @close="closeSessionSearch"
+                @navigate="handleSearchNavigate"
+                @update:terms="handleSearchTerms"
+            />
+        </Transition>
 
         <!-- The chat's stage: the states below and the scroll area, with the skeleton
              laid over them while the chat loads and positions itself. The notice and

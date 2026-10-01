@@ -300,7 +300,7 @@ useStartupPolling(fetchDailyActivity)
     display: flex;
     justify-content: center;
     padding: var(--wa-space-xs) 0 var(--wa-space-m);
-    background: var(--wa-color-surface-default);
+    background: var(--panel-solid);
 }
 
 .provider-filter-select {

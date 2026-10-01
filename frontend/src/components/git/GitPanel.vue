@@ -2134,7 +2134,7 @@ wa-callout {
     inset: 0;
     z-index: 11;
     overflow: hidden;
-    background: var(--wa-color-surface-default);
+    background: var(--panel-solid);
     display: flex;
     flex-direction: column;
 

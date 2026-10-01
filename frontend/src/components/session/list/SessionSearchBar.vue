@@ -310,15 +310,32 @@ defineExpose({ open, reset, openWithQuery, goToNext, goToPrevious })
     align-items: center;
     gap: var(--wa-space-m);
     padding: var(--wa-space-s);
-    background: var(--wa-color-surface-default);
-    border: var(--divider-size) solid var(--wa-color-surface-border);
+    background: var(--panel-solid);
+    /* Set off from the card it floats on: the glass border and the floating surfaces' shadow. */
+    border: var(--divider-size) solid var(--glass-border);
     border-top: 0;
     border-radius: 0 0 var(--wa-border-radius-l) var(--wa-border-radius-l);
+    box-shadow: var(--panel-overlay-shadow);
     flex-shrink: 0;
     position: absolute;
     z-index: 1;
     left: 50%;
     translate: -50% 0;
+}
+
+/* Slides down from the top edge of the chat (its container clips what is above) and back up.
+   The movement is × --motion-amount: reduced motion keeps the fade. The bar centres itself with
+   `translate: -50% 0`, so the horizontal part is repeated in every state. */
+.session-search-enter-active {
+    transition: translate var(--motion-dur-3) var(--motion-ease-out), opacity var(--motion-dur-2) ease-in-out;
+}
+.session-search-leave-active {
+    transition: translate var(--motion-dur-2) var(--motion-ease), opacity var(--motion-dur-1) ease-in-out;
+}
+.session-search-enter-from,
+.session-search-leave-to {
+    opacity: 0;
+    translate: -50% calc(-100% * var(--motion-amount));
 }
 
 .search-input {

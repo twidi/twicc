@@ -1439,7 +1439,7 @@ async function makeDefaultSavedUrl(opt) {
     position: fixed;
     inset: 0;
     z-index: 1000;
-    background: var(--wa-color-surface-default);
+    background: var(--panel-solid);
 }
 
 .browser-toolbar {

@@ -2223,7 +2223,7 @@ function goToNextDiff() {
     position: fixed;
     inset: 0;
     z-index: 1000;
-    background: var(--wa-color-surface-default, #fff);
+    background: var(--panel-solid);
 }
 
 /* Floating expand/compress toggle, pinned to the preview's top-right corner,
