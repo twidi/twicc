@@ -41,7 +41,7 @@ $TWICC peer-send [OPTIONS] '<PEER>' '<TITLE>' '<PROMPT>'
 
 ### Options
 
-- `--reply-to MESSAGE_ID` — answer a message of this peer; copy the id from the header of the delivered peer message. The id is case-sensitive and can name an inbound or outbound message in any status.
+- `--reply-to MESSAGE_ID` — answer a message of this peer; copy the id from the "Message id" line of the delivered peer message. The id is case-sensitive and can name an inbound or outbound message in any status.
 - `--attach PATH` (repeatable) — attach a file: PNG, JPEG, GIF, WebP, PDF, text/plain; 5 MB per file, 100 files / 32 MB per batch. Local path or base64 data URI.
 - `--timeout SECONDS` — seconds to wait for the server's response (default 30).
 
