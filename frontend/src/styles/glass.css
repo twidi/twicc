@@ -51,9 +51,6 @@
     /* The veil behind modal layers: a faint accent-tinted dim, slightly blurred. */
     --glass-veil: color-mix(in oklab, color-mix(in oklab, var(--wa-color-brand-20) 25%, var(--wa-color-neutral-20)) 22%, transparent);
     --glass-veil-filter: blur(0.375rem);
-    /* Tooltips: the theme's tooltip color (text-normal), slightly translucent. */
-    --glass-tooltip-bg: color-mix(in oklab, var(--wa-color-text-normal) 82%, transparent);
-    --glass-tooltip-filter: blur(0.5rem);
 }
 
 /* --glass-bg and --glass-sticky-bg are declared once on :root: their var(--glass-tint)
@@ -79,10 +76,8 @@
         --glass-bg: var(--glass-tint);
         --glass-sticky-bg: var(--glass-tint);
         --glass-field-bg: var(--wa-color-surface-default);
-        --glass-tooltip-bg: var(--wa-color-text-normal);
         --glass-filter: none;
         --glass-veil-filter: none;
-        --glass-tooltip-filter: none;
     }
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
@@ -90,10 +85,8 @@
         --glass-bg: var(--glass-tint);
         --glass-sticky-bg: var(--glass-tint);
         --glass-field-bg: var(--wa-color-surface-default);
-        --glass-tooltip-bg: var(--wa-color-text-normal);
         --glass-filter: none;
         --glass-veil-filter: none;
-        --glass-tooltip-filter: none;
     }
 }
 
@@ -115,6 +108,7 @@
 :where(wa-dropdown-item)::part(submenu),
 :where(wa-select)::part(listbox),
 :where(wa-popover)::part(body),
+:where(wa-tooltip)::part(body),
 :where(.glass-surface) {
     --wa-form-control-background-color: var(--glass-field-bg);
     --wa-color-surface-border: var(--glass-border);
@@ -138,6 +132,7 @@
 :where(wa-dropdown-item)::part(submenu),
 :where(wa-select:not(.glass-listbox-direct))::part(listbox),
 :where(wa-popover)::part(body),
+:where(wa-tooltip)::part(body),
 :where(.glass-surface),
 :where(.Notivue__notification) {
     --glass-shadow-live:
@@ -151,6 +146,7 @@
 :where(.wa-dark) :where(wa-dropdown-item)::part(submenu),
 :where(.wa-dark) :where(wa-select:not(.glass-listbox-direct))::part(listbox),
 :where(.wa-dark) :where(wa-popover)::part(body),
+:where(.wa-dark) :where(wa-tooltip)::part(body),
 :where(.wa-dark) :where(.glass-surface),
 :where(.wa-dark) :where(.Notivue__notification) {
     --glass-shadow-live:
@@ -166,6 +162,7 @@
 :where(wa-dropdown-item)::part(submenu),
 :where(wa-select:not(.glass-listbox-direct))::part(listbox),
 :where(wa-popover)::part(body),
+:where(wa-tooltip)::part(body),
 :where(.glass-surface) {
     background-color: transparent;
     border: 0;
@@ -179,6 +176,7 @@
 /* Layer anchors (the dialog is fixed, the menu and list box use their popup, the submenu
    is absolute). A panel whose own rule sets absolute or fixed keeps it. */
 :where(wa-popover)::part(body),
+:where(wa-tooltip)::part(body),
 :where(.glass-surface),
 :where(.Notivue__notification) {
     position: relative;
@@ -196,7 +194,8 @@
 :where(wa-dropdown)::part(menu)::before,
 :where(wa-dropdown-item)::part(submenu)::after,
 :where(wa-select:not(.glass-listbox-direct))::part(listbox)::before,
-:where(wa-popover)::part(body)::before {
+:where(wa-popover)::part(body)::before,
+:where(wa-tooltip)::part(body)::before {
     content: "";
     position: absolute;
     inset: 0;
@@ -227,7 +226,8 @@
 :where(wa-dialog)::part(dialog)::after,
 :where(wa-dropdown)::part(menu)::after,
 :where(wa-select:not(.glass-listbox-direct))::part(listbox)::after,
-:where(wa-popover)::part(body)::after {
+:where(wa-popover)::part(body)::after,
+:where(wa-tooltip)::part(body)::after {
     content: "";
     position: absolute;
     inset: 0;
@@ -276,8 +276,9 @@
     opacity: var(--twicc-reveal, 1);
 }
 
-/* The popover arrow: childless, so it carries its glass directly. */
-:where(wa-popover)::part(popup__arrow) {
+/* The popover and tooltip arrows: childless, so they carry their glass directly. */
+:where(wa-popover)::part(popup__arrow),
+:where(wa-tooltip)::part(base__arrow) {
     background-color: var(--glass-bg);
     /* Web Awesome draws the arrow's bottom/right borders with --wa-color-surface-border,
        resolved outside the glass body: match the body's glass border. */
@@ -285,6 +286,14 @@
     backdrop-filter: var(--glass-filter);
     -webkit-backdrop-filter: var(--glass-filter);
     opacity: var(--twicc-reveal, 1);
+}
+
+/* The tooltip's arrow alone is a denser accent instead of the body's glass (an experiment: the
+   arrow reads as part of the outline). The glass border is translucent (22%), too faint on a
+   triangle: the accent is mixed 40% into the opaque tint. After the shared arrow rule above
+   (same specificity), so it wins by order. */
+:where(wa-tooltip)::part(base__arrow) {
+    background-color: color-mix(in oklab, var(--glow-accent) 40%, var(--glass-tint));
 }
 
 /* The content of our own glass panels and toasts during an overlay motion: the mover
@@ -295,37 +304,20 @@
     filter: var(--twicc-reveal-filter, none);
 }
 
-/* Tooltips: dark in light mode (light in dark mode), slightly translucent and blurred. */
+/* Tooltips: a glass surface like the popover and the toasts, in the page scheme (they used
+   to be the opposite of the page). The body joins the groups above; the arrow joins the
+   popover's. The text is the page's text colour: Web Awesome's own is the surface colour,
+   made for its dark bubble. */
 :where(wa-tooltip) {
     /* Read by the arrow (--arrow-color). */
-    --wa-tooltip-background-color: var(--glass-tooltip-bg);
-    /* No border: the body's border is the background color today (the theme declares
-       --wa-tooltip-border-color as var(--wa-tooltip-background-color), resolved on :root to
-       the opaque color); a 0px width drops it and keeps the arrow geometry consistent (the
-       arrow's --popup-border-width reads this token). 0px, never a unitless 0: the value
-       feeds calc() next to lengths, where a bare number makes the arrow invalid. */
+    --wa-tooltip-background-color: var(--glass-bg);
+    --wa-tooltip-content-color: var(--wa-color-text-normal);
+    /* One and a half times the theme's arrow (0.375rem). */
+    --wa-tooltip-arrow-size: 0.5625rem;
+    /* No border: the glass border is the overlay above (a 0px width keeps the arrow geometry
+       consistent: the arrow's --popup-border-width reads this token). 0px, never a unitless
+       0: the value feeds calc() next to lengths, where a bare number makes the arrow invalid. */
     --wa-tooltip-border-width: 0px;
-}
-/* The body: its color moves to the layer. */
-:where(wa-tooltip)::part(body) {
-    background-color: transparent;
-    position: relative;
-    isolation: isolate;
-}
-:where(wa-tooltip)::part(body)::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    border-radius: inherit;
-    background-color: var(--glass-tooltip-bg);
-    backdrop-filter: var(--glass-tooltip-filter);
-    -webkit-backdrop-filter: var(--glass-tooltip-filter);
-    pointer-events: none;
-}
-:where(wa-tooltip)::part(base__arrow) {
-    backdrop-filter: var(--glass-tooltip-filter);
-    -webkit-backdrop-filter: var(--glass-tooltip-filter);
 }
 
 /* The arrow joint: Web Awesome's clip keeps a strip past the arrow's base, which reads as
@@ -455,7 +447,8 @@
     :where(wa-dropdown)::part(menu),
     :where(wa-dropdown-item)::part(submenu),
     :where(wa-select:not(.glass-listbox-direct))::part(listbox),
-    :where(wa-popover)::part(body) {
+    :where(wa-popover)::part(body),
+    :where(wa-tooltip)::part(body) {
         background-color: var(--glass-tint);
         /* No layer is left to hide an inset shadow, so the surface carries its top edge. */
         box-shadow: var(--glass-shadow), var(--glass-highlight);
@@ -467,16 +460,15 @@
     :where(wa-dialog)::part(dialog),
     :where(wa-dropdown)::part(menu),
     :where(wa-select:not(.glass-listbox-direct))::part(listbox),
-    :where(wa-popover)::part(body) {
+    :where(wa-popover)::part(body),
+    :where(wa-tooltip)::part(body) {
         border: var(--wa-border-width-s) solid var(--glass-border);
     }
     :where(wa-tooltip) {
-        --wa-tooltip-background-color: var(--wa-color-text-normal);
+        --wa-tooltip-background-color: var(--glass-tint);
     }
-    :where(wa-tooltip)::part(body) {
-        background-color: var(--wa-color-text-normal);
-    }
-    :where(wa-popover)::part(popup__arrow) {
+    :where(wa-popover)::part(popup__arrow),
+    :where(wa-tooltip)::part(base__arrow) {
         background-color: var(--glass-tint);
     }
 }

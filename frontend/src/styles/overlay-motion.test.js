@@ -266,7 +266,7 @@ test('SessionSwitcher: the moving panel fades its content through --twicc-reveal
         if ('--twicc-reveal-filter' in decls) {
             for (const selector of splitTopLevel(b.head)) assert.ok(moving.includes(selector), `${selector}: declares the motion state`)
         }
-        for (const property of ['--glass-bg', '--glass-sticky-bg', '--glass-tooltip-bg', '--glass-settle']) {
+        for (const property of ['--glass-bg', '--glass-sticky-bg', '--glass-settle']) {
             assert.ok(!(property in decls), `${b.head}: no opaque-while-moving ${property}`)
         }
     }
@@ -283,4 +283,15 @@ test('AppTooltip: a 250ms show delay, overridable by the caller', () => {
     const delayAt = tooltip.indexOf(':show-delay="TOOLTIP_SHOW_DELAY_MS"')
     assert.ok(delayAt >= 0, ':show-delay bound to the constant')
     assert.ok(tooltip.indexOf('v-bind="$attrs"') > delayAt, 'declared before v-bind="$attrs"')
+})
+
+// The arrow is a token one and a half times larger (glass.css): the gap to the target grows by
+// the same 3px, or the tip would touch the target. A caller may still override it.
+test('AppTooltip: an 11px distance to the target, overridable by the caller', () => {
+    const sfc = read('../components/ui/AppTooltip.vue')
+    assert.match(scriptOf(sfc), /\nconst TOOLTIP_DISTANCE = 11\n/)
+    const [tooltip] = openingTags(templateOf(sfc), 'wa-tooltip')
+    const at = tooltip.indexOf(':distance="TOOLTIP_DISTANCE"')
+    assert.ok(at >= 0, ':distance bound to the constant')
+    assert.ok(tooltip.indexOf('v-bind="$attrs"') > at, 'declared before v-bind="$attrs"')
 })

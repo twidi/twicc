@@ -18,15 +18,9 @@
  *
  * All extra attributes are forwarded to the underlying <wa-tooltip>.
  *
- * Color scheme: the tooltip body is painted with `--wa-color-text-normal`, so it
- * always reads as the opposite of the page (dark bubble in light mode and vice
- * versa) — but that is a "loud fill", not a scheme switch, so WA components and
- * semantic tokens inside the tooltip would still resolve against the page
- * scheme and become unreadable. The slotted content is therefore wrapped in a
- * `.wa-invert` box (see template), which flips the whole `--wa-color-*` set for
- * the subtree. The class goes on the content, never on the <wa-tooltip> host:
- * on the host it would also flip `--wa-tooltip-background-color` and the bubble
- * would lose its contrast.
+ * Color scheme: the tooltip is a glass surface in the page scheme, like the popovers and
+ * the toasts (styles/glass.css). The slotted content resolves the page's own tokens, so
+ * nothing inside needs flipping.
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
@@ -46,6 +40,13 @@ const INTERACTIVE_HIDE_DELAY = 300
  * caller's own `show-delay` still wins.
  */
 const TOOLTIP_SHOW_DELAY_MS = 250
+
+/**
+ * Gap, in px, between the tooltip and its target (Web Awesome's default is 8). The glass
+ * arrow is one and a half times the theme's (styles/glass.css): 3px more keep its tip off
+ * the target. Bound before `v-bind="$attrs"`, so a caller's own `distance` still wins.
+ */
+const TOOLTIP_DISTANCE = 11
 
 /**
  * Open interactive tooltips, which are mutually exclusive. The grace period
@@ -213,19 +214,10 @@ onBeforeUnmount(stopListening)
         v-if="shouldShow"
         ref="tooltipEl"
         :show-delay="TOOLTIP_SHOW_DELAY_MS"
+        :distance="TOOLTIP_DISTANCE"
         :hide-delay="interactive ? INTERACTIVE_HIDE_DELAY : undefined"
         v-bind="$attrs"
     >
-        <!-- display: contents — the box only carries the inverted color tokens,
-             it never takes part in the layout. -->
-        <div class="wa-invert tooltip-invert">
-            <slot />
-        </div>
+        <slot />
     </wa-tooltip>
 </template>
-
-<style scoped>
-.tooltip-invert {
-    display: contents;
-}
-</style>

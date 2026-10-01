@@ -99,9 +99,8 @@ const LIGHT_TOKENS = [
     '--glass-tint', '--glass-bg', '--glass-border', '--glass-highlight', '--glass-shadow',
     '--glass-filter', '--glass-sticky-bg', '--glass-field-bg', '--glass-item-highlight',
     '--glass-item-hover', '--glass-item-rest', '--glass-veil', '--glass-veil-filter',
-    '--glass-tooltip-bg', '--glass-tooltip-filter',
 ]
-const FILTER_TOKENS = ['--glass-filter', '--glass-veil-filter', '--glass-tooltip-filter']
+const FILTER_TOKENS = ['--glass-filter', '--glass-veil-filter']
 
 const rootTokens = mergedTopLevel(glassTree, ':root')
 const darkTokens = mergedTopLevel(glassTree, '.wa-dark')
@@ -112,7 +111,7 @@ test('1. glass tokens: light on :root, dark overrides, translucent, tint from pa
         assert.ok(darkTokens[name], `.wa-dark ${name} missing`)
     }
     for (const name of ['--glass-bg', '--glass-sticky-bg', '--glass-field-bg', '--glass-item-highlight',
-        '--glass-item-hover', '--glass-item-rest', '--glass-veil', '--glass-tooltip-bg']) {
+        '--glass-item-hover', '--glass-item-rest', '--glass-veil']) {
         assert.match(rootTokens[name], /\btransparent\b/, `:root ${name} must be translucent`)
     }
     assert.match(darkTokens['--glass-veil'], /\btransparent\b/, '.wa-dark --glass-veil must be translucent')
@@ -139,7 +138,6 @@ test('2. opaque fallbacks: reduced transparency and no backdrop-filter support',
         assert.equal(root.decls['--glass-bg'], 'var(--glass-tint)')
         assert.equal(root.decls['--glass-sticky-bg'], 'var(--glass-tint)')
         assert.equal(root.decls['--glass-field-bg'], 'var(--wa-color-surface-default)')
-        assert.equal(root.decls['--glass-tooltip-bg'], 'var(--wa-color-text-normal)')
         for (const name of FILTER_TOKENS) assert.equal(root.decls[name], 'none', `${name} must be none`)
     }
 })
@@ -255,15 +253,18 @@ test('4. glass classes stay away from pane containers', () => {
     assert.deepEqual(directCounts, { SearchOverlay: 4, PeerMessageReviewDialog: 1 })
 })
 
+// The tooltip is a glass surface like the popover (retouches): same groups, in the same places.
+const TOOLTIP_BODY = ':where(wa-tooltip)::part(body)'
 const LAYERED = [
     ':where(wa-dialog)::part(dialog)',
     ':where(wa-dropdown)::part(menu)',
     ':where(wa-dropdown-item)::part(submenu)',
     ':where(wa-select:not(.glass-listbox-direct))::part(listbox)',
     ':where(wa-popover)::part(body)',
+    TOOLTIP_BODY,
     ':where(.glass-surface)',
 ]
-const WA_LAYERED = LAYERED.slice(0, 5)
+const WA_LAYERED = LAYERED.slice(0, 6)
 const BOX = { content: '""', position: 'absolute', inset: '0', 'pointer-events': 'none' }
 
 function assertBox(rule, label) {
@@ -272,7 +273,7 @@ function assertBox(rule, label) {
 
 test('5. Web Awesome mapping, layers, overlays and fallback block', () => {
     // Token rule (six surfaces).
-    const tokenRule = findRule(topRulesOutsideAt, [...WA_LAYERED.slice(0, 3), ':where(wa-select)::part(listbox)', WA_LAYERED[4], ':where(.glass-surface)'])
+    const tokenRule = findRule(topRulesOutsideAt, [...WA_LAYERED.slice(0, 3), ':where(wa-select)::part(listbox)', WA_LAYERED[4], TOOLTIP_BODY, ':where(.glass-surface)'])
     assert.deepEqual(
         Object.fromEntries(Object.entries(tokenRule.decls)),
         {
@@ -293,7 +294,7 @@ test('5. Web Awesome mapping, layers, overlays and fallback block', () => {
     assert.equal(findRule(topRulesOutsideAt, [':where(wa-select:not(.glass-listbox-direct))::part(listbox)']).decls.position, 'static')
 
     // Layer anchors.
-    const anchors = findRule(topRulesOutsideAt, [':where(wa-popover)::part(body)', ':where(.glass-surface)', ':where(.Notivue__notification)'])
+    const anchors = findRule(topRulesOutsideAt, [':where(wa-popover)::part(body)', TOOLTIP_BODY, ':where(.glass-surface)', ':where(.Notivue__notification)'])
     assert.equal(anchors.decls.position, 'relative')
     assert.equal(anchors.decls.isolation, 'isolate')
 
@@ -305,6 +306,7 @@ test('5. Web Awesome mapping, layers, overlays and fallback block', () => {
             ':where(wa-dropdown-item)::part(submenu)::after',
             ':where(wa-select:not(.glass-listbox-direct))::part(listbox)::before',
             ':where(wa-popover)::part(body)::before',
+            ':where(wa-tooltip)::part(body)::before',
         ], 'WA layers'),
         findRule(topRulesOutsideAt, [':where(.glass-surface)::before', ':where(.Notivue__notification)::before'], 'own layers'),
     ]
@@ -325,6 +327,7 @@ test('5. Web Awesome mapping, layers, overlays and fallback block', () => {
             ':where(wa-dropdown)::part(menu)::after',
             ':where(wa-select:not(.glass-listbox-direct))::part(listbox)::after',
             ':where(wa-popover)::part(body)::after',
+            ':where(wa-tooltip)::part(body)::after',
         ], 'WA overlays'),
         findRule(topRulesOutsideAt, [':where(.glass-surface)::after', ':where(.Notivue__notification)::after'], 'own overlays'),
     ]
@@ -365,33 +368,22 @@ test('5. Web Awesome mapping, layers, overlays and fallback block', () => {
     }
 
     // Arrows (§5.2).
-    const clip = findRule(topRulesOutsideAt, [':where(wa-tooltip)::part(base__arrow)', ':where(wa-popover)::part(popup__arrow)'])
+    const ARROWS = [':where(wa-popover)::part(popup__arrow)', ':where(wa-tooltip)::part(base__arrow)']
+    const clip = topRulesOutsideAt.find((r) => r.selectors.length === 2 && ARROWS.every((x) => r.selectors.includes(x)) && r.decls['clip-path'])
     assert.equal(clip.decls['clip-path'], 'polygon(calc(0% - 1px) 100%, 100% calc(0% - 1px), 100% 100%)')
     assert.equal(findRule(topRulesOutsideAt, [':where(wa-popover)::part(popup)']).decls['--popup-border-width'], '0px')
-    const popoverArrow = findRule(topRulesOutsideAt, [':where(wa-popover)::part(popup__arrow)'])
-    assert.equal(popoverArrow.decls['background-color'], 'var(--glass-bg)')
-    assert.equal(popoverArrow.decls['border-color'], 'var(--glass-border)')
-    assert.equal(popoverArrow.decls['backdrop-filter'], 'var(--glass-filter)')
-    assert.equal(popoverArrow.decls['-webkit-backdrop-filter'], 'var(--glass-filter)')
-    const tooltipArrow = findRule(topRulesOutsideAt, [':where(wa-tooltip)::part(base__arrow)'])
-    assert.equal(tooltipArrow.decls['backdrop-filter'], 'var(--glass-tooltip-filter)')
-    assert.equal(tooltipArrow.decls['-webkit-backdrop-filter'], 'var(--glass-tooltip-filter)')
+    // The popover's and the tooltip's arrows are childless: one rule carries their glass.
+    const arrows = topRulesOutsideAt.filter((r) => r.selectors.length === 2 && ARROWS.every((x) => r.selectors.includes(x)) && r.decls['background-color'])
+    assert.equal(arrows.length, 1)
+    assert.equal(arrows[0].decls['background-color'], 'var(--glass-bg)')
+    assert.equal(arrows[0].decls['border-color'], 'var(--glass-border)')
+    assert.equal(arrows[0].decls['backdrop-filter'], 'var(--glass-filter)')
+    assert.equal(arrows[0].decls['-webkit-backdrop-filter'], 'var(--glass-filter)')
 
-    // Tooltip (§5.2).
+    // Tooltip (§5.2, retouched): host tokens only; its body is in the groups above.
     const tooltipHost = findRule(topRulesOutsideAt, [':where(wa-tooltip)'])
-    assert.equal(tooltipHost.decls['--wa-tooltip-background-color'], 'var(--glass-tooltip-bg)')
+    assert.equal(tooltipHost.decls['--wa-tooltip-background-color'], 'var(--glass-bg)')
     assert.equal(tooltipHost.decls['--wa-tooltip-border-width'], '0px')
-    const tooltipBody = findRule(topRulesOutsideAt, [':where(wa-tooltip)::part(body)'])
-    assert.equal(tooltipBody.decls['background-color'], 'transparent')
-    assert.equal(tooltipBody.decls.position, 'relative')
-    assert.equal(tooltipBody.decls.isolation, 'isolate')
-    const tooltipLayer = findRule(topRulesOutsideAt, [':where(wa-tooltip)::part(body)::before'])
-    assertBox(tooltipLayer, 'tooltip layer')
-    assert.equal(tooltipLayer.decls['background-color'], 'var(--glass-tooltip-bg)')
-    assert.equal(tooltipLayer.decls['z-index'], '-1')
-    assert.equal(tooltipLayer.decls['border-radius'], 'inherit')
-    assert.equal(tooltipLayer.decls['backdrop-filter'], 'var(--glass-tooltip-filter)')
-    assert.equal(tooltipLayer.decls['-webkit-backdrop-filter'], 'var(--glass-tooltip-filter)')
 
     // Modal veil (§5.3).
     const backdrop = findRule(topRulesOutsideAt, [':where(wa-dialog)::part(dialog)::backdrop'])
@@ -444,9 +436,8 @@ test('5. Web Awesome mapping, layers, overlays and fallback block', () => {
     assert.equal(fbFill.decls['box-shadow'], 'var(--glass-shadow), var(--glass-highlight)')
     const fbBorder = findRule(fallbackRules, WA_LAYERED.filter((s) => !s.includes('submenu')), 'fallback borders')
     assert.match(fbBorder.decls.border ?? '', /var\(--glass-border\)/)
-    assert.equal(findRule(fallbackRules, [':where(wa-tooltip)']).decls['--wa-tooltip-background-color'], 'var(--wa-color-text-normal)')
-    assert.equal(findRule(fallbackRules, [':where(wa-tooltip)::part(body)']).decls['background-color'], 'var(--wa-color-text-normal)')
-    assert.equal(findRule(fallbackRules, [':where(wa-popover)::part(popup__arrow)']).decls['background-color'], 'var(--glass-tint)')
+    assert.equal(findRule(fallbackRules, [':where(wa-tooltip)']).decls['--wa-tooltip-background-color'], 'var(--glass-tint)')
+    assert.equal(findRule(fallbackRules, [':where(wa-popover)::part(popup__arrow)', ':where(wa-tooltip)::part(base__arrow)']).decls['background-color'], 'var(--glass-tint)')
 
     // Dark --glass-shadow = dark --depth-3 without its inset layer.
     const depthTree = parseBlocks(stripComments(read('depth.css')))
@@ -466,6 +457,35 @@ test('6. glass.css is imported right after depth.css in the three entry files', 
     }
     const spa = read('../main.js')
     assert.ok(spa.indexOf("import './styles/glass.css'") < spa.indexOf("import './styles/surfaces.css'"), 'SPA: glass before surfaces')
+})
+
+// Retouches: the tooltip is a glass surface like the popover and the toasts, in the page scheme
+// (it was the opposite of the page: a dark bubble on a light page, a light one on a dark page).
+test('7b. tooltips take the page scheme: no inverted box, no inverted token left in the glass sheet', () => {
+    const tooltip = read('../components/ui/AppTooltip.vue')
+    assert.ok(!templateOf(tooltip).includes('wa-invert'), 'the slot is not wrapped in a .wa-invert box')
+    assert.ok(!tooltip.includes('tooltip-invert'), 'no tooltip-invert class or rule left')
+    const css = read('glass.css')
+    assert.ok(!css.includes('--glass-tooltip'), 'no dedicated tooltip tokens: it reuses the glass ones')
+    // The text is the page's text colour (Web Awesome's default is the surface colour, for the dark bubble).
+    const host = findRule(topRulesOutsideAt, [':where(wa-tooltip)'])
+    assert.equal(host.decls['--wa-tooltip-content-color'], 'var(--wa-color-text-normal)')
+    assert.equal(host.decls['--wa-tooltip-background-color'], 'var(--glass-bg)')
+    // A larger arrow, a token of Web Awesome (0.375rem by default): one and a half times.
+    assert.equal(host.decls['--wa-tooltip-arrow-size'], '0.5625rem')
+    // It joins every group a glass surface is in (tokens, shadow, layered background, anchors, layer, border overlay).
+    for (const part of ['::part(body)', '::part(body)::before', '::part(body)::after']) {
+        const selector = `:where(wa-tooltip)${part}`
+        assert.ok(topRulesOutsideAt.some((r) => r.selectors.includes(selector)), `${selector} is in a glass group`)
+    }
+    const arrow = topRulesOutsideAt.find((r) => r.selectors.includes(':where(wa-tooltip)::part(base__arrow)') && r.decls['background-color'])
+    assert.equal(arrow.decls['background-color'], 'var(--glass-bg)')
+    assert.equal(arrow.decls['backdrop-filter'], 'var(--glass-filter)')
+    // The tooltip's arrow alone is a denser accent (40% over the glass tint, opaque): it reads as part of
+    // the outline (an experiment of the retouches: the popover's arrow keeps the body's glass). After the shared rule, to win by order.
+    const tooltipArrow = findRule(topRulesOutsideAt, [':where(wa-tooltip)::part(base__arrow)'])
+    assert.deepEqual(tooltipArrow.decls, { 'background-color': 'color-mix(in oklab, var(--glow-accent) 40%, var(--glass-tint))' })
+    assert.ok(topRulesOutsideAt.indexOf(tooltipArrow) > topRulesOutsideAt.indexOf(arrow), 'after the shared arrow rule')
 })
 
 test('7. toasts take the page scheme and the Notivue list is not clipped', () => {
@@ -490,18 +510,22 @@ const REVEAL_OPACITY = 'var(--twicc-reveal, 1)'
 test('8. every glass layer fades through its own opacity, read from --twicc-reveal', () => {
     const layers = [
         [':where(wa-dialog)::part(dialog)::before', ':where(wa-dropdown)::part(menu)::before', ':where(wa-dropdown-item)::part(submenu)::after',
-            ':where(wa-select:not(.glass-listbox-direct))::part(listbox)::before', ':where(wa-popover)::part(body)::before'],
+            ':where(wa-select:not(.glass-listbox-direct))::part(listbox)::before', ':where(wa-popover)::part(body)::before',
+            ':where(wa-tooltip)::part(body)::before'],
         [':where(.glass-surface)::before', ':where(.Notivue__notification)::before'],
         [':where(wa-dialog)::part(dialog)::after', ':where(wa-dropdown)::part(menu)::after',
-            ':where(wa-select:not(.glass-listbox-direct))::part(listbox)::after', ':where(wa-popover)::part(body)::after'],
+            ':where(wa-select:not(.glass-listbox-direct))::part(listbox)::after', ':where(wa-popover)::part(body)::after',
+            ':where(wa-tooltip)::part(body)::after'],
         [':where(.glass-surface)::after', ':where(.Notivue__notification)::after'],
         [':where(wa-select.glass-listbox-direct)::part(listbox)'],
-        [':where(wa-popover)::part(popup__arrow)'],
+        [':where(wa-popover)::part(popup__arrow)', ':where(wa-tooltip)::part(base__arrow)'],
     ]
-    for (const selectors of layers) assert.equal(findRule(topRulesOutsideAt, selectors).decls.opacity, REVEAL_OPACITY, selectors.join(', '))
-    // Tooltips keep their opacity animation (§14.4): their layers do not read the reveal.
-    for (const selectors of [[':where(wa-tooltip)::part(body)::before'], [':where(wa-tooltip)::part(base__arrow)']]) {
-        assert.equal(findRule(topRulesOutsideAt, selectors).decls.opacity, undefined, selectors[0])
+    for (const selectors of layers) {
+        // The two arrows have a second rule (their clip): the one that carries the glass.
+        const glassOnly = (r) => r.selectors.length === selectors.length && selectors.every((x) => r.selectors.includes(x)) && (selectors.length < 2 || r.decls['background-color'] || r.decls.content)
+        const found = topRulesOutsideAt.filter(glassOnly)
+        assert.equal(found.length, 1, selectors.join(', '))
+        assert.equal(found[0].decls.opacity, REVEAL_OPACITY, selectors.join(', '))
     }
 })
 
@@ -516,6 +540,7 @@ const LIVE_SHADOW_HOSTS = [
     ':where(wa-dropdown-item)::part(submenu)',
     ':where(wa-select:not(.glass-listbox-direct))::part(listbox)',
     ':where(wa-popover)::part(body)',
+    TOOLTIP_BODY,
     ':where(.glass-surface)',
     ':where(.Notivue__notification)',
 ]
@@ -542,7 +567,8 @@ test('10. the cast shadow fades with the reveal: --glass-shadow-live on each hos
     // The direct list box fades as a whole through its opacity: it keeps --glass-shadow.
     const direct = findRule(topRulesOutsideAt, [':where(wa-select.glass-listbox-direct)::part(listbox)'])
     assert.equal(direct.decls['box-shadow'], 'var(--glass-shadow), var(--glass-highlight)')
-    assert.equal(findRule(topRulesOutsideAt, [':where(wa-popover)::part(popup__arrow)']).decls['box-shadow'], undefined, 'the arrow has no shadow')
+    const arrowGlass = topRulesOutsideAt.find((r) => r.selectors.includes(':where(wa-tooltip)::part(base__arrow)') && r.decls['background-color'])
+    assert.equal(arrowGlass.decls['box-shadow'], undefined, 'the arrows have no shadow')
     assert.ok(rootTokens['--glass-shadow'], '--glass-shadow stays for other readers')
 })
 
@@ -557,9 +583,6 @@ test('12. no trace of the opaque-while-moving attempt; header names motion.css',
     assert.ok(!stripped.includes('--glass-settle'), 'no --glass-settle')
     assert.ok(!/--glass-[\w-]*motion-bg/.test(stripped), 'no *-motion-bg token')
     assert.ok(!/\btransition\s*:/.test(stripped), 'no settle transition')
-    assert.equal(findRule(topRulesOutsideAt, [':where(wa-tooltip)::part(base__arrow)']).decls['background-color'], undefined)
-    const last = glassTree[glassTree.length - 1]
-    assert.equal(allRules(last.children).filter((r) => r.selector === ':where(wa-tooltip)::part(base__arrow)').length, 0)
     const header = glassCss.slice(0, glassCss.indexOf('*/'))
     assert.match(collapse(header), /except depth\.css \(--depth-3\), motion\.css \(the registered `--twicc-reveal` that the glass layers and shadows read\) and the Web Awesome theme tokens/)
 })
