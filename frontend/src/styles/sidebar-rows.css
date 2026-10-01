@@ -64,6 +64,23 @@
     color: color-mix(in oklab, var(--wa-color-text-normal) 40%, var(--wa-color-neutral-60));
 }
 
+/* The filter field of the header (sessions and artifacts list: both share .sidebar-header-row)
+   wears the brand look of its neighbours, the outlined brand buttons and the project selector:
+   their border colour and their text colour, as tokens, so both schemes follow. Zero
+   specificity. The field's own background (the canvas) stays with its component. */
+:where(.sidebar-header-row .session-search)::part(base) {
+    border-color: var(--wa-color-brand-border-loud);
+}
+:where(.sidebar-header-row .session-search)::part(input) {
+    color: var(--wa-color-brand-on-quiet);
+}
+:where(.sidebar-header-row .session-search)::part(input)::placeholder {
+    color: color-mix(in oklab, var(--wa-color-brand-on-quiet) 65%, transparent);
+}
+:where(.sidebar-header-row .session-search) wa-icon {
+    color: var(--wa-color-brand-on-quiet);
+}
+
 /* Compact mode: tighter padding. */
 .sidebar-row-wrapper--compact .sidebar-row::part(base) {
     padding-block: var(--wa-space-2xs);
