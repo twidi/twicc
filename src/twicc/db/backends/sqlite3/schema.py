@@ -8,8 +8,10 @@ from time import perf_counter
 
 from django.db import NotSupportedError
 from django.db.backends.base.schema import BaseDatabaseSchemaEditor
+from django.db.backends.ddl_references import Statement
 from django.db.backends.sqlite3.schema import DatabaseSchemaEditor as SQLiteSchemaEditor
-from django.db.models import Index
+from django.db.backends.utils import strip_quotes
+from django.db.models import Index, UniqueConstraint
 
 from twicc.db.migration_logging import log_fk_check
 
@@ -27,12 +29,20 @@ class StatementProof(NamedTuple):
     index: str | None
 
 
+class EmptyRebuild(NamedTuple):
+    table: str
+    temporary: str
+    writes: list
+    renames: list
+
+
 class DatabaseSchemaEditor(SQLiteSchemaEditor):
     """Own one observer, immutable statement proofs, and one atomic boundary.
 
     Proofs remove only matched schema authorizations from one execution.
     Independent data effects and unknown reasons always remain observable.
-    Table rebuilds and unproved schema statements keep the global fallback.
+    Only newly created, empty table rebuilds have an additional zero-row proof.
+    Other rebuilds and unproved schema statements keep the global fallback.
     """
 
     def __enter__(self):
@@ -53,6 +63,7 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
         self._operations = []
         self._proofs = []
         self._created_tables = set()
+        self._empty_rebuild = None
         self.observer = EffectObserver()
         self.decision = CheckDecision("none", frozenset(), ())
         self.deferred_sql = []
@@ -200,11 +211,85 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
         with self._operation("delete", model._meta.db_table):
             return super().delete_model(model, handle_autom2m=handle_autom2m)
 
+    def _table_empty(self, table):
+        return self.connection.connection.execute(
+            f"SELECT 1 FROM {self.quote_name(table)} LIMIT 1"
+        ).fetchone() is None
+
+    def _remake_table(self, model, **kwargs):
+        table = model._meta.db_table
+        key = canonical_identifier(table)
+        temporary = "new__%s" % strip_quotes(table)
+        native = self.connection.connection
+        if (
+            self.collect_sql
+            or not self.atomic_migration
+            or self._empty_rebuild is not None
+            or key in self._before
+            or key not in self._created_tables
+            or canonical_identifier(temporary) in self._before
+            or canonical_identifier(temporary) in read_schema(native)
+            or not self._table_empty(table)
+        ):
+            return super()._remake_table(model, **kwargs)
+        proof = EmptyRebuild(table, temporary, [], [])
+        changes = native.total_changes
+        self._empty_rebuild = proof
+        try:
+            result = super()._remake_table(model, **kwargs)
+            after = read_schema(native)
+            if (
+                native.total_changes == changes
+                and canonical_identifier(temporary) not in after
+                and key in after
+                and self._table_empty(table)
+                and len(proof.renames) == 1
+            ):
+                # Remove only the exact zero-row INSERT and rename events.
+                # Callback writes, unknown reasons and other schema events stay.
+                write_ids = {id(effect) for effect in proof.writes}
+                rename_ids = {id(effect) for effect in proof.renames[0]}
+                self.observer.effects[:] = [e for e in self.observer.effects if id(e) not in write_ids]
+                self.observer.schema_effects[:] = [
+                    e for e in self.observer.schema_effects if id(e) not in rename_ids
+                ]
+            return result
+        finally:
+            self._empty_rebuild = None
+
+    def alter_db_table(self, model, old_db_table, new_db_table):
+        rebuild = self._empty_rebuild
+        if rebuild is None or (old_db_table, new_db_table) != (rebuild.temporary, rebuild.table):
+            return super().alter_db_table(model, old_db_table, new_db_table)
+        # Django mutates deferred Statement references after the rename.
+        # Only still-intact standard index proofs can follow that mutation.
+        proofs = [
+            p for p in self._proofs
+            if p.kind == "index" and p.table == old_db_table
+            and type(p.statement) is Statement and p.rendered == str(p.statement)
+        ]
+        with self._operation("empty_rename", old_db_table):
+            result = super().alter_db_table(model, old_db_table, new_db_table)
+        for proof in proofs:
+            self._proofs.append(proof._replace(rendered=str(proof.statement), table=new_db_table))
+        return result
+
     def add_index(self, model, index):
         # Custom Index callbacks have no standard-operation provenance.
         kind = "index" if type(index) is Index else "unknown"
         with self._operation(kind, model._meta.db_table):
             return super().add_index(model, index)
+
+    def add_constraint(self, model, constraint):
+        table = model._meta.db_table
+        key = canonical_identifier(table)
+        if (
+            not self.collect_sql and type(constraint) is UniqueConstraint
+            and key not in self._before and key in self._created_tables and self._table_empty(table)
+        ):
+            with self._operation("empty_constraint", table):
+                return super().add_constraint(model, constraint)
+        return super().add_constraint(model, constraint)
 
     def remove_index(self, model, index):
         kind = "drop_index" if type(index) is Index else "unknown"
@@ -244,7 +329,9 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
 
     def _create_unique_sql(self, model, fields, *args, **kwargs):
         statement = super()._create_unique_sql(model, fields, *args, **kwargs)
-        if self._operations and self._operations[-1] == ("create", model._meta.db_table) and statement is not None:
+        if self._operations and self._operations[-1] in (
+            ("create", model._meta.db_table), ("empty_constraint", model._meta.db_table)
+        ) and statement is not None:
             name = str(statement.parts["name"]).strip('"').replace('""', '"')
             self._register(statement, (), "index", model._meta.db_table, name)
         return statement
@@ -282,14 +369,66 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
             kind, table = self._operations[-1]
             if kind == "delete" and rendered == self.sql_delete_table % {"table": self.quote_name(table)}:
                 proof = StatementProof(sql, rendered, tuple(params or ()), "delete", table, None)
+        rebuild = self._empty_rebuild
+        rename = rebuild is not None and self._operations and self._operations[-1] == (
+            "empty_rename", rebuild.temporary
+        ) and rendered == self.sql_rename_table % {
+            "old_table": self.quote_name(rebuild.temporary), "new_table": self.quote_name(rebuild.table)
+        } and not params
+        before_rename = read_schema(self.connection.connection) if rename else None
         start = len(self.observer.schema_effects)
+        write_start = len(self.observer.effects)
+        changes = self.connection.connection.total_changes
         result = super().execute(sql, params)
         effects = self.observer.schema_effects[start:]
         if proof and self._matches(proof, effects):
             del self.observer.schema_effects[start:]
             if proof.kind == "create":
                 self._created_tables.add(canonical_identifier(proof.table))
+        if rebuild is not None:
+            writes = self.observer.effects[write_start:]
+            if (
+                len(writes) == 1
+                and writes[0].action == sqlite3.SQLITE_INSERT
+                and writes[0].table == canonical_identifier(rebuild.temporary)
+                and writes[0].source is None
+                and self.connection.connection.total_changes == changes
+                and not effects
+                and self._table_empty(rebuild.table)
+                and self._table_empty(rebuild.temporary)
+            ):
+                rebuild.writes.extend(writes)
+            if rename and self._matches_empty_rename(rebuild, effects, before_rename):
+                rebuild.renames.append(effects)
         return result
+
+    def _matches_empty_rename(self, rebuild, effects, before):
+        temporary = canonical_identifier(rebuild.temporary)
+        target = canonical_identifier(rebuild.table)
+        after = read_schema(self.connection.connection)
+        if temporary not in before or target in before or temporary in after or target not in after:
+            return False
+        if {k: v for k, v in before.items() if k != temporary} != {
+            k: v for k, v in after.items() if k != target
+        }:
+            return False
+        alters = 0
+        for effect in effects:
+            if effect.source is not None:
+                return False
+            if effect.action == sqlite3.SQLITE_ALTER_TABLE:
+                if effect.arg1 != "main" or canonical_identifier(effect.arg2 or "") != temporary:
+                    return False
+                alters += 1
+            elif effect.action == sqlite3.SQLITE_UPDATE and (
+                (effect.database == "main" and effect.arg1 in ("sqlite_master", "sqlite_sequence"))
+                or (effect.database == "temp" and effect.arg1 == "sqlite_temp_master")
+            ):
+                if effect.arg2 not in ("sql", "tbl_name", "name"):
+                    return False
+            else:
+                return False
+        return alters == 1
 
     def _matches(self, proof, effects):
         """Prove expected main objects and their mechanical catalog effects."""

@@ -1257,3 +1257,177 @@ print('one private registration; existing adapters unchanged')
         text=True,
     )
     assert result.stdout.strip() == "one private registration; existing adapters unchanged"
+
+
+@isolate_apps()
+@pytest.mark.parametrize("populated", [False, True])
+def test_new_table_repeated_rebuilds(connection, populated):
+    class Entry(models.Model):
+        label = models.TextField()
+
+        class Meta:
+            app_label = "scope_app"
+
+    with checks(connection) as statements, connection.schema_editor() as editor:
+        editor.create_model(Entry)
+        if populated:
+            editor.execute("INSERT INTO scope_app_entry (label) VALUES ('keep')")
+        for _ in range(3):
+            editor._remake_table(Entry)
+    assert fk_checks(statements) == (["PRAGMA foreign_key_check"] if populated else [])
+    assert connection.connection.execute("SELECT label FROM scope_app_entry").fetchall() == (
+        [("keep",)] if populated else []
+    )
+    assert_restored(connection)
+
+
+@isolate_apps()
+@pytest.mark.parametrize("effect", ["write", "trigger", "schema", "pragma", "transient_reference"])
+def test_empty_rebuild_preserves_callback_effects(connection, effect):
+    if effect == "trigger":
+        connection.connection.execute(
+            "CREATE TRIGGER bad AFTER UPDATE OF label ON parent BEGIN UPDATE child SET parent_id=99; END"
+        )
+    if effect == "transient_reference":
+        connection.connection.execute(
+            "CREATE TABLE incoming (id integer REFERENCES new__scope_app_entry(id))"
+        )
+    active = False
+
+    class CallbackField(models.TextField):
+        def db_parameters(self, connection):
+            nonlocal active
+            if active:
+                active = False
+                sql = {
+                    "write": "UPDATE child SET parent_id=99",
+                    "trigger": "UPDATE parent SET label='fire'",
+                    "schema": "CREATE TABLE unrelated (id integer)",
+                    "pragma": "PRAGMA user_version=17",
+                    "transient_reference": "SELECT 1",
+                }[effect]
+                connection.connection.execute(sql)
+            return super().db_parameters(connection)
+
+    class Entry(models.Model):
+        label = CallbackField()
+
+        class Meta:
+            app_label = "scope_app"
+
+    with checks(connection) as statements:
+        try:
+            with connection.schema_editor() as editor:
+                editor.create_model(Entry)
+                active = True
+                editor._remake_table(Entry)
+        except IntegrityError:
+            assert effect in ("write", "trigger")
+        else:
+            assert effect not in ("write", "trigger")
+    assert fk_checks(statements)
+    assert connection.connection.execute("SELECT parent_id FROM child").fetchall() == [(1,)]
+    if effect in ("schema", "pragma", "transient_reference"):
+        assert fk_checks(statements) == ["PRAGMA foreign_key_check"]
+    assert_restored(connection)
+
+
+@isolate_apps()
+def test_empty_rebuild_checks_incoming_orphans_and_rolls_back(connection):
+    connection.disable_constraint_checking()
+    connection.connection.execute("CREATE TABLE orphan (id integer PRIMARY KEY, parent_id integer REFERENCES scope_app_entry(id))")
+    connection.connection.execute("INSERT INTO orphan VALUES (1, 99)")
+    connection.enable_constraint_checking()
+
+    class Entry(models.Model):
+        class Meta:
+            app_label = "scope_app"
+
+    with checks(connection) as statements, pytest.raises(IntegrityError), connection.schema_editor() as editor:
+        editor.create_model(Entry)
+        editor._remake_table(Entry)
+    assert fk_checks(statements) == ['PRAGMA foreign_key_check("orphan")']
+    assert "scope_app_entry" not in connection.introspection.table_names()
+    assert_restored(connection)
+
+
+@isolate_apps()
+@pytest.mark.parametrize("custom", [False, True])
+def test_empty_rebuild_conditional_unique_constraint_provenance(connection, custom):
+    class Entry(models.Model):
+        label = models.TextField()
+
+        class Meta:
+            app_label = "scope_app"
+
+    class CustomConstraint(models.UniqueConstraint):
+        pass
+
+    constraint = (CustomConstraint if custom else models.UniqueConstraint)(
+        fields=["label"], condition=models.Q(label__isnull=False), name="entry_unique_label"
+    )
+    with checks(connection) as statements, connection.schema_editor() as editor:
+        editor.create_model(Entry)
+        editor._remake_table(Entry)
+        editor.add_constraint(Entry, constraint)
+    assert fk_checks(statements) == (["PRAGMA foreign_key_check"] if custom else [])
+
+
+@isolate_apps()
+@pytest.mark.parametrize("raw_create", [False, True])
+def test_empty_rebuild_requires_new_standard_creation(connection, raw_create):
+    class Entry(models.Model):
+        label = models.TextField()
+
+        class Meta:
+            app_label = "scope_app"
+
+    if not raw_create:
+        with connection.schema_editor() as editor:
+            editor.create_model(Entry)
+    with checks(connection) as statements, connection.schema_editor() as editor:
+        if raw_create:
+            editor.execute("CREATE TABLE scope_app_entry (id integer PRIMARY KEY, label text)")
+        editor._remake_table(Entry)
+    assert fk_checks(statements) == ["PRAGMA foreign_key_check"]
+    if not raw_create:
+        assert not any(sql.startswith('SELECT 1 FROM "scope_app_entry"') for sql in statements)
+
+
+@isolate_apps()
+def test_empty_rebuild_populated_invalid_child_rolls_back(connection):
+    class Parent(models.Model):
+        class Meta:
+            app_label = "scope_app"
+            db_table = "parent"
+
+    class Entry(models.Model):
+        parent = models.ForeignKey(Parent, on_delete=models.CASCADE)
+
+        class Meta:
+            app_label = "scope_app"
+
+    with checks(connection) as statements, pytest.raises(IntegrityError), connection.schema_editor() as editor:
+        editor.create_model(Entry)
+        editor.execute("INSERT INTO scope_app_entry (parent_id) VALUES (99)")
+        editor._remake_table(Entry)
+    assert fk_checks(statements) == ["PRAGMA foreign_key_check"]
+    assert "scope_app_entry" not in connection.introspection.table_names()
+    assert_restored(connection)
+
+
+@isolate_apps()
+def test_empty_rebuild_generated_name_collision_rolls_back(connection):
+    connection.connection.execute("CREATE TABLE new__scope_app_entry (id integer PRIMARY KEY)")
+    connection.connection.execute("INSERT INTO new__scope_app_entry VALUES (7)")
+
+    class Entry(models.Model):
+        class Meta:
+            app_label = "scope_app"
+
+    with pytest.raises(OperationalError, match="already exists"), connection.schema_editor() as editor:
+        editor.create_model(Entry)
+        editor._remake_table(Entry)
+    assert connection.connection.execute("SELECT id FROM new__scope_app_entry").fetchall() == [(7,)]
+    assert "scope_app_entry" not in connection.introspection.table_names()
+    assert_restored(connection)

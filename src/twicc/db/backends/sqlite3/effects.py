@@ -63,8 +63,9 @@ class EffectObserver:
     """Own one editor's data effects and unproved schema effects.
 
     The editor may remove exactly proved entries from schema_effects. It must
-    never remove data effects when recognizing a schema operation. Unknown
-    effects remain global for the observer's whole lifetime.
+    retain independent data effects. An empty rebuild may remove only staged
+    transient INSERT authorizations proved to change no rows. Unknown effects
+    remain global for the observer's whole lifetime.
     """
 
     def __init__(self):
