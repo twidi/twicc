@@ -376,3 +376,23 @@ def test_unknown_operation_uses_global_check_in_both_directions(disposable_db, c
     checks = [r for r in events(caplog, "fk_check") if r.migration == "core.0004_unknown"]
     assert [(r.direction, r.scope) for r in checks] == [("forward", "global"), ("backward", "global")]
     assert all("unproved main-schema effects" in r.reason for r in checks)
+
+
+def test_populated_145_upgrade_146_skips_unrelated_checks(disposable_db, caplog, monkeypatch):
+    logger = logging.getLogger("twicc.db.migrations")
+    monkeypatch.setattr(logger, "disabled", False)
+    monkeypatch.setattr(logger, "propagate", True)
+    caplog.set_level(logging.INFO, logger=logger.name)
+    target = ("core", "0145_processrun_background_work_in_progress")
+    with disposable_db() as db:
+        MigrationExecutor(db).migrate([target])
+        executor = MigrationExecutor(db)
+        populate_items(db, executor.loader.project_state([target]))
+        caplog.clear()
+        with trace(db) as statements:
+            executor.migrate([M146])
+        assert check_sql(statements) == []
+        assert [r.scope for r in events(caplog, "fk_check")] == ["none"]
+        assert sum(sql.startswith('ALTER TABLE "new__') for sql in statements) == 3
+        assert db.connection.execute("SELECT count(*) FROM core_sessionitem").fetchone() == (10,)
+        assert M146 in MigrationRecorder(db).applied_migrations()

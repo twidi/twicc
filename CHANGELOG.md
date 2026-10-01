@@ -27,6 +27,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **SQLite empty rebuilds** — Migration 0146 now skips unrelated foreign key scans when Django rebuilds newly created empty tables. Incoming references and independent writes still validate before commit.
+
 - **SQLite migration checks** — Known empty-table and nonunique-index operations skip unrelated foreign key scans. Relation changes validate affected tables before commit. Unknown effects retain global validation. Logs report migration and check durations separately. `TWICC_SQLITE_STANDARD_MIGRATIONS=1` selects standard Django behavior.
 
 - **Docked panels on medium screens** — Opening a panel over the conversation no longer shifts the layout and leaves an empty strip on the right.
