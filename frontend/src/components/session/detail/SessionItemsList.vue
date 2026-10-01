@@ -2323,7 +2323,7 @@ defineExpose({
             <!-- Stale session banner (replaces message input for stale main sessions) -->
             <div v-else-if="isStale && !parentSessionId" v-footer-enter class="stale-banner">
                 <wa-callout variant="warning" appearance="outlined">
-                    <wa-icon slot="icon" name="clock-rotate-left"></wa-icon>
+                    <wa-icon slot="icon" name="link-slash" class="session-state-icon session-state-icon--stale"></wa-icon>
                     <div class="stale-banner-content">
                         <strong>Read-only session</strong>
                         <span>The session files were cleaned up by {{ providerLabel }}. The conversation history has been preserved for reference.</span>

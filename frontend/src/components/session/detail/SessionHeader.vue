@@ -502,16 +502,39 @@ defineExpose({
 <template>
     <header ref="headerRef" class="session-header" :class="{ 'compact-expanded': isCompactExpanded, 'compact-collapsed': !isCompactExpanded, 'effective-debug': isEffectiveDebug }" :data-session-type="mode" v-if="session">
         <div v-if="mode === 'session'" ref="titleRowRef" class="session-title">
-            <!-- Status tags: they carry state, not actions, so they stay out of the
-                 overflow cluster and remain visible on a narrow header. The only
-                 part of the title row the compact collapsed header drops. -->
-            <div class="session-title-tags">
-                <wa-tag v-if="session.archived" size="small" variant="neutral" class="archived-tag">Archived</wa-tag>
-                <wa-tag v-else-if="session.ephemeral && !session.draft" size="small" variant="neutral">Ephemeral</wa-tag>
-                <wa-tag v-else-if="session.draft && !processState" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
-                <wa-tag v-if="session.stale" :id="`session-header-${sessionId}-stale-tag`" size="small" variant="warning" class="stale-tag">Stale</wa-tag>
-                <AppTooltip v-if="session.stale" :for="`session-header-${sessionId}-stale-tag`">Session files were deleted from disk</AppTooltip>
-            </div>
+            <!-- Ephemeral marker: the sidebar's ghost, with the same colours. A state like draft, so it stays
+                 too; a draft can be ephemeral, and then both icons show. -->
+            <wa-icon
+                v-if="session.ephemeral"
+                :id="`session-header-${sessionId}-ephemeral-icon`"
+                name="ghost"
+                label="Ephemeral session"
+                class="session-state-icon session-state-icon--ephemeral"
+                :class="session.ephemeralPhase"
+            ></wa-icon>
+            <AppTooltip v-if="session.ephemeral" :for="`session-header-${sessionId}-ephemeral-icon`">Ephemeral session</AppTooltip>
+
+            <!-- Stale marker: the session's files are gone from disk. Same family as draft. -->
+            <wa-icon
+                v-if="session.stale"
+                :id="`session-header-${sessionId}-stale-icon`"
+                name="link-slash"
+                label="Session files deleted"
+                class="session-state-icon session-state-icon--stale"
+            ></wa-icon>
+            <AppTooltip v-if="session.stale" :for="`session-header-${sessionId}-stale-icon`">Session files were deleted from disk</AppTooltip>
+
+            <!-- Draft marker: a state, not an action, so it stays whether the action cluster is
+                 shown or not, compact collapsed header included. Archived has no such marker: its
+                 unarchive button, yellow, is in the cluster; the toggle repeats it while hidden. -->
+            <wa-icon
+                v-if="!session.archived && session.draft && !processState"
+                :id="`session-header-${sessionId}-draft-icon`"
+                name="file-pen"
+                label="Draft"
+                class="session-state-icon session-state-icon--draft"
+            ></wa-icon>
+            <AppTooltip v-if="!session.archived && session.draft && !processState" :for="`session-header-${sessionId}-draft-icon`">Draft</AppTooltip>
 
             <!-- Overflow toggle: shown only when the action cluster is wider than
                  ACTIONS_COLLAPSE_RATIO of the title row. Reveals/hides the cluster
@@ -529,13 +552,14 @@ defineExpose({
                 @click="isActionsExpanded = !isActionsExpanded"
             >
                 <wa-icon name="screwdriver-wrench" label="Toggle actions"></wa-icon>
-                <!-- Compact collapsed header hides the status tags: keep the archived
-                     state visible inside the toggle, so a click on either opens the actions. -->
+                <!-- While the cluster is hidden, the toggle carries the archived state (the
+                     unarchive button, which shows it, is hidden with the cluster): a click on
+                     either opens the actions. -->
                 <wa-icon
                     v-if="session.archived && !isActionsExpanded"
                     name="box-archive"
                     label="Archived"
-                    class="archived-compact-icon"
+                    class="archived-toggle-icon"
                 ></wa-icon>
             </wa-button>
             <AppTooltip v-if="actionsOverflow" :for="`session-header-${sessionId}-actions-toggle`">{{ actionsToggleTooltip }}</AppTooltip>
@@ -1000,11 +1024,6 @@ defineExpose({
     padding-top: var(--wa-space-xs);
 }
 
-/* Status tags wrapper: transparent, hidden in compact collapsed mode */
-.session-title-tags {
-    display: contents;
-}
-
 /* Action buttons wrapper. A real flex box (not `display: contents`) so its
    width is measurable: the overflow logic compares it to the title row. The
    values below reproduce what the children got as direct flex items of
@@ -1041,17 +1060,8 @@ defineExpose({
     opacity: 1;
 }
 
-.draft-tag, .archived-tag, .stale-tag {
-    flex-shrink: 0;
-    line-height: unset;
-    height: unset;
-    align-self: stretch;
-}
-
-/* Archived marker inside the actions toggle; only in the compact collapsed
-   header, where the status tags are hidden. */
-.archived-compact-icon {
-    display: none;
+/* Archived marker inside the actions toggle, while the cluster is hidden. */
+.archived-toggle-icon {
     flex-shrink: 0;
     margin-inline-start: var(--wa-space-2xs);
     color: var(--wa-color-yellow-80);
@@ -1429,25 +1439,8 @@ wa-divider {
     opacity: 1;
 }
 
-:where(html.compact-height) .draft-tag {
-    margin-bottom: var(--wa-space-xs);
-}
-
 :where(html.compact-height) .session-header.compact-collapsed {
     border-bottom: solid var(--wa-color-surface-border) var(--divider-size);
-}
-
-/* In compact collapsed mode: hide the status tags (revealed on expand).
-   They carry state, not actions, and the compact row has no room for them.
-   The action cluster stays: compact is about height, so the actions — or
-   the single overflow toggle standing in for them — remain one click away
-   without expanding the header first. */
-:where(html.compact-height) .session-header.compact-collapsed .session-title-tags {
-    display: none;
-}
-
-:where(html.compact-height) .session-header.compact-collapsed .archived-compact-icon {
-    display: inline-flex;
 }
 
 /* Dont show divider when compact mode is active */

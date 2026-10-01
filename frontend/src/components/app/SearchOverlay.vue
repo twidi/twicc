@@ -706,7 +706,7 @@ defineExpose({ open })
                     @pointerenter="selectedIndex = index"
                 >
                     <div class="result-header">
-                        <wa-tag v-if="result.archived" size="small" variant="neutral" class="archived-tag">Arch.</wa-tag>
+                        <wa-icon v-if="result.archived" name="box-archive" label="Archived" class="session-state-icon session-state-icon--archived"></wa-icon>
                         <span class="result-title">{{ result.session_title || result.session_id }}</span>
                         <div class="result-meta">
                             <ProjectBadge
@@ -997,12 +997,6 @@ defineExpose({ open })
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-muted);
     padding-left: var(--wa-space-l);
-}
-
-.archived-tag {
-    flex-shrink: 0;
-    line-height: unset;
-    height: unset;
 }
 
 /* ─── State panels ──────────────────────────────────────────────────────── */

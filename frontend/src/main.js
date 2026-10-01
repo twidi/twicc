@@ -25,6 +25,8 @@ import './styles/surfaces.css'
 import './styles/sidebar-rows.css'
 // Question option cards, shared by the Claude and Codex question bodies (SPA only).
 import './styles/option-cards.css'
+// Session state icons (archived, draft), shared by the sidebar, the switcher, the search and the header.
+import './styles/session-state-icons.css'
 import '@awesome.me/webawesome/dist/components/badge/badge.js'
 import '@awesome.me/webawesome/dist/components/button/button.js'
 import '@awesome.me/webawesome/dist/components/button-group/button-group.js'

@@ -1,0 +1,34 @@
+/* Session state markers: an icon where a text tag ("Arch.", "Draft", "Ephemeral", "Stale") used to stand. One look
+   for the sidebar rows, the session switcher, the search results and the session header.
+   Archived reuses the header's archive button icon and its yellow; draft is a warning-coloured
+   pen. Unlayered, like the other global sheets; no scoped copy in the components. */
+.session-state-icon {
+    flex-shrink: 0;
+}
+.session-state-icon--archived {
+    color: var(--wa-color-yellow-80);
+}
+.session-state-icon--draft {
+    color: var(--wa-color-warning-60);
+}
+.session-state-icon--stale {
+    color: var(--wa-color-warning-60);
+}
+/* Ephemeral: one colour, defined here, for every ghost: the sidebar row, the session header
+   and the composer's toggle when it is on. A launched ephemeral session takes its phase's
+   colour while it runs, fails or is lost; once done it shows the ephemeral colour. */
+:root {
+    --session-ephemeral-color: var(--wa-color-success-60);
+}
+.session-state-icon--ephemeral {
+    color: var(--session-ephemeral-color);
+}
+.session-state-icon--ephemeral.running {
+    color: var(--wa-color-brand-60);
+}
+.session-state-icon--ephemeral.error {
+    color: var(--wa-color-danger-60);
+}
+.session-state-icon--ephemeral.lost {
+    color: var(--wa-color-warning-60);
+}

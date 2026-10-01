@@ -488,9 +488,13 @@ function handleMenuSelect(event) {
                     <template v-else>{{ projectPathTitle(store.getProject(session.project_id)) || store.getProjectDisplayName(session.project_id) }}</template>
                 </AppTooltip>
                 <wa-icon v-if="session.pinned" name="thumbtack" class="pinned-icon"></wa-icon>
-                <wa-tag v-if="session.archived" size="small" variant="neutral" class="archived-tag">Arch.</wa-tag>
-                <wa-icon v-else-if="session.ephemeral && !session.draft" name="ghost" label="Ephemeral session" class="ephemeral-icon" :class="session.ephemeralPhase"></wa-icon>
-                <wa-tag v-else-if="session.draft && !processState" size="small" variant="warning" class="draft-tag">Draft</wa-tag>
+                <wa-icon v-if="session.archived" :id="`session-archived-${session.id}`" name="box-archive" label="Archived" class="session-state-icon session-state-icon--archived"></wa-icon>
+                <AppTooltip v-if="session.archived" :for="`session-archived-${session.id}`">Archived</AppTooltip>
+                <wa-icon v-if="session.ephemeral && !session.archived" name="ghost" label="Ephemeral session" class="session-state-icon session-state-icon--ephemeral" :class="session.ephemeralPhase"></wa-icon>
+                <wa-icon v-if="session.draft && !processState && !session.archived" :id="`session-draft-${session.id}`" name="file-pen" label="Draft" class="session-state-icon session-state-icon--draft"></wa-icon>
+                <AppTooltip v-if="!session.archived && session.draft && !processState" :for="`session-draft-${session.id}`">Draft</AppTooltip>
+                <wa-icon v-if="session.stale" :id="`session-stale-${session.id}`" name="link-slash" label="Session files deleted" class="session-state-icon session-state-icon--stale"></wa-icon>
+                <AppTooltip v-if="session.stale" :for="`session-stale-${session.id}`">Session files were deleted from disk</AppTooltip>
                 <ProviderIcon v-if="providerIcon" :provider="session.provider" :colored="false" class="provider-icon" />
                 <wa-icon
                     v-if="showWorktreeIcon"
@@ -719,12 +723,6 @@ function handleMenuSelect(event) {
 </template>
 
 <style scoped>
-.ephemeral-icon { flex-shrink: 0; color: var(--wa-color-neutral-60); }
-.ephemeral-icon.running { color: var(--wa-color-brand-60); }
-.ephemeral-icon.done { color: var(--wa-color-success-60); }
-.ephemeral-icon.error { color: var(--wa-color-danger-60); }
-.ephemeral-icon.lost { color: var(--wa-color-warning-60); }
-
 /* Row look (padding, keyboard highlight, multi-select fill, the lit open row, the row
    menu): styles/sidebar-rows.css, shared with the artifacts list. */
 .session-item-wrapper {
@@ -754,14 +752,6 @@ function handleMenuSelect(event) {
     flex-shrink: 0;
     color: var(--wa-color-text-quiet);
     font-size: 0.85em;
-}
-
-.draft-tag,
-.archived-tag {
-    flex-shrink: 0;
-    line-height: unset;
-    height: unset;
-    align-self: stretch;
 }
 
 .session-name {

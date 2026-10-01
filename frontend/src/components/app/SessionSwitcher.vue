@@ -132,18 +132,31 @@ useGlideInk({
                                 :name="row.providerIcon"
                                 class="switcher-provider"
                             ></wa-icon>
-                            <wa-tag
+                            <wa-icon
                                 v-if="row.session.archived"
-                                size="small"
-                                variant="neutral"
-                                class="switcher-archived-tag"
-                            >Arch.</wa-tag>
-                            <wa-tag
-                                v-else-if="row.isDraft"
-                                size="small"
-                                variant="warning"
-                                class="switcher-draft-tag"
-                            >Draft</wa-tag>
+                                name="box-archive"
+                                label="Archived"
+                                class="session-state-icon session-state-icon--archived"
+                            ></wa-icon>
+                            <wa-icon
+                                v-if="row.session.ephemeral && !row.session.archived"
+                                name="ghost"
+                                label="Ephemeral session"
+                                class="session-state-icon session-state-icon--ephemeral"
+                                :class="row.session.ephemeralPhase"
+                            ></wa-icon>
+                            <wa-icon
+                                v-if="row.isDraft && !row.session.archived"
+                                name="file-pen"
+                                label="Draft"
+                                class="session-state-icon session-state-icon--draft"
+                            ></wa-icon>
+                            <wa-icon
+                                v-if="row.session.stale"
+                                name="link-slash"
+                                label="Session files deleted"
+                                class="session-state-icon session-state-icon--stale"
+                            ></wa-icon>
                             <span class="switcher-name">{{ row.name }}</span>
                             <span class="switcher-state">
                                 <wa-icon v-if="row.state.kind === 'unread'" name="eye" class="switcher-unread"></wa-icon>
@@ -315,14 +328,6 @@ useGlideInk({
 
 .switcher-row--active .switcher-provider {
     color: inherit;
-}
-
-/* "Arch."/"Draft" markers — mirror SessionListItem's archived-tag/draft-tag. */
-.switcher-archived-tag,
-.switcher-draft-tag {
-    flex: 0 0 auto;
-    line-height: unset;
-    height: unset;
 }
 
 .switcher-name {
