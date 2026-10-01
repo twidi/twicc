@@ -48,7 +48,11 @@
 
 /* Nested quotes: a flat lighter card, its rail a shade deeper; every other level is stronger. */
 .markdown-body blockquote blockquote {
-    margin: 0.7em 0 0.2em;
+    margin: 0.7em 0 0.9em;
+}
+/* Last in its quote: the padding of the quote already gives the room below. */
+.markdown-body blockquote > blockquote:last-child {
+    margin-bottom: 0;
 }
 .markdown-body blockquote blockquote {
     border-radius: 0.5625rem;
@@ -96,8 +100,16 @@
 .markdown-body .md-container > :last-child {
     margin-bottom: 0;
 }
+/* The quote directly inside a container is its content, not a card in a card: no box, only the
+   accent line on its left, like a quoted e-mail. Quotes inside it keep their cards. */
 .markdown-body .md-container > blockquote {
-    margin: 0.2em 0 1em;
+    margin: 0.4em 0 1em;
+    padding: 0.1em 0 0.1em 1em;
+    border: 0;
+    border-inline-start: 2px solid var(--quote-c);
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
 }
 .markdown-body .md-container-label {
     margin-bottom: 0.5em;

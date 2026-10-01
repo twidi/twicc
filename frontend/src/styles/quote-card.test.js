@@ -78,7 +78,20 @@ test('8. a `::` line and a container title share the same semibold weight', () =
 })
 
 test('9. the quote of a container keeps its own margins: room below it before the comment', () => {
-    assert.match(css, /\.markdown-body \.md-container > blockquote \{\s*margin: 0\.2em 0 1em;/)
+    assert.match(css, /\.markdown-body \.md-container > blockquote \{\s*margin: 0\.4em 0 1em;/)
     // A rule that matched this quote with a higher specificity used to shrink the margin to 0.2em.
     assert.doesNotMatch(css, /\.md-container blockquote:not\(/)
+})
+
+test('10. a nested quote leaves room before what follows it, unless it is the last thing of its quote', () => {
+    assert.match(css, /\.markdown-body blockquote blockquote \{\s*margin: 0\.7em 0 0\.9em;\s*\}/)
+    assert.match(css, /\.markdown-body blockquote > blockquote:last-child \{\s*margin-bottom: 0;\s*\}/)
+})
+
+test('11. the quote directly inside a container is flat: an accent line, no box', () => {
+    const m = norm(css.match(/\.markdown-body \.md-container > blockquote \{([^}]*)\}/)[1])
+    assert.match(m, /border: 0; border-inline-start: 2px solid var\(--quote-c\);/)
+    assert.match(m, /border-radius: 0;/)
+    assert.match(m, /background: none;/)
+    assert.match(m, /box-shadow: none;/)
 })
