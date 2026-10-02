@@ -40,7 +40,7 @@
     /* Sticky headers inside a glass surface (content scrolls under them). */
     --glass-sticky-bg: color-mix(in oklab, var(--glass-tint) 60%, transparent);
     /* Text fields inside a glass surface. */
-    --glass-field-bg: color-mix(in oklab, var(--wa-color-surface-default) 70%, transparent);
+    --glass-field-bg: color-mix(in oklab, var(--field-bg, var(--wa-color-surface-default)) 70%, transparent);
     /* Highlighted row: menu/option hover, keyboard-selected row. */
     --glass-item-highlight: color-mix(in oklab, var(--wa-color-brand-fill-normal) 70%, transparent);
     /* Mouse hover on rows that also have a keyboard-selected state (lighter, so the
@@ -75,7 +75,7 @@
     :root {
         --glass-bg: var(--glass-tint);
         --glass-sticky-bg: var(--glass-tint);
-        --glass-field-bg: var(--wa-color-surface-default);
+        --glass-field-bg: var(--field-bg, var(--wa-color-surface-default));
         --glass-filter: none;
         --glass-veil-filter: none;
     }
@@ -84,7 +84,7 @@
     :root {
         --glass-bg: var(--glass-tint);
         --glass-sticky-bg: var(--glass-tint);
-        --glass-field-bg: var(--wa-color-surface-default);
+        --glass-field-bg: var(--field-bg, var(--wa-color-surface-default));
         --glass-filter: none;
         --glass-veil-filter: none;
     }

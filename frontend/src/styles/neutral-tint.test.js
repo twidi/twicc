@@ -75,3 +75,12 @@ test('4. dividers and progress tracks read the softer tokens, in every place tha
         assert.ok(s.includes('var(--progress-track)'), `${f}: reads the track token`)
     }
 })
+
+// Retouches: the fields are tinted with the accent, not a pure white or a near-black.
+test('field fill: a faint accent tint over the page surface (a little stronger in dark), read by Web Awesome and by the glass', () => {
+    const css = strip(read('neutral-tint.css')).replace(/\s+/g, ' ')
+    assert.ok(css.includes(':root { --field-bg: color-mix(in oklab, var(--wa-color-brand-60) 5%, var(--wa-color-surface-default)); --wa-form-control-background-color: var(--field-bg); }'))
+    assert.ok(css.includes('.wa-dark { --field-bg: color-mix(in oklab, var(--wa-color-brand-60) 11%, var(--wa-color-surface-default)); }'))
+    const glass = strip(read('glass.css')).replace(/\s+/g, ' ')
+    assert.ok(glass.includes('--glass-field-bg: color-mix(in oklab, var(--field-bg, var(--wa-color-surface-default)) 70%, transparent);'))
+})
