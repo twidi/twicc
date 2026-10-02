@@ -89,3 +89,31 @@ export function inspectMarkdownOutput(root, scenario) {
     }
     return evidence
 }
+function tupleMatches(a, b) {
+    return Boolean(a && a.source === b.source && a.theme === b.theme && a.slashTag === b.slashTag)
+}
+export function resetMarkdownPanelEvents(panel) {
+    panel.lastEmitted = null
+    panel.renderedEvents = []
+}
+export function latestMarkdownRenderMatches(panel, tuple, counted) {
+    if (!tupleMatches(panel.lastEmitted, tuple)) return false
+    if (!counted) return true
+    const report = panel.metrics.report
+    return report.active === 0 && tupleMatches(report.commits.at(-1), tuple) && tupleMatches(report.emits.at(-1), tuple)
+}
+export async function waitForMarkdownRestoreThenReveal(readRestoreState, reveal, options = {}) {
+    const restoreChecks = []
+    try {
+        await waitForMarkdownCondition(() => {
+            const state = readRestoreState()
+            restoreChecks.push({ ...state })
+            if (!state.observable) throw new Error('Restore completion is unobservable; acceptance is inconclusive')
+            return !state.pending
+        }, options)
+    } catch (error) {
+        error.restoreChecks = restoreChecks
+        throw error
+    }
+    return { restoreChecks, reveal: await reveal() }
+}

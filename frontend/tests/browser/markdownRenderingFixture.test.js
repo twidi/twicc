@@ -57,3 +57,68 @@ test('finite latest-render wait fails without synthesizing completion', async ()
     assert.ok(checks > 1)
     assert.equal(now, 40)
 })
+test('latest counted acceptance rejects stale emits and uncleared events', async () => {
+    const { latestMarkdownRenderMatches, resetMarkdownPanelEvents } = await import('./markdownRenderingHarness.js')
+    const latest = { source: 'latest', theme: 'dark', slashTag: true }
+    const panel = { lastEmitted: latest, renderedEvents: [{ source: 'earlier' }], metrics: { report: {
+        active: 0, commits: [latest], emits: [{ ...latest, source: 'obsolete' }],
+    } } }
+    assert.equal(latestMarkdownRenderMatches(panel, latest, true), false)
+    panel.metrics.report.emits.push(latest)
+    assert.equal(latestMarkdownRenderMatches(panel, latest, true), true)
+    resetMarkdownPanelEvents(panel)
+    assert.equal(panel.lastEmitted, null)
+    assert.deepEqual(panel.renderedEvents, [])
+    assert.equal(latestMarkdownRenderMatches(panel, latest, true), false)
+})
+test('restore acceptance waits for observed completion before any reveal', async () => {
+    const { waitForMarkdownRestoreThenReveal } = await import('./markdownRenderingHarness.js')
+    let now = 0, reveals = 0
+    const clock = { now: () => now, sleep: async delay => { now += delay } }
+    const result = await waitForMarkdownRestoreThenReveal(() => ({ observable: true, pending: now < 160, savedScrollTop: now < 160 ? 321 : null }),
+        () => { reveals++; return 'actual reveal result' }, { clock, timeout: 1000 })
+    assert.equal(now, 160)
+    assert.equal(reveals, 1)
+    assert.equal(result.reveal, 'actual reveal result')
+    assert.equal(result.restoreChecks.at(-1).pending, false)
+})
+test('pending or unobservable restore stays inconclusive without revealing', async () => {
+    const { waitForMarkdownRestoreThenReveal } = await import('./markdownRenderingHarness.js')
+    let now = 0, reveals = 0
+    const clock = { now: () => now, sleep: async delay => { now += delay } }
+    const reveal = () => { reveals++ }
+    await assert.rejects(waitForMarkdownRestoreThenReveal(() => ({ observable: true, pending: true }), reveal,
+        { clock, timeout: 40 }), error => {
+            assert.match(error.message, /Timed out/)
+            assert.equal(error.restoreChecks.at(-1).pending, true)
+            return true
+        })
+    await assert.rejects(waitForMarkdownRestoreThenReveal(() => ({ observable: false }), reveal,
+        { clock, timeout: 40 }), /inconclusive/)
+    assert.equal(reveals, 0)
+})
+test('actual KeepAlive control uses direct routes and waits before return scrollToKey', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { waitForMarkdownRestoreThenReveal } = await import('./markdownRenderingHarness.js')
+    const source = readFileSync(new URL('./markdownRenderingConversation.js', import.meta.url), 'utf8')
+    const body = source.slice(source.indexOf('function restoreState()'), source.indexOf('\nasync function openThinking()'))
+    let now = 0
+    const reveals = [], routes = []
+    const state = { streamSwapSavedScrollTop: null, scrollerRef: { suspended: false }, isAutoScrollingToBottom: false }
+    const fixture = { ids: { mainId: 'main', otherId: 'other' }, store: { sessions: { main: { project_id: 'project' } } },
+        navigate: async () => {},
+        switchSession: () => { throw new Error('Legacy fixed-settle switch must not run') },
+        router: { push: async route => { routes.push(route.params.sessionId); if (route.params.sessionId === 'main') state.streamSwapSavedScrollTop = 77 } },
+    }
+    const clock = { now: () => now, sleep: async delay => { now += delay; if (now >= 160) state.streamSwapSavedScrollTop = null } }
+    const factory = new Function('fixture', 'findList', 'unref', 'seed', 'replace', 'reveal', 'nextTick', 'waitForMarkdownRestoreThenReveal',
+        `${body}; return switchAndReturn`)
+    const run = factory(fixture, () => ({ setupState: state }), value => value, () => {}, () => {},
+        async marker => { reveals.push({ marker, at: now, pending: state.streamSwapSavedScrollTop }); return { scrollToKey: true } },
+        async () => {}, (read, reveal) => waitForMarkdownRestoreThenReveal(read, reveal, { clock, timeout: 1000 }))
+    const result = await run()
+    assert.deepEqual(routes, ['other', 'main'])
+    assert.equal(reveals[1].at, 160)
+    assert.equal(reveals[1].pending, null)
+    assert.equal(result.returned.reveal.scrollToKey, true)
+})

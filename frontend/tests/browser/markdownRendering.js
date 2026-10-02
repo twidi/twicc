@@ -4,7 +4,7 @@ import { createPinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import MarkdownContent from '../../src/components/ui/MarkdownContent.vue'
 import { useSettingsStore } from '../../src/stores/settings'
-import { createMarkdownMetrics, feedMarkdownSnapshots, inspectMarkdownOutput, markdownScenarios, waitForMarkdownCondition } from './markdownRenderingHarness.js'
+import { createMarkdownMetrics, feedMarkdownSnapshots, inspectMarkdownOutput, markdownScenarios, waitForMarkdownCondition, latestMarkdownRenderMatches, resetMarkdownPanelEvents } from './markdownRenderingHarness.js'
 import '@awesome.me/webawesome/dist/styles/webawesome.css'
 import '@awesome.me/webawesome/dist/styles/themes/default.css'
 import '@awesome.me/webawesome/dist/components/button/button.js'
@@ -58,7 +58,6 @@ function Panel(component, name) {
             })])])
     } })
 }
-function tupleMatches(a, b) { return a && a.source === b.source && a.theme === b.theme && a.slashTag === b.slashTag }
 function snapshot() {
     return { counted, selectedRenderer, visibility: document.visibilityState, viewport: { width: innerWidth, height: innerHeight },
         requests: [...requests], errors: [...errors], visibilityChanges: [...visibility] }
@@ -71,6 +70,7 @@ async function runScenario(name) {
     busy.value = true
     const startedAt = performance.now(), errorStart = errors.length
     // A fresh component instance gives each scenario independent cache/tool state and counters.
+    panels.forEach(resetMarkdownPanelEvents)
     source.value = ''; slashTag.value = false
     mountRevision.value++
     await nextTick()
@@ -85,8 +85,7 @@ async function runScenario(name) {
         const results = await Promise.all(panels.map(async panel => {
             try {
                 await waitForMarkdownCondition(async () => {
-                    if (!tupleMatches(panel.lastEmitted, finalTuple)) return false
-                    if (counted && (!tupleMatches(panel.metrics.report.commits.at(-1), finalTuple) || panel.metrics.report.active !== 0)) return false
+                    if (!latestMarkdownRenderMatches(panel, finalTuple, counted)) return false
                     await nextTick()
                     return true
                 })

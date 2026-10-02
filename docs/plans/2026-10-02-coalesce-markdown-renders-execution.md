@@ -116,7 +116,11 @@ The theme/tools check replaces a `markdown` fence with an `md` fence containing 
 It requires a new wrapper and restoration of remembered wrapping/rendered state.
 
 Each reveal separately records the actual successful `scrollToKey` return, row presence, and component content.
-No fixed wait competes with the eight-RAF retirement restore.
+The KeepAlive hide/return routes run directly through the production router.
+The control reads the existing live `streamSwapSavedScrollTop` setup getter and scroller suspension state.
+It waits for the pending retirement restore and auto-scroll to finish before return `scrollToKey`.
+Missing observable state or a 15-second timeout records failed/inconclusive acceptance without return reveal.
+No fixed wait or control scroll competes with the eight-RAF retirement restore.
 Composer editing uses the real contenteditable editor. It never clicks Send.
 The reused fetch responder rejects every mutation and unexpected read.
 No settings persistence watcher or live WebSocket bootstrap runs.
@@ -136,7 +140,7 @@ Close fixture tabs at completion.
 
 | Check | Command | Result |
 | --- | --- | --- |
-| Fixture tests | `node --test frontend/tests/browser/markdownRenderingFixture.test.js frontend/tests/browser/prepareMarkdownRenderingBaseline.test.js` | Exit 0; 17 passed, 0 failed |
+| Fixture tests | `node --test frontend/tests/browser/markdownRenderingFixture.test.js frontend/tests/browser/prepareMarkdownRenderingBaseline.test.js` | Exit 0; 22 passed, 0 failed |
 | MARKDOWN_TESTS | `node --test frontend/src/utils/markdownRenderCoordinator.test.js frontend/src/utils/markdownRenderCache.test.js frontend/src/components/ui/MarkdownContent.render.test.js frontend/src/composables/useMarkdownRenderEligibility.test.js frontend/src/utils/markdownColonBlocks.test.js frontend/src/styles/markdown-colours.test.js` | Exit 0; 70 passed, 0 failed |
 | FULL_TESTS | `npm --prefix frontend test` | Exit 0; 1644 passed, 0 failed |
 | BUILD | `npm --prefix frontend run build` | Exit 0; SPA, broker shim, shell, companion, and share-session bundles succeed |
@@ -158,3 +162,17 @@ Task 4 does not reinterpret that chronology as a full component RED-before-imple
 Controller preliminary normal-mode compatibility evidence passes lists/table/colon/comment/escaped script, file annotations, share hooks, code tools, and final marker 99.
 Recorded viewport: 1273 × 921. No run errors or console errors appear in that preliminary run.
 This is preliminary evidence before final review. It is not comparative performance evidence or standalone share-app acceptance.
+
+## Review correction round 1
+
+Baseline commit/emit counters now use the immutable source/theme/slash tuple captured at document entry.
+Current emit counters use the coordinator's captured input.
+Per-scenario emitted state resets before remount. Counted completion requires latest commit and latest emit.
+The execution document moves to this planned `docs/plans/` path.
+
+Scoped fixture RED: 21 checks; 17 passed, 4 failed. Failures cover stale baseline attribution and missing acceptance/restore helpers.
+Scoped fixture GREEN: 22 passed, 0 failed. An additional check executes the actual KeepAlive control with controlled restore completion.
+Additional pending-diagnostics RED: 22 checks; 21 passed, 1 failed.
+Logs: `/tmp/task4-fix-round1-red.log`, `/tmp/task4-fix-round1-diagnostics-red.log`, `/tmp/task4-fix-round1-green.log`.
+The controller owns final full-suite, build, browser acceptance, and scoped review checks after this correction.
+The earlier full-suite/build counts above describe the pre-correction verification.

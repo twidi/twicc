@@ -37,7 +37,8 @@ export function instrumentMarkdownComponent(original, kind, generationId) {
     const start = kind === 'current' ? 'async function renderDocument(input, { isCurrent }) {\n' : 'async function render() {\n'
     const tuple = kind === 'current' ? 'input' : '{ source: props.source, theme: mermaidTheme(), slashTag: props.tagSlashCommand }'
     source = once(source, start, start
-        + marked(`    const markdownFixtureOperation = markdownFixtureEvent('document-start', { ...${tuple} })`)
+        + marked(`    const markdownFixtureInput = { ...${tuple} }`)
+        + marked("    const markdownFixtureOperation = markdownFixtureEvent('document-start', markdownFixtureInput)")
         + marked('    try {'))
     const end = kind === 'current' ? '\n}\n\nconst coordinator =' : '\n}\n\n// Re-render on source changes'
     source = once(source, end, '\n' + marked("    } finally { markdownFixtureEvent('document-finish', markdownFixtureOperation) }") + end.slice(1))
@@ -52,9 +53,9 @@ export function instrumentMarkdownComponent(original, kind, generationId) {
     const mermaid = '            const { svg } = await mermaid.render(id, source)'
     source = once(source, mermaid, marked("            markdownFixtureEvent('mermaid', { source, theme })") + mermaid)
     const commit = kind === 'current' ? '        blocks.value = result.blocks' : '        blocks.value = result'
-    source = once(source, commit, marked(`        markdownFixtureEvent('commit', ${kind === 'current' ? 'input' : '{ source: props.source, theme, slashTag: props.tagSlashCommand }'})`) + commit)
+    source = once(source, commit, marked(`        markdownFixtureEvent('commit', ${kind === 'current' ? 'input' : 'markdownFixtureInput'})`) + commit)
     const emit = kind === 'current' ? "        if (isCurrent()) emit('rendered')" : "            emit('rendered')"
-    source = once(source, emit, marked(`${kind === 'current' ? '        if (isCurrent())' : '            '} markdownFixtureEvent('emit', { source: props.source, theme: mermaidTheme(), slashTag: props.tagSlashCommand })`) + emit)
+    source = once(source, emit, marked(`${kind === 'current' ? '        if (isCurrent())' : '            '} markdownFixtureEvent('emit', ${kind === 'current' ? 'input' : 'markdownFixtureInput'})`) + emit)
     if (stripMarkdownInstrumentation(source) !== original) throw new Error('Instrumentation changes original statements')
     return source
 }

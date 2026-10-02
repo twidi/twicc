@@ -184,3 +184,29 @@ test('both instrumented SFC copies compile with the production Vue compiler', as
         assert.deepEqual(template.errors, [])
     }
 })
+test('baseline commit and emit metrics retain the entry tuple across awaited prop changes', async t => {
+    const { api } = await fixture(t)
+    const adapter = api.instrumentMarkdownComponent(baseline, 'baseline', 'test-generation')
+    const body = adapter.slice(adapter.indexOf('async function render()'), adapter.indexOf('\n// Re-render on source changes'))
+    const props = { source: 'entry A', tagSlashCommand: false }
+    const metrics = []
+    let release
+    const pending = new Promise(resolve => { release = resolve })
+    const factory = new Function('props', 'markdownFixtureEvent', 'renderOneBlock', `
+        let renderSeq = 0; const rendering = { value: false }, blocks = { value: [] };
+        const mermaidTheme = () => props.theme || 'default';
+        const splitMarkdownBlocks = () => ({ blocks: [{ src: 'entry A', hash: 'A' }], env: {} });
+        const cacheKeyFor = () => 'key'; const renderCache = new Map(), codeToolsState = new Map();
+        const emit = () => {}; ${body}; return render`)
+    const render = factory(props, (kind, data) => { metrics.push({ kind, data: typeof data === 'object' ? { ...data } : data }); return data },
+        () => pending)
+    const operation = render()
+    props.source = 'later B'; props.theme = 'dark'; props.tagSlashCommand = true
+    release('<p>entry A</p>')
+    await operation
+    for (const kind of ['commit', 'emit']) {
+        assert.deepEqual(metrics.find(event => event.kind === kind).data,
+            { source: 'entry A', theme: 'default', slashTag: false })
+    }
+    assert.equal(api.stripMarkdownInstrumentation(adapter), baseline)
+})

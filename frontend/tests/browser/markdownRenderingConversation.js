@@ -1,8 +1,8 @@
 // Bounded acceptance controls on the existing production SessionView/KeepAlive fixture.
 // Reuse its canonical provider seeding and fail-closed mutation-fetch responder unchanged.
-import { nextTick } from 'vue'
+import { nextTick, unref } from 'vue'
 import { useSettingsStore } from '../../src/stores/settings'
-import { waitForMarkdownCondition } from './markdownRenderingHarness.js'
+import { waitForMarkdownCondition, waitForMarkdownRestoreThenReveal } from './markdownRenderingHarness.js'
 
 const reports = [], errors = [], visibility = []
 let ready = false, busy = false, startupFailure = null, fixture = null
@@ -39,7 +39,7 @@ async function execute(name, action) {
         return record({ name, status: 'passed', result, ...diagnostics() })
     } catch (error) {
         errors.push(String(error))
-        record({ name, status: 'failed/inconclusive', error: String(error), ...diagnostics() })
+        record({ name, status: 'failed/inconclusive', error: String(error), restoreChecks: error.restoreChecks || null, ...diagnostics() })
         throw error
     } finally { busy = false; buttons.forEach(button => { button.disabled = !ready }) }
 }
@@ -92,15 +92,28 @@ async function initialReveal() {
     seed('## Initial reveal\n\nReal Markdown initial reveal marker.')
     return reveal('Real Markdown initial reveal marker.')
 }
+function restoreState() {
+    const list = findList()
+    const state = list?.setupState
+    const observable = Boolean(state && Object.hasOwn(state, 'streamSwapSavedScrollTop'))
+    return { observable, savedScrollTop: state?.streamSwapSavedScrollTop,
+        suspended: Boolean(unref(state?.scrollerRef?.suspended)),
+        pending: !observable || state.streamSwapSavedScrollTop !== null
+            || Boolean(unref(state.scrollerRef?.suspended)) || Boolean(unref(state.isAutoScrollingToBottom)) }
+}
 async function switchAndReturn() {
     await fixture.navigate('main')
     seed('Before KeepAlive switch.')
     const initial = await reveal('Before KeepAlive switch.')
-    await fixture.switchSession()
+    const params = { projectId: fixture.store.sessions[fixture.ids.mainId].project_id, sessionId: fixture.ids.otherId }
+    // Direct routes avoid the older fixture's fixed settle timer.
+    await fixture.router.push({ name: 'session', params })
+    await nextTick()
     replace('## Latest while detached\n\nKeepAlive latest source marker.')
-    await fixture.switchSession()
-    // Reveal waits on the actual scrollToKey result. No fixed delay competes with anchor restoration.
-    const returned = await reveal('KeepAlive latest source marker.')
+    await fixture.router.push({ name: 'session', params: { ...params, sessionId: fixture.ids.mainId } })
+    await nextTick()
+    // Observe the existing live setup getter. No scrollToKey runs while the retirement restore remains active.
+    const returned = await waitForMarkdownRestoreThenReveal(restoreState, () => reveal('KeepAlive latest source marker.'))
     return { initial, returned }
 }
 async function openThinking() {
