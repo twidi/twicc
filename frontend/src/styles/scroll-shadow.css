@@ -16,6 +16,11 @@
     --scroll-shadow: color-mix(in oklab, var(--wa-color-brand-40) 30%, transparent);
     --scroll-shadow-size: 1.25rem;
 }
+/* On a dark surface the darker accent step of the light shadow does not register: a lighter step, a
+   little stronger. */
+.wa-dark {
+    --scroll-shadow: color-mix(in oklab, var(--wa-color-brand-70) 40%, transparent);
+}
 
 @property --scroll-edge-top {
     syntax: '<number>';

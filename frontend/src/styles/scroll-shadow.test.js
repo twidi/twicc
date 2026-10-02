@@ -39,6 +39,8 @@ test('4. the edge numbers are registered inherited numbers (the pseudo-elements 
         assert.match(css, new RegExp(`@property ${name} \\{ syntax: '<number>'; inherits: true; initial-value: 0; \\}`))
     }
     assert.match(css, /--scroll-shadow: color-mix\(in oklab, var\(--wa-color-brand-40\) 30%, transparent\);/)
+    // Dark: a lighter, stronger accent step, so it registers on a dark surface.
+    assert.match(css, /\.wa-dark \{ --scroll-shadow: color-mix\(in oklab, var\(--wa-color-brand-70\) 40%, transparent\); \}/)
 })
 
 const TARGETS = ['wa-dialog::part(body)', 'wa-drawer::part(body)', '[data-scroll-shadow]']
