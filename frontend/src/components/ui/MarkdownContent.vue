@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, inject, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, inject, watch, onScopeDispose, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import {
     splitMarkdownBlocks,
@@ -7,6 +7,9 @@ import {
     extractHeadings,
     extractBlockquoteSources,
 } from '../../utils/markdown.js'
+import { createMarkdownRenderCoordinator, MARKDOWN_RENDER_CANCELLED } from '../../utils/markdownRenderCoordinator.js'
+import { markdownReferenceContextKey, markdownBlockCacheKey } from '../../utils/markdownRenderCache.js'
+import { useMarkdownRenderEligibility } from '../../composables/useMarkdownRenderEligibility.js'
 import { hashString } from '../../utils/hash.js'
 import { useSettingsStore } from '../../stores/settings'
 import { vHighlight } from '../../directives/vHighlight.js'
@@ -64,6 +67,16 @@ const rewriteContentMediaUrl = inject('rewriteContentMediaUrl', null)
 const blocks = ref([])
 const container = ref(null)
 const rendering = ref(true)
+const { eligible } = useMarkdownRenderEligibility()
+let toolRevision = 0
+let disposed = false
+
+function toolOwnership(wrapper) {
+    const revision = toolRevision
+    const root = container.value
+    return () => !disposed && eligible.value && revision === toolRevision
+        && root === container.value && Boolean(root?.contains(wrapper))
+}
 
 // --- Table of contents (opt-in via showToc) --------------------------------
 // The heading outline, recomputed on source change (only when the TOC is on, so
@@ -97,8 +110,8 @@ function scrollToHeading(index) {
     els[index]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
-// Per-block rendered-HTML cache, keyed by raw block source (content-addressed:
-// identical blocks share a render, and a key can never serve the wrong HTML).
+// Completed block HTML keyed by exact source and rendering context.
+// Operation-local staging prevents cancelled work from entering this cache.
 // Component-level and non-reactive: it lives for the component's lifetime and is
 // rebuilt on remount — matching the "streaming only" scope (no cross-mount cache).
 const renderCache = new Map()
@@ -110,14 +123,17 @@ const renderCache = new Map()
 // is inlined into the block HTML before it ever reaches the live DOM (no flash).
 // Returns true if every mermaid diagram rendered (or there were none), false if
 // any failed — the caller uses this to avoid caching a failed render.
-async function renderMermaidIn(root, theme) {
+async function renderMermaidIn(root, theme, isCurrent) {
+    if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
     const mermaidBlocks = root.querySelectorAll('code.language-mermaid')
     if (mermaidBlocks.length === 0) return true
 
     const mermaid = await getMermaid()
+    if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
     let ok = true
 
     for (const block of mermaidBlocks) {
+        if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
         const pre = block.closest('pre')
         if (!pre) continue
 
@@ -126,11 +142,13 @@ async function renderMermaidIn(root, theme) {
 
         try {
             const { svg } = await mermaid.render(id, source)
+            if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
             const wrapper = document.createElement('div')
             wrapper.className = 'mermaid-diagram'
             wrapper.innerHTML = svg
             pre.replaceWith(wrapper)
         } catch {
+            if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
             // If mermaid fails (e.g. an incomplete block mid-stream), leave the
             // code block as-is (it will show as plain code).
             pre.classList.add('mermaid-error')
@@ -305,10 +323,12 @@ function applyCodeWrap(wrapper, wrapped) {
 // Render a nested markdown document (the content of a ```markdown block) with
 // the exact pipeline used for the outer content, tools included: a markdown
 // block inside a markdown block stays explorable all the way down.
-async function renderNestedMarkdown(source, theme) {
+async function renderNestedMarkdown(source, theme, isCurrent) {
+    if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
     const tmp = document.createElement('div')
     tmp.innerHTML = await renderBlockToHtml(source, {})
-    await postProcessIn(tmp, theme, source)
+    if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
+    if (await postProcessIn(tmp, theme, source, isCurrent) === MARKDOWN_RENDER_CANCELLED) return MARKDOWN_RENDER_CANCELLED
     return tmp.innerHTML
 }
 
@@ -316,22 +336,24 @@ async function renderNestedMarkdown(source, theme) {
 // built once per wrapper and then kept in the DOM, so flipping back and forth
 // costs nothing. Returns false when the state could not be applied — the caller
 // then leaves (or drops) the remembered toggle rather than lying about it.
-async function applyCodeRendered(wrapper, rendered) {
+async function applyCodeRendered(wrapper, rendered, isCurrent) {
+    if (!isCurrent()) return false
     const { pre, viewBtn } = codeToolsParts(wrapper)
     if (!pre || !viewBtn) return false
 
     if (rendered && !codeToolsParts(wrapper).view) {
         let html
         try {
-            html = await renderNestedMarkdown(pre.textContent ?? '', mermaidTheme())
+            html = await renderNestedMarkdown(pre.textContent ?? '', mermaidTheme(), isCurrent)
         } catch {
+            if (!isCurrent()) return false
             // Keep the raw block shown rather than swapping in an empty frame.
             toast.error('Could not render this markdown block', { duration: 3000 })
             return false
         }
         // The block may have been replaced (streaming) while the nested render
         // was in flight, or another call may have won the race to build the view.
-        if (!wrapper.isConnected) return false
+        if (!isCurrent() || html === MARKDOWN_RENDER_CANCELLED) return false
         if (!codeToolsParts(wrapper).view) {
             const view = document.createElement('div')
             view.className = 'code-tools-rendered'
@@ -340,6 +362,7 @@ async function applyCodeRendered(wrapper, rendered) {
         }
     }
 
+    if (!isCurrent()) return false
     wrapper.classList.toggle('is-rendered', rendered)
     viewBtn.querySelector('wa-icon')?.setAttribute('name', rendered ? 'code' : 'eye')
     const label = rendered ? 'Show raw markdown' : 'Show rendered markdown'
@@ -354,6 +377,8 @@ async function handleCodeToolsAction(button) {
     const { pre } = codeToolsParts(wrapper)
     if (!pre) return
 
+    const isCurrent = toolOwnership(wrapper)
+    if (!isCurrent()) return
     const key = wrapper.dataset.codeKey
     const state = codeToolsState.get(key) ?? {}
 
@@ -372,7 +397,7 @@ async function handleCodeToolsAction(button) {
         }
         case 'view': {
             const next = !wrapper.classList.contains('is-rendered')
-            if (await applyCodeRendered(wrapper, next)) {
+            if (await applyCodeRendered(wrapper, next, isCurrent) && isCurrent()) {
                 codeToolsState.set(key, { ...state, rendered: next })
             }
             break
@@ -382,16 +407,20 @@ async function handleCodeToolsAction(button) {
 
 // Re-apply the remembered toggles to the freshly rendered DOM. Only the block
 // that changed was replaced, so this is a no-op for every other wrapper.
-async function restoreCodeToolsState() {
+async function restoreCodeToolsState(isCurrent) {
+    if (!isCurrent()) return
     const root = container.value
     if (!root) return
     for (const wrapper of root.querySelectorAll('.code-tools[data-code-key]')) {
+        const ownsWrapper = toolOwnership(wrapper)
+        const ownsRestoration = () => isCurrent() && ownsWrapper()
+        if (!ownsRestoration()) return
         const state = codeToolsState.get(wrapper.dataset.codeKey)
         if (!state) continue
         if (state.wrap !== undefined) applyCodeWrap(wrapper, state.wrap)
         // A block whose nested render fails forgets the toggle, so the failure
         // is reported once instead of on every subsequent render.
-        if (state.rendered && !await applyCodeRendered(wrapper, true) && wrapper.isConnected) {
+        if (state.rendered && !await applyCodeRendered(wrapper, true, ownsRestoration) && ownsRestoration()) {
             codeToolsState.delete(wrapper.dataset.codeKey)
         }
     }
@@ -435,52 +464,44 @@ function handleQuoteToolsAction(button, quote) {
     copyText(quote.dataset.quoteSource ?? (quote.textContent ?? '').trim(), 'Quote')
 }
 
-// Matches a fenced mermaid block (``` or ~~~) at the start of a line. No `g`
-// flag, so `.test()` stays stateless across calls.
-const MERMAID_FENCE_RE = /(?:^|\n)[ \t]*(?:`{3,}|~{3,})[ \t]*mermaid\b/i
-
-// Cache key for a block's rendered HTML. Mermaid blocks render to theme-specific
-// SVG, so their key folds in the active theme; every other block renders
-// identically in light and dark (Shiki ships dual-theme CSS), so it keys on the
-// raw source alone and stays a cache hit across a theme toggle. A block rendered
-// with the slash-command tag gets a NUL-prefixed key (NUL can't appear in
-// source), so an identical block without the tag can never hit its cache entry.
-function cacheKeyFor(src, theme, slashTag = false) {
-    const key = MERMAID_FENCE_RE.test(src) ? `${theme} ${src}` : src
-    return slashTag ? `\x00${key}` : key
-}
-
 // Everything that turns freshly parsed markdown HTML into its final shape. Runs
 // on a DETACHED node, so the result is complete before it reaches the DOM — no
 // flash, even on first paint. `src` is the raw markdown `root` was rendered
 // from, which the quote tools need to recover each quote's own source. Returns
 // false if a mermaid diagram failed, which makes the result unfit for caching.
-async function postProcessIn(root, theme, src) {
-    const mermaidOk = await renderMermaidIn(root, theme)
+async function postProcessIn(root, theme, src, isCurrent) {
+    if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
+    const mermaidOk = await renderMermaidIn(root, theme, isCurrent)
+    if (!isCurrent() || mermaidOk === MARKDOWN_RENDER_CANCELLED) return MARKDOWN_RENDER_CANCELLED
     addLanguageLabelsIn(root)
+    if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
     annotateFileLinksIn(root)
+    if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
     if (rewriteContentMediaUrl) rewriteContentMediaUrlsIn(root)
+    if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
     addCodeToolsIn(root)
+    if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
     addQuoteToolsIn(root, src)
     return mermaidOk
 }
 
 // Render one block to its final HTML, memoized by source (plus the active theme
 // for mermaid blocks).
-async function renderOneBlock(src, env, theme, slashTag = false) {
-    const key = cacheKeyFor(src, theme, slashTag)
-    const cached = renderCache.get(key)
-    if (cached !== undefined) return cached
-
+async function renderOneBlock(src, env, theme, slashTag, referenceContext, cacheEntries, isCurrent) {
+    if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
+    const key = markdownBlockCacheKey({ source: src, referenceContext, theme, slashTag })
+    const cached = cacheEntries.get(key) ?? renderCache.get(key)
+    if (cached !== undefined) {
+        cacheEntries.set(key, cached)
+        return cached
+    }
     const tmp = document.createElement('div')
     tmp.innerHTML = await renderBlockToHtml(src, slashTag ? { ...env, tagLeadingSlashCommand: true } : env)
-    const mermaidOk = await postProcessIn(tmp, theme, src)
+    if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
+    const mermaidOk = await postProcessIn(tmp, theme, src, isCurrent)
+    if (!isCurrent() || mermaidOk === MARKDOWN_RENDER_CANCELLED) return MARKDOWN_RENDER_CANCELLED
     const html = tmp.innerHTML
-
-    // Cache only a fully-successful render. A failed mermaid (incomplete block
-    // mid-stream, or a transient during concurrent renders) must stay retryable,
-    // never frozen into the cache as an error state.
-    if (mermaidOk) renderCache.set(key, html)
+    if (mermaidOk) cacheEntries.set(key, html)
     return html
 }
 
@@ -492,67 +513,55 @@ function mermaidTheme() {
     return settingsStore._effectiveColorScheme === 'dark' ? 'dark' : 'default'
 }
 
-// Monotonic render token: while streaming, render() fires every animation frame
-// and successive calls overlap on their awaits. Only the latest call may commit
-// its result / evict / emit, so a slow older frame can never clobber a newer one.
-let renderSeq = 0
-
-async function render() {
-    rendering.value = true
-    const mySeq = ++renderSeq
-    const theme = mermaidTheme()
-    try {
-        const { blocks: raw, env } = splitMarkdownBlocks(props.source)
-
-        // Sequential (not Promise.all): the streaming hot path is cache-hit
-        // dominated (only the last block actually renders), and going one block
-        // at a time sidesteps any concurrent mermaid.render concerns.
-        const occurrences = new Map()
-        const result = []
-        for (const [i, block] of raw.entries()) {
-            // The slash-command tag only ever applies to the very first block.
-            const slashTag = props.tagSlashCommand && i === 0
-            const html = await renderOneBlock(block.src, env, theme, slashTag)
-            // Disambiguate identical blocks (e.g. two `---`) for a unique Vue key.
-            const n = occurrences.get(block.hash) ?? 0
-            occurrences.set(block.hash, n + 1)
-            result.push({ key: `${block.hash}:${n}`, html })
-        }
-
-        // A newer render() superseded us mid-await: drop our now-stale result.
-        if (mySeq !== renderSeq) return
-
-        // Evict cache entries whose block is gone — chiefly the growing last
-        // block, which otherwise leaves one stale entry per intermediate version.
-        // Keys are theme-aware for mermaid blocks, so a theme toggle also evicts
-        // the previous theme's now-superseded mermaid renders here.
-        const liveKeys = new Set(raw.map((block, i) => cacheKeyFor(block.src, theme, props.tagSlashCommand && i === 0)))
-        for (const key of renderCache.keys()) {
-            if (!liveKeys.has(key)) renderCache.delete(key)
-        }
-
-        blocks.value = result
-
-        // Re-apply the per-code-block toggles once the DOM catches up. Not
-        // awaited: a nested markdown render must not delay the `rendered` event
-        // consumers use for scroll anchoring.
-        if (codeToolsState.size > 0) {
-            nextTick(() => { if (mySeq === renderSeq) restoreCodeToolsState() })
-        }
-    } finally {
-        // Only the latest render owns the lifecycle flag and the event.
-        if (mySeq === renderSeq) {
-            rendering.value = false
-            emit('rendered')
-        }
+async function renderDocument(input, { isCurrent }) {
+    if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
+    const { blocks: raw, env } = splitMarkdownBlocks(input.source)
+    const referenceContext = markdownReferenceContextKey(env.references)
+    const cacheEntries = new Map()
+    const occurrences = new Map()
+    const result = []
+    for (const [i, block] of raw.entries()) {
+        if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
+        const html = await renderOneBlock(block.src, env, input.theme, input.slashTag && i === 0,
+            referenceContext, cacheEntries, isCurrent)
+        if (!isCurrent() || html === MARKDOWN_RENDER_CANCELLED) return MARKDOWN_RENDER_CANCELLED
+        const n = occurrences.get(block.hash) ?? 0
+        occurrences.set(block.hash, n + 1)
+        result.push({ key: `${block.hash}:${n}`, html })
     }
+    return { blocks: result, cacheEntries }
 }
 
-// Re-render on source changes and on color-scheme changes: mermaid diagrams are
-// static SVG baked at render time, so they need a fresh render to follow a
-// dark/light toggle (non-mermaid blocks stay cache hits — see cacheKeyFor).
-watch([() => props.source, () => settingsStore._effectiveColorScheme], render)
-onMounted(render)
+const coordinator = createMarkdownRenderCoordinator({
+    render: renderDocument,
+    commit(result, input, { isCurrent }) {
+        if (!isCurrent()) return
+        renderCache.clear()
+        for (const [key, html] of result.cacheEntries) renderCache.set(key, html)
+        blocks.value = result.blocks
+        if (codeToolsState.size > 0) {
+            nextTick(() => {
+                if (isCurrent()) void restoreCodeToolsState(isCurrent)
+            })
+        }
+        if (isCurrent()) emit('rendered')
+    },
+    onState: state => { rendering.value = state.rendering },
+    onError: () => toast.error('Could not render markdown', { duration: 3000 }),
+})
+watch([() => props.source, mermaidTheme, () => props.tagSlashCommand], ([source, theme, slashTag]) => {
+    toolRevision++
+    coordinator.request({ source, theme, slashTag })
+}, { immediate: true, flush: 'sync' })
+watch(eligible, value => {
+    if (!value) toolRevision++
+    coordinator.setEligible(value)
+}, { immediate: true, flush: 'sync' })
+onScopeDispose(() => {
+    disposed = true
+    toolRevision++
+    coordinator.dispose()
+})
 
 const showRaw = ref(false)
 
