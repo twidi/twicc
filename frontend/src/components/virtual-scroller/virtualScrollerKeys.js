@@ -13,3 +13,5 @@
  * See: https://github.com/WICG/resize-observer/issues/59
  */
 export const RESIZE_OBSERVER_KEY = Symbol('virtualScrollerResizeObserver')
+
+export const ROW_VISIBILITY_OBSERVER_KEY = Symbol('virtualScrollerRowVisibilityObserver')

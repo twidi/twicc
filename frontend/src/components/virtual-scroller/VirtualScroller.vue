@@ -23,8 +23,9 @@
  */
 import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, toRef, nextTick, provide } from 'vue'
 import { useVirtualScroll } from '../../composables/useVirtualScroll'
+import { createRowVisibilityObserver } from '../../utils/rowVisibilityObserver.js'
 import VirtualScrollerItem from './VirtualScrollerItem.vue'
-import { RESIZE_OBSERVER_KEY } from './virtualScrollerKeys.js'
+import { RESIZE_OBSERVER_KEY, ROW_VISIBILITY_OBSERVER_KEY } from './virtualScrollerKeys.js'
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Props
@@ -177,6 +178,7 @@ let hasMounted = false
  * we need to trigger re-measurement of items.
  */
 let lastKnownViewportHeight = 0
+const measuredViewportHeight = ref(0)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Shared ResizeObserver for Items (Provide/Inject Pattern)
@@ -329,6 +331,33 @@ const {
     preventAutoScrollToBottom: props.preventAutoScrollToBottom,
 })
 
+// Publication observation has its own epoch. Retained rows become unknown on recovery.
+const scrollerActive = computed(() => !composableSuspended.value && measuredViewportHeight.value > 0)
+const visibilityRows = new Map()
+let rowVisibilityObserver = null
+watch([containerRef, scrollerActive], ([root, active]) => {
+    rowVisibilityObserver?.disconnect()
+    rowVisibilityObserver = null
+    for (const registration of visibilityRows.values()) registration.onState('unknown')
+    if (!root || !active) return
+    rowVisibilityObserver = createRowVisibilityObserver({ root })
+    for (const [element, registration] of visibilityRows) {
+        registration.release = rowVisibilityObserver.observe(element, registration.onState)
+    }
+}, { flush: 'sync' })
+provide(ROW_VISIBILITY_OBSERVER_KEY, {
+    scrollerActive,
+    observe(element, onState) {
+        const registration = { onState, release: rowVisibilityObserver?.observe(element, onState) }
+        visibilityRows.set(element, registration)
+        return () => {
+            if (visibilityRows.get(element) !== registration) return
+            registration.release?.()
+            visibilityRows.delete(element)
+        }
+    },
+})
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Computed: Rendered Items
 // ═══════════════════════════════════════════════════════════════════════════
@@ -405,6 +434,7 @@ onMounted(() => {
     if (containerRef.value) {
         // Initial sync of scroll position and viewport height
         syncScrollPosition()
+        measuredViewportHeight.value = containerRef.value.clientHeight
 
         // Setup ResizeObserver for viewport height changes
         // We observe a single element, so we use entries[0] directly
@@ -428,6 +458,7 @@ onMounted(() => {
                     invalidateZeroHeights()
                 }
                 lastKnownViewportHeight = height
+                measuredViewportHeight.value = height
 
                 updateViewportHeight(height)
 
@@ -480,6 +511,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+    rowVisibilityObserver?.disconnect()
+    visibilityRows.clear()
     if (containerObserver) {
         containerObserver.disconnect()
         containerObserver = null

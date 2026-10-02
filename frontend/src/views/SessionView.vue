@@ -2313,6 +2313,7 @@ onBeforeUnmount(() => {
             v-if="isLaunchedEphemeral(session)"
             ref="sessionItemsListRef"
             class="panel-card"
+            :view-active="isActive"
             :session-id="sessionId"
             :project-id="projectId"
             @needs-title="handleNeedsTitle"
@@ -2422,6 +2423,7 @@ onBeforeUnmount(() => {
             <wa-tab-panel name="main">
                 <SessionItemsList
                     ref="sessionItemsListRef"
+                    :view-active="isActive && layout.centerVisible.value && centerActiveTab === 'main'"
                     :session-id="sessionId"
                     :project-id="projectId"
                     @needs-title="handleNeedsTitle"
@@ -2435,6 +2437,7 @@ onBeforeUnmount(() => {
                 :name="tab.id"
             >
                 <SessionContent
+                    :view-active="isActive && layout.centerVisible.value && centerActiveTab === tab.id"
                     :session-id="tab.agentId"
                     :parent-session-id="sessionId"
                     :project-id="projectId"

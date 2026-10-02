@@ -1,4 +1,5 @@
 <script setup>
+import { STREAMING_VIEW_CONTEXT } from '../../../composables/streamPublicationKeys.js'
 import { computed, watch, ref, reactive, provide, nextTick, inject, onMounted, onBeforeUnmount, onActivated, onDeactivated } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDebounceFn } from '@vueuse/core'
@@ -47,6 +48,7 @@ const BOTTOM_INDICATOR_ANIMATE_STATES = ['assistant_turn', 'user_turn', 'dead']
 const TEMPORARY_INDICATOR_DURATION = 10000
 
 const props = defineProps({
+    viewActive: { type: Boolean, default: false },
     sessionId: {
         type: String,
         required: true
@@ -472,6 +474,9 @@ const showSkeleton = computed(() => reveal.hidden.value && !unavailableReason.va
 
 // A row that arrives live enters (composables/useChatEntrance.js); nothing else plays
 // it. Only while the chat is on screen and revealed.
+provide(STREAMING_VIEW_CONTEXT, computed(() => props.viewActive && sessionActive.value &&
+    !isLoading.value && !reveal.hidden.value && showVirtualScroller.value))
+
 const isRevealed = () => sessionActive.value && !isLoading.value && !reveal.hidden.value && showVirtualScroller.value
 const entrance = useChatEntrance({ items: visualItems, getKey: item => item.lineNum, isRevealed })
 
@@ -2260,6 +2265,7 @@ defineExpose({
                                 :content="getParsedContent(item)"
                                 :kind="item.kind"
                                 :synthetic-kind="item.syntheticKind || null"
+                                :publication-identity="item.publicationIdentity || null"
                                 :project-id="projectId"
                                 :session-id="sessionId"
                                 :parent-session-id="parentSessionId"
@@ -2276,6 +2282,7 @@ defineExpose({
                             :content="getParsedContent(item)"
                             :kind="item.kind"
                             :synthetic-kind="item.syntheticKind || null"
+                                :publication-identity="item.publicationIdentity || null"
                             :project-id="projectId"
                             :session-id="sessionId"
                             :parent-session-id="parentSessionId"

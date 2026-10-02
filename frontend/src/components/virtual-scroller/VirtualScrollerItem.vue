@@ -18,8 +18,10 @@
  * NOTE: This component is client-only (SSR is not supported due to
  * ResizeObserver and DOM measurement requirements).
  */
-import { ref, onMounted, onUnmounted, inject } from 'vue'
-import { RESIZE_OBSERVER_KEY } from './virtualScrollerKeys.js'
+import { ref, onMounted, onUnmounted, inject, provide } from 'vue'
+import { RESIZE_OBSERVER_KEY, ROW_VISIBILITY_OBSERVER_KEY } from './virtualScrollerKeys.js'
+
+import { STREAMING_ROW_CONTEXT } from '../../composables/streamPublicationKeys.js'
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Props
@@ -54,6 +56,10 @@ const props = defineProps({
  * Reference to the item wrapper element.
  */
 const itemRef = ref(null)
+const intersection = ref('unknown')
+const visibilityContext = inject(ROW_VISIBILITY_OBSERVER_KEY, null)
+let releaseVisibility = null
+provide(STREAMING_ROW_CONTEXT, { intersection, scrollerActive: visibilityContext?.scrollerActive || ref(false) })
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Shared ResizeObserver (Injected from Parent)
@@ -73,6 +79,7 @@ const resizeObserverContext = inject(RESIZE_OBSERVER_KEY, null)
 
 onMounted(() => {
     if (!itemRef.value) return
+    releaseVisibility = visibilityContext?.observe(itemRef.value, state => { intersection.value = state })
     if (!resizeObserverContext) {
         console.warn(
             '[VirtualScrollerItem] No shared ResizeObserver context found. ' +
@@ -87,6 +94,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+    releaseVisibility?.()
     if (itemRef.value && resizeObserverContext) {
         resizeObserverContext.unregister(itemRef.value)
     }

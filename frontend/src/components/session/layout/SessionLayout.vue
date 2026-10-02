@@ -48,7 +48,6 @@ const dockRegions = computed(() => render.value.regions.filter((r) => r.kind !==
 const maximizedRegion = computed(() => render.value.regions.find((r) => r.kind === 'maximized') || null)
 const isCenterMaximized = computed(() => !!maximizedRegion.value?.slots.some((s) => s.dockId === 'center'))
 const maximizedDockRegion = computed(() => (maximizedRegion.value && !isCenterMaximized.value) ? maximizedRegion.value : null)
-const centerVisible = computed(() => !maximizedDockRegion.value)
 
 // Context classes on the root so descendant CSS can react to the mode and to what sits on the
 // edges. Used to inset gutter icons away from the sidebar-reopen toggle when closed, and to
@@ -677,7 +676,7 @@ onBeforeUnmount(() => {
         @contextmenu.capture="onCapturedContextMenu"
         @dragstart.capture="onNativeDragStart"
     >
-        <div class="center-slot panel-card" :style="centerStyle" v-show="centerVisible">
+        <div class="center-slot panel-card" :style="centerStyle" v-show="layout.centerVisible.value">
             <slot></slot>
         </div>
 

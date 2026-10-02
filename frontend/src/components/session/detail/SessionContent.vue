@@ -3,6 +3,7 @@ import SessionHeader from './SessionHeader.vue'
 import SessionItemsList from './SessionItemsList.vue'
 
 const props = defineProps({
+    viewActive: { type: Boolean, default: false },
     sessionId: {
         type: String,
         required: true
@@ -29,6 +30,7 @@ const mode = props.parentSessionId ? 'subagent' : 'session'
             :mode="mode"
         />
         <SessionItemsList
+            :view-active="viewActive"
             :session-id="sessionId"
             :parent-session-id="parentSessionId"
             :project-id="projectId"

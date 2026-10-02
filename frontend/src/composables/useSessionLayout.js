@@ -254,6 +254,7 @@ export function useSessionLayout({ sessionId, containerRef, tabs, routeActiveTab
     function restoreMaximized() { store.setLayoutMaximized(sessionId.value, null) }
     const maximizedRegion = computed(() => render.value.regions.find((r) => r.kind === 'maximized') || null)
     const isCenterMaximized = computed(() => !!maximizedRegion.value?.slots.some((s) => s.dockId === 'center'))
+    const centerVisible = computed(() => !maximizedRegion.value || isCenterMaximized.value)
 
     // Route drives the focus → keep the active tab visible: if a region that doesn't hold it is
     // maximized, restore first (the resolver renders ONLY the maximized region, so the tab would be
@@ -334,7 +335,7 @@ export function useSessionLayout({ sessionId, containerRef, tabs, routeActiveTab
         openOverlayEdge, routeActiveTabId,
         place, moveTab, minimize, restore, swapSide, rememberActive,
         setActiveResize, setResizeFraction,
-        maximize, restoreMaximized, maximizedRegion, isCenterMaximized,
+        maximize, restoreMaximized, maximizedRegion, isCenterMaximized, centerVisible,
         withRouteRevealSuspended,
     }
 }

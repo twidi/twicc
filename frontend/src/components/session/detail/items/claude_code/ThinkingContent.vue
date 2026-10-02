@@ -1,5 +1,7 @@
 <script setup>
-import { ref, computed, nextTick, onMounted } from 'vue'
+import { ref, computed, nextTick, onMounted, inject } from 'vue'
+import { STREAMING_BLOCK_CONTEXT } from '../../../../../composables/streamPublicationKeys.js'
+import { useStreamingPublication } from '../../../../../composables/useStreamingPublication.js'
 import { useDataStore } from '../../../../../stores/data'
 import { useDetailsClosing } from '../../../../../composables/useDetailsClosing'
 import { isBlankMarkdown } from '../../../../../utils/markdown.js'
@@ -44,6 +46,8 @@ const instantOpen = ref(isOpen.value)
 
 // Keeps the body rendered while the card folds (utils/detailsMotion.js).
 const { isClosing, markClosing, clearClosing } = useDetailsClosing()
+const publicationIdentity = inject(STREAMING_BLOCK_CONTEXT, null)
+useStreamingPublication({ identity: publicationIdentity, bodyActive: () => isOpen.value || isClosing() })
 
 onMounted(() => {
     if (instantOpen.value) {
@@ -51,19 +55,22 @@ onMounted(() => {
     }
 })
 
-function onShow() {
+function onShow(event) {
+    if (event.target !== event.currentTarget) return
     clearClosing()
     isOpen.value = true
     dataStore.setDetailOpen(props.sessionId, props.detailKey, true)
 }
 
-function onHide() {
+function onHide(event) {
+    if (event.target !== event.currentTarget) return
     markClosing()
     isOpen.value = false
     dataStore.setDetailOpen(props.sessionId, props.detailKey, false)
 }
 
-function onAfterHide() {
+function onAfterHide(event) {
+    if (event.target !== event.currentTarget) return
     clearClosing()
 }
 </script>

@@ -1,5 +1,7 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, provide } from 'vue'
+import { STREAMING_BLOCK_CONTEXT } from '../../../composables/streamPublicationKeys.js'
+import { useStreamingPublication } from '../../../composables/useStreamingPublication.js'
 import { PROVIDER, SYNTHETIC_ITEM, DISPLAY_MODE } from '../../../constants'
 import { useDataStore } from '../../../stores/data'
 import { useSettingsStore } from '../../../stores/settings'
@@ -22,6 +24,7 @@ const dataStore = useDataStore()
 const settingsStore = useSettingsStore()
 
 const props = defineProps({
+    publicationIdentity: { type: Object, default: null },
     content: {
         type: Object,
         default: null
@@ -125,6 +128,18 @@ function toggleBlockDetailed() {
 
 // Toggle for showing raw JSON
 const showJson = ref(false)
+const liveBlock = computed(() => {
+    const identity = props.publicationIdentity
+    if (props.syntheticKind !== SYNTHETIC_ITEM.STREAMING_BLOCK.kind || !identity || identity.sessionId !== props.sessionId) return null
+    const stream = dataStore.localState.streamingBlocks[props.sessionId]
+    if (stream?.messageId !== identity.messageId) return null
+    const block = stream.blocks.find(block => block.blockIndex === identity.blockIndex)
+    return block?.publicationIdentity === identity ? block : null
+})
+const publicationIdentity = computed(() => liveBlock.value?.publicationIdentity || null)
+provide(STREAMING_BLOCK_CONTEXT, publicationIdentity)
+useStreamingPublication({ identity: publicationIdentity,
+    bodyActive: () => !!liveBlock.value && (showJson.value || liveBlock.value.blockType === 'text') })
 
 // Get the entry type from parsed JSON (for unknown kind display)
 const entryType = computed(() => props.content?.type || 'unknown')
