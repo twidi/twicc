@@ -5,6 +5,8 @@ import { computed, createRenderer, h, nextTick, onMounted, shallowRef, watch } f
 import { useVirtualScroll } from '../composables/useVirtualScroll.js'
 import { useListExit } from '../composables/useListExit.js'
 import { initBuffer, feedDelta, flushBuffer, destroySessionBuffers, destroyAllBuffers } from '../utils/streamingBuffer.js'
+import { createStreamPublicationIdentity, streamPublicationRegistry } from '../utils/streamPublicationRegistry.js'
+import { isBufferActive } from '../utils/streamingBuffer.js'
 import { createPinia, defineStore } from 'pinia'
 import { getParsedContent, setParsedContent } from '../utils/parsedContent.js'
 import { SYNTHETIC_ITEM } from '../constants.js'
@@ -18,12 +20,12 @@ function action(name) {
     assert.ok(end > start, `action ${name} boundary not found`)
     return source.slice(start, end)
 }
-const deps = { SYNTHETIC_ITEM, setParsedContent, getParsedContent, initBuffer, flushBuffer, destroySessionBuffers,
+const deps = { SYNTHETIC_ITEM, setParsedContent, getParsedContent, initBuffer, feedDelta, flushBuffer, destroySessionBuffers, createStreamPublicationIdentity, isBufferActive, STREAM_BLOCK_INACTIVITY_MS: 1000,
     clearBlockInactivityTimer(block) { if (block._inactivityTimer) clearTimeout(block._inactivityTimer); block._inactivityTimer = null } }
-const actions = new Function(...Object.keys(deps), `return { ${['_onBufferDrain', 'streamBlockStart', '_retireStreamingBlocks'].map(action).join('')} }`)(...Object.values(deps))
+const actions = new Function(...Object.keys(deps), `return { ${['_onBufferDrain', 'streamBlockStart', 'streamBlockDelta', 'streamBlockStop', '_retireStreamingBlocks'].map(action).join('')} }`)(...Object.values(deps))
 let fixtureId = 0
 function makeRow(block, lineNum) {
-    const row = { lineNum, syntheticKind: SYNTHETIC_ITEM.STREAMING_BLOCK.kind }
+    const row = { lineNum, syntheticKind: SYNTHETIC_ITEM.STREAMING_BLOCK.kind, publicationIdentity: block.publicationIdentity }
     setParsedContent(row, { type: 'assistant', message: { role: 'assistant', content: [block.blockType === 'thinking'
         ? { type: 'thinking', thinking: block.displayedText, streaming: !block.stopped }
         : { type: 'text', text: block.displayedText }] } })
@@ -32,7 +34,7 @@ function makeRow(block, lineNum) {
 function makeFixture({ blockType = 'text', stopped = false, rowCount = 2 } = {}) {
     const sessionId = `stream-fixture-${++fixtureId}`, blockIndex = 0
     const lineNum = SYNTHETIC_ITEM.STREAMING_BLOCK.baseLineNum - blockIndex
-    const block = { blockIndex, blockType, displayedText: '', text: '', stopped, uuid: 'uuid' }
+    const block = { blockIndex, blockType, displayedText: '', text: '', stopped, uuid: 'uuid', publicationIdentity: createStreamPublicationIdentity(sessionId, 'message', blockIndex) }
     const row = makeRow(block, lineNum)
     const rows = [...Array.from({ length: rowCount - 1 }, (_, i) => ({ lineNum: i + 1 })), row]
     const store = defineStore(sessionId, {
@@ -234,7 +236,7 @@ for (const [provider, thinking, name] of [
     initBuffer(f.sessionId, f.blockIndex, text => {
         assert.equal(f.store.localState.streamingBlocks[f.sessionId].blocks.length, 1)
         publish(f, text); observed.push(getParsedContent(f.row).message.content[0])
-    })
+    }, { active: true, visibilityManaged: false })
     feedDelta(f.sessionId, f.blockIndex, 'complete pending text')
     assert.equal(frames.size, 1)
     const item = { line_num: 42, kind: thinking ? 'reasoning' : 'assistant_message', group_head: 42 }
@@ -262,13 +264,80 @@ test('a new message replaces the buffer at a reused synthetic index', () => with
         replaceRows(f, [makeRow(block, f.lineNum)])
     }
     f.store.streamBlockStart(f.sessionId, 'A', 0, 'text')
+    const oldOwner = streamPublicationRegistry.acquire(f.store.localState.streamingBlocks[f.sessionId].blocks[0].publicationIdentity, { viewActive: true, bodyActive: true, intersection: 'inside' })
     feedDelta(f.sessionId, 0, 'old text')
     const oldHandle = frames.keys().next().value
     f.store.streamBlockStart(f.sessionId, 'B', 0, 'text')
     assert.ok(cancelled.includes(oldHandle))
     assert.equal(frames.size, 0)
+    const newOwner = streamPublicationRegistry.acquire(f.store.localState.streamingBlocks[f.sessionId].blocks[0].publicationIdentity, { viewActive: true, bodyActive: true, intersection: 'inside' })
     feedDelta(f.sessionId, 0, 'new text')
     drain()
+    streamPublicationRegistry.release(oldOwner); streamPublicationRegistry.release(newOwner)
     assert.equal(f.store.localState.streamingBlocks[f.sessionId].messageId, 'B')
     assert.equal(getParsedContent(f.store.localState.visualItemCache[f.sessionId].get(f.lineNum)).message.content[0].text, 'new text')
+}))
+
+test('production start retains 1000 hidden deltas and activation patches the current row once', () => withFrames(({ frames }) => {
+    const f = makeFixture({ blockType: 'thinking' })
+    f.store.recomputeVisualItems = () => {
+        const block = f.store.localState.streamingBlocks[f.sessionId].blocks[0]
+        replaceRows(f, [makeRow(block, f.lineNum)])
+    }
+    f.store.streamBlockStart(f.sessionId, 'hidden-message', 0, 'thinking')
+    const block = f.store.localState.streamingBlocks[f.sessionId].blocks[0]
+    const row = f.store.localState.visualItemCache[f.sessionId].get(f.lineNum)
+    const before = getParsedContent(row)
+    for (let i = 0; i < 1000; i++) f.store.streamBlockDelta(f.sessionId, 'hidden-message', 0, 'x')
+    assert.equal(block.text, 'x'.repeat(1000))
+    assert.equal(frames.size, 0)
+    assert.strictEqual(getParsedContent(row), before)
+    const owner = streamPublicationRegistry.acquire(block.publicationIdentity, { viewActive: true, bodyActive: true, intersection: 'inside' })
+    assert.equal(getParsedContent(row).message.content[0].thinking, block.text)
+    assert.equal(block.displayedText, block.text)
+    assert.equal(frames.size, 0)
+    const current = getParsedContent(row)
+    publish(f, block.text)
+    assert.strictEqual(getParsedContent(row), current)
+    streamPublicationRegistry.release(owner)
+}))
+
+test('hidden text inactivity changes stopped state without draining its body', () => withFrames(({ frames }) => {
+    const f = makeFixture(), timers = new Map()
+    const oldSet = globalThis.setTimeout, oldClear = globalThis.clearTimeout
+    globalThis.setTimeout = fn => { const id = {}; timers.set(id, fn); return id }
+    globalThis.clearTimeout = id => timers.delete(id)
+    let rebuilds = 0
+    f.store.recomputeVisualItems = () => rebuilds++
+    try {
+        f.store.streamBlockStart(f.sessionId, 'timer-message', 0, 'text')
+        const block = f.store.localState.streamingBlocks[f.sessionId].blocks[0]
+        f.store.streamBlockDelta(f.sessionId, 'timer-message', 0, 'hidden text')
+        const callback = [...timers.values()][0]
+        timers.clear(); callback()
+        assert.equal(block.stopped, true)
+        assert.equal(block.text, 'hidden text')
+        assert.equal(block.displayedText, '')
+        assert.equal(frames.size, 0)
+        assert.equal(rebuilds, 2)
+        f.store.streamBlockDelta(f.sessionId, 'timer-message', 0, ' more')
+        assert.equal(block.stopped, false)
+        assert.equal(block.text, 'hidden text more')
+        assert.equal(rebuilds, 3)
+    } finally { globalThis.setTimeout = oldSet; globalThis.clearTimeout = oldClear }
+}))
+
+test('hidden retirement removes buffer without patching retained row', () => withFrames(({ frames }) => {
+    const f = makeFixture({ blockType: 'thinking' })
+    f.store.recomputeVisualItems = () => {}
+    f.store.streamBlockStart(f.sessionId, 'hidden-retirement', 0, 'thinking')
+    const block = f.store.localState.streamingBlocks[f.sessionId].blocks[0]
+    block.uuid = 'final-uuid'
+    f.store.streamBlockDelta(f.sessionId, 'hidden-retirement', 0, 'canonical final text')
+    const before = getParsedContent(f.row)
+    f.store._retireStreamingBlocks(f.sessionId, [{ kind: 'reasoning', line_num: 99, stream_uuid: 'final-uuid' }])
+    assert.equal(block.text, 'canonical final text')
+    assert.strictEqual(getParsedContent(f.row), before)
+    assert.equal(f.store.localState.streamingBlocks[f.sessionId], undefined)
+    assert.equal(frames.size, 0)
 }))

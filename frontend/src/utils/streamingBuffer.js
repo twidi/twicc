@@ -22,7 +22,7 @@ class BlockBuffer {
      * @param {(displayedText: string) => void} onDrain
      *   Called each frame with the text to display (growing substring).
      */
-    constructor(onDrain, { messageId = null, publicationIdentity = null, active = true } = {}) {
+    constructor(onDrain, { messageId = null, publicationIdentity = null, active = false } = {}) {
         this.messageId = messageId
         this.publicationIdentity = publicationIdentity
         this.active = active
@@ -177,12 +177,12 @@ export function initBuffer(sessionId, blockIndex, onDrain, options = {}) {
     const existing = buffers.get(k)
     if (existing) existing.destroy()
     buffers.delete(k)
-    const { messageId = null, publicationIdentity = null, visibilityManaged = false } = options
+    const { messageId = null, publicationIdentity = null, visibilityManaged = true } = options
     if (visibilityManaged && (!publicationIdentity || publicationIdentity.sessionId !== sessionId ||
         publicationIdentity.messageId !== messageId || publicationIdentity.blockIndex !== blockIndex)) {
         throw new Error('Managed streaming buffer requires a matching publication identity')
     }
-    const buf = new BlockBuffer(onDrain, { ...options, active: visibilityManaged ? false : options.active ?? true })
+    const buf = new BlockBuffer(onDrain, { ...options, active: visibilityManaged ? false : options.active ?? false })
     buffers.set(k, buf)
     if (visibilityManaged) {
         buf.releaseBinding = streamPublicationRegistry.bindBlock(publicationIdentity, {

@@ -53,7 +53,8 @@ import { applySessionMuteOnUserTurn } from '../utils/sessionMute'
 import { isWorkspaceProjectId, extractWorkspaceId } from '../utils/workspaceIds'
 import { syncBaseline } from '../utils/syncBaseline'
 import { getParsedContent, setParsedContent, clearParsedContent, hasContent } from '../utils/parsedContent'
-import { initBuffer, feedDelta, flushBuffer, destroySessionBuffers, destroyAllBuffers } from '../utils/streamingBuffer'
+import { createStreamPublicationIdentity } from '../utils/streamPublicationRegistry'
+import { initBuffer, feedDelta, flushBuffer, destroySessionBuffers, destroyAllBuffers, isBufferActive } from '../utils/streamingBuffer'
 
 // Map of debounced save functions per session (to avoid mixing debounces)
 const debouncedSaves = new Map()
@@ -3164,7 +3165,8 @@ export const useDataStore = defineStore('data', {
                 for (const block of streaming.blocks) {
                     if (!block.stopped && block.blockType === 'text') hasActiveTextStreaming = true
                     const lineNum = baseLineNum - block.blockIndex
-                    const displayText = block.displayedText ?? block.text
+                    const displayText = isBufferActive(sessionId, streaming.messageId, block.blockIndex, block.publicationIdentity)
+                        ? block.displayedText : block.text
                     const contentBlock = block.blockType === 'thinking'
                         ? { type: 'thinking', thinking: displayText, streaming: !block.stopped }
                         : { type: 'text', text: displayText }
@@ -3309,7 +3311,7 @@ export const useDataStore = defineStore('data', {
             // Propagate syntheticKind to visual items for synthetic messages.
             // computeVisualItems doesn't know about syntheticKind, so we add it here.
             const streamingLineNums = streamingItems.length
-                ? new Set(streamingItems.map(si => si.line_num))
+                ? new Map(streaming.blocks.map(block => [SYNTHETIC_ITEM.STREAMING_BLOCK.baseLineNum - block.blockIndex, block.publicationIdentity]))
                 : null
             for (let i = visualItems.length - 1; i >= 0; i--) {
                 const vi = visualItems[i]
@@ -3328,6 +3330,7 @@ export const useDataStore = defineStore('data', {
                     vi.workingStatusKey = workingMessage.workingStatusKey
                 } else if (streamingLineNums?.has(vi.lineNum)) {
                     vi.syntheticKind = SYNTHETIC_ITEM.STREAMING_BLOCK.kind
+                    vi.publicationIdentity = streamingLineNums.get(vi.lineNum)
                 }
                 // Synthetic items are always at the end, stop as soon as we hit a real item
                 if (vi.lineNum >= 0) break
@@ -5095,6 +5098,7 @@ export const useDataStore = defineStore('data', {
          * then adds the new block entry.
          */
         streamBlockStart(sessionId, messageId, blockIndex, blockType) {
+            const publicationIdentity = createStreamPublicationIdentity(sessionId, messageId, blockIndex)
             const existing = this.localState.streamingBlocks[sessionId]
             if (!existing || existing.messageId !== messageId) {
                 // New message — start fresh (destroy any old buffers).
@@ -5122,17 +5126,20 @@ export const useDataStore = defineStore('data', {
                 destroySessionBuffers(sessionId)
                 this.localState.streamingBlocks[sessionId] = {
                     messageId,
-                    blocks: [{ blockIndex, blockType, text: '', displayedText: '', stopped: false, uuid: null }],
+                    blocks: [{ blockIndex, blockType, text: '', displayedText: '', stopped: false, uuid: null, publicationIdentity }],
                 }
             } else {
                 // Same message, additional block (e.g. thinking then text)
-                existing.blocks.push({ blockIndex, blockType, text: '', displayedText: '', stopped: false, uuid: null })
+                existing.blocks.push({ blockIndex, blockType, text: '', displayedText: '', stopped: false, uuid: null, publicationIdentity })
             }
 
             // Initialize the adaptive buffer for this block
             initBuffer(sessionId, blockIndex, (displayedText) => {
+                const current = this.localState.streamingBlocks[sessionId]
+                if (current?.messageId !== messageId ||
+                    current.blocks.find(block => block.blockIndex === blockIndex)?.publicationIdentity !== publicationIdentity) return
                 this._onBufferDrain(sessionId, blockIndex, displayedText)
-            })
+            }, { messageId, publicationIdentity, active: false, visibilityManaged: true })
 
             this.recomputeVisualItems(sessionId)
         },
@@ -5192,7 +5199,12 @@ export const useDataStore = defineStore('data', {
             const { baseLineNum, kind: streamingSyntheticKind } = SYNTHETIC_ITEM.STREAMING_BLOCK
             const targetLineNum = baseLineNum - blockIndex
             const row = this.localState.visualItemCache[sessionId]?.get(targetLineNum)
-            if (!row || row.syntheticKind !== streamingSyntheticKind) return
+            if (!row || row.syntheticKind !== streamingSyntheticKind || row.publicationIdentity !== block.publicationIdentity) return
+
+            const previousContent = getParsedContent(row)?.message?.content?.[0]
+            if (block.blockType === 'thinking'
+                ? previousContent?.thinking === displayedText && previousContent.streaming === !block.stopped
+                : previousContent?.text === displayedText) return
 
             const contentBlock = block.blockType === 'thinking'
                 ? { type: 'thinking', thinking: displayedText, streaming: !block.stopped }
