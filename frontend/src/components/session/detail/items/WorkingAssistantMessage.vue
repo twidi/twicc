@@ -105,7 +105,7 @@ function buildPhraseGroups(tools, baseDir, lastStartedToolId, lastToolVisible, t
 </script>
 
 <template>
-    <AgentStatusLine class="working-assistant-message" :class="{ 'working-assistant-message--calm': isAwaiting }">
+    <AgentStatusLine class="working-assistant-message">
         <wa-icon
             v-if="isAwaiting"
             name="hand"
@@ -135,8 +135,11 @@ function buildPhraseGroups(tools, baseDir, lastStartedToolId, lastToolVisible, t
 }
 
 .working-assistant-message__phrase {
-    background: linear-gradient(90deg, var(--wa-color-text-quiet) 0%, var(--wa-color-text-quiet) 38%,
-        var(--wa-color-text-normal) 50%, var(--wa-color-text-quiet) 62%, var(--wa-color-text-quiet) 100%);
+    /* Light mode: a fainter resting colour, so the sweep of the normal colour stands out. */
+    --shimmer-base: color-mix(in oklab, var(--wa-color-text-quiet) 55%, transparent);
+    --shimmer-peak: var(--wa-color-text-normal);
+    background: linear-gradient(90deg, var(--shimmer-base) 0%, var(--shimmer-base) 38%,
+        var(--shimmer-peak) 50%, var(--shimmer-base) 62%, var(--shimmer-base) 100%);
     background-size: 250% 100%;
     background-clip: text;
     color: transparent;
@@ -146,6 +149,9 @@ function buildPhraseGroups(tools, baseDir, lastStartedToolId, lastToolVisible, t
        spilling out: a flex item's min-width is its min-content width otherwise. */
     min-width: 0;
     overflow-wrap: anywhere;
+}
+:global(.wa-dark) .working-assistant-message__phrase {
+    --shimmer-base: var(--wa-color-text-quiet);
 }
 /* <code> paints its own background over the clipped text: an explicit (static) colour. */
 .working-assistant-message__phrase code {
@@ -198,18 +204,6 @@ code {
 @keyframes awaiting-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.3; }
-}
-
-/* Calm while the agent waits for the user: no shimmer, static dots. */
-.working-assistant-message--calm .working-assistant-message__phrase {
-    animation: none;
-    background: none;
-    color: var(--wa-color-text-quiet);
-}
-/* Fully opaque in the quiet colour: they read as "..." in the phrase's colour. */
-.working-assistant-message--calm .working-assistant-message__dots i {
-    animation: none;
-    opacity: 1;
 }
 
 /* Reduced motion: the shimmer stops. The dots keep fading (their movement is

@@ -193,16 +193,3 @@
     0%, 60%, 100% { translate: none; opacity: 0.35; }
     30% { translate: 0 calc(-0.25rem * var(--motion-amount)); opacity: 1; }
 }
-/* The context ring's soft pulse (the mock's ring-pulse): shallower than
-   motion-status-pulse (0.45), as roadmap §8.9 asks for a soft pulse. */
-@keyframes glow-live-ring-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.65; }
-}
-
-/* The context ring pulses while its session or agent works (not while it waits for the
-   user). Opacity only: safe on the indicator (nothing painted outside the arc), and kept
-   under reduced motion. */
-:where(wa-progress-ring.is-live:is(.context-usage-ring, .onode-context-ring))::part(indicator) {
-    animation: glow-live-ring-pulse 2.4s ease-in-out infinite;
-}

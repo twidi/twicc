@@ -430,10 +430,6 @@ test('15. live states: the live keyframes (§4; the comet was removed after the 
         [['0%', '60%', '100%'], 'translate: none; opacity: 0.35;'],
         [['30%'], 'translate: 0 calc(-0.25rem * var(--motion-amount)); opacity: 1;'],
     ])
-    assertKeyframes('glow-live-ring-pulse', [
-        [['0%', '100%'], 'opacity: 1;'],
-        [['50%'], 'opacity: 0.65;'],
-    ])
 })
 
 const WAM = '../components/session/detail/items/WorkingAssistantMessage.vue'
@@ -449,8 +445,10 @@ const PILL_RULES = [
         font-style: italic;
         font-size: var(--wa-font-size-m);`],
     ['.working-assistant-message__phrase', `
-        background: linear-gradient(90deg, var(--wa-color-text-quiet) 0%, var(--wa-color-text-quiet) 38%,
-            var(--wa-color-text-normal) 50%, var(--wa-color-text-quiet) 62%, var(--wa-color-text-quiet) 100%);
+        --shimmer-base: color-mix(in oklab, var(--wa-color-text-quiet) 55%, transparent);
+        --shimmer-peak: var(--wa-color-text-normal);
+        background: linear-gradient(90deg, var(--shimmer-base) 0%, var(--shimmer-base) 38%,
+            var(--shimmer-peak) 50%, var(--shimmer-base) 62%, var(--shimmer-base) 100%);
         background-size: 250% 100%;
         background-clip: text;
         color: transparent;
@@ -474,16 +472,12 @@ const PILL_RULES = [
     ['.working-assistant-message__dots i:nth-child(2)', 'animation-delay: 0.15s;'],
     ['.working-assistant-message__dots i:nth-child(3)', 'animation-delay: 0.3s;'],
 ]
-const CALM_PHRASE = `
+const STILL_PHRASE = `
     animation: none;
     background: none;
     color: var(--wa-color-text-quiet);`
-const CALM_RULES = [
-    ['.working-assistant-message--calm .working-assistant-message__phrase', CALM_PHRASE],
-    ['.working-assistant-message--calm .working-assistant-message__dots i', 'animation: none; opacity: 1;'],
-]
 const REDUCED_RULES = [
-    ['.working-assistant-message__phrase', CALM_PHRASE],
+    ['.working-assistant-message__phrase', STILL_PHRASE],
 ]
 
 /** The inner HTML of the element opened at `start` (a <span>), matching nested spans. */
@@ -506,22 +500,16 @@ test('16. the working pill: every rule pinned whole, in the stated order (§5.2,
         assertPinned(r, body, selector)
         return r
     })
-    const calm = CALM_RULES.map(([selector, body]) => {
-        const r = rule(rules, [selector], topLevel)
-        assertPinned(r, body, selector)
-        return r
-    })
     const reduced = REDUCED_RULES.map(([selector, body]) => {
         const r = rule(rules, [selector], inReduced)
         assertPinned(r, body, `reduced motion ${selector}`)
         return r
     })
     const lastBase = Math.max(...base.map((r) => r.order))
-    for (const r of calm) assert.ok(r.order > lastBase, `${r.head}: after the base rules`)
     const firstReduced = Math.min(...reduced.map((r) => r.order))
     for (const r of rules.filter((x) => !inReduced(x))) assert.ok(r.order < firstReduced, `${r.head}: before the reduced-motion block`)
     assert.equal(rules.filter(inReduced).length, 1, 'the reduced-motion block holds the phrase rule only')
-    assert.ok(!rules.some((r) => r.head === '.working-assistant-message--calm'), 'no calm root rule: nothing to calm on the root')
+    assert.ok(!rules.some((r) => r.head.includes('--calm')), 'no calm variant: a request waiting for the user keeps the full animation')
 })
 
 test('17. the working pill template: phrase spans, dots, calm class (§5.1)', () => {
@@ -540,7 +528,7 @@ test('17. the working pill template: phrase spans, dots, calm class (§5.1)', ()
     }
     // No whitespace between the text and the dots: it would render a space before them.
     assert.ok(spanInner(template, phrases[0].index).endsWith(`}}${DOTS}`), 'plain branch: }}<span class="working-assistant-message__dots"')
-    assert.ok(template.includes(`:class="{ 'working-assistant-message--calm': isAwaiting }"`), 'calm class bound to isAwaiting')
+    assert.ok(!template.includes('--calm'), 'no calm class: the full animation runs while a request waits too')
     assert.ok(!template.includes('text-content'), 'no text-content class')
     assert.ok(!template.includes('...'), 'no literal "..."')
 })
@@ -578,7 +566,7 @@ test('18b. the breathing terminal icon of a background shell', () => {
     // The USER_TURN status line reads like the working line, without its movement: the phrase
     // keeps the resting (quiet) colour of the shimmer.
     const status = read('../components/session/detail/items/BackgroundWorkStatus.vue')
-    assert.ok(collapse(templateOf(status)).includes('<span class="background-work-status__phrase">{{ line.text }}'), 'phrase span')
+    assert.ok(collapse(templateOf(status)).includes('<span class="background-work-status__phrase" :class="{ \'background-work-status__phrase--live\': line.kind === \'shells\' }">{{ line.text }}'), 'phrase span')
     assert.equal(rule(parseCss(styleOf(status)), ['.background-work-status__phrase'], topLevel).decls.color, 'var(--wa-color-text-quiet)')
 
     // A running shell shows the working line's three bouncing dots (same rules, own class names);
@@ -586,6 +574,16 @@ test('18b. the breathing terminal icon of a background shell', () => {
     const statusTemplate = collapse(templateOf(status))
     assert.ok(statusTemplate.includes('{{ line.text }}<span v-if="line.kind === \'shells\'" class="background-work-status__dots" aria-hidden="true"><i></i><i></i><i></i></span></span>'), 'dots after the shells phrase, no space')
     const dots = parseCss(styleOf(status))
+    // The shell phrase shimmers like the working line's; the cron phrase does not.
+    assert.ok(collapse(templateOf(status)).includes(`:class="{ 'background-work-status__phrase--live': line.kind === 'shells' }"`), 'live class on shells only')
+    assertPinned(rule(dots, ['.background-work-status__phrase--live'], topLevel), `--shimmer-base: color-mix(in oklab, var(--wa-color-text-quiet) 55%, transparent);
+        --shimmer-peak: var(--wa-color-text-normal);
+        background: linear-gradient(90deg, var(--shimmer-base) 0%, var(--shimmer-base) 38%,
+            var(--shimmer-peak) 50%, var(--shimmer-base) 62%, var(--shimmer-base) 100%);
+        background-size: 250% 100%;
+        background-clip: text;
+        color: transparent;
+        animation: glow-live-shimmer 1.47s linear infinite;`)
     assertPinned(rule(dots, ['.background-work-status__dots'], topLevel), `display: inline-flex;
         gap: 0.1875rem;
         margin-inline-start: 0.3em;
@@ -682,24 +680,12 @@ test('19. the gap above the pill: on the card, after a text block (§5.4)', () =
     assertPinned(r, '--assistant-card-top-spacing: var(--wa-space-xl);')
 })
 
-test('20. the pulsing context ring: rule, keyframes, bindings (§7)', () => {
-    const ring = rule(glow, [':where(wa-progress-ring.is-live:is(.context-usage-ring, .onode-context-ring))::part(indicator)'], topLevel)
-    assertPinned(ring, 'animation: glow-live-ring-pulse 2.4s ease-in-out infinite;')
-    assert.deepEqual(rule(glow, ['50%'], inKeyframes('glow-live-ring-pulse')).decls, { opacity: '0.65' })
-
-    const ringTags = (file) => [...collapse(templateOf(read(file))).matchAll(/<wa-progress-ring\b[^>]*>/g)].map((m) => m[0])
-    const header = read('../components/session/detail/SessionHeader.vue')
-    assert.ok(collapse(header).includes('isContextRingLive(processState.value, store.getPendingRequests(props.sessionId))'), 'SessionHeader: the helper')
-    const headerRings = ringTags('../components/session/detail/SessionHeader.vue')
-    assert.equal(headerRings.length, 2, 'SessionHeader: two rings')
-    for (const tag of headerRings) assert.ok(tag.includes(`:class="{ 'is-live': contextRingLive }"`), tag)
-    for (const [file, binding] of [
-        ['../components/orchestration/OrchestrationNode.vue', `:class="{ 'is-live': nodeData?.process?.state === 'assistant_turn' }"`],
-        ['../components/orchestration/AgentTreeNode.vue', `:class="{ 'is-live': isRunning }"`],
-    ]) {
-        const tags = ringTags(file)
-        assert.equal(tags.length, 1, `${file}: one ring`)
-        assert.ok(tags[0].includes(binding), `${file}: ${binding}`)
+test('20. the context ring does not pulse: the process icon says the state', () => {
+    assert.ok(!glowCss.includes('glow-live-ring-pulse') && !glowCss.includes('is-live'), 'no ring pulse left in glow.css')
+    for (const file of ['session/detail/SessionHeader.vue', 'orchestration/OrchestrationNode.vue', 'orchestration/AgentTreeNode.vue']) {
+        const tags = [...collapse(templateOf(read(`../components/${file}`))).matchAll(/<wa-progress-ring\b[^>]*>/g)].map((m) => m[0])
+        assert.ok(tags.length > 0, file)
+        for (const tag of tags) assert.ok(!tag.includes('is-live'), `${file}: ${tag}`)
     }
 })
 

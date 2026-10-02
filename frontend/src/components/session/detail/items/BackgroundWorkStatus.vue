@@ -31,7 +31,7 @@ defineProps({
                 :background-shells="line.kind === 'shells' ? 1 : 0"
                 :has-active-crons="line.kind === 'crons'"
             />
-            <span class="background-work-status__phrase">{{ line.text }}<span v-if="line.kind === 'shells'" class="background-work-status__dots" aria-hidden="true"><i></i><i></i><i></i></span></span>
+            <span class="background-work-status__phrase" :class="{ 'background-work-status__phrase--live': line.kind === 'shells' }">{{ line.text }}<span v-if="line.kind === 'shells'" class="background-work-status__dots" aria-hidden="true"><i></i><i></i><i></i></span></span>
         </AgentStatusLine>
     </div>
 </template>
@@ -47,6 +47,22 @@ defineProps({
    not working, so the phrase keeps the resting colour of that line's shimmer. */
 .background-work-status__phrase {
     color: var(--wa-color-text-quiet);
+}
+
+/* A running shell works: its phrase shimmers like the working line's (same rule, same
+   keyframes in glow.css). A cron line, which waits, keeps the static resting colour. */
+.background-work-status__phrase--live {
+    --shimmer-base: color-mix(in oklab, var(--wa-color-text-quiet) 55%, transparent);
+    --shimmer-peak: var(--wa-color-text-normal);
+    background: linear-gradient(90deg, var(--shimmer-base) 0%, var(--shimmer-base) 38%,
+        var(--shimmer-peak) 50%, var(--shimmer-base) 62%, var(--shimmer-base) 100%);
+    background-size: 250% 100%;
+    background-clip: text;
+    color: transparent;
+    animation: glow-live-shimmer 1.47s linear infinite;
+}
+:global(.wa-dark) .background-work-status__phrase--live {
+    --shimmer-base: var(--wa-color-text-quiet);
 }
 
 /* A running shell shows the working line's three bouncing dots (same rules as
@@ -71,4 +87,13 @@ defineProps({
 }
 .background-work-status__dots i:nth-child(2) { animation-delay: 0.15s; }
 .background-work-status__dots i:nth-child(3) { animation-delay: 0.3s; }
+
+/* Reduced motion: the shimmer stops (as on the working line). */
+@media (prefers-reduced-motion: reduce) {
+    .background-work-status__phrase--live {
+        animation: none;
+        background: none;
+        color: var(--wa-color-text-quiet);
+    }
+}
 </style>
