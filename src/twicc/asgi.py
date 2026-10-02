@@ -2457,8 +2457,11 @@ application = ProtocolTypeRouter(
     }
 )
 
-# Serve static files via BlackNoise at the ASGI level.
-application = BlackNoise(application, immutable_file_test=lambda *_: True)
+# Serve static files via BlackNoise at the ASGI level. Only the content-hashed
+# Vite output (`/static/assets/`) is cached as immutable: the `public/` files
+# keep their name across builds, so they get a short cache and are
+# cache-busted by `?v=` in `resolvePublicAssetUrl` (frontend/src/utils/publicAsset.js).
+application = BlackNoise(application, immutable_file_test=lambda path: path.startswith("/static/assets/"))
 application.add(settings.FRONTEND_DIST_DIR, "/static")
 
 # Common public-origin gate (peer-origin-routing design §9-§11): routes the

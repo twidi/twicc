@@ -59,6 +59,11 @@ export default defineConfig(({ command }) => ({
     // Use /static/ base only for production build (Django serves static files)
     // In dev mode, use root path
     base: command === 'build' ? '/static/' : '/',
+    // Cache-buster for `public/` files referenced from JS (see
+    // utils/publicAsset.js). Build-only: the dev server does not cache them.
+    define: {
+        __PUBLIC_ASSETS_VERSION__: JSON.stringify(command === 'build' ? String(Date.now()) : ''),
+    },
     build: {
         outDir: '../src/twicc/static/frontend',
         emptyOutDir: true
