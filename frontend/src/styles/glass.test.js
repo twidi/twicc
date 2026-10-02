@@ -151,6 +151,7 @@ test('2b. "Reduce effects" gives the same opaque surfaces and no blur, after .wa
     assert.equal(decls['--glass-sticky-bg'], 'var(--glass-tint)')
     assert.equal(decls['--glass-field-bg'], 'var(--wa-color-surface-default)')
     for (const name of FILTER_TOKENS) assert.equal(decls[name], 'none', `${name} must be none`)
+    assert.equal(decls['--twicc-no-fade'], 'none', 'the overlays\' content fade filter is off')
 })
 
 function listSourceFiles(dir) {
@@ -542,7 +543,7 @@ test('8. every glass layer fades through its own opacity, read from --twicc-reve
 
 test('9. the content of our own glass surfaces and toasts fades through --twicc-reveal-filter', () => {
     const content = findRule(topRulesOutsideAt, [':where(.glass-surface, .Notivue__notification) > *'])
-    assert.deepEqual(content.decls, { filter: 'var(--twicc-reveal-filter, none)' })
+    assert.deepEqual(content.decls, { filter: 'var(--twicc-no-fade, var(--twicc-reveal-filter, none))' })
 })
 
 const LIVE_SHADOW_HOSTS = [

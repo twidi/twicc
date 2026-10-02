@@ -300,7 +300,7 @@ test('pulse: a scale nudge, and a --twicc-reveal dip that only shows when --moti
         ['scale', 'calc(1 + 0.02 * var(--motion-amount))'],
         ['--twicc-reveal', 'calc(1 - 0.15 * (1 - var(--motion-amount)))'],
     ] }])
-    assert.deepEqual(rule('wa-dialog', '.dialog.pulse > *').decls, [['filter', 'opacity(var(--twicc-reveal))']])
+    assert.deepEqual(rule('wa-dialog', '.dialog.pulse > *').decls, [['filter', 'var(--twicc-no-fade, opacity(var(--twicc-reveal)))']])
     assert.ok(!sheet.rules.some((r) => inReducedMedia(r)), 'no media query: a shadow tree cannot see the html class, the property carries it')
     assert.ok(!keyframeOf(sheet, 'twicc-pulse-dim'), 'no separate dim keyframes')
 })
@@ -473,16 +473,16 @@ test('content fade: direct rules on dialog, menu and submenu', () => {
         ['wa-dropdown-item', '#submenu.show ::slotted(*), #submenu.hide ::slotted(*)'],
     ]
     for (const [tag, selector] of direct) {
-        assert.deepEqual(rule(tag, selector).decls, [['filter', 'opacity(var(--twicc-reveal))']], `${tag} ${selector}`)
+        assert.deepEqual(rule(tag, selector).decls, [['filter', 'var(--twicc-no-fade, opacity(var(--twicc-reveal)))']], `${tag} ${selector}`)
     }
 })
 
 test('content fade: inherited --twicc-reveal-filter, set by the popover and select motion states only', () => {
-    assert.deepEqual(rule('wa-popover', '.body ::slotted(*)').decls, [['filter', 'var(--twicc-reveal-filter, none)']])
+    assert.deepEqual(rule('wa-popover', '.body ::slotted(*)').decls, [['filter', 'var(--twicc-no-fade, var(--twicc-reveal-filter, none))']])
     const selectContent = SHEETS['wa-select'].rules
     assert.equal(selectContent.length, 1, 'wa-select: one rule')
     assert.equal(selectContent[0].selector, ':host(:not(.glass-listbox-direct)) .listbox ::slotted(*)', 'the direct list box is excluded')
-    assert.deepEqual(selectContent[0].decls, [['filter', 'var(--twicc-reveal-filter, none)']])
+    assert.deepEqual(selectContent[0].decls, [['filter', 'var(--twicc-no-fade, var(--twicc-reveal-filter, none))']])
 
     const states = [
         ':host(.popover) .popup.show-with-scale',

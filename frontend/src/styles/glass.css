@@ -99,6 +99,9 @@
     --glass-field-bg: var(--wa-color-surface-default);
     --glass-filter: none;
     --glass-veil-filter: none;
+    /* The content of an overlay no longer fades through a filter: opacity() while it moves
+       (the consumers read this first, shadow trees included). */
+    --twicc-no-fade: none;
 }
 
 /* The modal veil: what Web Awesome's .dialog::backdrop and the native dialog::backdrop
@@ -312,7 +315,7 @@
    the glass layer, so the blur stays drawn. Zero specificity: a child with its own filter
    rule keeps it (and does not fade). */
 :where(.glass-surface, .Notivue__notification) > * {
-    filter: var(--twicc-reveal-filter, none);
+    filter: var(--twicc-no-fade, var(--twicc-reveal-filter, none));
 }
 
 /* Tooltips: a glass surface like the popover and the toasts, in the page scheme (they used

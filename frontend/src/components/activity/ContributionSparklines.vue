@@ -717,6 +717,10 @@ function formatAverage(value, isCost) {
 .sparkline-line {
     filter: drop-shadow(0 0 0.1875rem color-mix(in oklab, var(--curve-color) 60%, transparent));
 }
+/* "Reduce effects": no halo. */
+:root.reduce-effects .sparkline-line {
+    filter: none;
+}
 
 /* Legend */
 .sparkline-legend {

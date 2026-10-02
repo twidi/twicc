@@ -220,6 +220,10 @@ onBeforeUnmount(() => {
     opacity: 0;
     transition: var(--glide-fade);
 }
+/* "Reduce effects": the ink without its glow. */
+:root.reduce-effects .tab-bar::part(tabs)::after {
+    filter: none;
+}
 .tab-bar[data-glide-ready]::part(tabs)::after {
     opacity: 1;
     transition: var(--glide-transition);

@@ -35,7 +35,7 @@
 
 /* The close button resets `all` (App.vue): it reads the filter again. */
 .Notivue__notification > .Notivue__close {
-    filter: var(--twicc-reveal-filter, none);
+    filter: var(--twicc-no-fade, var(--twicc-reveal-filter, none));
 }
 
 @keyframes twicc-toast-in {

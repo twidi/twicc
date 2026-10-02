@@ -24,6 +24,10 @@ wa-callout > wa-icon[slot='icon'] {
     color: color-mix(in oklab, var(--callout-c) 78%, var(--wa-color-text-normal));
     filter: drop-shadow(0 0 5px color-mix(in oklab, var(--callout-c) 55%, transparent));
 }
+/* "Reduce effects": no halo. */
+:root.reduce-effects wa-callout > wa-icon[slot='icon'] {
+    filter: none;
+}
 
 .wa-dark wa-callout {
     background-image: linear-gradient(100deg, color-mix(in oklab, var(--callout-c) 30%, var(--surface-solid)), color-mix(in oklab, var(--callout-c) 21%, var(--surface-solid)) 60%, color-mix(in oklab, var(--callout-c) 8%, var(--surface-solid)));

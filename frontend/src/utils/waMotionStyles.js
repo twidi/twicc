@@ -42,13 +42,13 @@ export const WA_MOTION_STYLES = {
         :host(.motion-drop) .dialog.hide::backdrop { animation: twicc-fade 160ms ease-out reverse forwards; }
 
         /* The content fades during the motion (the glass layers read --twicc-reveal). */
-        .dialog.show > *, .dialog.hide > * { filter: opacity(var(--twicc-reveal)); }
+        .dialog.show > *, .dialog.hide > * { filter: var(--twicc-no-fade, opacity(var(--twicc-reveal))); }
 
         /* Click outside a dialog without light dismiss: a feedback nudge, scale only; under
            reduced motion (--motion-amount: 0), a --twicc-reveal dip of the whole dialog
            instead, its blur kept. */
         .dialog.pulse { animation: twicc-pulse 250ms var(--motion-ease); }
-        .dialog.pulse > * { filter: opacity(var(--twicc-reveal)); }
+        .dialog.pulse > * { filter: var(--twicc-no-fade, opacity(var(--twicc-reveal))); }
 
         @keyframes twicc-dialog { from { translate: 0 calc(0.75rem * ${A}); scale: calc(1 - 0.04 * ${A}); } }
         @keyframes twicc-drop { from { translate: 0 calc(-0.5rem * ${A}); scale: calc(1 - 0.03 * ${A}); } }
@@ -60,7 +60,7 @@ export const WA_MOTION_STYLES = {
     'wa-dropdown': `
         #menu.show { animation: twicc-pop-move 180ms var(--motion-ease-out), twicc-reveal 180ms var(--motion-ease-out); }
         #menu.hide { animation: twicc-pop-move 50ms ease-out reverse forwards, twicc-reveal 50ms ease-out reverse forwards; }
-        #menu.show ::slotted(*), #menu.hide ::slotted(*) { filter: opacity(var(--twicc-reveal)); }
+        #menu.show ::slotted(*), #menu.hide ::slotted(*) { filter: var(--twicc-no-fade, opacity(var(--twicc-reveal))); }
 
         @keyframes twicc-pop-move { from { scale: calc(1 - 0.06 * ${A}); } }
         @keyframes twicc-reveal { from { --twicc-reveal: 0; } }
@@ -70,7 +70,7 @@ export const WA_MOTION_STYLES = {
     'wa-dropdown-item': `
         #submenu.show { animation: twicc-reveal 180ms var(--motion-ease-out); }
         #submenu.hide { animation: twicc-reveal 50ms ease-out reverse forwards; }
-        #submenu.show ::slotted(*), #submenu.hide ::slotted(*) { filter: opacity(var(--twicc-reveal)); }
+        #submenu.show ::slotted(*), #submenu.hide ::slotted(*) { filter: var(--twicc-no-fade, opacity(var(--twicc-reveal))); }
 
         @keyframes twicc-reveal { from { --twicc-reveal: 0; } }
     `,
@@ -83,7 +83,7 @@ export const WA_MOTION_STYLES = {
         :host([data-glass-arrow='right']) .popover::part(popup) { transform-origin: right var(--popover-arrow-center, 50%); }
         :host([data-glass-arrow='left']) .popover::part(popup) { transform-origin: left var(--popover-arrow-center, 50%); }
 
-        .body ::slotted(*) { filter: var(--twicc-reveal-filter, none); }
+        .body ::slotted(*) { filter: var(--twicc-no-fade, var(--twicc-reveal-filter, none)); }
     `,
     // The inner popup of wa-select (host class select), wa-color-picker (color-popup),
     // wa-popover (popover) and wa-tooltip (tooltip). A bare wa-popup (the pickers) matches none.
@@ -125,7 +125,7 @@ export const WA_MOTION_STYLES = {
     // The select's options fade with the reveal of its moving popup. The opt-in direct
     // list boxes fade as a whole through their own opacity (glass.css): excluded here.
     'wa-select': `
-        :host(:not(.glass-listbox-direct)) .listbox ::slotted(*) { filter: var(--twicc-reveal-filter, none); }
+        :host(:not(.glass-listbox-direct)) .listbox ::slotted(*) { filter: var(--twicc-no-fade, var(--twicc-reveal-filter, none)); }
     `,
 }
 

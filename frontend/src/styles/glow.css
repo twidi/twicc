@@ -162,6 +162,10 @@
 :where(wa-progress-ring:is(.context-usage-ring, .onode-context-ring))::part(base) {
     filter: drop-shadow(0 0 0.1875rem color-mix(in oklab, var(--indicator-color) 35%, transparent));
 }
+/* "Reduce effects": no glow (a drop-shadow repaints the shape on every frame). */
+:root.reduce-effects :where(wa-progress-ring:is(.context-usage-ring, .onode-context-ring))::part(base) {
+    filter: none;
+}
 /* The empty track reads the shared token (--progress-track, neutral-tint.css), which in dark is
    the lifted grey of the quota bars' empty lane: Web Awesome's own track nearly vanishes on the
    dark header. A rule on the host beats the component's own :host declaration. */

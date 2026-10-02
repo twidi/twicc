@@ -138,7 +138,7 @@ test('the motion states declare --twicc-reveal-filter; the close button reads it
         const merged = Object.assign({}, ...rules.filter((b) => splitTopLevel(b.head).includes(state)).map((b) => declarations(b.body)))
         assert.equal(merged['--twicc-reveal-filter'], 'opacity(var(--twicc-reveal))', state)
     }
-    assert.deepEqual(declarations(block('.Notivue__notification > .Notivue__close').body), { filter: 'var(--twicc-reveal-filter, none)' })
+    assert.deepEqual(declarations(block('.Notivue__notification > .Notivue__close').body), { filter: 'var(--twicc-no-fade, var(--twicc-reveal-filter, none))' })
     const css = stripComments(read('toast-motion.css'))
     assert.ok(!/--glass-(bg|sticky-bg|tooltip-bg|settle)\s*:/.test(css), 'no opaque-while-moving state')
 })

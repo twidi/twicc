@@ -900,6 +900,11 @@ onBeforeUnmount(() => {
     background: var(--surface-solid, #fff);
     border-radius: var(--wa-border-radius-s, 4px);
 }
+/* "Reduce effects": a plain box shadow instead of the filter. */
+:root.reduce-effects .layout-tab-drag-ghost {
+    filter: none;
+    box-shadow: 0 5px 12px rgba(0, 0, 0, 0.25);
+}
 .layout-tab-drag-ghost::part(base) {
     padding: var(--wa-space-2xs) var(--wa-space-xs);
     gap: var(--wa-space-2xs);
