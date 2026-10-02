@@ -88,3 +88,40 @@ test('managed buffers ignore active option and follow exact registry generation'
         assert.equal(buffer.isBufferActive('session', 'message', 0, identity), false)
     })
 })
+
+test('empty unknown bootstrap retains later hidden deltas until first inside observation', async () => {
+    const { createStreamPublicationIdentity, streamPublicationRegistry } = await import('./streamPublicationRegistry.js')
+    frames(({ pending, publications }) => {
+        const identity = createStreamPublicationIdentity('session', 'message', 0)
+        buffer.initBuffer('session', 0, text => publications.push(text), { messageId: 'message', publicationIdentity: identity })
+        const owner = streamPublicationRegistry.acquire(identity, { viewActive: true, bodyActive: true, intersection: 'unknown' })
+        buffer.feedDelta('session', 0, 'first hidden delta')
+        assert.equal(pending.size, 0)
+        assert.deepEqual(publications, [])
+        streamPublicationRegistry.update(owner, { viewActive: true, bodyActive: true, intersection: 'inside' })
+        assert.deepEqual(publications, ['first hidden delta'])
+        assert.equal(pending.size, 0)
+        streamPublicationRegistry.release(owner)
+    })
+})
+test('a second eligible view does not jump the shared adaptive prefix', async () => {
+    const { createStreamPublicationIdentity, streamPublicationRegistry } = await import('./streamPublicationRegistry.js')
+    frames(({ pending, publications, advance }) => {
+        const identity = createStreamPublicationIdentity('session', 'message', 0)
+        buffer.initBuffer('session', 0, text => publications.push(text), { messageId: 'message', publicationIdentity: identity })
+        const state = { viewActive: true, bodyActive: true, intersection: 'inside' }
+        const a = streamPublicationRegistry.acquire(identity, state)
+        buffer.feedDelta('session', 0, 'abcdefghijklmnopqrstuvwxyz')
+        advance()
+        const prefix = publications.at(-1), before = publications.length
+        const b = streamPublicationRegistry.acquire(identity, { ...state, intersection: 'unknown' })
+        streamPublicationRegistry.update(b, state)
+        assert.equal(publications.length, before)
+        assert.equal(publications.at(-1), prefix)
+        assert.equal(pending.size, 1)
+        streamPublicationRegistry.release(a)
+        assert.equal(buffer.isBufferActive('session', 'message', 0, identity), true)
+        streamPublicationRegistry.release(b)
+        assert.equal(pending.size, 0)
+    })
+})

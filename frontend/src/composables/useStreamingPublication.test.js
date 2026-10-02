@@ -43,3 +43,25 @@ test('missing context never owns a live block', () => {
     app.mount({}); app.unmount(); unbind()
     assert.deepEqual(events, [])
 })
+
+test('actual SessionItem identity resolver rejects retained exit-only and real JSONL rows', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { reactive } = await import('vue')
+    const { SYNTHETIC_ITEM } = await import('../constants.js')
+    const source = readFileSync(new URL('../components/session/detail/SessionItem.vue', import.meta.url), 'utf8')
+    const begin = source.indexOf('const liveBlock = computed('), end = source.indexOf('const publicationIdentity =', begin)
+    assert.ok(begin >= 0 && end > begin)
+    const old = createStreamPublicationIdentity('session', 'message', 0), next = createStreamPublicationIdentity('session', 'message', 0)
+    const props = reactive({ sessionId: 'session', syntheticKind: SYNTHETIC_ITEM.STREAMING_BLOCK.kind, publicationIdentity: old })
+    const block = reactive({ publicationIdentity: next, blockIndex: 0, blockType: 'text', text: 'current canonical text' })
+    const dataStore = reactive({ localState: { streamingBlocks: { session: { messageId: 'message', blocks: [block] } } } })
+    // Execute the actual SFC resolver, rather than deriving ownership from its reused line number.
+    const resolve = new Function('computed', 'props', 'dataStore', 'SYNTHETIC_ITEM', `${source.slice(begin, end)}; return liveBlock`)
+    const liveBlock = resolve(computed, props, dataStore, SYNTHETIC_ITEM)
+    assert.equal(liveBlock.value, null)
+    props.publicationIdentity = next
+    assert.strictEqual(liveBlock.value, block)
+    assert.equal(liveBlock.value.text, 'current canonical text')
+    props.syntheticKind = null
+    assert.equal(liveBlock.value, null)
+})

@@ -389,3 +389,10 @@ Native execution is recommended. These tasks share buffer, registry, and Vue own
 Keep a whole-change independent review before completion when the user authorizes it.
 The user authorizes internal subagents for specification and plan reviews. Implementation delegation remains unselected for this priority.
 This plan remains unexecuted until the user approves implementation.
+
+## Implementation execution status
+
+Tasks 1–4 have implementation commits on the isolated worktree branch.
+Task 5 has a full SessionView fixture and baseline adapter helper. Browser acceptance remains incomplete.
+See `docs/plans/2026-10-02-invisible-stream-publications-execution.md` for exact verification and remaining cases.
+Independent implementation review belongs to the parent agent. No review acceptance is claimed here.
