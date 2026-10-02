@@ -1,13 +1,16 @@
 // Real production consumers. All substitutions stay in this fixture; mutation fetches remain blocked.
-import { createApp, h, nextTick } from 'vue'
+import { createApp, h, nextTick, unref } from 'vue'
 import SessionList from '../../src/components/session/list/SessionList.vue'
 import { useSettingsStore } from '../../src/stores/settings'
 import { DISPLAY_LEVEL, DISPLAY_MODE } from '../../src/constants'
 import { waitForMarkdownCondition as waitFor } from './markdownRenderingHarness.js'
-import { runBoundedScrollerAction, recoverScrollerConversation } from './scrollerConversationHarness.js'
+import { runBoundedScrollerAction, recoverScrollerConversation, installImportedScrollerQuarantine, replaceScrollerContentWithMetadata, makeScrollerRecoveryItem } from './scrollerConversationHarness.js'
+import { getParsedContent, hasContent } from '../../src/utils/parsedContent.js'
+const quarantineImportedControls = installImportedScrollerQuarantine(document)
 const reports = [], requests = []
 let fixture, ready = false, busy = false, locked = false, activeAction = null
 const actionDeadlineMs = 20000
+let loadingProbe = null
 const controls = document.createElement('section')
 controls.style.cssText = 'position:fixed;bottom:0;left:0;z-index:2000;background:Canvas;max-height:22vh;overflow:auto;padding:4px'
 const status = document.createElement('strong'); status.id = 'scroller-conversation-status'; status.textContent = 'Startup pending'
@@ -16,15 +19,41 @@ controls.append(status, evidence); document.body.append(controls)
 const buttons = []
 function check(value, message) { if (!value) throw new Error(message) }
 function diagnostics() {
+    const imported = document.querySelector('#fixture-controls')
+    const importedActions = [...(imported?.querySelectorAll('button,input,select,textarea') ?? [])]
     return { viewport: { width: innerWidth, height: innerHeight }, visibility: document.visibilityState,
         controls: { ready, busy, locked, actionDeadlineMs, activeAction },
+        importedControls: { present: Boolean(imported), inert: imported?.inert ?? null, actionCount: importedActions.length,
+            hiddenActions: importedActions.filter(action => action.hidden).length, disabledActions: importedActions.filter(action => action.disabled).length },
         provider: fixture?.provider, moduleWarm: Boolean(fixture), feed: 'Seeded synthetic read-only data; bounded browser controls',
-        geometry: fixture?.geometry(), requests: [...requests], snapshot: fixture?.snapshot() }
+        geometry: fixture?.geometry(), loading: loadingDiagnostics(), requests: [...requests], snapshot: fixture?.snapshot() }
+}
+function loadingDiagnostics() {
+    if (!loadingProbe || !fixture) return null
+    const { line } = loadingProbe, id = fixture.ids.mainId
+    const state = list()?.setupState
+    const raw = fixture.store.sessionItems[id]?.[line - 1]
+    const visualItems = fixture.store.getSessionVisualItems(id)
+    const index = visualItems.findIndex(item => item.lineNum === line)
+    const visual = visualItems[index]
+    return { ...loadingProbe, rawHasContent: raw ? hasContent(raw) : null, rawParsedAvailable: raw ? getParsedContent(raw) !== null : null,
+        visualIndex: index, visualHasContent: visual ? hasContent(visual) : null, visualParsedAvailable: visual ? getParsedContent(visual) !== null : null,
+        gapReady: Boolean(unref(state?.gapReady)), gapMounted: Boolean(unref(state?.gapMounted)), gapActive: Boolean(unref(state?.gapActive)),
+        sessionActive: Boolean(unref(state?.sessionActive)), viewActive: list()?.props.viewActive ?? null,
+        gapRange: unref(state?.gapRange) ?? null, missingLines: [...(unref(state?.missingLines) ?? [])],
+        scrollerSuspended: Boolean(unref(scroller()?.suspended)), scrollState: scroller()?.getScrollState() ?? null,
+        renderedRowPresent: Boolean(row(line)), fixtureReadCount: requests.length - loadingProbe.requestStart }
+}
+function loadingStage(stage, line) {
+    loadingProbe = { stage, line, requestStart: loadingProbe?.line === line ? loadingProbe.requestStart : requests.length }
+    if (activeAction) activeAction.stage = stage
+    evidence.textContent = JSON.stringify({ reports, ...diagnostics() }, null, 2)
 }
 function add(label, action) {
     const button = document.createElement('button'); button.textContent = label; button.disabled = true
     button.onclick = async () => {
         if (!ready || busy || locked) return
+        quarantineImportedControls()
         busy = true
         activeAction = { name: label, startedAt: performance.now(), deadlineMs: actionDeadlineMs }
         activeAction.deadlineAt = activeAction.startedAt + actionDeadlineMs
@@ -40,6 +69,7 @@ function add(label, action) {
         } catch (error) {
             Object.assign(report, { status: 'failed/inconclusive', error: String(error) })
         } finally {
+            quarantineImportedControls()
             busy = false; activeAction = null
             buttons.forEach(b => { b.disabled = !ready || locked })
             status.textContent = locked ? 'Scroller conversation inconclusive; reload required'
@@ -147,24 +177,27 @@ function installReads() {
 add('Missing content recovery', async () => {
     await fixture.navigate('main'); fixture.clear()
     const item = seed('Before missing-content substitution.')
+    loadingStage('waiting-for-initial-row-and-content', item.line_num)
     await reveal(item.line_num, 'Before missing-content substitution.')
-    const id = fixture.ids.mainId
-    itemRead = { item: { ...item, content: JSON.stringify(content('Recovered same-index content marker.')) }, fail: true }
+    itemRead = { item: makeScrollerRecoveryItem(item, JSON.stringify(content('Recovered same-index content marker.'))), fail: true }
     const before = requests.length
-    // Replace through production metadata/content APIs. Never inspect raw content or cache internals.
-    const metadata = { line_num: item.line_num, kind: item.kind, display_level: item.display_level, group_head: null, group_tail: null }
-    fixture.store.sessionItems[id][item.line_num - 1] = metadata
-    fixture.store.recomputeVisualItems(id)
+    // This public action clears the cached parsed source before production visual recomputation.
+    const substitution = replaceScrollerContentWithMetadata(fixture, item.line_num)
+    loadingStage('waiting-for-failed-read', item.line_num)
     await waitFor(() => requests.length > before)
     await new Promise(resolve => setTimeout(resolve, 350))
     const failedRequests = requests.length - before
     check(failedRequests === 1, 'Failed gap load loops or duplicates')
+    loadingStage('failed-read-settled', item.line_num)
     itemRead.fail = false
     // A real KeepAlive recovery lifecycle supplies the next demand; no automatic retry policy is added.
+    loadingStage('waiting-for-KeepAlive-recovery', item.line_num)
     const lifecycle = await recoverScrollerConversation(fixture)
+    loadingStage('waiting-for-recovered-row-and-content', item.line_num)
     const result = await reveal(item.line_num, 'Recovered same-index content marker.')
     itemRead = null
-    return { lifecycle, failedRequests, requestsAfterRecovery: requests.length - before, result }
+    loadingStage('recovered-content-verified', item.line_num)
+    return { substitution, lifecycle, failedRequests, requestsAfterRecovery: requests.length - before, result }
 })
 add('Filtered session pagination', async () => {
     check(!pageRead, 'Pagination acceptance runs once per fresh page')
@@ -200,6 +233,7 @@ try {
     evidence.textContent = JSON.stringify({ status: 'pending', ...diagnostics() }, null, 2)
     const startup = await runBoundedScrollerAction(async () => {
         await import('./invisibleStreaming.js')
+        quarantineImportedControls()
         const loaded = window.invisibleStreamingFixture
         await waitFor(() => document.querySelector('#fixture-status')?.textContent === 'Fixture ready')
         check(!loaded.baseline && !loaded.publicationRateBaseline, 'Production current components required')
