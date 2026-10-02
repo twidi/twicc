@@ -3720,7 +3720,7 @@ html.wa-dark .usage-lane-time {
     /* Toggle button sticks out from the sidebar when closed */
     .sidebar-toggle {
         /* Position at right edge of sidebar, offset to stick out */
-        transform: translateX(var(--sidebar-width)) translateY(4px);
+        transform: translateX(var(--sidebar-width));
         transition: transform var(--transition-duration) ease;
         .icon-collapse {
             display: none;
@@ -3763,7 +3763,7 @@ html.wa-dark .usage-lane-time {
         }
 
          .sidebar-toggle {
-            transform: translateX(0) translateY(4px);
+            transform: translateX(0);
             .icon-collapse {
                 display: inline;
             }
