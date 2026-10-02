@@ -17,11 +17,13 @@ function harness(t, options = {}) {
     const props = reactive({ source: '', tagSlashCommand: false, showToc: false })
     const settingsStore = reactive({ _effectiveColorScheme: 'light' })
     const eligible = ref(true)
-    const calls = [], errors = [], emitted = []
+    const calls = [], errors = [], emitted = [], reports = []
     const scope = effectScope()
     const document = options.document ?? { createElement: () => ({ innerHTML: '', querySelectorAll: () => [] }) }
     const dependencies = {
         ref, computed, watch, nextTick, onScopeDispose, props, settingsStore, document,
+        getCurrentInstance: () => ({ proxy: 'component-proxy', appContext: { config: { errorHandler: options.errorHandler ?? ((...args) => reports.push(args)) } } }),
+        console: { error: (...args) => reports.push(args) },
         useMarkdownRenderEligibility: () => ({ eligible }),
         createMarkdownRenderCoordinator, MARKDOWN_RENDER_CANCELLED,
         markdownReferenceContextKey, markdownBlockCacheKey,
@@ -36,7 +38,7 @@ function harness(t, options = {}) {
     const setup = new Function(...Object.keys(dependencies), `${extracted}\nreturn { blocks, renderCache, coordinator, container, renderMermaidIn, toolOwnership, applyCodeRendered, handleCodeToolsAction, restoreCodeToolsState, codeToolsState };`)
     const component = scope.run(() => setup(...Object.values(dependencies)))
     t.after(() => scope.stop())
-    return { ...component, props, eligible, calls, errors, emitted, settingsStore, scope }
+    return { ...component, props, eligible, calls, errors, emitted, settingsStore, scope, reports }
 }
 
 test('superseded highlighter stops before another block and retains complete output', async t => {
@@ -86,6 +88,7 @@ test('hidden work consumes rejection and resumes only latest input', async t => 
     h.eligible.value = false
     held.reject(Error('obsolete')); await flush()
     assert.equal(h.errors.length, 0)
+    assert.equal(h.reports.length, 0)
     assert.equal(h.blocks.value[0].html, 'old')
     h.props.source = 'new'; h.eligible.value = true; await flush()
     assert.equal(h.blocks.value[0].html, 'new')
@@ -97,6 +100,7 @@ test('scope disposal consumes library rejection without commit or error', async 
     h.props.source = 'held'; await flush()
     h.scope.stop(); held.reject(Error('disposed')); await flush()
     assert.equal(h.errors.length, 0)
+    assert.equal(h.reports.length, 0)
     assert.equal(h.renderCache.size, 0)
 })
 
@@ -170,7 +174,7 @@ test('current failure retains old blocks and emits no success', async t => {
     const h = harness(t, { render: text => { if (text === 'bad') throw Error('current'); return text } })
     h.props.source = 'old'; await flush()
     h.props.source = 'bad'; await flush()
-    assert.equal(h.errors.length, 1)
+    assert.equal(h.reports.length, 1)
     assert.equal(h.blocks.value[0].html, 'old')
     assert.equal(h.emitted.length, 1)
 })
@@ -220,4 +224,49 @@ test('queued nextTick restoration cannot apply after source changes', async t =>
     assert.equal(wraps, 0)
     h.scope.stop(); held.resolve('two'); await flush()
     assert.equal(wraps, 0)
+})
+
+
+test('current failure reaches configured application handler with exact exception', async t => {
+    const error = new Error('render failed', { cause: new Error('library cause') })
+    const received = []
+    const h = harness(t, { errorHandler: (...args) => received.push(args), render: () => { throw error } })
+    h.props.source = 'bad'; await flush()
+    assert.equal(received.length, 1)
+    assert.equal(received[0][0], error)
+    assert.equal(received[0][1], 'component-proxy')
+    assert.equal(h.errors.length, 0)
+})
+
+test('current failure reaches console with exact exception when application handler is absent', async t => {
+    const error = new Error('console failure')
+    const h = harness(t, { errorHandler: false, render: () => { throw error } })
+    h.props.source = 'bad'; await flush()
+    assert.equal(h.reports.length, 1)
+    assert.equal(h.reports[0][0], error)
+    assert.equal(h.errors.length, 0)
+})
+
+test('throwing application error handler cannot strand the document slot', async t => {
+    const errors = []
+    const error = new Error('render failure')
+    const h = harness(t, {
+        errorHandler: caught => { errors.push(caught); throw Error('sink failure') },
+        render: text => { if (text === 'bad') throw error; return text },
+    })
+    h.props.source = 'bad'; await flush()
+    h.props.source = 'recovered'; await flush()
+    assert.deepEqual(errors, [error])
+    assert.equal(h.blocks.value[0].html, 'recovered')
+    assert.equal(h.emitted.length, 1)
+})
+
+
+test('superseded rejection never reaches application handler', async t => {
+    const held = deferred()
+    const h = harness(t, { render: text => text === 'old' ? held.promise : text })
+    h.props.source = 'old'; await flush()
+    h.props.source = 'new'; held.reject(new Error('obsolete')); await flush()
+    assert.deepEqual(h.reports, [])
+    assert.equal(h.blocks.value[0].html, 'new')
 })

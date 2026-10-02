@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, inject, watch, onScopeDispose, nextTick } from 'vue'
+import { ref, computed, inject, watch, onScopeDispose, nextTick, getCurrentInstance } from 'vue'
 import { useRouter } from 'vue-router'
 import {
     splitMarkdownBlocks,
@@ -65,6 +65,7 @@ const fileLinks = inject('markdownFileLinks', null)
 const rewriteContentMediaUrl = inject('rewriteContentMediaUrl', null)
 
 const blocks = ref([])
+const componentInstance = getCurrentInstance()
 const container = ref(null)
 const rendering = ref(true)
 const { eligible } = useMarkdownRenderEligibility()
@@ -547,7 +548,11 @@ const coordinator = createMarkdownRenderCoordinator({
         if (isCurrent()) emit('rendered')
     },
     onState: state => { rendering.value = state.rendering },
-    onError: () => toast.error('Could not render markdown', { duration: 3000 }),
+    onError: error => {
+        const handler = componentInstance?.appContext.config.errorHandler
+        if (typeof handler === 'function') handler(error, componentInstance.proxy, 'Markdown document render')
+        else console.error(error)
+    },
 })
 watch([() => props.source, mermaidTheme, () => props.tagSlashCommand], ([source, theme, slashTag]) => {
     toolRevision++
