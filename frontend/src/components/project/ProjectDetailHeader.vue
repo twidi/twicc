@@ -386,8 +386,7 @@ function handleUnarchive() {
     font-size: var(--wa-font-size-l);
 }
 
-/* Action group placed before the title (mirrors the session header's
-   .session-title-actions): archived badge / archive button + edit button. */
+/* Action group placed before the title: archived badge / archive button + edit button. */
 .detail-title-actions {
     display: flex;
     align-items: center;

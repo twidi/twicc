@@ -105,12 +105,6 @@ const contextUsageColor = computed(() => {
     if (pct > 50) return 'var(--wa-color-warning)'
     return 'var(--glow-context-ring)'
 })
-const contextUsageIndicatorWidth = computed(() => {
-    const pct = contextUsagePercentage.value
-    if (pct == null) return null
-    const multiplier = Math.min(1 + (pct / 80), 1.5)
-    return `calc(var(--track-width) * ${multiplier.toFixed(2)})`
-})
 
 // ── Dates ───────────────────────────────────────────────────────────────────
 function fmtDate(iso) {
@@ -179,7 +173,6 @@ const expanded = ref(true)
                         :value="Math.min(contextUsagePercentage, 100)"
                         :style="{
                             '--indicator-color': contextUsageColor,
-                            '--indicator-width': contextUsageIndicatorWidth,
                         }"
                     ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring><AppTooltip :for="`atree-context-${node.id}`">{{ contextUsageTooltip }}</AppTooltip></template>
                 </div>

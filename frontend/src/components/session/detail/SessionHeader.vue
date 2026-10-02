@@ -71,10 +71,6 @@ function toggleSessionDebug() {
 // Whether the session's project is a git worktree of another project — drives
 // the worktree marker before the title.
 const isProjectWorktree = computed(() => !!store.getProject(session.value?.project_id)?.worktree_of)
-// Whether the session's project is not trusted (effective trust ≠ trusted —
-// explicitly untrusted or unknown). Drives the title-line lock marker, a
-// session-level echo of the untrusted badge shown on project/worktree badges.
-const isProjectUntrusted = computed(() => store.untrustedProjectIds.has(session.value?.project_id))
 const providerLabel = computed(() => getProviderLabel(session.value?.provider))
 const providerIcon = computed(() => getProviderIcon(session.value?.provider))
 
@@ -153,15 +149,6 @@ const contextUsageColor = computed(() => {
     if (pct > 70) return 'var(--wa-color-danger)'
     if (pct > 50) return 'var(--wa-color-warning)'
     return 'var(--glow-context-ring)'
-})
-
-// Calculate indicator width multiplier (1x at 0%, 2x at 80%+)
-const contextUsageIndicatorWidth = computed(() => {
-    const pct = contextUsagePercentage.value
-    if (pct == null) return null
-    // Linear interpolation from 1x (at 0%) to 1.5x (at 80%), capped at 1.5x
-    const multiplier = Math.min(1 + (pct / 80), 1.5)
-    return `calc(var(--track-width) * ${multiplier.toFixed(2)})`
 })
 
 // Display directory: git_directory if available, otherwise cwd. For a draft
@@ -354,54 +341,34 @@ const injectedOpenRenameDialog = inject('openRenameDialog')
 // Reference to the header element
 const headerRef = ref(null)
 
+function toggleCompact() {
+    isCompactExpanded.value = !isCompactExpanded.value
+}
+
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Action cluster overflow in the normal header
+// Action buttons: layout follows the header width
 // ═══════════════════════════════════════════════════════════════════════════
 
-// The action buttons sit before the title, so on a narrow header they eat the
-// room the title needs. Past this share of the title row they collapse behind a
-// single toggle button. The header lives in a dock pane, so its width does not
-// follow the viewport: measure both elements instead of using a media query.
-const ACTIONS_COLLAPSE_RATIO = 1 / 3
+// The header lives in a dock pane, so its width does not follow the viewport: measure it instead of
+// using a media query. From ACTIONS_LABELS_MIN_WIDTH the actions row (at full height, or at the top of
+// the compact panel) spells out each button's name.
+const ACTIONS_LABELS_MIN_WIDTH = 520
+const { width: headerWidth } = useElementSize(headerRef)
+const actionsLabels = computed(() => headerWidth.value >= ACTIONS_LABELS_MIN_WIDTH)
 
-const titleRowRef = ref(null)
-const actionsRef = ref(null)
-const { width: titleRowWidth } = useElementSize(titleRowRef)
-const { width: actionsWidth } = useElementSize(actionsRef)
-
-// Whether the user revealed the cluster while it overflows.
-const isActionsExpanded = ref(false)
-
-// The cluster never shrinks (flex-shrink: 0) and is taken out of the flow —
-// not unmounted — when collapsed, so the measured width is always its natural
-// width whatever the current state. The ratio is therefore stable: revealing
-// or hiding the cluster cannot flip the decision, so there is no feedback loop.
-const actionsOverflow = computed(() => {
-    if (!titleRowWidth.value || !actionsWidth.value) return false
-    return actionsWidth.value / titleRowWidth.value > ACTIONS_COLLAPSE_RATIO
-})
-
-// Collapse again as soon as the cluster fits, and when the header switches to
-// another session (the component is kept alive and reused).
-watch(actionsOverflow, (overflow) => {
-    if (!overflow) isActionsExpanded.value = false
-})
-watch(() => props.sessionId, () => {
-    isActionsExpanded.value = false
-})
-
-const actionsToggleTooltip = computed(() => isActionsExpanded.value ? 'Hide the session actions' : 'Show the session actions')
-
-// Both reveals behave like a popup: a click anywhere else closes them. The
-// compact overlay is a child of the header, so one target covers both, and
-// VueUse walks the composed path — a click inside a Web Awesome popup (pin
-// dropdown, tooltip) stays "inside". Clicks inside an iframe (Browser pane,
-// artifact preview) never reach this document, so they cannot close it.
+// The compact panel is a popup: a click anywhere else closes it. The panel is
+// a child of the header, so one target covers it, and VueUse walks the
+// composed path — a click inside a Web Awesome popup (pin dropdown, tooltip)
+// stays "inside". Clicks inside an iframe (Browser pane, artifact preview)
+// never reach this document, so they cannot close it.
 onClickOutside(headerRef, () => {
     isCompactExpanded.value = false
-    isActionsExpanded.value = false
 })
+
+// A request waiting for the user. Its hand lives with the actions, which the
+// collapsed compact header hides, so the compact live group shows it too.
+const hasPendingRequest = computed(() => store.getPendingRequests(props.sessionId).length > 0)
 
 /**
  * Open the rename dialog.
@@ -442,12 +409,10 @@ function handleUnarchive() {
  *
  * An expanded compact header sits on top of the search bar that appears just
  * below it, so collapse it on click (no-op when it is already collapsed, and on
- * wide viewports). Same idea for the overflow cluster on a narrow header: give
- * the title its room back once the search bar is open.
+ * tall viewports).
  */
 function toggleSessionSearch() {
     isCompactExpanded.value = false
-    isActionsExpanded.value = false
     window.dispatchEvent(new CustomEvent('twicc:toggle-session-search', { detail: { handled: false } }))
 }
 
@@ -498,8 +463,10 @@ defineExpose({
 </script>
 
 <template>
-    <header ref="headerRef" class="session-header" :class="{ 'compact-expanded': isCompactExpanded, 'compact-collapsed': !isCompactExpanded, 'effective-debug': isEffectiveDebug }" :data-session-type="mode" v-if="session">
-        <div v-if="mode === 'session'" ref="titleRowRef" class="session-title">
+    <header ref="headerRef" class="session-header" :class="{ 'compact-expanded': isCompactExpanded, 'compact-collapsed': !isCompactExpanded, 'effective-debug': isEffectiveDebug, 'actions-labels': actionsLabels }" :data-session-type="mode" v-if="session">
+        <!-- Row 1: state markers, provider, title, context ring (compact only). A click on the row
+             toggles the compact panel. -->
+        <div v-if="mode === 'session'" class="session-title" @click="toggleCompact">
             <!-- Ephemeral marker: the sidebar's ghost, with the same colours. A state like draft, so it stays
                  too; a draft can be ephemeral, and then both icons show. -->
             <wa-icon
@@ -522,9 +489,19 @@ defineExpose({
             ></wa-icon>
             <AppTooltip v-if="session.stale" :for="`session-header-${sessionId}-stale-icon`">Session files were deleted from disk</AppTooltip>
 
-            <!-- Draft marker: a state, not an action, so it stays whether the action cluster is
-                 shown or not, compact collapsed header included. Archived has no such marker: its
-                 unarchive button, yellow, is in the cluster; the toggle repeats it while hidden. -->
+            <!-- Archived marker: the sidebar's archive icon, in its yellow. A state, so it shows in every
+                 header state; the unarchive button, with the actions, is the way out. -->
+            <wa-icon
+                v-if="session.archived"
+                :id="`session-header-${sessionId}-archived-icon`"
+                name="box-archive"
+                label="Archived session"
+                class="session-state-icon session-state-icon--archived"
+            ></wa-icon>
+            <AppTooltip v-if="session.archived" :for="`session-header-${sessionId}-archived-icon`">Archived session</AppTooltip>
+
+            <!-- Draft marker: a state, not an action, so it shows whether the compact panel is open or not.
+                 Archived has its own marker above. -->
             <wa-icon
                 v-if="!session.archived && session.draft && !processState"
                 :id="`session-header-${sessionId}-draft-icon`"
@@ -534,42 +511,135 @@ defineExpose({
             ></wa-icon>
             <AppTooltip v-if="!session.archived && session.draft && !processState" :for="`session-header-${sessionId}-draft-icon`">Draft</AppTooltip>
 
-            <!-- Overflow toggle: shown only when the action cluster is wider than
-                 ACTIONS_COLLAPSE_RATIO of the title row. Reveals/hides the cluster
-                 in place, giving the title the width back. The icon never changes;
-                 the open state reads from the active styling, like the pin and
-                 debug buttons — a vertical-ellipsis-style icon would instead
-                 promise the dropdown menu it opens everywhere else in the UI. -->
+            <!-- Worktree marker: only when the session's project is a git worktree.
+                 Its tooltip restates that the session runs in a worktree and embeds the same
+                 worktree badge shown on the project row (parent repo + branch icon + worktree folder). -->
+            <wa-icon
+                v-if="isProjectWorktree"
+                :id="`session-header-${sessionId}-worktree`"
+                auto-width
+                name="code-branch"
+                class="worktree-title-icon"
+            ></wa-icon>
+            <AppTooltip v-if="isProjectWorktree" :for="`session-header-${sessionId}-worktree`">
+                <div class="worktree-title-tooltip">
+                    <span>This session runs in a git worktree</span>
+                    <ProjectBadge :project-id="session.project_id" />
+                </div>
+            </AppTooltip>
+
+            <ProviderIcon
+                v-if="providerIcon"
+                :provider="session?.provider"
+                class="session-provider-icon"
+            />
+
+            <h2 :id="`session-header-${sessionId}-title`">{{ displayName }}</h2>
+            <AppTooltip :for="`session-header-${sessionId}-title`">{{ displayName }}</AppTooltip>
+
+            <!-- Compact status (visible only at compact height, panel closed: the panel shows the same things).
+                 The two facts to know at a glance: how full the context is, and what the agent is doing. A
+                 pending request takes the place of the process indicator: its hand is with the actions, which
+                 the collapsed header hides. Unframed. Its cells are as wide as the segments of the controls
+                 under them, and sit right above: the process state over the stop button, the ring over the
+                 panel toggle, so the right edge of the two rows reads as one column. -->
+            <div v-if="contextUsagePercentage != null || hasPendingRequest || processState" class="compact-status">
+                <div class="compact-status-cell compact-status-cell--state">
+                    <wa-icon
+                        v-if="hasPendingRequest"
+                        :id="`session-header-${sessionId}-compact-pending`"
+                        name="hand"
+                        class="pending-request-indicator"
+                    ></wa-icon>
+                    <AppTooltip v-if="hasPendingRequest" :for="`session-header-${sessionId}-compact-pending`">Waiting for your response</AppTooltip>
+
+                    <ProcessIndicator
+                        v-else-if="processState"
+                        class="compact-process-indicator"
+                        :state="processState.state"
+                        :has-active-crons="hasActiveCrons"
+                        :background-shells="userTurnBackgroundShells"
+                        size="small"
+                        :animate-states="animateStates"
+                    />
+                </div>
+                <div class="compact-status-cell compact-status-cell--ring">
+                    <wa-progress-ring
+                        v-if="contextUsagePercentage != null"
+                        class="context-usage-ring compact-context-ring"
+                        :value="Math.min(contextUsagePercentage, 100)"
+                        :style="{
+                            '--indicator-color': contextUsageColor
+                        }"
+                    ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}</span></wa-progress-ring>
+                </div>
+            </div>
+        </div>
+
+        <!-- Row 2: the project (or worktree) badge, always under the markers. At compact height it also
+             carries the process controls and the button that opens the panel. -->
+        <div v-if="mode === 'session'" class="session-project-row" @click="toggleCompact">
+            <router-link v-if="session.project_id" :to="{ name: 'project', params: { projectId: session.project_id } }" class="session-project" @click.stop>
+                <ProjectBadge :project-id="session.project_id" />
+            </router-link>
+
+            <!-- Compact controls (compact height only), in one pill like the outlined buttons at the top of the
+                 sidebar: the interrupt and stop buttons (panel closed only: the panel has the same buttons) and
+                 the panel toggle. The tooltips share the v-if of their button, see the note in the process zone. -->
+            <div class="compact-pill">
+            <div class="compact-live">
+                <wa-button
+                    v-if="canInterruptTurn"
+                    :id="`session-header-${sessionId}-compact-interrupt-button`"
+                    variant="brand"
+                    appearance="plain"
+                    size="small"
+                    class="compact-live-button reduced-height"
+                    :loading="interrupting"
+                    :disabled="interrupting"
+                    @click.stop="handleInterrupt"
+                >
+                    <wa-icon name="circle-stop" label="Interrupt"></wa-icon>
+                </wa-button>
+                <AppTooltip v-if="canInterruptTurn" :for="`session-header-${sessionId}-compact-interrupt-button`">Interrupt the current turn (keeps the session alive)</AppTooltip>
+
+                <wa-button
+                    v-if="canStopProcess"
+                    :id="`session-header-${sessionId}-compact-stop-button`"
+                    variant="danger"
+                    appearance="plain"
+                    size="small"
+                    class="compact-live-button reduced-height"
+                    :class="{ forcing: stoppingProcess }"
+                    @click.stop="handleStopProcess($event)"
+                >
+                    <wa-icon :name="stoppingProcess ? 'skull-crossbones' : 'ban'" :label="stoppingProcess ? 'Force kill' : 'Stop'"></wa-icon>
+                </wa-button>
+                <AppTooltip v-if="canStopProcess" :for="`session-header-${sessionId}-compact-stop-button`">{{ stoppingProcess ? 'Force kill' : `Stop the ${providerLabel} process` }}</AppTooltip>
+            </div>
+
+            <!-- Panel toggle (compact height only): the tools icon says there is more, the chevron says
+                 it unfolds. The open state reads from the active styling. -->
             <wa-button
-                v-if="actionsOverflow"
-                :id="`session-header-${sessionId}-actions-toggle`"
-                variant="neutral"
+                :id="`session-header-${sessionId}-compact-toggle`"
+                variant="brand"
                 appearance="plain"
                 size="small"
-                :class="['actions-toggle-button', 'reduced-height', { 'actions-toggle-button--active': isActionsExpanded }]"
-                @click="isActionsExpanded = !isActionsExpanded"
+                :class="['compact-tool-button', 'reduced-height', { 'compact-tool-button--active': isCompactExpanded, 'compact-tool-button--pending': hasPendingRequest }]"
+                @click.stop="toggleCompact"
             >
-                <wa-icon name="screwdriver-wrench" label="Toggle actions"></wa-icon>
-                <!-- While the cluster is hidden, the toggle carries the archived state (the
-                     unarchive button, which shows it, is hidden with the cluster): a click on
-                     either opens the actions. -->
-                <wa-icon
-                    v-if="session.archived && !isActionsExpanded"
-                    name="box-archive"
-                    label="Archived"
-                    class="archived-toggle-icon"
-                ></wa-icon>
+                <wa-icon name="screwdriver-wrench" label="Toggle details"></wa-icon>
+                <wa-icon class="compact-tool-chevron" :name="isCompactExpanded ? 'chevron-up' : 'chevron-down'"></wa-icon>
             </wa-button>
-            <AppTooltip v-if="actionsOverflow" :for="`session-header-${sessionId}-actions-toggle`">{{ actionsToggleTooltip }}</AppTooltip>
+            </div>
+        </div>
 
-            <!-- Action buttons group: collapsed behind the toggle above when too
-                 wide. Shown in every header state, compact collapsed included —
-                 compact trades height, not actions. -->
-            <div
-                ref="actionsRef"
-                class="session-title-actions"
-                :class="{ 'session-title-actions--collapsed': actionsOverflow && !isActionsExpanded }"
-            >
+        <!-- Collapsible rows: identity + stats + process (overlay on small viewports) -->
+        <div class="session-collapsible-rows" :class="{ 'glass-surface': compactHeight }">
+
+            <!-- Action buttons (main session): the first row of the compact panel; at full height the row
+                 stays visible, on its own row under the project. -->
+            <div v-if="mode === 'session'" class="session-actions">
                 <!-- In-session search trigger: clickable equivalent of Ctrl+F (not for drafts) -->
                 <wa-button
                     v-if="!session.draft && !session.ephemeral"
@@ -581,6 +651,7 @@ defineExpose({
                     @click="toggleSessionSearch"
                 >
                     <wa-icon name="magnifying-glass" label="Search"></wa-icon>
+                    <span class="action-label">Search</span>
                 </wa-button>
                 <AppTooltip v-if="!session.draft && !session.ephemeral" :for="`session-header-${sessionId}-search-button`">{{ searchTooltip }}</AppTooltip>
 
@@ -600,6 +671,7 @@ defineExpose({
                         :class="['pin-button', 'reduced-height', { 'pin-button--active': session.pinned }]"
                     >
                         <wa-icon name="thumbtack" label="Pin"></wa-icon>
+                        <span class="action-label">Pin</span>
                     </wa-button>
                     <wa-dropdown-item type="checkbox" :checked="!session.pinned" value="none">
                         Not pinned
@@ -631,6 +703,7 @@ defineExpose({
                         :name="session.mute_on_user_turn ? 'bell-slash' : 'bell'"
                         :label="session.mute_on_user_turn ? 'Muted' : 'Notifications on'"
                     ></wa-icon>
+                    <span class="action-label">{{ session.mute_on_user_turn ? 'Muted' : 'Mute' }}</span>
                 </wa-button>
                 <AppTooltip
                     v-if="!session.draft && !session.ephemeral"
@@ -648,6 +721,7 @@ defineExpose({
                     @click="handleArchive"
                 >
                     <wa-icon name="box-archive" label="Archive"></wa-icon>
+                    <span class="action-label">Archive</span>
                 </wa-button>
                 <AppTooltip v-if="!session.archived && !session.draft && !session.ephemeral" :for="`session-header-${sessionId}-archive-button`">{{ canStopProcess ? archiveStopLabel('Archive session', providerLabel, backgroundShellCount(processState)) : 'Archive session' }}</AppTooltip>
 
@@ -662,6 +736,7 @@ defineExpose({
                     @click="handleUnarchive"
                 >
                     <wa-icon name="box-archive" label="Unarchive"></wa-icon>
+                    <span class="action-label">Unarchive</span>
                 </wa-button>
                 <AppTooltip v-if="session.archived" :for="`session-header-${sessionId}-unarchive-button`">Unarchive session</AppTooltip>
 
@@ -677,6 +752,7 @@ defineExpose({
                     @click="openRenameDialog"
                 >
                     <wa-icon name="pencil" label="Rename"></wa-icon>
+                    <span class="action-label">Rename</span>
                 </wa-button>
                 <AppTooltip :for="`session-header-${sessionId}-rename-button`">{{ isProviderEnabled ? 'Rename session' : 'Cannot rename: provider is disabled.' }}</AppTooltip>
 
@@ -692,6 +768,7 @@ defineExpose({
                     @click="toggleSessionDebug"
                 >
                     <wa-icon name="bug" label="Debug view"></wa-icon>
+                    <span class="action-label">Debug</span>
                 </wa-button>
                 <AppTooltip v-if="mode === 'session' && !session.ephemeral && settingsStore.isDevMode" :for="`session-header-${sessionId}-debug-button`">{{ isSessionDebugForced ? 'Debug view forced for this session — click to restore the global mode' : 'Force the debug view for this session only' }}</AppTooltip>
 
@@ -707,6 +784,7 @@ defineExpose({
                     @click="openShare"
                 >
                     <wa-icon name="share-nodes" label="Share"></wa-icon>
+                    <span class="action-label">Share</span>
                 </wa-button>
                 <AppTooltip :for="`session-header-${sessionId}-share-button`">
                     {{ sharingEnabled
@@ -723,89 +801,6 @@ defineExpose({
                 ></wa-icon>
                 <AppTooltip v-if="store.getPendingRequests(sessionId).length > 0" :for="`session-header-${sessionId}-pending-request`">Waiting for your response</AppTooltip>
             </div>
-
-            <!-- Clickable zone: title + project + context ring + chevron toggle compact mode -->
-            <div class="compact-toggle-zone" @click="isCompactExpanded = !isCompactExpanded">
-                <ProviderIcon
-                    v-if="providerIcon"
-                    :provider="session?.provider"
-                    class="compact-provider-icon"
-                />
-
-                <!-- Worktree marker: only when the session's project is a git worktree.
-                     Sits right before the title; its tooltip restates that the session
-                     runs in a worktree and embeds the same worktree badge shown elsewhere
-                     (parent repo + branch icon + worktree folder). -->
-                <wa-icon
-                    v-if="isProjectWorktree"
-                    :id="`session-header-${sessionId}-worktree`"
-                    auto-width
-                    name="code-branch"
-                    class="worktree-title-icon"
-                ></wa-icon>
-                <AppTooltip v-if="isProjectWorktree" :for="`session-header-${sessionId}-worktree`">
-                    <div class="worktree-title-tooltip">
-                        <span>This session runs in a git worktree</span>
-                        <ProjectBadge :project-id="session.project_id" />
-                    </div>
-                </AppTooltip>
-
-                <!-- Untrusted marker: only when the session's project is not trusted
-                     (explicitly untrusted or unknown). Sits next to the worktree
-                     marker as a session-level status flag; the project/worktree
-                     badge on the right carries the same lock independently. -->
-                <wa-icon
-                    v-if="isProjectUntrusted"
-                    :id="`session-header-${sessionId}-untrusted`"
-                    auto-width
-                    name="lock"
-                    class="untrusted-title-icon"
-                ></wa-icon>
-                <AppTooltip v-if="isProjectUntrusted" :for="`session-header-${sessionId}-untrusted`">
-                    This session is in an untrusted project
-                </AppTooltip>
-
-                <h2 :id="`session-header-${sessionId}-title`">{{ displayName }}</h2>
-                <AppTooltip :for="`session-header-${sessionId}-title`">{{ displayName }}</AppTooltip>
-
-                <router-link v-if="session.project_id" :to="{ name: 'project', params: { projectId: session.project_id } }" class="session-project" @click.stop>
-                    <ProjectBadge :project-id="session.project_id" />
-                </router-link>
-
-                <!-- Context usage ring duplicate for compact mode (visible only on small viewports when not expanded) -->
-                <wa-progress-ring
-                    v-if="contextUsagePercentage != null"
-                    class="context-usage-ring compact-context-ring"
-                    :value="Math.min(contextUsagePercentage, 100)"
-                    :style="{
-                        '--indicator-color': contextUsageColor,
-                        '--indicator-width': contextUsageIndicatorWidth
-                    }"
-                ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
-
-                <!-- Process state indicator duplicate for compact mode (visible only on small viewports when not expanded) -->
-                <ProcessIndicator
-                    v-if="processState"
-                    class="compact-process-indicator"
-                    :state="processState.state"
-                    :has-active-crons="hasActiveCrons"
-                    :background-shells="userTurnBackgroundShells"
-                    size="small"
-                    :animate-states="animateStates"
-                />
-
-                <!-- Compact mode: expand/collapse chevron (only visible on small viewports via CSS) -->
-                <wa-icon
-                    v-if="!session.draft && !session.ephemeral"
-                    class="compact-toggle-chevron"
-                    :name="isCompactExpanded ? 'chevron-up' : 'chevron-down'"
-                    label="Toggle details"
-                ></wa-icon>
-            </div>
-        </div>
-
-        <!-- Collapsible rows: identity + stats + process (overlay on small viewports) -->
-        <div class="session-collapsible-rows" :class="{ 'glass-surface': compactHeight }">
 
             <!-- Identity: directory (truncated from the left, so the last folder always stays visible) and
                  branch. For a draft, displayDirectory falls back to the project path and there is no
@@ -899,8 +894,7 @@ defineExpose({
                             class="context-usage-ring"
                             :value="Math.min(contextUsagePercentage, 100)"
                             :style="{
-                                '--indicator-color': contextUsageColor,
-                                '--indicator-width': contextUsageIndicatorWidth
+                                '--indicator-color': contextUsageColor
                             }"
                         ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
                     </div>
@@ -1032,57 +1026,42 @@ defineExpose({
 }
 
 .session-title {
-    flex: 1;
     display: flex;
     justify-content: start;
-    align-items: baseline;
+    align-items: center;
     gap: var(--wa-space-xs);
     min-width: 0;  /* Allow text truncation */
     padding-inline: var(--wa-space-xs);
     padding-top: var(--wa-space-xs);
 }
 
-/* Action buttons wrapper. A real flex box (not `display: contents`) so its
-   width is measurable: the overflow logic compares it to the title row. The
-   values below reproduce what the children got as direct flex items of
-   `.session-title`. It never shrinks, so the measured width is always the
-   natural one. */
-.session-title-actions {
+/* Row 2: the project badge under the markers, left-aligned; the compact-only pieces sit on the right. */
+.session-project-row {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: var(--wa-space-xs);
-    flex-shrink: 0;
+    min-width: 0;
+    padding-inline: var(--wa-space-xs);
+    margin-top: calc(-1 * var(--wa-space-2xs));
 }
 
-/* Collapsed by the overflow toggle: out of the flow, so the title gets the
-   width back, but still laid out — the ResizeObserver keeps reporting the
-   natural width, which is what the decision is based on. */
-.session-title-actions--collapsed {
-    position: absolute;
-    visibility: hidden;
-    pointer-events: none;
+/* Action buttons: a row of their own at full height, the first row of the panel at compact height. */
+.session-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+    padding-inline: var(--wa-space-xs);
 }
 
-/* Overflow toggle button: same faint treatment as the actions it replaces. */
-.actions-toggle-button {
-    opacity: 0.6;
-    transition: opacity 0.15s;
-    flex-shrink: 0;
-    margin-block: calc(-3 * var(--wa-space-2xs));
-    position: relative;
-    top: calc(-1 * var(--wa-space-2xs));
+/* The button names show only when the header is wide enough (see ACTIONS_LABELS_MIN_WIDTH). */
+.action-label {
+    display: none;
+    margin-inline-start: var(--wa-space-xs);
+    white-space: nowrap;
 }
-
-.actions-toggle-button:hover,
-.actions-toggle-button.actions-toggle-button--active {
-    opacity: 1;
-}
-
-/* Archived marker inside the actions toggle, while the cluster is hidden. */
-.archived-toggle-icon {
-    flex-shrink: 0;
-    margin-inline-start: var(--wa-space-2xs);
-    color: var(--wa-color-yellow-80);
+.session-header.actions-labels .action-label {
+    display: inline;
 }
 
 .session-title h2 {
@@ -1092,6 +1071,8 @@ defineExpose({
     letter-spacing: -0.015em;
     color: var(--wa-color-text-normal);
     margin-right: var(--wa-space-xs);
+    flex: 1 1 0;
+    min-width: 0;
     /* Truncate with ellipsis */
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1099,34 +1080,21 @@ defineExpose({
 }
 
 .session-project {
-    margin-left: auto;
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
     text-decoration: none;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    width: 25%;
-    min-width: 3rem;
-    max-width: max-content;
+    min-width: 0;
+}
+/* In a worktree badge the parent repo's name gives way first: the worktree's name is what tells two
+   sessions of one repo apart. */
+.session-project :deep(.project-badge-name:has(+ .project-badge-sep)) {
+    flex-shrink: 5;
 }
 .session-project:hover {
     color: var(--wa-color-text);
-}
-
-/* Clickable zone for compact toggle: wraps title, project badge, context ring, and chevron */
-.compact-toggle-zone {
-    display: contents;
-}
-
-/* Compact chevron icon: hidden by default, shown only on small viewports */
-.compact-toggle-chevron {
-    display: none;
-    flex-shrink: 0;
-    opacity: 0.6;
-    transition: opacity 0.15s;
-    font-size: var(--wa-font-size-xs);
-    align-self: center;
 }
 
 /* Zone 1 — identity: directory (left-truncated, last folder emphasised) + branch pill. */
@@ -1256,37 +1224,14 @@ defineExpose({
     font-size: var(--wa-font-size-2xs);
 }
 
-/* Compact context ring: hidden by default, shown in compact mode when not expanded */
-.compact-context-ring {
-    display: none;
-    align-self: center;
-}
-
-/* Compact process indicator: hidden by default, shown in compact mode when not expanded */
-.compact-process-indicator {
-    display: none;
-    align-self: center;
-}
-
-/* Compact provider icon: hidden by default, shown in compact mode when not expanded */
-.compact-provider-icon {
-    display: none;
+/* Provider icon, between the state markers and the title. */
+.session-provider-icon {
     align-self: center;
     flex-shrink: 0;
 }
 
-/* Worktree marker icon before the title (only for worktree projects). */
+/* Worktree marker icon before the provider (only for worktree projects). */
 .worktree-title-icon {
-    align-self: center;
-    flex-shrink: 0;
-    color: var(--wa-color-text-quiet);
-    font-size: var(--wa-font-size-s);
-}
-
-/* Untrusted-project marker before the title (sibling of the worktree marker).
-   Matches it visually — full visibility, not the faint badge treatment — since
-   it is a single focal session-status flag, not a list item. */
-.untrusted-title-icon {
     align-self: center;
     flex-shrink: 0;
     color: var(--wa-color-text-quiet);
@@ -1378,9 +1323,6 @@ wa-divider {
     opacity: 0.6;
     transition: opacity 0.15s;
     flex-shrink: 0;
-    margin-block: calc(-3 * var(--wa-space-2xs));
-    position: relative;
-    top: calc(-1 * var(--wa-space-2xs));
 }
 
 .debug-button.debug-button--active {
@@ -1401,7 +1343,8 @@ wa-divider {
 }
 
 .pin-button {
-    &::part(label) {
+    /* The icon tilts, not the label part: the button can carry its name next to the icon. */
+    & wa-icon {
         transform: rotate(30deg);
     }
     &.pin-button--active {
@@ -1452,10 +1395,10 @@ wa-divider {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Compact header mode — toggle button + collapsible rows
+   Compact header mode — panel toggle + live group + collapsible rows
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Toggle button: hidden by default, shown only on small viewports */
+/* Non main session toggle: hidden by default, shown only at compact height */
 .compact-toggle-button {
     display: none;
     flex-shrink: 0;
@@ -1481,34 +1424,140 @@ wa-divider {
     top: auto;
 }
 
+/* Compact-only pieces of the project row: hidden by default. */
+.session-header {
+}
+
+/* Compact pill geometry. The icons of the three buttons sit at the same distance from each other:
+   every button is one icon wide, except the toggle, which is also wider by its chevron. Its content is
+   centred, so the tools icon lands at the middle of a button-wide share, like the other two. */
+.session-header {
+    --compact-pill-button-width: 2.75rem;
+    --compact-pill-chevron-width: 1rem;
+}
+
+.compact-pill,
+.compact-live,
+.compact-tool-button {
+    display: none;
+    flex-shrink: 0;
+}
+
+/* The pill: one outlined brand button cut in segments, like the back / selector / search buttons at the
+   top of the sidebar: a brand border, the same raised shadow and top highlight (depth.css, themed for
+   light and dark), transparent inside. It is made of buttons only: no padding, no gap, each button fills
+   its share and a line in the border colour separates two of them. The overflow clip rounds the buttons'
+   hover fill to the pill. Its buttons overhang the row by a negative margin, so it does not make the row
+   taller than the badge. */
+.compact-pill {
+    align-items: stretch;
+    overflow: hidden;
+    margin-inline-start: auto;
+    margin-block: calc(-3 * var(--wa-space-2xs));
+    border-radius: var(--wa-form-control-border-radius, var(--wa-border-radius-m));
+    border: 1px solid var(--wa-color-brand-border-loud);
+    box-shadow: var(--depth-button), var(--depth-highlight);
+}
+
+.compact-live {
+    align-items: center;
+    align-items: stretch;
+}
+
+/* Icon-only interrupt / stop, plain like the other header buttons. */
+.compact-live-button {
+    opacity: 0.85;
+    transition: opacity 0.15s;
+    /* A flex host: its base stretches to the pill's height, with no percentage height (which resolved
+       against a height that itself depends on the buttons). The panel toggle gets it from the compact
+       rule that shows it. */
+    display: inline-flex;
+}
+.compact-live-button,
+.compact-tool-button {
+    width: var(--compact-pill-button-width);
+    &::part(base) {
+        flex: 1;
+        min-width: 0;
+        padding-inline: 0;
+        border-radius: 0;
+    }
+}
+.compact-tool-button {
+    width: calc(var(--compact-pill-button-width) + var(--compact-pill-chevron-width));
+}
+/* A line in the border colour between two buttons of the pill: on the end of each process control, so
+   it needs no sibling selector (the last one separates it from the toggle, which has none of its own). */
+.compact-live-button {
+    border-inline-end: 1px solid var(--wa-color-brand-border-loud);
+}
+.compact-live-button:hover,
+.compact-live-button.forcing {
+    opacity: 1;
+}
+
+/* Panel toggle: tools icon + chevron, the faint treatment of the other header buttons; active while
+   the panel is open, amber while a request waits for the user. */
+.compact-tool-button {
+    opacity: 0.6;
+    transition: opacity 0.15s;
+}
+.compact-tool-button:hover,
+.compact-tool-button.compact-tool-button--active {
+    opacity: 1;
+}
+.compact-tool-button--pending::part(base) {
+    color: var(--wa-color-warning-60);
+}
+.compact-tool-chevron {
+    display: inline-flex;
+    justify-content: center;
+    width: var(--compact-pill-chevron-width);
+    font-size: var(--wa-font-size-2xs);
+}
+
+/* Compact status, on the title row: hidden by default, shown in compact mode when not expanded. Its two
+   cells have the width of the controls' segments below (see --compact-pill-button-width), the ring one
+   that of the toggle, and each centres its content: the icons line up with the controls' icons. */
+.compact-status {
+    display: none;
+    align-items: center;
+    flex-shrink: 0;
+}
+.compact-status-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.compact-status-cell--state {
+    width: var(--compact-pill-button-width);
+}
+.compact-status-cell--ring {
+    width: calc(var(--compact-pill-button-width) + var(--compact-pill-chevron-width));
+}
+
 /* Collapsible rows wrapper: transparent on large viewports */
 .session-collapsible-rows {
     display: contents;
 }
 
 /* compact height: see utils/compactHeight.js */
-/* Show the compact toggle chevron */
-:where(html.compact-height) .compact-toggle-chevron {
-    display: inline-flex;
-}
-
 /* Show the compact toggle button for non-main sessions */
 :where(html.compact-height) .compact-toggle-button {
     display: inline-flex;
 }
 
-/* Make the toggle zone a clickable flex row */
-:where(html.compact-height) .compact-toggle-zone {
-    display: flex;
-    align-items: center;
-    gap: var(--wa-space-s);
-    min-width: 0;
-    cursor: pointer;
-    flex: 1;
+/* Show the pill and the panel toggle in it */
+:where(html.compact-height) .compact-pill,
+:where(html.compact-height) .compact-tool-button {
+    display: inline-flex;
 }
 
-:where(html.compact-height) .compact-toggle-zone:hover .compact-toggle-chevron {
-    opacity: 1;
+
+/* The row is the click target that opens the panel */
+:where(html.compact-height) .session-title,
+:where(html.compact-height) .session-project-row {
+    cursor: pointer;
 }
 
 :where(html.compact-height) .session-header.compact-collapsed {
@@ -1520,24 +1569,23 @@ wa-divider {
     display: none;
 }
 
-/* Add some padding on the bottom of the first line */
-:where(html.compact-height) .session-header .session-title {
-    padding-bottom: var(--wa-space-xs);
+/* The buttons of the row overhang it by their negative margin (see .compact-live): the row pays that
+   back at the bottom so they do not touch the card below. */
+:where(html.compact-height) .session-header .session-project-row {
+    padding-bottom: calc(1.5 * var(--wa-space-2xs));
 }
 
-/* Show the compact context ring when not expanded */
-:where(html.compact-height) .session-header.compact-collapsed .compact-context-ring {
-    display: inline-flex;
-    margin-block: -0.25rem;
+/* Show the status chip and the process controls when the panel is closed (the panel shows the same
+   things, so they leave the rows while it is open and the title and project get the room) */
+.compact-context-ring {
+    /* Smaller than the stats ring, and without the % sign: it must not reach the controls below. */
+    --size: 1.5rem;
+    --track-width: 3px;
+    /* No height of its own in the title row: it is a little taller than the title's line. */
+    margin-block: calc(-0.5 * var(--size));
 }
-
-/* Show the compact process indicator when not expanded */
-:where(html.compact-height) .session-header.compact-collapsed .compact-process-indicator {
-    display: inline-flex;
-}
-
-/* Show the compact provider icon when not expanded */
-:where(html.compact-height) .session-header.compact-collapsed .compact-provider-icon {
+:where(html.compact-height) .session-header.compact-collapsed .compact-live,
+:where(html.compact-height) .session-header.compact-collapsed .compact-status {
     display: inline-flex;
 }
 

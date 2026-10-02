@@ -288,8 +288,8 @@ test('7. context ring: a real colour at every percentage, glow on the base part'
         assert.ok(!body.includes('--wa-color-primary'), `${file}: no --wa-color-primary`)
         assert.match(body, /return 'var\(--glow-context-ring\)'/, `${file}: default colour`)
     }
-    const ring = rule(glow, [':where(wa-progress-ring:is(.context-usage-ring, .onode-context-ring))::part(base)'], topLevel)
-    assert.match(ring.decls.filter, /^drop-shadow\(.*var\(--indicator-color\)/)
+    // No halo on the ring: a filter on its base part would blur the percentage too.
+    assert.ok(!glow.some((x) => x.selectors.some((s) => s.includes('progress-ring') && s.includes('::part(base)'))), 'no rule on the ring base part')
     // No drop-shadow on the indicator: the SVG clips it (live states §7.2: an opacity pulse is safe).
     for (const r of glow.filter((x) => x.selectors.some((s) => s.includes('::part(indicator)')))) {
         assert.equal(r.decls.filter, undefined, `no filter on the indicator: ${r.head}`)

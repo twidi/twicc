@@ -205,14 +205,6 @@ const contextUsageColor = computed(() => {
     return 'var(--glow-context-ring)'
 })
 
-// Indicator width multiplier (1x at 0%, up to 1.5x at 80%+), mirroring the header.
-const contextUsageIndicatorWidth = computed(() => {
-    const pct = contextUsagePercentage.value
-    if (pct == null) return null
-    const multiplier = Math.min(1 + (pct / 80), 1.5)
-    return `calc(var(--track-width) * ${multiplier.toFixed(2)})`
-})
-
 // Expand/collapse this node's children (default expanded).
 const expanded = ref(true)
 </script>
@@ -284,7 +276,6 @@ const expanded = ref(true)
                         :value="Math.min(contextUsagePercentage, 100)"
                         :style="{
                             '--indicator-color': contextUsageColor,
-                            '--indicator-width': contextUsageIndicatorWidth,
                         }"
                     ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring><AppTooltip :for="`orch-context-${node.id}`">{{ contextUsageTooltip }}</AppTooltip></template>
                 </div>

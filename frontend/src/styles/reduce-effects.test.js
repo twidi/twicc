@@ -12,7 +12,6 @@ const read = (rel) => readFileSync(join(srcDir, rel), 'utf8')
 const collapse = (text) => text.replace(/\s+/g, ' ')
 
 const RULES = [
-    ['styles/glow.css', ":root.reduce-effects :where(wa-progress-ring:is(.context-usage-ring, .onode-context-ring))::part(base) { filter: none; }"],
     ['components/ui/TabBar.vue', ':root.reduce-effects .tab-bar::part(tabs)::after { filter: none; }'],
     ['components/session/layout/SessionLayout.vue', ':root.reduce-effects .layout-tab-drag-ghost { filter: none; box-shadow: 0 5px 12px rgba(0, 0, 0, 0.25); }'],
     ['components/activity/ContributionSparklines.vue', ':root.reduce-effects .sparkline-line { filter: none; }'],
