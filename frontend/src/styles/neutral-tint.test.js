@@ -76,11 +76,12 @@ test('4. dividers and progress tracks read the softer tokens, in every place tha
     }
 })
 
-// Retouches: the fields are tinted with the accent, not a pure white or a near-black.
-test('field fill: a faint accent tint over the page surface (a little stronger in dark), read by Web Awesome and by the glass', () => {
+// Retouches: the fields are a translucent flat (lighter in light, darker in dark), not a fixed colour.
+test('field fill: translucent, a little lighter than its surroundings in light and darker in dark, read by Web Awesome and by the glass', () => {
     const css = strip(read('neutral-tint.css')).replace(/\s+/g, ' ')
-    assert.ok(css.includes(':root { --field-bg: color-mix(in oklab, var(--wa-color-brand-60) 5%, var(--wa-color-surface-default)); --wa-form-control-background-color: var(--field-bg); }'))
-    assert.ok(css.includes('.wa-dark { --field-bg: color-mix(in oklab, var(--wa-color-brand-60) 11%, var(--wa-color-surface-default)); }'))
+    assert.ok(css.includes(':root { --field-bg: color-mix(in oklab, white 60%, transparent); --wa-form-control-background-color: var(--field-bg); }'))
+    assert.ok(css.includes('.wa-dark { --field-bg: color-mix(in oklab, oklch(0.12 0.03 217) 40%, transparent); }'))
     const glass = strip(read('glass.css')).replace(/\s+/g, ' ')
-    assert.ok(glass.includes('--glass-field-bg: color-mix(in oklab, var(--field-bg, var(--wa-color-surface-default)) 70%, transparent);'))
+    assert.ok(glass.includes('--glass-field-bg: var(--field-bg, color-mix(in oklab, var(--wa-color-surface-default) 70%, transparent));'), 'the glass reads it as is (it is already translucent), with a fallback where it does not exist')
+    assert.equal(glass.split('--glass-field-bg: var(--wa-color-surface-default);').length - 1, 2, 'the opaque fallbacks stay opaque')
 })

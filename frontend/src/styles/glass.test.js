@@ -137,7 +137,7 @@ test('2. opaque fallbacks: reduced transparency and no backdrop-filter support',
         assert.ok(root, `${glassTree[index].prelude}: no :root block`)
         assert.equal(root.decls['--glass-bg'], 'var(--glass-tint)')
         assert.equal(root.decls['--glass-sticky-bg'], 'var(--glass-tint)')
-        assert.equal(root.decls['--glass-field-bg'], 'var(--field-bg, var(--wa-color-surface-default))')
+        assert.equal(root.decls['--glass-field-bg'], 'var(--wa-color-surface-default)')
         for (const name of FILTER_TOKENS) assert.equal(root.decls[name], 'none', `${name} must be none`)
     }
 })

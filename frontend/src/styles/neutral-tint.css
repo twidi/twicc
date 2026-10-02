@@ -46,15 +46,16 @@
     --wa-color-mix-active: oklch(8% 0.03 var(--neutral-tint-hue)) 16%;
 }
 
-/* The fill of the fields (wa-input, wa-textarea, wa-select, the list boxes): a faint accent tint over the
-   page surface instead of a pure white (light) or a near-black (dark). Read by Web Awesome through its own
-   token, and by the glass surfaces (--glass-field-bg, glass.css). */
+/* The fill of the fields (wa-input, wa-textarea, wa-select, the list boxes): a translucent flat, not a fixed
+   colour, so a field keeps the same contrast with whatever it sits on (the page, a card, a glass surface):
+   a little lighter than its surroundings in light, a little darker in dark. Read by Web Awesome through
+   its own token, and by the glass surfaces (--glass-field-bg, glass.css). */
 :root {
-    --field-bg: color-mix(in oklab, var(--wa-color-brand-60) 5%, var(--wa-color-surface-default));
+    --field-bg: color-mix(in oklab, white 60%, transparent);
     --wa-form-control-background-color: var(--field-bg);
 }
 .wa-dark {
-    --field-bg: color-mix(in oklab, var(--wa-color-brand-60) 11%, var(--wa-color-surface-default));
+    --field-bg: color-mix(in oklab, oklch(0.12 0.03 217) 40%, transparent);
 }
 
 wa-divider {
