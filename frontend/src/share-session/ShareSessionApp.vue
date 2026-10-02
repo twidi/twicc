@@ -212,8 +212,10 @@ onUnmounted(() => window.removeEventListener('popstate', onPopState))
             :last-line="meta.last_line"
         />
 
-        <SharedSubagentView v-if="ready && subagentStack.length"
-            :stack="subagentStack" @close="closeSubagent" @clear="clearSubagents" />
+        <Transition name="subagent-drawer">
+            <SharedSubagentView v-if="ready && subagentStack.length"
+                :stack="subagentStack" @close="closeSubagent" @clear="clearSubagents" />
+        </Transition>
 
         <GlobalMediaPreview />
         <ShareFooter class="glass-sticky" />

@@ -34,16 +34,40 @@ const agentLabel = (id) => {
     </div>
 </template>
 
+<style>
+/* The veil's opacity is the drawer's own property, so it can fade with the slide (glass.css reads it). */
+@property --glass-veil-opacity {
+    syntax: '<number>';
+    inherits: true;
+    initial-value: 1;
+}
+</style>
+
 <style scoped>
 .subagent-drawer { position: fixed; inset: 0; z-index: 20; }
 /* The veil is the drawer's glass-veil layer; the backdrop stays as the click target. */
 .subagent-backdrop { position: absolute; inset: 0; }
-.subagent-panel { position: absolute; top: 0; right: 0; bottom: 0; width: min(52rem, 100%);
-    background: var(--wa-color-surface-default); box-shadow: -4px 0 24px rgba(0,0,0,.3);
+/* A sub-agent opens from the right and takes 90% of the width. Its background is the page's own: the
+   canvas (the gradient auras), fixed to the viewport like the page's, so the panel reads as the same
+   surface. The head is transparent over it. */
+.subagent-panel { position: absolute; top: 0; right: 0; bottom: 0; width: 90%;
+    padding-inline: .5rem; background: var(--canvas-background); background-attachment: fixed;
+    box-shadow: -4px 0 24px rgba(0,0,0,.3);
     display: flex; flex-direction: column; overflow: hidden; }
 /* The inner ShareItemsList (flex:1; min-height:0 via the shell styles) owns the
    scroll, so the head stays fixed and the drawer never traps the wheel. */
 .subagent-head { flex: 0 0 auto; display: flex; justify-content: space-between;
-    align-items: center; padding: .5rem 1rem; background: var(--wa-color-surface-default); }
+    align-items: center; padding: .5rem 1rem; }
 .crumbs { display: flex; gap: .35rem; font-size: var(--wa-font-size-s); color: var(--wa-color-text-quiet); }
+
+/* Opening and closing (the owner wraps this component in <Transition name="subagent-drawer">): the panel
+   slides in from the right edge (the slide follows --motion-amount: reduced motion keeps the fade), and the
+   veil fades with it. */
+.subagent-drawer { transition: --glass-veil-opacity 300ms ease-in-out; }
+.subagent-drawer-enter-from,
+.subagent-drawer-leave-to { --glass-veil-opacity: 0; }
+.subagent-drawer-enter-active .subagent-panel { transition: translate 320ms var(--motion-ease-out, ease-out); }
+.subagent-drawer-leave-active .subagent-panel { transition: translate 240ms ease-in; }
+.subagent-drawer-enter-from .subagent-panel,
+.subagent-drawer-leave-to .subagent-panel { translate: calc(100% * var(--motion-amount, 1)) 0; }
 </style>
