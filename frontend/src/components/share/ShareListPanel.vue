@@ -22,16 +22,17 @@ const uid = useId()
 // button is enough).
 const activeShares = computed(() => props.shares.filter((s) => s.status === 'active'))
 const revokingAll = ref(false)
+const revokeAllConfirm = ref(false) // inline "Revoke all?" confirmation pending
 async function revokeAll() {
     const active = activeShares.value
     if (active.length < 1 || revokingAll.value) return
-    if (!confirm(`Revoke all ${active.length} active link${active.length > 1 ? 's' : ''}? They stop working until unrevoked.`)) return
     revokingAll.value = true
     try {
         await Promise.all(active.map((s) => store.revokeShare(s.id, true)))
         toast.success('Active links revoked')
     } finally {
         revokingAll.value = false
+        revokeAllConfirm.value = false
     }
 }
 
@@ -45,9 +46,18 @@ function copy(s) {
     if (!url) { toast.error?.('Configure a share host in Settings → Sharing first.'); return }
     navigator.clipboard.writeText(url); toast.success('Share URL copied')
 }
-async function del(s) {
-    if (!confirm('Delete this share link? It cannot be undone.')) return
-    await store.deleteShare(s.id)
+// Inline delete confirmation (same "Delete?" check/cross pattern as the workspace manager).
+const deleteConfirmId = ref(null) // share ID pending delete confirmation
+const deleting = ref(false)
+async function confirmDelete(s) {
+    if (deleting.value) return
+    deleting.value = true
+    try {
+        await store.deleteShare(s.id)
+    } finally {
+        deleting.value = false
+        deleteConfirmId.value = null
+    }
 }
 async function toggleViews(s) {
     if (s.id in accesses.value) { delete accesses.value[s.id]; return }
@@ -59,7 +69,14 @@ async function toggleViews(s) {
 <template>
     <div class="share-list">
         <div v-if="activeShares.length >= 2" class="share-list-toolbar">
-            <wa-button size="small" appearance="plain" variant="warning" :loading="revokingAll" @click="revokeAll">
+            <template v-if="revokeAllConfirm">
+                <span class="revoke-confirm-label">Revoke {{ activeShares.length }} active links? They stop working until unrevoked.</span>
+                <wa-button :id="`${uid}-revoke-all-ok`" size="small" appearance="plain" variant="warning" :loading="revokingAll" @click="revokeAll"><wa-icon name="check"></wa-icon></wa-button>
+                <AppTooltip :for="`${uid}-revoke-all-ok`">Confirm revoke all</AppTooltip>
+                <wa-button :id="`${uid}-revoke-all-no`" size="small" appearance="plain" :disabled="revokingAll" @click="revokeAllConfirm = false"><wa-icon name="xmark"></wa-icon></wa-button>
+                <AppTooltip :for="`${uid}-revoke-all-no`">Cancel revoke all</AppTooltip>
+            </template>
+            <wa-button v-else size="small" appearance="plain" variant="warning" @click="revokeAllConfirm = true">
                 <wa-icon slot="start" name="ban"></wa-icon>Revoke all ({{ activeShares.length }})
             </wa-button>
         </div>
@@ -97,8 +114,17 @@ async function toggleViews(s) {
                 <AppTooltip v-if="s.status !== 'revoked'" :for="`${uid}-revoke-${s.id}`">Disable this link (viewers get a 404)</AppTooltip>
                 <wa-button v-if="s.status === 'revoked'" :id="`${uid}-unrevoke-${s.id}`" size="small" appearance="plain" @click="store.revokeShare(s.id, false)">Unrevoke</wa-button>
                 <AppTooltip v-if="s.status === 'revoked'" :for="`${uid}-unrevoke-${s.id}`">Re-enable this link</AppTooltip>
-                <wa-button :id="`${uid}-del-${s.id}`" size="small" appearance="plain" variant="danger" @click="del(s)"><wa-icon name="trash"></wa-icon></wa-button>
-                <AppTooltip :for="`${uid}-del-${s.id}`">Delete this link permanently</AppTooltip>
+                <template v-if="deleteConfirmId === s.id">
+                    <span class="delete-confirm-label">Delete? It cannot be undone.</span>
+                    <wa-button :id="`${uid}-del-ok-${s.id}`" size="small" appearance="plain" variant="danger" :loading="deleting" @click="confirmDelete(s)"><wa-icon name="check"></wa-icon></wa-button>
+                    <AppTooltip :for="`${uid}-del-ok-${s.id}`">Confirm delete</AppTooltip>
+                    <wa-button :id="`${uid}-del-no-${s.id}`" size="small" appearance="plain" :disabled="deleting" @click="deleteConfirmId = null"><wa-icon name="xmark"></wa-icon></wa-button>
+                    <AppTooltip :for="`${uid}-del-no-${s.id}`">Cancel delete</AppTooltip>
+                </template>
+                <template v-else>
+                    <wa-button :id="`${uid}-del-${s.id}`" size="small" appearance="plain" variant="danger" @click="deleteConfirmId = s.id"><wa-icon name="trash"></wa-icon></wa-button>
+                    <AppTooltip :for="`${uid}-del-${s.id}`">Delete this link permanently</AppTooltip>
+                </template>
             </div>
         </div>
         <p v-if="!shares.length" class="share-empty muted">No share links yet.</p>
@@ -106,14 +132,16 @@ async function toggleViews(s) {
 </template>
 
 <style scoped>
-.share-list-toolbar { display: flex; justify-content: flex-end; padding-bottom: 0.25rem; }
+.share-list-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 0.25rem; padding-bottom: 0.25rem; }
+.revoke-confirm-label { font-size: 0.85rem; color: var(--wa-color-warning-60); }
 .share-row { padding: 0.5rem 0; border-bottom: 1px solid var(--wa-color-surface-border); }
 .share-row-main { display: flex; align-items: center; gap: 0.5rem; }
 .share-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .share-agent-badge { flex-shrink: 0; }
 .share-agent-badge a { color: inherit; }
 .share-views { background: none; border: none; color: var(--wa-color-text-quiet); cursor: pointer; font-size: 0.85rem; text-decoration: underline dotted; }
-.share-row-actions { display: flex; gap: 0.25rem; margin-top: 0.35rem; flex-wrap: wrap; }
+.share-row-actions { display: flex; align-items: center; gap: 0.25rem; margin-top: 0.35rem; flex-wrap: wrap; }
+.delete-confirm-label { font-size: 0.85rem; color: var(--wa-color-danger-60); white-space: nowrap; }
 /* The fetched log is capped server-side (newest 200); AccessLogList itself
    caps the panel height so a busy link scrolls instead of blowing up the dialog. */
 .share-views-panel { margin-top: 0.4rem; font-size: 0.8rem; }
