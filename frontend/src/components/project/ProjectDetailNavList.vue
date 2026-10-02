@@ -229,6 +229,14 @@ const items = computed(() => {
     flex-wrap: wrap;
     column-gap: var(--wa-space-l);
     row-gap: var(--wa-space-2xs);
+    /* Many workspaces/projects: show about 3 rows, scroll the rest. */
+    --nav-row-height: calc(var(--wa-font-size-s) * var(--wa-line-height-normal));
+    max-height: calc(3 * var(--nav-row-height) + 2 * var(--wa-space-2xs));
+    align-content: flex-start;
+    overflow-y: auto;
+    /* The panel's padding must not eat into the 3 rows, and a flex parent must not squash the list. */
+    box-sizing: content-box;
+    flex-shrink: 0;
 }
 
 .nav-item {
