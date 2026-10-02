@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { effectScope, nextTick, shallowRef, triggerRef } from 'vue'
+import { createRenderer, effectScope, nextTick, shallowRef, triggerRef } from 'vue'
 
 import { useVirtualScroll } from './useVirtualScroll.js'
 
@@ -93,6 +93,243 @@ function assertFrozen(scroller, expected) {
     assert.strictEqual(actual.visibleRange, expected.visibleRange)
     assert.deepEqual(actual, expected)
 }
+
+function controlledAsync(t) {
+    const originals = {
+        requestAnimationFrame: globalThis.requestAnimationFrame,
+        cancelAnimationFrame: globalThis.cancelAnimationFrame,
+        setTimeout: globalThis.setTimeout,
+        clearTimeout: globalThis.clearTimeout,
+    }
+    let nextId = 0
+    const frames = new Map()
+    const timers = new Map()
+    const canceledFrames = new Set()
+    const canceledTimers = new Set()
+    globalThis.requestAnimationFrame = callback => { const id = ++nextId; frames.set(id, callback); return id }
+    globalThis.cancelAnimationFrame = id => { canceledFrames.add(id) }
+    globalThis.setTimeout = callback => { const id = ++nextId; timers.set(id, callback); return id }
+    globalThis.clearTimeout = id => { canceledTimers.add(id) }
+    t.after(() => Object.assign(globalThis, originals))
+    return {
+        frames, timers, canceledFrames, canceledTimers,
+        fireFrame(id) { frames.get(id)(); frames.delete(id) },
+        fireTimer(id) { timers.get(id)(); timers.delete(id) },
+        pendingTimers: () => [...timers.keys()].filter(id => !canceledTimers.has(id)),
+    }
+}
+
+test('suspension cancels settling key and edge reveals across immediate resume', async (t) => {
+    const clock = controlledAsync(t)
+    const { scroller, container, keyCalls, resetKeyCalls } = setup(t, { count: 20 })
+    for (const align of ['nearest', 'center']) {
+        const changed = []
+        const result = scroller.scrollToKey('suspension-test:row-15', {
+            align, settleMs: 100, onHeightChange: () => changed.push(true),
+        })
+        const timer = clock.pendingTimers().at(-1)
+        scroller.suspend()
+        assert.ok(clock.canceledTimers.has(timer), 'settle timer is canceled immediately')
+        scroller.resume()
+        resetKeyCalls()
+        const writes = container.scrollTop
+        clock.fireTimer(timer) // Canceled callbacks can still arrive.
+        assert.equal(await result, false)
+        assert.equal(keyCalls(), 0, 'stale continuation does not search the list')
+        assert.equal(container.scrollTop, writes)
+        assert.deepEqual(changed, [])
+    }
+
+    const edge = scroller.scrollToEdge('bottom', { settleMs: 100 })
+    const timer = clock.pendingTimers().at(-1)
+    scroller.suspend()
+    assert.ok(clock.canceledTimers.has(timer))
+    scroller.resume()
+    const writes = container.scrollTop
+    clock.fireTimer(timer)
+    assert.equal(await edge, false)
+    assert.equal(container.scrollTop, writes)
+})
+
+test('suspension ends smooth reveal before its continuation can start a settle wait', async (t) => {
+    const clock = controlledAsync(t)
+    const { scroller, container, resetKeyCalls, keyCalls } = setup(t, { count: 20, buffer: 500 })
+    const listeners = new Map()
+    container.addEventListener = (type, callback) => listeners.set(type, callback)
+    container.removeEventListener = (type, callback) => { if (listeners.get(type) === callback) listeners.delete(type) }
+    container.scrollTo = ({ top }) => { container.scrollTop = top }
+    container.scrollTop = 400
+    scroller.syncScrollPosition()
+    await nextTick()
+    const result = scroller.scrollToKey('suspension-test:row-17', {
+        align: 'nearest', allowSmooth: true, settleMs: 100,
+    })
+    assert.ok(listeners.has('scrollend'))
+    scroller.suspend()
+    assert.equal(listeners.has('scrollend'), false)
+    scroller.resume()
+    resetKeyCalls()
+    assert.equal(await result, false)
+    assert.equal(keyCalls(), 0)
+    assert.equal(clock.pendingTimers().length, 0, 'no settle timer starts after canceled smooth completion')
+})
+
+test('height-change callback cannot rearm a wait after it suspends the scroller', async (t) => {
+    const clock = controlledAsync(t)
+    const { scroller } = setup(t, { count: 20 })
+    const result = scroller.scrollToKey('suspension-test:row-15', {
+        settleMs: 100,
+        onHeightChange: () => { scroller.suspend(); scroller.resume() },
+    })
+    scroller.updateItemHeight('suspension-test:row-0', 80)
+    await nextTick()
+    assert.equal(await result, false)
+    assert.equal(clock.pendingTimers().length, 0, 'callback cannot rearm a canceled wait')
+})
+
+test('suspended scroll commands do no work and retain their return types', async (t) => {
+    const clock = controlledAsync(t)
+    const { scroller, container, keyCalls, resetKeyCalls } = setup(t, { count: 20 })
+    let writes = 0
+    let actualTop = container.scrollTop
+    Object.defineProperty(container, 'scrollTop', {
+        get: () => actualTop,
+        set(value) { writes++; actualTop = value },
+    })
+    container.scrollTo = () => { writes++ }
+    scroller.suspend()
+    resetKeyCalls()
+    assert.equal(scroller.scrollToIndex(5), null)
+    assert.equal(await scroller.scrollToKey('suspension-test:row-5'), false)
+    assert.equal(await scroller.scrollToEdge('bottom'), false)
+    assert.equal(scroller.scrollToTop(), undefined)
+    assert.equal(scroller.scrollToBottom(), undefined)
+    assert.equal(scroller.scrollToAnchor({ index: 5, key: 'suspension-test:row-5', offset: 0 }), undefined)
+    assert.equal(scroller.setScrollTop(100), undefined)
+    assert.equal(keyCalls(), 0)
+    assert.equal(writes, 0)
+    assert.equal(clock.pendingTimers().length, 0)
+})
+
+test('canceled scroll and retry frames cannot change newer ownership', async (t) => {
+    const clock = controlledAsync(t)
+    const { scroller, container } = setup(t, { count: 20 })
+    container.scrollTop = 400
+    scroller.syncScrollPosition()
+    await nextTick()
+    scroller.handleScroll({ target: container })
+    const oldScroll = [...clock.frames.keys()].at(-1)
+    scroller.suspend()
+    scroller.resume()
+    scroller.handleScroll({ target: container })
+    const newScroll = [...clock.frames.keys()].at(-1)
+    clock.fireFrame(oldScroll)
+    scroller.handleScroll({ target: container })
+    assert.ok(clock.canceledFrames.has(newScroll), 'new scroll frame remains owned after old callback')
+
+    let actualTop = container.scrollTop
+    let writes = 0
+    container.domHeight = 200
+    Object.defineProperty(container, 'scrollTop', {
+        get: () => actualTop,
+        set(value) { writes++; actualTop = Math.min(value, container.domHeight - container.clientHeight) },
+    })
+    scroller.suspend()
+    scroller.resume()
+    const oldRetry = [...clock.frames.keys()].at(-1)
+    scroller.suspend()
+    scroller.resume()
+    const newRetry = [...clock.frames.keys()].at(-1)
+    const before = writes
+    clock.fireFrame(oldRetry)
+    assert.equal(writes, before)
+    assert.notEqual(newRetry, oldRetry)
+    container.domHeight = 800
+    clock.fireFrame(newRetry)
+    assert.equal(writes, before + 1, 'new retry remains owned after old callback')
+})
+
+test('old programmatic reset cannot release a newer smooth hold', async (t) => {
+    const clock = controlledAsync(t)
+    const { scroller, container } = setup(t, { count: 20 })
+    container.scrollTo = ({ top }) => { container.scrollTop = top }
+    scroller.scrollToTop({ behavior: 'smooth' })
+    const oldTimer = clock.pendingTimers().at(-1)
+    scroller.scrollToBottom({ behavior: 'smooth' })
+    clock.fireTimer(oldTimer)
+    const prior = container.scrollTop
+    scroller.updateItemHeight('suspension-test:row-0', 80)
+    assert.equal(container.scrollTop, prior, 'older timer does not release newer programmatic hold')
+})
+
+test('component unmount disposes listeners, frames, timers, and settle waits', async (t) => {
+    const clock = controlledAsync(t)
+    const listeners = new Map()
+    const container = {
+        clientHeight: 200, scrollHeight: 800, scrollTop: 0,
+        addEventListener(type, listener) { listeners.set(type, listener) },
+        removeEventListener(type, listener) { if (listeners.get(type) === listener) listeners.delete(type) },
+        scrollTo({ top }) { this.scrollTop = top },
+    }
+    const containerRef = shallowRef(container)
+    const items = shallowRef(Array.from({ length: 20 }, (_, index) => ({ id: `row-${index}` })))
+    let scroller
+    const renderer = createRenderer({
+        createComment: () => ({}), createElement: () => ({}), createText: () => ({}),
+        insert() {}, remove() {}, setElementText() {}, setText() {},
+        patchProp() {}, parentNode: () => null, nextSibling: () => null,
+    })
+    const app = renderer.createApp({
+        setup() {
+            scroller = useVirtualScroll({ items, itemKey: item => item.id, minItemHeight: 40, containerRef })
+            return () => null
+        },
+    })
+    app.mount({})
+    scroller.syncScrollPosition()
+    const reveal = scroller.scrollToKey('row-15', { settleMs: 100 })
+    scroller.handleScroll({ target: container })
+    assert.ok(listeners.size > 0)
+    assert.ok(clock.frames.size > 0)
+    assert.ok(clock.pendingTimers().length > 0)
+    app.unmount()
+    assert.equal(listeners.size, 0)
+    assert.ok([...clock.frames.keys()].every(id => clock.canceledFrames.has(id)))
+    assert.equal(clock.pendingTimers().length, 0)
+    assert.equal(await reveal, false)
+})
+
+test('height-change callback cannot rearm a wait after component unmount', async (t) => {
+    const clock = controlledAsync(t)
+    const container = {
+        clientHeight: 200, scrollHeight: 800, scrollTop: 0,
+        addEventListener() {}, removeEventListener() {},
+    }
+    let scroller
+    const renderer = createRenderer({
+        createComment: () => ({}), createElement: () => ({}), createText: () => ({}),
+        insert() {}, remove() {}, setElementText() {}, setText() {},
+        patchProp() {}, parentNode: () => null, nextSibling: () => null,
+    })
+    const app = renderer.createApp({
+        setup() {
+            scroller = useVirtualScroll({
+                items: shallowRef(Array.from({ length: 20 }, (_, index) => ({ id: `row-${index}` }))),
+                itemKey: item => item.id,
+                minItemHeight: 40,
+                containerRef: shallowRef(container),
+            })
+            return () => null
+        },
+    })
+    app.mount({})
+    scroller.syncScrollPosition()
+    const reveal = scroller.scrollToKey('row-15', { settleMs: 100, onHeightChange: () => app.unmount() })
+    scroller.updateItemHeight('row-0', 80)
+    await nextTick()
+    assert.equal(await reveal, false)
+    assert.equal(clock.pendingTimers().length, 0)
+})
 
 test('suspension retains one geometry generation through in-place edits and height seeds', async (t) => {
     const { scroller, items, container, keyCalls, resetKeyCalls } = setup(t)

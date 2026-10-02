@@ -113,11 +113,16 @@ export function useVirtualScroll(options) {
      * RAF handle for scroll throttling.
      */
     let rafId = null
+    let lifecycleGeneration = 0
+    let disposed = false
+    const pendingHeightWaits = new Set()
 
     /**
      * Flag to track if we're in programmatic scroll mode (to avoid scroll correction).
      */
     let isProgrammaticScroll = false
+    let programmaticToken = 0
+    let programmaticResetTimer = null
 
     /**
      * When true, the implicit "stay at bottom on resize" behavior in
@@ -689,13 +694,15 @@ export function useVirtualScroll(options) {
     function handleScroll(event) {
         // Ignore scroll events while suspended (container is detached).
         // The browser may fire a scroll event when resetting scrollTop to 0 during detach.
-        if (suspended.value) return
+        if (suspended.value || disposed) return
 
         if (rafId !== null) {
             cancelAnimationFrame(rafId)
         }
 
-        rafId = requestAnimationFrame(() => {
+        const generation = lifecycleGeneration
+        const handle = requestAnimationFrame(() => {
+            if (generation !== lifecycleGeneration || rafId !== handle || disposed) return
             rafId = null
             if (suspended.value) return
             const target = event?.target || containerRef.value
@@ -716,12 +723,14 @@ export function useVirtualScroll(options) {
                 scrollTop.value = target.scrollTop
             }
         })
+        rafId = handle
     }
 
     // A scrolling gesture the browser performs itself cancels a smooth reveal's animation:
     // it ends it (endSmooth), so the anchor correction works again at once. A click or a tap
     // on a row does not cancel the animation: a child's pointerdown and a touchstart do not.
     function noteUserScroll(event) {
+        if (suspended.value || disposed) return
         userScrollSeq++
         if (event.type === 'wheel' || (event.type === 'pointerdown' && event.target === containerRef.value)) {
             endSmooth()
@@ -731,6 +740,7 @@ export function useVirtualScroll(options) {
     // Arrow / Home / End / PageUp / PageDown are handled by the list (defaultPrevented, often
     // no scroll at all): only a key the browser scrolls ends a smooth reveal.
     function noteScrollKey(event) {
+        if (suspended.value || disposed) return
         if (!SCROLL_KEYS.has(event.key)) return
         userScrollSeq++
         if (!event.defaultPrevented) endSmooth()
@@ -738,6 +748,7 @@ export function useVirtualScroll(options) {
 
     // The browser took the touch for panning (a touchmove also fires for a tap's jitter).
     function noteTouchPan(event) {
+        if (suspended.value || disposed) return
         if (event.pointerType === 'touch') endSmooth()
     }
 
@@ -799,11 +810,34 @@ export function useVirtualScroll(options) {
      */
     function endSmooth() {
         if (!smoothTo) return
-        const { cancel } = smoothTo
+        const { cancel, programmaticOwner } = smoothTo
         smoothTo = null
         smoothToken++
-        isProgrammaticScroll = false
+        releaseProgrammaticScroll(programmaticOwner)
         cancel()
+    }
+
+    function beginProgrammaticScroll() {
+        if (programmaticResetTimer !== null) {
+            clearTimeout(programmaticResetTimer)
+            programmaticResetTimer = null
+        }
+        isProgrammaticScroll = true
+        return ++programmaticToken
+    }
+
+    function releaseProgrammaticScroll(owner) {
+        if (owner === programmaticToken) isProgrammaticScroll = false
+    }
+
+    function scheduleProgrammaticReset(owner) {
+        const generation = lifecycleGeneration
+        const handle = setTimeout(() => {
+            if (generation !== lifecycleGeneration || owner !== programmaticToken || programmaticResetTimer !== handle) return
+            programmaticResetTimer = null
+            releaseProgrammaticScroll(owner)
+        }, 500)
+        programmaticResetTimer = handle
     }
 
     /**
@@ -818,13 +852,14 @@ export function useVirtualScroll(options) {
     function startSmoothReveal(container, target) {
         endSmooth()
         const token = ++smoothToken
-        isProgrammaticScroll = true
+        const programmaticOwner = beginProgrammaticScroll()
+        const generation = lifecycleGeneration
         const { done, cancel } = startSmoothScroll(container, target)
-        smoothTo = { target, token, done, cancel }
+        smoothTo = { target, token, done, cancel, programmaticOwner }
         done.then(() => {
-            if (smoothTo?.token !== token) return
+            if (generation !== lifecycleGeneration || smoothTo?.token !== token) return
             smoothTo = null
-            isProgrammaticScroll = false
+            releaseProgrammaticScroll(programmaticOwner)
         })
         return done
     }
@@ -867,6 +902,7 @@ export function useVirtualScroll(options) {
      *   or null (an instant write or no write)
      */
     function scrollToIndex(index, options = {}) {
+        if (suspended.value || disposed) return null
         const {
             align = 'start',
             behavior = 'auto',
@@ -940,18 +976,16 @@ export function useVirtualScroll(options) {
      */
     function writeProgrammaticScroll(container, targetScrollTop, behavior) {
         if (behavior !== 'smooth') endSmooth()
-        isProgrammaticScroll = true
+        const owner = beginProgrammaticScroll()
 
         if (behavior === 'smooth') {
             container.scrollTo({ top: targetScrollTop, behavior: 'smooth' })
             // Reset programmatic flag after smooth scroll completes (estimate)
-            setTimeout(() => {
-                isProgrammaticScroll = false
-            }, 500)
+            scheduleProgrammaticReset(owner)
         } else {
             container.scrollTop = targetScrollTop
             scrollTop.value = targetScrollTop
-            isProgrammaticScroll = false
+            releaseProgrammaticScroll(owner)
         }
     }
 
@@ -962,23 +996,22 @@ export function useVirtualScroll(options) {
      * @param {'auto' | 'smooth'} [options.behavior='auto'] - Scroll behavior
      */
     function scrollToTop(options = {}) {
+        if (suspended.value || disposed) return
         const { behavior = 'auto' } = options
         const container = containerRef.value
         if (!container) return
 
         endSmooth()
         explicitScrollSeq++
-        isProgrammaticScroll = true
+        const owner = beginProgrammaticScroll()
 
         if (behavior === 'smooth') {
             container.scrollTo({ top: 0, behavior: 'smooth' })
-            setTimeout(() => {
-                isProgrammaticScroll = false
-            }, 500)
+            scheduleProgrammaticReset(owner)
         } else {
             container.scrollTop = 0
             scrollTop.value = 0
-            isProgrammaticScroll = false
+            releaseProgrammaticScroll(owner)
         }
     }
 
@@ -989,6 +1022,7 @@ export function useVirtualScroll(options) {
      * @param {'auto' | 'smooth'} [options.behavior='auto'] - Scroll behavior
      */
     function scrollToBottom(options = {}) {
+        if (suspended.value || disposed) return
         const { behavior = 'auto' } = options
         const container = containerRef.value
         if (!container) return
@@ -997,17 +1031,15 @@ export function useVirtualScroll(options) {
 
         endSmooth()
         explicitScrollSeq++
-        isProgrammaticScroll = true
+        const owner = beginProgrammaticScroll()
 
         if (behavior === 'smooth') {
             container.scrollTo({ top: targetScrollTop, behavior: 'smooth' })
-            setTimeout(() => {
-                isProgrammaticScroll = false
-            }, 500)
+            scheduleProgrammaticReset(owner)
         } else {
             container.scrollTop = targetScrollTop
             scrollTop.value = targetScrollTop
-            isProgrammaticScroll = false
+            releaseProgrammaticScroll(owner)
         }
     }
 
@@ -1026,12 +1058,16 @@ export function useVirtualScroll(options) {
      * @returns {Promise<boolean>} true if the container really sits at the edge
      */
     async function scrollToEdge(edge, options = {}) {
+        if (suspended.value || disposed) return false
+        const generation = lifecycleGeneration
         const { settleMs = 150, maxAttempts = 4 } = options
         const jump = edge === 'top' ? scrollToTop : scrollToBottom
 
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            if (generation !== lifecycleGeneration || suspended.value || disposed) return false
             jump({ behavior: 'auto' })
             await waitForHeightStability(settleMs)
+            if (generation !== lifecycleGeneration || suspended.value || disposed) return false
 
             // Read the container rather than the cached state: the settle we just
             // awaited is exactly when both drift apart.
@@ -1047,6 +1083,7 @@ export function useVirtualScroll(options) {
         }
 
         // Out of attempts: land on the edge with whatever the current heights say.
+        if (generation !== lifecycleGeneration || suspended.value || disposed) return false
         jump({ behavior: 'auto' })
         return false
     }
@@ -1106,6 +1143,7 @@ export function useVirtualScroll(options) {
      * @param {number} height - The new viewport height
      */
     function updateViewportHeight(height) {
+        if (disposed) return
         // While suspended, ignore all height changes — UNLESS we need to
         // complete a deferred resume (container was hidden when resume() was called)
         // or auto-resume (container was hidden by tab switch and is now visible again).
@@ -1159,6 +1197,7 @@ export function useVirtualScroll(options) {
      * is required instead of an automatic resume from updateViewportHeight().
      */
     function enterSuspension(origin) {
+        if (disposed) return
         // A restore from the previous cycle is moot: this suspension re-captures the anchor.
         cancelResumeRetry()
 
@@ -1209,6 +1248,8 @@ export function useVirtualScroll(options) {
             }
         }
 
+        lifecycleGeneration++
+        disposeOwnedWork()
         suspended.value = true
     }
 
@@ -1230,6 +1271,7 @@ export function useVirtualScroll(options) {
      * tab panel becomes visible).
      */
     function resume() {
+        if (disposed) return
         if (!suspended.value) return
 
         const container = containerRef.value
@@ -1255,6 +1297,22 @@ export function useVirtualScroll(options) {
             cancelAnimationFrame(resumeRetryHandle)
             resumeRetryHandle = null
         }
+    }
+
+    function disposeOwnedWork() {
+        if (rafId !== null) {
+            cancelAnimationFrame(rafId)
+            rafId = null
+        }
+        cancelResumeRetry()
+        endSmooth()
+        if (programmaticResetTimer !== null) {
+            clearTimeout(programmaticResetTimer)
+            programmaticResetTimer = null
+        }
+        programmaticToken++
+        isProgrammaticScroll = false
+        for (const cancel of [...pendingHeightWaits]) cancel()
     }
 
     /**
@@ -1352,7 +1410,9 @@ export function useVirtualScroll(options) {
         // Retry on the next frame, by which point Vue has flushed the render and the
         // spacers describe the real total height.
         const seqAtSchedule = explicitScrollSeq
-        resumeRetryHandle = requestAnimationFrame(() => {
+        const generation = lifecycleGeneration
+        const handle = requestAnimationFrame(() => {
+            if (generation !== lifecycleGeneration || resumeRetryHandle !== handle || disposed) return
             resumeRetryHandle = null
             const el = containerRef.value
             if (!el) return
@@ -1366,6 +1426,7 @@ export function useVirtualScroll(options) {
             }
             restoreSavedAnchor(el, attempt + 1)
         })
+        resumeRetryHandle = handle
     }
 
     /**
@@ -1426,6 +1487,7 @@ export function useVirtualScroll(options) {
      * @param {{ index: number, key: any, offset: number }} anchor - The anchor to restore
      */
     function scrollToAnchor(anchor) {
+        if (suspended.value || disposed) return
         if (!anchor) return
 
         const container = containerRef.value
@@ -1465,6 +1527,7 @@ export function useVirtualScroll(options) {
      * @param {number} value - Target scrollTop in pixels
      */
     function setScrollTop(value) {
+        if (suspended.value || disposed) return
         const container = containerRef.value
         if (!container || !Number.isFinite(value)) return
 
@@ -1517,6 +1580,8 @@ export function useVirtualScroll(options) {
      *   its zone) after scrolling
      */
     async function scrollToKey(key, options = {}) {
+        if (suspended.value || disposed) return false
+        const generation = lifecycleGeneration
         const {
             align = 'center',
             settleMs = 150,
@@ -1532,6 +1597,7 @@ export function useVirtualScroll(options) {
         const ownReveal = nearest ? ++revealSeq : 0
 
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            if (generation !== lifecycleGeneration || suspended.value || disposed) return false
             // Find the item index by key
             const index = items.value.findIndex(item => itemKey(item) === key)
             if (index === -1) return false
@@ -1546,9 +1612,11 @@ export function useVirtualScroll(options) {
             // the one already running — a plain wait: its hold and token stay with it.
             if (nearest && smoothDone) await smoothDone
             else if (nearest && smoothTo) await smoothTo.done
+            if (generation !== lifecycleGeneration || suspended.value || disposed) return false
 
             // Wait for heights to settle (no ResizeObserver changes for settleMs)
             await waitForHeightStability(settleMs, onHeightChange)
+            if (generation !== lifecycleGeneration || suspended.value || disposed) return false
 
             // A newer intent: the user scrolled, an explicit scroll or a newer reveal
             // happened, or the target is no longer wanted. Leave the list where it is.
@@ -1610,17 +1678,33 @@ export function useVirtualScroll(options) {
     function waitForHeightStability(ms, onHeightChange = null) {
         return new Promise(resolve => {
             let timeoutId = null
+            const generation = lifecycleGeneration
+            let settled = false
+            let stopWatch = null
+
+            const finish = () => {
+                if (settled) return
+                settled = true
+                if (timeoutId !== null) clearTimeout(timeoutId)
+                timeoutId = null
+                if (stopWatch) stopWatch()
+                pendingHeightWaits.delete(finish)
+                resolve()
+            }
+            pendingHeightWaits.add(finish)
 
             const startTimer = () => {
-                if (timeoutId) clearTimeout(timeoutId)
-                timeoutId = setTimeout(() => {
-                    stopWatch()
-                    resolve()
+                if (generation !== lifecycleGeneration || settled || suspended.value || disposed) return
+                if (timeoutId !== null) clearTimeout(timeoutId)
+                const handle = setTimeout(() => {
+                    if (generation !== lifecycleGeneration || settled || timeoutId !== handle) return
+                    finish()
                 }, ms)
+                timeoutId = handle
             }
 
             // Watch the heightCache for any change (it's a reactive Map)
-            const stopWatch = watch(
+            stopWatch = watch(
                 () => {
                     // Access heightCache.size to create a reactive dependency.
                     // Also access each entry to detect value changes (not just additions/removals).
@@ -1631,7 +1715,9 @@ export function useVirtualScroll(options) {
                     return hash
                 },
                 () => {
+                    if (generation !== lifecycleGeneration || settled || suspended.value || disposed) return
                     if (onHeightChange) onHeightChange()
+                    if (generation !== lifecycleGeneration || settled || suspended.value || disposed) return
                     startTimer()
                 },
                 { flush: 'post' }
@@ -1646,7 +1732,7 @@ export function useVirtualScroll(options) {
      * Sync the scroll position from the container (useful after mount or resize).
      */
     function syncScrollPosition() {
-        if (suspended.value) return
+        if (suspended.value || disposed) return
         const container = containerRef.value
         if (container) {
             scrollTop.value = container.scrollTop
@@ -1659,12 +1745,13 @@ export function useVirtualScroll(options) {
     // ═══════════════════════════════════════════════════════════════════════════
 
     onUnmounted(() => {
-        if (rafId !== null) {
-            cancelAnimationFrame(rafId)
-            rafId = null
-        }
-        cancelResumeRetry()
-        endSmooth()
+        lifecycleGeneration++
+        disposed = true
+        disposeOwnedWork()
+        suspendedSnapshot = null
+        savedAnchors = null
+        latestReplacement = null
+        lastCleanedItems = null
         // containerRef is already null here: the listeners are removed from listenedEl.
         if (listenedEl) removeUserScrollListeners(listenedEl)
         listenedEl = null
