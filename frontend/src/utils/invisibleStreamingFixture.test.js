@@ -289,3 +289,22 @@ test('rate errors exclude earlier scenario errors while export keeps the global 
     assert.match(fixture, /result.errors.push\(\.\.\.errors.slice\(errorStartIndex\)\)/)
     assert.match(fixture, /exportEvidence\(\).*reports: reports.value, requests, errors, lifetimes/)
 })
+
+test('Codex fixture history and final replacement provide valid canonical AgentMessage text', async () => {
+    const { agentMessageText } = await import('../providers/codex/canonical.js')
+    const start = fixture.indexOf('function finalContent(')
+    const end = fixture.indexOf('\nfunction seedSession(', start)
+    const finalContent = new Function('provider', `${fixture.slice(start, end)}; return finalContent`)('codex')
+    for (const [name, text] of [
+        ['history', 'History 1. Readable history content.'],
+        ['final plain text', 'Complete final plain text.\n\nSecond paragraph.'],
+        ['final fenced code', '```javascript\nconst value = "final";\n```'],
+    ]) {
+        const content = finalContent(text, 'text', 'fixture-message', `fixture-${name}`)
+        assert.equal(agentMessageText(content), text, `${name} must reach the production Codex renderer`)
+        assert.equal(content.payload.item.content[0].type, 'Text')
+    }
+    const thinking = finalContent('Complete reasoning.', 'thinking', 'fixture-message', 'fixture-thinking')
+    assert.equal(thinking.payload.summary[0].type, 'summary_text')
+    assert.equal(thinking.payload.summary[0].text, 'Complete reasoning.')
+})

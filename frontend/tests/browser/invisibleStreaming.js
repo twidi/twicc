@@ -156,7 +156,7 @@ store.projectsLoaded = true
 function finalContent(text, blockType, messageId, uuid) {
     if (provider === 'claude_code') return { type: 'assistant', uuid, message: { id: messageId, role: 'assistant', content: [blockType === 'thinking' ? { type: 'thinking', thinking: text } : { type: 'text', text }] } }
     if (blockType === 'thinking') return { type: 'response_item', payload: { type: 'reasoning', summary: [{ type: 'summary_text', text }] } }
-    return { type: 'event_msg', payload: { type: 'item_completed', item: { type: 'AgentMessage', content: [{ type: 'text', text }] } } }
+    return { type: 'event_msg', payload: { type: 'item_completed', item: { type: 'AgentMessage', content: [{ type: 'Text', text }] } } }
 }
 function seedSession(id, parent = null) {
     const history = Array.from({ length: 100 }, (_, index) => ({

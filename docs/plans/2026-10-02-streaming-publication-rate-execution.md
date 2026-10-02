@@ -181,3 +181,28 @@ The earlier 155 targeted and 1,577 full results describe the pre-correction comm
 No full-suite rerun follows this small fixture-only correction, as the controller instructs.
 Production code and adapter generation stay unchanged.
 Controller browser revalidation and independent re-review remain pending after the correction commit.
+
+## Task 3 browser correction round 2
+
+The controller observes an empty Codex mobile final component while canonical and raw final text comparisons pass.
+The fixture emits lowercase `text` inside Codex `AgentMessage.content`.
+The production `agentMessageText` parser accepts capitalized `Text` for that item type.
+The fixture now uses `Text` for Codex history and final text replacements.
+Reasoning keeps the existing correct `summary_text` type. Production parsers stay unchanged.
+
+The regression executes source-extracted fixture `finalContent` through the actual production `agentMessageText` function.
+It verifies complete history, final plain text, and fenced code reach the canonical rendering input.
+It also checks reasoning retains its original representation.
+
+```bash
+node --test frontend/src/utils/invisibleStreamingFixture.test.js
+node --check frontend/tests/browser/invisibleStreaming.js
+node --check frontend/tests/browser/preparePublicationRateBaseline.mjs
+git diff --check
+```
+
+RED: 20 tests, 19 pass, 1 expected failure. Log: `/tmp/task3-round2-red.log`.
+GREEN: 20 tests, 20 pass, 0 fail. Log: `/tmp/task3-round2-green.log`.
+Syntax and whitespace checks pass. No full-suite rerun follows this fixture-only correction.
+The controller repeats affected Codex browser scenarios after the stable correction commit.
+Earlier affected Codex history and replacement rendering observations use invalid fixture data and do not establish acceptance.
