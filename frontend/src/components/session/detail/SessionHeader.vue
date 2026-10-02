@@ -13,7 +13,7 @@ import {
 } from '../../../utils/backgroundWork'
 import { getProviderHelpers, getProviderLabel, getProviderIcon } from '../../../providers'
 import ProviderIcon from '../../ui/ProviderIcon.vue'
-import { compactHeight } from '../../../utils/compactHeight'
+import { compactHeight, rootFontSizePx } from '../../../utils/compactHeight'
 import { getAgentDisplay } from '../../../utils/agentLabel'
 import { stopSubagent, interruptSession } from '../../../composables/useWebSocket'
 import { stopSessionProcess, hardKillSessionProcess } from '../../../composables/useStopSessionProcess'
@@ -350,12 +350,35 @@ function toggleCompact() {
 // Action buttons: layout follows the header width
 // ═══════════════════════════════════════════════════════════════════════════
 
-// The header lives in a dock pane, so its width does not follow the viewport: measure it instead of
-// using a media query. From ACTIONS_LABELS_MIN_WIDTH the actions row (at full height, or at the top of
-// the compact panel) spells out each button's name.
-const ACTIONS_LABELS_MIN_WIDTH = 520
+// The actions row spells out each button's name (at full height, and at the top of the compact panel)
+// when it fits on one line, and shows icons only otherwise. It is measured, not a fixed width: the names'
+// widths follow the font size setting and the set of buttons (Debug in dev mode, the draft's few
+// buttons...), so any constant goes stale the day a button is added. Names are tried whenever the header
+// is wider than the last width at which they wrapped; a wrap, detected right after the render and before
+// the paint, records that width and drops the names. The record resets when what the row holds, or the
+// size of its text, changes. The header lives in a dock pane, so its width does not follow the viewport.
 const { width: headerWidth } = useElementSize(headerRef)
-const actionsLabels = computed(() => headerWidth.value >= ACTIONS_LABELS_MIN_WIDTH)
+const actionsRef = ref(null)
+const labelsWrappedAt = ref(0)
+const actionsLabels = computed(() => headerWidth.value > labelsWrappedAt.value)
+
+function actionsRowWraps() {
+    const buttons = actionsRef.value?.querySelectorAll(':scope > wa-button, :scope > wa-dropdown')
+    if (!buttons || buttons.length < 2) return false
+    return buttons[buttons.length - 1].offsetTop - buttons[0].offsetTop > 2
+}
+
+watch([headerWidth, actionsLabels], () => {
+    if (actionsLabels.value && actionsRowWraps()) {
+        labelsWrappedAt.value = Math.max(labelsWrappedAt.value, headerWidth.value)
+    }
+}, { flush: 'post' })
+
+watch(
+    () => [props.sessionId, session.value?.draft, session.value?.ephemeral, session.value?.archived,
+        settingsStore.isDevMode, compactHeight.value, rootFontSizePx.value],
+    () => { labelsWrappedAt.value = 0 },
+)
 
 // The compact panel is a popup: a click anywhere else closes it. The panel is
 // a child of the header, so one target covers it, and VueUse walks the
@@ -637,9 +660,26 @@ defineExpose({
         <!-- Collapsible rows: identity + stats + process (overlay on small viewports) -->
         <div class="session-collapsible-rows" :class="{ 'glass-surface': compactHeight }">
 
-            <!-- Action buttons (main session): the first row of the compact panel; at full height the row
-                 stays visible, on its own row under the project. -->
-            <div v-if="mode === 'session'" class="session-actions">
+            <!-- Identity: directory (truncated from the left, so the last folder always stays visible) and
+                 branch. For a draft, displayDirectory falls back to the project path and there is no
+                 branch yet, so only the folder shows. -->
+            <div v-if="displayDirectory || session.git_branch" class="session-git-info">
+                <span v-if="displayDirectory" :id="`session-header-${sessionId}-git-directory`" class="git-info-item git-directory">
+                    <wa-icon auto-width name="folder-open" variant="regular"></wa-icon>
+                    <span class="git-directory-text"><span class="git-directory-inner">{{ displayDirectoryParts.head }}<strong>{{ displayDirectoryParts.last }}</strong></span></span>
+                </span>
+                <AppTooltip v-if="displayDirectory" :for="`session-header-${sessionId}-git-directory`">{{ displayDirectoryTooltip }}</AppTooltip>
+
+                <span v-if="session.git_branch" :id="`session-header-${sessionId}-git-branch`" class="git-info-item git-branch">
+                    <wa-icon auto-width name="code-branch"></wa-icon>
+                    <span class="git-branch-name">{{ session.git_branch }}</span>
+                </span>
+                <AppTooltip v-if="session.git_branch" :for="`session-header-${sessionId}-git-branch`">Git branch</AppTooltip>
+            </div>
+
+            <!-- Action buttons (main session), right under the identity row: part of the compact panel, and
+                 always visible at full height. -->
+            <div v-if="mode === 'session'" ref="actionsRef" class="session-actions">
                 <!-- In-session search trigger: clickable equivalent of Ctrl+F (not for drafts) -->
                 <wa-button
                     v-if="!session.draft && !session.ephemeral"
@@ -650,7 +690,7 @@ defineExpose({
                     class="search-button reduced-height"
                     @click="toggleSessionSearch"
                 >
-                    <wa-icon name="magnifying-glass" label="Search"></wa-icon>
+                    <wa-icon auto-width name="magnifying-glass" label="Search"></wa-icon>
                     <span class="action-label">Search</span>
                 </wa-button>
                 <AppTooltip v-if="!session.draft && !session.ephemeral" :for="`session-header-${sessionId}-search-button`">{{ searchTooltip }}</AppTooltip>
@@ -670,7 +710,7 @@ defineExpose({
                         size="small"
                         :class="['pin-button', 'reduced-height', { 'pin-button--active': session.pinned }]"
                     >
-                        <wa-icon name="thumbtack" label="Pin"></wa-icon>
+                        <wa-icon auto-width name="thumbtack" label="Pin"></wa-icon>
                         <span class="action-label">Pin</span>
                     </wa-button>
                     <wa-dropdown-item type="checkbox" :checked="!session.pinned" value="none">
@@ -720,7 +760,7 @@ defineExpose({
                     class="archive-button reduced-height"
                     @click="handleArchive"
                 >
-                    <wa-icon name="box-archive" label="Archive"></wa-icon>
+                    <wa-icon auto-width name="box-archive" label="Archive"></wa-icon>
                     <span class="action-label">Archive</span>
                 </wa-button>
                 <AppTooltip v-if="!session.archived && !session.draft && !session.ephemeral" :for="`session-header-${sessionId}-archive-button`">{{ canStopProcess ? archiveStopLabel('Archive session', providerLabel, backgroundShellCount(processState)) : 'Archive session' }}</AppTooltip>
@@ -735,7 +775,7 @@ defineExpose({
                     class="archive-button archive-button--archived reduced-height"
                     @click="handleUnarchive"
                 >
-                    <wa-icon name="box-archive" label="Unarchive"></wa-icon>
+                    <wa-icon auto-width name="box-archive" label="Unarchive"></wa-icon>
                     <span class="action-label">Unarchive</span>
                 </wa-button>
                 <AppTooltip v-if="session.archived" :for="`session-header-${sessionId}-unarchive-button`">Unarchive session</AppTooltip>
@@ -751,7 +791,7 @@ defineExpose({
                     :disabled="!isProviderEnabled"
                     @click="openRenameDialog"
                 >
-                    <wa-icon name="pencil" label="Rename"></wa-icon>
+                    <wa-icon auto-width name="pencil" label="Rename"></wa-icon>
                     <span class="action-label">Rename</span>
                 </wa-button>
                 <AppTooltip :for="`session-header-${sessionId}-rename-button`">{{ isProviderEnabled ? 'Rename session' : 'Cannot rename: provider is disabled.' }}</AppTooltip>
@@ -767,7 +807,7 @@ defineExpose({
                     :class="['debug-button', 'reduced-height', { 'debug-button--active': isSessionDebugForced }]"
                     @click="toggleSessionDebug"
                 >
-                    <wa-icon name="bug" label="Debug view"></wa-icon>
+                    <wa-icon auto-width name="bug" label="Debug view"></wa-icon>
                     <span class="action-label">Debug</span>
                 </wa-button>
                 <AppTooltip v-if="mode === 'session' && !session.ephemeral && settingsStore.isDevMode" :for="`session-header-${sessionId}-debug-button`">{{ isSessionDebugForced ? 'Debug view forced for this session — click to restore the global mode' : 'Force the debug view for this session only' }}</AppTooltip>
@@ -783,7 +823,7 @@ defineExpose({
                     :disabled="!sharingEnabled"
                     @click="openShare"
                 >
-                    <wa-icon name="share-nodes" label="Share"></wa-icon>
+                    <wa-icon auto-width name="share-nodes" label="Share"></wa-icon>
                     <span class="action-label">Share</span>
                 </wa-button>
                 <AppTooltip :for="`session-header-${sessionId}-share-button`">
@@ -800,23 +840,6 @@ defineExpose({
                     class="pending-request-indicator"
                 ></wa-icon>
                 <AppTooltip v-if="store.getPendingRequests(sessionId).length > 0" :for="`session-header-${sessionId}-pending-request`">Waiting for your response</AppTooltip>
-            </div>
-
-            <!-- Identity: directory (truncated from the left, so the last folder always stays visible) and
-                 branch. For a draft, displayDirectory falls back to the project path and there is no
-                 branch yet, so only the folder shows. -->
-            <div v-if="displayDirectory || session.git_branch" class="session-git-info">
-                <span v-if="displayDirectory" :id="`session-header-${sessionId}-git-directory`" class="git-info-item git-directory">
-                    <wa-icon auto-width name="folder-open" variant="regular"></wa-icon>
-                    <span class="git-directory-text"><span class="git-directory-inner">{{ displayDirectoryParts.head }}<strong>{{ displayDirectoryParts.last }}</strong></span></span>
-                </span>
-                <AppTooltip v-if="displayDirectory" :for="`session-header-${sessionId}-git-directory`">{{ displayDirectoryTooltip }}</AppTooltip>
-
-                <span v-if="session.git_branch" :id="`session-header-${sessionId}-git-branch`" class="git-info-item git-branch">
-                    <wa-icon auto-width name="code-branch"></wa-icon>
-                    <span class="git-branch-name">{{ session.git_branch }}</span>
-                </span>
-                <AppTooltip v-if="session.git_branch" :for="`session-header-${sessionId}-git-branch`">Git branch</AppTooltip>
             </div>
 
             <!-- Stats container (not shown for draft sessions): labelled segments + the context ring -->
@@ -1045,19 +1068,61 @@ defineExpose({
     margin-top: calc(-1 * var(--wa-space-2xs));
 }
 
-/* Action buttons: a row of their own at full height, the first row of the panel at compact height. */
+/* Action buttons: a row of their own under the identity row, in the full header and in the compact
+   panel. The buttons' boxes are taller than their icon and name, so the row pulls its neighbours in: the
+   visible gap above it matches the one between the project row and the identity row. */
 .session-actions {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--wa-space-2xs);
+    /* Row gap a quarter of the column gap. The buttons' boxes are taller than their content, so the pull-in
+       is on each button (below), not on the row: a wrapped line is then pulled in too, and not set far
+       below the one above it. */
+    gap: var(--wa-space-3xs) var(--wa-space-xs);
+    padding-inline: var(--wa-space-xs);
+    margin-block: 0 calc(0.5 * var(--wa-space-2xs));
+}
+.session-actions > wa-button,
+.session-actions > wa-dropdown {
+    margin-block: calc(-1.5 * var(--wa-space-2xs));
+}
+/* A step above the 3xs the buttons had in the title row (the global .reduced-height): the names and the
+   icons read too small at the full-height header. The 1.3 scale of .reduced-height is replaced by a real
+   1.3em on the icon and the name: a scale grows from the middle of the label and overflows its box, which
+   made a long name run into the next button's icon. The button's height follows the font size set here,
+   not the inner 1.3em, so the box keeps its size. */
+.session-actions wa-button {
+    font-size: var(--wa-font-size-2xs);
+}
+.session-actions wa-button::part(base) {
     padding-inline: var(--wa-space-xs);
 }
+.session-actions wa-button::part(label) {
+    scale: 1;
+}
+.session-actions wa-button wa-icon,
+.session-actions .action-label {
+    font-size: 1.3em;
+}
+/* The first button's icon sits on the header's icon axis (see --header-icon-col): no padding before it and
+   an icon box of the column's width. */
+.session-actions > wa-button:first-child::part(base) {
+    padding-inline-start: 0;
+}
+.session-actions > wa-button:first-child wa-icon {
+    width: var(--header-icon-col);
+}
+/* A step above the 3xs the buttons had in the title row (the global .reduced-height): the names and the
+   icons read too small at the full-height header. */
+.session-actions wa-button {
+    font-size: var(--wa-font-size-2xs);
+}
 
-/* The button names show only when the header is wide enough (see ACTIONS_LABELS_MIN_WIDTH). */
+/* The button names show only when the row fits on one line (see actionsLabels in the script). */
 .action-label {
     display: none;
-    margin-inline-start: var(--wa-space-xs);
+    /* The same between the icon and the name of every button. */
+    margin-inline-start: calc(0.75 * var(--wa-space-xs));
     white-space: nowrap;
 }
 .session-header.actions-labels .action-label {
@@ -1104,9 +1169,17 @@ defineExpose({
     align-items: center;
     column-gap: var(--wa-space-m);
     row-gap: var(--wa-space-3xs);
-    padding-inline: var(--wa-space-m);
+    padding-inline: var(--wa-space-xs);
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
+}
+/* Full height only (the compact panel keeps its spacing): the project row above it left too much white
+   under the badge, so the identity row comes a little closer. */
+:where(html:not(.compact-height)) .session-header[data-session-type="session"] .session-git-info {
+    margin-top: calc(-1.5 * var(--wa-space-2xs));
+}
+/* No project row above it in a subagent header: it keeps a top space. */
+.session-header[data-session-type="subagent"] .session-git-info {
     margin-top: var(--wa-space-xs);
 }
 
@@ -1164,7 +1237,7 @@ defineExpose({
 .session-stats {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    margin-inline: var(--wa-space-m);
+    margin-inline: var(--wa-space-xs);
     border: var(--divider-size) solid var(--wa-color-surface-border);
     border-radius: var(--wa-border-radius-l);
     background: color-mix(in oklab, var(--wa-color-brand-60) 8%, transparent);
@@ -1183,7 +1256,7 @@ defineExpose({
     justify-content: center;
     gap: 2px;
     flex: 1 1 auto;
-    padding: var(--wa-space-xs) var(--wa-space-m);
+    padding: calc(var(--wa-space-xs) / 2) calc(var(--wa-space-m) / 2);
 }
 
 .stat-label {
@@ -1224,6 +1297,22 @@ defineExpose({
     font-size: var(--wa-font-size-2xs);
 }
 
+/* The leading icon of each row, centred on the header's icon axis. The title row's is the first marker, or
+   the provider icon; the project row's is the project's mark; the identity row's is the folder. */
+.session-title > :is(wa-icon, .session-provider-icon):first-child {
+    display: inline-flex;
+    justify-content: center;
+    width: var(--header-icon-col);
+}
+.session-project :deep(.project-badge > :first-child) {
+    display: inline-flex;
+    justify-content: center;
+    width: var(--header-icon-col);
+}
+.session-git-info .git-directory > wa-icon:first-child {
+    width: var(--header-icon-col);
+}
+
 /* Provider icon, between the state markers and the title. */
 .session-provider-icon {
     align-self: center;
@@ -1257,7 +1346,7 @@ wa-divider {
     flex-wrap: wrap;
     align-items: center;
     gap: var(--wa-space-xs) var(--wa-space-s);
-    padding-inline: var(--wa-space-m);
+    padding-inline: var(--wa-space-xs);
     font-size: var(--wa-font-size-s);
 }
 
@@ -1432,6 +1521,9 @@ wa-divider {
    every button is one icon wide, except the toggle, which is also wider by its chevron. Its content is
    centred, so the tools icon lands at the middle of a button-wide share, like the other two. */
 .session-header {
+    /* The leading icon of the title, project, identity and actions rows is centred in a box of this width,
+       starting at the rows' inline padding: one vertical axis for all four. */
+    --header-icon-col: 1.5rem;
     --compact-pill-button-width: 2.75rem;
     --compact-pill-chevron-width: 1rem;
 }

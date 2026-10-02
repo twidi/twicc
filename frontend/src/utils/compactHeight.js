@@ -12,6 +12,10 @@ export const COMPACT_HEIGHT_CLASS = 'compact-height'
 // styles read the class on <html>, which Vue cannot watch.
 export const compactHeight = ref(false)
 
+// The root font size in px, as a ref: a threshold in rem (a width below which a header drops its labels)
+// is compared to a measured px width, so it needs the real root font size, kept current here.
+export const rootFontSizePx = ref(16)
+
 export function isCompactHeight(viewportHeightPx, rootFontSizePx) {
     return viewportHeightPx <= COMPACT_HEIGHT_REM * rootFontSizePx
 }
@@ -20,6 +24,7 @@ export function isCompactHeight(viewportHeightPx, rootFontSizePx) {
 export function updateCompactHeight() {
     const root = document.documentElement
     const fontSize = parseFloat(getComputedStyle(root).fontSize)
+    rootFontSizePx.value = fontSize
     compactHeight.value = isCompactHeight(window.innerHeight, fontSize)
     root.classList.toggle(COMPACT_HEIGHT_CLASS, compactHeight.value)
 }

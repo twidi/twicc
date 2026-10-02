@@ -21,7 +21,8 @@ for (const [name, file, rows, header, importPath, gap] of HEADERS) {
 
     test(`${name}: the rows get the glass class only at compact height, from a ref (the styles read a class Vue cannot watch)`, () => {
         assert.ok(sfc.includes(`<div class="${rows}" :class="{ 'glass-surface': compactHeight }">`))
-        assert.ok(sfc.includes(`import { compactHeight } from '${importPath}'`))
+        // compactHeight comes from the shared ref; the same import may carry other names (the root font size).
+        assert.ok(new RegExp(`import \\{ compactHeight[^}]*\\} from '${importPath}'`).test(sfc))
     })
 
     test(`${name}: the panel hangs inset under the title row with a full radius, and does not use opacity`, () => {
