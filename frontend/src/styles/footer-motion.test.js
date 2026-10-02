@@ -331,3 +331,11 @@ test('9. no transform in the composable and the helper keyframes (§5)', () => {
         assert.ok(!/transform|translate|scale|rotate/i.test(code), `${file}: no transform`)
     }
 })
+
+test('the chat stage clips its scroller: a squeezed stage never spills under the translucent footer', () => {
+    const sfc = read('../components/session/detail/SessionItemsList.vue')
+    const style = sfc.slice(sfc.lastIndexOf('<style'))
+    const block = style.match(/\.chat-stage \{([^}]*)\}/)
+    assert.ok(block, '.chat-stage rule')
+    assert.match(block[1], /overflow:\s*clip;/)
+})

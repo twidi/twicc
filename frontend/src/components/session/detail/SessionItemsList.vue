@@ -2565,6 +2565,10 @@ defineExpose({
     display: flex;
     flex-direction: column;
     position: relative;
+    /* Squeezed to nothing (a phone with its keyboard open, the footer taller than the room
+       left): the scroller keeps its minimum height and would spill under the footer, whose
+       translucent fields then show the chat through. Clip it to the stage. */
+    overflow: clip;
 }
 
 .chat-skeleton-area {
