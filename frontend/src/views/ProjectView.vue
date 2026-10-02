@@ -2583,7 +2583,7 @@ function updateSidebarClosedClass(closed) {
                     </KeepAlive>
                 </router-view>
             </div>
-            <div v-show="!isArtifactsMode && !sessionId" class="project-detail-content panel-card">
+            <div v-show="!isArtifactsMode && !sessionId" class="project-detail-content">
                 <KeepAlive>
                     <ProjectDetailPanel :project-id="effectiveProjectId" :active="!sessionId" :key="effectiveProjectId" />
                 </KeepAlive>
@@ -3045,9 +3045,14 @@ wa-dropdown-item:hover .row-menu-trigger,
     height: 100%;
 }
 /* Cards: clip (both axes) follows the rounded corners and is not a scroll container. */
-.project-detail-content,
 .artifacts-browser-content {
     overflow: clip;
+}
+/* The project page is a header on the canvas and a card below it (ProjectDetailPanel), like the session
+   view: clip with a gap-sized margin lets the card's shadow paint into .main-content's padding. */
+.project-detail-content {
+    overflow: clip;
+    overflow-clip-margin: var(--panel-gap);
 }
 
 .sessions-loading {

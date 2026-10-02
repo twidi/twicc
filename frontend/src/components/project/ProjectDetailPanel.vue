@@ -463,7 +463,7 @@ onBeforeUnmount(() => {
 
         <TabBar
             :active="activeTab"
-            class="detail-tabs"
+            class="detail-tabs panel-card"
             @wa-tab-show="onTabShow"
         >
             <wa-tab v-for="tab in TABS" :key="tab.id" slot="nav" :panel="tab.id">
@@ -531,12 +531,23 @@ onBeforeUnmount(() => {
     height: 100%;
     padding-top: var(--wa-space-s);
     width: 100%;
-    overflow: hidden;
+    /* clip with a gap-sized margin: the card's shadow paints into .main-content's padding. */
+    overflow: clip;
+    overflow-clip-margin: var(--panel-gap);
 }
 
 wa-divider {
     --spacing: 0;
     --width: var(--divider-size);
+}
+
+/* The header sits on the canvas, above the card (like the session view's): its separator would draw a
+   hairline just above the card. Invisible but still taking its space. */
+.project-detail-panel > wa-divider {
+    visibility: hidden;
+}
+:where(html.compact-height) .project-detail-panel > .detail-header.compact-collapsed {
+    border-bottom-color: transparent;
 }
 
 .detail-tabs {

@@ -30,3 +30,14 @@ test('mobile sidebar drawer: no slide under reduced motion, it fades instead', (
     assert.ok(!/translate|transform/.test(css), 'the reduced-motion rules move nothing')
     assert.ok(!/prefers-reduced-motion/.test(view), 'no prefers-reduced-motion media query: the class carries it')
 })
+
+// The project, workspace and all-projects page has the session view's shape: a header on the canvas,
+// and a card (the tab bar) below it. The card is not the whole panel.
+test('project page: header on the canvas, the card is the tab bar', () => {
+    const panel = readFileSync(join(here, '../components/project/ProjectDetailPanel.vue'), 'utf8')
+    assert.match(panel, /<TabBar[^>]*class="detail-tabs panel-card"/)
+    assert.match(panel, /\.project-detail-panel > wa-divider \{\s*visibility: hidden;/)
+    assert.match(panel, /\.project-detail-panel > \.detail-header\.compact-collapsed \{\s*border-bottom-color: transparent;/)
+    assert.match(view, /<div v-show="!isArtifactsMode && !sessionId" class="project-detail-content">/)
+    assert.match(view, /\.project-detail-content \{\s*overflow: clip;\s*overflow-clip-margin: var\(--panel-gap\);/)
+})
