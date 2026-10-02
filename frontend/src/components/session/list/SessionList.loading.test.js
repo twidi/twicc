@@ -296,3 +296,53 @@ test('actual delayed ResizeObserver measurement enables pagination after an init
     assert.equal(v.calls.length, 1, 'the first delayed real measurement permits one current-scope page')
     await v.finish(); await flush(); assert.equal(v.calls.length, 1)
 })
+
+test('no-progress affordance cannot create a ResizeObserver shrink/grow pagination loop', async t => {
+    const observers = [], previous = globalThis.ResizeObserver
+    globalThis.ResizeObserver = class {
+        constructor(callback) { this.callback = callback; observers.push(this) }
+        observe(target) { this.target = target }
+        disconnect() {}
+    }
+    t.after(() => {
+        if (previous === undefined) delete globalThis.ResizeObserver
+        else globalThis.ResizeObserver = previous
+    })
+    const v = mount(t, { height: 140, initialSessions: matchingSessions(6) }); await flush()
+    const viewport = observers.find(observer => observer.target?.props.class?.includes('virtual-scroller'))
+    assert.ok(viewport)
+    assert.equal(v.calls.length, 1)
+    await v.finish()
+    const originalRange = { ...v.range() }, sizes = []
+    assert.deepEqual(originalRange, { start: 0, end: 3 })
+    // The controlled host applies the actual SFC affordance's positioning to its flex footprint.
+    // An in-flow 70px callout consumes half the 140px viewport; an overlay consumes no flex space.
+    async function measureAffordanceFootprint() {
+        const callout = descendants(v.root, node => node.props.class?.split(' ').includes('load-more-error'))[0]
+        const inFlow = callout && callout.props.style?.position !== 'absolute'
+        const height = 140 - (inFlow ? 70 : 0)
+        sizes.push(height)
+        viewport.target.clientHeight = height
+        viewport.callback([{ contentRect: { height } }])
+        await flush()
+    }
+    for (let cycle = 0; cycle < 2; cycle++) {
+        const callsBefore = v.calls.length
+        await measureAffordanceFootprint()
+        if (v.calls.length > callsBefore) {
+            await measureAffordanceFootprint()
+            await v.finish()
+        }
+    }
+    assert.equal(v.calls.length, 1, `affordance feedback cannot supply a new opportunity: heights ${sizes}`)
+    assert.deepEqual(v.range(), originalRange)
+    assert.deepEqual(sizes, [140, 140])
+    assert.ok(v.retry(), 'the overlay retains explicit Retry')
+    await flush(); assert.equal(v.calls.length, 2)
+    await v.finish()
+    // A real external viewport shrink still creates the permitted changed-range opportunity.
+    viewport.target.clientHeight = 70
+    viewport.callback([{ contentRect: { height: 70 } }])
+    await flush(); assert.equal(v.calls.length, 3)
+    await v.finish({ more: false })
+})

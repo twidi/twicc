@@ -838,8 +838,12 @@ defineExpose({
             </template>
         </VirtualScroller>
 
-        <!-- Fetch failure and successful no-progress keep separate retry states. -->
-        <div v-if="loadMoreError || paginationNoProgress" class="load-more-error">
+        <!-- No-progress Retry overlays the list so its appearance cannot create a pagination range opportunity. -->
+        <div
+            v-if="loadMoreError || paginationNoProgress"
+            class="load-more-error"
+            :style="paginationNoProgress && !loadMoreError ? { position: 'absolute', insetInline: 0, bottom: 0, zIndex: 1 } : null"
+        >
             <wa-callout :variant="loadMoreError ? 'danger' : 'neutral'">
                 <span>{{ loadMoreError ? 'Failed to load more sessions' : 'No additional sessions received' }}</span>
                 <wa-button
