@@ -980,6 +980,10 @@ function handleLinkClick(event) {
 .markdown-body table th,
 .markdown-body table td {
     border-color: var(--divider-color, var(--wa-color-surface-border));
+    /* github-markdown-css caps the table at 100% of its container, so the browser squeezes the
+       columns to fit. A minimum width per cell lets the table overflow instead, and its own
+       overflow: auto scrolls it horizontally rather than leaving unreadable narrow columns. */
+    min-width: 6rem;
 }
 .markdown-body table tr {
     background-color: transparent;
