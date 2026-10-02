@@ -3710,6 +3710,13 @@ html.wa-dark .usage-lane-time {
         border-right: solid var(--wa-color-neutral-border-normal) 0.25rem;
     }
 
+    /* Dark: the drawer repaints the canvas from its own box, so the end aura lands behind the
+       footer and the page-fixed grey of the empty bar rails reads as a dark band on it. A
+       translucent light lets the drawer show through instead of inventing another grey. */
+    .wa-dark .usage-lane {
+        background: color-mix(in oklab, white 14%, transparent);
+    }
+
     /* Toggle button sticks out from the sidebar when closed */
     .sidebar-toggle {
         /* Position at right edge of sidebar, offset to stick out */
