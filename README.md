@@ -6,9 +6,9 @@ One self-hosted web interface for both [Claude Code](https://docs.anthropic.com/
 
 ## Demo
 
-> An 80-second tour: Claude Code and Codex side by side, live tool calls, approvals and questions, your own layout, your phone, orchestration, sharing, and more:
+> A 90-second tour: Claude Code and Codex side by side, live tool calls, approvals and questions, your own layout, your phone, orchestration, sharing, light or dark, and more:
 
-https://github.com/user-attachments/assets/6f845593-5555-4cea-9cfb-0ce4b4d113ca
+https://github.com/user-attachments/assets/8c51d0a6-cd92-4b6b-9154-a4f1d810d830
 
 ▶ No player above? [Watch the demo video on GitHub](https://github.com/twidi/twicc#demo).
 
