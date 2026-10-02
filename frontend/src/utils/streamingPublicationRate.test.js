@@ -91,14 +91,32 @@ test('skipped opportunities do not consume smoothing elapsed or credit', () => {
 test('continuous arrivals preserve episode age and long frame gaps publish once', () => harness(h => {
     let full = 'x'.repeat(10000)
     h.feed(full, 0)
-    for (let at = 10; at <= 300; at += 10) {
+    h.frame(1)
+    assert.equal(h.publications[0].text.length, 1)
+    // Remove the initial burst from the five-arrival estimate before eligibility.
+    for (let at = 2; at <= 6; at++) {
         full += 'y'
         h.feed('y', at)
-        h.frame(at)
     }
-    const caughtUp = h.publications.find(p => p.text.length >= 10025)
-    assert.ok(caughtUp)
-    assert.ok(caughtUp.time <= 250 + INTERVAL + 10)
+    let caughtUp = null
+    for (let at = 10; at <= 280; at += 10) {
+        full += 'y'
+        h.feed('y', at)
+        const previous = h.publications.at(-1)
+        const eligible = at - previous.time >= INTERVAL
+        const firstDeadlineFrame = eligible && at >= 250 && caughtUp === null
+        h.frame(at)
+        const published = h.publications.at(-1)
+        if (firstDeadlineFrame) {
+            assert.equal(published.time, at)
+            assert.equal(published.text, full)
+            caughtUp = published
+        } else if (caughtUp === null) {
+            assert.ok(published.text.length < full.length, `episode must remain unfinished at ${at} ms`)
+        }
+    }
+    assert.equal(caughtUp?.time, 280)
+    gaps(h.publications)
     h.feed('z'.repeat(10000), 310)
     const count = h.publications.length
     h.frame(2310)
