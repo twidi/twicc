@@ -20,7 +20,11 @@ class BlockBuffer {
      * @param {(displayedText: string) => void} onDrain
      *   Called each frame with the text to display (growing substring).
      */
-    constructor(onDrain) {
+    constructor(onDrain, { messageId = null, publicationIdentity = null, active = true } = {}) {
+        this.messageId = messageId
+        this.publicationIdentity = publicationIdentity
+        this.active = active
+        this.requestToken = null
         this.onDrain = onDrain
         this.fullText = ''
         this.displayedLength = 0
@@ -35,6 +39,7 @@ class BlockBuffer {
     pushDelta(text) {
         const now = performance.now()
         this.fullText += text
+        if (!this.active) return
 
         if (this.firstDelta) {
             this.firstDelta = false
@@ -74,7 +79,12 @@ class BlockBuffer {
     }
 
     _scheduleFrame() {
-        this.rafId = requestAnimationFrame((time) => this._onFrame(time))
+        const token = {}
+        this.requestToken = token
+        this.rafId = requestAnimationFrame((time) => {
+            if (this.requestToken !== token || !this.active) return
+            this._onFrame(time)
+        })
     }
 
     _onFrame(time) {
@@ -104,22 +114,43 @@ class BlockBuffer {
         }
     }
 
+    cancel() {
+        this.requestToken = null
+        if (this.rafId !== null) cancelAnimationFrame(this.rafId)
+        this.rafId = null
+    }
+
+    resetRate() {
+        this.deltaHistory = []
+        this.fractionalChars = 0
+        this.lastFrameTime = null
+        this.rateCharsPerMs = 0
+        this.firstDelta = true
+    }
+
+    snapshot(publish = true) {
+        this.cancel()
+        const changed = this.displayedLength !== this.fullText.length
+        this.displayedLength = this.fullText.length
+        this.resetRate()
+        if (changed && publish) this.onDrain(this.fullText)
+    }
+
+    setActive(active) {
+        if (this.active === active) return
+        this.active = active
+        if (active) this.snapshot()
+        else this.cancel()
+    }
+
     flush() {
-        if (this.rafId !== null) {
-            cancelAnimationFrame(this.rafId)
-            this.rafId = null
-        }
-        if (this.displayedLength < this.fullText.length) {
-            this.displayedLength = this.fullText.length
-            this.onDrain(this.fullText)
-        }
+        this.snapshot(this.active)
+        return this.fullText
     }
 
     destroy() {
-        if (this.rafId !== null) {
-            cancelAnimationFrame(this.rafId)
-            this.rafId = null
-        }
+        this.active = false
+        this.cancel()
     }
 }
 
@@ -137,11 +168,11 @@ function key(sessionId, blockIndex) {
  * @param {number} blockIndex
  * @param {(displayedText: string) => void} onDrain
  */
-export function initBuffer(sessionId, blockIndex, onDrain) {
+export function initBuffer(sessionId, blockIndex, onDrain, options = {}) {
     const k = key(sessionId, blockIndex)
     const existing = buffers.get(k)
     if (existing) existing.destroy()
-    buffers.set(k, new BlockBuffer(onDrain))
+    buffers.set(k, new BlockBuffer(onDrain, options))
 }
 
 /** Feed a delta into the buffer. */
@@ -155,10 +186,12 @@ export function flushBuffer(sessionId, blockIndex) {
     const k = key(sessionId, blockIndex)
     const buf = buffers.get(k)
     if (buf) {
-        buf.flush()
+        const text = buf.flush()
         buf.destroy()
         buffers.delete(k)
+        return text
     }
+    return null
 }
 
 /** Destroy all buffers for a session. */
@@ -178,4 +211,27 @@ export function destroyAllBuffers() {
         buf.destroy()
     }
     buffers.clear()
+}
+
+function matchingBuffer(sessionId, messageId, blockIndex, publicationIdentity = null) {
+    const buf = buffers.get(key(sessionId, blockIndex))
+    return buf && buf.messageId === messageId && (!publicationIdentity || buf.publicationIdentity === publicationIdentity) ? buf : null
+}
+
+export function setBufferActive(sessionId, messageId, blockIndex, active) {
+    const buf = matchingBuffer(sessionId, messageId, blockIndex)
+    if (!buf) return false
+    buf.setActive(active)
+    return true
+}
+
+export function snapshotBuffer(sessionId, messageId, blockIndex) {
+    const buf = matchingBuffer(sessionId, messageId, blockIndex)
+    if (!buf) return false
+    buf.snapshot()
+    return true
+}
+
+export function isBufferActive(sessionId, messageId, blockIndex, publicationIdentity = null) {
+    return !!matchingBuffer(sessionId, messageId, blockIndex, publicationIdentity)?.active
 }
