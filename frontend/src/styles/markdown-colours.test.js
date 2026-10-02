@@ -15,7 +15,8 @@ test('1. links take the theme link colour (the accent: darker in light, lighter 
 })
 
 test('2. tables: transparent rows, a faint accent tint on even rows (a little stronger in dark), a stronger header, divider-coloured rules', () => {
-    assert.ok(css.includes('.markdown-body table th, .markdown-body table td { border-color: var(--divider-color, var(--wa-color-surface-border)); }'))
+    // (the rule may carry other declarations, e.g. a minimum cell width: only the colour is pinned)
+    assert.ok(css.includes('.markdown-body table th, .markdown-body table td { border-color: var(--divider-color, var(--wa-color-surface-border));'))
     assert.ok(css.includes('.markdown-body table tr { background-color: transparent; border-top-color: var(--divider-color, var(--wa-color-surface-border)); }'))
     assert.ok(css.includes('.markdown-body table tr:nth-child(2n) { background-color: color-mix(in oklab, var(--wa-color-brand-60) 6%, transparent); }'))
     assert.ok(css.includes('.markdown-body table th { background-color: color-mix(in oklab, var(--wa-color-brand-60) 12%, transparent); }'))
