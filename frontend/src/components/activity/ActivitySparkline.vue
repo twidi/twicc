@@ -19,6 +19,12 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    /** Fill the parent box instead of keeping the intrinsic size: the drawing is stretched on both
+     *  axes (the line keeps a constant width), for use as a backdrop. */
+    stretch: {
+        type: Boolean,
+        default: false,
+    },
 })
 
 const SVG_HEIGHT = 30
@@ -51,7 +57,17 @@ const polylinePoints = computed(() => {
 </script>
 
 <template>
-    <svg v-if="data.length" :width="svgWidth" aria-hidden="true" :height="SVG_HEIGHT" class="activity-sparkline" :class="{ 'activity-sparkline--reveal': reveal }">
+    <svg
+        v-if="data.length"
+        :width="svgWidth"
+        aria-hidden="true"
+        :height="SVG_HEIGHT"
+        :viewBox="stretch ? `0 0 ${svgWidth} ${SVG_HEIGHT}` : undefined"
+        :preserveAspectRatio="stretch ? 'none' : undefined"
+        class="activity-sparkline"
+        :class="{ 'activity-sparkline--reveal': reveal }"
+        :data-stretch="stretch || undefined"
+    >
         <defs>
             <linearGradient :id="gradientId" x1="0" x2="0" y1="1" y2="0">
                 <stop offset="0%" stop-color="var(--sparkline-project-gradient-color-1)"></stop>
@@ -66,6 +82,7 @@ const polylinePoints = computed(() => {
                     fill="transparent"
                     stroke="var(--sparkline-project-stroke-color)"
                     stroke-width="2"
+                    :vector-effect="stretch ? 'non-scaling-stroke' : undefined"
                 ></polyline>
             </mask>
         </defs>
@@ -85,6 +102,11 @@ const polylinePoints = computed(() => {
 <style scoped>
 .activity-sparkline {
     display: block;
+}
+
+.activity-sparkline[data-stretch] {
+    width: 100%;
+    height: 100%;
 }
 
 /* Reveal (step 7b): with its home card's entrance (.home-card-entering on the card, outside

@@ -1,8 +1,8 @@
 <script setup>
 // ProjectDetailHeader.vue - Header section of the project detail panel.
-// Shows project/workspace name, sparkline, process indicator, edit button,
-// directory path, meta info (sessions count, cost, last activity),
-// and manages the edit/manage dialogs.
+// Shows project/workspace name, edit button, then three zones: identity (directory path and
+// live indicators chip), a stats container (sessions count, cost, last activity over the
+// activity sparkline drawn as a backdrop) and the navigation list; manages the edit/manage dialogs.
 //
 // On small viewports (compact height, utils/compactHeight.js), collapses to a single compact row
 // with a chevron to expand the full details as an overlay — same pattern as
@@ -283,52 +283,65 @@ function handleUnarchive() {
 
         <!-- Collapsible rows: sparkline, directory, meta (overlay on small viewports) -->
         <div class="detail-collapsible-rows" :class="{ 'glass-surface': compactHeight }">
-            <!-- Sparkline -->
-            <div class="detail-sparkline-row">
-                <span :id="`detail-sparkline-${projectId}`" class="detail-sparkline">
+            <!-- Identity: directory (single project only; cut from the left so the last folder stays
+                 visible) and the live indicators chip -->
+            <div v-if="!isAllProjectsMode" class="detail-identity">
+                <div v-if="isSingleProjectMode && directory" class="detail-directory">
+                    <wa-icon name="folder" class="detail-icon"></wa-icon>
+                    <ProjectDirectoryPath :project-id="projectId" emphasize-last class="detail-directory-path" />
+                    <!-- flex-basis: 100% puts it on its own line without disturbing the
+                         icon/path alignment of the single-line case. -->
+                    <ProjectMissingDirectoryNote :project-id="projectId" class="detail-directory-note" />
+                </div>
+
+                <!-- Full-size indicators (hidden in compact collapsed mode, which shows its own copies in
+                     the title row). The chip hides itself when both indicators render nothing. -->
+                <span class="detail-indicators">
+                    <CodeCommentsIndicator :project-ids="indicatorProjectIds" class="full-indicator" />
+                    <AggregatedProcessIndicator :project-ids="indicatorProjectIds" size="small" class="full-indicator" />
+                </span>
+            </div>
+
+            <!-- Stats container: labelled cells over the activity sparkline, drawn as a soft backdrop. -->
+            <div class="detail-stats">
+                <span :id="`detail-sparkline-${projectId}`" class="detail-sparkline-backdrop">
                     <ActivitySparkline
                         reveal
+                        stretch
                         :id-suffix="`${projectId}-detail`"
                         :data="weeklyActivity"
                     />
                 </span>
                 <AppTooltip :for="`detail-sparkline-${projectId}`">{{ isWorkspaceMode ? 'Workspace' : isAllProjectsMode ? 'Overall' : 'Project' }} activity (message turns per week)</AppTooltip>
 
-                <!-- Full-size indicators (hidden in compact mode, shown on large viewports) -->
-                <CodeCommentsIndicator v-if="!isAllProjectsMode" :project-ids="indicatorProjectIds" class="full-indicator" />
-                <AggregatedProcessIndicator v-if="!isAllProjectsMode" :project-ids="indicatorProjectIds" size="small" class="full-indicator" />
-            </div>
+                <div class="detail-cells">
+                    <div class="detail-cell">
+                        <span class="detail-cell-label">Sessions</span>
+                        <div id="detail-sessions-count" class="detail-cell-value">
+                            <wa-icon name="folder-open" class="detail-icon" variant="regular"></wa-icon>
+                            <span>{{ sessionsCount }}</span>
+                        </div>
+                        <AppTooltip for="detail-sessions-count">Number of sessions</AppTooltip>
+                    </div>
 
-            <!-- Directory (single project only) -->
-            <div v-if="isSingleProjectMode && directory" class="detail-directory">
-                <wa-icon name="folder" class="detail-icon"></wa-icon>
-                <ProjectDirectoryPath :project-id="projectId" />
-                <!-- flex-basis: 100% puts it on its own line without disturbing the
-                     icon/path alignment of the single-line case. -->
-                <ProjectMissingDirectoryNote :project-id="projectId" class="detail-directory-note" />
-            </div>
+                    <div v-if="showCosts" class="detail-cell">
+                        <span class="detail-cell-label">Cost</span>
+                        <CostDisplay id="detail-cost" :cost="totalCost" class="detail-cell-value" />
+                        <AppTooltip for="detail-cost">Total cost</AppTooltip>
+                    </div>
 
-            <!-- Meta info -->
-            <div class="detail-meta">
-                <div id="detail-sessions-count" class="detail-meta-item">
-                    <wa-icon name="folder-open" class="detail-icon" variant="regular"></wa-icon>
-                    <span>{{ sessionsCount }} session{{ sessionsCount !== 1 ? 's' : '' }}</span>
+                    <div v-if="mtime" class="detail-cell">
+                        <span class="detail-cell-label">Last activity</span>
+                        <div id="detail-mtime" class="detail-cell-value">
+                            <wa-icon name="clock" class="detail-icon" variant="regular"></wa-icon>
+                            <span>
+                                <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(mtime)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
+                                <template v-else>{{ formatDate(mtime) }}</template>
+                            </span>
+                        </div>
+                        <AppTooltip for="detail-mtime">{{ useRelativeTime ? `Last activity: ${formatDate(mtime)}` : 'Last activity' }}</AppTooltip>
+                    </div>
                 </div>
-                <AppTooltip for="detail-sessions-count">Number of sessions</AppTooltip>
-
-                <template v-if="showCosts">
-                    <CostDisplay id="detail-cost" :cost="totalCost" class="detail-meta-item" />
-                    <AppTooltip for="detail-cost">Total cost</AppTooltip>
-                </template>
-
-                <div v-if="mtime" id="detail-mtime" class="detail-meta-item">
-                    <wa-icon name="clock" class="detail-icon" variant="regular"></wa-icon>
-                    <span>
-                        <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(mtime)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
-                        <template v-else>{{ formatDate(mtime) }}</template>
-                    </span>
-                </div>
-                <AppTooltip v-if="mtime" for="detail-mtime">{{ useRelativeTime ? `Last activity: ${formatDate(mtime)}` : 'Last activity' }}</AppTooltip>
             </div>
 
             <!-- Navigation list of workspaces/projects (aggregate modes only) -->
@@ -418,25 +431,37 @@ function handleUnarchive() {
     align-items: center;
 }
 
-.detail-sparkline-row {
-    display: flex;
-    align-items: center;
-    gap: var(--wa-space-m);
-}
-
 /* Collapsible rows: transparent wrapper on large viewports */
 .detail-collapsible-rows {
     display: contents;
 }
 
+/* Zone 1 — identity: directory + indicators chip. Hidden when it would hold neither. */
+.detail-identity {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--wa-space-3xs) var(--wa-space-m);
+}
+
+.detail-identity:not(:has(> .detail-directory)):not(:has(> .detail-indicators > *)) {
+    display: none;
+}
+
 .detail-directory {
+    flex: 1 1 14rem;
+    min-width: 0;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--wa-space-3xs) var(--wa-space-xs);
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
-    word-break: break-all;
+}
+
+.detail-directory-path {
+    flex: 1 1 0;
+    min-width: 0;
 }
 
 .detail-directory-note {
@@ -445,33 +470,103 @@ function handleUnarchive() {
 
 .detail-icon {
     flex-shrink: 0;
-    color: var(--wa-color-text-quiet);
+    color: var(--wa-color-brand-60);
     font-size: var(--wa-font-size-s);
 }
 
-.detail-meta {
+/* The directory icon is chrome, not data: keep it quiet like the path. */
+.detail-directory > .detail-icon {
+    color: var(--wa-color-text-quiet);
+}
+
+.detail-indicators {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wa-space-s);
+    margin-inline-start: auto;
+    padding: 0.125rem var(--wa-space-s);
+    border-radius: 999px;
+    border: var(--divider-size) solid var(--wa-color-surface-border);
+    background: color-mix(in oklab, var(--wa-color-brand-60) 8%, transparent);
+}
+
+.detail-indicators:not(:has(> *)) {
+    display: none;
+}
+
+/* Zone 2 — stats container: labelled cells over the sparkline backdrop. */
+.detail-stats {
+    position: relative;
+    overflow: hidden;
+    border: var(--divider-size) solid var(--wa-color-surface-border);
+    border-radius: var(--wa-border-radius-l);
+    background: color-mix(in oklab, var(--wa-color-brand-60) 8%, transparent);
+    font-size: var(--wa-font-size-s);
+}
+
+/* The sparkline fills the container, drawn softly so the cells stay readable. The mask is a gentle
+   fade (never to zero: a full fade washes out the peaks); the cell values add a halo of their own. */
+.detail-sparkline-backdrop {
+    position: absolute;
+    inset: 0;
+    opacity: 0.5;
+    -webkit-mask-image: linear-gradient(to top, #000, rgb(0 0 0 / 0.5));
+    mask-image: linear-gradient(to top, #000, rgb(0 0 0 / 0.5));
+}
+
+/* The dark-mode graph palette starts near the container colour; shift it up for the backdrop. */
+:where(.wa-dark) .detail-sparkline-backdrop {
+    opacity: 0.75;
+    --sparkline-project-gradient-color-1: #196c2e;
+    --sparkline-project-gradient-color-2: #2ea043;
+    --sparkline-project-gradient-color-3: #56d364;
+    --sparkline-project-gradient-color-4: #7ee787;
+    --sparkline-project-stroke-color: #b6f0b9;
+}
+
+.detail-cells {
+    position: relative;
     display: flex;
     flex-wrap: wrap;
-    gap: var(--wa-space-m);
+    /* Clicks and hovers go through to the backdrop (its tooltip); only the values catch them. */
+    pointer-events: none;
 }
 
-.detail-meta:not(:has(+ .detail-nav-list)) {
-    padding-bottom: var(--wa-space-s);
-}
-.detail-nav-list {
-    padding-bottom: var(--wa-space-s);
+.detail-cell {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    padding: var(--wa-space-s) var(--wa-space-m);
 }
 
-.detail-meta-item {
+.detail-cell-label {
+    font-size: var(--wa-font-size-3xs);
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--wa-color-text-quiet);
+}
+
+.detail-cell-value {
     display: flex;
     align-items: center;
     gap: var(--wa-space-xs);
-    font-size: var(--wa-font-size-s);
-    color: var(--wa-color-text-quiet);
+    align-self: flex-start;
+    pointer-events: auto;
+    font-weight: 600;
+    white-space: nowrap;
+    /* Halo in the container colour, so a curve passing behind a value does not cut through it. */
+    text-shadow:
+        0 0 0.35em color-mix(in oklab, var(--wa-color-surface-raised) 85%, transparent),
+        0 0 0.7em color-mix(in oklab, var(--wa-color-surface-raised) 60%, transparent);
 }
 
-.detail-sparkline {
-    flex-shrink: 0;
+.detail-stats:not(:has(+ .detail-nav-list)) {
+    margin-bottom: var(--wa-space-s);
+}
+.detail-nav-list {
+    padding-bottom: var(--wa-space-s);
 }
 
 /* compact height: see utils/compactHeight.js */
@@ -566,18 +661,19 @@ function handleUnarchive() {
     padding-block: var(--wa-space-xs);
 }
 
-:where(html.compact-height) .detail-meta,
+:where(html.compact-height) .detail-stats,
 :where(html.compact-height) .detail-nav-list {
     padding-bottom: 0 !important;
-}
-:where(html.compact-height) .detail-sparkline-row {
-    padding-top: var(--wa-space-s);
+    margin-bottom: 0 !important;
 }
 
-:where(html.compact-height) .detail-meta,
-:where(html.compact-height) .detail-sparkline-row,
-:where(html.compact-height) .detail-directory,
+/* The bubble has no side padding of its own: each zone brings its own inset. */
+:where(html.compact-height) .detail-identity,
 :where(html.compact-height) .detail-nav-list {
     padding-inline: var(--wa-space-m);
+}
+
+:where(html.compact-height) .detail-stats {
+    margin-inline: var(--wa-space-m);
 }
 </style>
