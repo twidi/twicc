@@ -5,7 +5,8 @@
 Tasks 1–4 have implementation commits. Task 5 has a prepared browser fixture.
 **Task 5 is incomplete.** Controlled browser and baseline scroll acceptance remain unexecuted.
 No worktree server startup authorization is received. The implementation does not use the main instance.
-The parent agent owns independent implementation review. This record contains no review acceptance claim.
+The independent implementation review completes in two rounds. Both identified defects are corrected.
+This is code-review closure, not browser acceptance or feature-completion approval.
 
 ## Commits
 
@@ -172,3 +173,15 @@ Broader affected suite: **42/42 pass**, using the same read-only dependency load
 
 The complete frontend suite reports **1504/1506 pass**. The two failures remain the missing worktree dependency files read directly by `waMotionStyles.test.js`: `@lit/reactive-element/reactive-element.js` and `notivue/package.json`.
 No browser page or baseline comparison runs. Every browser acceptance case in the table above remains **unexecuted**. No worktree server startup or package installation occurs.
+
+## Independent review round 2: closure
+
+The scoped review checks `160777fc..f42326d1` against findings R1 and R2.
+It marks both findings ADDRESSED and identifies no new concrete defect in the correction diff.
+The reviewer independently runs all six focused test files: **42/42 pass**.
+The parent also runs the same command on the corrected head: **42/42 pass**.
+
+Product review head: `f42326d1`. All product and fixture changes remain in the isolated worktree.
+No merge, push, dependency installation, or server operation occurs.
+The complete browser matrix and scroll baseline comparison remain **unexecuted**. Task 5 stays incomplete.
+The ignored review workspace remains available for the pending browser acceptance and native dependency verification.
