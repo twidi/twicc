@@ -93,6 +93,11 @@ export function useVirtualScroll(options) {
      * Using reactive() to make the Map reactive for Vue's dependency tracking.
      */
     const heightCache = reactive(new Map())
+    // The sync watcher records only the newest replacement. The post watcher owns
+    // active cleanup; resume consumes it first when that watcher has not run yet.
+    let latestReplacement = items.value
+    let lastCleanedItems = items.value
+    let pendingZeroHeightInvalidation = false
 
     /**
      * Current scroll position of the container.
@@ -660,6 +665,10 @@ export function useVirtualScroll(options) {
      * Removing these entries allows them to be re-measured with correct values.
      */
     function invalidateZeroHeights() {
+        if (suspended.value) {
+            pendingZeroHeightInvalidation = true
+            return
+        }
         for (const [key, height] of heightCache.entries()) {
             if (height === 0) {
                 heightCache.delete(key)
@@ -701,8 +710,7 @@ export function useVirtualScroll(options) {
                 // be called. This check in handleScroll acts as a fallback
                 // detection: if the container has no height, it's hidden.
                 if (target.clientHeight === 0 && viewportHeight.value > 0) {
-                    autoSuspended = true
-                    suspend()
+                    enterSuspension('automatic')
                     return
                 }
                 scrollTop.value = target.scrollTop
@@ -1122,8 +1130,7 @@ export function useVirtualScroll(options) {
         // This avoids spurious suspend/resume cycles during initial mount of
         // hidden tab panels (Files, Git, Terminal) that start with height=0.
         if (height === 0 && viewportHeight.value > 0) {
-            autoSuspended = true
-            suspend()
+            enterSuspension('automatic')
             return
         }
 
@@ -1151,15 +1158,18 @@ export function useVirtualScroll(options) {
      * KeepAlive suspend clears the autoSuspended flag so that a manual resume()
      * is required instead of an automatic resume from updateViewportHeight().
      */
-    function suspend() {
+    function enterSuspension(origin) {
         // A restore from the previous cycle is moot: this suspension re-captures the anchor.
         cancelResumeRetry()
 
-        if (suspended.value) {
-            // Already suspended (e.g., auto-suspended from tab switch).
-            // Clear autoSuspended so that a KeepAlive resume() is required
-            // instead of an automatic resume from updateViewportHeight().
+        if (origin === 'manual') {
+            pendingResume = false
             autoSuspended = false
+        } else {
+            autoSuspended = true
+        }
+
+        if (suspended.value) {
             return
         }
 
@@ -1200,6 +1210,10 @@ export function useVirtualScroll(options) {
         }
 
         suspended.value = true
+    }
+
+    function suspend() {
+        enterSuspension('manual')
     }
 
     /**
@@ -1320,7 +1334,8 @@ export function useVirtualScroll(options) {
         cancelResumeRetry()
         if (!savedAnchors) return
 
-        if (writeAnchor(container, savedAnchors) === true) {
+        const restored = writeAnchor(container, savedAnchors)
+        if (restored === true || restored === null) {
             savedAnchors = null
             return
         }
@@ -1363,13 +1378,16 @@ export function useVirtualScroll(options) {
     function performResume(container) {
         pendingResume = false
         autoSuspended = false
-        suspendedSnapshot = null
+        flushDeferredMaintenance()
+        const latestPositions = livePositions.value
         suspended.value = false
 
         // Update viewportHeight from the now-visible container
         viewportHeight.value = container.clientHeight
+        updateRenderRange(latestPositions)
 
         restoreSavedAnchor(container)
+        suspendedSnapshot = null
     }
 
     /**
@@ -1661,21 +1679,35 @@ export function useVirtualScroll(options) {
      * height cache entries for items that no longer exist.
      * However, we preserve heights for items that still exist (same key).
      */
-    watch(
-        () => items.value,
-        (newItems) => {
-            // Build a set of current item keys
-            const currentKeys = new Set(newItems.map(item => itemKey(item)))
-
-            // Remove cached heights for items that no longer exist
-            for (const key of heightCache.keys()) {
-                if (!currentKeys.has(key)) {
-                    heightCache.delete(key)
-                }
+    function cleanupHeightCache(currentItems) {
+        const currentKeys = new Set(currentItems.map(item => itemKey(item)))
+        for (const [key, height] of heightCache.entries()) {
+            if (!currentKeys.has(key) || (pendingZeroHeightInvalidation && height === 0)) {
+                heightCache.delete(key)
             }
-        },
-        { flush: 'post' }
-    )
+        }
+        lastCleanedItems = currentItems
+        pendingZeroHeightInvalidation = false
+    }
+
+    function flushDeferredMaintenance() {
+        if (latestReplacement !== lastCleanedItems) {
+            cleanupHeightCache(latestReplacement)
+        } else if (pendingZeroHeightInvalidation) {
+            for (const [key, height] of heightCache.entries()) {
+                if (height === 0) heightCache.delete(key)
+            }
+            pendingZeroHeightInvalidation = false
+        }
+    }
+
+    watch(() => items.value, (currentItems) => {
+        latestReplacement = currentItems
+    }, { flush: 'sync' })
+
+    watch(() => items.value, () => {
+        if (!suspended.value) flushDeferredMaintenance()
+    }, { flush: 'post' })
 
     // ═══════════════════════════════════════════════════════════════════════════
     // Public API
