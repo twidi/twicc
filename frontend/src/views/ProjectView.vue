@@ -105,6 +105,15 @@ const selectionStore = useSessionSelectionStore()
 // (so each "Check again" button can disable independently).
 const authChecking = ref(new Set())
 
+// Providers whose "not authenticated" callout shows its details (login command + actions).
+// Collapsed by default: the callout then takes a single line.
+const authExpanded = ref(new Set())
+function toggleAuthExpanded(provider) {
+    const next = new Set(authExpanded.value)
+    if (!next.delete(provider)) next.add(provider)
+    authExpanded.value = next
+}
+
 // Providers that the registry knows about and that gate sending on auth.
 // Registry membership is fixed at app boot, so this is a plain array.
 const _authAwareProviders = getRegisteredProviders()
@@ -2357,7 +2366,7 @@ function updateSidebarClosedClass(closed) {
             <wa-divider></wa-divider>
 
             <div class="sidebar-footer">
-                <div v-if="quotaHasUsage && quotaComputed" ref="usageBlockRef" class="sidebar-footer-usage">
+                <div v-if="quotaHasUsage && quotaComputed" ref="usageBlockRef" class="sidebar-footer-usage glass-surface">
                     <div class="usage-header">
                         <div
                             id="usage-provider-group"
@@ -2511,13 +2520,15 @@ function updateSidebarClosedClass(closed) {
                     </AppTooltip>
                 </div>
 
-                <template v-for="(entry, index) in unauthenticatedProviders" :key="entry.provider">
-                    <wa-divider v-if="index === 0 && quotaHasUsage && quotaComputed"></wa-divider>
-                    <wa-divider v-else-if="index > 0"></wa-divider>
+                <template v-for="entry in unauthenticatedProviders" :key="entry.provider">
                     <div class="sidebar-footer-provider-auth">
-                        <wa-callout variant="warning" size="small">
-                            <div class="sidebar-footer-provider-auth-row">
-                                <span class="sidebar-footer-provider-auth-text">{{ entry.label }} CLI not authenticated. Run <code class="copyable" title="Click to copy" @click="copyLoginCommand(entry.loginCommand)">{{ entry.loginCommand }}</code>.</span>
+                        <wa-callout variant="warning" size="small" class="sidebar-footer-provider-auth-callout glass-shadow">
+                            <div class="sidebar-footer-provider-auth-head">
+                                <strong class="sidebar-footer-provider-auth-title">{{ entry.label }} not authenticated</strong>
+                                <button type="button" class="sidebar-footer-provider-auth-toggle" :aria-expanded="authExpanded.has(entry.provider)" @click="toggleAuthExpanded(entry.provider)">{{ authExpanded.has(entry.provider) ? 'less' : 'more' }}</button>
+                            </div>
+                            <div v-if="authExpanded.has(entry.provider)" class="sidebar-footer-provider-auth-row">
+                                <span class="sidebar-footer-provider-auth-text">Run <code class="copyable" title="Click to copy" @click="copyLoginCommand(entry.loginCommand)">{{ entry.loginCommand }}</code>.</span>
                                 <div class="sidebar-footer-provider-auth-buttons">
                                     <wa-button
                                         v-if="entry.canDisable"
@@ -3183,7 +3194,16 @@ wa-dropdown-item:hover .row-menu-trigger,
 .sidebar-footer-usage {
     display: flex;
     flex-direction: column;
-    padding: var(--wa-space-2xs) var(--wa-space-s);
+    /* A floating glass card (styles/glass.css), inset from the sidebar edges like the panels. */
+    margin: var(--wa-space-xs) var(--sidebar-footer-inset, var(--wa-space-s));
+    padding: var(--wa-space-xs) var(--wa-space-s);
+    border-radius: var(--panel-radius);
+}
+
+/* The card floats on its own: the separators that framed the old flat block go. */
+.sidebar > wa-divider:has(+ .sidebar-footer > .sidebar-footer-usage),
+.sidebar-footer-usage + wa-divider {
+    display: none;
 }
 
 .usage-header {
@@ -3242,10 +3262,44 @@ wa-dropdown-item:hover .row-menu-trigger,
 }
 
 .sidebar-footer-provider-auth {
-    padding: var(--wa-space-xs) var(--wa-space-s);
+    padding: var(--wa-space-xs) var(--sidebar-footer-inset, var(--wa-space-s));
+}
+
+/* The callouts stand on their own: no separator after the last one either. */
+.sidebar-footer-provider-auth + wa-divider {
+    display: none;
+}
+
+.sidebar-footer-provider-auth-callout {
+    box-shadow: var(--glass-shadow-live);
+}
+
+.sidebar-footer-provider-auth-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--wa-space-s);
+}
+
+/* Same colour as the outlined warning buttons below. */
+.sidebar-footer-provider-auth-title,
+.sidebar-footer-provider-auth-toggle {
+    color: var(--wa-color-warning-on-quiet);
+}
+
+.sidebar-footer-provider-auth-toggle {
+    all: unset;
+    cursor: pointer;
+    font-size: var(--wa-font-size-s);
+    text-decoration: underline;
+}
+.sidebar-footer-provider-auth-toggle:focus-visible {
+    outline: var(--wa-focus-ring);
+    outline-offset: 2px;
 }
 
 .sidebar-footer-provider-auth-row {
+    margin-top: var(--wa-space-xs);
     display: flex;
     align-items: center;
     gap: var(--wa-space-s);
@@ -3589,7 +3643,7 @@ html.wa-dark .usage-burn-chip-danger {
     gap: var(--wa-space-s);
     align-items: center;
     justify-content: space-between;
-    padding: var(--wa-space-s);
+    padding: var(--sidebar-footer-inset, var(--wa-space-s));
     position: relative;
     background: var(--main-header-footer-bg-color);
 }
@@ -3600,7 +3654,11 @@ html.wa-dark .usage-burn-chip-danger {
 @container sidebar (width <= 19rem) {
     .sidebar-footer-buttons--with-inbox {
         gap: var(--wa-space-xs);
-        padding: var(--wa-space-xs);
+    }
+    /* One inset for the whole footer: the buttons row pads with it and the quota card is
+       inset by it, so their edges line up whatever the width or the number of buttons. */
+    .sidebar-footer:has(.sidebar-footer-buttons--with-inbox) {
+        --sidebar-footer-inset: var(--wa-space-xs);
     }
     .sidebar-footer-buttons--with-inbox .sidebar-toggle {
         --sidebar-toggle-offset: var(--wa-space-xs);

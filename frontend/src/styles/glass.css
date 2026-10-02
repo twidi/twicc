@@ -136,7 +136,8 @@
     --glass-edge-gap: calc(var(--wa-border-width-s) + 1px);
 }
 
-/* The cast shadow while an overlay fades (overlay motion design §14): its alphas are
+/* .glass-shadow: the same shadow on a surface that is not glass (it only reads --glass-shadow-live).
+   The cast shadow while an overlay fades (overlay motion design §14): its alphas are
    scaled by --twicc-reveal (1 at rest), declared on each glass host so the var() resolves
    there. Written entry by entry (a ::part() is not valid inside :where()). Keep the light
    layers in sync with --depth-3 (depth.css), the dark ones with the dark --glass-shadow.
@@ -148,6 +149,7 @@
 :where(wa-popover)::part(body),
 :where(wa-tooltip)::part(body),
 :where(.glass-surface),
+:where(.glass-shadow),
 :where(.Notivue__notification) {
     --glass-shadow-live:
         0 2px 4px oklch(0.2 0.02 275 / calc(0.06 * var(--twicc-reveal, 1))),
@@ -162,6 +164,7 @@
 :where(.wa-dark) :where(wa-popover)::part(body),
 :where(.wa-dark) :where(wa-tooltip)::part(body),
 :where(.wa-dark) :where(.glass-surface),
+:where(.wa-dark) :where(.glass-shadow),
 :where(.wa-dark) :where(.Notivue__notification) {
     --glass-shadow-live:
         0 2px 6px oklch(0 0 0 / calc(0.45 * var(--twicc-reveal, 1))),
