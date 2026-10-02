@@ -46,9 +46,13 @@ export function instrumentMarkdownComponent(original, kind, generationId) {
         ? '    const { blocks: raw, env } = splitMarkdownBlocks(input.source)'
         : '        const { blocks: raw, env } = splitMarkdownBlocks(props.source)'
     source = once(source, split, marked(`    markdownFixtureEvent('parse', ${kind === 'current' ? 'input.source' : 'props.source'})`) + split)
-    const block = '    tmp.innerHTML = await renderBlockToHtml(src, slashTag ? { ...env, tagLeadingSlashCommand: true } : env)'
+    const block = kind === 'current'
+        ? '    const renderedHtml = await renderBlockToHtml(src, slashTag ? { ...env, tagLeadingSlashCommand: true } : env)'
+        : '    tmp.innerHTML = await renderBlockToHtml(src, slashTag ? { ...env, tagLeadingSlashCommand: true } : env)'
     source = once(source, block, marked("    markdownFixtureEvent('block', { source: src, theme, slashTag })") + block)
-    const nested = '    tmp.innerHTML = await renderBlockToHtml(source, {})'
+    const nested = kind === 'current'
+        ? '    const renderedHtml = await renderBlockToHtml(source, {})'
+        : '    tmp.innerHTML = await renderBlockToHtml(source, {})'
     source = once(source, nested, marked("    markdownFixtureEvent('block', { source, theme, nested: true })") + nested)
     const mermaid = '            const { svg } = await mermaid.render(id, source)'
     source = once(source, mermaid, marked("            markdownFixtureEvent('mermaid', { source, theme })") + mermaid)

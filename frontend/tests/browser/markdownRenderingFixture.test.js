@@ -122,3 +122,34 @@ test('actual KeepAlive control uses direct routes and waits before return scroll
     assert.equal(reveals[1].pending, null)
     assert.equal(result.returned.reveal.scrollToKey, true)
 })
+
+test('composer control waits for production wa-textarea and edits its shadow textarea value without sending', async () => {
+    const { readFileSync } = await import('node:fs')
+    const source = readFileSync(new URL('./markdownRenderingConversation.js', import.meta.url), 'utf8')
+    const body = source.slice(source.indexOf('async function typeComposer()'), source.indexOf('\nasync function themeAndTools()'))
+    let ready = false, selected = false, focused = false, ticks = 0
+    const textarea = { value: 'old draft', focus() { focused = true },
+        setSelectionRange(start, end) { assert.equal(start, 0); assert.equal(end, this.value.length); selected = true } }
+    const host = { updateComplete: Promise.resolve().then(() => { ready = true }),
+        shadowRoot: { querySelector(selector) { assert.equal(selector, 'textarea'); return ready ? textarea : null } } }
+    const document = { querySelector(selector) { assert.equal(selector, '#conversation .message-input wa-textarea'); return host },
+        execCommand(command, unused, text) { assert.equal(command, 'insertText'); assert.ok(focused && selected); textarea.value = text; return true } }
+    const requests = [{ method: 'GET' }]
+    const fixture = { navigate: async () => {}, snapshot: () => ({ requests }) }
+    const wait = async check => { for (let i = 0; i < 5; i++) { if (check()) return; await Promise.resolve() } throw Error('readiness fails') }
+    const run = new Function('fixture', 'document', 'nextTick', 'waitForMarkdownCondition', 'requireCheck',
+        `${body}; return typeComposer`)(fixture, document, async () => { ticks++ }, wait,
+        (value, message) => { if (!value) throw Error(message) })
+    const result = await run()
+    assert.equal(result.text, 'Fixture composer typing without send.')
+    assert.equal(result.mutations, 0)
+    assert.ok(ticks > 0)
+    assert.deepEqual(requests, [{ method: 'GET' }])
+    const edit = document.execCommand
+    document.execCommand = (...args) => {
+        const result = edit(...args)
+        requests.push({ method: 'POST' })
+        return result
+    }
+    await assert.rejects(run(), /Composer typing attempts a mutation request/)
+})

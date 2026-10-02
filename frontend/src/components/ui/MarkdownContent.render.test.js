@@ -35,7 +35,7 @@ function harness(t, options = {}) {
         getMermaid: options.getMermaid ?? (() => { throw Error('unexpected Mermaid') }),
         applyMermaidTheme: text => text,
     }
-    const setup = new Function(...Object.keys(dependencies), `${extracted}\nreturn { blocks, renderCache, coordinator, container, renderMermaidIn, toolOwnership, applyCodeRendered, handleCodeToolsAction, restoreCodeToolsState, codeToolsState };`)
+    const setup = new Function(...Object.keys(dependencies), `${extracted}\nreturn { blocks, renderCache, coordinator, container, renderOneBlock, renderNestedMarkdown, renderMermaidIn, toolOwnership, applyCodeRendered, handleCodeToolsAction, restoreCodeToolsState, codeToolsState };`)
     const component = scope.run(() => setup(...Object.values(dependencies)))
     t.after(() => scope.stop())
     return { ...component, props, eligible, calls, errors, emitted, settingsStore, scope, reports }
@@ -270,3 +270,32 @@ test('superseded rejection never reaches application handler', async t => {
     assert.deepEqual(h.reports, [])
     assert.equal(h.blocks.value[0].html, 'new')
 })
+
+for (const pipeline of ['renderOneBlock', 'renderNestedMarkdown']) {
+    for (const invalidation of ['supersession', 'hide', 'disposal']) {
+        test(`${pipeline} avoids detached HTML allocation after ${invalidation}`, async t => {
+            const held = deferred()
+            let allocations = 0, assignments = 0
+            const document = { createElement: () => {
+                allocations++
+                return { set innerHTML(value) { assignments++ }, querySelectorAll: () => [] }
+            } }
+            const h = harness(t, { document, render: () => held.promise })
+            await flush()
+            h.container.value = { contains: () => true }
+            const owned = h.toolOwnership({})
+            assert.equal(owned(), true)
+            const pending = pipeline === 'renderOneBlock'
+                ? h.renderOneBlock('held', {}, 'default', false, '', new Map(), owned)
+                : h.renderNestedMarkdown('held', 'default', owned)
+            if (invalidation === 'supersession') h.settingsStore._effectiveColorScheme = 'dark'
+            if (invalidation === 'hide') h.eligible.value = false
+            if (invalidation === 'disposal') h.scope.stop()
+            held.resolve('<p>obsolete</p>')
+            assert.equal(await pending, MARKDOWN_RENDER_CANCELLED)
+            // Observe this continuation before the coordinator can drain replacement work.
+            assert.equal(allocations, 0)
+            assert.equal(assignments, 0)
+        })
+    }
+}

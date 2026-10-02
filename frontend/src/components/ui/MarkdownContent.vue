@@ -326,9 +326,10 @@ function applyCodeWrap(wrapper, wrapped) {
 // block inside a markdown block stays explorable all the way down.
 async function renderNestedMarkdown(source, theme, isCurrent) {
     if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
-    const tmp = document.createElement('div')
-    tmp.innerHTML = await renderBlockToHtml(source, {})
+    const renderedHtml = await renderBlockToHtml(source, {})
     if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
+    const tmp = document.createElement('div')
+    tmp.innerHTML = renderedHtml
     if (await postProcessIn(tmp, theme, source, isCurrent) === MARKDOWN_RENDER_CANCELLED) return MARKDOWN_RENDER_CANCELLED
     return tmp.innerHTML
 }
@@ -496,9 +497,10 @@ async function renderOneBlock(src, env, theme, slashTag, referenceContext, cache
         cacheEntries.set(key, cached)
         return cached
     }
-    const tmp = document.createElement('div')
-    tmp.innerHTML = await renderBlockToHtml(src, slashTag ? { ...env, tagLeadingSlashCommand: true } : env)
+    const renderedHtml = await renderBlockToHtml(src, slashTag ? { ...env, tagLeadingSlashCommand: true } : env)
     if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
+    const tmp = document.createElement('div')
+    tmp.innerHTML = renderedHtml
     const mermaidOk = await postProcessIn(tmp, theme, src, isCurrent)
     if (!isCurrent() || mermaidOk === MARKDOWN_RENDER_CANCELLED) return MARKDOWN_RENDER_CANCELLED
     const html = tmp.innerHTML

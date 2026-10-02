@@ -129,20 +129,29 @@ async function openThinking() {
 }
 async function typeComposer() {
     await fixture.navigate('main')
-    const composer = document.querySelector('#conversation .message-input-container .cm-content')
-        || document.querySelector('#conversation .cm-content[contenteditable="true"]')
-    requireCheck(composer, 'Production composer contenteditable is missing')
+    await nextTick()
+    let host, composer
+    await waitForMarkdownCondition(() => {
+        host = document.querySelector('#conversation .message-input wa-textarea')
+        return Boolean(host)
+    })
+    await host.updateComplete
+    await waitForMarkdownCondition(() => {
+        composer = host.shadowRoot?.querySelector('textarea')
+        return Boolean(composer && !composer.disabled)
+    })
     const blockedBefore = fixture.snapshot().requests.filter(entry => entry.method !== 'GET').length
     composer.focus()
     const text = 'Fixture composer typing without send.'
     // An actual input edit goes through the production editor. No Send action runs.
-    const selection = getSelection(), range = document.createRange()
-    range.selectNodeContents(composer); selection.removeAllRanges(); selection.addRange(range)
+    composer.setSelectionRange(0, composer.value.length)
     requireCheck(document.execCommand('insertText', false, text), 'Browser composer insertText fails')
-    await waitForMarkdownCondition(() => composer.textContent.includes(text))
+    await nextTick()
+    await host.updateComplete
+    await waitForMarkdownCondition(() => composer.value === text)
     const blockedAfter = fixture.snapshot().requests.filter(entry => entry.method !== 'GET').length
     requireCheck(blockedAfter === blockedBefore, 'Composer typing attempts a mutation request')
-    return { text: composer.textContent, mutations: blockedAfter - blockedBefore }
+    return { text: composer.value, mutations: blockedAfter - blockedBefore }
 }
 async function themeAndTools() {
     await fixture.navigate('main')
