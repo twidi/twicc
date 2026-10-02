@@ -42,7 +42,6 @@ function compactMoment(when) {
     const { time, day } = formatQuotaMoment(when)
     return [day, time].filter(Boolean).join(' ')
 }
-const pct = (value) => (value == null ? null : `${value.toFixed(1)}%`)
 
 // Same wording as the sidebar: "1 h 13 min", "45 min", "2 d 3 h".
 function formatSpan(ms) {
@@ -104,6 +103,10 @@ const costItems = computed(() => {
     return items
 })
 
+// White reads on the red and green fills; only the light warning yellow needs dark text.
+const isWarning = computed(() => props.color === 'var(--wa-color-warning)')
+const usageFigure = computed(() => `${Math.round(props.quota.utilization ?? 0)}%`)
+const timeFigure = computed(() => `${Math.round(props.quota.timePct ?? 0)}%`)
 const usageWidth = computed(() => `${Math.min(props.quota.utilization ?? 0, 100)}%`)
 const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 0, 100))}%`)
 </script>
@@ -124,20 +127,20 @@ const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 
         </div>
 
         <div class="quota-tip-bars">
+            <span class="quota-tip-bar-label">Usage</span>
             <div class="quota-tip-lane">
-                <div class="quota-tip-fill" :style="{ width: usageWidth }"></div>
+                <div class="quota-tip-fill" :style="{ width: usageWidth }"><span class="quota-tip-figure" :class="{ 'quota-tip-figure-dark': isWarning }">{{ usageFigure }}</span></div>
             </div>
-            <div class="quota-tip-lane quota-tip-lane-time">
-                <div class="quota-tip-time" :style="{ width: timeWidth }"></div>
-                <template v-if="cost && cost.cutoffPct != null">
-                    <div class="quota-tip-hatch" :style="{ left: cost.cutoffPct + '%' }"></div>
-                    <div class="quota-tip-tick" :style="{ left: cost.cutoffPct + '%' }"></div>
-                </template>
-            </div>
-        </div>
-        <div class="quota-tip-legend">
-            <span>Usage <strong>{{ pct(quota.utilization ?? 0) }}</strong></span>
-            <span v-if="quota.timePct != null">Time elapsed <strong>{{ pct(quota.timePct) }}</strong></span>
+            <template v-if="quota.timePct != null">
+                <span class="quota-tip-bar-label">Time</span>
+                <div class="quota-tip-lane">
+                    <div class="quota-tip-time" :style="{ width: timeWidth }"><span class="quota-tip-figure quota-tip-figure-time">{{ timeFigure }}</span></div>
+                    <template v-if="cost && cost.cutoffPct != null">
+                        <div class="quota-tip-hatch" :style="{ left: cost.cutoffPct + '%' }"></div>
+                        <div class="quota-tip-tick" :style="{ left: cost.cutoffPct + '%' }"></div>
+                    </template>
+                </div>
+            </template>
         </div>
 
         <div v-if="paceItems.length" class="quota-tip-stats">
@@ -227,20 +230,42 @@ const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 
 
 /* Lanes: same visual language as the sidebar footer bars. */
 .quota-tip-bars {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: var(--wa-space-2xs) var(--wa-space-s);
+}
+.quota-tip-bar-label {
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-neutral-muted);
 }
 .quota-tip-lane {
     position: relative;
-    height: 8px;
+    height: 18px;
     border-radius: var(--wa-border-radius-pill);
     background: var(--progress-track);
+}
+.quota-tip-figure {
+    padding-inline: var(--wa-space-xs);
+    font-size: var(--wa-font-size-xs);
+    font-weight: var(--wa-font-weight-bold);
+    color: #fff;
+    text-shadow: 0 0 3px rgb(0 0 0 / 0.55), 0 1px 1px rgb(0 0 0 / 0.35);
+}
+.quota-tip-figure-dark {
+    color: oklch(from var(--quota-color) 0.22 calc(c * 0.6) h);
+    text-shadow: none;
 }
 .quota-tip-fill,
 .quota-tip-time {
     position: absolute;
     inset: 0 auto 0 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    /* Wide enough for "8%" at very low values. */
+    min-width: 2.6rem;
+    max-width: 100%;
     border-radius: var(--wa-border-radius-pill);
 }
 .quota-tip-fill {
@@ -270,17 +295,6 @@ const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 
     pointer-events: none;
 }
 
-.quota-tip-legend {
-    display: flex;
-    justify-content: space-between;
-    gap: var(--wa-space-m);
-    font-size: var(--wa-font-size-2xs);
-    color: var(--wa-color-neutral-muted);
-    margin-top: calc(-1 * var(--wa-space-3xs));
-}
-.quota-tip-legend strong {
-    color: var(--wa-color-neutral-content);
-}
 
 /* Three-column figures; the pace row and the cost block share the grid so columns line up. */
 .quota-tip-stats {
@@ -356,5 +370,10 @@ const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 
 <style>
 html.wa-dark .quota-tip-time {
     background: var(--wa-color-neutral-fill-loud);
+}
+/* The dark-mode time fill is a light grey: its figure turns dark. */
+html.wa-dark .quota-tip-figure-time {
+    color: var(--wa-color-neutral-on-loud, #10171d);
+    text-shadow: none;
 }
 </style>
