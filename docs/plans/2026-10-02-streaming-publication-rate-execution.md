@@ -3,7 +3,8 @@
 ## Status
 
 Tasks 1–3 implementation and deterministic checks pass.
-The controller owns browser acceptance and whole-change independent review. Both remain pending in this record.
+Task reviews and whole-change independent review approve the implementation.
+Browser checks provide partial evidence. Performance and complete visual acceptance remain inconclusive.
 This record does not establish that the global freeze is fixed.
 
 ## Deterministic rate proof
@@ -124,18 +125,62 @@ All pass.
 
 ## Browser observations and pending acceptance
 
-Chrome browser tooling is available. The controller owns acceptance after the final fixture commit.
-A pre-final diagnostic trace reports only two buffer RAF executions and an approximately 1,019.6 ms publication gap.
-Its canonical and final text equality pass; displayed equality before retirement fails.
-That trace does not establish performance because its RAF opportunities do not support a 400 ms backlog observation window.
-Source HMR changes also reset the fixture during investigation. Do not use these runs as acceptance results.
-The final reports include visibility and buffer-activity diagnostics to distinguish throttling from inactive ownership.
-ResizeObserver notifications remain recorded as browser errors rather than silently discarded.
+The controller runs Chrome against the existing worktree server on port 5175.
+Desktop CSS viewport: 1527 × 909. Mobile CSS viewport: 355 × 767.
+The baseline uses the pinned pre-rate buffer and store from `1f7d16ef`.
+All stable traces below run after the startup and final-render evidence corrections.
 
-Pending: both providers, both modes, desktop and mobile, plain text, fenced code, and open thinking.
-Pending: route hide/return and retirement while reading above, then while following the bottom.
-Pending: composer typing, session switching, complete text, reading anchor, bottom following, and visual progression/catch-up.
-The controller records actual browser viewports, screenshots/logs, timing/count reports, and safely removes generated adapters.
+| Provider / viewport | Mode / source | Regular publications / buffer RAF | Minimum gap (ms) | Display complete before retirement | Final visual/component source checks |
+| --- | --- | ---: | ---: | --- | --- |
+| Claude / desktop | Implementation / plain | 8 / 10 | 37.1 | false | true |
+| Claude / desktop | Baseline / plain | 2 / 2 | 1014.6 | false | true |
+| Claude / desktop | Baseline / fenced code | 2 / 2 | 1105.9 | false | true |
+| Claude / desktop | Baseline / open thinking | 6 / 6 | 42.3 | false | true |
+| Claude / desktop | Implementation / fenced code | 3 / 3 | 487.0 | true | true |
+| Claude / desktop | Implementation / open thinking | 4 / 4 | 99.7 | false | true |
+| Codex / mobile | Implementation / plain, after `f2b4d362` | 3 / 3 | 97.6 | true | true |
+
+Canonical and raw final source comparisons pass in these runs.
+Actual composer typing succeeds during the baseline plain stream and implementation fenced-code stream.
+The corrected Codex mobile plain run ends with a 1.46 px bottom gap.
+Its canonical, displayed, parsed displayed, final visual, and final component source comparisons all pass.
+Two ResizeObserver notifications remain recorded in that run.
+Several Claude runs also record ResizeObserver notifications.
+The fixture does not silently suppress them.
+
+RAF opportunities are sparse in both modes, despite recorded visible document and active view/buffer state.
+The cause is not established.
+A fixed 400 ms observation cannot prove completion when a frame opportunity arrives approximately one second later.
+The scheduling contract includes the next frame opportunity, rather than a wall-clock guarantee under blocked or throttled rendering.
+These traces cannot establish comparative publication savings at normal or high refresh rates.
+Deterministic high-refresh tests provide the cadence proof.
+
+Desktop fixture bottom gaps also occur in the pre-rate baseline.
+They do not prove a new product bottom-following regression.
+The user reports that actual main-instance bottom following generally works.
+
+The controller also repeats mobile Codex fenced code with reading-above and route hide/return in both modes.
+Both report zero regular publications and zero buffer RAF executions while the block remains outside the viewport.
+Both preserve history anchor `2` and its -32.06 px offset through retirement.
+Both pass canonical, raw final, and exact production visual-item source checks.
+Both fail the subsequent final component rendering probe with the same diagnostic.
+
+That probe combines a missing component and incorrect component content into one assertion.
+It ignores the `scrollToKey()` return value and uses a fixed wait.
+Production retirement restores the reading anchor for eight RAF opportunities.
+The fixture waits two RAF opportunities plus 700 ms before probing another row.
+Under sparse RAF delivery, the restore can move the probe row outside the rendered window.
+Source inspection supports this explanation; the trace does not prove the exact race or production text loss.
+This final component probe remains inconclusive in both modes.
+A future fixture refinement must wait for restoration and distinguish absent rendering from incorrect content.
+
+Exclude earlier HMR/startup-race runs and pre-`f2b4d362` Codex text runs from acceptance.
+Those Codex runs use malformed synthetic item content.
+
+Pending: full provider/mode/viewport/source matrix, normal-frame-rate performance comparison, and complete visual progression acceptance.
+Pending: final component rendering after reading-above retirement and route hide/return.
+Current browser observations do not establish that the global freeze is fixed.
+The controller resets the temporary viewport, closes its fixture tab, and removes generated adapters with the guarded script.
 
 ## Limits and review status
 
@@ -145,7 +190,10 @@ A large deadline catch-up can trigger a costly Markdown render.
 30 Hz progression and the 250 ms deadline remain product choices that require browser evaluation.
 
 Tasks 1–2 independent review closes before Task 3 dispatch, according to the controller's task brief.
-Task 3 and whole-change review remain pending with the controller.
+Task 3 review closes all startup, rendering-evidence, and error-attribution findings.
+Whole-change review approves `70ee160a..d1820fb6` without a significant code finding.
+Scoped final review approves `d1820fb6..f2b4d362` and closes the Codex fixture finding.
+No implementation finding remains open. Browser acceptance remains partial as stated above.
 No server restart, dependency installation, migration, merge, or main-checkout write runs for this task.
 
 ## Task 3 review correction round 1
@@ -180,7 +228,7 @@ Both `node --check` commands and `git diff --check` pass again.
 The earlier 155 targeted and 1,577 full results describe the pre-correction commit.
 No full-suite rerun follows this small fixture-only correction, as the controller instructs.
 Production code and adapter generation stay unchanged.
-Controller browser revalidation and independent re-review remain pending after the correction commit.
+Independent re-review closes all three findings. Browser revalidation appears above.
 
 ## Task 3 browser correction round 2
 
@@ -204,5 +252,30 @@ git diff --check
 RED: 20 tests, 19 pass, 1 expected failure. Log: `/tmp/task3-round2-red.log`.
 GREEN: 20 tests, 20 pass, 0 fail. Log: `/tmp/task3-round2-green.log`.
 Syntax and whitespace checks pass. No full-suite rerun follows this fixture-only correction.
-The controller repeats affected Codex browser scenarios after the stable correction commit.
+The controller repeats affected Codex browser scenarios after the stable correction commit, as recorded above.
 Earlier affected Codex history and replacement rendering observations use invalid fixture data and do not establish acceptance.
+
+## Controller final verification
+
+The controller reruns the complete frontend suite after both fixture correction commits:
+
+```bash
+npm --prefix frontend test
+```
+
+Result: **1,581 tests, 1,581 pass, 0 fail**, exit 0.
+Log: `.superpowers/sdd/2026-10-02-streaming-publication-rate-implementation-plan/final-full-tests.log`.
+An independent targeted buffer/rate/registry/store/fixture run also passes 85 tests before the last fixture correction.
+The complete final suite supersedes earlier suite counts.
+
+The implementation stays on `bugfix/stable-streaming-rows` in the existing worktree.
+Main stays unchanged. Existing worktree servers stay running; no restart runs.
+
+## Controller rulings
+
+1. Use runtime variable paths for optional fixture adapters and test loading without adapters.
+   Vite resolves missing literal imports even with `@vite-ignore`.
+   Cost if wrong: baseline fixture loading needs rework. Production application code stays unchanged.
+2. Correct fixture Codex `AgentMessage.content` blocks to canonical `Text` and test the actual parser.
+   Malformed synthetic data invalidates rendering acceptance.
+   Cost if wrong: test-source compatibility needs rework. Production parsers stay unchanged.
