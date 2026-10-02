@@ -272,6 +272,8 @@ function addCodeToolsIn(root) {
 
         pre.replaceWith(wrapper)
         wrapper.append(bar, pre)
+        // Wrapped by default; a remembered toggle re-applies over this later.
+        applyCodeWrap(wrapper, true)
     }
 }
 
