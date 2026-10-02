@@ -152,19 +152,19 @@ Use the existing installed dependency tree. Do not install dependencies to run t
 **Files:** geometry utility and its tests.
 **Produces:** `createVirtualScrollGeometry` interface above. No composable integration yet.
 
-- [ ] Step 1: Add deferred dirty-key and full-oracle tests before implementation.
+- [x] Step 1: Add deferred dirty-key and full-oracle tests before implementation.
   Cover empty/initial rows, append/prepend/insert/delete/truncate/reorder/same-length replacement, duplicate keys, and identical key snapshots.
   Compare every entry and total against a simple full-recompute oracle after mixed structural/height traces.
-- [ ] Step 2: Add count/identity tests for 1,000 unique keys with index 799 changed.
+- [x] Step 2: Add count/identity tests for 1,000 unique keys with index 799 changed.
   Rebuild exactly 201 suffix entries; preserve 799 prefix entries by identity; read 201 heights and no prefix heights.
   Retain the old array and every old entry unchanged. Opposite height changes cannot cancel invalidation through equal sums.
-- [ ] Step 3: Add first measurement equal to estimate, unknown future seed, clear/delete-effective change, batched minimum, and later-prefix invalidation cases.
+- [x] Step 3: Add first measurement equal to estimate, unknown future seed, clear/delete-effective change, batched minimum, and later-prefix invalidation cases.
   Unknown invalidation does not rebuild unrelated current geometry. A later inserted future key reads its preserved seed.
-- [ ] Step 4: Run the utility test file and record meaningful RED failures.
-- [ ] Step 5: Implement the geometry interface with current key lookup, first structural mismatch, and immutable suffix publication.
+- [x] Step 4: Run the utility test file and record meaningful RED failures.
+- [x] Step 5: Implement the geometry interface with current key lookup, first structural mismatch, and immutable suffix publication.
   Reference copying is permitted and reported; avoid hashing entire geometry or scanning all keys on the height-only path.
-- [ ] Step 6: Run the utility tests and record GREEN. Self-review all mutation/publication ownership.
-- [ ] Step 7: Obtain scoped review and commit owned files: `perf(scroller): reuse unchanged position prefixes`.
+- [x] Step 6: Run the utility tests and record GREEN. Self-review all mutation/publication ownership.
+- [x] Step 7: Obtain scoped review and commit owned files: `perf(scroller): reuse unchanged position prefixes`.
 
 ## Task 2: Integrate all writers and stable reactive ranges
 
@@ -172,23 +172,23 @@ Use the existing installed dependency tree. Do not install dependencies to run t
 **Consumes:** Task 1 geometry interface.
 **Produces:** existing composable API with complete invalidation and stable range identity.
 
-- [ ] Step 1: Build tests around the actual composable with real Vue refs/effect scopes and existing controlled containers.
+- [x] Step 1: Build tests around the actual composable with real Vue refs/effect scopes and existing controlled containers.
   Count `itemKey` calls: after initial reconciliation, a unique-key height-only update reads zero item keys.
   Compare entries/total/spacers with the oracle and retained snapshot identities.
-- [ ] Step 2: Cover every `heightCache.set/delete/clear` branch found in the source audit.
+- [x] Step 2: Cover every `heightCache.set/delete/clear` branch found in the source audit.
   Include no container, programmatic scrolling, unknown future seeds, equal estimates, zero cleanup, deferred cleanup, and legitimate shrink after a height floor.
-- [ ] Step 3: Cover a suffix update followed by a head update, multiple writes before read, and immediate anchor correction.
+- [x] Step 3: Cover a suffix update followed by a head update, multiple writes before read, and immediate anchor correction.
   Prove prefix invalidation remains reactive and synchronous post-batch reads contain all accepted heights.
-- [ ] Step 4: Cover equal render/visible indices retaining separate object identities, then actual scroll/resize/topology changes publishing correct ranges.
+- [x] Step 4: Cover equal render/visible indices retaining separate object identities, then actual scroll/resize/topology changes publishing correct ranges.
   Preserve empty ranges, exclusive ends, search boundaries, and hysteresis.
-- [ ] Step 5: Cover hidden replacements/seeds with zero key extraction and zero geometry construction.
+- [x] Step 5: Cover hidden replacements/seeds with zero key extraction and zero geometry construction.
   Include same-reference mutation plus `triggerRef`, reactive key changes, immediate resume before post cleanup, and suspend immediately after active replacement.
   Retained arrays/snapshots cannot change after resumed reconciliation.
-- [ ] Step 6: Run GEOMETRY and SCROLL; record RED before integrating.
-- [ ] Step 7: Integrate lazy ordered keys and explicit height revision. Route every writer through local invalidation ownership.
+- [x] Step 6: Run GEOMETRY and SCROLL; record RED before integrating.
+- [x] Step 7: Integrate lazy ordered keys and explicit height revision. Route every writer through local invalidation ownership.
   Keep active cleanup and resume ordering. Reuse equal range objects only after reading required reactive inputs.
-- [ ] Step 8: Run GEOMETRY and SCROLL; record GREEN. Inspect all remaining cache mutation calls.
-- [ ] Step 9: Obtain scoped review and commit: `perf(scroller): stabilize geometry and range publication`.
+- [x] Step 8: Run GEOMETRY and SCROLL; record GREEN. Inspect all remaining cache mutation calls.
+- [x] Step 9: Obtain scoped review and commit: `perf(scroller): stabilize geometry and range publication`.
 
 ## Task 3: Deduplicate events without starving either consumer
 
@@ -196,19 +196,19 @@ Use the existing installed dependency tree. Do not install dependencies to run t
 **Consumes:** stable ranges and existing exposed scroller API from Task 2.
 **Produces:** unchanged public payload and independent lifecycle-owned loading opportunities.
 
-- [ ] Step 1: Add event admission tests and actual VirtualScroller wiring tests.
+- [x] Step 1: Add event admission tests and actual VirtualScroller wiring tests.
   Initial measured notification occurs once; real recovery occurs once with equal bounds; normal duplicate tuples never emit.
   Changed visible-only/render-only tuples emit. Deferred old-epoch callbacks cannot notify a new epoch.
   Trace both normal-before-lifecycle and lifecycle-before-normal orders for initial, equal recovery, and changed recovery tuples.
   Test mount activation without a second initial event, then a later changed tuple in the same epoch.
-- [ ] Step 2: Add bounded missing-line tests using `hasContent`, real visual item shapes, separators, and existing inclusive load boundaries.
+- [x] Step 2: Add bounded missing-line tests using `hasContent`, real visual item shapes, separators, and existing inclusive load boundaries.
   Execute actual SessionItemsList loading functions/watch wiring; do not duplicate its algorithm in the test.
   Equal-index placeholder replacement and content removal trigger loading. Geometry-only churn does not scan or rearm its debounce.
-- [ ] Step 3: Add deferred conversation fetch tests.
+- [x] Step 3: Add deferred conversation fetch tests.
   Partial progress reconciles remaining candidates. Same gap coalesces while a request runs.
   Failure/no-progress does not self-loop; later real scroll, membership, or activation can retry with unchanged bounds.
   Hide/unmount before debounce prevents start. Hide/scope change during await prevents obsolete scroll correction or follow-up.
-- [ ] Step 4: Add actual SessionList tests for short pages, filtered pages with cursor advance, empty/no-progress pages, failures, and explicit retry.
+- [x] Step 4: Add actual SessionList tests for short pages, filtered pages with cursor advance, empty/no-progress pages, failures, and explicit retry.
   Capture existing cursor and unfiltered canonical scope IDs, using current store scope membership rules.
   Defer before initial measurement. Hide/unmount/project-filter changes revoke chaining; current activation permits reevaluation.
   Execute the actual empty-state template/component branch with zero displayed rows and hasMore true.
@@ -217,16 +217,16 @@ Use the existing installed dependency tree. Do not install dependencies to run t
   Do not prove these cases with a permanently injected fake scroller reference.
   Cover sessionsLoading becoming false before the store removes its finishing in-flight request.
   Reconcile after the current request promise settles; joining that finishing request cannot latch false no-progress.
-- [ ] Step 5: Run EVENTS_LOADING and record RED.
-- [ ] Step 6: Implement admission plus both consumer trigger paths in the same task.
+- [x] Step 5: Run EVENTS_LOADING and record RED.
+- [x] Step 6: Implement admission plus both consumer trigger paths in the same task.
   Retain latest measured range. Derive bounded missing candidates from range, visual item membership, and relevant content availability.
   Schedule the existing debounce only for changed candidates or an explicit permitted retry opportunity.
   Preserve in-flight ownership across async work; current final settlement reconciles once without a no-progress loop.
   Pagination watches current scoped membership/loading settlement and checks progress before automatic chaining.
   Change the empty-state template ownership with this loading task, not as a later fixture-only fix.
-- [ ] Step 7: Run EVENTS_LOADING, GEOMETRY, and SCROLL; record GREEN.
+- [x] Step 7: Run EVENTS_LOADING, GEOMETRY, and SCROLL; record GREEN.
   Audit all VirtualScroller update consumers and prohibit normal geometry events as a loading fallback.
-- [ ] Step 8: Obtain scoped review and commit: `perf(scroller): suppress redundant updates and preserve loading`.
+- [x] Step 8: Obtain scoped review and commit: `perf(scroller): suppress redundant updates and preserve loading`.
 
 ## Task 4: Validate work counts and real scroll/loading behavior
 
@@ -252,11 +252,11 @@ Use the existing installed dependency tree. Do not install dependencies to run t
   The current imports production directly; the optional baseline copy keeps same-directory imports and unchanged executable source.
   Use the same rows/measurement sequence/container conditions in both modes.
   Wrap the existing itemKey input to count actual key extraction. Compare old/new entry references outside the measured operation.
-- [ ] Step 3: Run 60 accepted height changes with 500, 2,000, and 10,000 rows, at head/middle/tail positions.
+- [x] Step 3: Run 60 accepted height changes with 500, 2,000, and 10,000 rows, at head/middle/tail positions.
   Record exact source sizes, indices, key reads, rebuilt entries, total/spacers, range identities, and actual elapsed times.
   Validate final positions against an independent full oracle. Exclude oracle/reference-inspection work from the timed interval.
   Record reference-copy and height-stability scans as remaining costs. Never equate allocation counts with total runtime complexity.
-- [ ] Step 4: Reuse `invisibleStreaming.js` unchanged through the new conversation entry.
+- [x] Step 4: Reuse `invisibleStreaming.js` unchanged through the new conversation entry.
   Add bounded controls for real SessionView/SessionItemsList, initial reveal, near-bottom growth, reading-above anchor, group expand/collapse, and streaming retirement.
   Check actual successful scrollToKey, row presence, and component content separately.
   Exercise same-index missing content and failure/recovery using fixture-only read substitutions; all mutation fetches remain blocked.
@@ -264,15 +264,15 @@ Use the existing installed dependency tree. Do not install dependencies to run t
   Reject inherited baseline query flags in the production conversation entry; it always imports current production components.
 - [x] Step 5: Run FIXTURE, GEOMETRY, SCROLL, EVENTS_LOADING, FULL, BUILD, and WHITESPACE.
   Record exact commands/counts/exits. The controller independently runs final full/build checks after all fixes.
-- [ ] Step 6: Use existing browser tooling and servers for desktop and mobile viewport comparisons and Claude/Codex conversation checks.
+- [x] Step 6: Use existing browser tooling and servers for desktop and mobile viewport comparisons and Claude/Codex conversation checks.
   Apply viewport overrides after navigation; record actual DOM dimensions, feed conditions, module warm state, and all failures.
   Real bottom-following remains browser evidence. Sparse RAF or unavailable native behavior stays pending/inconclusive.
-- [ ] Step 7: Close owned tabs, reset viewport, and remove only verified generated baseline/manifest files.
+- [x] Step 7: Close owned tabs, reset viewport, and remove only verified generated baseline/manifest files.
   Do not restart servers or install packages. Preserve unrelated user tabs and files.
-- [ ] Step 8: Run whole-change adversarial review, correct significant findings, and obtain scoped re-review.
+- [x] Step 8: Run whole-change adversarial review, correct significant findings, and obtain scoped re-review.
   Record every deferred acceptance limit and controller decision in the execution report.
-- [ ] Step 9: Commit artifacts: `test(scroller): verify geometry reuse and loading preservation`.
-  Update plan checkboxes truthfully. Retain explicit missing browser acceptance.
+- [x] Step 9: Commit artifacts: `test(scroller): verify geometry reuse and loading preservation`.
+  Update plan checkboxes truthfully. Retain explicit missing browser acceptance. See `2026-10-02-scroller-geometry-execution.md` for native timeouts and the tested provider/viewport combinations.
 
 ## Plan self-review
 
