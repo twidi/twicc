@@ -2,7 +2,7 @@
 import { MARKDOWN_RENDER_VIEW_CONTEXT, STREAMING_VIEW_CONTEXT } from '../../../composables/streamPublicationKeys.js'
 import { computed, watch, ref, reactive, provide, nextTick, inject, onMounted, onBeforeUnmount, onActivated, onDeactivated, unref } from 'vue'
 import { useRouter } from 'vue-router'
-import { useDebounceFn } from '@vueuse/core'
+import { collectMissingScrollerLines, sameScrollerLoadCandidates } from '../../../utils/scrollerLoadWindow.js'
 import { useDataStore } from '../../../stores/data'
 import { INITIAL_ITEMS_COUNT, DISPLAY_MODE } from '../../../constants'
 import { useSettingsStore } from '../../../stores/settings'
@@ -158,9 +158,6 @@ const LOAD_DEBOUNCE_MS = 150
 
 // Minimum item size for the virtual scroller (in pixels)
 const MIN_ITEM_SIZE = 50
-
-// Track pending range to load (accumulated during debounce)
-const pendingLoadRange = ref(null)
 
 // Drag and drop state
 const dragOverType = ref(null)  // null | 'files' | 'text'
@@ -1342,6 +1339,7 @@ async function scrollToEdgeUntilStable(edge, options = {}) {
  * Convert an array of line numbers to ranges for API calls.
  * e.g., [1, 2, 3, 5, 6, 10] -> [[1, 3], [5, 6], [10, 10]]
  */
+// Gap loading ownership belongs to this mounted, visible session scope.
 function lineNumsToRanges(lineNums) {
     if (lineNums.length === 0) return []
 
@@ -1364,72 +1362,107 @@ function lineNumsToRanges(lineNums) {
     return ranges
 }
 
-/**
- * Execute the pending load - called after debounce.
- * Loads specific line numbers instead of ranges of indices.
- */
+const gapMounted = ref(false)
+const gapActive = ref(true)
+const gapRange = ref(null)
+let gapGeneration = 0
+let gapTimer = null
+let gapRequest = null
+let gapRetryPending = false
+let attemptedGap = []
+const gapReady = computed(() => gapMounted.value && gapActive.value && sessionActive.value && props.viewActive &&
+    !!scrollerRef.value && !unref(scrollerRef.value.suspended) && scrollerRef.value.getScrollState().clientHeight > 0)
+const missingLines = computed(previous => {
+    if (!gapReady.value || !gapRange.value) return []
+    const lines = collectMissingScrollerLines(visualItems.value ?? [], gapRange.value, LOAD_BUFFER)
+    return previous && sameScrollerLoadCandidates(previous, lines) ? previous : lines
+})
+
+// Membership can change while the same missing lines remain. Track only the
+// bounded ordered keys; streaming content and geometry are not retry signals.
+const gapMembership = computed(previous => {
+    if (!gapReady.value || !gapRange.value) return []
+    const items = visualItems.value ?? []
+    const { start, end } = gapRange.value
+    const keys = items.slice(Math.max(0, start - LOAD_BUFFER), Math.min(items.length, end + LOAD_BUFFER + 1))
+        .map(item => item?.lineNum)
+    return previous && sameScrollerLoadCandidates(previous, keys) ? previous : keys
+})
+
+// Read layout again at the action boundary: observer delivery can lag a hidden DOM.
+function canLoadGap() {
+    return gapReady.value && scrollerRef.value.getScrollState().clientHeight > 0
+}
+
+function cancelGapTimer() {
+    clearTimeout(gapTimer)
+    gapTimer = null
+}
+
+function scheduleGapLoad(retry = false) {
+    if (!canLoadGap() || !missingLines.value.length) { cancelGapTimer(); return }
+    if (gapRequest) { gapRetryPending ||= retry; return }
+    if (!retry && sameScrollerLoadCandidates(attemptedGap, missingLines.value)) return
+    if (gapTimer) return
+    gapTimer = setTimeout(executePendingLoad, LOAD_DEBOUNCE_MS)
+}
+
 async function executePendingLoad() {
-    const range = pendingLoadRange.value
-    if (!range || !range.lineNums || range.lineNums.length === 0) return
-
-    pendingLoadRange.value = null
-
-    const ranges = lineNumsToRanges(range.lineNums)
-
-    if (ranges.length > 0) {
-        const scroller = scrollerRef.value
-        const wasAtBottom = scroller?.isAtBottom?.() ?? false
-
-        await store.loadSessionItemsRanges(
-            props.projectId,
-            props.sessionId,
-            ranges,
-            props.parentSessionId
-        )
-
-        if (scroller && wasAtBottom) {
-            const state = scroller.getScrollState()
-            const distanceFromBottom = state.scrollHeight - state.scrollTop - state.clientHeight
-            if (distanceFromBottom > 5) {
+    cancelGapTimer()
+    if (!canLoadGap() || gapRequest || !missingLines.value.length) return
+    const lines = [...missingLines.value]
+    attemptedGap = lines
+    const owner = { generation: gapGeneration, scroller: scrollerRef.value }
+    gapRequest = owner
+    gapRetryPending = false
+    const current = () => gapRequest === owner && owner.generation === gapGeneration && canLoadGap() &&
+        scrollerRef.value === owner.scroller
+    const wasAtBottom = owner.scroller.isAtBottom?.() ?? false
+    let succeeded = false
+    try {
+        await store.loadSessionItemsRanges(props.projectId, props.sessionId, lineNumsToRanges(lines), props.parentSessionId)
+        succeeded = true
+        if (current() && wasAtBottom) {
+            const state = owner.scroller.getScrollState()
+            if (state.scrollHeight - state.scrollTop - state.clientHeight > 5) {
                 await nextTick()
-                scrollToBottomUntilStable()
+                if (current()) scrollToBottomUntilStable()
             }
         }
+    } catch {
+        // A failed gap waits for a new range, membership, or activation opportunity.
+    } finally {
+        const ownsSettlement = current()
+        gapRequest = null
+        if (canLoadGap() && (gapRetryPending || (ownsSettlement && succeeded &&
+            !sameScrollerLoadCandidates(lines, missingLines.value)))) scheduleGapLoad(gapRetryPending)
+        gapRetryPending = false
     }
 }
 
-const debouncedLoad = useDebounceFn(executePendingLoad, LOAD_DEBOUNCE_MS)
+watch(missingLines, () => scheduleGapLoad())
+watch(gapMembership, () => scheduleGapLoad(true))
+watch([gapReady, () => props.projectId, () => props.sessionId, () => props.parentSessionId], () => {
+    gapGeneration++
+    cancelGapTimer()
+    attemptedGap = []
+    gapRetryPending = false
+    if (gapReady.value) scheduleGapLoad(true)
+}, { flush: 'sync' })
+onMounted(() => { gapMounted.value = true })
+onActivated(() => { gapActive.value = true })
+onDeactivated(() => { gapActive.value = false })
+onBeforeUnmount(() => { gapMounted.value = false; cancelGapTimer() })
 
-/**
- * Handle scroller update event - triggers lazy loading for visible items.
- * Works with visualItems (filtered list) and maps to actual line numbers.
- *
- * @param {{ startIndex: number, endIndex: number, visibleStartIndex: number, visibleEndIndex: number }} payload
- *   - startIndex/endIndex: indices of items being rendered (with buffer)
- *   - visibleStartIndex/visibleEndIndex: indices of items actually visible (no buffer)
- */
-function onScrollerUpdate({ startIndex, endIndex, visibleStartIndex, visibleEndIndex }) {
-    const visItems = visualItems.value
-    if (!visItems || visItems.length === 0) return
+function onScrollerUpdate({ visibleStartIndex, visibleEndIndex }) {
+    if (gapRange.value?.start === visibleStartIndex && gapRange.value?.end === visibleEndIndex) return
+    gapRange.value = { start: visibleStartIndex, end: visibleEndIndex }
+    scheduleGapLoad(true)
+}
 
-    // Add buffer around visible range
-    const bufferedStart = Math.max(0, visibleStartIndex - LOAD_BUFFER)
-    const bufferedEnd = Math.min(visItems.length - 1, visibleEndIndex + LOAD_BUFFER)
-
-    // Collect line numbers that need content loading
-    const lineNumsToLoad = []
-    for (let i = bufferedStart; i <= bufferedEnd; i++) {
-        const visualItem = visItems[i]
-        // Day separators carry no content and a non-numeric key — never queue them.
-        if (visualItem && !visualItem.isDaySeparator && !hasContent(visualItem)) {
-            lineNumsToLoad.push(visualItem.lineNum)
-        }
-    }
-
-    if (lineNumsToLoad.length > 0) {
-        pendingLoadRange.value = { lineNums: lineNumsToLoad }
-        debouncedLoad()
-    }
+// A real scroll can retry an unchanged gap after failure without geometry churn.
+function onGapScroll() {
+    scheduleGapLoad(true)
 }
 
 /**
@@ -2234,6 +2267,7 @@ defineExpose({
                     class="session-items"
                     :class="{ 'initial-scrolling': reveal.hidden.value }"
                     @update="onScrollerUpdate"
+                    @scroll="onGapScroll"
                     @item-resized="onItemResized"
                     @became-visible="onScrollerBecameVisible"
                 >

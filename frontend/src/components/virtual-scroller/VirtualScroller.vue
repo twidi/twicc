@@ -23,6 +23,7 @@
  */
 import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, toRef, nextTick, provide } from 'vue'
 import { useVirtualScroll } from '../../composables/useVirtualScroll'
+import { createVirtualScrollRangeUpdates } from '../../utils/virtualScrollRangeUpdates.js'
 import { createRowVisibilityObserver } from '../../utils/rowVisibilityObserver.js'
 import VirtualScrollerItem from './VirtualScrollerItem.vue'
 import { RESIZE_OBSERVER_KEY, ROW_VISIBILITY_OBSERVER_KEY } from './virtualScrollerKeys.js'
@@ -167,8 +168,8 @@ const containerRef = ref(null)
 const sentinelRef = ref(null)
 
 /**
- * Flag to track whether the initial @update event has been emitted.
- * Used to defer the first emission until after mount.
+ * Whether the initial DOM measurement has completed.
+ * Visibility notifications must wait for this measurement.
  */
 let hasMounted = false
 
@@ -390,21 +391,29 @@ const renderedItems = computed(() => {
  * the container has been measured and ranges are accurate. Before mount,
  * viewportHeight is 0 which produces incorrect ranges.
  */
-watch(
-    [renderRange, visibleRange],
-    ([render, visible]) => {
-        // Skip emission before mount - ranges are incorrect without viewport measurements
-        if (!hasMounted) return
+const rangeUpdates = createVirtualScrollRangeUpdates()
+const eventMounted = ref(false)
+const eventReady = computed(() => eventMounted.value && !composableSuspended.value && measuredViewportHeight.value > 0)
+let rangeEpoch = -1
 
-        emit('update', {
-            startIndex: render.start,
-            endIndex: render.end,
-            visibleStartIndex: visible.start,
-            visibleEndIndex: visible.end,
-        })
-    },
-    { immediate: true }
-)
+function emitRangeUpdate(reason, epoch = rangeEpoch) {
+    if (!eventReady.value || epoch !== rangeEpoch) return
+    const payload = {
+        startIndex: renderRange.value.start,
+        endIndex: renderRange.value.end,
+        visibleStartIndex: visibleRange.value.start,
+        visibleEndIndex: visibleRange.value.end,
+    }
+    if (rangeUpdates.admit(payload, { reason, epoch })) emit('update', payload)
+}
+
+// Establish ownership synchronously, before either the range watcher or nextTick.
+// Initial KeepAlive activation does not change readiness and cannot create an epoch.
+watch(eventReady, ready => {
+    const epoch = ++rangeEpoch
+    if (ready) nextTick(() => emitRangeUpdate(epoch === 0 ? 'initial' : 'recovery', epoch))
+}, { flush: 'sync' })
+watch([renderRange, visibleRange], () => emitRangeUpdate('normal'))
 
 // NOTE: Item resize handling is now done directly in the ResizeObserver callback
 // (getItemObserver function) which batches all updates and emits events.
@@ -495,22 +504,13 @@ onMounted(() => {
             sentinelObserver.observe(sentinelRef.value)
         }
 
-        // Mark as mounted and emit initial @update event on next tick
-        // This ensures viewportHeight has been measured correctly
-        nextTick(() => {
-            hasMounted = true
-            // Manually trigger the initial @update emission now that we're ready
-            emit('update', {
-                startIndex: renderRange.value.start,
-                endIndex: renderRange.value.end,
-                visibleStartIndex: visibleRange.value.start,
-                visibleEndIndex: visibleRange.value.end,
-            })
-        })
+        hasMounted = true
+        eventMounted.value = true
     }
 })
 
 onUnmounted(() => {
+    eventMounted.value = false
     rowVisibilityObserver?.disconnect()
     visibilityRows.clear()
     if (containerObserver) {

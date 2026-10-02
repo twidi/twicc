@@ -6,7 +6,7 @@
  * search filtering, keyboard navigation. Each session item is rendered
  * by SessionListItem, which owns its own store lookups (computed).
  */
-import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUnmount, onMounted, onActivated, onDeactivated, unref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useDataStore, ALL_PROJECTS_ID } from '../../../stores/data'
 import { useWorkspacesStore } from '../../../stores/workspaces'
@@ -19,6 +19,7 @@ import { useListCascade } from '../../../composables/useListCascade'
 import { useListExit } from '../../../composables/useListExit'
 import { useGlideInk } from '../../../composables/useGlideInk'
 import { activeRowBase, entranceOffset, revealBands, revealMargins } from '../../../utils/sidebarRows'
+import { hasScrollerPaginationProgress } from '../../../utils/scrollerLoadWindow.js'
 import VirtualScroller from '../../virtual-scroller/VirtualScroller.vue'
 import SessionListItem from './SessionListItem.vue'
 import SidebarListSeparator from '../../sidebar/SidebarListSeparator.vue'
@@ -285,37 +286,105 @@ store.$onAction(({ name, args, after }) => {
     }
 })
 
-// Load more sessions when approaching the end of the list
-async function loadMore() {
-    if (isLoading.value || !hasMore.value || loadMoreError.value) return
+// Pagination follows measured scope ownership, not repeated geometry notifications.
+const paginationMounted = ref(false)
+const paginationActive = ref(true)
+const paginationRange = ref(null)
+let paginationGeneration = 0
+let paginationRequest = null
+let pendingPaginationGeneration = null
+let externalPageStart = null
+const paginationReady = computed(() => paginationMounted.value && paginationActive.value &&
+    !!scrollerRef.value && !unref(scrollerRef.value.suspended) && scrollerRef.value.getScrollState().clientHeight > 0)
 
+// Match the store's natural scope before archive/search/cross-filter display rules.
+const canonicalSessions = computed(() => {
+    const ids = scopeProjectIds.value
+    if (!ids) return store.getAllSessions
+    if (!isWorkspaceProjectId(props.projectId) && ids.length === 1) return store.getProjectSessions(props.projectId)
+    const scope = new Set(ids)
+    return store.getAllSessions.filter(session => scope.has(session.project_id))
+})
+const paginationSnapshot = computed(() => ({
+    cursor: store.localState.projects[props.projectId]?.oldestSessionMtime ?? null,
+    ids: new Set(canonicalSessions.value.map(session => session.id)),
+}))
+
+function canPaginate() {
+    return paginationReady.value && scrollerRef.value.getScrollState().clientHeight > 0
+}
+
+async function loadMore() {
+    if (!canPaginate() || !paginationRange.value || !hasMore.value || loadMoreError.value) return
+    if (paginationRequest) {
+        if (paginationRequest.generation !== paginationGeneration) pendingPaginationGeneration = paginationGeneration
+        return
+    }
+    if (sessions.value.length - paginationRange.value.end >= 10) return
+    const before = externalPageStart?.projectId === props.projectId ? externalPageStart.snapshot : paginationSnapshot.value
+    const owner = { generation: paginationGeneration, before }
+    externalPageStart = null
+    paginationRequest = owner
+    const current = () => paginationRequest === owner && owner.generation === paginationGeneration && canPaginate()
+    let progressed = false
     try {
-        loadMoreError.value = false
+        // Join an external load, including its finishing phase. Awaiting the public
+        // promise lets the store remove its in-flight entry before we chain.
         await store.loadSessions(props.projectId)
+        if (!current()) return
+        progressed = hasScrollerPaginationProgress(owner.before, paginationSnapshot.value)
+        if (hasMore.value && !progressed) loadMoreError.value = true
     } catch {
-        // Only show error if we already have some sessions (not initial load)
-        if (sessions.value.length > 0) {
-            loadMoreError.value = true
+        if (current()) loadMoreError.value = true
+    } finally {
+        const ownsSettlement = current()
+        paginationRequest = null
+        const currentOpportunity = pendingPaginationGeneration === paginationGeneration
+        pendingPaginationGeneration = null
+        if ((ownsSettlement && progressed) || currentOpportunity) {
+            const generation = paginationGeneration
+            await nextTick()
+            if (generation === paginationGeneration) loadMore()
         }
     }
 }
 
-// Retry after error
-async function handleRetry() {
+function handleRetry() {
     loadMoreError.value = false
-    await loadMore()
+    return loadMore()
 }
 
-/**
- * Handle virtual scroller update event.
- * Triggers loading more sessions when user scrolls near the end.
- */
-function onScrollerUpdate({ visibleEndIndex }) {
-    // Load more when within 10 items of the end
-    if (hasMore.value && !isLoading.value && sessions.value.length - visibleEndIndex < 10) {
-        loadMore()
-    }
+function onScrollerUpdate({ visibleStartIndex, visibleEndIndex }) {
+    paginationRange.value = { start: visibleStartIndex, end: visibleEndIndex }
+    loadMore()
 }
+
+// Retain the baseline from loading START, not the already-merged finishing page.
+watch(isLoading, loading => {
+    if (loading && !paginationRequest) externalPageStart = { projectId: props.projectId, snapshot: paginationSnapshot.value }
+    // _doLoadSessions publishes true before loadSessions registers its promise.
+    // Capture now, but never reenter the store from this synchronous watcher.
+    const generation = paginationGeneration
+    nextTick(() => { if (generation === paginationGeneration) loadMore() })
+}, { immediate: true, flush: 'sync' })
+watch([paginationSnapshot, hasMore], () => loadMore())
+
+async function refreshPaginationScope() {
+    const generation = ++paginationGeneration
+    paginationRange.value = null
+    loadMoreError.value = false
+    await nextTick()
+    if (generation !== paginationGeneration || !canPaginate()) return
+    paginationRange.value = scrollerRef.value.getVisibleRange()
+    loadMore()
+}
+watch([paginationReady, () => props.projectId, () => props.searchQuery, () => props.showArchived,
+    () => props.showArchivedProjects, () => props.showActiveAcrossFilters, activeWorkspaceId,
+    () => scopeProjectIds.value?.join('|')], refreshPaginationScope, { flush: 'sync' })
+onMounted(() => { paginationMounted.value = true })
+onActivated(() => { paginationActive.value = true })
+onDeactivated(() => { paginationActive.value = false })
+onBeforeUnmount(() => { paginationMounted.value = false })
 
 // Reset scroll to top and highlight when project changes
 watch(() => props.projectId, () => {
@@ -686,18 +755,18 @@ defineExpose({
 <template>
     <div class="session-list-container" :class="{ 'session-list-container--compact': compactView }">
         <!-- Empty state: no sessions at all -->
-        <div v-if="allSessions.length === 0 && !isLoading" class="empty-state">
+        <div v-if="allSessions.length === 0 && !isLoading" class="empty-state" :class="{ 'pagination-empty': hasMore }">
             No sessions
         </div>
 
         <!-- Empty state: no matching sessions (search returned nothing) -->
-        <div v-else-if="displayItems.length === 0 && !isLoading" class="empty-state">
+        <div v-else-if="displayItems.length === 0 && !isLoading" class="empty-state" :class="{ 'pagination-empty': hasMore }">
             No matching sessions
         </div>
 
         <!-- Session list with virtual scroller -->
         <VirtualScroller
-            v-else
+            v-if="displayItems.length > 0 || hasMore || isLoading"
             ref="scrollerRef"
             :key="projectId"
             :items="displayItems"
@@ -762,6 +831,7 @@ defineExpose({
 
 <style scoped>
 .session-list-container {
+    position: relative;
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -769,6 +839,12 @@ defineExpose({
     overflow: hidden;
     container-type: inline-size;
     container-name: session-list;
+}
+
+.pagination-empty {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
 }
 
 .session-list {

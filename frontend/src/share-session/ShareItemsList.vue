@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch, nextTick, onMounted, provide, inject } from 'vue'
+import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount, provide, inject, unref } from 'vue'
 import VirtualScroller from '../components/virtual-scroller/VirtualScroller.vue'
 import SessionItem from '../components/session/detail/SessionItem.vue'
 import GroupToggle from '../components/session/detail/GroupToggle.vue'
@@ -11,7 +11,7 @@ import { useChatReveal } from '../composables/useChatReveal.js'
 import { useDataStore } from '../stores/data'          // aliased → dataStoreShim
 import { useSettingsStore } from '../stores/settings'  // aliased → settingsStoreShim
 import { getParsedContent, hasContent } from '../utils/parsedContent'
-import { useDebounceFn } from '@vueuse/core'
+import { collectMissingScrollerLines, sameScrollerLoadCandidates } from '../utils/scrollerLoadWindow.js'
 import { isSessionNotReadyError } from './shims/shareApi'
 
 const props = defineProps({
@@ -80,23 +80,85 @@ async function loadLines(lines) {
     await store.loadSessionItemsRanges(props.projectId, props.sessionId, ranges, props.parentSessionId)
 }
 
-const pending = ref(null)
-const flush = useDebounceFn(async () => {
-    const lines = pending.value; pending.value = null
-    await loadLines(lines)
-}, 120)
+// Share gaps have local ownership; neither geometry churn nor failed requests retry themselves.
+const gapMounted = ref(false)
+const gapRange = ref(null)
+let gapGeneration = 0
+let gapTimer = null
+let gapRequest = null
+let gapRetryPending = false
+let attemptedGap = []
+const gapReady = computed(() => gapMounted.value && !initialLoading.value && !preparationPending.value &&
+    !!scrollerRef.value && !unref(scrollerRef.value.suspended) && scrollerRef.value.getScrollState().clientHeight > 0)
+const missingLines = computed(previous => {
+    if (!gapReady.value || !gapRange.value) return []
+    const lines = collectMissingScrollerLines(visualItems.value ?? [], gapRange.value, BUFFER)
+    return previous && sameScrollerLoadCandidates(previous, lines) ? previous : lines
+})
+const gapMembership = computed(previous => {
+    if (!gapReady.value || !gapRange.value) return []
+    const items = visualItems.value ?? []
+    const { start, end } = gapRange.value
+    const keys = items.slice(Math.max(0, start - BUFFER), Math.min(items.length, end + BUFFER + 1))
+        .map(item => item?.lineNum)
+    return previous && sameScrollerLoadCandidates(previous, keys) ? previous : keys
+})
+// Read layout again at the action boundary: observer delivery can lag a hidden DOM.
+function canLoadGap() {
+    return gapReady.value && scrollerRef.value.getScrollState().clientHeight > 0
+}
+
+function cancelGapTimer() {
+    clearTimeout(gapTimer)
+    gapTimer = null
+}
+function scheduleGapLoad(retry = false) {
+    if (!canLoadGap() || !missingLines.value.length) { cancelGapTimer(); return }
+    if (gapRequest) { gapRetryPending ||= retry; return }
+    if (!retry && sameScrollerLoadCandidates(attemptedGap, missingLines.value)) return
+    if (!gapTimer) gapTimer = setTimeout(executeGapLoad, 120)
+}
+async function executeGapLoad() {
+    cancelGapTimer()
+    if (!canLoadGap() || gapRequest || !missingLines.value.length) return
+    const lines = [...missingLines.value]
+    attemptedGap = lines
+    const owner = { generation: gapGeneration }
+    gapRequest = owner
+    gapRetryPending = false
+    let succeeded = false
+    try {
+        await loadLines(lines)
+        succeeded = true
+    } catch {
+        // Preserve the initial preparation policy. Later gaps wait for a new opportunity.
+    } finally {
+        const current = canLoadGap() && owner.generation === gapGeneration
+        gapRequest = null
+        if (canLoadGap() && (gapRetryPending || (current && succeeded &&
+            !sameScrollerLoadCandidates(lines, missingLines.value)))) scheduleGapLoad(gapRetryPending)
+        gapRetryPending = false
+    }
+}
+watch(missingLines, () => scheduleGapLoad())
+watch(gapMembership, () => scheduleGapLoad(true))
+watch([gapReady, () => props.projectId, () => props.sessionId, () => props.parentSessionId], () => {
+    gapGeneration++
+    cancelGapTimer()
+    attemptedGap = []
+    gapRetryPending = false
+    if (gapReady.value) scheduleGapLoad(true)
+}, { flush: 'sync' })
+onMounted(() => { gapMounted.value = true })
+onBeforeUnmount(() => { gapMounted.value = false; cancelGapTimer() })
 
 function onUpdate({ visibleStartIndex, visibleEndIndex }) {
-    const vis = visualItems.value
-    if (!vis?.length) return
-    const lo = Math.max(0, visibleStartIndex - BUFFER)
-    const hi = Math.min(vis.length - 1, visibleEndIndex + BUFFER)
-    const need = []
-    for (let i = lo; i <= hi; i++) {
-        const vi = vis[i]
-        if (vi && !vi.isDaySeparator && !hasContent(vi)) need.push(vi.lineNum)
-    }
-    if (need.length) { pending.value = need; flush() }
+    if (gapRange.value?.start === visibleStartIndex && gapRange.value?.end === visibleEndIndex) return
+    gapRange.value = { start: visibleStartIndex, end: visibleEndIndex }
+    scheduleGapLoad(true)
+}
+function onShareScroll() {
+    scheduleGapLoad(true)
 }
 
 function toggleGroup(head) { store.toggleExpandedGroup(props.sessionId, head) }
@@ -144,8 +206,7 @@ async function scrollToItem(lineNum, offset = 0) {
         const vi = vis[i]
         if (vi && !vi.isDaySeparator && !hasContent(vi)) need.push(vi.lineNum)
     }
-    // Loaded directly rather than through `flush`: its debounce drops the promise
-    // of a superseded call, which would leave this await hanging forever.
+    // Navigation awaits its own content load before positioning the target.
     if (need.length) {
         await loadLines(need)
         await nextTick()
@@ -188,6 +249,7 @@ const {
             class="session-items"
             :class="{ 'initial-scrolling': reveal.hidden.value }"
             @update="onUpdate"
+            @scroll="onShareScroll"
         >
             <template #default="{ item }">
                 <DaySeparator v-if="item.isDaySeparator" :label="item.dayLabel" :day-key="item.dayKey" />
