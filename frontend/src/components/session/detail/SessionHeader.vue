@@ -4,7 +4,7 @@ import { useElementSize, onClickOutside } from '@vueuse/core'
 import { useDataStore } from '../../../stores/data'
 import { useSettingsStore } from '../../../stores/settings'
 import { formatDate } from '../../../utils/date'
-import { PROCESS_STATE, PROCESS_STATE_COLORS, DISPLAY_MODE } from '../../../constants'
+import { PROCESS_STATE, DISPLAY_MODE } from '../../../constants'
 import {
     archiveStopLabel,
     backgroundShellCount,
@@ -177,6 +177,16 @@ const displayDirectory = computed(() => {
     return null
 })
 
+// Directory split in "parent folders" + "last folder" so the template can emphasise the folder
+// that identifies the checkout (the last one, e.g. the worktree name).
+const displayDirectoryParts = computed(() => {
+    const dir = displayDirectory.value
+    if (!dir) return null
+    const trimmed = dir.length > 1 ? dir.replace(/\/+$/, '') : dir
+    const cut = trimmed.lastIndexOf('/') + 1
+    return { head: trimmed.slice(0, cut), last: trimmed.slice(cut) }
+})
+
 // Tooltip for directory: indicate whether it's the resolved git directory, the
 // cwd fallback, or — for a draft — the target project's git root / directory.
 const displayDirectoryTooltip = computed(() => {
@@ -209,15 +219,6 @@ const userTurnBackgroundShells = computed(() => userTurnBackgroundShellCount(pro
 const processTooltip = computed(() =>
     processState.value ? processStateTooltip(providerLabel.value, processState.value) : ''
 )
-
-/**
- * Get the color for a process state.
- * @param {string} state
- * @returns {string} CSS color variable
- */
-function getProcessColor(state) {
-    return PROCESS_STATE_COLORS[state] || PROCESS_STATE_COLORS[PROCESS_STATE.DEAD]
-}
 
 /**
  * Format memory in bytes to a human-readable string.
@@ -803,181 +804,203 @@ defineExpose({
             </div>
         </div>
 
-        <!-- Collapsible rows: git info + meta (overlay on small viewports) -->
+        <!-- Collapsible rows: identity + stats + process (overlay on small viewports) -->
         <div class="session-collapsible-rows" :class="{ 'glass-surface': compactHeight }">
 
-            <!-- Git info row: directory @ branch. For a draft, displayDirectory
-                 falls back to the project path and there is no branch yet, so
-                 only the folder line shows. -->
+            <!-- Identity: directory (truncated from the left, so the last folder always stays visible) and
+                 branch. For a draft, displayDirectory falls back to the project path and there is no
+                 branch yet, so only the folder shows. -->
             <div v-if="displayDirectory || session.git_branch" class="session-git-info">
-                <span v-if="displayDirectory" :id="`session-header-${sessionId}-git-directory`" class="git-info-item">
+                <span v-if="displayDirectory" :id="`session-header-${sessionId}-git-directory`" class="git-info-item git-directory">
                     <wa-icon auto-width name="folder-open" variant="regular"></wa-icon>
-                    <span>{{ displayDirectory }}</span>
+                    <span class="git-directory-text"><span class="git-directory-inner">{{ displayDirectoryParts.head }}<strong>{{ displayDirectoryParts.last }}</strong></span></span>
                 </span>
                 <AppTooltip v-if="displayDirectory" :for="`session-header-${sessionId}-git-directory`">{{ displayDirectoryTooltip }}</AppTooltip>
 
-                <span v-if="session.git_branch" :id="`session-header-${sessionId}-git-branch`" class="git-info-item">
+                <span v-if="session.git_branch" :id="`session-header-${sessionId}-git-branch`" class="git-info-item git-branch">
                     <wa-icon auto-width name="code-branch"></wa-icon>
-                    <span>{{ session.git_branch }}</span>
+                    <span class="git-branch-name">{{ session.git_branch }}</span>
                 </span>
                 <AppTooltip v-if="session.git_branch" :for="`session-header-${sessionId}-git-branch`">Git branch</AppTooltip>
             </div>
 
-            <!-- Meta row (not shown for draft sessions) -->
-            <div v-if="!session.draft && !session.ephemeral" class="session-meta">
+            <!-- Stats container (not shown for draft sessions): labelled segments + the context ring -->
+            <div v-if="!session.draft && !session.ephemeral" class="session-stats">
+                <div class="stats-grid">
 
-                <span :id="`session-header-${sessionId}-messages`" class="meta-item">
-                    <wa-icon auto-width name="comment" variant="regular"></wa-icon>
-                    <span>{{ session.user_message_count ?? '??' }}</span>
-                </span>
-                <AppTooltip :for="`session-header-${sessionId}-messages`">Number of message turns</AppTooltip>
-
-                <span :id="`session-header-${sessionId}-lines`" class="meta-item nb_lines">
-                    <wa-icon auto-width name="bars"></wa-icon>
-                    <span>{{ session.last_line }}</span>
-                </span>
-                <AppTooltip :for="`session-header-${sessionId}-lines`">Lines in the JSONL file</AppTooltip>
-
-                <span :id="`session-header-${sessionId}-mtime`" class="meta-item">
-                    <wa-icon auto-width name="clock" variant="regular"></wa-icon>
-                    <span>{{ formatDate(session.mtime, { smart: true }) }}</span>
-                </span>
-                <AppTooltip :for="`session-header-${sessionId}-mtime`">Last activity</AppTooltip>
-
-                <template v-if="showCosts && totalCost != null">
-                    <CostDisplay :id="`session-header-${sessionId}-cost`" :cost="totalCost" class="meta-item" />
-                    <AppTooltip :for="`session-header-${sessionId}-cost`">Total session cost</AppTooltip>
-                </template>
-
-                <template v-if="showCosts && costBreakdown">
-                    <span :id="`session-header-${sessionId}-cost-breakdown`" class="meta-item cost-breakdown-item">
-                        <span>(
-                        <span>
-                            <CostDisplay :cost="costBreakdown.self" />
-                            <span class="cost-breakdown-separator">+</span>
-                            <CostDisplay :cost="costBreakdown.subagents" />
+                    <div :id="`session-header-${sessionId}-messages`" class="stat">
+                        <span class="stat-label">Messages</span>
+                        <span class="stat-value">
+                            <wa-icon auto-width name="comment" variant="regular"></wa-icon>
+                            <span>{{ session.user_message_count ?? '??' }}</span>
                         </span>
-                        )</span>
-                    </span>
-                    <AppTooltip :for="`session-header-${sessionId}-cost-breakdown`">Main agent cost + sub-agents cost</AppTooltip>
-                </template>
+                    </div>
+                    <AppTooltip :for="`session-header-${sessionId}-messages`">Number of message turns</AppTooltip>
 
-                <template v-if="formattedModel">
-                    <span :id="`session-header-${sessionId}-model`" class="meta-item">
-                        <ProviderIcon v-if="providerIcon" :provider="session?.provider" />
-                        <wa-icon v-else auto-width name="robot" variant="classic"></wa-icon>
-                        <span>{{ formattedModel }}</span>
-                    </span>
-                    <AppTooltip :for="`session-header-${sessionId}-model`">Last used model</AppTooltip>
-                </template>
+                    <!-- Debug only -->
+                    <div :id="`session-header-${sessionId}-lines`" class="stat stat-debug">
+                        <span class="stat-label">Lines</span>
+                        <span class="stat-value">
+                            <wa-icon auto-width name="bars"></wa-icon>
+                            <span>{{ session.last_line }}</span>
+                        </span>
+                    </div>
+                    <AppTooltip :for="`session-header-${sessionId}-lines`">Lines in the JSONL file</AppTooltip>
+
+                    <div :id="`session-header-${sessionId}-mtime`" class="stat">
+                        <span class="stat-label">Activity</span>
+                        <span class="stat-value">
+                            <wa-icon auto-width name="clock" variant="regular"></wa-icon>
+                            <span>{{ formatDate(session.mtime, { smart: true }) }}</span>
+                        </span>
+                    </div>
+                    <AppTooltip :for="`session-header-${sessionId}-mtime`">Last activity</AppTooltip>
+
+                    <template v-if="showCosts && totalCost != null">
+                        <div :id="`session-header-${sessionId}-cost`" class="stat">
+                            <span class="stat-label">Cost</span>
+                            <CostDisplay :cost="totalCost" class="stat-value" />
+                        </div>
+                        <AppTooltip :for="`session-header-${sessionId}-cost`">Total session cost</AppTooltip>
+                    </template>
+
+                    <!-- Debug only -->
+                    <template v-if="showCosts && costBreakdown">
+                        <div :id="`session-header-${sessionId}-cost-breakdown`" class="stat stat-debug">
+                            <span class="stat-label">Cost split</span>
+                            <span class="stat-value">
+                                <CostDisplay :cost="costBreakdown.self" />
+                                <span class="cost-breakdown-separator">+</span>
+                                <CostDisplay :cost="costBreakdown.subagents" />
+                            </span>
+                        </div>
+                        <AppTooltip :for="`session-header-${sessionId}-cost-breakdown`">Main agent cost + sub-agents cost</AppTooltip>
+                    </template>
+
+                    <template v-if="formattedModel">
+                        <div :id="`session-header-${sessionId}-model`" class="stat">
+                            <span class="stat-label">Model</span>
+                            <span class="stat-value">
+                                <ProviderIcon v-if="providerIcon" :provider="session?.provider" />
+                                <wa-icon v-else auto-width name="robot" variant="classic"></wa-icon>
+                                <span>{{ formattedModel }}</span>
+                            </span>
+                        </div>
+                        <AppTooltip :for="`session-header-${sessionId}-model`">Last used model</AppTooltip>
+                    </template>
+
+                </div>
 
                 <template v-if="contextUsagePercentage != null">
-                    <wa-progress-ring
-                        :id="`session-header-${sessionId}-context`"
-                        class="context-usage-ring"
-                        :value="Math.min(contextUsagePercentage, 100)"
-                        :style="{
-                            '--indicator-color': contextUsageColor,
-                            '--indicator-width': contextUsageIndicatorWidth
-                        }"
-                    ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
+                    <div class="stat stat-context">
+                        <span class="stat-label">Context</span>
+                        <wa-progress-ring
+                            :id="`session-header-${sessionId}-context`"
+                            class="context-usage-ring"
+                            :value="Math.min(contextUsagePercentage, 100)"
+                            :style="{
+                                '--indicator-color': contextUsageColor,
+                                '--indicator-width': contextUsageIndicatorWidth
+                            }"
+                        ><span class="wa-font-weight-bold">{{ contextUsagePercentage }}%</span></wa-progress-ring>
+                    </div>
                     <AppTooltip :for="`session-header-${sessionId}-context`">{{ contextUsageTooltip }}</AppTooltip>
                 </template>
+            </div>
 
-                <template
-                    v-if="processState"
-                >
-                    <div class="meta-process">
-                        <ProcessDuration
-                            v-if="processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at"
-                            :state-changed-at="processState.state_changed_at"
-                            :id="`session-header-${sessionId}-process-duration`"
-                            class="process-duration"
-                            :style="{ color: getProcessColor(processState.state) }"
-                        />
-                        <AppTooltip v-if="processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at" :for="`session-header-${sessionId}-process-duration`">Assistant turn duration</AppTooltip>
+            <!-- Process: status chip (indicator first, then turn duration and memory) + control buttons -->
+            <div v-if="!session.draft && !session.ephemeral && processState" class="meta-process">
+                <span class="process-chip">
+                    <ProcessIndicator
+                        :id="`session-header-${sessionId}-process-indicator`"
+                        :state="processState.state"
+                        :has-active-crons="hasActiveCrons"
+                        :background-shells="userTurnBackgroundShells"
+                        size="small"
+                        :animate-states="animateStates"
+                    />
+                    <AppTooltip :for="`session-header-${sessionId}-process-indicator`">{{ processTooltip }}</AppTooltip>
 
-                        <span
-                            v-if="processState.memory"
-                            :id="`session-header-${sessionId}-process-memory`"
-                            class="process-memory"
-                            :style="{ color: getProcessColor(processState.state) }"
-                        >
-                            {{ formatMemory(processState.memory) }}
+                    <ProcessDuration
+                        v-if="processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at"
+                        :state-changed-at="processState.state_changed_at"
+                        :id="`session-header-${sessionId}-process-duration`"
+                        class="process-duration"
+                    />
+                    <AppTooltip v-if="processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at" :for="`session-header-${sessionId}-process-duration`">Assistant turn duration</AppTooltip>
+
+                    <span
+                        v-if="processState.memory"
+                        :id="`session-header-${sessionId}-process-memory`"
+                        class="process-memory"
+                    >
+                        {{ formatMemory(processState.memory) }}
+                    </span>
+                    <AppTooltip v-if="processState.memory" :for="`session-header-${sessionId}-process-memory`">{{ providerLabel }} memory usage</AppTooltip>
+                </span>
+
+                <wa-button-group v-if="canInterruptTurn || canStopProcess || canStopAgent" class="process-actions" label="Process controls">
+                    <wa-button
+                        v-if="canInterruptTurn"
+                        :id="`session-header-${sessionId}-interrupt-button`"
+                        variant="neutral"
+                        appearance="outlined"
+                        size="small"
+                        class="stop-button reduced-height"
+                        :loading="interrupting"
+                        :disabled="interrupting"
+                        @click="handleInterrupt"
+                    >
+                        <wa-icon slot="start" auto-width name="circle-stop"></wa-icon>
+                        Interrupt
+                    </wa-button>
+
+                    <wa-button
+                        v-if="canStopProcess"
+                        :id="`session-header-${sessionId}-stop-button`"
+                        variant="danger"
+                        appearance="outlined"
+                        size="small"
+                        class="stop-button reduced-height"
+                        :class="{ forcing: stoppingProcess }"
+                        @click="handleStopProcess($event)"
+                    >
+                        <span slot="start" class="stop-icon-wrap">
+                            <wa-icon
+                                auto-width
+                                :name="stoppingProcess ? 'skull-crossbones' : 'ban'"
+                                :variant="stoppingProcess ? 'solid' : undefined"
+                            ></wa-icon>
+                            <wa-spinner
+                                v-if="stoppingProcess"
+                                class="stop-overlay-spinner"
+                            ></wa-spinner>
                         </span>
-                        <AppTooltip v-if="processState.memory" :for="`session-header-${sessionId}-process-memory`">{{ providerLabel }} memory usage</AppTooltip>
+                        {{ stoppingProcess ? 'Force kill' : 'Stop' }}
+                    </wa-button>
 
-                        <ProcessIndicator
-                            :id="`session-header-${sessionId}-process-indicator`"
-                            :state="processState.state"
-                            :has-active-crons="hasActiveCrons"
-                            :background-shells="userTurnBackgroundShells"
-                            size="small"
-                            :animate-states="animateStates"
-                        />
-                        <AppTooltip :for="`session-header-${sessionId}-process-indicator`">{{ processTooltip }}</AppTooltip>
-
-                        <div class="meta-actions">
-                            <wa-button
-                                v-if="canInterruptTurn"
-                                :id="`session-header-${sessionId}-interrupt-button`"
-                                variant="neutral"
-                                appearance="filled"
-                                size="small"
-                                class="stop-button reduced-height"
-                                :loading="interrupting"
-                                :disabled="interrupting"
-                                @click="handleInterrupt"
-                            >
-                                <wa-icon name="circle-stop" label="Interrupt"></wa-icon>
-                            </wa-button>
-                            <!-- Same v-if as the button: wa-tooltip resolves its anchor once, when it
-                                 connects, and never re-resolves. The interrupt button only appears in
-                                 ASSISTANT_TURN, after this block mounted, so an always-mounted tooltip
-                                 would stay anchorless (unlike the stop button, born with the block). -->
-                            <AppTooltip v-if="canInterruptTurn" :for="`session-header-${sessionId}-interrupt-button`">Interrupt the current turn (keeps the session alive)</AppTooltip>
-
-                            <wa-button
-                                v-if="canStopProcess"
-                                :id="`session-header-${sessionId}-stop-button`"
-                                variant="danger"
-                                appearance="filled"
-                                size="small"
-                                class="stop-button reduced-height"
-                                :class="{ forcing: stoppingProcess }"
-                                @click="handleStopProcess($event)"
-                            >
-                                <span class="stop-icon-wrap">
-                                    <wa-icon
-                                        :name="stoppingProcess ? 'skull-crossbones' : 'ban'"
-                                        :variant="stoppingProcess ? 'solid' : undefined"
-                                        :label="stoppingProcess ? 'Force kill' : 'Stop'"
-                                    ></wa-icon>
-                                    <wa-spinner
-                                        v-if="stoppingProcess"
-                                        class="stop-overlay-spinner"
-                                    ></wa-spinner>
-                                </span>
-                            </wa-button>
-                            <AppTooltip :for="`session-header-${sessionId}-stop-button`">{{ stoppingProcess ? 'Force kill' : `Stop the ${providerLabel} process` }}</AppTooltip>
-
-                            <wa-button
-                                v-if="canStopAgent"
-                                :id="`session-header-${sessionId}-stop-agent-button`"
-                                variant="danger"
-                                appearance="filled"
-                                size="small"
-                                class="stop-button reduced-height"
-                                :loading="stoppingAgent"
-                                :disabled="stoppingAgent"
-                                @click="handleStopAgent"
-                            >
-                                <wa-icon name="ban" label="Stop Agent"></wa-icon>
-                            </wa-button>
-                            <AppTooltip v-if="canStopAgent" :for="`session-header-${sessionId}-stop-agent-button`">Stop this agent</AppTooltip>
-                        </div>
-                    </div>
-                </template>
+                    <wa-button
+                        v-if="canStopAgent"
+                        :id="`session-header-${sessionId}-stop-agent-button`"
+                        variant="danger"
+                        appearance="outlined"
+                        size="small"
+                        class="stop-button reduced-height"
+                        :loading="stoppingAgent"
+                        :disabled="stoppingAgent"
+                        @click="handleStopAgent"
+                    >
+                        <wa-icon slot="start" auto-width name="ban"></wa-icon>
+                        Stop agent
+                    </wa-button>
+                </wa-button-group>
+                <!-- Same v-if as the buttons: wa-tooltip resolves its anchor once, when it connects, and
+                     never re-resolves. The interrupt button only appears in ASSISTANT_TURN, after this
+                     block mounted, so an always-mounted tooltip would stay anchorless. Tooltips live
+                     outside the button group so they do not take part in its joined layout. -->
+                <AppTooltip v-if="canInterruptTurn" :for="`session-header-${sessionId}-interrupt-button`">Interrupt the current turn (keeps the session alive)</AppTooltip>
+                <AppTooltip v-if="canStopProcess" :for="`session-header-${sessionId}-stop-button`">{{ stoppingProcess ? 'Force kill' : `Stop the ${providerLabel} process` }}</AppTooltip>
+                <AppTooltip v-if="canStopAgent" :for="`session-header-${sessionId}-stop-agent-button`">Stop this agent</AppTooltip>
             </div>
 
         </div><!-- /.session-collapsible-rows -->
@@ -1106,16 +1129,16 @@ defineExpose({
     align-self: center;
 }
 
+/* Zone 1 — identity: directory (left-truncated, last folder emphasised) + branch pill. */
 .session-git-info {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    column-gap: var(--wa-space-l);
+    column-gap: var(--wa-space-m);
     row-gap: var(--wa-space-3xs);
     padding-inline: var(--wa-space-m);
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
-    overflow: hidden;
     margin-top: var(--wa-space-xs);
 }
 
@@ -1123,54 +1146,107 @@ defineExpose({
     display: flex;
     align-items: center;
     gap: var(--wa-space-xs);
-    overflow: hidden;
-    text-overflow: ellipsis;
+    min-width: 0;
     white-space: nowrap;
 }
 
-.session-meta {
-    display: flex;
-    justify-content: start;
-    align-items: center;
-    gap: var(--wa-space-l);
-    padding-inline: var(--wa-space-m);
+.git-directory {
+    flex: 1 1 14rem;
 }
 
-.session-meta {
-    display: flex;
-    flex-wrap: wrap;
-    column-gap: var(--wa-space-l);
-    row-gap: var(--wa-space-xs);
+/* direction: rtl moves the ellipsis to the START of the path; the inner span restores ltr so the
+   slashes stay in place. */
+.git-directory-text {
+    direction: rtl;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.git-directory-inner {
+    direction: ltr;
+    unicode-bidi: embed;
+}
+
+.git-directory-inner strong {
+    color: var(--wa-color-text-normal);
+    font-weight: 650;
+}
+
+.git-branch {
+    flex: 0 1 auto;
+    padding: 0.125rem var(--wa-space-s) 0.125rem var(--wa-space-xs);
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--wa-color-brand-60) 14%, transparent);
+    color: var(--wa-color-text-normal);
+    font-size: var(--wa-font-size-xs);
+}
+
+.git-branch wa-icon {
+    color: var(--wa-color-brand-60);
+}
+
+.git-branch-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Zone 2 — stats container: labelled segments, with the context ring as a closing column. */
+.session-stats {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    margin-inline: var(--wa-space-m);
+    border: var(--divider-size) solid var(--wa-color-surface-border);
+    border-radius: var(--wa-border-radius-l);
+    background: color-mix(in oklab, var(--wa-color-brand-60) 8%, transparent);
     font-size: var(--wa-font-size-s);
 }
 
-.meta-item {
+/* Cells size to their content (never truncated) and share the leftover width. */
+.stats-grid {
     display: flex;
-    align-items: center;
-    gap: var(--wa-space-xs);
+    flex-wrap: wrap;
 }
 
-.cost-breakdown-item {
-    gap: 0;
-    > span {
-        --parentheses-offset: 1.5px;
-        position: relative;
-        top: calc(-1 * var(--parentheses-offset));
-        gap: 0.2em;
-        > span {
-            position: relative;
-            top: var(--parentheses-offset);
-        }
-    }
+.stat {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    flex: 1 1 auto;
+    padding: var(--wa-space-xs) var(--wa-space-m);
 }
 
-.nb_lines, .cost-breakdown-item {
-    font-size: var(--wa-font-size-xs);
+.stat-label {
+    font-size: var(--wa-font-size-3xs);
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
     color: var(--wa-color-text-quiet);
 }
 
-.session-header:not(.effective-debug) .nb_lines,
-.session-header:not(.effective-debug) .cost-breakdown-item {
+.stat-value {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.stat-value wa-icon {
+    color: var(--wa-color-brand-60);
+}
+
+.stat-context {
+    align-items: center;
+    border-inline-start: var(--divider-size) solid var(--wa-color-surface-border);
+}
+
+.cost-breakdown-separator {
+    color: var(--wa-color-text-quiet);
+}
+
+.session-header:not(.effective-debug) .stat-debug {
     display: none;
 }
 
@@ -1229,32 +1305,33 @@ wa-divider {
     --spacing: 0;
 }
 
-/* Process block (duration, memory, state, controls) as ONE flex child of the
-   wrapping .session-meta row: the auto start margin pins it to the right edge
-   of whatever line it lands on, so it stays right-aligned after a wrap instead
-   of restarting at the left — and it never splits across two lines. */
+/* Zone 3 — process: status chip on the left, control buttons pushed to the right edge. A wrapped
+   button group stays right-aligned thanks to the auto start margin. */
 .meta-process {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: flex-end;
-    column-gap: var(--wa-space-l);
-    row-gap: var(--wa-space-xs);
+    gap: var(--wa-space-xs) var(--wa-space-s);
+    padding-inline: var(--wa-space-m);
+    font-size: var(--wa-font-size-s);
+}
+
+.process-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wa-space-m);
+    padding: 0.125rem var(--wa-space-m) 0.125rem var(--wa-space-xs);
+    border-radius: 999px;
+    border: var(--divider-size) solid var(--wa-color-surface-border);
+    background: color-mix(in oklab, var(--wa-color-brand-60) 8%, transparent);
+}
+
+.process-actions {
     margin-inline-start: auto;
 }
 
-/* Trailing process-control buttons (interrupt, stop, stop-agent) cluster as a
-   single flex child of .meta-process so they sit tight together, decoupled
-   from the meta row's large inter-item gap. */
-.meta-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--wa-space-2xs);
-    flex-shrink: 0;
-}
-
 .stop-button {
-    opacity: 0.6;
+    opacity: 0.85;
     transition: opacity 0.15s;
     flex-shrink: 0;
 }
