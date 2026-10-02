@@ -137,7 +137,10 @@ function seedSession(id, parent = null) {
     store.sessions[id] = { id, project_id: projectId, provider, title: id, last_line: history.length,
         parent_session_id: parent, type: parent ? 'subagent' : 'session', compute_version_up_to_date: true,
         // Draft prevents layout intention persistence from making a backend write. Content stays fully seeded.
-        draft: true, layout: { assignment: { tasks: 'right-top' } }, permission_mode: 'default' }
+        draft: true, layout: { assignment: { tasks: 'right-top' } }, permission_mode: 'default',
+        tasks: { provider, source: provider === 'codex' ? 'update_plan' : 'TodoWrite', line: history.length,
+            updated_at: '2026-10-02T12:00:00Z', explanation: '',
+            items: [{ status: 'pending', content: 'Check streaming publications' }] } }
     store.localState.sessions[id] = { itemsFetched: true, itemsLoading: false, itemsLoadingError: false }
     store.localState.agentLoaded[id] = true
     store.initSessionItemsFromMetadata(id, history)
@@ -236,6 +239,66 @@ function feed(text, id = currentId(), messageId = store.localState.streamingBloc
 async function navigate(tab) {
     await router.push({ name: tab === 'main' ? 'session' : `session-${tab}`, params: { projectId, sessionId: currentId() } })
     await settle()
+}
+function tasksDockRegion(layout) {
+    return layout.render.value.regions.find(region =>
+        region.slots.some(slot => slot.dockId === 'right-top' && slot.tabs.some(tab => tab.id === 'tasks')))
+}
+function assertTasksDock(layout) {
+    assert(store.getSessionTasks(currentId())?.items?.length > 0, 'Tasks presence snapshot is missing')
+    assert(layout.measured.value && layout.render.value.mode !== 'tabs', 'Use a docking-capable viewport for Tasks checks')
+    const region = tasksDockRegion(layout)
+    assert(region, 'Tasks is absent from the right-top rendered region')
+    const dock = document.querySelector(`.dock-region[data-rid="${region.id}"]`)
+    assert(dock?.querySelector('wa-tab[panel="tasks"]'), 'The rendered right-top dock has no Tasks tab')
+    return region
+}
+async function runDockPreflight() {
+    await navigate('main')
+    const layout = viewInstance()?.$.setupState.layout
+    assert(layout, 'SessionView layout is missing')
+    assertTasksDock(layout)
+    await navigate('tasks')
+    assert(router.currentRoute.value.name === 'session-tasks', 'Tasks route redirected to Chat')
+    assert(layout.routeActiveTabId.value === 'tasks', 'Tasks does not own the route')
+    assert(layout.centerVisible.value && listInstance(mainId)?.$props.viewActive,
+        'The Tasks route hides center Chat')
+    assertTasksDock(layout)
+
+    const messageId = start('text', mainId)
+    feed('Dock preflight starts visible. ', mainId, messageId)
+    await listInstance(mainId).$.setupState.scrollerRef.scrollToEdge('bottom', { maxAttempts: 12 })
+    await settle(700)
+    assert(row(mainId)?.innerText.includes('Dock preflight starts visible.'), 'The active Chat block is not visible')
+    const block = store.localState.streamingBlocks[mainId].blocks[0]
+    await maximizeDock()
+    assert(layout.maximizedRegion.value?.slots.some(slot => slot.dockId === 'right-top'),
+        'The actual Tasks dock did not maximize')
+    assert(!layout.centerVisible.value && !listInstance(mainId)?.$props.viewActive,
+        'Maximizing Tasks leaves center Chat active')
+    assert(document.querySelector('.dock-region.maximized wa-tab[panel="tasks"]'),
+        'The maximized dock does not render Tasks')
+    feed('Dock preflight resumes this block.', mainId, messageId)
+    await settle(700)
+    const transitionsBeforeRestore = counters.transitions
+    await restoreDock()
+    assert(layout.centerVisible.value && listInstance(mainId)?.$props.viewActive,
+        'Restoring Tasks does not show center Chat')
+    assert(store.localState.streamingBlocks[mainId].messageId === messageId &&
+        store.localState.streamingBlocks[mainId].blocks[0] === block,
+    'Restoring Tasks changed the current streaming block')
+    const resumedText = row(mainId)?.innerText || ''
+    assert(resumedText.split('Dock preflight resumes this block.').length - 1 === 1,
+        'Restoring Tasks does not show the current block exactly once')
+    if (!baseline) assert(counters.transitions - transitionsBeforeRestore === 1,
+        'Restoring Tasks resumes the current block more than once')
+    assertTasksDock(layout)
+    await navigate('main')
+    destroySessionBuffers(mainId)
+    delete store.localState.streamingBlocks[mainId]
+    store.recomputeVisualItems(mainId)
+    await settle()
+    resetCounters()
 }
 async function switchSession() {
     await router.push({ name: 'session', params: { projectId, sessionId: currentId() === mainId ? otherId : mainId } })
@@ -343,9 +406,10 @@ async function reconnectSameMessage() {
 // Browser control can exercise the remaining production controls and save these diagnostics.
 window.invisibleStreamingFixture = { store, router, provider, baseline, ids: { mainId, otherId, agentId }, counters,
     start, feed, settle, snapshot, geometry, resetCounters, navigate, switchSession, selectSubagent,
-    maximizeDock, restoreDock, toggleSecondary, secondaryActive, runHiddenThinking, runVisible, readingAbove, displayMode, reconnectSameMessage,
+    maximizeDock, restoreDock, runDockPreflight, toggleSecondary, secondaryActive, runHiddenThinking, runVisible, readingAbove, displayMode, reconnectSameMessage,
     clear(id = currentId()) { destroySessionBuffers(id); delete store.localState.streamingBlocks[id]; store.recomputeVisualItems(id) },
     exportEvidence() { return JSON.stringify({ reports: reports.value, requests, errors, lifetimes }, null, 2) },
 }
 await settle(450)
+await runDockPreflight()
 reports.value.push({ fixtureReady: true, storeShared: useDataStore(pinia) === store, ...snapshot() })

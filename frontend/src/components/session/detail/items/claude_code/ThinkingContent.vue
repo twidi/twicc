@@ -57,8 +57,8 @@ onMounted(() => {
 
 function onShow(event) {
     if (event.target !== event.currentTarget) return
-    clearClosing()
     isOpen.value = true
+    clearClosing()
     dataStore.setDetailOpen(props.sessionId, props.detailKey, true)
 }
 

@@ -159,3 +159,16 @@ Canonical text, inactivity timers, stopped flags, and structural lifecycle handl
 
 No package install, server start/restart, main-checkout change, merge, push, provider message, or user message is performed.
 Browser fixture fidelity, provider visual behavior, scroll behavior, and complete lifecycle acceptance remain material verification gaps.
+
+## Independent review round 1: correction evidence
+
+The independent review found two defects in `160777fc`: a transient loss of thinking-body ownership during a close/reopen reversal, and a Tasks fixture without a task snapshot.
+The correction changes `onShow` in both provider components to set `isOpen` before clearing closing state. The bubbling guard and detail-state write remain in place.
+The fixture now seeds normalized Tasks snapshots on every scenario session. Its startup preflight uses the real SessionView and layout. It checks task presence, the rendered right-top Tasks dock, route ownership with center Chat shown, dock maximize with center Chat hidden, restore with center Chat shown, and the exact current block displayed once. The implementation path also requires one aggregate resume transition. This preflight runs on both baseline and implementation pages before measurement counters reset.
+
+RED, before correction: the two parameterized close/reopen tests failed on unexpected `true → false → true` aggregate transitions. The two fixture seed tests failed because `getSessionTasks` returned null. Focused run: **3 pass, 4 fail**.
+GREEN, after correction: focused run **7/7 pass**. The close/reopen tests execute the actual extracted SFC handlers with the actual closing helper, ownership composable, managed buffer, and pending adaptive RAF. They check no false transition, no catch-up, preserved RAF, and release after a normal `wa-after-hide`.
+Broader affected suite: **42/42 pass**, using the same read-only dependency loader and the six focused test files. Both changed SFC script/template pairs compile. The browser fixture passes `node --check`; `git diff --check` passes.
+
+The complete frontend suite reports **1504/1506 pass**. The two failures remain the missing worktree dependency files read directly by `waMotionStyles.test.js`: `@lit/reactive-element/reactive-element.js` and `notivue/package.json`.
+No browser page or baseline comparison runs. Every browser acceptance case in the table above remains **unexecuted**. No worktree server startup or package installation occurs.

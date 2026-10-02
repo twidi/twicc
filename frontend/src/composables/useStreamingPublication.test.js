@@ -65,3 +65,70 @@ test('actual SessionItem identity resolver rejects retained exit-only and real J
     props.syntheticKind = null
     assert.equal(liveBlock.value, null)
 })
+
+for (const providerFile of ['claude_code/ThinkingContent.vue', 'codex/Reasoning.vue']) {
+    test(`${providerFile}: reopening during closing preserves adaptive publication ownership`, async () => {
+        const { readFileSync } = await import('node:fs')
+        const { useDetailsClosing } = await import('./useDetailsClosing.js')
+        const { initBuffer, feedDelta, destroySessionBuffers } = await import('../utils/streamingBuffer.js')
+        const source = readFileSync(new URL(`../components/session/detail/items/${providerFile}`, import.meta.url), 'utf8')
+        function handler(name) {
+            const start = source.indexOf(`function ${name}(`), end = source.indexOf('\n}', start)
+            assert.ok(start >= 0 && end > start)
+            return source.slice(start, end + 2)
+        }
+        const identity = createStreamPublicationIdentity(`reopen-${providerFile}`, 'message', 0)
+        const frames = new Map(), publications = [], transitions = [], writes = []
+        let frameId = 0, controls, app
+        const oldRAF = globalThis.requestAnimationFrame, oldCancel = globalThis.cancelAnimationFrame
+        const oldBind = streamPublicationRegistry.bindBlock
+        globalThis.requestAnimationFrame = fn => { frames.set(++frameId, fn); return frameId }
+        globalThis.cancelAnimationFrame = id => frames.delete(id)
+        streamPublicationRegistry.bindBlock = (identity, callbacks) => oldBind(identity, {
+            ...callbacks, setActive(active) { transitions.push(active); callbacks.setActive(active) },
+        })
+        try {
+            initBuffer(identity.sessionId, 0, text => publications.push(text), { messageId: 'message', publicationIdentity: identity })
+            const Owner = { setup() {
+                const isOpen = ref(true)
+                const closing = useDetailsClosing()
+                useStreamingPublication({ identity: () => identity, bodyActive: () => isOpen.value || closing.isClosing() })
+                const dataStore = { setDetailOpen(...args) { writes.push(args) } }
+                controls = new Function('isOpen', 'clearClosing', 'markClosing', 'dataStore', 'props', 'detailKey',
+                    `${['onShow', 'onHide', 'onAfterHide'].map(handler).join('\n')}; return { onShow, onHide, onAfterHide }`)(
+                    isOpen, closing.clearClosing, closing.markClosing, dataStore,
+                    { sessionId: identity.sessionId, detailKey: 'line:-1000:0' }, computed(() => 'line:-1000:0'))
+                return () => h('span')
+            } }
+            app = renderer.createApp({ setup() {
+                provide(STREAMING_VIEW_CONTEXT, ref(true))
+                provide(STREAMING_ROW_CONTEXT, { intersection: ref('inside'), scrollerActive: ref(true) })
+                return () => h(Owner)
+            } })
+            app.mount({})
+            feedDelta(identity.sessionId, 0, 'Pending visible text')
+            assert.equal(frames.size, 1, 'Visible backlog has no adaptive RAF to preserve')
+            assert.deepEqual(publications, [], 'Visible backlog published before its first RAF')
+            const originalFrames = [...frames.entries()], before = [...publications]
+            const target = {}, event = { target, currentTarget: target }
+            controls.onHide(event)
+            controls.onShow(event)
+            assert.deepEqual(transitions, [true], 'Reopen introduces a false aggregate transition')
+            assert.deepEqual(publications, before, 'Reopen forces a full catch-up')
+            assert.deepEqual([...frames.entries()], originalFrames, 'Reopen cancels or replaces the adaptive RAF')
+            // Normal close owns the closing body until its actual after-hide boundary.
+            controls.onHide(event)
+            assert.deepEqual(transitions, [true])
+            controls.onAfterHide(event)
+            assert.deepEqual(transitions, [true, false])
+            assert.equal(frames.size, 0)
+            assert.deepEqual(writes.map(write => write[2]), [false, true, false])
+            assert.deepEqual(publications, before)
+        } finally {
+            app?.unmount()
+            destroySessionBuffers(identity.sessionId)
+            streamPublicationRegistry.bindBlock = oldBind
+            globalThis.requestAnimationFrame = oldRAF; globalThis.cancelAnimationFrame = oldCancel
+        }
+    })
+}
