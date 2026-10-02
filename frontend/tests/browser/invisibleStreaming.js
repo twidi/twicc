@@ -9,7 +9,7 @@ import { useSettingsStore } from '../../src/stores/settings'
 import { getParsedContent } from '../../src/utils/parsedContent'
 import { DISPLAY_LEVEL, DISPLAY_MODE, SYNTHETIC_ITEM } from '../../src/constants'
 import { streamPublicationRegistry } from '../../src/utils/streamPublicationRegistry.js'
-import { destroySessionBuffers } from '../../src/utils/streamingBuffer.js'
+import { destroySessionBuffers, isBufferActive } from '../../src/utils/streamingBuffer.js'
 import { installDetailsMotion } from '../../src/utils/detailsMotion'
 import { installWaMotionStyles } from '../../src/utils/waMotionStyles'
 import '../../src/utils/brandRobotIcon'
@@ -75,13 +75,17 @@ installWaMotionStyles()
 const query = new URLSearchParams(location.search)
 const provider = query.get('provider') === 'codex' ? 'codex' : 'claude_code'
 const baseline = query.get('baseline') === '1'
+const publicationRateBaseline = query.get('publicationRateBaseline') === '1'
+if (baseline && publicationRateBaseline) throw new Error('Fixture baseline=1 and publicationRateBaseline=1 are mutually exclusive')
 const projectId = 'invisible-stream-fixture-project'
 const mainId = 'invisible-stream-fixture-main', otherId = 'invisible-stream-fixture-other', agentId = 'invisible-stream-fixture-agent'
 const ids = new Set([mainId, otherId, agentId])
 const lineNum = SYNTHETIC_ITEM.STREAMING_BLOCK.baseLineNum
 const errors = [], requests = [], lifetimes = [], instances = new Map()
-const counters = { bufferFrames: 0, drains: 0, envelopes: 0, transitions: 0, bootstraps: 0 }
+const counters = { bufferFrames: 0, bufferExecutions: 0, drains: 0, envelopes: 0, transitions: 0, bootstraps: 0 }
 const reports = ref([])
+const rateReadingAbove = ref(false), rateHideReturn = ref(false), rateBusy = ref(false)
+const latestRateReport = ref(null)
 const secondaryMounted = ref(false), secondaryActive = ref(false)
 function toggleSecondary() { secondaryMounted.value = true; secondaryActive.value = !secondaryActive.value }
 window.addEventListener('error', event => errors.push(String(event.error || event.message)))
@@ -103,23 +107,48 @@ window.fetch = async (input, options = {}) => {
 }
 // Count only buffer RAF. The scroller and motion RAF are separate work.
 const nativeRAF = window.requestAnimationFrame.bind(window)
+let rateRun = null
+let executingBufferRAF = false
 window.requestAnimationFrame = callback => {
-    if (new Error().stack?.includes('streamingBuffer.js') || new Error().stack?.includes('invisibleStreamingBaselineBuffer.js')) counters.bufferFrames++
-    return nativeRAF(callback)
+    const stack = new Error().stack || ''
+    const buffer = ['streamingBuffer.js', 'invisibleStreamingBaselineBuffer.js', 'publicationRateBaselineBuffer.js']
+        .some(name => stack.includes(name))
+    if (buffer) counters.bufferFrames++
+    return nativeRAF(time => {
+        if (!buffer) return callback(time)
+        counters.bufferExecutions++
+        if (rateRun) rateRun.rafOpportunities.push(performance.now() - rateRun.startedAt)
+        executingBufferRAF = true
+        try { callback(time) } finally { executingBufferRAF = false }
+    })
 }
 const originalBind = streamPublicationRegistry.bindBlock
 streamPublicationRegistry.bindBlock = (identity, callbacks) => originalBind(identity, {
-    setActive(active) { counters.transitions++; callbacks.setActive(active) },
-    snapshot() { counters.bootstraps++; callbacks.snapshot() },
+    setActive(active) { counters.transitions++; withPublicationBoundary('activation', () => callbacks.setActive(active)) },
+    snapshot() { counters.bootstraps++; withPublicationBoundary('bootstrap', () => callbacks.snapshot()) },
 })
 const pinia = createPinia()
 // Baseline must define data first in a fresh Pinia. All production components retrieve this same ID.
-const dataFactory = baseline
-    ? (await import(/* @vite-ignore */ '../../src/stores/invisibleStreamingBaselineData.js')).useDataStore
-    : useDataStore
+let dataFactory = useDataStore
+let destroyFixtureSessionBuffers = destroySessionBuffers
+let isFixtureBufferActive = isBufferActive
+if (baseline || publicationRateBaseline) {
+    // Runtime paths keep Vite from resolving absent optional adapters in normal mode.
+    const dataAdapterPath = publicationRateBaseline
+        ? '../../src/stores/publicationRateBaselineData.js' : '../../src/stores/invisibleStreamingBaselineData.js'
+    const bufferAdapterPath = publicationRateBaseline
+        ? '../../src/utils/publicationRateBaselineBuffer.js' : '../../src/utils/invisibleStreamingBaselineBuffer.js'
+    dataFactory = (await import(/* @vite-ignore */ dataAdapterPath)).useDataStore
+    const bufferAdapter = await import(/* @vite-ignore */ bufferAdapterPath)
+    destroyFixtureSessionBuffers = bufferAdapter.destroySessionBuffers
+    isFixtureBufferActive = bufferAdapter.isBufferActive
+}
 const store = dataFactory(pinia)
 if (useDataStore(pinia) !== store) throw new Error('Production components do not share the selected data store')
 const settings = useSettingsStore(pinia)
+// No settings watchers or WebSocket bootstrap run here. These gates stay in fixture memory.
+settings.disabledProviders = []
+store.providerStates = { claude_code: 'running', codex: 'running' }
 settings.setDisplayMode(DISPLAY_MODE.NORMAL)
 store.projects[projectId] = { id: projectId, directory: '/invisible-stream-fixture', name: 'Invisible stream fixture', sessions_count: 3 }
 store.projectsLoaded = true
@@ -161,14 +190,30 @@ function seedHistory(id, count) {
     store.addSessionItems(id, added)
     store.sessions[id].last_line = count
 }
+function withPublicationBoundary(label, callback) {
+    if (!rateRun) return callback()
+    const previous = rateRun.boundary
+    rateRun.boundary = label
+    try { return callback() } finally { rateRun.boundary = previous }
+}
 const originalDrain = store._onBufferDrain
 store._onBufferDrain = (id, index, text) => {
     counters.drains++
     const row = store.localState.visualItemCache[id]?.get(lineNum - index)
     const before = row && getParsedContent(row)
+    const previousText = store.localState.streamingBlocks[id]?.blocks.find(block => block.blockIndex === index)?.displayedText
     originalDrain(id, index, text)
+    if (rateRun && id === mainId && index === 0 && previousText !== text) {
+        const at = performance.now() - rateRun.startedAt
+        const label = rateRun.boundary || (executingBufferRAF ? 'regular' : 'explicit snapshot')
+        rateRun.publications.push({ at, label, phase: rateRun.phase, text, length: text.length,
+            canonicalLength: store.localState.streamingBlocks[id]?.blocks[0]?.text.length ?? null })
+    }
     if (row && before !== getParsedContent(row)) counters.envelopes++
 }
+document.addEventListener('visibilitychange', () => {
+    if (rateRun) rateRun.visibilityChanges.push({ at: performance.now() - rateRun.startedAt, state: document.visibilityState, hidden: document.hidden })
+})
 const noop = { render: () => null }
 const router = createRouter({ history: createMemoryHistory(), routes: [{
     path: '/project/:projectId/session/:sessionId', name: 'session', component: SessionView,
@@ -189,7 +234,13 @@ function tag(instance) {
     return { file, uid: instance.$.uid, sessionId: instance.$props.sessionId, lineNum: instance.$props.lineNum ?? instance.$props.itemKey }
 }
 const app = createApp({ setup: () => () => [
-    h('div', { id: 'fixture-controls' }, [h('strong', `${provider} / ${baseline ? 'baseline aeaf1838' : 'implementation'}`),
+    h('div', { id: 'fixture-controls' }, [h('strong', `${provider} / ${baseline ? 'baseline aeaf1838' : publicationRateBaseline ? 'rate baseline 1f7d16ef' : 'implementation'}`),
+        h('label', [h('input', { type: 'checkbox', checked: rateReadingAbove.value, disabled: rateBusy.value, onChange: event => { rateReadingAbove.value = event.target.checked } }), 'Rate: read above bottom']),
+        h('label', [h('input', { type: 'checkbox', checked: rateHideReturn.value, disabled: rateBusy.value, onChange: event => { rateHideReturn.value = event.target.checked } }), 'Rate: route hide and return']),
+        h('button', { disabled: rateBusy.value, onClick: () => runPublicationRateScenario({ blockType: 'text', sourceKind: 'plain' }) }, 'Publication rate: plain text'),
+        h('button', { disabled: rateBusy.value, onClick: () => runPublicationRateScenario({ blockType: 'text', sourceKind: 'code' }) }, 'Publication rate: fenced code'),
+        h('button', { disabled: rateBusy.value, onClick: () => runPublicationRateScenario({ blockType: 'thinking', sourceKind: 'plain' }) }, 'Publication rate: open thinking'),
+        h('button', { onClick: () => readingAbove() }, 'Read above bottom'),
         h('button', { onClick: () => runHiddenThinking() }, 'Closed thinking: 1000 hidden deltas'),
         h('button', { onClick: () => runVisible('text') }, 'Visible text'),
         h('button', { onClick: () => runVisible('thinking') }, 'Visible thinking'),
@@ -208,6 +259,7 @@ const app = createApp({ setup: () => () => [
         secondaryMounted.value ? h('aside', { style: { display: secondaryActive.value ? 'flex' : 'none', width: '38%', minHeight: 0, borderLeft: '1px solid gray' } },
             [h(SessionItemsList, { sessionId: mainId, projectId, viewActive: secondaryActive.value })]) : null]),
     h('pre', { id: 'fixture-report' }, JSON.stringify(reports.value, null, 2)),
+    h('pre', { id: 'publication-rate-report', style: { display: 'none' } }, JSON.stringify(latestRateReport.value, null, 2)),
 ] })
 app.mixin({ mounted() { const entry = tag(this); if (entry) { instances.set(entry.uid, this); lifetimes.push({ ...entry, event: 'mounted' }) } },
     unmounted() { const entry = tag(this); if (entry) { instances.delete(entry.uid); lifetimes.push({ ...entry, event: 'unmounted' }) } } })
@@ -238,7 +290,7 @@ function geometry(id = currentId()) {
         anchor: anchor?.dataset.itemKey ?? null, anchorOffset: anchor ? anchor.getBoundingClientRect().top - rect.top : null }
 }
 function snapshot() {
-    return { provider, baseline, counters: { ...counters }, geometry: geometry(), text: row()?.innerText || '',
+    return { provider, baseline, publicationRateBaseline, counters: { ...counters }, geometry: geometry(), text: row()?.innerText || '',
         rows: lifetimes.filter(entry => entry.lineNum === lineNum), requests: [...requests], errors: [...errors] }
 }
 function viewportDiagnostics() {
@@ -283,6 +335,171 @@ function scenarioReport(name, phases, inputs = {}) {
 function resetCounters() { for (const key of Object.keys(counters)) counters[key] = 0 }
 function assert(condition, message) { if (!condition) throw new Error(message) }
 function report(name, before, extra = {}) { const result = { name, before, after: snapshot(), ...extra }; reports.value.push(result); return result }
+const publicationRateSchedule = Object.freeze({ chunkSize: 200, intervalMs: 20, deliveries: 100, observationMs: 400 })
+function publicationRateSource(sourceKind) {
+    const length = publicationRateSchedule.chunkSize * publicationRateSchedule.deliveries
+    if (sourceKind === 'code') {
+        const opening = '```javascript\n', closing = '\n```'
+        const body = 'const value = "Stable code publication"; // Read the growing code.\n'
+        return opening + body.repeat(Math.ceil(length / body.length)).slice(0, length - opening.length - closing.length) + closing
+    }
+    const paragraph = 'Stable plain text publication. Read the growing paragraph.\n\n'
+    return paragraph.repeat(Math.ceil(length / paragraph.length)).slice(0, length)
+}
+function finalItemText(item) {
+    const parsed = getParsedContent(item)
+    if (parsed.message) return parsed.message.content.map(block => block.text ?? block.thinking ?? '').join('')
+    if (parsed.payload?.summary) return parsed.payload.summary.map(block => block.text ?? '').join('')
+    return parsed.payload?.item?.content?.map(block => block.text ?? '').join('') ?? ''
+}
+async function runPublicationRateScenario({ blockType = 'text', sourceKind = 'plain',
+    readingAbove = rateReadingAbove.value, hideReturn = rateHideReturn.value } = {}) {
+    assert(!rateBusy.value, 'A publication rate scenario already runs')
+    assert(blockType === 'text' || blockType === 'thinking', 'Invalid publication block type')
+    assert(sourceKind === 'plain' || sourceKind === 'code', 'Invalid publication source kind')
+    rateBusy.value = true
+    latestRateReport.value = { status: 'running', provider, blockType, sourceKind, publicationRateBaseline, readingAbove, hideReturn }
+    const timers = [], routeWork = []
+    const result = { name: 'publication rate', status: 'running', provider,
+        mode: publicationRateBaseline ? 'rate baseline 1f7d16ef' : baseline ? 'priority-2 baseline aeaf1838' : 'implementation',
+        blockType, sourceKind, readingAbove, hideReturn, viewport: viewportDiagnostics(),
+        schedule: publicationRateSchedule, source: publicationRateSource(sourceKind),
+        deliveries: [], publications: [], rafOpportunities: [], phases: [], visibilityChanges: [], errors: [] }
+    const mark = phase => {
+        result.phase = phase
+        result.phases.push({ phase, at: performance.now() - result.startedAt, geometry: geometry(mainId),
+            documentVisibility: document.visibilityState, documentHidden: document.hidden,
+            route: router.currentRoute.value.name, currentSession: currentId(),
+            viewActive: listInstance(mainId)?.$props.viewActive,
+            bufferActive: isFixtureBufferActive(mainId, store.localState.streamingBlocks[mainId]?.messageId, 0),
+            rowRect: row(mainId)?.getBoundingClientRect().toJSON() ?? null,
+            thinkingOpen: row(mainId)?.querySelector('wa-details')?.open ?? null })
+    }
+    try {
+        // Reset every fixture session through its selected buffer map before clearing store state.
+        for (const id of ids) {
+            destroyFixtureSessionBuffers(id)
+            delete store.localState.streamingBlocks[id]
+            seedSession(id, id === agentId ? mainId : null)
+            store.recomputeVisualItems(id)
+        }
+        secondaryActive.value = false
+        await router.push({ name: 'session', params: { projectId, sessionId: mainId } })
+        viewInstance()?.$.setupState.layout.restoreMaximized()
+        await settle()
+        resetCounters()
+        result.startedAt = performance.now()
+        rateRun = result
+        mark('setup')
+        const messageId = start(blockType, mainId)
+        await settle(100)
+        const scroller = listInstance(mainId)?.$.setupState.scrollerRef
+        assert(scroller, 'Main production scroller is missing')
+        await scroller.scrollToEdge('bottom', { maxAttempts: 12 })
+        await settle(100)
+        if (blockType === 'thinking') {
+            const details = row(mainId)?.querySelector('wa-details')
+            assert(details, 'Production thinking details is missing')
+            details.show()
+            await settle(450)
+            assert(details.open, 'Production thinking details does not open')
+        }
+        if (readingAbove) { scroller.setScrollTop(200); await settle(100) }
+        result.geometryBefore = geometry(mainId)
+        result.scrollerBefore = scrollerDiagnostics(listInstance(mainId))
+        result.feedStartedAt = performance.now() - result.startedAt
+        mark('feed')
+        if (hideReturn) {
+            // Navigation runs independently of feed timers. It never changes scheduled delivery deadlines.
+            for (const [delay, sessionId, phase] of [[800, otherId, 'route hide'], [1200, mainId, 'route return']]) {
+                timers.push(setTimeout(() => {
+                    mark(phase)
+                    routeWork.push(router.push({ name: 'session', params: { projectId, sessionId } })
+                        .catch(error => result.errors.push(String(error))))
+                }, delay))
+            }
+        }
+        for (let index = 0; index < publicationRateSchedule.deliveries; index++) {
+            const scheduledAt = result.feedStartedAt + (index + 1) * publicationRateSchedule.intervalMs
+            await new Promise(resolve => setTimeout(resolve, Math.max(0, result.startedAt + scheduledAt - performance.now())))
+            const chunk = result.source.slice(index * publicationRateSchedule.chunkSize, (index + 1) * publicationRateSchedule.chunkSize)
+            const deliveredAt = performance.now() - result.startedAt
+            result.deliveries.push({ index, scheduledAt, deliveredAt, text: chunk, length: chunk.length })
+            feed(chunk, mainId, messageId)
+        }
+        await Promise.all(routeWork)
+        mark('observe backlog')
+        await new Promise(resolve => setTimeout(resolve, publicationRateSchedule.observationMs))
+        const stream = store.localState.streamingBlocks[mainId]
+        const block = stream?.blocks[0]
+        result.canonicalText = block?.text ?? null
+        result.displayedText = block?.displayedText ?? null
+        result.canonicalEqualsSource = result.canonicalText === result.source
+        result.displayedEqualsSource = result.displayedText === result.source
+        const streamingRow = store.localState.visualItemCache[mainId]?.get(lineNum)
+        const parsed = streamingRow ? getParsedContent(streamingRow) : null
+        const content = parsed?.message?.content?.[0]
+        result.parsedDisplayedText = content?.text ?? content?.thinking ?? null
+        result.parsedDisplayedEqualsSource = result.parsedDisplayedText === result.source
+        result.geometryBeforeRetirement = geometry(mainId)
+        result.scrollerBeforeRetirement = scrollerDiagnostics(listInstance(mainId))
+        mark('terminal retirement')
+        withPublicationBoundary('terminal', () => {
+            const uuid = `final-${messageId}`
+            store.streamBlockStop(mainId, messageId, 0)
+            store.streamBlockEnd(mainId, messageId, 0, uuid)
+            const realLine = store.sessionItems[mainId].length + 1
+            store.addSessionItems(mainId, [{ line_num: realLine,
+                kind: blockType === 'thinking' && provider === 'codex' ? 'reasoning' : 'assistant_message',
+                display_level: DISPLAY_LEVEL.ALWAYS, group_head: null, group_tail: null,
+                stream_uuid: provider === 'codex' ? uuid : undefined,
+                content: JSON.stringify(finalContent(result.source, blockType, messageId, uuid)) }])
+            store.sessions[mainId].last_line = realLine
+            result.realLine = realLine
+        })
+        await settle(700)
+        result.finalText = finalItemText(store.sessionItems[mainId].at(-1))
+        result.finalTextEqualsSource = result.finalText === result.source
+        result.retired = !store.localState.streamingBlocks[mainId]
+        result.finalDOMText = listInstance(mainId)?.$el.querySelector(`[data-line-num="${result.realLine}"]`)?.innerText ?? null
+        result.geometryAfter = geometry(mainId)
+        result.scrollerAfter = scrollerDiagnostics(listInstance(mainId))
+        assert(result.canonicalEqualsSource, 'Canonical text loses feed characters')
+        assert(result.finalTextEqualsSource && result.retired, 'Final retirement loses source text or keeps streaming state')
+        if (!readingAbove) assert(result.displayedEqualsSource && result.parsedDisplayedEqualsSource, 'Visible displayed text does not complete before retirement')
+        result.status = 'complete'
+    } catch (error) {
+        result.status = 'failed'
+        result.errors.push(String(error))
+    } finally {
+        for (const timer of timers) clearTimeout(timer)
+        await Promise.all(routeWork)
+        const regular = result.publications.filter(publication => publication.label === 'regular')
+        const exceptions = result.publications.filter(publication => publication.label !== 'regular')
+        result.regularPublications = regular.length
+        result.exceptionalPublications = exceptions.length
+        result.exceptionCounts = Object.fromEntries([...new Set(exceptions.map(publication => publication.label))]
+            .map(label => [label, exceptions.filter(publication => publication.label === label).length]))
+        result.regularPublicationGaps = regular.slice(1).map((publication, index) => publication.at - regular[index].at)
+        result.minimumRegularGapMs = result.regularPublicationGaps.length ? Math.min(...result.regularPublicationGaps) : null
+        result.backlogCompletionTimes = regular.filter(publication => publication.length === publication.canonicalLength)
+            .map(publication => publication.at)
+        result.counters = { ...counters }
+        result.bufferRAFExecutions = counters.bufferExecutions
+        result.parsedEnvelopeChanges = counters.envelopes
+        result.errors.push(...errors)
+        destroyFixtureSessionBuffers(mainId)
+        if (store.localState.streamingBlocks[mainId]) {
+            delete store.localState.streamingBlocks[mainId]
+            store.recomputeVisualItems(mainId)
+        }
+        rateRun = null
+        rateBusy.value = false
+        latestRateReport.value = result
+        reports.value.push(result)
+    }
+    return result
+}
 let messageSequence = 0
 function start(blockType = 'text', id = currentId(), messageId = `fixture-message-${++messageSequence}`) {
     store.streamBlockStart(id, messageId, 0, blockType)
@@ -349,7 +566,7 @@ async function runDockPreflight() {
         'Restoring Tasks resumes the current block more than once')
     assertTasksDock(layout)
     await navigate('main')
-    destroySessionBuffers(mainId)
+    destroyFixtureSessionBuffers(mainId)
     delete store.localState.streamingBlocks[mainId]
     store.recomputeVisualItems(mainId)
     await settle()
@@ -447,7 +664,7 @@ async function runReconcileHideReturn({ expectedViewport = null } = {}) {
     const target = listInstance(mainId)
     const scroller = target.$.setupState.scrollerRef
     if (store.localState.streamingBlocks[mainId]) {
-        destroySessionBuffers(mainId)
+        destroyFixtureSessionBuffers(mainId)
         delete store.localState.streamingBlocks[mainId]
         store.recomputeVisualItems(mainId)
     }
@@ -616,11 +833,11 @@ async function reconnectSameMessage() {
     return report('same-field reconnect', snapshot())
 }
 // Browser control can exercise the remaining production controls and save these diagnostics.
-window.invisibleStreamingFixture = { store, router, provider, baseline, ids: { mainId, otherId, agentId }, counters,
+window.invisibleStreamingFixture = { store, router, provider, baseline, publicationRateBaseline, ids: { mainId, otherId, agentId }, counters,
     start, feed, settle, snapshot, geometry, resetCounters, navigate, switchSession, selectSubagent,
     maximizeDock, restoreDock, runDockPreflight, toggleSecondary, secondaryActive, runHiddenThinking, runVisible, readingAbove, displayMode, reconnectSameMessage,
-    viewportDiagnostics, sessionRows, scrollerDiagnostics, runLargeHistorySuspension, runPendingRevealHide, runReconcileHideReturn,
-    clear(id = currentId()) { destroySessionBuffers(id); delete store.localState.streamingBlocks[id]; store.recomputeVisualItems(id) },
+    runPublicationRateScenario, viewportDiagnostics, sessionRows, scrollerDiagnostics, runLargeHistorySuspension, runPendingRevealHide, runReconcileHideReturn,
+    clear(id = currentId()) { destroyFixtureSessionBuffers(id); delete store.localState.streamingBlocks[id]; store.recomputeVisualItems(id) },
     exportEvidence() { return JSON.stringify({ reports: reports.value, requests, errors, lifetimes }, null, 2) },
 }
 await settle(450)

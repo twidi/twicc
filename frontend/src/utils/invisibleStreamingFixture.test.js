@@ -107,3 +107,136 @@ test('suspension diagnostics include viewport inputs and latest rows', () => {
     assert.match(fixture, /function sessionRows\(/)
     assert.match(fixture, /function scenarioReport\(/)
 })
+
+const adapterURL = new URL('../../tests/browser/preparePublicationRateBaseline.mjs', import.meta.url)
+test('rate adapter preparation pins source, root, import, and exclusive writes', async () => {
+    const { prepareAdapters, EXPECTED_ROOT, BASELINE_COMMIT } = await import(adapterURL)
+    assert.equal(BASELINE_COMMIT, '1f7d16ef')
+    assert.equal(EXPECTED_ROOT, '/home/twidi/dev/twicc-poc/.worktrees/bugfix-stable-streaming-rows')
+    const files = new Map(), calls = []
+    const operations = {
+        git(args) { calls.push(args); return args[0] === 'rev-parse' ? EXPECTED_ROOT : args[1].endsWith('data.js')
+            ? "import { x } from '../utils/streamingBuffer'\nregistry unchanged" : 'old buffer' },
+        write(path, text, options) { assert.equal(options.flag, 'wx'); if (files.has(path)) throw Error('exists'); files.set(path, text) },
+        read(path) { if (!files.has(path)) throw Object.assign(Error('missing'), { code: 'ENOENT' }); return files.get(path) },
+        remove(path) { files.delete(path) },
+    }
+    prepareAdapters({ operations })
+    assert.equal(files.size, 2)
+    assert.ok([...files.values()].includes("import { x } from '../utils/publicationRateBaselineBuffer'\nregistry unchanged"))
+    assert.ok(calls.some(args => args[1] === '1f7d16ef:frontend/src/utils/streamingBuffer.js'))
+    assert.throws(() => prepareAdapters({ operations }), /exists/)
+    assert.equal(files.size, 2)
+    prepareAdapters({ operations, remove: true })
+    assert.equal(files.size, 0)
+    assert.throws(() => prepareAdapters({ operations: { ...operations, git() { return '/wrong' } } }), /require/)
+    assert.throws(() => prepareAdapters({ operations: { ...operations, git(args) { return args[0] === 'rev-parse' ? EXPECTED_ROOT : 'wrong import' } } }), /import/)
+})
+test('rate adapter transaction preserves preexisting files and refuses unknown removal contents', async () => {
+    const { prepareAdapters, EXPECTED_ROOT } = await import(adapterURL)
+    const { mkdtempSync, writeFileSync, readFileSync: read, rmSync, existsSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join, basename } = await import('node:path')
+    const temp = mkdtempSync(join(tmpdir(), 'publication-rate-'))
+    const local = path => join(temp, basename(path))
+    const operations = {
+        git(args) { return args[0] === 'rev-parse' ? EXPECTED_ROOT : args[1].endsWith('data.js')
+            ? "import { x } from '../utils/streamingBuffer'" : 'old buffer' },
+        write(path, text, options) { writeFileSync(local(path), text, options) },
+        read(path) { return read(local(path), 'utf8') },
+        remove(path) { rmSync(local(path)) },
+    }
+    try {
+        const buffer = join(temp, 'publicationRateBaselineBuffer.js')
+        const data = join(temp, 'publicationRateBaselineData.js')
+        writeFileSync(buffer, 'developer buffer')
+        assert.throws(() => prepareAdapters({ operations }), /EEXIST/)
+        assert.equal(existsSync(data), false)
+        assert.equal(read(buffer, 'utf8'), 'developer buffer')
+        writeFileSync(data, "import { x } from '../utils/publicationRateBaselineBuffer'")
+        assert.throws(() => prepareAdapters({ operations, remove: true }), /contents/)
+        assert.equal(existsSync(data), true, 'Validate every file before deleting any file')
+        assert.equal(read(buffer, 'utf8'), 'developer buffer')
+    } finally { rmSync(temp, { recursive: true, force: true }) }
+})
+test('rate fixture routes adapters before store creation and selects all cleanup boundaries', () => {
+    assert.match(fixture, /publicationRateBaseline = query.get\('publicationRateBaseline'\) === '1'/)
+    assert.match(fixture, /if \(baseline && publicationRateBaseline\) throw new Error/)
+    assert.match(fixture, /await import\(\/\* @vite-ignore \*\/ dataAdapterPath\)/)
+    assert.ok(fixture.indexOf('destroyFixtureSessionBuffers =') < fixture.indexOf('const store = dataFactory(pinia)'))
+    assert.doesNotMatch(fixture, /destroySessionBuffers\(mainId\)|destroySessionBuffers\(id\)/)
+    assert.match(fixture, /clear\(id = currentId\(\)\) \{ destroyFixtureSessionBuffers\(id\)/)
+})
+test('rate fixture records execution, changed publications, fixed timed source, and visible reports', () => {
+    assert.match(fixture, /publicationRateBaselineBuffer\.js/)
+    assert.match(fixture, /counters.bufferExecutions\+\+/)
+    assert.match(fixture, /async function runPublicationRateScenario\(/)
+    assert.match(fixture, /chunkSize: 200, intervalMs: 20, deliveries: 100, observationMs: 400/)
+    assert.match(fixture, /regularPublications/)
+    assert.match(fixture, /canonicalEqualsSource/)
+    assert.match(fixture, /displayedEqualsSource/)
+    assert.match(fixture, /Publication rate: plain text/)
+    assert.match(fixture, /Publication rate: fenced code/)
+    assert.match(fixture, /Publication rate: open thinking/)
+    assert.match(fixture, /id: 'fixture-report'/)
+})
+
+test('selected fixture cleanup drains only its matching map across repeated clears', async () => {
+    const selection = fixture.slice(fixture.indexOf('let dataFactory = useDataStore'), fixture.indexOf('\nconst store = dataFactory(pinia)'))
+    const clear = fixture.match(/clear\(id = currentId\(\)\) \{ ([^\n]+) \}/)[1]
+    for (const mode of ['production', 'baseline', 'rate']) {
+        const production = new Map([['main', { handles: [1, 2] }]])
+        const baselineMap = new Map([['main', { handles: [3, 4] }]])
+        const canceled = []
+        const cleanup = map => id => {
+            canceled.push(...(map.get(id)?.handles ?? []))
+            map.delete(id)
+        }
+        const store = { localState: { streamingBlocks: { main: {} } }, recomputeVisualItems() {} }
+        const adapterPaths = []
+        const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
+        const load = new AsyncFunction('useDataStore', 'destroySessionBuffers', 'baseline', 'publicationRateBaseline', 'importAdapter', 'store', 'isBufferActive',
+            `${selection.replaceAll('import(/* @vite-ignore */', 'importAdapter(')}\nreturn { clear(id) { ${clear} }, dataFactory }`)
+        const selected = await load(() => 'production store', cleanup(production), mode === 'baseline', mode === 'rate', async path => {
+            adapterPaths.push(path)
+            return { useDataStore: () => 'adapter store', destroySessionBuffers: cleanup(baselineMap) }
+        }, store, () => false)
+        selected.clear('main')
+        selected.clear('main')
+        assert.equal(store.localState.streamingBlocks.main, undefined)
+        assert.equal(mode === 'production' ? production.size : baselineMap.size, 0)
+        assert.equal(mode === 'production' ? baselineMap.size : production.size, 1)
+        assert.deepEqual(canceled, mode === 'production' ? [1, 2] : [3, 4])
+        if (mode === 'rate') assert.ok(adapterPaths.every(path => path.includes('publicationRateBaseline')))
+    }
+})
+test('rate sources contain exactly 100 equal chunks and a complete fenced code block', () => {
+    const start = fixture.indexOf('const publicationRateSchedule =')
+    const end = fixture.indexOf('\nfunction finalItemText(', start)
+    const { publicationRateSource, publicationRateSchedule } = new Function(`${fixture.slice(start, end)}; return { publicationRateSource, publicationRateSchedule }`)()
+    assert.deepEqual(publicationRateSchedule, { chunkSize: 200, intervalMs: 20, deliveries: 100, observationMs: 400 })
+    for (const kind of ['plain', 'code']) {
+        const source = publicationRateSource(kind)
+        assert.equal(source.length, 20000)
+        const chunks = Array.from({ length: 100 }, (_, index) => source.slice(index * 200, (index + 1) * 200))
+        assert.ok(chunks.every(chunk => chunk.length === 200))
+        assert.equal(chunks.join(''), source)
+        assert.equal(publicationRateSource(kind), source)
+        if (kind === 'code') { assert.ok(source.startsWith('```javascript\n')); assert.ok(source.endsWith('\n```')) }
+    }
+})
+
+test('fixture seeds both provider gates only in its local Pinia state', () => {
+    assert.match(fixture, /settings.disabledProviders = \[\]/)
+    assert.match(fixture, /store.providerStates = \{ claude_code: 'running', codex: 'running' \}/)
+    assert.doesNotMatch(fixture, /initSettings\(|sendSyncedSettings\(/)
+    assert.match(fixture, /if \(method !== 'GET'\) throw new Error/)
+})
+
+test('rate reports distinguish document visibility, registry activity, and actual frame opportunities', () => {
+    assert.match(fixture, /documentVisibility: document.visibilityState/)
+    assert.match(fixture, /documentHidden: document.hidden/)
+    assert.match(fixture, /bufferActive: isFixtureBufferActive\(mainId, store\.localState\.streamingBlocks\[mainId\]\?\.messageId, 0\)/)
+    assert.match(fixture, /viewActive: listInstance\(mainId\)\?\.\$props.viewActive/)
+    assert.match(fixture, /visibilityChanges/)
+})

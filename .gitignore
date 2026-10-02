@@ -335,3 +335,7 @@ AGENTS.local.md
 /.claude/
 .superpowers/
 .codex
+
+# Optional rate-only browser fixture adapters.
+/frontend/src/stores/publicationRateBaselineData.js
+/frontend/src/utils/publicationRateBaselineBuffer.js
