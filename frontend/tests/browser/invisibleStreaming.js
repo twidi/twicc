@@ -2,6 +2,7 @@
 import { createApp, h, KeepAlive, nextTick, ref } from 'vue'
 import { createPinia } from 'pinia'
 import { createRouter, createMemoryHistory, RouterView } from 'vue-router'
+import SessionItemsList from '../../src/components/session/detail/SessionItemsList.vue'
 import SessionView from '../../src/views/SessionView.vue'
 import { useDataStore } from '../../src/stores/data'
 import { useSettingsStore } from '../../src/stores/settings'
@@ -81,6 +82,8 @@ const lineNum = SYNTHETIC_ITEM.STREAMING_BLOCK.baseLineNum
 const errors = [], requests = [], lifetimes = [], instances = new Map()
 const counters = { bufferFrames: 0, drains: 0, envelopes: 0, transitions: 0, bootstraps: 0 }
 const reports = ref([])
+const secondaryMounted = ref(false), secondaryActive = ref(false)
+function toggleSecondary() { secondaryMounted.value = true; secondaryActive.value = !secondaryActive.value }
 window.addEventListener('error', event => errors.push(String(event.error || event.message)))
 window.addEventListener('unhandledrejection', event => errors.push(String(event.reason)))
 // This responder accepts synthetic read routes only. Unexpected reads and all mutations fail closed.
@@ -180,8 +183,11 @@ const app = createApp({ setup: () => () => [
         h('button', { onClick: () => maximizeDock() }, 'Maximize task dock'),
         h('button', { onClick: () => restoreDock() }, 'Restore center'),
         h('button', { onClick: () => switchSession() }, 'Switch session'),
-        h('button', { onClick: () => selectSubagent() }, 'Select subagent')]),
-    h('div', { id: 'conversation' }, [h(RouterView, {}, { default: ({ Component, route }) => h(KeepAlive, {}, () => h(Component, { key: route.params.sessionId })) })]),
+        h('button', { onClick: () => selectSubagent() }, 'Select subagent'),
+        h('button', { onClick: toggleSecondary }, 'Show/hide second main Chat')]),
+    h('div', { id: 'conversation' }, [h(RouterView, {}, { default: ({ Component, route }) => h(KeepAlive, {}, () => h(Component, { key: route.params.sessionId })) }),
+        secondaryMounted.value ? h('aside', { style: { display: secondaryActive.value ? 'flex' : 'none', width: '38%', minHeight: 0, borderLeft: '1px solid gray' } },
+            [h(SessionItemsList, { sessionId: mainId, projectId, viewActive: secondaryActive.value })]) : null]),
     h('pre', { id: 'fixture-report' }, JSON.stringify(reports.value, null, 2)),
 ] })
 app.mixin({ mounted() { const entry = tag(this); if (entry) { instances.set(entry.uid, this); lifetimes.push({ ...entry, event: 'mounted' }) } },
@@ -337,7 +343,7 @@ async function reconnectSameMessage() {
 // Browser control can exercise the remaining production controls and save these diagnostics.
 window.invisibleStreamingFixture = { store, router, provider, baseline, ids: { mainId, otherId, agentId }, counters,
     start, feed, settle, snapshot, geometry, resetCounters, navigate, switchSession, selectSubagent,
-    maximizeDock, restoreDock, runHiddenThinking, runVisible, readingAbove, displayMode, reconnectSameMessage,
+    maximizeDock, restoreDock, toggleSecondary, secondaryActive, runHiddenThinking, runVisible, readingAbove, displayMode, reconnectSameMessage,
     clear(id = currentId()) { destroySessionBuffers(id); delete store.localState.streamingBlocks[id]; store.recomputeVisualItems(id) },
     exportEvidence() { return JSON.stringify({ reports: reports.value, requests, errors, lifetimes }, null, 2) },
 }

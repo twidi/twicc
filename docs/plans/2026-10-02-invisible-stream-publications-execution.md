@@ -82,6 +82,8 @@ Mixin diagnostics record outer row component UIDs. Geometry reads record physica
 
 Prepared controls cover closed thinking, visible text/thinking/proposed plans, final `addSessionItems` reconciliation, tasks-route ownership,
 actual layout maximize/restore, subagent selection, KeepAlive session switching, display-mode changes, and same-field reconnect.
+A secondary production SessionItemsList can show/hide the same main-session block beside the SessionView.
+Its explicit viewActive input changes independently, without replacing the primary hierarchy.
 The console API is `window.invisibleStreamingFixture`.
 Required hidden delta counters reset after observer/reveal settling.
 Visible scenarios use real exposed scroller navigation. They never force `scrollTop = scrollHeight` to hide baseline failures.
@@ -135,7 +137,7 @@ Every case below remains **unexecuted** for both providers. Unit evidence does n
 | Tool dock maximize/restore | Unexecuted |
 | Selected subagent versus hidden main Chat | Unexecuted |
 | KeepAlive switch and current-generation acquisition on return | Unexecuted |
-| Two simultaneous views sharing one block | Unexecuted; secondary fixture not yet prepared |
+| Two simultaneous views sharing one block | Unexecuted; secondary production SessionItemsList view prepared |
 | Actual document hide/show | Unexecuted |
 | Provider final-item replacement and detail-state transfer | Unexecuted |
 | Next message reuses the synthetic index | Unexecuted |
