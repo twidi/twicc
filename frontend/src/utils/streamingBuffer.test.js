@@ -56,7 +56,9 @@ test('canceled frame A cannot mutate or steal resumed frame B', () => frames(({ 
     assert.deepEqual(publications, before)
     assert.deepEqual([...pending.keys()], [b])
     advance()
-    assert.equal(publications.at(-1), 'old pending textabc')
+    assert.equal(publications.at(-1), 'old pending text')
+    advance(18)
+    assert.equal(publications.at(-1), 'old pending textabcdef')
     assert.equal(pending.size, 1)
 }))
 test('mismatched message and destroyed buffers cannot publish', () => frames(({ publications, callbacks }) => {

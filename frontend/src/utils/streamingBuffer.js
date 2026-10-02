@@ -15,12 +15,14 @@ import { streamPublicationRegistry } from './streamPublicationRegistry.js'
 
 const WINDOW_SIZE = 5    // number of recent deltas for rate calculation
 const MAX_DT = 100       // cap frame dt (ms) to prevent jumps after tab switch
+const PUBLICATION_INTERVAL_MS = 1000 / 30
+const MAX_DISPLAY_LAG_MS = 250
 const DEFAULT_RATE = 200 / 1000  // 200 chars/s → 0.2 chars/ms (used for first delta)
 
 class BlockBuffer {
     /**
      * @param {(displayedText: string) => void} onDrain
-     *   Called each frame with the text to display (growing substring).
+     *   Called at eligible publications with a growing text prefix.
      */
     constructor(onDrain, { messageId = null, publicationIdentity = null, active = false } = {}) {
         this.messageId = messageId
@@ -34,38 +36,34 @@ class BlockBuffer {
         this.rateCharsPerMs = 0
         this.fractionalChars = 0
         this.rafId = null
-        this.lastFrameTime = null
+        this.lastAdvanceTime = null
+        this.lastPublicationTime = null
+        this.pendingSince = null
+        this.lifecycleGeneration = 0
         this.firstDelta = true
     }
 
     pushDelta(text) {
+        if (!text.length) return
         const now = performance.now()
+        const caughtUp = this.displayedLength === this.fullText.length
         this.fullText += text
         if (!this.active) return
 
+        if (caughtUp) {
+            this.resetRate()
+            this.pendingSince = now
+            this.lastAdvanceTime = now
+        }
+        this.deltaHistory.push({ time: now, chars: text.length })
+        if (this.deltaHistory.length > WINDOW_SIZE) this.deltaHistory.shift()
         if (this.firstDelta) {
             this.firstDelta = false
-            this.deltaHistory.push({ time: now, chars: text.length })
             this.rateCharsPerMs = DEFAULT_RATE
-
-            if (this.rafId === null) {
-                this.lastFrameTime = now
-                this._scheduleFrame()
-            }
-            return
+        } else {
+            this._updateRate()
         }
-
-        this.deltaHistory.push({ time: now, chars: text.length })
-        if (this.deltaHistory.length > WINDOW_SIZE) {
-            this.deltaHistory.shift()
-        }
-
-        this._updateRate()
-
-        if (this.rafId === null) {
-            this.lastFrameTime = now
-            this._scheduleFrame()
-        }
+        if (this.rafId === null) this._scheduleFrame()
     }
 
     _updateRate() {
@@ -83,40 +81,46 @@ class BlockBuffer {
     _scheduleFrame() {
         const token = {}
         this.requestToken = token
-        this.rafId = requestAnimationFrame((time) => {
+        this.rafId = requestAnimationFrame(() => {
             if (this.requestToken !== token || !this.active) return
-            this._onFrame(time)
+            this._onFrame()
         })
     }
 
-    _onFrame(time) {
-        const dt = Math.min(time - this.lastFrameTime, MAX_DT)
-        this.lastFrameTime = time
-
-        const remaining = this.fullText.length - this.displayedLength
-        if (remaining <= 0) {
-            this.rafId = null
+    _onFrame() {
+        const now = performance.now()
+        const generation = this.lifecycleGeneration
+        this.requestToken = null
+        this.rafId = null
+        if (this.displayedLength >= this.fullText.length) return
+        if (this.lastPublicationTime !== null && now - this.lastPublicationTime < PUBLICATION_INTERVAL_MS) {
+            this._scheduleFrame()
             return
         }
 
-        this.fractionalChars += this.rateCharsPerMs * dt
-        let charsToShow = Math.floor(this.fractionalChars)
-        this.fractionalChars -= charsToShow
-
-        if (charsToShow < 1) charsToShow = 1
-        charsToShow = Math.min(charsToShow, remaining)
-
-        this.displayedLength += charsToShow
+        if (now - this.pendingSince >= MAX_DISPLAY_LAG_MS) {
+            this.displayedLength = this.fullText.length
+            this.resetRate()
+        } else {
+            const dt = Math.min(now - this.lastAdvanceTime, MAX_DT)
+            this.lastAdvanceTime = now
+            this.fractionalChars += this.rateCharsPerMs * dt
+            const wholeChars = Math.floor(this.fractionalChars)
+            this.fractionalChars -= wholeChars
+            this.displayedLength = Math.min(this.fullText.length, this.displayedLength + Math.max(1, wholeChars))
+        }
+        if (this.displayedLength === this.fullText.length) this.pendingSince = null
+        this.lastPublicationTime = now
         this.onDrain(this.fullText.substring(0, this.displayedLength))
 
-        if (this.displayedLength < this.fullText.length) {
+        if (this.lifecycleGeneration === generation && this.active &&
+            this.displayedLength < this.fullText.length && this.rafId === null) {
             this._scheduleFrame()
-        } else {
-            this.rafId = null
         }
     }
 
     cancel() {
+        this.lifecycleGeneration++
         this.requestToken = null
         if (this.rafId !== null) cancelAnimationFrame(this.rafId)
         this.rafId = null
@@ -125,7 +129,7 @@ class BlockBuffer {
     resetRate() {
         this.deltaHistory = []
         this.fractionalChars = 0
-        this.lastFrameTime = null
+        this.lastAdvanceTime = null
         this.rateCharsPerMs = 0
         this.firstDelta = true
     }
@@ -135,7 +139,11 @@ class BlockBuffer {
         const changed = this.displayedLength !== this.fullText.length
         this.displayedLength = this.fullText.length
         this.resetRate()
-        if (changed && publish) this.onDrain(this.fullText)
+        this.pendingSince = null
+        if (changed && publish) {
+            this.lastPublicationTime = performance.now()
+            this.onDrain(this.fullText)
+        }
     }
 
     setActive(active) {
