@@ -140,7 +140,9 @@ async function executeGapLoad() {
         gapRetryPending = false
     }
 }
-watch(missingLines, () => scheduleGapLoad())
+// A changed availability window permits retry, including a previously filled gap.
+// Equal candidate snapshots stay stable, so failed/no-progress gaps do not self-loop.
+watch(missingLines, () => scheduleGapLoad(true))
 watch(gapMembership, () => scheduleGapLoad(true))
 watch([gapReady, () => props.projectId, () => props.sessionId, () => props.parentSessionId], () => {
     gapGeneration++

@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import * as Vue from 'vue'
-import { hasContent, setParsedContent } from '../utils/parsedContent.js'
+import { hasContent, setParsedContent, clearParsedContent } from '../utils/parsedContent.js'
 import * as helpers from '../utils/scrollerLoadWindow.js'
 import { makeRenderer, deferred, flush } from '../../tests/helpers/scrollerComponentHarness.js'
 const source = readFileSync(new URL('./ShareItemsList.vue', import.meta.url), 'utf8')
@@ -60,4 +60,19 @@ test('share preparation and initial loading gate background gaps', async t => {
 test('share DOM hides before observer delivery: pending gap cannot start', async t => {
     const v = mount(t); v.api.onUpdate(range); await flush()
     v.viewport.height = 0; await debounce(); assert.equal(v.calls.length, 0)
+})
+
+test('share successful fill can reload the same key after its content becomes missing again', async t => {
+    const v = mount(t)
+    v.visualItems.value = [{ lineNum: 1 }]
+    const item = v.visualItems.value[0]
+    v.api.onUpdate(range); await debounce()
+    assert.deepEqual(v.calls[0][2], [[1, 1]])
+    setParsedContent(item, { text: 'loaded' })
+    v.requests[0].resolve(); await debounce()
+    assert.equal(v.calls.length, 1)
+    clearParsedContent(item); await debounce()
+    assert.deepEqual(v.calls[1]?.[2], [[1, 1]])
+    v.requests[1].resolve(); await debounce()
+    assert.equal(v.calls.length, 2, 'unchanged no-progress settlement must still stop')
 })

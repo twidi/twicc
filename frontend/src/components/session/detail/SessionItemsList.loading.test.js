@@ -106,3 +106,18 @@ test('DOM hides before ResizeObserver delivery: pending gap still cannot start',
     const v = mount(t); v.api.onScrollerUpdate(range); await flush()
     v.viewport.height = 0; await debounce(); assert.equal(v.calls.length, 0)
 })
+
+test('successful gap fill can reload the same key after its content becomes missing again', async t => {
+    const v = mount(t)
+    v.visualItems.value = [{ lineNum: 1 }]
+    const item = v.visualItems.value[0]
+    v.api.onScrollerUpdate(range); await debounce()
+    assert.deepEqual(v.calls[0][2], [[1, 1]])
+    setParsedContent(item, { text: 'loaded' })
+    v.requests[0].resolve(); await debounce()
+    assert.equal(v.calls.length, 1)
+    clearParsedContent(item); await debounce()
+    assert.deepEqual(v.calls[1]?.[2], [[1, 1]])
+    v.requests[1].resolve(); await debounce()
+    assert.equal(v.calls.length, 2, 'unchanged no-progress settlement must still stop')
+})
