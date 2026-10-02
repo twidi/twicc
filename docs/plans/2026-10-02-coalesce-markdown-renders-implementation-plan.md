@@ -10,7 +10,7 @@
 
 **Spec:** `docs/plans/2026-10-02-coalesce-markdown-renders-spec.md`, commit `88dcb87e`.
 
-**Status:** Documents only. The user has not authorized implementation. Stop after plan review and commit.
+**Status:** Implemented and reviewed. All significant findings are corrected. Final controller checks pass 1,656 tests and five bundle builds. Browser output and conversation checks pass with explicit remaining acceptance limits. See the execution report.
 
 ## Global constraints
 
@@ -56,7 +56,11 @@
 | `frontend/tests/browser/markdownRendering.html` (new) | Real-component fixture entry |
 | `frontend/tests/browser/markdownRendering.js` (new) | Baseline/current comparison and production conversation checks |
 | `frontend/tests/browser/prepareMarkdownRenderingBaseline.mjs` (new) | Guarded baseline/current instrumented SFC preparation and removal |
-| `frontend/src/utils/markdownRenderingFixture.test.js` (new) | Fixture readiness, adapter safety, source schedule, and report checks |
+| `frontend/tests/browser/markdownRenderingHarness.js` (new) | Shared source feed, metrics, readiness, and real-output checks |
+| `frontend/tests/browser/markdownRenderingFixture.test.js` (new) | Fixture readiness, source schedule, instrumentation, and report checks |
+| `frontend/tests/browser/prepareMarkdownRenderingBaseline.test.js` (new) | Adapter ownership, rollback, recovery, and guarded removal |
+| `frontend/tests/browser/markdownRenderingConversation.html` (new) | Production conversation acceptance entry |
+| `frontend/tests/browser/markdownRenderingConversation.js` (new) | Reuse production conversation fixture and add Markdown acceptance controls |
 | `.gitignore` | Ignore generated UI adapters and `frontend/tests/browser/.markdown-rendering-generation.json` only |
 | `docs/plans/2026-10-02-coalesce-markdown-renders-execution.md` (new) | Tests, reviews, browser observations, and explicit limits |
 
@@ -164,52 +168,54 @@ Use an existing installed dependency tree. A missing dependency blocks that comm
 **Files:** coordinator module and its tests.
 **Dependency:** none. This task does not wire the component yet.
 
-- [ ] **Step 1:** Add deferred-Promise tests for one active operation and one replaceable pending input.
+- [x] **Step 1:** Add deferred-Promise tests for one active operation and one replaceable pending input.
   Hold A; submit B, C, D; assert peak active count is 1 and starts equal `[A]` before resolving.
   Resolve A; assert no A commit, starts equal `[A, D]`, and only D commits.
-- [ ] **Step 2:** Add RED ownership traces: A → B → A, identical current-active/pending/committed input, and synchronous source/theme/slash changes before one drain microtask.
+- [x] **Step 2:** Add RED ownership traces: A → B → A, identical current-active/pending/committed input, and synchronous source/theme/slash changes before one drain microtask.
   A → B → A must start `[A, A]`, with the first revision never committing.
   Drive injected `schedule` callbacks explicitly; assert one queued drain and no timer/RAF use.
-- [ ] **Step 3:** Add RED lifecycle/error traces: hide while A awaits, hidden B/C, show before/after A settles, dispose twice, rejecting A, and a throwing error sink.
+- [x] **Step 3:** Add RED lifecycle/error traces: hide while A awaits, hidden B/C, show before/after A settles, dispose twice, rejecting A, and a throwing error sink.
   Assert no hidden start/commit, latest resume only, all rejections consumed, no obsolete error, and later work proceeds.
   Return the cancellation sentinel while current: one start, no commit/report, no extra drain, and rendering=false. Then changed input progresses.
-- [ ] **Step 4:** Add reentrant commit/state callbacks that request another source or hide/dispose.
+- [x] **Step 4:** Add reentrant commit/state callbacks that request another source or hide/dispose.
   Assert current ownership checks prevent stale flag clearing or duplicate drains, and successor input survives.
-- [ ] **Step 5:** Run COORDINATOR_TESTS. Confirm failures reflect absent scheduling behavior, not test harness errors.
-- [ ] **Step 6:** Implement the documented coordinator signatures and revision state.
+- [x] **Step 5:** Run COORDINATOR_TESTS. Confirm failures reflect absent scheduling behavior, not test harness errors.
+- [x] **Step 6:** Implement the documented coordinator signatures and revision state.
   Keep active ownership until the Promise settles. Guard both render and commit failures with guaranteed release.
-- [ ] **Step 7:** Run COORDINATOR_TESTS. All traces pass with exact start/commit/error/state counts.
-- [ ] **Step 8:** Review and commit owned files: `perf(markdown): serialize document render requests`.
+- [x] **Step 7:** Run COORDINATOR_TESTS. All traces pass with exact start/commit/error/state counts.
+- [x] **Step 8:** Review and commit owned files: `perf(markdown): serialize document render requests`.
 
 ## Task 2: Supply lifecycle eligibility without blocking initial reveal
 
 **Files:** eligibility composable/tests, keys, SessionItemsList provider.
 **Dependency:** Task 1 interface. This task supplies the component integration gate for Task 3.
 
-- [ ] **Step 1:** Add a real Vue custom-renderer harness, following `useStreamingPublication.test.js`.
+- [x] **Step 1:** Add a real Vue custom-renderer harness, following `useStreamingPublication.test.js`.
   Provide reactive view, row intersection, and scrollerActive fields. Use a fake document with listener counters.
-- [ ] **Step 2:** Add RED tests for mounted default consumers, initial activation, KeepAlive deactivation/reactivation, document hide/show, row outside/inside/unknown, and unmount listener cleanup.
+- [x] **Step 2:** Add RED tests for mounted default consumers, initial activation, KeepAlive deactivation/reactivation, document hide/show, row outside/inside/unknown, and unmount listener cleanup.
   Missing contexts allow rendering. Unknown row plus positive viewport allows rendering.
   Inactive view or suspended scroller suppresses work. Each transition reports the correct immediate eligibility value.
-- [ ] **Step 3:** Execute the actual SessionItemsList Markdown-provider computed expression with reactive inputs.
+- [x] **Step 3:** Execute the actual SessionItemsList Markdown-provider computed expression with reactive inputs.
   Set reveal hidden true and ready active view true: eligibility stays true.
   Set props.viewActive false: eligibility becomes false. Existing streaming provider still includes reveal hidden.
-- [ ] **Step 4:** Run ELIGIBILITY_TESTS; confirm RED failures identify missing gate or lifecycle wiring.
-- [ ] **Step 5:** Implement the key, independent provider, and lifecycle composable.
+- [x] **Step 4:** Run ELIGIBILITY_TESTS; confirm RED failures identify missing gate or lifecycle wiring.
+- [x] **Step 5:** Implement the key, independent provider, and lifecycle composable.
   Use existing Vue hooks and optional context values. Add no store/composable import cycle.
-- [ ] **Step 6:** Connect a test coordinator to actual eligibility transitions.
+- [x] **Step 6:** Connect a test coordinator to actual eligibility transitions.
   Hold active work through hide/show and KeepAlive transitions. Assert one active operation and latest-only resume.
-- [ ] **Step 7:** Run ELIGIBILITY_TESTS and COORDINATOR_TESTS. Existing streaming publication tests remain unchanged and pass.
-- [ ] **Step 8:** Review and commit: `perf(markdown): suspend render work outside active views`.
+- [x] **Step 7:** Run ELIGIBILITY_TESTS and COORDINATOR_TESTS. Existing streaming publication tests remain unchanged and pass.
+- [x] **Step 8:** Review and commit: `perf(markdown): suspend render work outside active views`.
 
 ## Task 3: Integrate the block pipeline, cache, and tool ownership
+
+**Chronology:** Steps 3–6 do not run RED before pipeline implementation. Their behavioral coverage passes later. Independent review accepts this documented deviation. Unchecked boxes record chronology, not open production work. See the execution report.
 
 **Files:** MarkdownContent, cache utility/tests, actual component render harness.
 **Dependencies:** Tasks 1–2.
 
-- [ ] **Step 1:** Add cache-key RED cases: same source with changed reference href/title, reordered equivalent definitions, theme change for Mermaid/non-Mermaid, first-block slash change, and delimiter-like source.
+- [x] **Step 1:** Add cache-key RED cases: same source with changed reference href/title, reordered equivalent definitions, theme change for Mermaid/non-Mermaid, first-block slash change, and delimiter-like source.
   Equivalent contexts compare equal. Different rendering contexts never compare equal.
-- [ ] **Step 2:** Extract actual component functions into a controlled node:test harness, following existing source-extracted SFC tests.
+- [x] **Step 2:** Extract actual component functions into a controlled node:test harness, following existing source-extracted SFC tests.
   Fail clearly if extraction boundaries disappear. Inject the real coordinator, Vue refs/watch/nextTick, and controllable parser/highlighter/Mermaid/DOM dependencies.
   Do not copy the production algorithm into tests. Count real function entry, cache insertion, block commit, and emit calls.
 - [ ] **Step 3:** Add RED checkpoints: supersede while first block highlights; supersede between Mermaid diagrams; hide while Mermaid loads; unmount while a library Promise rejects.
@@ -221,25 +227,25 @@ Use an existing installed dependency tree. A missing dependency blocks that comm
   Hold nested work, change source while its replacement remains deferred, and keep the old wrapper connected.
   Resolve nested work: assert no effect. Repeat hide → show before nested completion; invalidated ownership stays invalid.
 - [ ] **Step 6:** Run MARKDOWN_TESTS. Verify RED failures exercise production function paths.
-- [ ] **Step 7:** Implement exact cache keys, per-operation staging, and cancellation checkpoints in the existing pipeline.
+- [x] **Step 7:** Implement exact cache keys, per-operation staging, and cancellation checkpoints in the existing pipeline.
   Snapshot slash mode instead of reading current props during a block loop.
-- [ ] **Step 8:** Wire one coordinator in component setup.
+- [x] **Step 8:** Wire one coordinator in component setup.
   Submit source/theme/slash through one immediate synchronous watcher. Set eligibility through a synchronous watcher.
   Mount/activation hooks must not directly launch a second render. Dispose coordinator on scope destruction.
   Commit staging eviction/promotion, blocks, and guarded restoration only while current.
   Emit `rendered` only for current successful output. Catch error-sink exceptions without stranding the coordinator.
-- [ ] **Step 9:** Guard nested tool paths and restoration after every await, including state mutation and failure toast paths.
+- [x] **Step 9:** Guard nested tool paths and restoration after every await, including state mutation and failure toast paths.
   Keep user-triggered nested work separate from the document queue.
-- [ ] **Step 10:** Run MARKDOWN_TESTS, ELIGIBILITY_TESTS, and FULL_TESTS. Run BUILD and WHITESPACE.
+- [x] **Step 10:** Run MARKDOWN_TESTS, ELIGIBILITY_TESTS, and FULL_TESTS. Run BUILD and WHITESPACE.
   Inspect build output and any test failures before proceeding.
-- [ ] **Step 11:** Review and commit: `perf(markdown): stop obsolete block rendering and stage cache results`.
+- [x] **Step 11:** Review and commit: `perf(markdown): stop obsolete block rendering and stage cache results`.
 
 ## Task 4: Validate real output and browser behavior
 
 **Files:** browser fixture, baseline preparation, fixture tests, ignore entry, execution report.
 **Dependency:** Task 3. This task supplies product evidence, not a replacement for deterministic tests.
 
-- [ ] **Step 1:** Add RED preparation/fixture tests.
+- [x] **Step 1:** Add RED preparation/fixture tests.
   Pin the baseline component source to `f5d52630`. Generate `MarkdownRenderingBaseline.vue` from the pin and `MarkdownRenderingCurrent.vue` from the reviewed current component, in the same UI directory. Preserve relative imports.
   Apply identical fixture-only operation counters to both copies. Never alter the production source or Vite configuration.
   Require the exact worktree root. Use exclusive creation and roll back only newly created files.
@@ -252,13 +258,13 @@ Use an existing installed dependency tree. A missing dependency blocks that comm
   Preparation failure removes only files exclusively created by that invocation. Cleanup failure retains the ownership record for a later guarded retry.
   Tests: edit original current source after preparation and remove successfully; edit an adapter and refuse removal without partial deletion; fail halfway and preserve all pre-existing files.
   Use temporary directories for preparation unit tests. Never write a real adapter during node:test.
-- [ ] **Step 2:** Create visible fixture controls for isolated current/baseline real MarkdownContent runs.
+- [x] **Step 2:** Create visible fixture controls for isolated current/baseline real MarkdownContent runs.
   Load optional instrumented current/baseline copies through runtime variable paths.
   Normal mode imports the unchanged production component and loads without generated files. Counted comparison requires preparation.
   Disable controls until startup completes. Record explicit startup failures.
   Feed the same 100 source snapshots at fixed 20 ms deadlines, then wait for successful latest-source rendering with a finite 15-second diagnostic timeout.
   A timeout is failed/inconclusive evidence, not permission to flush or inject rendered results.
-- [ ] **Step 3:** Add real-render source scenarios: growing paragraphs, fenced code, several Mermaid diagrams, reference definition changes, slash-mode changes, and empty final source.
+- [x] **Step 3:** Add real-render source scenarios: growing paragraphs, fenced code, several Mermaid diagrams, reference definition changes, slash-mode changes, and empty final source.
   Instrument actual source-driven parsing/block/Mermaid operations and active concurrency through the prepared SFC copies.
   Use the same counters for baseline/current. Do not add production debug exports or count watcher calls as render executions.
   The preparation script inserts an optional injected metrics sink and wraps the document operation in start/finally-finish counters.
@@ -267,27 +273,28 @@ Use an existing installed dependency tree. A missing dependency blocks that comm
   Keep generated modules restricted to fixture imports and preserve executable production statements.
   Unit tests compare stripped instrumentation with the original component source and verify release on throw/cancellation.
   Preparation exports `prepareMarkdownRenderingBaseline({ root, operations })` and `removeMarkdownRenderingBaseline({ root, operations })`; CLI defaults root to the validated current worktree.
-- [ ] **Step 4:** Add separate current implementation checks through production SessionView/SessionItemsList/KeepAlive routing.
+- [x] **Step 4:** Add separate current implementation checks through production SessionView/SessionItemsList/KeepAlive routing.
   Reuse the established fixture seeding conventions and mutation-fetch blockade from `invisibleStreaming.js`.
   Exercise initial reveal, session switch, composer typing without send, open thinking, document visibility, theme, and code-tool restoration.
   Do not claim isolated baseline renders are full-conversation comparisons.
-- [ ] **Step 5:** Record report fields: actual feed times, started request tuples, peak active document operations, parsed sources, block/Mermaid starts, commits/emits, final DOM source/content checks, errors, visibility, and viewport.
+- [x] **Step 5:** Record report fields: actual feed times, started request tuples, peak active document operations, parsed sources, block/Mermaid starts, commits/emits, final DOM source/content checks, errors, visibility, and viewport.
   For cancelled staging, use deterministic tests as proof; do not add production inspection hooks.
   Reference output checks inspect real link href/title. Check diagrams, code tools, sanitization, lists, tables, colon blocks, comments, and share/file-link compatibility using known fixtures.
-- [ ] **Step 6:** Run fixture tests, MARKDOWN_TESTS, FULL_TESTS, BUILD, and WHITESPACE.
+- [x] **Step 6:** Run fixture tests, MARKDOWN_TESTS, FULL_TESTS, BUILD, and WHITESPACE.
   Record exact counts and exits in the execution document.
 - [ ] **Step 7:** If existing browser tooling and worktree servers are available, compare isolated baseline/current on desktop and mobile.
+  Partial acceptance: seven current cases pass per viewport; three baseline cases run per viewport; five Claude and five Codex conversation checks pass. Native document visibility and standalone share-app acceptance remain pending. Physical-phone latency is not measured.
   Then run production conversation checks for Claude and Codex.
   Observe actual successful `scrollToKey` return, row element presence, and component content separately before final rendering assertions.
   Do not use a fixed wait that competes with the eight-RAF retirement anchor restore.
   Report no available browser, sparse frame opportunities, or timed-out library work as explicit pending/inconclusive acceptance.
-- [ ] **Step 8:** Close fixture tabs, reset temporary viewport, and safely remove the adapter.
+- [x] **Step 8:** Close fixture tabs, reset temporary viewport, and safely remove the adapter.
   Run `node frontend/tests/browser/prepareMarkdownRenderingBaseline.mjs --remove` only after comparison tabs close.
   Preserve existing worktree servers. Do not restart or install packages.
-- [ ] **Step 9:** Run whole-change independent adversarial review.
+- [x] **Step 9:** Run whole-change independent adversarial review.
   Fix significant findings through scoped corrections, rerun affected checks, and obtain scoped re-review.
   Record unresolved visual/performance limits without claiming the global freeze is fixed.
-- [ ] **Step 10:** Commit owned artifacts: `test(markdown): verify latest-only rendering and final output`.
+- [x] **Step 10:** Commit owned artifacts: `test(markdown): verify latest-only rendering and final output`.
   Update plan checkboxes according to actual completion. Keep incomplete browser acceptance unchecked.
 
 ## Self-review and spec coverage
@@ -318,3 +325,13 @@ Scoped re-review approves all three corrections. No significant finding remains 
 
 Stop after this plan's review and commit. Wait for the user's implementation go.
 Keep the current worktree and branch. Do not merge or deploy the document commits.
+
+
+## Implementation review closure
+
+Implementation commits run from `2df31e2c` through `6c7f5c33` in the authorized worktree.
+Each task receives an independent scoped review.
+Task 3 corrects application error routing. Task 4 corrects measurement attribution and restore/composer readiness.
+The whole-change review then finds obsolete detached HTML work and the unsupported composer selector.
+One final correction wave addresses both findings. The scoped final review finds no new breakage.
+The execution report preserves controller decisions, test chronology, browser counts, diagnostics, and remaining acceptance limits.

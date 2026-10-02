@@ -1,5 +1,9 @@
 # Real Markdown browser validation
 
+**Status:** Implemented and reviewed at `6c7f5c33`. Final controller checks pass 1,656 tests and five bundle builds.
+Current output passes seven scenarios on desktop and mobile viewports. Claude and Codex pass five conversation checks each.
+Native document visibility, physical-phone latency, and standalone share-app acceptance remain explicit limits.
+
 ## Scope
 
 These fixtures separate three forms of evidence:
@@ -8,7 +12,8 @@ These fixtures separate three forms of evidence:
 - Isolated real MarkdownContent runs prove parser/highlighter/Mermaid/DOM compatibility and count actual operations.
 - Production conversation checks use SessionView, SessionItemsList, and KeepAlive from the existing conversation fixture.
 
-No production component, Vite configuration, backend API, or streaming policy changes here.
+The validation fixtures change no production component, Vite configuration, backend API, or streaming policy.
+The implementation changes Markdown rendering and its view eligibility.
 The controller owns browser acceptance and the whole-change adversarial review.
 Do not infer a complete application performance fix from these fixtures.
 
@@ -151,7 +156,7 @@ Existing build chunk-size warnings remain. No build errors occur.
 The Task 4 scratch report preserves detailed command chronology and limits.
 The committed deterministic tests use temporary filesystem fixtures and compile both instrumented SFCs in memory.
 The frontend build verifies the production bundles; Vite serves the test HTML entries directly.
-Browser acceptance remains controller-owned until its final review and evidence record.
+This initial record precedes the final controller evidence below.
 
 Task 3 chronology remains explicit: initial cache RED was a module-existence failure.
 Component tests initially followed implementation. A temporary stale-tool mutation later produced two behavioral failures.
@@ -174,5 +179,198 @@ Scoped fixture RED: 21 checks; 17 passed, 4 failed. Failures cover stale baselin
 Scoped fixture GREEN: 22 passed, 0 failed. An additional check executes the actual KeepAlive control with controlled restore completion.
 Additional pending-diagnostics RED: 22 checks; 21 passed, 1 failed.
 Logs: `/tmp/task4-fix-round1-red.log`, `/tmp/task4-fix-round1-diagnostics-red.log`, `/tmp/task4-fix-round1-green.log`.
-The controller owns final full-suite, build, browser acceptance, and scoped review checks after this correction.
+The controller subsequently completes the final checks recorded below.
 The earlier full-suite/build counts above describe the pre-correction verification.
+
+
+## Controller checks before the final correction
+
+Revision: `15e88249`.
+The controller independently runs `npm --prefix frontend test`: 1,649 passed, 0 failed, 0 skipped.
+The controller runs `npm --prefix frontend run build`: all five bundles complete successfully.
+Existing Node MockTimers and Vite chunk-size warnings remain.
+Logs are in this plan's retained `.superpowers/sdd/` workspace: `controller-full-tests.log` and `controller-build.log`.
+These checks precede the final correction. They do not replace its fresh verification.
+
+Normal production output passes compatibility and the actual nested Markdown tool.
+The desktop viewport is 1273 × 921. No isolated run errors or console errors occur.
+
+Claude conversation checks pass initial reveal, KeepAlive return, open thinking, and theme/tool restoration.
+KeepAlive waits for observable restoration before its return reveal.
+Theme/tool restoration requires a replacement wrapper and restores the nested rendered view.
+The composer control fails twice because it assumes CodeMirror. The actual editor is a Web Awesome shadow textarea.
+Manual browser input succeeds in that textarea. Send remains disabled; no Send action occurs.
+A startup ResizeObserver notification remains in the fixture diagnostics.
+The document-visibility check remains inconclusive: the browser API does not produce an actual hidden transition.
+No synthetic visibility event supplies acceptance.
+
+The isolated baseline page uses one renderer and a fresh component for each scenario.
+The first Mermaid run loads its libraries cold in that page. Code follows with the page's libraries loaded.
+The viewport is 1273 × 870. Source deadlines are identical; actual feed lateness remains recorded.
+
+| Baseline scenario | Final output | Document starts | Peak active | Block starts | Mermaid starts | Maximum feed lateness |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Mermaid | Passed, three diagrams | 89 | 74 | 352 | 264 | 76.9 ms |
+| Code | Passed, highlighted final source and tools | 89 | 3 | 176 | 0 | 86.8 ms |
+| References | Failed: stale final href/title | 96 | 1 | 96 | 0 | 80.1 ms |
+
+All baseline operations settle before the page closes.
+These operation counts do not measure complete application input latency.
+The guarded removal command succeeds after the owned fixture pages close.
+
+## Review closure
+
+Task 1 and Task 2 scoped reviews approve their changes.
+Task 3 review corrects application error routing; its scoped re-review approves the correction.
+Task 4 review corrects tuple attribution, restore observation, scenario event isolation, and matching emit acceptance.
+Its scoped re-review marks all four findings addressed and finds no new breakage.
+The whole-change review covers `f9102d3c..15e88249` and returns two Important findings.
+The final correction must stop obsolete HTML allocation/parsing after highlighting and support the actual textarea composer.
+The following final correction section records closure and fresh controller evidence.
+
+## Controller decisions
+
+| Decision | Reason | Cost if wrong |
+| --- | --- | --- |
+| Accept the documented Task 3 test chronology | Independent review and behavioral mutation proof validate current behavior; retrospective RED would be false | Add missed regression tests and correct the pipeline |
+| Add two conversation fixture entry files | Reuse existing production seeding without duplicating provider contracts | Rework fixture composition and controls; production remains unchanged |
+| Permit an exclusive recovery generation manifest | Preserve exact ownership after preparation rollback fails | Rework cleanup or manually remove verified test artifacts |
+| Keep fixture helpers/tests under `tests/browser` | They have fixture-specific responsibilities and normal test discovery includes them | Move fixture files and adjust imports |
+
+## Behaviors outside final review acceptance
+
+The controller assesses every behavior that the whole-change reviewer declines to judge.
+No item supplies hidden acceptance or cancels a required check.
+
+| Behavior | Controller disposition |
+| --- | --- |
+| Cross-component scheduling and Mermaid contention | Explicit non-goal; only component-local serialization is implemented |
+| Interrupting synchronous work already running | Not possible within this design; subsequent stages still require ownership checks |
+| Unfinished fences and incremental parsing | Deferred to later priorities |
+| TOC parsing cost and temporary outline differences | Unchanged; no optimization claim |
+| Shared nested-render Promise deduplication and simultaneous tool toggles | Deferred; stale ownership remains covered |
+| Existing clipboard notifications after clipboard awaits | Unchanged; no new clipboard behavior claim |
+| Existing occurrence hashes and nested-code key collisions | Unchanged contracts; no new collision evidence |
+| Priorities 1–4 backend/scroller/animation algorithms | Integration gates checked; no broad historical audit claim |
+| Standalone share application | Injected component hooks pass; standalone acceptance remains pending |
+| Complete application freeze resolution | No complete application performance claim |
+| Codex conversation and document visibility | Actual browser checks required; unavailable real visibility stays inconclusive |
+| ResizeObserver notification | Preserve diagnostics; attribution to this change is unproven |
+| Hostile concurrent filesystem replacement during cleanup | Outside the local developer fixture ownership model |
+| Installations, migrations, and server restarts | No such change or operation occurs |
+
+
+## Final correction and verification
+
+Final production revision: `6c7f5c33`.
+The single final fix wave corrects both Important findings.
+Highlighting returns into a local string. Current ownership is checked before detached-root allocation and HTML assignment.
+Both document blocks and nested Markdown use this order.
+Six deferred tests cover supersession, visibility loss, and disposal.
+The composer control waits for the actual `wa-textarea` and edits its shadow textarea's selection and value.
+Its behavioral test also rejects an induced mutation request.
+
+Corrected RED: 33 tests, 26 passed, 7 failed.
+An initial draft used an invalid ownership predicate; the corrected RED establishes valid initial ownership.
+GREEN covering component/coordinator/fixture/preparation checks: 69 passed, 0 failed.
+Both adapters compile and strip back to the exact original executable source.
+The scoped final review marks both findings addressed and reports no new breakage.
+
+| Final controller check | Result | Retained log |
+| --- | --- | --- |
+| `npm --prefix frontend test` | Exit 0; 1,656 passed, 0 failed, 0 skipped; 1,644 top-level tests | Plan workspace `final-full-tests.log` |
+| `npm --prefix frontend run build` | Exit 0; all five bundles complete | Plan workspace `final-build.log` |
+
+The existing Node MockTimers and Vite chunk-size warnings remain.
+
+## Final isolated browser output
+
+The reviewed current adapter uses `6c7f5c33`. Each scenario remounts a fresh component.
+Each page contains one renderer. Mermaid runs first; code follows; references, slash, empty, paragraphs, and compatibility follow.
+Page module instances are fresh at navigation. The browser HTTP cache is not controlled.
+Desktop and mobile are browser viewports on this computer, not measurements on a physical phone.
+Actual feed deadlines can be late. Counts are work evidence, not controlled latency benchmarks.
+Initial empty-source bootstrap can contribute one document start.
+
+| Current scenario | Desktop starts / blocks / Mermaid | Desktop maximum lateness | Mobile starts / blocks / Mermaid | Mobile maximum lateness |
+| --- | --- | ---: | --- | ---: |
+| Mermaid | 89 / 159 / 99 | 83.0 ms | 90 / 166 / 93 | 51.3 ms |
+| Code | 87 / 172 / 0 | 125.7 ms | 87 / 159 / 0 | 68.9 ms |
+| References | 101 / 200 / 0 | 9.8 ms | 98 / 194 / 0 | 27.2 ms |
+| Slash | 101 / 101 / 0 | 16.5 ms | 101 / 101 / 0 | 9.6 ms |
+| Empty | 101 / 99 / 0 | 10.5 ms | 101 / 99 / 0 | 8.5 ms |
+| Paragraphs | 95 / 194 / 0 | 132.9 ms | 87 / 186 / 0 | 235.1 ms |
+| Compatibility | 87 / 114 / 0 | 244.4 ms | 79 / 106 / 0 | 383.2 ms |
+
+All fourteen current runs pass final DOM checks, matching commit/emit checks, and settlement checks.
+Peak active document operations equals one in every current run.
+Desktop viewport: 1273 × 921. Mobile viewport: 355 × 767, from a 390 × 844 override at the browser's current zoom.
+No isolated run errors or console errors appear.
+Current Mermaid renders all three final diagrams, with fewer Mermaid calls than the recorded desktop baseline.
+Current references produce the latest href and title; the desktop baseline retains stale values.
+These findings do not prove that every application freeze is resolved.
+
+
+## Final conversation checks
+
+Codex conversation at 355 × 767 passes all five checks: initial reveal, KeepAlive return, open thinking, composer typing, and theme/tool restoration.
+The return records observable restoration, no pending restore, and a successful `scrollToKey` result.
+The corrected composer check records the exact textarea value and zero mutation requests.
+The theme/tool check replaces the wrapper, restores nested Markdown, preserves wrapping, and retains Mermaid SVG after changing theme.
+No console errors occur. Two ResizeObserver notifications remain in production-fixture diagnostics.
+These fixture controls verify product behavior. They do not measure input latency under a production workload.
+
+The second baseline page unexpectedly returns to 1273 × 870 after a tab change.
+Its 279 Mermaid calls and peak 75 are a second desktop sample, not mobile evidence.
+The controller preserves that sample and rejects the mobile label.
+The mobile baseline is repeated after applying the override to the new tab and checking its actual DOM width.
+
+
+## Verified mobile baseline comparison
+
+The baseline viewport is checked after navigation: 355 × 767.
+The order matches the current page: Mermaid first, then code and references.
+Each scenario uses a fresh component; page library instances remain loaded after the first scenario.
+
+| Mobile baseline scenario | Final output | Document starts | Peak active | Block starts | Mermaid calls | Maximum feed lateness |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Mermaid | Passed, three diagrams | 92 | 78 | 364 | 273 | 73.9 ms |
+| Code | Passed | 74 | 3 | 146 | 0 | 114.9 ms |
+| References | Failed: stale href/title | 85 | 1 | 85 | 0 | 169.0 ms |
+
+All operations settle. No isolated console errors occur.
+The current mobile Mermaid run has peak one and 93 Mermaid calls, with the same three final diagrams.
+The current desktop Mermaid run has peak one and 99 Mermaid calls, compared with baseline peak 74 and 264 calls.
+Actual feed lateness and library conditions differ. These counts establish bounded concurrency and reduced obsolete Mermaid work in these samples.
+They do not establish a controlled speedup ratio or physical mobile responsiveness.
+Baseline comparison covers three scenarios per viewport. Current final-output acceptance covers all seven scenarios per viewport.
+
+
+## Completion and remaining limits
+
+Claude final conversation at 1273 × 870 passes the same five checks as Codex.
+Its corrected composer records zero mutation requests.
+Its theme/tool check replaces the wrapper and restores nested Markdown and wrapping after the theme change.
+No console errors occur. One ResizeObserver notification remains in its fixture diagnostics.
+The two earlier composer-control failures remain recorded above; the corrected final checks pass for both providers.
+
+Owned fixture tabs close. The viewport override resets.
+Guarded removal succeeds for both final-generation adapters and their ownership manifest.
+Existing worktree servers remain running on frontend 5175 and backend 3502.
+No install, restart, merge, main edit, or production mutation request occurs.
+The branch and review workspace remain available for independent user testing.
+
+The controller resolves the scoped final review's remaining exclusions as follows:
+
+- Fresh full-suite and build checks pass, as recorded above.
+- Corrected real-browser composer checks pass for Claude and Codex.
+- Comparative work counts pass with the stated timing limits. Real document visibility remains inconclusive.
+- Other production behavior retains the original whole-change review disposition.
+- This execution report and the plan record final controller evidence and explicit incomplete acceptance.
+
+Real document visibility cannot be exercised with the available browser-tab controls.
+Deterministic lifecycle tests cover hide/show and ownership, but they do not replace an actual native browser transition.
+Standalone share-app acceptance remains untested; actual component share hooks pass compatibility checks.
+Physical-phone input latency and complete production freeze resolution require product observation.
+Synchronous work already running remains non-interruptible. Different Markdown components can still render concurrently.
+Unfinished-fence deferral, incremental parsing, and cross-component scheduling remain outside this implementation.
