@@ -292,13 +292,18 @@ store.$onAction(({ name, args, after }) => {
 const paginationMounted = ref(false)
 const paginationActive = ref(true)
 const paginationRange = ref(null)
+const paginationMeasurementRevision = ref(0)
 let paginationGeneration = 0
 let paginationRequest = null
 let pendingPaginationGeneration = null
 let externalPageStart = null
 let paginationScrollTop = null
-const paginationReady = computed(() => paginationMounted.value && paginationActive.value &&
-    !!scrollerRef.value && !unref(scrollerRef.value.suspended) && scrollerRef.value.getScrollState().clientHeight > 0)
+const paginationReady = computed(() => {
+    // DOM height is not reactive. Measured updates and native scrolls refresh this cached decision.
+    paginationMeasurementRevision.value
+    return paginationMounted.value && paginationActive.value &&
+        !!scrollerRef.value && !unref(scrollerRef.value.suspended) && scrollerRef.value.getScrollState().clientHeight > 0
+})
 
 // Match the store's natural scope before archive/search/cross-filter display rules.
 const canonicalSessions = computed(() => {
@@ -364,6 +369,7 @@ function requestPaginationOpportunity() {
 }
 
 function onScrollerUpdate({ visibleStartIndex, visibleEndIndex }) {
+    paginationMeasurementRevision.value++
     const previous = paginationRange.value
     paginationRange.value = { start: visibleStartIndex, end: visibleEndIndex }
     if (paginationScrollTop === null) paginationScrollTop = scrollerRef.value?.getScrollState().scrollTop ?? null
@@ -372,6 +378,7 @@ function onScrollerUpdate({ visibleStartIndex, visibleEndIndex }) {
 }
 
 function onScrollerScroll(event) {
+    paginationMeasurementRevision.value++
     if (!canPaginate()) return
     // VirtualScroller forwards the native event. Equal range indices can still contain real scrolling.
     const scrollTop = event.target?.scrollTop

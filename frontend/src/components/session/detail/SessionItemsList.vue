@@ -1365,13 +1365,18 @@ function lineNumsToRanges(lineNums) {
 const gapMounted = ref(false)
 const gapActive = ref(true)
 const gapRange = ref(null)
+const gapMeasurementRevision = ref(0)
 let gapGeneration = 0
 let gapTimer = null
 let gapRequest = null
 let gapRetryPending = false
 let attemptedGap = []
-const gapReady = computed(() => gapMounted.value && gapActive.value && sessionActive.value && props.viewActive &&
-    !!scrollerRef.value && !unref(scrollerRef.value.suspended) && scrollerRef.value.getScrollState().clientHeight > 0)
+const gapReady = computed(() => {
+    // DOM height is not reactive. Measured updates and native scrolls refresh this cached decision.
+    gapMeasurementRevision.value
+    return gapMounted.value && gapActive.value && sessionActive.value && props.viewActive &&
+        !!scrollerRef.value && !unref(scrollerRef.value.suspended) && scrollerRef.value.getScrollState().clientHeight > 0
+})
 const missingLines = computed(previous => {
     if (!gapReady.value || !gapRange.value) return []
     const lines = collectMissingScrollerLines(visualItems.value ?? [], gapRange.value, LOAD_BUFFER)
@@ -1457,6 +1462,7 @@ onDeactivated(() => { gapActive.value = false })
 onBeforeUnmount(() => { gapMounted.value = false; cancelGapTimer() })
 
 function onScrollerUpdate({ visibleStartIndex, visibleEndIndex }) {
+    gapMeasurementRevision.value++
     if (gapRange.value?.start === visibleStartIndex && gapRange.value?.end === visibleEndIndex) return
     gapRange.value = { start: visibleStartIndex, end: visibleEndIndex }
     scheduleGapLoad(true)
@@ -1464,6 +1470,7 @@ function onScrollerUpdate({ visibleStartIndex, visibleEndIndex }) {
 
 // A real scroll can retry an unchanged gap after failure without geometry churn.
 function onGapScroll() {
+    gapMeasurementRevision.value++
     scheduleGapLoad(true)
 }
 

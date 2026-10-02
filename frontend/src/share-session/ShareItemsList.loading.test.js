@@ -7,12 +7,12 @@ import * as helpers from '../utils/scrollerLoadWindow.js'
 import { makeRenderer, deferred, flush } from '../../tests/helpers/scrollerComponentHarness.js'
 const source = readFileSync(new URL('./ShareItemsList.vue', import.meta.url), 'utf8')
 const block = source.slice(source.indexOf('async function loadLines('), source.indexOf('function toggleGroup('))
-function mount(t) {
+function mount(t, { height = 140 } = {}) {
     const { renderer, root } = makeRenderer()
     const props = Vue.reactive({ projectId: 'share', sessionId: 's', parentSessionId: 'parent' })
     const visualItems = Vue.ref([{ lineNum: 1 }, { lineNum: 2 }]), suspended = Vue.ref(false)
     const initialLoading = Vue.ref(false), preparationPending = Vue.ref(false)
-    const viewport = { height: 140 }
+    const viewport = { height }
     const scrollerRef = Vue.ref({ suspended, getScrollState: () => ({ clientHeight: viewport.height }) })
     const calls = [], requests = []
     const store = { loadSessionItemsRanges(...args) { calls.push(args); const r = deferred(); requests.push(r); return r.promise } }
@@ -76,3 +76,20 @@ test('share successful fill can reload the same key after its content becomes mi
     v.requests[1].resolve(); await debounce()
     assert.equal(v.calls.length, 2, 'unchanged no-progress settlement must still stop')
 })
+
+
+for (const opportunity of ['measured update', 'scroll']) {
+    test('share zero-height readiness recovers on ' + opportunity + ' with unchanged range', async t => {
+        const v = mount(t, { height: 0 })
+        v.api.onUpdate(range)
+        await debounce(); assert.equal(v.calls.length, 0)
+        // DOM dimensions change without invalidating any Vue ref used by the readiness computed.
+        v.viewport.height = 421
+        if (opportunity === 'measured update') v.api.onUpdate({ ...range })
+        else v.api.scroll()
+        await debounce()
+        assert.equal(v.calls.length, 1, 'a real measured opportunity refreshes cached false readiness')
+        v.requests[0].resolve(); await debounce()
+        assert.equal(v.calls.length, 1, 'no-progress settlement still cannot self-loop')
+    })
+}

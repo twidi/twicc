@@ -273,3 +273,26 @@ test('archive-driven filtered membership supplies the same independent threshold
     v.sessions['session-18'].annotations = { archivedReason: 'unrelated' }
     await flush(); assert.equal(v.calls.length, 1)
 })
+
+
+test('actual delayed ResizeObserver measurement enables pagination after an initial zero-height mount', async t => {
+    const observers = [], previous = globalThis.ResizeObserver
+    globalThis.ResizeObserver = class {
+        constructor(callback) { this.callback = callback; observers.push(this) }
+        observe(target) { this.target = target }
+        disconnect() {}
+    }
+    t.after(() => {
+        if (previous === undefined) delete globalThis.ResizeObserver
+        else globalThis.ResizeObserver = previous
+    })
+    const v = mount(t, { height: 0 }); await flush()
+    assert.equal(v.calls.length, 0)
+    const viewport = observers.find(observer => observer.target?.props.class?.includes('virtual-scroller'))
+    assert.ok(viewport, 'the actual VirtualScroller observes its container')
+    viewport.target.clientHeight = 421
+    viewport.callback([{ contentRect: { height: 421 } }])
+    await flush()
+    assert.equal(v.calls.length, 1, 'the first delayed real measurement permits one current-scope page')
+    await v.finish(); await flush(); assert.equal(v.calls.length, 1)
+})
