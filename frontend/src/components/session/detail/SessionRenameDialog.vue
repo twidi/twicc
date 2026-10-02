@@ -340,9 +340,12 @@ defineExpose({
                         Try again
                     </wa-button>
                 </div>
-                <a v-else href="#" class="suggestion-link" @click.prevent="applySuggestion">
-                    {{ suggestion }}
-                </a>
+                <template v-else>
+                    <a href="#" class="suggestion-link" @click.prevent="applySuggestion">
+                        {{ suggestion }}
+                    </a>
+                    <div class="form-hint">Click the suggestion above to use it</div>
+                </template>
             </div>
 
             <div class="form-group">
