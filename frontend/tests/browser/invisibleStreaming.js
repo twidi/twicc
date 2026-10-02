@@ -452,38 +452,76 @@ async function runReconcileHideReturn({ expectedViewport = null } = {}) {
         store.recomputeVisualItems(mainId)
     }
     const messageId = start('text', mainId)
-    feed('Final reconciliation followed by rapid hide and return.', mainId, messageId)
+    const marker = 'Final reconciliation survives rapid hide and return.'
+    const tallText = Array.from({ length: 180 }, (_, index) =>
+        `Streamed paragraph ${index + 1}. ${'Measured content stays tall. '.repeat(4)}`).join('\n\n') + `\n\n${marker}`
+    feed(tallText, mainId, messageId)
     await settle(700)
-    scroller.setScrollTop(12000)
+    const streamVisible = await scroller.scrollToKey(lineNum, { align: 'start', maxAttempts: 12 })
+    assert(streamVisible, 'The streamed row did not enter the rendered window')
+    await settle()
+    const measuredHeight = scroller.getItemHeight(lineNum)
+    assert(measuredHeight > scroller.$el.clientHeight + 400, 'The streamed row has no tall measured height')
+    const streamPosition = unref(scroller.positions).find(position => position.key === lineNum)
+    assert(streamPosition, 'The streamed row has no live geometry')
+    scroller.setScrollTop(streamPosition.top + 200)
     await settle()
     const before = scrollerDiagnostics(target)
+    assert(before.savedAnchor?.key === lineNum && before.savedAnchor.offset > 0,
+        'The reading anchor is not inside the streamed row')
+    assert(before.scrollState.scrollHeight - before.scrollState.clientHeight - before.scrollState.scrollTop > 150,
+        'The reader is still near the bottom of the streamed row')
+    assert(!scroller.isAtBottom(), 'The parent would skip its reading-position restore')
     const stream = store.localState.streamingBlocks[mainId]
     const text = stream.blocks[0].text
     const uuid = `final-${messageId}`
     store.streamBlockStop(mainId, messageId, 0)
     store.streamBlockEnd(mainId, messageId, 0, uuid)
     const realLine = store.sessionItems[mainId].length + 1
-    store.addSessionItems(mainId, [{ line_num: realLine, kind: 'assistant_message', display_level: DISPLAY_LEVEL.ALWAYS,
-        group_head: null, group_tail: null, stream_uuid: provider === 'codex' ? uuid : undefined,
-        content: JSON.stringify(finalContent(text, 'text', messageId, uuid)) }])
-    store.sessions[mainId].last_line = realLine
-    // Start the real KeepAlive transition while SessionItemsList still owns swap restoration.
-    await switchSession()
-    const hidden = scrollerDiagnostics(target)
-    await switchSession()
-    await settle(700)
-    const after = scrollerDiagnostics(target)
-    assert(!store.localState.streamingBlocks[mainId], 'Final reconciliation retains the streaming block')
-    assert(store.sessionItems[mainId][realLine - 1].content.includes(text), 'Final JSONL row loses the latest text')
-    assert(!after.suspended, 'Main scroller remains suspended after rapid return')
-    const result = scenarioReport('reconciliation then rapid hide and return', { before, hidden, after },
-        { realLine, text, expectedViewport })
-    await scroller.scrollToKey(realLine, { align: 'nearest' })
-    await settle()
-    assert(target.$el.querySelector(`[data-line-num="${realLine}"]`)?.innerText.includes(text),
-        'Final row is missing from the rendered transcript')
-    result.finalRow = scrollerDiagnostics(target)
-    return result
+    const originalSetScrollTop = scroller.setScrollTop
+    let restoreWrites = 0
+    scroller.setScrollTop = value => {
+        if (Math.abs(value - before.scrollState.scrollTop) <= 0.5) restoreWrites++
+        return originalSetScrollTop(value)
+    }
+    try {
+        store.addSessionItems(mainId, [{ line_num: realLine, kind: 'assistant_message', display_level: DISPLAY_LEVEL.ALWAYS,
+            group_head: null, group_tail: null, stream_uuid: provider === 'codex' ? uuid : undefined,
+            content: JSON.stringify(finalContent(text, 'text', messageId, uuid)) }])
+        store.sessions[mainId].last_line = realLine
+        assert(scroller.getItemHeight(realLine) === measuredHeight, 'The parent did not seed the final row height')
+        // The parent seeds the height synchronously, then awaits nextTick and eight RAFs.
+        // Start real KeepAlive routing before that restore can finish.
+        const writesAtHideStart = restoreWrites
+        const hidePromise = router.push({ name: 'session', params: { projectId, sessionId: otherId } })
+        assert(writesAtHideStart < 8, 'The parent restore finished before the hide route started')
+        await hidePromise
+        await nextTick()
+        assert(currentId() === otherId, 'The KeepAlive hide route did not activate')
+        const hidden = scrollerDiagnostics(target)
+        assert(hidden.suspended, 'The main scroller did not suspend on the hide route')
+        const writesAtReturnStart = restoreWrites
+        const returnPromise = router.push({ name: 'session', params: { projectId, sessionId: mainId } })
+        assert(writesAtReturnStart < 8, 'The parent restore finished before the return route started')
+        await returnPromise
+        await settle(700)
+        const after = scrollerDiagnostics(target)
+        assert(restoreWrites >= 8, 'The parent restore did not complete eight frame writes')
+        assert(!store.localState.streamingBlocks[mainId], 'Final reconciliation retains the streaming block')
+        assert(store.sessionItems[mainId][realLine - 1].content.includes(text), 'Final JSONL row loses the latest text')
+        assert(!after.suspended, 'Main scroller remains suspended after rapid return')
+        assert(after.savedAnchor?.key === realLine, 'Return does not anchor inside the final row')
+        assert(Math.abs(after.savedAnchor.offset - before.savedAnchor.offset) <= 8,
+            'Return moves the reading anchor more than 8px within the final row')
+        assert(Math.abs(after.scrollState.scrollTop - before.scrollState.scrollTop) <= 8,
+            'Return moves the reading position more than 8px')
+        assert(target.$el.querySelector(`[data-line-num="${realLine}"]`)?.innerText.includes(marker),
+            'Final row is absent from the restored rendered window')
+        return scenarioReport('reconciliation then rapid hide and return', { before, hidden, after },
+            { realLine, measuredHeight, writesAtHideStart, writesAtReturnStart, restoreWrites, expectedViewport })
+    } finally {
+        scroller.setScrollTop = originalSetScrollTop
+    }
 }
 async function runHiddenThinking() {
     try {

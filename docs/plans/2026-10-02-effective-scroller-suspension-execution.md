@@ -16,7 +16,7 @@ It now exposes these named controls on `window.invisibleStreamingFixture`:
 | --- | --- |
 | `runLargeHistorySuspension({ mode, replacements, expectedViewport })` | Seed 2,000 main-session history rows. Keep a second main Chat scroller visible. Hide the target with KeepAlive, a subagent tab, or the Tasks dock. Replace line 1,000 60 times by default. Record frozen and resumed geometry. |
 | `runPendingRevealHide({ expectedViewport })` | Start a real `scrollToKey()` reveal, switch sessions immediately, record its result, and return. |
-| `runReconcileHideReturn({ expectedViewport })` | Reconcile a streamed block into a final session item. Switch sessions before the parent's stream-swap restore completes. Return, then verify the final row. |
+| `runReconcileHideReturn({ expectedViewport })` | Render and measure a tall streamed block. Read inside it above the bottom. Reconcile it into a final item, then hide and return before the parent's eight-frame restore completes. Compare the returned anchor and final row before any explicit scroller navigation. |
 
 `expectedViewport` accepts `desktop` or `mobile` and checks the current browser width.
 Each scenario records the actual viewport width and height.
@@ -24,6 +24,9 @@ The mobile fixture skips only its desktop Tasks-dock preflight.
 The target's scroller diagnostics include published positions, visible range, anchor, raw scroll state, and rendered anchor.
 The fixture uses Vue `unref()` because exposed component refs can be unwrapped by the public proxy.
 These diagnostics do not add a product API or count geometry builds.
+The reconciliation control asserts that the streamed height exists and is seeded onto the final row.
+It counts `setScrollTop()` calls matching the saved position during the route transitions.
+The browser run must confirm the anchor tolerance and final rendered text.
 
 ## Deterministic verification
 
@@ -81,5 +84,7 @@ Do not use rendered-window `itemKey()` calls or logpoint timing as geometry-buil
 ## Review
 
 Task 4 self-review checked actual scroller access and corrected exposed-ref reads with `unref()`.
-Independent adversarial review is pending with the controller.
+The first independent review found an offscreen reconciliation setup.
+The fixture now measures the visible streamed row and checks its returned anchor before any explicit reveal.
+Review closure is pending with the controller.
 No browser acceptance claim is made.

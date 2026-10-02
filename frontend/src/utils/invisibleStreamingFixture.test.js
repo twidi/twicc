@@ -78,6 +78,26 @@ test('suspension fixture exposes pending reveal and immediate reconciliation hid
     assert.match(fixture, /window\.invisibleStreamingFixture = [\s\S]*runLargeHistorySuspension[\s\S]*runPendingRevealHide[\s\S]*runReconcileHideReturn/)
 })
 
+test('reconciliation fixture swaps a measured visible stream and checks the returned anchor before navigation', () => {
+    const start = fixture.indexOf('async function runReconcileHideReturn(')
+    const end = fixture.indexOf('\nasync function runHiddenThinking(', start)
+    assert.ok(start >= 0 && end > start)
+    const scenario = fixture.slice(start, end)
+    assert.match(scenario, /scrollToKey\(lineNum/)
+    assert.match(scenario, /getItemHeight\(lineNum\)/)
+    assert.match(scenario, /before\.savedAnchor\?\.key === lineNum/)
+    assert.match(scenario, /getItemHeight\(realLine\)/)
+    assert.match(scenario, /const hidePromise = router\.push\(/)
+    assert.match(scenario, /writesAtHideStart < 8/)
+    assert.match(scenario, /writesAtReturnStart < 8/)
+    assert.match(scenario, /restoreWrites >= 8/)
+    assert.match(scenario, /after\.savedAnchor\?\.key === realLine/)
+    assert.ok(scenario.indexOf('getItemHeight(lineNum)') < scenario.indexOf('store.addSessionItems(mainId,'))
+    assert.ok(scenario.indexOf('const hidePromise = router.push(') < scenario.indexOf('const after = scrollerDiagnostics(target)'))
+    assert.doesNotMatch(scenario, /scrollToKey\(realLine/)
+    assert.ok(scenario.indexOf('after.savedAnchor?.key === realLine') < scenario.indexOf('querySelector(`[data-line-num='))
+})
+
 test('suspension diagnostics include viewport inputs and latest rows', () => {
     assert.match(fixture, /function viewportDiagnostics\(/)
     assert.match(fixture, /window\.innerWidth/)
