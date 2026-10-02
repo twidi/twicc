@@ -150,6 +150,7 @@ export function useVirtualScroll(options) {
      *   survived restores the exact same position, since all offsets share one origin.
      */
     const suspended = ref(false)
+    let suspendedSnapshot = null
     let savedAnchors = null
     let pendingResume = false
     // When the container is hidden by a parent (e.g., wa-tab-panel display:none),
@@ -225,7 +226,7 @@ export function useVirtualScroll(options) {
      * Performance note: This recomputes when items change OR when heightCache changes.
      * For large lists, consider memoization strategies if this becomes a bottleneck.
      */
-    const positions = computed(() => {
+    const livePositions = computed(() => {
         let top = 0
         return items.value.map((item, index) => {
             const key = itemKey(item)
@@ -236,14 +237,20 @@ export function useVirtualScroll(options) {
         })
     })
 
+    const positions = computed(() => suspended.value ? suspendedSnapshot.positions : livePositions.value)
+
+    function totalHeightForPositions(posArray) {
+        if (posArray.length === 0) return 0
+        const last = posArray[posArray.length - 1]
+        return last.top + last.height
+    }
+
     /**
      * Total height of all items (for scroll container sizing).
      */
     const totalHeight = computed(() => {
-        const posArray = positions.value
-        if (posArray.length === 0) return 0
-        const last = posArray[posArray.length - 1]
-        return last.top + last.height
+        if (suspended.value) return suspendedSnapshot.totalHeight
+        return totalHeightForPositions(positions.value)
     })
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -259,11 +266,10 @@ export function useVirtualScroll(options) {
      * @param {number} targetTop - The scroll position to find
      * @returns {number} Index of the item at or just before this position
      */
-    function findIndexAtPosition(targetTop) {
-        const posArray = positions.value
+    function findIndexAtPosition(targetTop, posArray = positions.value) {
         if (posArray.length === 0) return -1
         if (targetTop <= 0) return 0
-        if (targetTop >= totalHeight.value) return posArray.length - 1
+        if (targetTop >= totalHeightForPositions(posArray)) return posArray.length - 1
 
         let low = 0
         let high = posArray.length - 1
@@ -319,18 +325,12 @@ export function useVirtualScroll(options) {
      * - Won't be loaded initially (outside 500px buffer)
      * - Won't be unloaded if already loaded (inside 1000px unloadBuffer)
      */
-    watchEffect(() => {
-        const posArray = positions.value
+    function updateRenderRange(posArray) {
         if (posArray.length === 0) {
             previousRange = { start: 0, end: 0 }
             renderRange.value = { start: 0, end: 0 }
             return
         }
-
-        // When suspended, keep the current renderRange frozen.
-        // `suspended` is a ref so Vue tracks it as a dependency here:
-        // when resume() sets it to false, this watchEffect will re-run.
-        if (suspended.value) return
 
         // Calculate zones with both buffers
         const loadTop = Math.max(0, scrollTop.value - buffer)
@@ -339,12 +339,12 @@ export function useVirtualScroll(options) {
         const unloadBottom = scrollTop.value + viewportHeight.value + unloadBuffer
 
         // Find indices for load zone (items that SHOULD be loaded)
-        const loadStart = findIndexAtPosition(loadTop)
-        const loadEnd = findIndexAtPosition(loadBottom)
+        const loadStart = findIndexAtPosition(loadTop, posArray)
+        const loadEnd = findIndexAtPosition(loadBottom, posArray)
 
         // Find indices for unload zone (items that CAN stay loaded)
-        const unloadStart = findIndexAtPosition(unloadTop)
-        const unloadEnd = findIndexAtPosition(unloadBottom)
+        const unloadStart = findIndexAtPosition(unloadTop, posArray)
+        const unloadEnd = findIndexAtPosition(unloadBottom, posArray)
 
         // Apply hysteresis:
         // - For start: use min of (loadStart, previousStart) but never below unloadStart
@@ -387,28 +387,39 @@ export function useVirtualScroll(options) {
         // Store for next computation and update the reactive ref
         previousRange = { start: newStart, end: newEnd }
         renderRange.value = { start: newStart, end: newEnd }
+    }
+
+    watchEffect(() => {
+        // Avoid subscribing this effect to live positions while hidden. It must also
+        // ignore an empty replacement until the scroller resumes.
+        if (suspended.value) return
+        updateRenderRange(positions.value)
     })
 
     /**
      * The range of items actually visible in the viewport (without buffer).
      * Useful for the @update event to tell the parent what's truly visible.
      */
-    const visibleRange = computed(() => {
-        const posArray = positions.value
+    function visibleRangeFor(posArray, currentScrollTop, currentViewportHeight) {
         if (posArray.length === 0) {
             return { start: 0, end: 0 }
         }
 
-        const visibleTop = scrollTop.value
-        const visibleBottom = scrollTop.value + viewportHeight.value
+        const visibleTop = currentScrollTop
+        const visibleBottom = currentScrollTop + currentViewportHeight
 
-        const start = findIndexAtPosition(visibleTop)
-        const end = findIndexAtPosition(visibleBottom)
+        const start = findIndexAtPosition(visibleTop, posArray)
+        const end = findIndexAtPosition(visibleBottom, posArray)
 
         return {
             start: Math.max(0, start),
             end: Math.min(posArray.length, end + 1),
         }
+    }
+
+    const visibleRange = computed(() => {
+        if (suspended.value) return suspendedSnapshot.visibleRange
+        return visibleRangeFor(positions.value, scrollTop.value, viewportHeight.value)
     })
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -419,28 +430,33 @@ export function useVirtualScroll(options) {
      * Height of the spacer before rendered items.
      * Sum of all item heights before renderRange.start.
      */
-    const spacerBeforeHeight = computed(() => {
-        const posArray = positions.value
-        const { start } = renderRange.value
-
+    function spacerBeforeFor(posArray, { start }) {
         if (start <= 0 || start >= posArray.length || posArray.length === 0) return 0
         // The top of the first rendered item IS the total height of items before it
         return posArray[start].top
+    }
+
+    const spacerBeforeHeight = computed(() => {
+        if (suspended.value) return suspendedSnapshot.spacerBeforeHeight
+        return spacerBeforeFor(positions.value, renderRange.value)
     })
 
     /**
      * Height of the spacer after rendered items.
      * Sum of all item heights after renderRange.end.
      */
-    const spacerAfterHeight = computed(() => {
-        const posArray = positions.value
-        const { end } = renderRange.value
-
+    function spacerAfterFor(posArray, { end }, height) {
         if (end <= 0 || end >= posArray.length || posArray.length === 0) return 0
         // Total height minus the bottom position of the last rendered item
         const lastRenderedPos = posArray[end - 1]
         const lastRenderedBottom = lastRenderedPos.top + lastRenderedPos.height
-        return totalHeight.value - lastRenderedBottom
+        return height - lastRenderedBottom
+    }
+
+    const spacerAfterHeight = computed(() => {
+        if (suspended.value) return suspendedSnapshot.spacerAfterHeight
+        const posArray = positions.value
+        return spacerAfterFor(posArray, renderRange.value, totalHeight.value)
     })
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1147,10 +1163,24 @@ export function useVirtualScroll(options) {
             return
         }
 
-        const posArray = positions.value
+        const posArray = livePositions.value
+        updateRenderRange(posArray)
+        const currentScrollTop = scrollTop.value
+        const currentViewportHeight = viewportHeight.value
+        const capturedRange = renderRange.value
+        const capturedTotalHeight = totalHeightForPositions(posArray)
+        suspendedSnapshot = {
+            positions: posArray,
+            totalHeight: capturedTotalHeight,
+            renderRange: capturedRange,
+            visibleRange: visibleRangeFor(posArray, currentScrollTop, currentViewportHeight),
+            spacerBeforeHeight: spacerBeforeFor(posArray, capturedRange),
+            spacerAfterHeight: spacerAfterFor(posArray, capturedRange, capturedTotalHeight),
+            scrollTop: currentScrollTop,
+            viewportHeight: currentViewportHeight,
+        }
         if (posArray.length > 0) {
-            const currentScrollTop = scrollTop.value
-            const anchorIndex = findIndexAtPosition(currentScrollTop)
+            const anchorIndex = findIndexAtPosition(currentScrollTop, posArray)
             if (anchorIndex >= 0) {
                 // The item at the top of the viewport, then the ones above it: an item that
                 // gets folded into a collapsed group has its group head above it, so walking
@@ -1333,6 +1363,7 @@ export function useVirtualScroll(options) {
     function performResume(container) {
         pendingResume = false
         autoSuspended = false
+        suspendedSnapshot = null
         suspended.value = false
 
         // Update viewportHeight from the now-visible container
@@ -1355,8 +1386,8 @@ export function useVirtualScroll(options) {
         const posArray = positions.value
         if (posArray.length === 0) return null
 
-        const currentScrollTop = scrollTop.value
-        const anchorIndex = findIndexAtPosition(currentScrollTop)
+        const currentScrollTop = suspended.value ? suspendedSnapshot.scrollTop : scrollTop.value
+        const anchorIndex = findIndexAtPosition(currentScrollTop, posArray)
         const anchorItem = posArray[anchorIndex]
         if (!anchorItem) return null
 
@@ -1597,6 +1628,7 @@ export function useVirtualScroll(options) {
      * Sync the scroll position from the container (useful after mount or resize).
      */
     function syncScrollPosition() {
+        if (suspended.value) return
         const container = containerRef.value
         if (container) {
             scrollTop.value = container.scrollTop
