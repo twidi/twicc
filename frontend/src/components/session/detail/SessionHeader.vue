@@ -602,9 +602,19 @@ defineExpose({
         <!-- Row 2: the project (or worktree) badge, always under the markers. At compact height it also
              carries the process controls and the button that opens the panel. -->
         <div v-if="mode === 'session'" class="session-project-row" @click="toggleCompact">
-            <router-link v-if="session.project_id" :to="{ name: 'project', params: { projectId: session.project_id } }" class="session-project" @click.stop>
+            <!-- The arrow after the badge says the link goes up to the project; it is part of the link, so it is
+                 part of what is clickable (the project header's navigation puts it before, here it follows). -->
+            <router-link
+                v-if="session.project_id"
+                :id="`session-header-${sessionId}-project-link`"
+                :to="{ name: 'project', params: { projectId: session.project_id } }"
+                class="session-project"
+                @click.stop
+            >
                 <ProjectBadge :project-id="session.project_id" />
+                <wa-icon name="arrow-up" auto-width class="session-project-up"></wa-icon>
             </router-link>
+            <AppTooltip v-if="session.project_id" :for="`session-header-${sessionId}-project-link`">Go to the project</AppTooltip>
 
             <!-- Compact controls (compact height only), in one pill like the outlined buttons at the top of the
                  sidebar: the interrupt and stop buttons (panel closed only: the panel has the same buttons) and
@@ -1145,6 +1155,9 @@ defineExpose({
 }
 
 .session-project {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
     text-decoration: none;
@@ -1152,6 +1165,10 @@ defineExpose({
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
+}
+/* The up arrow of the project link: never squeezed by a long badge. */
+.session-project-up {
+    flex-shrink: 0;
 }
 /* In a worktree badge the parent repo's name gives way first: the worktree's name is what tells two
    sessions of one repo apart. */
