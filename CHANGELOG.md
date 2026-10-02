@@ -23,7 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **New logo** — TwiCC gets its own robot, with a bit more soul.
 - **Message timestamps while the agent works** — The time now also shows under the agent's last message while it is still working, not only once its turn is over.
 - **Claude Agent SDK** — Upgrade from 0.2.159 to 0.2.163 (bundled Claude Code CLI: 2.1.281 → 2.1.286)
-- **Codex runtime** — Update from v0.156.1 to v0.159.2.
+- **Codex runtime** — Update from v0.156.1 to v0.160.0.
 
 ### Fixed
 
