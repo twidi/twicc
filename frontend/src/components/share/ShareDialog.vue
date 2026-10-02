@@ -47,6 +47,8 @@ const form = reactive({
 })
 const error = ref('')
 const createdUrl = ref('')
+// The link to copy: the freshly-created one, or the existing share's when editing.
+const linkUrl = computed(() => createdUrl.value || (props.edit ? shareAbsoluteUrl(props.edit) : null))
 const dialogRef = ref(null)
 const submitBtnRef = ref(null)
 // Unique per instance: several ShareDialogs coexist in the DOM (SessionHeader keeps
@@ -160,7 +162,7 @@ async function handleSave() {
             await shares.patchShare(props.edit.id, fields)
             // Editing is a plain "apply my changes" action, so close on save (the URL
             // is unchanged and already known). Creating instead keeps the dialog open
-            // to surface the freshly-minted link for copying.
+            // so the freshly-minted link can be copied from the footer.
             toast.success('Share updated')
             emit('close')
         } else {
@@ -192,7 +194,7 @@ async function handleSave() {
     }
 }
 
-function copyUrl() { navigator.clipboard.writeText(createdUrl.value); toast.success('Share URL copied') }
+function copyUrl() { navigator.clipboard.writeText(linkUrl.value); toast.success('Share URL copied') }
 
 function onAfterShow(e) {
     // Guard bubbling wa-after-show from a nested wa-select/wa-switch panel: re-running
@@ -322,12 +324,9 @@ function onHide(e) { if (e.target === dialogRef.value) emit('close') }
             </label>
             <wa-switch :checked="form.notify_on_view" @change.stop="form.notify_on_view = $event.target.checked">Notify me when viewed</wa-switch>
 
-            <div v-if="createdUrl" class="share-url">
-                <wa-input readonly :value="createdUrl"></wa-input>
-                <wa-button @click.stop="copyUrl"><wa-icon slot="start" name="copy"></wa-icon>Copy</wa-button>
-            </div>
         </form>
         <div slot="footer" class="dialog-footer">
+            <wa-button v-if="linkUrl" class="copy-link" @click="copyUrl"><wa-icon slot="start" name="copy"></wa-icon>Copy link</wa-button>
             <wa-button @click="emit('close')">Close</wa-button>
             <wa-button ref="submitBtnRef" type="submit" variant="brand" :form="formId" :disabled="!sharingEnabled">{{ edit ? 'Save' : 'Create link' }}</wa-button>
         </div>
@@ -360,8 +359,7 @@ wa-switch { display: block; }
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
 }
-.share-url { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.8rem; }
-.share-url wa-input { flex: 1; }
+.copy-link { margin-right: auto; }
 .dialog-footer {
     display: flex;
     gap: var(--wa-space-s);
