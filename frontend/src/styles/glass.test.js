@@ -254,7 +254,9 @@ test('4. glass classes stay away from pane containers', () => {
             }
         }
         if (component === 'ProjectView') {
-            assert.equal(tokens.filter((t) => t === 'glass-surface' || t === 'glass-sticky').length, 0)
+            // The one glass surface is the sidebar's quota card; no sticky layer.
+            assert.equal(tokens.filter((t) => t === 'glass-surface').length, 1)
+            assert.equal(tokens.filter((t) => t === 'glass-sticky').length, 0)
             const veils = tags.filter((t) => classTokens(t.attrs).includes('glass-veil'))
             assert.equal(veils.length, 1, 'ProjectView: glass-veil exactly once')
             assert.equal(tokens.filter((t) => t === 'glass-veil').length, 1)
@@ -554,6 +556,7 @@ const LIVE_SHADOW_HOSTS = [
     ':where(wa-popover)::part(body)',
     TOOLTIP_BODY,
     ':where(.glass-surface)',
+    ':where(.glass-shadow)',
     ':where(.Notivue__notification)',
 ]
 const LIGHT_LIVE_SHADOW = '0 2px 4px oklch(0.2 0.02 275 / calc(0.06 * var(--twicc-reveal, 1))), '

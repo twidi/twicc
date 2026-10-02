@@ -20,13 +20,16 @@ test('1. .main-content may be shorter than its content (the card scrolls, not th
     assert.ok(/\n\s*height: 100%;/.test(m[1]), 'height: 100% stays')
 })
 
-test('mobile sidebar drawer: no slide under reduced motion, it fades instead', () => {
+test('mobile sidebar drawer: no slide under reduced motion, it fades in instead', () => {
     const block = view.match(/@media \(width < 640px\) \{\s*:root\.reduce-motion \.sidebar \{([\s\S]*?)\n\}\n/)
     assert.ok(block, 'a mobile block with the reduced-motion rules')
     const css = block[0]
-    assert.match(css, /:root\.reduce-motion \.sidebar \{[^}]*opacity: 0;[^}]*visibility: hidden;[^}]*transition: opacity/)
+    assert.match(css, /:root\.reduce-motion \.sidebar \{\s*transition: none;/)
     assert.match(css, /:root\.reduce-motion \.sidebar-toggle \{\s*transition: none;/)
-    assert.match(css, /:checked\) \.sidebar \{[^}]*opacity: 1;[^}]*visibility: visible;/)
+    assert.match(css, /:checked\) \.sidebar \{\s*animation: sidebar-drawer-fade-in/)
+    // The toggle lives inside the drawer: a visibility on the closed drawer, or an opacity at rest, would hide it.
+    assert.ok(!/visibility/.test(css), 'the closed drawer is never hidden')
+    assert.ok(!/\.sidebar \{[^}]*opacity/.test(css), 'no opacity at rest on the drawer')
     assert.ok(!/translate|transform/.test(css), 'the reduced-motion rules move nothing')
     assert.ok(!/prefers-reduced-motion/.test(view), 'no prefers-reduced-motion media query: the class carries it')
 })

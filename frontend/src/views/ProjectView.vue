@@ -3876,20 +3876,21 @@ html.wa-dark .usage-burn-chip-danger {
 }
 
 /* Reduced motion, mobile: the drawer and its toggle no longer slide: they take their place at
-   once, and the drawer fades in and out instead (the veil already fades). */
+   once, and the drawer fades in when it opens (the veil already fades). The closed drawer is
+   off-screen, so it needs no opacity or visibility of its own: both would also hide the toggle,
+   which lives inside it and sticks out over the content. */
 @media (width < 640px) {
     :root.reduce-motion .sidebar {
-        opacity: 0;
-        visibility: hidden;
-        transition: opacity var(--transition-duration) ease, visibility 0s linear var(--transition-duration);
+        transition: none;
     }
     :root.reduce-motion .sidebar-toggle {
         transition: none;
     }
     :root.reduce-motion .project-view-wrapper:has(.sidebar-toggle-checkbox:checked) .sidebar {
-        opacity: 1;
-        visibility: visible;
-        transition-delay: 0s;
+        animation: sidebar-drawer-fade-in var(--transition-duration) ease;
+    }
+    @keyframes sidebar-drawer-fade-in {
+        from { opacity: 0; }
     }
 }
 </style>
