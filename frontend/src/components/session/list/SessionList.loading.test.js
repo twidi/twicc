@@ -16,6 +16,20 @@ function mount(t, { initialLoading = false, height = 140, more = true, initialSe
     const active = Vue.ref(true), calls = [], requests = []
     const state = Vue.reactive({ sessionsLoading: false, sessionsFetched: true, hasMoreSessions: more, oldestSessionMtime: 100 })
     const sessions = Vue.reactive(initialSessions)
+    const savedRAF = [globalThis.requestAnimationFrame, globalThis.cancelAnimationFrame]
+    const pendingRAF = new Map(), scrollerInputs = [], scrollerAPIs = [], updates = []
+    let nextRAF = 0
+    globalThis.requestAnimationFrame = callback => { pendingRAF.set(++nextRAF, callback); return nextRAF }
+    globalThis.cancelAnimationFrame = handle => pendingRAF.delete(handle)
+    const actualScroller = virtualScroller()
+    const setupScroller = actualScroller.setup
+    actualScroller.setup = (props, context) => {
+        scrollerInputs.push(props)
+        return setupScroller(props, { ...context,
+            expose(value) { scrollerAPIs.push(value); context.expose(value) },
+            emit(name, value) { if (name === 'update') updates.push(value); context.emit(name, value) },
+        })
+    }
     const localState = Vue.reactive({ projects: { p: state, q: { sessionsLoading: false, sessionsFetched: true, hasMoreSessions: true, oldestSessionMtime: 50 } }, sessions: {} })
     const store = {
         sessions, processStates: {}, localState,
@@ -38,7 +52,7 @@ function mount(t, { initialLoading = false, height = 140, more = true, initialSe
         '../../../stores/workspaces': { useWorkspacesStore: () => ({ getVisibleProjectIds: () => ['p'] }) },
         '../../../stores/sessionSelection': { useSessionSelectionStore: () => ({}) },
         '../../../utils/workspaceIds': { isWorkspaceProjectId: id => id.startsWith('workspace:'), extractWorkspaceId: id => id.slice(10) },
-        '../../../utils/sidebarSessions': { computeSidebarSessionBlocks: () => ({ extra: null, crossFilterPinned: [], crossFilterActive: [], natural: Object.values(sessions) }) },
+        '../../../utils/sidebarSessions': { computeSidebarSessionBlocks: ({ showArchived }) => ({ extra: null, crossFilterPinned: [], crossFilterActive: [], natural: Object.values(sessions).filter(session => showArchived || !session.archived) }) },
         '../../../utils/textFilter': { matchQuery: (query, value) => value?.includes(query) },
         '../../../utils/datePresets': { dateBucketSeparator: () => ({ key: 'old', entry: { label: 'Older' } }) },
         '../../../composables/useListCascade': { useListCascade: () => noMotion },
@@ -46,19 +60,35 @@ function mount(t, { initialLoading = false, height = 140, more = true, initialSe
         '../../../composables/useGlideInk': { useGlideInk() {} },
         '../../../utils/sidebarRows': { activeRowBase() {}, entranceOffset() {}, revealBands() {}, revealMargins() {} },
         '../../../utils/scrollerLoadWindow.js': helpers,
-        '../../virtual-scroller/VirtualScroller.vue': virtualScroller(),
+        '../../virtual-scroller/VirtualScroller.vue': actualScroller,
         './SessionListItem.vue': row, '../../sidebar/SidebarListSeparator.vue': row,
     })
     if (initialLoading) store.loadSessions('p')
     const app = renderer.createApp({ setup: () => () => Vue.h(Vue.KeepAlive, () => active.value ? Vue.h(component, props) : null) })
-    app.mount(root); t.after(() => app.unmount())
+    app.mount(root); t.after(() => {
+        app.unmount()
+        for (const [index, name] of ['requestAnimationFrame', 'cancelAnimationFrame'].entries()) {
+            if (savedRAF[index] === undefined) delete globalThis[name]
+            else globalThis[name] = savedRAF[index]
+        }
+    })
     async function finish({ cursor = state.oldestSessionMtime, id, title = 'other', more = true, fail = false } = {}) {
         const request = requests.at(-1)
         if (fail) request.reject(new Error('network'))
         else request.resolve({ sessions: id ? [{ id, title, project_id: 'p', mtime: cursor }] : [], has_more: more })
         await flush()
     }
-    return { props, active, calls, requests, root, state, store, sessions, app, finish,
+    return { props, active, calls, requests, root, state, store, sessions, app, finish, updates,
+        range: () => scrollerAPIs.at(-1).getVisibleRange(),
+        displayedIds: () => scrollerInputs.at(-1).items.map(session => session.id),
+        async scroll(top) {
+            const viewport = descendants(root, n => n.props.class?.split(' ').includes('virtual-scroller'))[0]
+            viewport.scrollTop = top
+            viewport.props.onScrollPassive({ type: 'scroll', target: viewport })
+            const batch = [...pendingRAF]; pendingRAF.clear()
+            for (const [, callback] of batch) callback(0)
+            await flush()
+        },
         scrollers: () => descendants(root, n => n.props.class?.split(' ').includes('virtual-scroller')),
         retry: () => descendants(root, n => n.type === 'wa-button').find(n => n.props.onClick)?.props.onClick(),
     }
@@ -139,4 +169,107 @@ test('an unmeasured external baseline cannot become another project baseline', a
     await v.finish()
     assert.deepEqual(v.calls, ['p', 'q'], 'an empty q page has no progress against q cursor 50')
     v.requests[0].resolve({ sessions: [], has_more: false }); await flush()
+})
+
+
+function matchingSessions(count) {
+    return Object.fromEntries(Array.from({ length: count }, (_, index) => {
+        const id = `session-${index}`
+        return [id, { id, title: `match ${index}`, project_id: 'p', mtime: 100 }]
+    }))
+}
+for (const opportunity of ['range', 'membership', 'equal-index scroll']) {
+    test(`successful no-progress waits for an independent ${opportunity} opportunity`, async t => {
+        const v = mount(t, { initialSessions: matchingSessions(6) }); await flush()
+        assert.equal(v.calls.length, 1)
+        await v.finish(); await flush()
+        assert.equal(v.calls.length, 1, 'successful no-progress cannot self-loop')
+        assert.equal(descendants(v.root, n => n.type === 'wa-callout' && n.props.variant === 'danger').length, 0,
+            'successful no-progress is not a fetch failure')
+        const beforeRange = { ...v.range() }, beforeUpdates = v.updates.length
+        if (opportunity === 'range') {
+            await v.scroll(70)
+            assert.notDeepEqual(v.range(), beforeRange)
+        } else if (opportunity === 'membership') {
+            v.sessions.new = { id: 'new', title: 'filtered-out', project_id: 'p', mtime: 100 }
+            await flush()
+            assert.deepEqual(v.range(), beforeRange, 'canonical membership can change without displayed range movement')
+        } else {
+            await v.scroll(1)
+            assert.deepEqual(v.range(), beforeRange)
+            assert.equal(v.updates.length, beforeUpdates, 'native scroll uses the equal-range event path')
+        }
+        assert.equal(v.calls.length, 2, 'one independent opportunity starts one next request')
+        await v.finish(); await flush()
+        assert.equal(v.calls.length, 2, 'second no-progress settlement cannot self-loop')
+        await v.scroll(v.scrollers()[0].scrollTop)
+        assert.equal(v.calls.length, 2, 'an unchanged scroll position is not a new scroll opportunity')
+    })
+}
+test('real page rejection remains latched across external opportunities until explicit retry', async t => {
+    t.mock.method(console, 'error', () => {})
+    const v = mount(t, { initialSessions: matchingSessions(6) }); await flush()
+    await v.finish({ fail: true })
+    assert.equal(v.calls.length, 1)
+    await v.scroll(70)
+    v.sessions.new = { id: 'new', title: 'match new', project_id: 'p', mtime: 100 }
+    await flush(); await v.scroll(71)
+    assert.equal(v.calls.length, 1)
+    assert.equal(descendants(v.root, n => n.type === 'wa-callout' && n.props.variant === 'danger').length, 1)
+    v.retry(); await flush(); assert.equal(v.calls.length, 2)
+    await v.finish({ more: false })
+})
+test('30 matching sessions shrinking to 12 requests one page without query or range changes', async t => {
+    const v = mount(t, { initialSessions: matchingSessions(30), height: 140 }); await flush()
+    assert.equal(v.calls.length, 0)
+    const beforeRange = { ...v.range() }, beforeUpdates = v.updates.length
+    const beforeIds = Object.keys(v.sessions), beforeCursor = v.state.oldestSessionMtime
+    assert.equal(beforeRange.end, 3)
+    assert.equal(v.displayedIds().length, 30)
+    for (let index = 0; index < 18; index++) v.sessions[`session-${index}`].title = `excluded ${index}`
+    await flush()
+    assert.equal(v.displayedIds().length, 12)
+    assert.equal(12 - beforeRange.end, 9)
+    assert.deepEqual(v.range(), beforeRange)
+    assert.equal(v.updates.length, beforeUpdates, 'stable geometry emits no replacement event')
+    assert.equal(v.props.searchQuery, 'match')
+    assert.deepEqual(Object.keys(v.sessions), beforeIds)
+    assert.equal(v.state.oldestSessionMtime, beforeCursor)
+    assert.equal(v.calls.length, 1, 'changed filtered membership supplies the missing opportunity')
+    await v.finish(); await flush()
+    assert.equal(v.calls.length, 1, 'no-progress completion does not retry itself')
+    v.sessions['session-18'].title = 'match changed title'
+    v.sessions['session-19'].annotations = { edited: true }
+    await flush()
+    assert.equal(v.calls.length, 1, 'same ordered displayed membership cannot unlock no-progress')
+    v.sessions['session-18'].title = 'excluded later'
+    await flush(); assert.equal(v.calls.length, 2)
+    await v.finish({ more: false })
+})
+
+
+test('a successful same-ID title replacement cannot turn filtered membership into a self-loop', async t => {
+    const v = mount(t, { initialSessions: matchingSessions(6) }); await flush()
+    assert.equal(v.calls.length, 1)
+    await v.finish({ cursor: 100, id: 'session-0', title: 'excluded' })
+    await flush()
+    assert.equal(v.displayedIds().length, 5)
+    assert.equal(v.calls.length, 1, 'a response without canonical progress stops after its own membership change')
+    v.sessions['session-1'].title = 'excluded independently'
+    await flush(); assert.equal(v.calls.length, 2)
+    await v.finish({ more: false })
+})
+test('archive-driven filtered membership supplies the same independent threshold opportunity', async t => {
+    const v = mount(t, { initialSessions: matchingSessions(30) }); await flush()
+    assert.equal(v.calls.length, 0)
+    const beforeRange = { ...v.range() }, beforeIds = Object.keys(v.sessions)
+    for (let index = 0; index < 18; index++) v.sessions[`session-${index}`].archived = true
+    await flush()
+    assert.equal(v.displayedIds().length, 12)
+    assert.deepEqual(v.range(), beforeRange)
+    assert.deepEqual(Object.keys(v.sessions), beforeIds)
+    assert.equal(v.calls.length, 1)
+    await v.finish(); assert.equal(v.calls.length, 1)
+    v.sessions['session-18'].annotations = { archivedReason: 'unrelated' }
+    await flush(); assert.equal(v.calls.length, 1)
 })

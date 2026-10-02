@@ -211,6 +211,8 @@ const isLoading = computed(() => store.areSessionsLoading(props.projectId))
 
 // Local error state for "load more" failures (not initial load)
 const loadMoreError = ref(false)
+// A successful unchanged page stops chaining until a separate pagination opportunity.
+const paginationNoProgress = ref(false)
 
 // Virtual scroller configuration
 // Session items have relatively uniform height (~80-100px normal, ~35-40px compact)
@@ -294,6 +296,7 @@ let paginationGeneration = 0
 let paginationRequest = null
 let pendingPaginationGeneration = null
 let externalPageStart = null
+let paginationScrollTop = null
 const paginationReady = computed(() => paginationMounted.value && paginationActive.value &&
     !!scrollerRef.value && !unref(scrollerRef.value.suspended) && scrollerRef.value.getScrollState().clientHeight > 0)
 
@@ -315,7 +318,7 @@ function canPaginate() {
 }
 
 async function loadMore() {
-    if (!canPaginate() || !paginationRange.value || !hasMore.value || loadMoreError.value) return
+    if (!canPaginate() || !paginationRange.value || !hasMore.value || loadMoreError.value || paginationNoProgress.value) return
     if (paginationRequest) {
         if (paginationRequest.generation !== paginationGeneration) pendingPaginationGeneration = paginationGeneration
         return
@@ -333,7 +336,7 @@ async function loadMore() {
         await store.loadSessions(props.projectId)
         if (!current()) return
         progressed = hasScrollerPaginationProgress(owner.before, paginationSnapshot.value)
-        if (hasMore.value && !progressed) loadMoreError.value = true
+        if (hasMore.value && !progressed) paginationNoProgress.value = true
     } catch {
         if (current()) loadMoreError.value = true
     } finally {
@@ -351,12 +354,30 @@ async function loadMore() {
 
 function handleRetry() {
     loadMoreError.value = false
+    paginationNoProgress.value = false
     return loadMore()
 }
 
-function onScrollerUpdate({ visibleStartIndex, visibleEndIndex }) {
-    paginationRange.value = { start: visibleStartIndex, end: visibleEndIndex }
+function requestPaginationOpportunity() {
+    paginationNoProgress.value = false
     loadMore()
+}
+
+function onScrollerUpdate({ visibleStartIndex, visibleEndIndex }) {
+    const previous = paginationRange.value
+    paginationRange.value = { start: visibleStartIndex, end: visibleEndIndex }
+    if (paginationScrollTop === null) paginationScrollTop = scrollerRef.value?.getScrollState().scrollTop ?? null
+    if (!previous || previous.start !== visibleStartIndex || previous.end !== visibleEndIndex) requestPaginationOpportunity()
+    else loadMore()
+}
+
+function onScrollerScroll(event) {
+    if (!canPaginate()) return
+    // VirtualScroller forwards the native event. Equal range indices can still contain real scrolling.
+    const scrollTop = event.target?.scrollTop
+    if (!Number.isFinite(scrollTop) || scrollTop === paginationScrollTop) return
+    paginationScrollTop = scrollTop
+    requestPaginationOpportunity()
 }
 
 // Retain the baseline from loading START, not the already-merged finishing page.
@@ -368,11 +389,17 @@ watch(isLoading, loading => {
     nextTick(() => { if (generation === paginationGeneration) loadMore() })
 }, { immediate: true, flush: 'sync' })
 watch([paginationSnapshot, hasMore], () => loadMore())
+// Compare membership values, not newly allocated arrays or unrelated session fields.
+// Displayed membership supplies opportunities; canonical IDs/cursor still decide completed-page progress.
+watch(() => JSON.stringify(sessions.value.map(session => session.id)), requestPaginationOpportunity)
+watch(() => JSON.stringify([...paginationSnapshot.value.ids].sort()), requestPaginationOpportunity)
 
 async function refreshPaginationScope() {
     const generation = ++paginationGeneration
     paginationRange.value = null
+    paginationScrollTop = null
     loadMoreError.value = false
+    paginationNoProgress.value = false
     await nextTick()
     if (generation !== paginationGeneration || !canPaginate()) return
     paginationRange.value = scrollerRef.value.getVisibleRange()
@@ -780,6 +807,7 @@ defineExpose({
             :class="{ 'sidebar-row-list--compact': compactView }"
             tabindex="0"
             @update="onScrollerUpdate"
+            @scroll="onScrollerScroll"
             @keydown="handleListKeydown"
         >
             <template #before><span ref="inkRef" class="glide-ink" aria-hidden="true"></span></template>
@@ -803,13 +831,13 @@ defineExpose({
             </template>
         </VirtualScroller>
 
-        <!-- Error state for load more (shown after the scroller) -->
-        <div v-if="loadMoreError" class="load-more-error">
-            <wa-callout variant="danger">
-                <span>Failed to load more sessions</span>
+        <!-- Fetch failure and successful no-progress keep separate retry states. -->
+        <div v-if="loadMoreError || paginationNoProgress" class="load-more-error">
+            <wa-callout :variant="loadMoreError ? 'danger' : 'neutral'">
+                <span>{{ loadMoreError ? 'Failed to load more sessions' : 'No additional sessions received' }}</span>
                 <wa-button
                     slot="footer"
-                    variant="danger"
+                    :variant="loadMoreError ? 'danger' : 'neutral'"
                     appearance="outlined"
                     size="small"
                     :loading="isLoading"
