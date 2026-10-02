@@ -568,8 +568,8 @@ export const useDataStore = defineStore('data', {
             // Visual item reference cache - used to stabilize object references
             // across recomputes so Vue skips re-renders for unchanged items.
             // { sessionId: Map<lineNum, visualItem> }
-            // Not reactive (plain object + Maps) — only used internally by
-            // recomputeVisualItems, never read by Vue templates.
+            // Internal reactive Pinia state. Map access returns row proxies shared
+            // with the visual list; templates do not read the cache directly.
             visualItemCache: {},
 
             // Open tabs per session - for tab restoration when returning to a session
@@ -5191,11 +5191,8 @@ export const useDataStore = defineStore('data', {
 
             const { baseLineNum, kind: streamingSyntheticKind } = SYNTHETIC_ITEM.STREAMING_BLOCK
             const targetLineNum = baseLineNum - blockIndex
-            const visualItems = this.localState.sessionVisualItems[sessionId]
-            if (!visualItems) return
-
-            const idx = visualItems.findIndex(vi => vi.lineNum === targetLineNum)
-            if (idx === -1) return
+            const row = this.localState.visualItemCache[sessionId]?.get(targetLineNum)
+            if (!row || row.syntheticKind !== streamingSyntheticKind) return
 
             const contentBlock = block.blockType === 'thinking'
                 ? { type: 'thinking', thinking: displayedText, streaming: !block.stopped }
@@ -5206,12 +5203,7 @@ export const useDataStore = defineStore('data', {
                 message: { role: 'assistant', content: [contentBlock] },
             }
 
-            const newVi = { ...visualItems[idx] }
-            setParsedContent(newVi, newParsed)
-            visualItems[idx] = newVi
-
-            const cache = this.localState.visualItemCache[sessionId]
-            if (cache) cache.set(targetLineNum, newVi)
+            setParsedContent(row, newParsed)
         },
 
         /**
