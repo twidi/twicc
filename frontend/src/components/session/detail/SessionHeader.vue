@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch, inject } from 'vue'
-import { useElementSize, onClickOutside } from '@vueuse/core'
+import { onClickOutside } from '@vueuse/core'
 import { useDataStore } from '../../../stores/data'
 import { useSettingsStore } from '../../../stores/settings'
 import { formatDate } from '../../../utils/date'
@@ -25,6 +25,7 @@ import CostDisplay from '../../ui/CostDisplay.vue'
 import AppTooltip from '../../ui/AppTooltip.vue'
 import { useSharesStore } from '../../../stores/shares'
 import { toggleSessionMute } from '../../../composables/useSessionMute'
+import { useActionsRowLabels } from '../../../composables/useActionsRowLabels'
 import { useCodeCommentsStore } from '../../../stores/codeComments'
 
 const props = defineProps({
@@ -352,35 +353,13 @@ function toggleCompact() {
 // Action buttons: layout follows the header width
 // ═══════════════════════════════════════════════════════════════════════════
 
-// The actions row spells out each button's name (at full height, and at the top of the compact panel)
-// when it fits on one line, and shows icons only otherwise. It is measured, not a fixed width: the names'
-// widths follow the font size setting and the set of buttons (Debug in dev mode, the draft's few
-// buttons...), so any constant goes stale the day a button is added. Names are tried whenever the header
-// is wider than the last width at which they wrapped; a wrap, detected right after the render and before
-// the paint, records that width and drops the names. The record resets when what the row holds, or the
-// size of its text, changes. The header lives in a dock pane, so its width does not follow the viewport.
-const { width: headerWidth } = useElementSize(headerRef)
+// The actions row spells out each button's name when it fits on one line (see useActionsRowLabels).
+// What the row holds, or the size of its text, changing forgets the recorded wrap width.
 const actionsRef = ref(null)
-const labelsWrappedAt = ref(0)
-const actionsLabels = computed(() => headerWidth.value > labelsWrappedAt.value)
-
-function actionsRowWraps() {
-    const buttons = actionsRef.value?.querySelectorAll(':scope > wa-button, :scope > wa-dropdown')
-    if (!buttons || buttons.length < 2) return false
-    return buttons[buttons.length - 1].offsetTop - buttons[0].offsetTop > 2
-}
-
-watch([headerWidth, actionsLabels], () => {
-    if (actionsLabels.value && actionsRowWraps()) {
-        labelsWrappedAt.value = Math.max(labelsWrappedAt.value, headerWidth.value)
-    }
-}, { flush: 'post' })
-
-watch(
-    () => [props.sessionId, session.value?.draft, session.value?.ephemeral, session.value?.archived,
-        settingsStore.isDevMode, compactHeight.value, rootFontSizePx.value],
-    () => { labelsWrappedAt.value = 0 },
-)
+const actionsLabels = useActionsRowLabels(headerRef, actionsRef, () => [
+    props.sessionId, session.value?.draft, session.value?.ephemeral, session.value?.archived,
+    settingsStore.isDevMode, compactHeight.value, rootFontSizePx.value,
+])
 
 // The compact panel is a popup: a click anywhere else closes it. The panel is
 // a child of the header, so one target covers it, and VueUse walks the

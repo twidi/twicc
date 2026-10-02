@@ -1,12 +1,12 @@
 <script setup>
 // ProjectDetailHeader.vue - Header section of the project detail panel.
-// Shows project/workspace name, edit button, then three zones: identity (directory path and
-// live indicators chip), a stats container (sessions count, cost, last activity over the
-// activity sparkline drawn as a backdrop) and the navigation list; manages the edit/manage dialogs.
+// Shows the project/workspace name with its status icons (code comments, live process), then the
+// zones below: identity (directory path), the action buttons (archive, edit/manage), a stats container
+// (sessions count, cost, last activity over the activity sparkline drawn as a backdrop) and the
+// navigation list; manages the edit/manage dialogs.
 //
 // On small viewports (compact height, utils/compactHeight.js), collapses to a single compact row
-// with a chevron to expand the full details as an overlay — same pattern as
-// SessionHeader.vue.
+// with a tools button to expand the zones below as an overlay — same pattern as SessionHeader.vue.
 
 import { ref, computed } from 'vue'
 import { onClickOutside } from '@vueuse/core'
@@ -16,7 +16,8 @@ import { useWorkspacesStore } from '../../stores/workspaces'
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../utils/workspaceIds'
 import { aggregateWeeklyActivity } from '../../utils/activityAggregation'
 import { formatDate } from '../../utils/date'
-import { compactHeight } from '../../utils/compactHeight'
+import { compactHeight, rootFontSizePx } from '../../utils/compactHeight'
+import { useActionsRowLabels } from '../../composables/useActionsRowLabels'
 import { SESSION_TIME_FORMAT } from '../../constants'
 import ProjectBadge from './ProjectBadge.vue'
 import ProjectDirectoryPath from './ProjectDirectoryPath.vue'
@@ -83,7 +84,7 @@ const workspaceStatsProjectIds = computed(() =>
 const project = computed(() => isSingleProjectMode.value ? store.getProject(props.projectId) : null)
 
 // Whether the thing shown in the header (the single project or the active
-// workspace) is currently archived — drives the clickable "Archived" badge.
+// workspace) is currently archived — drives the archived marker and the Archive / Unarchive button.
 const isArchived = computed(() => {
     if (isSingleProjectMode.value) return !!project.value?.archived
     if (isWorkspaceMode.value) return !!workspace.value?.archived
@@ -102,9 +103,9 @@ const displayName = computed(() => {
 
 // Directory (single project only)
 const directory = computed(() => project.value?.directory || null)
-// Compact mode collapses the directory row away, so the warning is re-hung next
-// to the badge — the wrapper needs the same condition as the icon itself,
-// otherwise an empty indicator would still claim its slot in the row's gap.
+// The compact closed header hides the zone where the missing-directory warning lives, so the warning is
+// re-hung next to the name — the wrapper needs the same condition as the icon itself, otherwise an
+// empty indicator would still claim its slot in the row's gap.
 const directoryMissing = computed(() => !!project.value?.stale)
 
 // Project IDs aggregated for this page's stats (counter, cost, last activity,
@@ -158,6 +159,12 @@ const indicatorProjectIds = computed(() => {
 const isCompactExpanded = ref(false)
 const headerRef = ref(null)
 
+// The action buttons spell out their names when their row fits on one line (see useActionsRowLabels).
+const actionsRef = ref(null)
+const actionsLabels = useActionsRowLabels(headerRef, actionsRef, () => [
+    props.projectId, isArchived.value, compactHeight.value, rootFontSizePx.value,
+])
+
 // The expanded overlay behaves like a popup: a click anywhere else closes it.
 // The overlay is a child of the header, so one target is enough.
 onClickOutside(headerRef, () => {
@@ -188,8 +195,7 @@ function handleArchive() {
     }
 }
 
-// Click on the "Archived" badge → unarchive the project / workspace in place
-// (mirrors the clickable archived badge on a session header).
+// Click on the Unarchive button → unarchive the project / workspace in place.
 function handleUnarchive() {
     if (isSingleProjectMode.value && project.value?.archived) {
         store.setProjectArchived(props.projectId, false)
@@ -200,51 +206,21 @@ function handleUnarchive() {
 </script>
 
 <template>
-    <header ref="headerRef" class="detail-header" :class="{ 'compact-expanded': isCompactExpanded, 'compact-collapsed': !isCompactExpanded }">
+    <header ref="headerRef" class="detail-header" :class="{ 'compact-expanded': isCompactExpanded, 'compact-collapsed': !isCompactExpanded, 'actions-labels': actionsLabels }">
         <!-- Title row -->
         <div class="detail-title-row">
             <!-- Clickable zone for compact toggle -->
             <div class="compact-toggle-zone" @click="isCompactExpanded = !isCompactExpanded">
-                <!-- Action group before the title (mirrors the session header):
-                     the clickable "Archived" badge (or the Archive button when
-                     not archived) followed by the Edit/Manage button. -->
-                <div v-if="!isAllProjectsMode" class="detail-title-actions">
-                    <wa-tag
-                        v-if="isArchived"
-                        id="project-detail-archived-tag"
-                        size="small"
-                        variant="neutral"
-                        class="archived-tag"
-                        @click.stop="handleUnarchive"
-                    >Archived</wa-tag>
-                    <AppTooltip v-if="isArchived" for="project-detail-archived-tag">Click to unarchive</AppTooltip>
-
-                    <wa-button
-                        v-else
-                        id="detail-archive-button"
-                        variant="neutral"
-                        appearance="plain"
-                        size="small"
-                        class="archive-button reduced-height"
-                        @click.stop="handleArchive"
-                    >
-                        <wa-icon name="box-archive" :label="isWorkspaceMode ? 'Archive workspace' : 'Archive project'"></wa-icon>
-                    </wa-button>
-                    <AppTooltip v-if="!isArchived" for="detail-archive-button">{{ isWorkspaceMode ? 'Archive workspace' : 'Archive project' }}</AppTooltip>
-
-                    <wa-button
-                        id="detail-edit-button"
-                        variant="neutral"
-                        appearance="plain"
-                        size="small"
-                        class="edit-button reduced-height"
-                        @click.stop="handleEditClick"
-                    >
-                        <wa-icon :name="isWorkspaceMode ? 'gear' : 'pencil'"></wa-icon>
-                    </wa-button>
-                    <AppTooltip v-if="isWorkspaceMode" for="detail-edit-button">Manage workspace</AppTooltip>
-                    <AppTooltip v-else-if="isSingleProjectMode" for="detail-edit-button">Edit project (name and color)</AppTooltip>
-                </div>
+                <!-- Archived marker: the session header's archive icon, in its yellow. The Unarchive button,
+                     with the other actions, is the way out. -->
+                <wa-icon
+                    v-if="isArchived"
+                    id="project-detail-archived-icon"
+                    name="box-archive"
+                    :label="isWorkspaceMode ? 'Archived workspace' : 'Archived project'"
+                    class="session-state-icon session-state-icon--archived"
+                ></wa-icon>
+                <AppTooltip v-if="isArchived" for="project-detail-archived-icon">{{ isWorkspaceMode ? 'Archived workspace' : 'Archived project' }}</AppTooltip>
 
                 <!-- Single project mode -->
                 <template v-if="isSingleProjectMode">
@@ -258,48 +234,98 @@ function handleUnarchive() {
                     </h2>
                 </template>
 
-                <!-- Compact-only indicators (visible only in compact collapsed mode).
-                     The missing-directory mark comes first: in compact mode the
-                     directory row is collapsed away, so the warning would
-                     otherwise disappear exactly where the badge still shows. -->
-                <span v-if="directoryMissing" class="compact-indicator compact-missing-directory">
+                <!-- Missing directory (compact closed header only: the warning is in the opened panel and in
+                     the full header, with the path). It comes first: the directory row is collapsed away, so
+                     the warning would otherwise disappear exactly where the name still shows. -->
+                <span v-if="directoryMissing" class="compact-missing-directory">
                     <ProjectMissingDirectoryIcon :project-id="projectId" />
                 </span>
-                <span v-if="!isAllProjectsMode" class="compact-indicator">
+
+                <!-- Status: unsent code comments, then the live process indicator, right after the name in
+                     every mode. The wrappers have no box of their own, so an indicator that renders nothing
+                     claims no gap. -->
+                <span v-if="!isAllProjectsMode" class="title-indicator">
                     <CodeCommentsIndicator :project-ids="indicatorProjectIds" />
                 </span>
-                <span v-if="!isAllProjectsMode" class="compact-indicator">
+                <span v-if="!isAllProjectsMode" class="title-indicator">
                     <AggregatedProcessIndicator :project-ids="indicatorProjectIds" size="small" />
                 </span>
 
-                <!-- Compact chevron -->
-                <wa-icon
-                    class="compact-toggle-chevron"
-                    :name="isCompactExpanded ? 'chevron-up' : 'chevron-down'"
-                    label="Toggle details"
-                ></wa-icon>
+                <!-- Panel toggle (compact height only): the same one-segment pill as the session header's. -->
+                <div class="compact-pill">
+                    <wa-button
+                        id="detail-compact-toggle"
+                        variant="brand"
+                        appearance="plain"
+                        size="small"
+                        :class="['compact-tool-button', 'reduced-height', { 'compact-tool-button--active': isCompactExpanded }]"
+                        @click.stop="isCompactExpanded = !isCompactExpanded"
+                    >
+                        <wa-icon name="screwdriver-wrench" label="Toggle details"></wa-icon>
+                        <wa-icon class="compact-tool-chevron" :name="isCompactExpanded ? 'chevron-up' : 'chevron-down'"></wa-icon>
+                    </wa-button>
+                </div>
             </div>
         </div>
 
         <!-- Collapsible rows: sparkline, directory, meta (overlay on small viewports) -->
         <div class="detail-collapsible-rows" :class="{ 'glass-surface': compactHeight }">
             <!-- Identity: directory (single project only; cut from the left so the last folder stays
-                 visible) and the live indicators chip -->
-            <div v-if="!isAllProjectsMode" class="detail-identity">
-                <div v-if="isSingleProjectMode && directory" class="detail-directory">
+                 visible) -->
+            <div v-if="isSingleProjectMode && directory" class="detail-identity">
+                <div class="detail-directory">
                     <wa-icon name="folder" class="detail-icon"></wa-icon>
                     <ProjectDirectoryPath :project-id="projectId" emphasize-last class="detail-directory-path" />
                     <!-- flex-basis: 100% puts it on its own line without disturbing the
                          icon/path alignment of the single-line case. -->
                     <ProjectMissingDirectoryNote :project-id="projectId" class="detail-directory-note" />
                 </div>
+            </div>
 
-                <!-- Full-size indicators (hidden in compact collapsed mode, which shows its own copies in
-                     the title row). The chip hides itself when both indicators render nothing. -->
-                <span class="detail-indicators">
-                    <CodeCommentsIndicator :project-ids="indicatorProjectIds" class="full-indicator" />
-                    <AggregatedProcessIndicator :project-ids="indicatorProjectIds" size="small" class="full-indicator" />
-                </span>
+            <!-- Action buttons (a project or a workspace): part of the compact panel, always visible at full
+                 height. -->
+            <div v-if="!isAllProjectsMode" ref="actionsRef" class="detail-actions">
+                <wa-button
+                    v-if="!isArchived"
+                    id="detail-archive-button"
+                    variant="neutral"
+                    appearance="plain"
+                    size="small"
+                    class="archive-button reduced-height"
+                    @click="handleArchive"
+                >
+                    <wa-icon auto-width name="box-archive" :label="isWorkspaceMode ? 'Archive workspace' : 'Archive project'"></wa-icon>
+                    <span class="action-label">Archive</span>
+                </wa-button>
+                <AppTooltip v-if="!isArchived" for="detail-archive-button">{{ isWorkspaceMode ? 'Archive workspace' : 'Archive project' }}</AppTooltip>
+
+                <wa-button
+                    v-else
+                    id="detail-unarchive-button"
+                    variant="neutral"
+                    appearance="plain"
+                    size="small"
+                    class="archive-button archive-button--archived reduced-height"
+                    @click="handleUnarchive"
+                >
+                    <wa-icon auto-width name="box-archive" :label="isWorkspaceMode ? 'Unarchive workspace' : 'Unarchive project'"></wa-icon>
+                    <span class="action-label">Unarchive</span>
+                </wa-button>
+                <AppTooltip v-if="isArchived" for="detail-unarchive-button">{{ isWorkspaceMode ? 'Unarchive workspace' : 'Unarchive project' }}</AppTooltip>
+
+                <wa-button
+                    id="detail-edit-button"
+                    variant="neutral"
+                    appearance="plain"
+                    size="small"
+                    class="edit-button reduced-height"
+                    @click="handleEditClick"
+                >
+                    <wa-icon auto-width :name="isWorkspaceMode ? 'gear' : 'pencil'" :label="isWorkspaceMode ? 'Manage workspace' : 'Edit project'"></wa-icon>
+                    <span class="action-label">{{ isWorkspaceMode ? 'Manage' : 'Edit' }}</span>
+                </wa-button>
+                <AppTooltip v-if="isWorkspaceMode" for="detail-edit-button">Manage workspace</AppTooltip>
+                <AppTooltip v-else-if="isSingleProjectMode" for="detail-edit-button">Edit project (name and color)</AppTooltip>
             </div>
 
             <!-- Stats container: labelled cells over the activity sparkline, drawn as a soft backdrop. -->
@@ -357,6 +383,12 @@ function handleUnarchive() {
 
 <style scoped>
 .detail-header {
+    /* The leading icon of the title row, the directory row and the action row is centred in a box of this
+       width, starting at the rows' inline padding: one vertical axis, like the session header's. */
+    --header-icon-col: 1.5rem;
+    /* Geometry of the compact tools pill (see SessionHeader.vue): one button-wide share plus the chevron. */
+    --compact-pill-button-width: 2.75rem;
+    --compact-pill-chevron-width: 1rem;
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-m);
@@ -386,16 +418,9 @@ function handleUnarchive() {
     font-size: var(--wa-font-size-l);
 }
 
-/* Action group placed before the title: archived badge / archive button + edit button. */
-.detail-title-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--wa-space-2xs);
-    flex-shrink: 0;
-}
-.edit-button,
-.archive-button {
-    flex-shrink: 0;
+/* The status indicators after the name: no box of their own (an empty one claims no gap). */
+.title-indicator {
+    display: contents;
 }
 
 /* Compact toggle zone: transparent on large viewports */
@@ -403,31 +428,58 @@ function handleUnarchive() {
     display: contents;
 }
 
-/* Clickable "Archived" badge shown before the title when the project /
-   workspace is archived (mirrors the session header's archived tag). */
-.archived-tag {
-    flex-shrink: 0;
-    cursor: pointer;
+/* The missing-directory mark: only in the compact closed header, on the name's centre line. */
+.compact-missing-directory {
+    display: none;
+    align-items: center;
 }
 
-/* Compact chevron: hidden by default */
-.compact-toggle-chevron {
+/* Leading icon of the title row: the archived marker, the project's mark, or the workspace's icon. */
+.compact-toggle-zone > wa-icon:first-child,
+.all-projects-title > wa-icon:first-child {
+    display: inline-flex;
+    justify-content: center;
+    width: var(--header-icon-col);
+}
+:deep(.detail-title > :first-child) {
+    display: inline-flex;
+    justify-content: center;
+    width: var(--header-icon-col);
+}
+
+/* The compact tools pill: hidden by default, one outlined brand segment like the session header's. */
+.compact-pill {
     display: none;
     flex-shrink: 0;
+    align-items: stretch;
+    overflow: hidden;
+    margin-inline-start: auto;
+    margin-block: calc(-3 * var(--wa-space-2xs));
+    border-radius: var(--wa-form-control-border-radius, var(--wa-border-radius-m));
+    border: 1px solid var(--wa-color-brand-border-loud);
+    box-shadow: var(--depth-button), var(--depth-highlight);
+}
+.compact-tool-button {
+    display: inline-flex;
+    width: calc(var(--compact-pill-button-width) + var(--compact-pill-chevron-width));
     opacity: 0.6;
     transition: opacity 0.15s;
-    font-size: var(--wa-font-size-xs);
-    align-self: center;
+    &::part(base) {
+        flex: 1;
+        min-width: 0;
+        padding-inline: 0;
+        border-radius: 0;
+    }
 }
-
-/* Compact-only indicators: hidden by default (shown only in compact collapsed mode) */
-.compact-indicator {
-    display: none;
+.compact-tool-button:hover,
+.compact-tool-button.compact-tool-button--active {
+    opacity: 1;
 }
-
-/* Keeps the missing-directory mark on the badge's centre line. */
-.compact-missing-directory {
-    align-items: center;
+.compact-tool-chevron {
+    display: inline-flex;
+    justify-content: center;
+    width: var(--compact-pill-chevron-width);
+    font-size: var(--wa-font-size-2xs);
 }
 
 /* Collapsible rows: transparent wrapper on large viewports */
@@ -435,16 +487,12 @@ function handleUnarchive() {
     display: contents;
 }
 
-/* Zone 1 — identity: directory + indicators chip. Hidden when it would hold neither. */
+/* Zone 1 — identity: the directory. */
 .detail-identity {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--wa-space-3xs) var(--wa-space-m);
-}
-
-.detail-identity:not(:has(> .detail-directory)):not(:has(> .detail-indicators > *)) {
-    display: none;
 }
 
 .detail-directory {
@@ -477,20 +525,61 @@ function handleUnarchive() {
 .detail-directory > .detail-icon {
     color: var(--wa-color-text-quiet);
 }
-
-.detail-indicators {
+/* The directory icon sits on the header's icon axis, in a box of the column's width. */
+.detail-directory > .detail-icon:first-child {
     display: inline-flex;
-    align-items: center;
-    gap: var(--wa-space-s);
-    margin-inline-start: auto;
-    padding: 0.125rem var(--wa-space-s);
-    border-radius: 999px;
-    border: var(--divider-size) solid var(--wa-color-surface-border);
-    background: color-mix(in oklab, var(--wa-color-brand-60) 8%, transparent);
+    justify-content: center;
+    width: var(--header-icon-col);
 }
 
-.detail-indicators:not(:has(> *)) {
+/* Action buttons: a row of their own between the identity and the stats, in the full header and in the
+   compact panel. Same treatment as the session header's (see SessionHeader.vue): the 1.3 scale of
+   .reduced-height is a real 1.3em, so a long name cannot run into the next icon; the pull-in that trims the
+   buttons' tall boxes is on each button, so a wrapped line stays close; the first icon is on the axis. */
+.detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--wa-space-3xs) var(--wa-space-xs);
+    margin-block: 0 calc(0.5 * var(--wa-space-2xs));
+}
+.detail-actions > wa-button {
+    margin-block: calc(-1.5 * var(--wa-space-2xs));
+}
+.detail-actions wa-button {
+    font-size: var(--wa-font-size-2xs);
+}
+.detail-actions wa-button::part(base) {
+    padding-inline: var(--wa-space-xs);
+}
+.detail-actions wa-button::part(label) {
+    scale: 1;
+}
+.detail-actions wa-button wa-icon,
+.detail-actions .action-label {
+    font-size: 1.3em;
+}
+.detail-actions > wa-button:first-child::part(base) {
+    padding-inline-start: 0;
+}
+.detail-actions > wa-button:first-child wa-icon {
+    width: var(--header-icon-col);
+}
+.edit-button,
+.archive-button {
+    flex-shrink: 0;
+}
+.archive-button.archive-button--archived::part(base) {
+    color: var(--wa-color-yellow-80);
+}
+/* The button names show only when the row fits on one line (see useActionsRowLabels). */
+.action-label {
     display: none;
+    margin-inline-start: calc(0.75 * var(--wa-space-xs));
+    white-space: nowrap;
+}
+.detail-header.actions-labels .action-label {
+    display: inline;
 }
 
 /* Zone 2 — stats container: labelled cells over the sparkline backdrop. */
@@ -569,8 +658,13 @@ function handleUnarchive() {
 }
 
 /* compact height: see utils/compactHeight.js */
-/* Show chevron */
-:where(html.compact-height) .compact-toggle-chevron {
+/* Show the missing-directory mark while the panel that holds the path is closed */
+:where(html.compact-height) .detail-header.compact-collapsed .compact-missing-directory {
+    display: inline-flex;
+}
+
+/* Show the tools pill */
+:where(html.compact-height) .compact-pill {
     display: inline-flex;
 }
 
@@ -584,31 +678,11 @@ function handleUnarchive() {
     flex: 1;
 }
 
-:where(html.compact-height) .compact-toggle-zone:hover .compact-toggle-chevron {
-    opacity: 1;
-}
-
-/* In compact collapsed mode: show compact indicators, hide full indicators */
-:where(html.compact-height) .detail-header.compact-collapsed .compact-indicator {
-    display: inline-flex;
-}
-
 :where(html.compact-height) .detail-header.compact-collapsed {
     border-bottom: solid var(--wa-color-surface-border) var(--divider-size);
     gap: 0;
     padding-block: 0;
     padding-inline: var(--wa-space-xs);
-}
-
-/* In compact collapsed mode: hide the action buttons (archive/edit), like
-   the session header — they reappear when the header is expanded. */
-:where(html.compact-height) .detail-header.compact-collapsed .detail-title-actions {
-    display: none;
-}
-
-/* Hide full indicators in compact mode (they live inside the collapsible rows) */
-:where(html.compact-height) .detail-header.compact-collapsed .full-indicator {
-    display: none;
 }
 
 /* Collapsible rows become a glass panel hanging under the title row, the same as the session header's
@@ -647,15 +721,6 @@ function handleUnarchive() {
     translate: 0 0;
 }
 
-/* When expanded: hide compact indicators, show full indicators */
-:where(html.compact-height) .detail-header.compact-expanded .compact-indicator {
-    display: none;
-}
-
-:where(html.compact-height) .detail-header.compact-expanded .full-indicator {
-    display: inline-flex;
-}
-
 :where(html.compact-height) .detail-title-row {
     padding-block: var(--wa-space-xs);
 }
@@ -666,13 +731,16 @@ function handleUnarchive() {
     margin-bottom: 0 !important;
 }
 
-/* The bubble has no side padding of its own: each zone brings its own inset. */
+/* The bubble has no side padding of its own: each zone brings its own inset. The title row is at the
+   header's padding (m) and the bubble starts xs inside it, so the zones' inset is the difference: their
+   icons line up with the title's. */
 :where(html.compact-height) .detail-identity,
+:where(html.compact-height) .detail-actions,
 :where(html.compact-height) .detail-nav-list {
-    padding-inline: var(--wa-space-m);
+    padding-inline: var(--wa-space-xs);
 }
 
 :where(html.compact-height) .detail-stats {
-    margin-inline: var(--wa-space-m);
+    margin-inline: var(--wa-space-xs);
 }
 </style>

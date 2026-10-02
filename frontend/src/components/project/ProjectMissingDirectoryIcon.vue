@@ -12,7 +12,7 @@
  *
  * Three call sites: inside ProjectDirectoryPath next to the path itself, inside
  * ProjectBadge behind its opt-in `flag-missing-directory` (the sidebar project
- * selector), and standalone next to the badge of the compact project header.
+ * selector), and standalone next to the name in the compact closed project header.
  *
  * Two root nodes (icon + tooltip), so callers must NOT pass a class or style:
  * there is no single root for Vue to fall them through to. Wrap it instead.
