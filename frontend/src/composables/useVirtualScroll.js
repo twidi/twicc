@@ -1,6 +1,7 @@
 // frontend/src/composables/useVirtualScroll.js
 
-import { ref, computed, reactive, watch, watchEffect, onUnmounted } from 'vue'
+import { ref, computed, reactive, toRaw, watch, watchEffect, onUnmounted } from 'vue'
+import { createVirtualScrollGeometry } from '../utils/virtualScrollGeometry.js'
 import { nearestScrollTop, revealBehavior, startSmoothScroll } from '../utils/nearestScroll.js'
 import { isReducedMotion } from '../utils/reducedMotion.js'
 
@@ -229,22 +230,36 @@ export function useVirtualScroll(options) {
     // Computed: Positions
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /**
-     * Computed array of item positions with cumulative top offset.
-     * Each entry contains: { index, key, top, height }
-     *
-     * Performance note: This recomputes when items change OR when heightCache changes.
-     * For large lists, consider memoization strategies if this becomes a bottleneck.
-     */
+    // Keys depend only on topology and reactive fields accessed by itemKey.
+    // This computed stays lazy while hidden, including triggerRef invalidation.
+    const orderedKeys = computed((previous) => {
+        const keys = items.value.map(item => itemKey(item))
+        if (previous && previous.length === keys.length
+            && keys.every((key, index) => Object.is(key, previous[index]))) return previous
+        return Object.freeze(keys)
+    })
+    const geometry = createVirtualScrollGeometry({ minItemHeight })
+    const geometryRevision = ref(0)
+    const rawHeightCache = toRaw(heightCache)
+
+    function setCachedHeight(key, height) {
+        const oldHeight = rawHeightCache.get(key) ?? minItemHeight
+        const changed = oldHeight !== height
+        if (changed) geometry.invalidateKey(key)
+        heightCache.set(key, height)
+        if (changed) geometryRevision.value++
+    }
+
+    function deleteCachedHeight(key) {
+        const changed = rawHeightCache.has(key) && rawHeightCache.get(key) !== minItemHeight
+        if (changed) geometry.invalidateKey(key)
+        heightCache.delete(key)
+        if (changed) geometryRevision.value++
+    }
+
     const livePositions = computed(() => {
-        let top = 0
-        return items.value.map((item, index) => {
-            const key = itemKey(item)
-            const height = heightCache.get(key) ?? minItemHeight
-            const pos = { index, key, top, height }
-            top += height
-            return pos
-        })
+        geometryRevision.value
+        return geometry.reconcile(orderedKeys.value, key => rawHeightCache.get(key))
     })
 
     const positions = computed(() => suspended.value ? suspendedSnapshot.positions : livePositions.value)
@@ -338,7 +353,9 @@ export function useVirtualScroll(options) {
     function updateRenderRange(posArray) {
         if (posArray.length === 0) {
             previousRange = { start: 0, end: 0 }
-            renderRange.value = { start: 0, end: 0 }
+            if (renderRange.value.start !== 0 || renderRange.value.end !== 0) {
+                renderRange.value = { start: 0, end: 0 }
+            }
             return
         }
 
@@ -396,7 +413,9 @@ export function useVirtualScroll(options) {
 
         // Store for next computation and update the reactive ref
         previousRange = { start: newStart, end: newEnd }
-        renderRange.value = { start: newStart, end: newEnd }
+        if (renderRange.value.start !== newStart || renderRange.value.end !== newEnd) {
+            renderRange.value = { start: newStart, end: newEnd }
+        }
     }
 
     watchEffect(() => {
@@ -427,9 +446,10 @@ export function useVirtualScroll(options) {
         }
     }
 
-    const visibleRange = computed(() => {
+    const visibleRange = computed((previous) => {
         if (suspended.value) return suspendedSnapshot.visibleRange
-        return visibleRangeFor(positions.value, scrollTop.value, viewportHeight.value)
+        const next = visibleRangeFor(positions.value, scrollTop.value, viewportHeight.value)
+        return previous && previous.start === next.start && previous.end === next.end ? previous : next
     })
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -539,7 +559,7 @@ export function useVirtualScroll(options) {
         // If no container or programmatic scroll, just apply without anchor logic
         if (!container || isProgrammaticScroll) {
             for (const [key, { newHeight, oldHeight }] of actualUpdates) {
-                heightCache.set(key, newHeight)
+                setCachedHeight(key, newHeight)
                 results.push({ key, height: newHeight, oldHeight })
             }
             return results
@@ -561,7 +581,7 @@ export function useVirtualScroll(options) {
         // Edge case: empty list or no positions
         if (posArray.length === 0) {
             for (const [key, { newHeight, oldHeight }] of actualUpdates) {
-                heightCache.set(key, newHeight)
+                setCachedHeight(key, newHeight)
                 results.push({ key, height: newHeight, oldHeight })
             }
             return results
@@ -575,7 +595,7 @@ export function useVirtualScroll(options) {
         // Safety check
         if (!anchorItem) {
             for (const [key, { newHeight, oldHeight }] of actualUpdates) {
-                heightCache.set(key, newHeight)
+                setCachedHeight(key, newHeight)
                 results.push({ key, height: newHeight, oldHeight })
             }
             return results
@@ -588,7 +608,7 @@ export function useVirtualScroll(options) {
 
         // 2. APPLY all height changes to the cache
         for (const [key, { newHeight, oldHeight }] of actualUpdates) {
-            heightCache.set(key, newHeight)
+            setCachedHeight(key, newHeight)
             results.push({ key, height: newHeight, oldHeight })
         }
 
@@ -625,7 +645,7 @@ export function useVirtualScroll(options) {
      * @param {*} key - The item key to remove
      */
     function removeItemHeight(key) {
-        heightCache.delete(key)
+        deleteCachedHeight(key)
     }
 
     /**
@@ -633,7 +653,14 @@ export function useVirtualScroll(options) {
      * Useful when the items array is completely replaced.
      */
     function clearHeightCache() {
+        let changed = false
+        for (const [key, height] of rawHeightCache) {
+            if (height === minItemHeight) continue
+            geometry.invalidateKey(key)
+            changed = true
+        }
         heightCache.clear()
+        if (changed) geometryRevision.value++
     }
 
     /**
@@ -660,7 +687,7 @@ export function useVirtualScroll(options) {
      */
     function seedItemHeight(key, height) {
         if (!Number.isFinite(height) || height <= 0) return
-        heightCache.set(key, height)
+        setCachedHeight(key, height)
     }
 
     /**
@@ -676,7 +703,7 @@ export function useVirtualScroll(options) {
         }
         for (const [key, height] of heightCache.entries()) {
             if (height === 0) {
-                heightCache.delete(key)
+                deleteCachedHeight(key)
             }
         }
     }
@@ -1770,7 +1797,7 @@ export function useVirtualScroll(options) {
         const currentKeys = new Set(currentItems.map(item => itemKey(item)))
         for (const [key, height] of heightCache.entries()) {
             if (!currentKeys.has(key) || (pendingZeroHeightInvalidation && height === 0)) {
-                heightCache.delete(key)
+                deleteCachedHeight(key)
             }
         }
         lastCleanedItems = currentItems
@@ -1782,7 +1809,7 @@ export function useVirtualScroll(options) {
             cleanupHeightCache(latestReplacement)
         } else if (pendingZeroHeightInvalidation) {
             for (const [key, height] of heightCache.entries()) {
-                if (height === 0) heightCache.delete(key)
+                if (height === 0) deleteCachedHeight(key)
             }
             pendingZeroHeightInvalidation = false
         }
