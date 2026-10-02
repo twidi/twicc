@@ -3,7 +3,7 @@ import { ref, reactive, provide, onMounted, onUnmounted, computed } from 'vue'
 import ShareItemsList from './ShareItemsList.vue'
 import SharedSubagentView from './SharedSubagentView.vue'
 import GlobalMediaPreview from '../components/media/GlobalMediaPreview.vue'
-import BrandLogo from '../components/ui/BrandLogo.vue'
+import ShareFooter from './ShareFooter.vue'
 import { useDataStore } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
 import { getProviderIcon } from '../providers'
@@ -216,11 +216,7 @@ onUnmounted(() => window.removeEventListener('popstate', onPopState))
             :stack="subagentStack" @close="closeSubagent" @clear="clearSubagents" />
 
         <GlobalMediaPreview />
-        <footer class="share-footer glass-sticky">
-            <a class="share-footer-link" href="https://github.com/twidi/twicc" target="_blank" rel="noopener noreferrer">
-                <BrandLogo :size="32" /> <span>Shared with <u>TwiCC</u></span>
-            </a>
-        </footer>
+        <ShareFooter class="glass-sticky" />
     </div>
 </template>
 
@@ -268,11 +264,6 @@ html, body { height: 100%; margin: 0; }
 .share-items-list { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
     overflow: hidden; position: relative; margin-block: .5rem; }
 .share-items-list .session-items { flex: 1; min-height: 0; }
-.share-footer { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
-/* The logo and the whole sentence are one link. */
-.share-footer-link { display: inline-flex; align-items: center; gap: .5rem; color: var(--wa-color-text-quiet);
-    font-size: var(--wa-font-size-m); text-decoration: none; }
-.share-footer-link:hover, .share-footer-link:focus-visible { color: var(--wa-color-text-normal); }
 /* Print: let everything flow (the scroller still only renders its virtualized
    window, but at least it isn't clipped to one viewport). */
 @media print {

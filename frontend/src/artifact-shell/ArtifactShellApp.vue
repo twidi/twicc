@@ -6,7 +6,7 @@
 import { ref, onMounted } from 'vue'
 import { useArtifactBroker } from '../composables/useArtifactBroker'
 import ArtifactBrokerPrompt from '../components/artifacts/ArtifactBrokerPrompt.vue'
-import BrandLogo from '../components/ui/BrandLogo.vue'
+import ShareFooter from '../share-session/ShareFooter.vue'
 
 const props = defineProps({
     // Backend-served inner-doc URL (/artifacts/<id>/__twicc_doc__).
@@ -112,9 +112,8 @@ onMounted(() => {
         title="Artifact"
     ></iframe>
     <!-- Share mode gets the same "Shared with TwiCC" footer as the session/doc
-         share viewers; the in-app owner page (a plain tool view) does not. -->
-    <footer v-if="mode === 'share'" class="share-footer"><BrandLogo :size="16" /> Shared with
-        <a href="https://github.com/twidi/twicc" target="_blank" rel="noopener noreferrer">TwiCC</a></footer>
+         share viewers (one component); the in-app owner page (a plain tool view) does not. -->
+    <ShareFooter v-if="mode === 'share'" solid />
     <!-- Share mode never prompts (server enforces the owner allowlist, D6). -->
     <ArtifactBrokerPrompt v-if="mode !== 'share'" :prompt="brokerPrompt" @decision="onBrokerDecision" />
     <div v-if="blockedHosts.length" class="share-blocked-banner">
@@ -149,21 +148,6 @@ body {
     /* WA's base stylesheet gives block flow elements a bottom margin; here it
        would leave a blank strip between the iframe and the footer. */
     margin: 0;
-}
-/* Same look as the session/doc share footers (share-session bundle); restated
-   here because that bundle's stylesheet isn't loaded in the artifact shell. */
-.share-footer {
-    flex: 0 0 auto;
-    text-align: center;
-    color: var(--wa-color-text-quiet);
-    background: var(--wa-color-surface-default);
-    font-size: var(--wa-font-size-s);
-    line-height: 1.2;
-    padding: 0.5rem 0;
-}
-.share-footer a {
-    color: inherit;
-    text-decoration: underline;
 }
 .share-update-banner {
     position: fixed;

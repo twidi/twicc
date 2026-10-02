@@ -5,7 +5,7 @@ import MarkdownContent from '../components/ui/MarkdownContent.vue'
 // rendered image or Mermaid SVG has nowhere to open. Mirrors ShareSessionApp.
 import GlobalMediaPreview from '../components/media/GlobalMediaPreview.vue'
 import ShareThemeToggle from './ShareThemeToggle.vue'
-import BrandLogo from '../components/ui/BrandLogo.vue'
+import ShareFooter from './ShareFooter.vue'
 
 const props = defineProps({ tokenPath: String, meta: Object })
 const source = ref('')
@@ -65,11 +65,9 @@ onMounted(() => {
                                  :class="{ 'doc-image': docKind === 'image' }" />
             </div>
         </div>
-        <footer class="share-footer">
-            <span><BrandLogo :size="16" /> Shared with
-                <a href="https://github.com/twidi/twicc" target="_blank" rel="noopener noreferrer">TwiCC</a></span>
+        <ShareFooter solid>
             <ShareThemeToggle />
-        </footer>
+        </ShareFooter>
         <GlobalMediaPreview />
     </div>
 </template>
