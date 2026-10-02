@@ -338,6 +338,64 @@ export function formatRecentDelta(deltaMs, roundToHour) {
 }
 
 /**
+ * Short reset/cutoff time: time only under 24h, weekday + time under 7 days, else weekday + date.
+ *
+ * @param {string|number|Date|null} resetsAt
+ * @returns {string}
+ */
+export function formatResetTime(resetsAt) {
+    if (!resetsAt) return '?'
+    const reset = resetsAt instanceof Date ? resetsAt : new Date(resetsAt)
+    const now = new Date()
+    const locale = navigator.language
+    const diffMs = reset - now
+    const diffHours = diffMs / (1000 * 60 * 60)
+    // < 24h: time only
+    if (diffHours < 24) {
+        return reset.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
+    }
+    // < 7 days: weekday + time
+    if (diffHours < 7 * 24) {
+        return reset.toLocaleDateString(locale, { weekday: 'long', hour: '2-digit', minute: '2-digit' })
+    }
+    // >= 7 days: weekday + day/month
+    return reset.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'numeric' })
+}
+
+/**
+ * A reset/cutoff moment split for use inside an English sentence: the clock follows the
+ * browser locale, the day and month names stay English (a localized "samedi" in the middle
+ * of an English phrase reads badly). Same windows as formatResetTime: under 24h only a time,
+ * under 7 days a weekday + time, beyond a weekday + date (no time).
+ *
+ * @param {string|number|Date|null} when
+ * @returns {{time: string|null, day: string|null}}
+ */
+export function formatQuotaMoment(when) {
+    if (!when) return { time: null, day: null }
+    const date = when instanceof Date ? when : new Date(when)
+    const diffHours = (date - new Date()) / (1000 * 60 * 60)
+    const time = date.toLocaleTimeString(navigator.language, { hour: '2-digit', minute: '2-digit' })
+    const weekday = date.toLocaleDateString('en', { weekday: 'long' })
+    if (diffHours < 24) return { time, day: null }
+    if (diffHours < 7 * 24) return { time, day: weekday }
+    return { time: null, day: `${weekday} ${date.getDate()} ${date.toLocaleDateString('en', { month: 'long' })}` }
+}
+
+/**
+ * Full reset date with weekday, day, month and time (tooltip precision).
+ *
+ * @param {string|number|Date|null} resetsAt
+ * @returns {string}
+ */
+export function formatResetTimePrecise(resetsAt) {
+    if (!resetsAt) return ''
+    const reset = resetsAt instanceof Date ? resetsAt : new Date(resetsAt)
+    const locale = navigator.language
+    return reset.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })
+}
+
+/**
  * Detect whether extra usage was consumed in the last ~hour.
  *
  * Returns true when the current snapshot shows more consumption than the

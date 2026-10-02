@@ -50,12 +50,12 @@ import ShareDialog from '../components/share/ShareDialog.vue'
 import ShareTargetDialog from '../components/share/ShareTargetDialog.vue'
 import { getSessionGrantsForBookmark } from '../artifact-broker/host'
 import BulkArchiveConfirmDialog from '../components/sidebar/BulkArchiveConfirmDialog.vue'
-import { getUsageRingColor, formatRecentDelta, formatBurnChip, formatExtraUsageAmount } from '../utils/usage'
+import { getUsageRingColor, formatBurnChip, formatExtraUsageAmount, formatResetTime } from '../utils/usage'
 import { buildProjectTree, flattenProjectTree } from '../utils/projectTree'
 import { sessionRouteLocation } from '../utils/sessionRoute'
 import { artifactBookmarkRouteLocation } from '../utils/artifactBookmark'
-import CostDisplay from '../components/ui/CostDisplay.vue'
 import AppTooltip from '../components/ui/AppTooltip.vue'
+import QuotaTooltipContent from '../components/app/QuotaTooltipContent.vue'
 import UsageGraphDialog from '../components/app/UsageGraphDialog.vue'
 import AggregatedProcessIndicator from '../components/ui/AggregatedProcessIndicator.vue'
 import CodeCommentsIndicator from '../components/ui/CodeCommentsIndicator.vue'
@@ -325,32 +325,6 @@ function resetsAtToDate(resetsAt) {
 function extraUsageResetDate() {
     const now = new Date()
     return new Date(now.getFullYear(), now.getMonth() + 1, 1)
-}
-
-function formatResetTime(resetsAt) {
-    if (!resetsAt) return '?'
-    const reset = resetsAt instanceof Date ? resetsAt : new Date(resetsAt)
-    const now = new Date()
-    const locale = navigator.language
-    const diffMs = reset - now
-    const diffHours = diffMs / (1000 * 60 * 60)
-    // < 24h: time only
-    if (diffHours < 24) {
-        return reset.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
-    }
-    // < 7 days: weekday + time
-    if (diffHours < 7 * 24) {
-        return reset.toLocaleDateString(locale, { weekday: 'long', hour: '2-digit', minute: '2-digit' })
-    }
-    // >= 7 days: weekday + day/month
-    return reset.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'numeric' })
-}
-
-function formatResetTimePrecise(resetsAt) {
-    if (!resetsAt) return ''
-    const reset = resetsAt instanceof Date ? resetsAt : new Date(resetsAt)
-    const locale = navigator.language
-    return reset.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })
 }
 
 // Stale data detection: data older than 15 minutes
@@ -2435,31 +2409,19 @@ function updateSidebarClosedClass(closed) {
                             </span>
                         </div>
                     </div>
-                    <AppTooltip v-if="quotaFiveHour" for="quota-five-hour" hoist force interactive :placement="usageTooltipPlacement" :trigger="usageTooltipTrigger">
-                        <div class="quota-tooltip">
-                            <div class="quota-tooltip-title">{{ currentUsageProviderLabel }} usage — 5h</div>
-                            <div class="quota-tooltip-row"><span class="quota-tooltip-label">Usage</span><span>{{ (quotaFiveHour.utilization ?? 0).toFixed(1) }}%</span></div>
-                            <div class="quota-tooltip-note" v-if="!quotaFiveHour.resetsAt"><wa-icon name="info-circle"></wa-icon> Period not started yet</div>
-                            <div class="quota-tooltip-row" v-if="quotaFiveHour.timePct != null"><span class="quota-tooltip-label">Time elapsed</span><span>{{ quotaFiveHour.timePct.toFixed(1) }}%</span></div>
-                            <div class="quota-tooltip-row" v-if="quotaFiveHour.burnRate != null"><span class="quota-tooltip-label">Burn rate</span><span>{{ (quotaFiveHour.burnRate * 100).toFixed(0) }}%</span></div>
-                            <div class="quota-tooltip-row quota-tooltip-row-cutoff" v-if="quotaFiveHourCost?.cutoffAt"><span class="quota-tooltip-label"><wa-icon name="triangle-exclamation"></wa-icon> Cutoff</span><span>{{ formatResetTime(quotaFiveHourCost.cutoffAt) }}</span></div>
-                            <div class="quota-tooltip-note quota-tooltip-row-cutoff" v-if="quotaFiveHourCost?.cutoffAt"><wa-icon name="triangle-exclamation"></wa-icon> Quota will be exhausted at current pace</div>
-                            <div class="quota-tooltip-row" v-if="quotaFiveHour.recentLong.rate != null && !quotaFiveHour.recentLong.isFallback"><span class="quota-tooltip-label" style="margin-left: .5rem;"> - last {{ formatRecentDelta(quotaFiveHour.recentLong.deltaMs, false) }}</span><span>{{ (quotaFiveHour.recentLong.rate * 100).toFixed(0) }}%</span></div>
-                            <div class="quota-tooltip-row" v-if="quotaFiveHour.recentShort.rate != null && !quotaFiveHour.recentShort.isFallback && formatRecentDelta(quotaFiveHour.recentShort.deltaMs, false) !== formatRecentDelta(quotaFiveHour.recentLong.deltaMs, false)"><span class="quota-tooltip-label" style="margin-left: .5rem;"> - last {{ formatRecentDelta(quotaFiveHour.recentShort.deltaMs, false) }}</span><span>{{ (quotaFiveHour.recentShort.rate * 100).toFixed(0) }}%</span></div>
-                            <div class="quota-tooltip-row" v-if="quotaFiveHour.resetsAt"><span class="quota-tooltip-label">Reset</span><span>{{ formatResetTime(quotaFiveHour.resetsAt) }}</span></div>
-                            <template v-if="showCosts && quotaFiveHourCost && quotaFiveHourCost.spent != null">
-                                <wa-divider class="quota-tooltip-divider"></wa-divider>
-                                <div class="quota-tooltip-row"><span class="quota-tooltip-label">Spent</span><CostDisplay :cost="quotaFiveHourCost.spent" /></div>
-                                <div class="quota-tooltip-row" v-if="quotaFiveHourCost.estimatedPeriod != null"><span class="quota-tooltip-label">Est. 5h</span><CostDisplay :cost="quotaFiveHourCost.estimatedPeriod" /></div>
-                                <div class="quota-tooltip-note quota-tooltip-row-cutoff" v-if="quotaFiveHourCost.capped"><wa-icon name="triangle-exclamation"></wa-icon> Capped — burn rate exceeds 100%</div>
-                                <div class="quota-tooltip-row" v-if="quotaFiveHourCost.estimatedMonthly != null"><span class="quota-tooltip-label">Est. 30 days</span><CostDisplay :cost="quotaFiveHourCost.estimatedMonthly" /></div>
-                                <div class="quota-tooltip-note quota-tooltip-row-cutoff" v-if="quotaFiveHourCost.capped"><wa-icon name="triangle-exclamation"></wa-icon> Based on capped 5h estimate</div>
-                            </template>
-                            <div class="quota-tooltip-buttons">
-                                <wa-button v-if="usageExternalLink" size="small" variant="brand" appearance="outlined" :href="usageExternalLink.url" target="_blank" rel="noopener"><wa-icon slot="start" name="up-right-from-square"></wa-icon>{{ usageExternalLink.label }}</wa-button>
-                                <wa-button size="small" variant="brand" appearance="outlined" @click="openUsageGraph('five-hour')"><wa-icon slot="start" name="chart-line"></wa-icon>View graph</wa-button>
-                            </div>
-                        </div>
+                    <AppTooltip v-if="quotaFiveHour" for="quota-five-hour" hoist force interactive class="quota-tooltip-wide" :placement="usageTooltipPlacement" :trigger="usageTooltipTrigger">
+                        <QuotaTooltipContent
+                            :quota="quotaFiveHour"
+                            :cost="quotaFiveHourCost"
+                            :color="quotaFiveHourRingColor"
+                            :provider-label="currentUsageProviderLabel"
+                            period-label="5 hours"
+                            period-short="5h"
+                            :round-to-hour="false"
+                            :show-costs="showCosts"
+                            :external-link="usageExternalLink"
+                            @open-graph="openUsageGraph('five-hour')"
+                        />
                     </AppTooltip>
                     <div id="quota-seven-day" class="usage-quota" v-if="quotaSevenDay">
                         <div class="usage-bar">
@@ -2483,31 +2445,19 @@ function updateSidebarClosedClass(closed) {
                             </span>
                         </div>
                     </div>
-                    <AppTooltip v-if="quotaSevenDay" for="quota-seven-day" hoist force interactive :placement="usageTooltipPlacement" :trigger="usageTooltipTrigger">
-                        <div class="quota-tooltip">
-                            <div class="quota-tooltip-title">{{ currentUsageProviderLabel }} usage — 7d</div>
-                            <div class="quota-tooltip-row"><span class="quota-tooltip-label">Usage</span><span>{{ (quotaSevenDay.utilization ?? 0).toFixed(1) }}%</span></div>
-                            <div class="quota-tooltip-note" v-if="!quotaSevenDay.resetsAt"><wa-icon name="info-circle"></wa-icon> Period not started yet</div>
-                            <div class="quota-tooltip-row" v-if="quotaSevenDay.timePct != null"><span class="quota-tooltip-label">Time elapsed</span><span>{{ quotaSevenDay.timePct.toFixed(1) }}%</span></div>
-                            <div class="quota-tooltip-row" v-if="quotaSevenDay.burnRate != null"><span class="quota-tooltip-label">Burn rate</span><span>{{ (quotaSevenDay.burnRate * 100).toFixed(0) }}%</span></div>
-                            <div class="quota-tooltip-row quota-tooltip-row-cutoff" v-if="quotaSevenDayCost?.cutoffAt"><span class="quota-tooltip-label"><wa-icon name="triangle-exclamation"></wa-icon> Cutoff</span><span>{{ formatResetTime(quotaSevenDayCost.cutoffAt) }}</span></div>
-                            <div class="quota-tooltip-note quota-tooltip-row-cutoff" v-if="quotaSevenDayCost?.cutoffAt"><wa-icon name="triangle-exclamation"></wa-icon> Quota will be exhausted at current pace</div>
-                            <div class="quota-tooltip-row" v-if="quotaSevenDay.recentLong.rate != null && !quotaSevenDay.recentLong.isFallback"><span class="quota-tooltip-label" style="margin-left: .5rem;"> - last {{ formatRecentDelta(quotaSevenDay.recentLong.deltaMs, true) }}</span><span>{{ (quotaSevenDay.recentLong.rate * 100).toFixed(0) }}%</span></div>
-                            <div class="quota-tooltip-row" v-if="quotaSevenDay.recentShort.rate != null && !quotaSevenDay.recentShort.isFallback && formatRecentDelta(quotaSevenDay.recentShort.deltaMs, true) !== formatRecentDelta(quotaSevenDay.recentLong.deltaMs, true)"><span class="quota-tooltip-label" style="margin-left: .5rem;"> - last {{ formatRecentDelta(quotaSevenDay.recentShort.deltaMs, true) }}</span><span>{{ (quotaSevenDay.recentShort.rate * 100).toFixed(0) }}%</span></div>
-                            <div class="quota-tooltip-row" v-if="quotaSevenDay.resetsAt"><span class="quota-tooltip-label">Reset</span><span :title="formatResetTimePrecise(quotaSevenDay.resetsAt)">{{ formatResetTime(quotaSevenDay.resetsAt) }}</span></div>
-                            <template v-if="showCosts && quotaSevenDayCost && quotaSevenDayCost.spent != null">
-                                <wa-divider class="quota-tooltip-divider"></wa-divider>
-                                <div class="quota-tooltip-row"><span class="quota-tooltip-label">Spent</span><CostDisplay :cost="quotaSevenDayCost.spent" /></div>
-                                <div class="quota-tooltip-row" v-if="quotaSevenDayCost.estimatedPeriod != null"><span class="quota-tooltip-label">Est. 7d</span><CostDisplay :cost="quotaSevenDayCost.estimatedPeriod" /></div>
-                                <div class="quota-tooltip-note quota-tooltip-row-cutoff" v-if="quotaSevenDayCost.capped"><wa-icon name="triangle-exclamation"></wa-icon> Capped — burn rate exceeds 100%</div>
-                                <div class="quota-tooltip-row" v-if="quotaSevenDayCost.estimatedMonthly != null"><span class="quota-tooltip-label">Est. 30 days</span><CostDisplay :cost="quotaSevenDayCost.estimatedMonthly" /></div>
-                                <div class="quota-tooltip-note quota-tooltip-row-cutoff" v-if="quotaSevenDayCost.capped"><wa-icon name="triangle-exclamation"></wa-icon> Based on capped 7d estimate</div>
-                            </template>
-                            <div class="quota-tooltip-buttons">
-                                <wa-button v-if="usageExternalLink" size="small" variant="brand" appearance="outlined" :href="usageExternalLink.url" target="_blank" rel="noopener"><wa-icon slot="start" name="up-right-from-square"></wa-icon>{{ usageExternalLink.label }}</wa-button>
-                                <wa-button size="small" variant="brand" appearance="outlined" @click="openUsageGraph('seven-day')"><wa-icon slot="start" name="chart-line"></wa-icon>View graph</wa-button>
-                            </div>
-                        </div>
+                    <AppTooltip v-if="quotaSevenDay" for="quota-seven-day" hoist force interactive class="quota-tooltip-wide" :placement="usageTooltipPlacement" :trigger="usageTooltipTrigger">
+                        <QuotaTooltipContent
+                            :quota="quotaSevenDay"
+                            :cost="quotaSevenDayCost"
+                            :color="quotaSevenDayRingColor"
+                            :provider-label="currentUsageProviderLabel"
+                            period-label="7 days"
+                            period-short="7d"
+                            :round-to-hour="true"
+                            :show-costs="showCosts"
+                            :external-link="usageExternalLink"
+                            @open-graph="openUsageGraph('seven-day')"
+                        />
                     </AppTooltip>
                     <div id="quota-extra-usage" class="usage-quota" v-if="quotaExtraUsage">
                         <div class="usage-bar usage-bar-extra">
@@ -3008,7 +2958,7 @@ wa-dropdown-item:hover .row-menu-trigger,
 }
 /* Not the separators inside the dropdown menus (project selector, new session): those
    sit on the menu's own surface. */
-.sidebar wa-divider:not(wa-dropdown wa-divider, .quota-tooltip-divider) {
+.sidebar wa-divider:not(wa-dropdown wa-divider) {
     --color: var(--sidebar-divider-color);
 }
 
@@ -3540,17 +3490,20 @@ html.wa-dark .usage-lane-time {
     color: var(--wa-color-neutral-muted);
 }
 
+/* The rich 5h / 7d body sizes the tooltip (wa-tooltip caps it at 30ch by default); it stays
+   inside the viewport. */
+.quota-tooltip-wide {
+    --max-width: min(24rem, calc(100vw - 2rem));
+}
+/* One even inset all around (the theme's body padding is tighter and uneven). */
+.quota-tooltip-wide::part(body) {
+    padding: var(--wa-space-m);
+}
+
 .quota-tooltip {
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-xs);
-}
-
-.quota-tooltip-title {
-    font-weight: var(--wa-font-weight-bold);
-    text-align: center;
-    padding-bottom: var(--wa-space-3xs);
-    border-bottom: 1px solid var(--wa-color-neutral-border-quiet);
 }
 
 .quota-tooltip-row {
@@ -3562,21 +3515,6 @@ html.wa-dark .usage-lane-time {
 
 .quota-tooltip-label {
     font-weight: var(--wa-font-weight-bold);
-}
-
-.quota-tooltip-divider {
-    --spacing: var(--wa-space-2xs);
-}
-
-.quota-tooltip-note {
-    font-size: var(--wa-font-size-2xs);
-    display: flex;
-    align-items: center;
-    gap: var(--wa-space-2xs);
-}
-
-.quota-tooltip-row-cutoff {
-    color: var(--wa-color-warning-60);
 }
 
 .quota-stale-icon {
