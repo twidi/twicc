@@ -88,7 +88,7 @@ function handleClick() {
     padding: 0.05em 0.7em;
     border-radius: 999px;
     border: 1px solid var(--wa-color-surface-border);
-    background: var(--surface-solid, var(--wa-color-surface-default));
+    background: var(--field-bg, var(--wa-color-surface-default));
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-text-quiet);
     white-space: nowrap;
@@ -100,7 +100,7 @@ function handleClick() {
 .group-toggle[aria-expanded="true"] .group-toggle-pill {
     color: var(--wa-color-brand-on-quiet);
     border-color: color-mix(in oklab, var(--wa-color-brand-60) 55%, transparent);
-    background: color-mix(in oklab, var(--wa-color-brand-60) 12%, var(--surface-solid, var(--wa-color-surface-default)));
+    background: color-mix(in oklab, var(--wa-color-brand-60) 12%, var(--field-bg, var(--wa-color-surface-default)));
 }
 
 .group-toggle:focus-visible {

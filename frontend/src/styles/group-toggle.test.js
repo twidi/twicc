@@ -40,9 +40,9 @@ test('3. the rules are the day separator\'s: 1px surface border, a flex row with
     }
 })
 
-test('4. the pill lights up in the accent on hover, on keyboard focus and while the group is open (the share viewer has no --surface-solid: a fallback)', () => {
+test('4. the pill lights up in the accent on hover, on keyboard focus and while the group is open (its fill is the translucent flat of the fields, --field-bg, with a fallback where it does not exist)', () => {
     assert.ok(style.includes('.group-toggle:hover .group-toggle-pill, .group-toggle:focus-visible .group-toggle-pill, .group-toggle[aria-expanded="true"] .group-toggle-pill {'))
-    assert.match(style, /\.group-toggle-pill \{[^}]*background: var\(--surface-solid, var\(--wa-color-surface-default\)\);/)
+    assert.match(style, /\.group-toggle-pill \{[^}]*background: var\(--field-bg, var\(--wa-color-surface-default\)\);/)
 })
 
 test('5. the open toggle still pulls the item below it up (the rule that targeted the checked switch now targets the button)', () => {
