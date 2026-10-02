@@ -257,9 +257,19 @@ const quotaSevenDayRingColor = computed(() => getUsageRingColor(quotaSevenDay.va
 const quotaFiveHourChip = computed(() => formatBurnChip(quotaFiveHour.value))
 const quotaSevenDayChip = computed(() => formatBurnChip(quotaSevenDay.value))
 
-// Inline style for a burn chip: severity-tinted fill + severity text.
+// Inline style for a burn chip: severity-tinted fill + severity text (read through a variable,
+// so a stylesheet rule can still darken the text for one severity).
 function burnChipStyle(color) {
-    return { color, background: `color-mix(in srgb, ${color} 20%, transparent)` }
+    return { '--chip-color': color, background: `color-mix(in srgb, ${color} 20%, transparent)` }
+}
+// Text nudged per severity and scheme (all tuned by eye): light, the yellow is too pale (a lot), the
+// green and the red a little; dark, the green and the red are a little too deep.
+function burnChipClass(color) {
+    return {
+        'usage-burn-chip-warning': color === 'var(--wa-color-warning)',
+        'usage-burn-chip-success': color === 'var(--wa-color-success)',
+        'usage-burn-chip-danger': color === 'var(--wa-color-danger)',
+    }
 }
 
 // Bar width helpers (clamped percentages) for the dual usage/time lanes.
@@ -2400,7 +2410,7 @@ function updateSidebarClosedClass(closed) {
                                 </template>
                             </div>
                         </div>
-                        <span v-if="quotaFiveHourChip" class="usage-burn-chip" :style="burnChipStyle(quotaFiveHourRingColor)">{{ quotaFiveHourChip.text }}</span>
+                        <span v-if="quotaFiveHourChip" class="usage-burn-chip" :class="burnChipClass(quotaFiveHourRingColor)" :style="burnChipStyle(quotaFiveHourRingColor)">{{ quotaFiveHourChip.text }}</span>
                         <div class="usage-quota-info">
                             <span class="usage-quota-label">5h</span>
                             <span v-if="quotaFiveHour.resetsAt" class="usage-quota-reset">
@@ -2436,7 +2446,7 @@ function updateSidebarClosedClass(closed) {
                                 </template>
                             </div>
                         </div>
-                        <span v-if="quotaSevenDayChip" class="usage-burn-chip" :style="burnChipStyle(quotaSevenDayRingColor)">{{ quotaSevenDayChip.text }}</span>
+                        <span v-if="quotaSevenDayChip" class="usage-burn-chip" :class="burnChipClass(quotaSevenDayRingColor)" :style="burnChipStyle(quotaSevenDayRingColor)">{{ quotaSevenDayChip.text }}</span>
                         <div class="usage-quota-info">
                             <span class="usage-quota-label">7d</span>
                             <span v-if="quotaSevenDay.resetsAt" class="usage-quota-reset">
@@ -3446,6 +3456,7 @@ html.wa-dark .usage-lane-time {
 }
 
 .usage-burn-chip {
+    color: var(--chip-color);
     flex: 0 0 auto;
     font-size: var(--wa-font-size-2xs);
     font-weight: var(--wa-font-weight-bold);
@@ -3454,6 +3465,24 @@ html.wa-dark .usage-lane-time {
     padding: 0 var(--wa-space-2xs);
     border-radius: var(--wa-border-radius-pill);
     white-space: nowrap;
+}
+.usage-burn-chip-warning {
+    color: oklch(from var(--wa-color-warning) 0.38 c h);
+}
+.usage-burn-chip-success {
+    color: oklch(from var(--wa-color-success) calc(l - 0.12) c h);
+}
+.usage-burn-chip-danger {
+    color: oklch(from var(--wa-color-danger) calc(l - 0.08) c h);
+}
+html.wa-dark .usage-burn-chip-warning {
+    color: var(--chip-color);
+}
+html.wa-dark .usage-burn-chip-success {
+    color: oklch(from var(--wa-color-success) calc(l + 0.08) c h);
+}
+html.wa-dark .usage-burn-chip-danger {
+    color: oklch(from var(--wa-color-danger) calc(l + 0.1) c h);
 }
 .usage-burn-chip-neutral {
     color: var(--wa-color-neutral-content);
