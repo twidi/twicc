@@ -15,6 +15,7 @@
 // survives the block's effect scope (Vue stops it before the Transition leave hook runs).
 
 import { getCurrentScope, inject, nextTick, onScopeDispose, provide, ref, watch, computed } from 'vue'
+import { isReducedMotion } from '../utils/reducedMotion.js'
 import {
     fadeKeyframes,
     footerMotionTimings,
@@ -30,7 +31,6 @@ export const FOOTER_MOTION_KEY = Symbol('footerMotion')
 const RESTORING = 'data-footer-restoring'
 const LEAVING = 'data-footer-leaving'
 const CONTAINER = '.session-items-list'
-const REDUCED_QUERY = '(prefers-reduced-motion: reduce)'
 // A user scroll gesture ends the pin at once (pointerdown only on the scroller itself: a
 // scrollbar drag).
 const GESTURES = ['wheel', 'touchstart', 'keydown', 'pointerdown']
@@ -73,6 +73,7 @@ function realEnv() {
     return {
         getComputedStyle: (element) => window.getComputedStyle(element),
         matchMedia: (query) => window.matchMedia(query),
+        document: window.document,
         ResizeObserver: window.ResizeObserver,
         requestAnimationFrame: (callback) => window.requestAnimationFrame(callback),
     }
@@ -115,7 +116,7 @@ export function createFooterMotion({ env, enabled, pinEnabled, getScrollEl, isAt
         return timings
     }
 
-    const isReduced = () => !!env.matchMedia?.(REDUCED_QUERY)?.matches
+    const isReduced = () => isReducedMotion(env)
     const isVisible = (el) => el.getClientRects().length > 0
 
     // ── Chat pin ─────────────────────────────────────────────────────────────

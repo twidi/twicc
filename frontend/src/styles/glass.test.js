@@ -142,6 +142,17 @@ test('2. opaque fallbacks: reduced transparency and no backdrop-filter support',
     }
 })
 
+test('2b. "Reduce effects" gives the same opaque surfaces and no blur, after .wa-dark', () => {
+    const darkIndex = glassTree.findIndex((n) => n.type === 'rule' && n.selector === '.wa-dark')
+    const index = glassTree.findIndex((n) => n.type === 'rule' && n.selector === ':root.reduce-effects')
+    assert.ok(index > darkIndex, ':root.reduce-effects missing or before .wa-dark')
+    const decls = glassTree[index].decls
+    assert.equal(decls['--glass-bg'], 'var(--glass-tint)')
+    assert.equal(decls['--glass-sticky-bg'], 'var(--glass-tint)')
+    assert.equal(decls['--glass-field-bg'], 'var(--wa-color-surface-default)')
+    for (const name of FILTER_TOKENS) assert.equal(decls[name], 'none', `${name} must be none`)
+})
+
 function listSourceFiles(dir) {
     return readdirSync(dir, { recursive: true, withFileTypes: true })
         .filter((e) => e.isFile() && /\.(css|vue|js|ts)$/.test(e.name) && !e.name.endsWith('.test.js'))

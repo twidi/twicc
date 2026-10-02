@@ -39,6 +39,7 @@ import AppTooltip from '../ui/AppTooltip.vue'
 import ArtifactBookmarkDialog from './ArtifactBookmarkDialog.vue'
 import ArtifactsHelpButton from './ArtifactsHelpButton.vue'
 import SidebarListSeparator from '../sidebar/SidebarListSeparator.vue'
+import { isReducedMotion } from '../../utils/reducedMotion'
 
 const props = defineProps({
     effectiveProjectId: { type: String, default: null },
@@ -339,7 +340,7 @@ function revealEntry(index) {
         const behavior = revealBehavior({
             distance: Math.abs(target - current),
             viewport: list.clientHeight,
-            reduced: globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true,
+            reduced: isReducedMotion(),
             allowed: !cascade.isArriving(),
         })
         endSmooth()

@@ -504,6 +504,7 @@ const isMac = computed(() => store.isMac)
 const isLinux = computed(() => store.isLinux)
 const worktreeDirectoryTemplate = computed(() => store.getWorktreeDirectoryTemplate)
 const compactSessionList = computed(() => store.isCompactSessionList)
+const reduceEffects = computed(() => store.isReduceEffects)
 const showMessageTimestamps = computed(() => store.areMessageTimestampsShown)
 const showDiffs = computed(() => store.isShowDiffs)
 const toolDiffWordWrap = computed(() => store.isToolDiffWordWrap)
@@ -1123,6 +1124,10 @@ async function onTmuxConfigPathApply() {
 /**
  * Toggle compact session list.
  */
+function onReduceEffectsChange(event) {
+    store.setReduceEffects(event.target.checked)
+}
+
 function onCompactSessionListChange(event) {
     store.setCompactSessionList(event.target.checked)
 }
@@ -1371,6 +1376,15 @@ function onChangelogClose() {
                         </span>
                     </div>
                     <wa-divider></wa-divider>
+                    <div class="setting-group">
+                        <label class="setting-group-label">Reduce effects</label>
+                        <wa-switch
+                            :checked="reduceEffects"
+                            @change="onReduceEffectsChange"
+                            size="small"
+                        >Enabled</wa-switch>
+                        <span class="setting-group-hint">Turns off animations, glass blur and other costly effects. Useful on a slower device. Only applies to this device.</span>
+                    </div>
                     <div class="setting-group">
                         <label class="setting-group-label">Color scheme</label>
                         <wa-select

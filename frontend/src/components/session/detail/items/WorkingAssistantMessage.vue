@@ -208,11 +208,9 @@ code {
 
 /* Reduced motion: the shimmer stops. The dots keep fading (their movement is
    × --motion-amount). Last: same specificity as the base rule, later in the source. */
-@media (prefers-reduced-motion: reduce) {
-    .working-assistant-message__phrase {
-        animation: none;
-        background: none;
-        color: var(--wa-color-text-quiet);
-    }
+:root.reduce-motion .working-assistant-message__phrase {
+    animation: none;
+    background: none;
+    color: var(--wa-color-text-quiet);
 }
 </style>

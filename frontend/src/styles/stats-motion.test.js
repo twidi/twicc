@@ -93,8 +93,8 @@ function rule(rules, selectors, where = () => true) {
 }
 
 const topLevel = (r) => r.ancestors.length === 0
-const REDUCED = '@media (prefers-reduced-motion: reduce)'
-const inReduced = (r) => r.ancestors.length === 1 && r.ancestors[0] === REDUCED
+// Reduced motion is a class on <html> (utils/reducedMotion.js): a top-level rule under this prefix.
+const RM = ':root.reduce-motion'
 const inKeyframes = (name) => (r) => r.ancestors.length === 1 && r.ancestors[0] === `@keyframes ${name}`
 
 /** A top-level @keyframes block pinned frame by frame. */
@@ -175,13 +175,11 @@ test('4. ContributionSparklines: the reveal, the reduced-motion fade, area and h
         [['to'], 'clip-path: inset(-1rem -1rem -1rem -1rem);'],
     ])
 
-    const reducedBlocks = all.filter((r) => r.head === REDUCED)
-    assert.equal(reducedBlocks.length, 1, 'one reduced-motion block')
-    assert.ok(topLevel(reducedBlocks[0]), 'the reduced-motion block is top-level')
-    const inBlock = all.filter(inReduced)
-    assert.deepEqual(inBlock.map((r) => r.selectors), [['.contribution-sparkline']], 'the block holds one rule')
-    assertPinned(inBlock[0], 'animation: sparkline-fade 300ms ease-in-out backwards;')
-    assert.ok(reducedBlocks[0].order > svg.order, 'the reduced-motion block comes after the .contribution-sparkline rule')
+    const reduced = all.filter((r) => r.head.startsWith(RM))
+    assert.deepEqual(reduced.map((r) => r.selectors), [[`${RM} .contribution-sparkline`]], 'one reduced-motion rule')
+    assert.ok(topLevel(reduced[0]), 'the reduced-motion rule is top-level')
+    assertPinned(reduced[0], 'animation: sparkline-fade 300ms ease-in-out backwards;')
+    assert.ok(reduced[0].order > svg.order, 'the reduced-motion rule comes after the .contribution-sparkline rule')
     assertKeyframes(all, 'sparkline-fade', [[['from'], 'opacity: 0;']])
 
     assertPinned(rule(all, ['.sparkline-area'], topLevel), 'stroke: none;')

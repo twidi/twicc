@@ -66,6 +66,7 @@ import { fileRootsFromStore } from '../utils/projectRoots'
 import { normalizePosixPath } from '../utils/worktreePath'
 import { computeSessionArtifactBookmarks } from '../utils/sessionArtifactBookmarks'
 import { runViewTransition } from '../utils/viewTransition'
+import { isReducedMotion } from '../utils/reducedMotion'
 
 const route = useRoute()
 const router = useRouter()
@@ -1130,7 +1131,7 @@ const SLIDE_OFFSETS = { right: ['100vw', '0px'], left: ['-100vw', '0px'], bottom
 function runOverlayTransition(update, slideEdge) {
     cancelPaneFocus()
     const offsets = slideEdge ? SLIDE_OFFSETS[slideEdge] : null
-    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true
+    const reduced = isReducedMotion()
     if (offsets && !reduced) {
         runViewTransition(update, {
             kind: 'overlay',

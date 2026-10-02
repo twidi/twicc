@@ -83,5 +83,5 @@ test('field fill: translucent, a little lighter than its surroundings in light a
     assert.ok(css.includes('.wa-dark { --field-bg: color-mix(in oklab, oklch(0.12 0.03 217) 40%, transparent); }'))
     const glass = strip(read('glass.css')).replace(/\s+/g, ' ')
     assert.ok(glass.includes('--glass-field-bg: var(--field-bg, color-mix(in oklab, var(--wa-color-surface-default) 70%, transparent));'), 'the glass reads it as is (it is already translucent), with a fallback where it does not exist')
-    assert.equal(glass.split('--glass-field-bg: var(--wa-color-surface-default);').length - 1, 2, 'the opaque fallbacks stay opaque')
+    assert.equal(glass.split('--glass-field-bg: var(--wa-color-surface-default);').length - 1, 3, 'the opaque fallbacks (transparency preference, no backdrop-filter, Reduce effects) stay opaque')
 })

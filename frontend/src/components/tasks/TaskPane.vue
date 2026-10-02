@@ -124,14 +124,12 @@ const progress = computed(() => countTasks(tasks.value?.items))
     from { width: 0; }
 }
 /* Reduced motion: the strike and the bar snap (the colour fade stays). After the rules above. */
-@media (prefers-reduced-motion: reduce) {
-    .task-scroll :deep(.todo-item-ticking .todo-item-strike) {
-        animation: none;
-    }
-    .task-progress-fill {
-        transition: none;
-        animation: none;
-    }
+:root.reduce-motion .task-scroll :deep(.todo-item-ticking .todo-item-strike) {
+    animation: none;
+}
+:root.reduce-motion .task-progress-fill {
+    transition: none;
+    animation: none;
 }
 .task-state {
     display: flex;

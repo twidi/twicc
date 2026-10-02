@@ -13,6 +13,7 @@
 
 import { inject, nextTick, onBeforeUnmount, onMounted, provide } from 'vue'
 import { homeCardEndMs, planHomeCardCascade } from '../utils/homeCardCascade.js'
+import { isReducedMotion } from '../utils/reducedMotion.js'
 
 export const HOME_CARD_CASCADE_KEY = Symbol('homeCardCascade')
 
@@ -24,6 +25,8 @@ export function provideHomeCardCascade() {
     function flush() {
         const elements = batch.filter((el) => el.isConnected)
         batch = []
+        // Reduced motion: the cards are simply there (a cascade is movement and stagger).
+        if (isReducedMotion()) return
         elements.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
         // The home scrolls the page, not an inner box.
         const plan = planHomeCardCascade(

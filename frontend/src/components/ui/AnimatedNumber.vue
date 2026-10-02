@@ -9,6 +9,7 @@
 import { ref, watch, onBeforeUnmount, onDeactivated } from 'vue'
 import CostDisplay from './CostDisplay.vue'
 import { tweenValue, formatAvg } from '../../utils/countUp.js'
+import { isReducedMotion } from '../../utils/reducedMotion.js'
 
 const props = defineProps({
     /** The number to show (null shows a dash) */
@@ -32,7 +33,7 @@ let frame = null
 let hasCounted = false
 
 const isNumber = (v) => typeof v === 'number' && Number.isFinite(v)
-const motionAllowed = () => !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+const motionAllowed = () => !isReducedMotion()
 
 function cancelTween() {
     if (frame !== null) {

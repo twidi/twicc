@@ -289,10 +289,8 @@ function onResumeInputChange(event) {
     box-shadow: 0 0 0.25rem color-mix(in oklab, var(--wa-color-brand-60) 40%, transparent);
 }
 /* Reduced motion: the bar snaps (as in the Tasks tab). After the rule above. */
-@media (prefers-reduced-motion: reduce) {
-    .upload-progress::part(indicator) {
-        transition: none;
-    }
+:root.reduce-motion .upload-progress::part(indicator) {
+    transition: none;
 }
 
 .upload-percent {

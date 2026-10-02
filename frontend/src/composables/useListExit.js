@@ -7,6 +7,7 @@
 
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import { LIST_EXIT_DURATION_MS, mergeExits, pickExits } from '../utils/listExit.js'
+import { isReducedMotion } from '../utils/reducedMotion.js'
 
 const END_MARGIN_MS = 40
 
@@ -47,7 +48,8 @@ export function useListExit({ items, getKey, isEligible, scopeKey, getVisibleRan
         if (leaving.value.some((entry) => nextKeys.has(entry.key))) {
             leaving.value = leaving.value.filter((entry) => !nextKeys.has(entry.key))
         }
-        const exits = pickExits({
+        // Reduced motion: a row that leaves is gone at once (the fold is movement).
+        const exits = isReducedMotion(env) ? [] : pickExits({
             previousItems: displayItems.value,
             nextKeys,
             getKey,

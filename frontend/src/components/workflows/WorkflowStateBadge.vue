@@ -57,7 +57,5 @@ const LABELS = { running: 'Running', completed: 'Completed', interrupted: 'Inter
 }
 
 /* Reduced motion: an opacity pulse instead of the hop (keyframe in motion.css, global). */
-@media (prefers-reduced-motion: reduce) {
-    .wf-state-pending { animation: motion-status-pulse 1s ease-in-out infinite; }
-}
+:root.reduce-motion .wf-state-pending { animation: motion-status-pulse 1s ease-in-out infinite; }
 </style>

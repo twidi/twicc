@@ -4,8 +4,11 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import { initShareTheme } from './theme'
+import { initReducedMotion } from '../utils/reducedMotion'
 
 initShareTheme()
+// No settings here: the system preference alone cuts the movement.
+initReducedMotion()
 
 // Web Awesome: tokens + the elements the transcript tree actually renders.
 import '@awesome.me/webawesome/dist/styles/webawesome.css'

@@ -7,6 +7,7 @@
 
 import { COLOR_SCHEME } from '../constants.js'
 import { runViewTransition } from './viewTransition.js'
+import { isReducedMotion } from './reducedMotion.js'
 
 /** Duration of the circle (the twicc-scheme-circle rule in styles/motion.css). */
 export const SCHEME_REVEAL_MS = 650
@@ -62,7 +63,7 @@ export function runSchemeTransition(apply, { origin = null, animate = true, env 
         apply()
         return
     }
-    const reduced = env.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+    const reduced = isReducedMotion(env)
     if (origin && !reduced) {
         const radius = revealRadius(origin.x, origin.y, env.innerWidth, env.innerHeight)
         runViewTransition(apply, {

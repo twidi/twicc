@@ -92,7 +92,7 @@ function rule(rules, selectors, where = () => true) {
 // ---------------------------------------------------------------------------
 
 const motion = parseCss(read('motion.css'))
-const isReduced = (r) => r.ancestors.some((a) => /^@media \(prefers-reduced-motion: ?reduce\)$/.test(a))
+const isReduced = (r) => r.ancestors.length === 0 && r.head.startsWith(':root.reduce-motion')
 
 test('motion.css: glide tokens, no glide under reduced motion', () => {
     const tokens = rule(motion, [':root'], (r) => r.ancestors.length === 0 && '--motion-amount' in r.decls)
@@ -102,7 +102,7 @@ test('motion.css: glide tokens, no glide under reduced motion', () => {
         'height var(--motion-dur-3) var(--motion-ease-spring)',
     ])
     assert.equal(tokens.decls['--glide-fade'], 'opacity var(--motion-dur-1) var(--motion-ease)')
-    const reduced = rule(motion, [':root'], isReduced)
+    const reduced = rule(motion, [':root.reduce-motion'], isReduced)
     assert.equal(reduced.decls['--glide-transition'], 'none')
     assert.equal(reduced.decls['--glide-fade'], undefined, 'the fade stays')
 })
@@ -482,7 +482,7 @@ test('ArtifactBookmarkList: the reveal watchers use revealEntry, keyboard naviga
     assert.ok(reveal.includes('const current = smoothTo ? smoothTo.target : list.scrollTop'), 'the current scroll')
     assert.ok(reveal.includes('scrollTop: current,'), 'entryReveal from the current scroll')
     assert.ok(reveal.includes('if (target === null) return'), 'written only when needed')
-    assert.match(collapse(reveal), /revealBehavior\(\{ distance: Math\.abs\(target - current\), viewport: list\.clientHeight, reduced: globalThis\.matchMedia\?\.\('\(prefers-reduced-motion: reduce\)'\)\?\.matches === true, allowed: !cascade\.isArriving\(\), \}\)/)
+    assert.match(collapse(reveal), /revealBehavior\(\{ distance: Math\.abs\(target - current\), viewport: list\.clientHeight, reduced: isReducedMotion\(\), allowed: !cascade\.isArriving\(\), \}\)/)
     const autoWrite = reveal.indexOf('list.scrollTop = target')
     assert.ok(autoWrite >= 0, 'the auto write')
     assert.ok(reveal.lastIndexOf('endSmooth()', autoWrite) >= 0, 'endSmooth() before the auto write')

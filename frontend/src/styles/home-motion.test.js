@@ -98,7 +98,8 @@ function rule(rules, selectors, where = () => true) {
 }
 
 const topLevel = (r) => r.ancestors.length === 0
-const REDUCED = '@media (prefers-reduced-motion: reduce)'
+// Reduced motion is a class on <html> (utils/reducedMotion.js): the rule's selectors carry this prefix.
+const RM = ':root.reduce-motion'
 const HOVER = '@media (hover: hover)'
 const inBlock = (head) => (r) => r.ancestors.length === 1 && r.ancestors[0] === head
 const inKeyframes = (name) => inBlock(`@keyframes ${name}`)
@@ -168,13 +169,12 @@ test('2. ActivitySparkline: the reveal, both keyframes, the reduced-motion fade 
         [['to'], 'clip-path: inset(0 0 0 0);'],
     ])
 
-    const reduced = block(all, REDUCED)
-    assert.deepEqual(reduced.inside.map((r) => r.selectors), [[CARD_ENTERING, SVG_REVEAL]], 'the block holds one rule')
-    assertPinned(reduced.inside[0], `
+    const reduced = rule(all, [`${RM} ${CARD_ENTERING}`, `${RM} ${SVG_REVEAL}`], topLevel)
+    assertPinned(reduced, `
         animation: activity-sparkline-fade 300ms ease-in-out backwards;
         animation-delay: calc(var(--home-card-index, 0) * 60ms);
     `)
-    assert.ok(reduced.block.order > reveal.order, 'the reduced-motion block comes after the reveal rule')
+    assert.ok(reduced.order > reveal.order, 'the reduced-motion rule comes after the reveal rule')
     assertKeyframes(all, 'activity-sparkline-fade', [[['from'], 'opacity: 0;']])
 })
 
@@ -183,10 +183,10 @@ test('3. ActivitySparkline: the card-side selector survives scoping (§4.1)', ()
     const { code, errors } = compileStyle({ source: styleOf(read(SPARKLINE)), filename: 'ActivitySparkline.vue', id, scoped: true })
     assert.deepEqual(errors, [], 'no compile errors')
     const compiled = parseAll(code)
-    const reveals = compiled.filter((r) => r.selectors.includes(`${SVG_REVEAL}[${id}]`))
+    const reveals = compiled.filter((r) => r.selectors.some((s) => s.endsWith(`${SVG_REVEAL}[${id}]`)))
     assert.equal(reveals.length, 2, 'two compiled reveal rules (base, reduced motion)')
     for (const r of reveals) {
-        assert.ok(r.selectors.includes(`${CARD_ENTERING}[${id}]`), `"${r.head}" keeps the card ancestor unscoped`)
+        assert.ok(r.selectors.some((s) => s.endsWith(`${CARD_ENTERING}[${id}]`)), `"${r.head}" keeps the card ancestor unscoped`)
     }
 })
 

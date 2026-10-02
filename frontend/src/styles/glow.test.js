@@ -97,7 +97,9 @@ function rule(rules, selectors, where = () => true) {
 
 const topLevel = (r) => r.ancestors.length === 0
 const inHover = (r) => r.ancestors.length === 1 && /^@media \(hover: ?hover\)$/.test(r.ancestors[0])
-const inReduced = (r) => r.ancestors.length === 1 && /^@media \(prefers-reduced-motion: ?reduce\)$/.test(r.ancestors[0])
+// Reduced motion is a class on <html> (utils/reducedMotion.js): a top-level rule under `:root.reduce-motion`.
+const RM = ':root.reduce-motion'
+const inReduced = (r) => r.ancestors.length === 0 && r.head.startsWith(`${RM} `)
 
 const glowCss = read('glow.css')
 const glowStripped = stripComments(glowCss)
@@ -159,7 +161,7 @@ test('4. solid brand buttons: target, exclusions, rest / hover / press', () => {
     ])
     for (const r of glow.filter((x) => x.head.includes('wa-button') && !x.selectors.every((sel) => PRESS_SYSTEM.has(sel)))) {
         if (inReduced(r)) {
-            assert.deepEqual(r.selectors, [`:where(${BRAND})::part(base)::after`])
+            assert.deepEqual(r.selectors, [`${RM} :where(${BRAND})::part(base)::after`])
             continue
         }
         for (const s of r.selectors) assert.ok(s.includes(`${BRAND}:not(${EXCLUDED}`), `exclusions: ${s}`)
@@ -245,7 +247,7 @@ test('5. the sheen: positioned band under the content, sweep on hover, off under
     const sweep = rule(glow, [`:where(${LIVE}:hover)::part(base)::after`], inHover)
     assert.ok(sweep.decls['background-position'], 'the hover moves the band')
 
-    const reduced = rule(glow, [`:where(${BRAND})::part(base)::after`], inReduced)
+    const reduced = rule(glow, [`${RM} :where(${BRAND})::part(base)::after`], inReduced)
     assert.deepEqual(reduced.decls, { display: 'none' })
 })
 
@@ -501,7 +503,7 @@ test('16. the working pill: every rule pinned whole, in the stated order (§5.2,
         return r
     })
     const reduced = REDUCED_RULES.map(([selector, body]) => {
-        const r = rule(rules, [selector], inReduced)
+        const r = rule(rules, [`${RM} ${selector}`], inReduced)
         assertPinned(r, body, `reduced motion ${selector}`)
         return r
     })
@@ -666,7 +668,7 @@ test('18c. the upload strip: unfolding, upload icon, lit bar', () => {
     assertPinned(rule(tree, ['.upload-progress::part(indicator)'], topLevel), `background: linear-gradient(90deg, oklch(from var(--wa-color-brand-60) calc(l + 0.08) c h), var(--wa-color-brand-60));
         border-radius: var(--wa-border-radius-pill);
         box-shadow: 0 0 0.25rem color-mix(in oklab, var(--wa-color-brand-60) 40%, transparent);`)
-    assertPinned(rule(tree, ['.upload-progress::part(indicator)'], inReduced), 'transition: none;')
+    assertPinned(rule(tree, [`${RM} .upload-progress::part(indicator)`], inReduced), 'transition: none;')
     assert.equal(rule(tree, ['.upload-percent'], topLevel).decls.color, 'var(--wa-color-brand)')
 })
 

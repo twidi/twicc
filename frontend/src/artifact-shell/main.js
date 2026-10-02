@@ -25,6 +25,10 @@ import ArtifactShellApp from './ArtifactShellApp.vue'
 import { recordShareView } from '../share-recent/recordView'
 import { initArtifactShellColorScheme } from '../share-session/theme'
 import { installWaMotionStyles } from '../utils/waMotionStyles'
+import { initReducedMotion } from '../utils/reducedMotion'
+
+// No settings here: the system preference alone cuts the movement.
+initReducedMotion()
 
 // The consent prompt dialog opens and closes like the SPA's (see utils/waMotionStyles.js).
 installWaMotionStyles()

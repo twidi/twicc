@@ -73,7 +73,7 @@ test('motion.css: loading line, guarded by :has(), with its spinner keyframes', 
     const spin = block('@keyframes motion-spin')
     assert.deepEqual(topBlocks(spin.body).map((b) => [b.head, declarations(b.body)]), [['to', { rotate: '1turn' }]])
     // The spinner is a status indicator: nothing stops it under reduced motion.
-    for (const media of motion.filter((b) => /prefers-reduced-motion/.test(b.head))) {
+    for (const media of motion.filter((b) => b.head.startsWith(':root.reduce-motion'))) {
         assert.ok(!media.body.includes('motion-spin') && !media.body.includes('data-motion-loading'))
     }
 })
@@ -81,11 +81,10 @@ test('motion.css: loading line, guarded by :has(), with its spinner keyframes', 
 test('motion.css: the chevron turns with the spring, at once under reduced motion', () => {
     const base = block(':where(wa-details)::part(icon)')
     assert.deepEqual(declarations(base.body), { transition: 'rotate var(--motion-dur-2) var(--motion-ease-spring)' })
-    const reduced = motion.filter((b) => /^@media \(prefers-reduced-motion: ?reduce\)$/.test(b.head) && b.body.includes('::part(icon)'))
+    const reduced = motion.filter((b) => b.head === ':root.reduce-motion :where(wa-details)::part(icon)')
     assert.equal(reduced.length, 1)
-    assert.ok(motion.indexOf(reduced[0]) > blockIndex(':where(wa-details)::part(icon)'), 'reduced block after the base rule')
-    const inner = topBlocks(reduced[0].body)
-    assert.deepEqual(inner.map((b) => [b.head, declarations(b.body)]), [[':where(wa-details)::part(icon)', { 'transition-duration': '0s' }]])
+    assert.ok(motion.indexOf(reduced[0]) > blockIndex(':where(wa-details)::part(icon)'), 'reduced rule after the base rule')
+    assert.deepEqual(declarations(reduced[0].body), { 'transition-duration': '0s' })
 })
 
 test('installDetailsMotion() runs right after installGlassArrowGap() in both entry files', () => {

@@ -3,6 +3,8 @@
 // Theme management - must be initialized before CSS imports to prevent flash
 import { initTheme } from './utils/theme'
 initTheme()
+import { initReducedMotion } from './utils/reducedMotion'
+initReducedMotion()
 
 // Web Awesome base styles and its default theme (the only one used)
 import '@awesome.me/webawesome/dist/styles/webawesome.css';

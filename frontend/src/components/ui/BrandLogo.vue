@@ -254,13 +254,11 @@ span.brand-logo {
     68%, 100% { transform: translateX(0) rotate(0); }
 }
 
-@media (prefers-reduced-motion: reduce) {
-    .brand-logo--animated :is(.tilt, .hop, .shadow, .antenna, .eyes, .ear-left, .ear-right) {
-        animation: none;
-    }
-    /* Keyframe in motion.css (global). */
-    .brand-logo--busy {
-        animation: motion-status-pulse 1.4s ease-in-out infinite;
-    }
+:root.reduce-motion .brand-logo--animated :is(.tilt, .hop, .shadow, .antenna, .eyes, .ear-left, .ear-right) {
+    animation: none;
+}
+/* Keyframe in motion.css (global). */
+:root.reduce-motion .brand-logo--busy {
+    animation: motion-status-pulse 1.4s ease-in-out infinite;
 }
 </style>

@@ -649,9 +649,7 @@ function agentsLabel(n) {
 }
 
 /* Reduced motion: an opacity pulse instead of the hop (keyframe in motion.css, global). */
-@media (prefers-reduced-motion: reduce) {
-    .wf-row .wf-status-pending { animation: motion-status-pulse 1s ease-in-out infinite; }
-}
+:root.reduce-motion .wf-row .wf-status-pending { animation: motion-status-pulse 1s ease-in-out infinite; }
 
 .wf-row-body {
     color: var(--wa-color-text-quiet);

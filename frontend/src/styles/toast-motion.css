@@ -67,9 +67,7 @@
 /* Notivue skips its enter/leave classes under reduced motion: keep a reveal on the
    notification itself (it plays when the element is created). The leave stays instant.
    No end state: the children keep filter: opacity(1) for the toast's life. */
-@media (prefers-reduced-motion: reduce) {
-    .Notivue__notification {
-        animation: twicc-reveal 200ms var(--motion-ease);
-        --twicc-reveal-filter: opacity(var(--twicc-reveal));
-    }
+:root.reduce-motion .Notivue__notification {
+    animation: twicc-reveal 200ms var(--motion-ease);
+    --twicc-reveal-filter: opacity(var(--twicc-reveal));
 }

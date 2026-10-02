@@ -68,13 +68,11 @@
 
 /* Reduced, not none: movement goes, fades and status indicators stay. After the token
    block (same selector, source order decides). */
-@media (prefers-reduced-motion: reduce) {
-    :root {
-        --motion-amount: 0;
-        --motion-ease-spring: var(--motion-ease);
-        /* No gliding: the ink goes to its place at once; --glide-fade stays. */
-        --glide-transition: none;
-    }
+:root.reduce-motion {
+    --motion-amount: 0;
+    --motion-ease-spring: var(--motion-ease);
+    /* No gliding: the ink goes to its place at once; --glide-fade stays. */
+    --glide-transition: none;
 }
 
 /* Status indicators whose animation is movement pulse in opacity under reduced motion
@@ -224,10 +222,8 @@ wa-details[data-motion-loading]:not(:has(> :not([slot])))::part(content) {
 :where(wa-details)::part(icon) {
     transition: rotate var(--motion-dur-2) var(--motion-ease-spring);
 }
-@media (prefers-reduced-motion: reduce) {
-    :where(wa-details)::part(icon) {
-        transition-duration: 0s;
-    }
+:root.reduce-motion :where(wa-details)::part(icon) {
+    transition-duration: 0s;
 }
 
 /* Loading line of a card opened with nothing to show yet, like the "Loading result..."
@@ -285,6 +281,10 @@ wa-details[data-motion-loading]:not(:has(> :not([slot])))::part(content)::after 
 }
 .chat-entering.is-slice {
     animation-name: chat-enter-fade;
+}
+/* Reduced motion: the fade alone, with no stagger between rows. */
+:root.reduce-motion .chat-entering {
+    animation-delay: 0s;
 }
 
 /* Sidebar list cascade (step 5c). Classes and --list-enter-index are set by useListCascade

@@ -45,19 +45,16 @@ export const WA_MOTION_STYLES = {
         .dialog.show > *, .dialog.hide > * { filter: opacity(var(--twicc-reveal)); }
 
         /* Click outside a dialog without light dismiss: a feedback nudge, scale only; under
-           reduced motion, a --twicc-reveal dip of the whole dialog, its blur kept. */
+           reduced motion (--motion-amount: 0), a --twicc-reveal dip of the whole dialog
+           instead, its blur kept. */
         .dialog.pulse { animation: twicc-pulse 250ms var(--motion-ease); }
-        @media (prefers-reduced-motion: reduce) {
-            .dialog.pulse { animation: twicc-pulse-dim 250ms var(--motion-ease); }
-            .dialog.pulse > * { filter: opacity(var(--twicc-reveal)); }
-        }
+        .dialog.pulse > * { filter: opacity(var(--twicc-reveal)); }
 
         @keyframes twicc-dialog { from { translate: 0 calc(0.75rem * ${A}); scale: calc(1 - 0.04 * ${A}); } }
         @keyframes twicc-drop { from { translate: 0 calc(-0.5rem * ${A}); scale: calc(1 - 0.03 * ${A}); } }
         @keyframes twicc-fade { from { opacity: 0; } }
         @keyframes twicc-reveal { from { --twicc-reveal: 0; } }
-        @keyframes twicc-pulse { 50% { scale: calc(1 + 0.02 * ${A}); } }
-        @keyframes twicc-pulse-dim { 50% { --twicc-reveal: 0.85; } }
+        @keyframes twicc-pulse { 50% { scale: calc(1 + 0.02 * ${A}); --twicc-reveal: calc(1 - 0.15 * (1 - ${A})); } }
     `,
     // Menus grow from Web Awesome's placement-based origin (the edge touching the trigger).
     'wa-dropdown': `

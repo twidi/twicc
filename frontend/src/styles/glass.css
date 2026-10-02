@@ -90,6 +90,17 @@
     }
 }
 
+/* "Reduce effects" (a setting local to the device, utils/reducedMotion.js): the same opaque
+   surfaces, no blur. The blur is the costliest effect of the app on a slow device. After
+   .wa-dark, and more specific than it. */
+:root.reduce-effects {
+    --glass-bg: var(--glass-tint);
+    --glass-sticky-bg: var(--glass-tint);
+    --glass-field-bg: var(--wa-color-surface-default);
+    --glass-filter: none;
+    --glass-veil-filter: none;
+}
+
 /* The modal veil: what Web Awesome's .dialog::backdrop and the native dialog::backdrop
    paint. The theme declares it in @layer wa-theme on :root and .wa-dark; this unlayered
    :root declaration wins on <html>. */

@@ -132,7 +132,7 @@ test('the motion states declare --twicc-reveal-filter; the close button reads it
         const decls = declarations(b.body)
         if (!('--twicc-reveal-filter' in decls)) continue
         assert.equal(decls['--twicc-reveal-filter'], 'opacity(var(--twicc-reveal))', b.head)
-        for (const selector of splitTopLevel(b.head)) assert.ok(states.includes(selector), `${selector}: declares the motion state`)
+        for (const selector of splitTopLevel(b.head)) assert.ok([...states, ':root.reduce-motion .Notivue__notification'].includes(selector), `${selector}: declares the motion state`)
     }
     for (const state of states) {
         const merged = Object.assign({}, ...rules.filter((b) => splitTopLevel(b.head).includes(state)).map((b) => declarations(b.body)))
@@ -144,12 +144,10 @@ test('the motion states declare --twicc-reveal-filter; the close button reads it
 })
 
 test('reduced motion: one rule, a 200ms reveal on .Notivue__notification', () => {
-    const media = blocks.filter((b) => /^@media \(prefers-reduced-motion: ?reduce\)$/.test(b.head))
-    assert.equal(media.length, 1)
-    const inner = topBlocks(media[0].body)
-    assert.equal(inner.length, 1)
-    assert.equal(inner[0].head, '.Notivue__notification')
-    const decls = declarations(inner[0].body)
+    const reduced = blocks.filter((b) => b.head.startsWith(':root.reduce-motion'))
+    assert.equal(reduced.length, 1)
+    assert.equal(reduced[0].head, ':root.reduce-motion .Notivue__notification')
+    const decls = declarations(reduced[0].body)
     assert.deepEqual(animations(decls.animation).map((a) => [a.name, a.duration, a.easing]), [['twicc-reveal', '200ms', 'var(--motion-ease)']])
     assert.equal(decls['--twicc-reveal-filter'], 'opacity(var(--twicc-reveal))')
 })

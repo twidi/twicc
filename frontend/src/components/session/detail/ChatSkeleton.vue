@@ -81,10 +81,8 @@ const BARS = [
 
 /* Reduced motion: no moving shimmer, the bars pulse in opacity (motion-status-pulse is
    global, motion.css); the opacity fade of the root stays. */
-@media (prefers-reduced-motion: reduce) {
-    .chat-skeleton-bar {
-        background: var(--chat-skeleton-base);
-        animation: motion-status-pulse 1.4s ease-in-out infinite;
-    }
+:root.reduce-motion .chat-skeleton-bar {
+    background: var(--chat-skeleton-base);
+    animation: motion-status-pulse 1.4s ease-in-out infinite;
 }
 </style>

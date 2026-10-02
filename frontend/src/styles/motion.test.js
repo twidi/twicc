@@ -141,7 +141,11 @@ const motionTree = parseBlocks(motionStripped)
 const motionFlat = flatten(motionTree)
 const motionRules = motionFlat.map((e) => e.rule)
 const topRules = motionTree.filter((n) => n.type === 'rule')
-const reducedMedia = motionTree.filter((n) => n.type === 'at' && /^@media \(prefers-reduced-motion: ?reduce\)$/.test(n.prelude))
+// Reduced motion is a class on <html> (utils/reducedMotion.js), never a media query: the rules that
+// apply it are top-level rules whose selector starts with `:root.reduce-motion`.
+const RM = ':root.reduce-motion'
+const reducedRules = (tree) => tree.filter((n) => n.type === 'rule' && n.selector.startsWith(RM))
+const reducedMedia = reducedRules(motionTree)
 
 const TOKENS = {
     '--motion-dur-1': '120ms',
@@ -159,9 +163,13 @@ test('1. motion tokens on :root, reduced-motion block after them', () => {
     const tokenBlocks = motionTree.filter((n) => n.type === 'rule' && n.selector === ':root')
     assert.equal(tokenBlocks.length, 1, 'one top-level :root token block')
     for (const [name, value] of Object.entries(TOKENS)) assert.equal(tokenBlocks[0].decls[name], value, name)
-    // The :root block (step 4a) and the wa-details chevron block (step 4b).
-    assert.equal(reducedMedia.length, 2, 'two top-level reduced-motion blocks')
-    assert.ok(motionTree.indexOf(reducedMedia[0]) > motionTree.indexOf(tokenBlocks[0]), 'reduced-motion block must follow the tokens')
+    // The :root block (step 4a) and the wa-details chevron rule (step 4b).
+    // Plus the chat entrances losing their stagger.
+    assert.equal(reducedMedia.length, 3, 'three top-level reduced-motion rules')
+    assert.equal(reducedMedia[2].selector, ':root.reduce-motion .chat-entering')
+    assert.deepEqual(reducedMedia[2].decls, { 'animation-delay': '0s' })
+    assert.ok(motionTree.indexOf(reducedMedia[0]) > motionTree.indexOf(tokenBlocks[0]), 'reduced-motion rule must follow the tokens')
+    assert.ok(!/@media \(prefers-reduced-motion/.test(motionStripped), 'no prefers-reduced-motion media query in motion.css')
 })
 
 test('2. Web Awesome tokens: mapping on :root, .wa-invert', () => {
@@ -177,9 +185,8 @@ test('2. Web Awesome tokens: mapping on :root, .wa-invert', () => {
 })
 
 test('3. reduced motion is reduced, not none', () => {
-    const rules = reducedMedia[0].children
-    assert.equal(rules.length, 1)
-    assert.equal(rules[0].selector, ':root')
+    const rules = [reducedMedia[0]]
+    assert.equal(rules[0].selector, ':root.reduce-motion')
     // Gliding indicators (step 4c): no glide, the ink goes to its place at once.
     assert.deepEqual(rules[0].decls, {
         '--motion-amount': '0',
@@ -187,9 +194,8 @@ test('3. reduced motion is reduced, not none', () => {
         '--glide-transition': 'none',
     })
     // The second block only makes the wa-details chevron turn at once (step 4b).
-    const chevron = reducedMedia[1].children
-    assert.equal(chevron.length, 1)
-    assert.equal(chevron[0].selector, ':where(wa-details)::part(icon)')
+    const chevron = [reducedMedia[1]]
+    assert.equal(chevron[0].selector, ':root.reduce-motion :where(wa-details)::part(icon)')
     assert.deepEqual(chevron[0].decls, { 'transition-duration': '0s' })
     for (const rule of motionRules) {
         for (const selector of rule.selectors) assert.ok(!/(^|[\s>+~(,])\*/.test(selector), `"${selector}": no * selector`)
@@ -213,22 +219,22 @@ test('4. status indicators pulse in opacity under reduced motion', () => {
         ['ChatSkeleton.vue', componentTree('../components/session/detail/ChatSkeleton.vue'), '.chat-skeleton-bar', 'motion-status-pulse 1.4s ease-in-out infinite'],
     ]
     for (const [file, tree, selector, animation] of localRules) {
-        const media = tree.filter((n) => n.type === 'at' && /prefers-reduced-motion: ?reduce/.test(n.prelude))
-        assert.equal(media.length, 1, `${file}: one reduced-motion block`)
-        const rule = findRule(media[0].children, [selector], `${file} ${selector}`)
+        const reduced = reducedRules(tree)
+        assert.equal(reduced.length, 1, `${file}: one reduced-motion rule`)
+        const rule = findRule(reduced, [`${RM} ${selector}`], `${file} ${selector}`)
         assert.equal(rule.decls.animation, animation, `${file}: pulse`)
-        const text = JSON.stringify(media[0])
+        const text = JSON.stringify(reduced[0])
         assert.ok(!text.includes('animation: none') && !/"animation":"none"/.test(text), `${file}: animation: none left`)
     }
 
     const logo = read('../components/ui/BrandLogo.vue')
     assert.match(logo, /busy:\s*\{\s*type:\s*Boolean,\s*default:\s*false\s*\}/, 'BrandLogo: busy prop')
     assert.match(logo, /'brand-logo--busy':\s*busy/, 'BrandLogo: brand-logo--busy class')
-    const logoMedia = componentTree('../components/ui/BrandLogo.vue').filter((n) => n.type === 'at' && /prefers-reduced-motion: ?reduce/.test(n.prelude))
-    assert.equal(logoMedia.length, 1)
-    assert.equal(findRule(logoMedia[0].children, ['.brand-logo--busy']).decls.animation, 'motion-status-pulse 1.4s ease-in-out infinite')
+    const logoRules = reducedRules(componentTree('../components/ui/BrandLogo.vue'))
+    assert.equal(logoRules.length, 2)
+    assert.equal(findRule(logoRules, [`${RM} .brand-logo--busy`]).decls.animation, 'motion-status-pulse 1.4s ease-in-out infinite')
     assert.ok(
-        logoMedia[0].children.some((r) => r.selector.startsWith('.brand-logo--animated') && r.decls.animation === 'none'),
+        logoRules.some((r) => r.selector.startsWith(`${RM} .brand-logo--animated`) && r.decls.animation === 'none'),
         'BrandLogo: the parts still stop under reduced motion',
     )
 

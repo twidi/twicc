@@ -24,6 +24,7 @@ import { validateWorktreeTemplate } from '../utils/worktreePath'
 import { usablePublicOrigin } from '../utils/publicOrigin'
 import { ORIGIN_SETTING_KEYS } from '../utils/originSettingsForm'
 import { updateCompactHeight, watchCompactHeight } from '../utils/compactHeight'
+import { applyReduceEffects } from '../utils/reducedMotion'
 
 const STORAGE_KEY = 'twicc-settings'
 
@@ -53,6 +54,8 @@ export const SETTINGS_SCHEMA = {
     terminalMacOptionIsMeta: false,
     terminalCopyOnSelect: false,
     compactSessionList: false,
+    // Local to the device: cuts movement and costly effects (glass blur, filters). Local-only.
+    reduceEffects: false,
     showAllArtifacts: false,
     showMessageTimestamps: false,
     showArchivedSessions: false,
@@ -170,6 +173,7 @@ const SETTINGS_VALIDATORS = {
     diffSideBySide: (v) => typeof v === 'boolean',
     editorWordWrap: (v) => typeof v === 'boolean',
     compactSessionList: (v) => typeof v === 'boolean',
+    reduceEffects: (v) => typeof v === 'boolean',
     showAllArtifacts: (v) => typeof v === 'boolean',
     showMessageTimestamps: (v) => typeof v === 'boolean',
     showArchivedSessions: (v) => typeof v === 'boolean',
@@ -385,6 +389,7 @@ export const useSettingsStore = defineStore('settings', {
         isDiffSideBySide: (state) => state.diffSideBySide,
         isEditorWordWrap: (state) => state.editorWordWrap,
         isCompactSessionList: (state) => state.compactSessionList,
+        isReduceEffects: (state) => state.reduceEffects,
         isShowAllArtifacts: (state) => state.showAllArtifacts,
         areMessageTimestampsShown: (state) => state.showMessageTimestamps,
         isShowArchivedSessions: (state) => state.showArchivedSessions,
@@ -784,6 +789,16 @@ export const useSettingsStore = defineStore('settings', {
         setEditorWordWrap(enabled) {
             if (SETTINGS_VALIDATORS.editorWordWrap(enabled)) {
                 this.editorWordWrap = enabled
+            }
+        },
+
+        /**
+         * Set the "Reduce effects" mode (local-only; applied to <html> by utils/reducedMotion.js).
+         * @param {boolean} enabled
+         */
+        setReduceEffects(enabled) {
+            if (SETTINGS_VALIDATORS.reduceEffects(enabled)) {
+                this.reduceEffects = enabled
             }
         },
 
@@ -1198,6 +1213,8 @@ export function initSettings() {
     // Apply initial font size (theme is already applied in main.js)
     document.documentElement.style.fontSize = `${store.fontSize}px`
     watchCompactHeight()
+    // The classes on <html> follow the setting (and the system preference, in reducedMotion.js).
+    watch(() => store.reduceEffects, applyReduceEffects, { immediate: true })
 
     // Build the union of settings (generic + each provider's synced subset)
     // for the localStorage and outgoing-sync watchers. The function is invoked
@@ -1235,6 +1252,7 @@ export function initSettings() {
             diffSideBySide: store.diffSideBySide,
             editorWordWrap: store.editorWordWrap,
             compactSessionList: store.compactSessionList,
+            reduceEffects: store.reduceEffects,
             showAllArtifacts: store.showAllArtifacts,
             showMessageTimestamps: store.showMessageTimestamps,
             showArchivedSessions: store.showArchivedSessions,

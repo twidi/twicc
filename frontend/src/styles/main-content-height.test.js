@@ -21,11 +21,12 @@ test('1. .main-content may be shorter than its content (the card scrolls, not th
 })
 
 test('mobile sidebar drawer: no slide under reduced motion, it fades instead', () => {
-    const block = view.match(/@media \(width < 640px\) and \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}\n/)
-    assert.ok(block, 'a mobile + reduced-motion block')
-    const css = block[1]
-    assert.match(css, /\.sidebar \{[^}]*opacity: 0;[^}]*visibility: hidden;[^}]*transition: opacity/)
-    assert.match(css, /\.sidebar-toggle \{\s*transition: none;/)
+    const block = view.match(/@media \(width < 640px\) \{\s*:root\.reduce-motion \.sidebar \{([\s\S]*?)\n\}\n/)
+    assert.ok(block, 'a mobile block with the reduced-motion rules')
+    const css = block[0]
+    assert.match(css, /:root\.reduce-motion \.sidebar \{[^}]*opacity: 0;[^}]*visibility: hidden;[^}]*transition: opacity/)
+    assert.match(css, /:root\.reduce-motion \.sidebar-toggle \{\s*transition: none;/)
     assert.match(css, /:checked\) \.sidebar \{[^}]*opacity: 1;[^}]*visibility: visible;/)
-    assert.ok(!/translate|transform/.test(css), 'the reduced-motion block moves nothing')
+    assert.ok(!/translate|transform/.test(css), 'the reduced-motion rules move nothing')
+    assert.ok(!/prefers-reduced-motion/.test(view), 'no prefers-reduced-motion media query: the class carries it')
 })

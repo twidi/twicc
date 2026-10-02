@@ -703,10 +703,8 @@ function formatAverage(value, isCost) {
 }
 
 /* Reduced motion: a fade instead of the wipe. After the rule above (same specificity). */
-@media (prefers-reduced-motion: reduce) {
-    .contribution-sparkline {
-        animation: sparkline-fade 300ms ease-in-out backwards;
-    }
+:root.reduce-motion .contribution-sparkline {
+    animation: sparkline-fade 300ms ease-in-out backwards;
 }
 @keyframes sparkline-fade { from { opacity: 0; } }
 

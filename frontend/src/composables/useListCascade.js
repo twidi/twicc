@@ -20,6 +20,7 @@ import {
     pickLiveEntrances,
     planListCascade,
 } from '../utils/listCascade.js'
+import { isReducedMotion } from '../utils/reducedMotion.js'
 
 const FRAME_FALLBACK_MS = 16
 
@@ -168,13 +169,16 @@ export function useListCascade({ items, getKey, sourceSize, scopeKey, getVisible
 
     watch([scopeKey, items, sourceSize], run, { immediate: true, flush: 'pre' })
 
+    // Reduced motion: a cascade is movement and stagger, not a fade: the rows are simply there.
     function itemClass(item) {
+        if (isReducedMotion(env)) return null
         if (phase.value === 'pending') return 'list-arriving'
         const key = getKey(item)
         return plan.value.has(key) || live.has(key) ? 'list-entering' : null
     }
 
     function itemStyle(item) {
+        if (isReducedMotion(env)) return null
         const key = getKey(item)
         const index = plan.value.get(key) ?? live.get(key)
         return index === undefined ? null : { '--list-enter-index': index }

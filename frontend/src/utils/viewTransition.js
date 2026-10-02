@@ -9,6 +9,7 @@
 // A skipped transition still runs its update: the change lands, without animation.
 
 import { nextTick } from 'vue'
+import { isReduceEffects } from './reducedMotion.js'
 
 const CLASS_PREFIX = 'twicc-vt-'
 const UPDATE_CAP_MS = 3000
@@ -73,7 +74,7 @@ export function runViewTransition(update, {
     startTimeoutMs = 150, updateTimeoutMs = 400, overrunMs = 150, env = globalThis,
 } = {}) {
     const doc = env.document
-    if (typeof doc?.startViewTransition !== 'function' || depth > 0) {
+    if (typeof doc?.startViewTransition !== 'function' || depth > 0 || isReduceEffects(env)) {
         update()
         return
     }

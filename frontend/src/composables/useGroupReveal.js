@@ -11,6 +11,7 @@
 
 import { onScopeDispose, reactive, ref, watch } from 'vue'
 import { GROUP_REVEAL_WINDOW_MS, groupRevealEndMs, planGroupReveal } from '../utils/groupReveal.js'
+import { isReducedMotion } from '../utils/reducedMotion.js'
 
 const LEAVE_DURATION_MS = 260
 const END_MARGIN_MS = 60
@@ -36,6 +37,8 @@ export function useGroupReveal({ items, getKey, env = globalThis }) {
 
     /** Call right before the store toggles the group of `headKey`. `headHeight`: the head item's height now. */
     function noteToggle(headKey, expanding, headHeight) {
+        // Reduced motion: the group opens and closes at once (the curtain is movement).
+        if (isReducedMotion(env)) return
         pending = { previousKeys: new Set((items.value ?? []).map(getKey)), expanding }
         if (expanding) {
             headRevealing.add(headKey)

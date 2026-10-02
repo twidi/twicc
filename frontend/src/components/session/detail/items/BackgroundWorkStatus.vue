@@ -89,11 +89,9 @@ defineProps({
 .background-work-status__dots i:nth-child(3) { animation-delay: 0.3s; }
 
 /* Reduced motion: the shimmer stops (as on the working line). */
-@media (prefers-reduced-motion: reduce) {
-    .background-work-status__phrase--live {
-        animation: none;
-        background: none;
-        color: var(--wa-color-text-quiet);
-    }
+:root.reduce-motion .background-work-status__phrase--live {
+    animation: none;
+    background: none;
+    color: var(--wa-color-text-quiet);
 }
 </style>

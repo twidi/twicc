@@ -2,6 +2,7 @@
 
 import { ref, computed, reactive, watch, watchEffect, onUnmounted } from 'vue'
 import { nearestScrollTop, revealBehavior, startSmoothScroll } from '../utils/nearestScroll.js'
+import { isReducedMotion } from '../utils/reducedMotion.js'
 
 /**
  * Default minimum item height used for items that haven't been measured yet.
@@ -872,7 +873,7 @@ export function useVirtualScroll(options) {
             const smooth = revealBehavior({
                 distance: Math.abs(targetScrollTop - current),
                 viewport: Math.min(container.clientHeight, buffer),
-                reduced: globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true,
+                reduced: isReducedMotion(),
                 allowed: allowSmooth && (targetScrollTop >= current || upwardItemsMeasured(targetScrollTop)),
             }) === 'smooth'
             if (smooth) return startSmoothReveal(container, targetScrollTop)

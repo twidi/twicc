@@ -137,6 +137,11 @@ function onPopEnd(index) {
     animation-delay: calc(var(--tick-rank, 0) * 150ms);
 }
 
+/* Reduced motion: no chain between ticks. The animation stays (animationend cleans the set). */
+:root.reduce-motion .todo-item-icon--pop {
+    animation-delay: 0s;
+}
+
 @keyframes todo-check-pop {
     from {
         scale: calc(1 - var(--motion-amount));

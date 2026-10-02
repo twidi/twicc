@@ -292,20 +292,17 @@ test('each hide rule names its show rule\'s keyframes, comes after it, with at l
     assert.ok(compareSpecificity(specificity(dropHide.selector), specificity(dropShow.selector)) >= 0)
 })
 
-test('pulse: scale only; reduced motion swaps it for a --twicc-reveal dip of the whole dialog', () => {
+test('pulse: a scale nudge, and a --twicc-reveal dip that only shows when --motion-amount is 0', () => {
     const sheet = SHEETS['wa-dialog']
     assert.equal(animations(decl(rule('wa-dialog', '.dialog.pulse'), 'animation'))[0].name, 'twicc-pulse')
-    assert.deepEqual([...keyframeProperties(keyframeOf(sheet, 'twicc-pulse'))], ['scale'])
-    const reduced = sheet.rules.filter((r) => inReducedMedia(r))
-    assert.deepEqual(reduced.map((r) => r.selector), ['.dialog.pulse', '.dialog.pulse > *'])
-    assert.deepEqual(reduced[0].decls.map(([p]) => p), ['animation'])
-    const [dim] = animations(decl(reduced[0], 'animation'))
-    assert.deepEqual([dim.name, dim.duration, dim.easing], ['twicc-pulse-dim', '250ms', 'var(--motion-ease)'])
-    assert.deepEqual(reduced[1].decls, [['filter', 'opacity(var(--twicc-reveal))']])
-    const pulseDim = keyframeOf(sheet, 'twicc-pulse-dim')
-    assert.deepEqual([...keyframeProperties(pulseDim)], ['--twicc-reveal'])
-    assert.deepEqual(pulseDim.steps, [{ step: '50%', decls: [['--twicc-reveal', '0.85']] }])
-    assert.ok(reduced[0].index > rule('wa-dialog', '.dialog.pulse').index, 'the reduced rule comes after the base one')
+    assert.deepEqual([...keyframeProperties(keyframeOf(sheet, 'twicc-pulse'))], ['scale', '--twicc-reveal'])
+    assert.deepEqual(keyframeOf(sheet, 'twicc-pulse').steps, [{ step: '50%', decls: [
+        ['scale', 'calc(1 + 0.02 * var(--motion-amount))'],
+        ['--twicc-reveal', 'calc(1 - 0.15 * (1 - var(--motion-amount)))'],
+    ] }])
+    assert.deepEqual(rule('wa-dialog', '.dialog.pulse > *').decls, [['filter', 'opacity(var(--twicc-reveal))']])
+    assert.ok(!sheet.rules.some((r) => inReducedMedia(r)), 'no media query: a shadow tree cannot see the html class, the property carries it')
+    assert.ok(!keyframeOf(sheet, 'twicc-pulse-dim'), 'no separate dim keyframes')
 })
 
 test('submenus fade without scaling (the safe triangle keeps working)', () => {
@@ -450,7 +447,7 @@ test('twicc-reveal and twicc-pop-move keyframes; the color picker keeps twicc-po
 
 test('keyframe inventory per sheet (§14.4): opacity only in the tooltip, color picker and veil fades', () => {
     const inventory = {
-        'wa-dialog': ['twicc-dialog', 'twicc-drop', 'twicc-fade', 'twicc-reveal', 'twicc-pulse', 'twicc-pulse-dim'],
+        'wa-dialog': ['twicc-dialog', 'twicc-drop', 'twicc-fade', 'twicc-reveal', 'twicc-pulse'],
         'wa-dropdown': ['twicc-pop-move', 'twicc-reveal'],
         'wa-dropdown-item': ['twicc-reveal'],
         'wa-popover': [],

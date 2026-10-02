@@ -166,6 +166,10 @@ function tooltipFormatter(item, unit) {
     }
 }
 @keyframes heatmap-cell-in { from { opacity: 0; } }
+/* Reduced motion: no wave (a stagger is movement), the cells are simply there. */
+:root.reduce-motion .contribution-graph :deep(.vch__day__square) {
+    animation: none;
+}
 
 /* Override vue3-calendar-heatmap styles for theme integration */
 .contribution-graph :deep(svg.vch__wrapper) {

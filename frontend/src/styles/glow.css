@@ -152,10 +152,8 @@
     }
 }
 /* The sweep is movement: gone under reduced motion. The brightening and glow stay. */
-@media (prefers-reduced-motion: reduce) {
-    :where(wa-button[variant='brand'][appearance='accent'])::part(base)::after {
-        display: none;
-    }
+:root.reduce-motion :where(wa-button[variant='brand'][appearance='accent'])::part(base)::after {
+    display: none;
 }
 
 /* The context ring glows in its own colour (--indicator-color is set inline on the host

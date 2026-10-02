@@ -96,7 +96,8 @@ function rule(rules, selectors, where = () => true) {
 }
 
 const topLevel = (r) => r.ancestors.length === 0
-const REDUCED = '@media (prefers-reduced-motion: reduce)'
+// Reduced motion is a class on <html> (utils/reducedMotion.js): top-level rules under this prefix.
+const RM = ':root.reduce-motion'
 const HOVER = '@media (hover: hover)'
 const inBlock = (head) => (r) => r.ancestors.length === 1 && r.ancestors[0] === head
 const inKeyframes = (name) => inBlock(`@keyframes ${name}`)
@@ -208,16 +209,16 @@ test('4. TaskPane: progress line rules and keyframes (§6)', () => {
 
 test('5. TaskPane: the reduced-motion block comes after the strike and progress rules (§7)', () => {
     const all = parseAll(styleOf(read(PANE)))
-    const reduced = block(all, REDUCED)
-    assert.deepEqual(reduced.inside.map((r) => r.selectors), [[DEEP_STRIKE], ['.task-progress-fill']], 'the block holds two rules')
-    assertPinned(reduced.inside[0], 'animation: none;')
-    assertPinned(reduced.inside[1], `
+    const strike = rule(all, [`${RM} ${DEEP_STRIKE}`], topLevel)
+    const fill = rule(all, [`${RM} .task-progress-fill`], topLevel)
+    assertPinned(strike, 'animation: none;')
+    assertPinned(fill, `
         transition: none;
         animation: none;
     `)
-    for (const selector of [DEEP_STRIKE, '.task-progress-fill']) {
+    for (const [selector, reducedRule] of [[DEEP_STRIKE, strike], ['.task-progress-fill', fill]]) {
         const base = rule(all, [selector], topLevel)
-        assert.ok(reduced.block.order > base.order, `the reduced-motion block comes after ${selector}`)
+        assert.ok(reducedRule.order > base.order, `the reduced-motion rule comes after ${selector}`)
     }
 })
 

@@ -122,12 +122,10 @@ const polylinePoints = computed(() => {
     to { clip-path: inset(0 0 0 0); }
 }
 /* Reduced, not none: a fade, same delay. After the base rule (same specificity). */
-@media (prefers-reduced-motion: reduce) {
-    .home-card-entering .activity-sparkline,
-    .activity-sparkline.activity-sparkline--reveal {
-        animation: activity-sparkline-fade 300ms ease-in-out backwards;
-        animation-delay: calc(var(--home-card-index, 0) * 60ms);
-    }
+:root.reduce-motion .home-card-entering .activity-sparkline,
+:root.reduce-motion .activity-sparkline.activity-sparkline--reveal {
+    animation: activity-sparkline-fade 300ms ease-in-out backwards;
+    animation-delay: calc(var(--home-card-index, 0) * 60ms);
 }
 @keyframes activity-sparkline-fade { from { opacity: 0; } }
 </style>
