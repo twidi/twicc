@@ -1688,6 +1688,8 @@ wa-divider {
     --track-width: 3px;
     /* No height of its own in the title row: it is a little taller than the title's line. */
     margin-block: calc(-0.5 * var(--size));
+    /* Nudged up: centred on the row it reads a little low next to the title's text. */
+    translate: 0 -2px;
 }
 :where(html.compact-height) .session-header.compact-collapsed .compact-live,
 :where(html.compact-height) .session-header.compact-collapsed .compact-status {
