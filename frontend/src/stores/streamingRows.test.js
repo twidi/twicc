@@ -141,11 +141,11 @@ function mountGeometry(f) {
         watch(() => props.content.message.content[0].text, text => texts.push(text), { immediate: true })
         return () => h('span', props.content.message.content[0].text)
     } }
-    const Row = { props: ['row'], setup: props => () => h(Content, { content: getParsedContent(props.row) }) }
+    const Row = { props: ['row'], setup: (props, { slots }) => () => h('div', slots.default({ row: props.row })) }
     const unmount = mount(() => {
         scroller = useVirtualScroll({ items: computed(() => f.store.localState.sessionVisualItems[f.sessionId]),
             itemKey: row => { keyReads++; return row.lineNum }, containerRef: shallowRef(null), minItemHeight: 20 })
-        return () => { scroller.positions.value; return h(Row, { row: f.store.localState.sessionVisualItems[f.sessionId].at(-1) }) }
+        return () => { scroller.positions.value; return h(Row, { row: f.store.localState.sessionVisualItems[f.sessionId].at(-1) }, { default: ({ row }) => h(Content, { content: getParsedContent(row) }) }) }
     })
     return { scroller, texts, unmount, get mounts() { return mounts }, get keyReads() { return keyReads },
         reset() { keyReads = 0; texts.length = 0 } }
