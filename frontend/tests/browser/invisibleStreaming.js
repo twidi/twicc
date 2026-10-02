@@ -1,5 +1,5 @@
 // Full production conversation fixture. No main.js bootstrap or live WebSocket.
-import { createApp, h, KeepAlive, nextTick, ref } from 'vue'
+import { createApp, h, KeepAlive, nextTick, ref, unref } from 'vue'
 import { createPinia } from 'pinia'
 import { createRouter, createMemoryHistory, RouterView } from 'vue-router'
 import SessionItemsList from '../../src/components/session/detail/SessionItemsList.vue'
@@ -148,6 +148,19 @@ function seedSession(id, parent = null) {
     store.processStates[id] = { state: 'assistant_turn', tools: [], pending_requests: [] }
 }
 seedSession(mainId); seedSession(otherId); seedSession(agentId, mainId)
+function seedHistory(id, count) {
+    const existing = store.sessionItems[id].length
+    if (existing >= count) return
+    const added = Array.from({ length: count - existing }, (_, index) => {
+        const number = existing + index + 1
+        return { line_num: number, kind: 'assistant_message', display_level: DISPLAY_LEVEL.ALWAYS,
+            group_head: null, group_tail: null, timestamp: '2026-10-02T12:00:00Z',
+            content: JSON.stringify(finalContent(`History ${number}. ${'Readable history content. '.repeat(8)}`,
+                'text', 'history', `history-${number}`)) }
+    })
+    store.addSessionItems(id, added)
+    store.sessions[id].last_line = count
+}
 const originalDrain = store._onBufferDrain
 store._onBufferDrain = (id, index, text) => {
     counters.drains++
@@ -187,7 +200,10 @@ const app = createApp({ setup: () => () => [
         h('button', { onClick: () => restoreDock() }, 'Restore center'),
         h('button', { onClick: () => switchSession() }, 'Switch session'),
         h('button', { onClick: () => selectSubagent() }, 'Select subagent'),
-        h('button', { onClick: toggleSecondary }, 'Show/hide second main Chat')]),
+        h('button', { onClick: toggleSecondary }, 'Show/hide second main Chat'),
+        h('button', { onClick: () => runLargeHistorySuspension() }, 'Suspension: 2000 rows / 60 replacements'),
+        h('button', { onClick: () => runPendingRevealHide() }, 'Suspension: pending reveal / hide'),
+        h('button', { onClick: () => runReconcileHideReturn() }, 'Suspension: final / hide / return')]),
     h('div', { id: 'conversation' }, [h(RouterView, {}, { default: ({ Component, route }) => h(KeepAlive, {}, () => h(Component, { key: route.params.sessionId })) }),
         secondaryMounted.value ? h('aside', { style: { display: secondaryActive.value ? 'flex' : 'none', width: '38%', minHeight: 0, borderLeft: '1px solid gray' } },
             [h(SessionItemsList, { sessionId: mainId, projectId, viewActive: secondaryActive.value })]) : null]),
@@ -224,6 +240,45 @@ function geometry(id = currentId()) {
 function snapshot() {
     return { provider, baseline, counters: { ...counters }, geometry: geometry(), text: row()?.innerText || '',
         rows: lifetimes.filter(entry => entry.lineNum === lineNum), requests: [...requests], errors: [...errors] }
+}
+function viewportDiagnostics() {
+    return { width: window.innerWidth, height: window.innerHeight,
+        mobile: window.matchMedia('(max-width: 767px)').matches }
+}
+function requireViewport(expectedViewport) {
+    if (expectedViewport == null) return
+    assert(expectedViewport === 'mobile' || expectedViewport === 'desktop', 'Expected viewport must be mobile or desktop')
+    assert(viewportDiagnostics().mobile === (expectedViewport === 'mobile'),
+        `Expected ${expectedViewport} viewport; check the browser width before this scenario`)
+}
+function sessionRows(id = mainId) {
+    const items = store.sessionItems[id] || []
+    const last = items.at(-1)
+    return { raw: items.length, visual: store.getSessionVisualItems(id).length,
+        lastLine: last?.line_num ?? null, lastContent: last ? JSON.stringify(getParsedContent(last)) : null }
+}
+function scrollerDiagnostics(list) {
+    const scroller = list?.$.setupState.scrollerRef
+    if (!scroller) return null
+    const root = scroller.$el
+    const positions = unref(scroller.positions)
+    const rect = root?.getBoundingClientRect()
+    const anchor = rect && [...root.querySelectorAll('.virtual-scroller-item')].find(element => {
+        const box = element.getBoundingClientRect()
+        return box.bottom > rect.top && box.top < rect.bottom && Number(element.dataset.itemKey) > 0
+    })
+    return { suspended: unref(scroller.suspended), positions: positions.length,
+        totalHeight: positions.length ? positions.at(-1).top + positions.at(-1).height : 0,
+        visibleRange: scroller.getVisibleRange(),
+        savedAnchor: scroller.getScrollAnchor(), scrollState: scroller.getScrollState(),
+        renderedAnchor: anchor?.dataset.itemKey ?? null,
+        renderedOffset: anchor ? anchor.getBoundingClientRect().top - rect.top : null }
+}
+function scenarioReport(name, phases, inputs = {}) {
+    const result = { name, provider, viewport: viewportDiagnostics(), inputs,
+        phases, rows: sessionRows(), requests: [...requests], errors: [...errors] }
+    reports.value.push(result)
+    return result
 }
 function resetCounters() { for (const key of Object.keys(counters)) counters[key] = 0 }
 function assert(condition, message) { if (!condition) throw new Error(message) }
@@ -311,6 +366,125 @@ async function selectSubagent() {
 }
 async function maximizeDock() { viewInstance().$.setupState.layout.maximize(['right-top']); await settle() }
 async function restoreDock() { viewInstance().$.setupState.layout.restoreMaximized(); await settle() }
+async function hideMain(mode) {
+    if (mode === 'keepAlive') await switchSession()
+    else if (mode === 'tab') await selectSubagent()
+    else if (mode === 'dock') await maximizeDock()
+    else throw new Error(`Unknown hide mode: ${mode}`)
+}
+async function showMain(mode) {
+    if (mode === 'keepAlive') await switchSession()
+    else if (mode === 'tab') await navigate('main')
+    else await restoreDock()
+}
+async function runLargeHistorySuspension({ mode = 'keepAlive', replacements = 60, expectedViewport = null } = {}) {
+    requireViewport(expectedViewport)
+    await navigate('main')
+    seedHistory(mainId, 2000)
+    await settle()
+    const target = listInstance(mainId)
+    const scroller = target?.$.setupState.scrollerRef
+    assert(scroller, 'Main production scroller is missing')
+    await scroller.scrollToKey(1000, { align: 'start' })
+    await settle()
+    secondaryMounted.value = true
+    secondaryActive.value = true
+    await settle()
+    const comparison = [...instances.values()].find(instance => instance !== target &&
+        instance.$options.__file?.endsWith('SessionItemsList.vue') && instance.$props.sessionId === mainId)
+    assert(comparison?.$.setupState.scrollerRef, 'Visible comparison scroller is missing')
+    const before = scrollerDiagnostics(target)
+    await hideMain(mode)
+    assert(unref(scroller.suspended), `Main scroller did not suspend through ${mode}`)
+    assert(!unref(comparison.$.setupState.scrollerRef.suspended), 'Comparison scroller also suspended')
+    const frozenPositions = unref(scroller.positions)
+    const hiddenStart = scrollerDiagnostics(target)
+    for (let index = 0; index < replacements; index++) {
+        const text = `History 1000 replacement ${String(index).padStart(2, '0')}. ${'Readable history content. '.repeat(8)}`
+        store.updateSessionItemsContent(mainId, [{ line_num: 1000,
+            content: JSON.stringify(finalContent(text, 'text', 'history', `history-replacement-${index}`)) }])
+        await nextTick()
+        await new Promise(resolve => nativeRAF(resolve))
+        assert(unref(scroller.positions) === frozenPositions, 'Suspended geometry changed identity')
+    }
+    const hiddenEnd = scrollerDiagnostics(target)
+    const comparisonHidden = scrollerDiagnostics(comparison)
+    assert(hiddenEnd.suspended, 'Main scroller resumed during hidden replacements')
+    await showMain(mode)
+    await settle()
+    const after = scrollerDiagnostics(target)
+    assert(!after.suspended, 'Main scroller did not resume')
+    assert(store.sessionItems[mainId][999].content.includes(`replacement ${String(replacements - 1).padStart(2, '0')}`),
+        'Latest history replacement is missing')
+    return scenarioReport('large history suspension', { before, hiddenStart, hiddenEnd,
+        comparisonHidden, after }, { mode, history: 2000, replacements, expectedViewport })
+}
+async function runPendingRevealHide({ expectedViewport = null } = {}) {
+    requireViewport(expectedViewport)
+    await navigate('main')
+    seedHistory(mainId, 2000)
+    await settle()
+    const target = listInstance(mainId)
+    const scroller = target.$.setupState.scrollerRef
+    scroller.setScrollTop(0)
+    await settle()
+    const before = scrollerDiagnostics(target)
+    const pending = scroller.scrollToKey(1900, { align: 'nearest', maxAttempts: 12 })
+    await switchSession()
+    const hidden = scrollerDiagnostics(target)
+    const revealResult = await pending
+    assert(revealResult === false, 'Pending reveal completed after suspension')
+    await switchSession()
+    await settle()
+    return scenarioReport('pending reveal then hide', { before, hidden, after: scrollerDiagnostics(target), revealResult },
+        { expectedViewport })
+}
+async function runReconcileHideReturn({ expectedViewport = null } = {}) {
+    requireViewport(expectedViewport)
+    await navigate('main')
+    seedHistory(mainId, 2000)
+    await settle()
+    const target = listInstance(mainId)
+    const scroller = target.$.setupState.scrollerRef
+    if (store.localState.streamingBlocks[mainId]) {
+        destroySessionBuffers(mainId)
+        delete store.localState.streamingBlocks[mainId]
+        store.recomputeVisualItems(mainId)
+    }
+    const messageId = start('text', mainId)
+    feed('Final reconciliation followed by rapid hide and return.', mainId, messageId)
+    await settle(700)
+    scroller.setScrollTop(12000)
+    await settle()
+    const before = scrollerDiagnostics(target)
+    const stream = store.localState.streamingBlocks[mainId]
+    const text = stream.blocks[0].text
+    const uuid = `final-${messageId}`
+    store.streamBlockStop(mainId, messageId, 0)
+    store.streamBlockEnd(mainId, messageId, 0, uuid)
+    const realLine = store.sessionItems[mainId].length + 1
+    store.addSessionItems(mainId, [{ line_num: realLine, kind: 'assistant_message', display_level: DISPLAY_LEVEL.ALWAYS,
+        group_head: null, group_tail: null, stream_uuid: provider === 'codex' ? uuid : undefined,
+        content: JSON.stringify(finalContent(text, 'text', messageId, uuid)) }])
+    store.sessions[mainId].last_line = realLine
+    // Start the real KeepAlive transition while SessionItemsList still owns swap restoration.
+    await switchSession()
+    const hidden = scrollerDiagnostics(target)
+    await switchSession()
+    await settle(700)
+    const after = scrollerDiagnostics(target)
+    assert(!store.localState.streamingBlocks[mainId], 'Final reconciliation retains the streaming block')
+    assert(store.sessionItems[mainId][realLine - 1].content.includes(text), 'Final JSONL row loses the latest text')
+    assert(!after.suspended, 'Main scroller remains suspended after rapid return')
+    const result = scenarioReport('reconciliation then rapid hide and return', { before, hidden, after },
+        { realLine, text, expectedViewport })
+    await scroller.scrollToKey(realLine, { align: 'nearest' })
+    await settle()
+    assert(target.$el.querySelector(`[data-line-num="${realLine}"]`)?.innerText.includes(text),
+        'Final row is missing from the rendered transcript')
+    result.finalRow = scrollerDiagnostics(target)
+    return result
+}
 async function runHiddenThinking() {
     try {
         await navigate('main')
@@ -407,9 +581,11 @@ async function reconnectSameMessage() {
 window.invisibleStreamingFixture = { store, router, provider, baseline, ids: { mainId, otherId, agentId }, counters,
     start, feed, settle, snapshot, geometry, resetCounters, navigate, switchSession, selectSubagent,
     maximizeDock, restoreDock, runDockPreflight, toggleSecondary, secondaryActive, runHiddenThinking, runVisible, readingAbove, displayMode, reconnectSameMessage,
+    viewportDiagnostics, sessionRows, scrollerDiagnostics, runLargeHistorySuspension, runPendingRevealHide, runReconcileHideReturn,
     clear(id = currentId()) { destroySessionBuffers(id); delete store.localState.streamingBlocks[id]; store.recomputeVisualItems(id) },
     exportEvidence() { return JSON.stringify({ reports: reports.value, requests, errors, lifetimes }, null, 2) },
 }
 await settle(450)
-await runDockPreflight()
+if (viewInstance()?.$.setupState.layout.render.value.mode !== 'tabs') await runDockPreflight()
+else reports.value.push({ dockPreflightSkipped: true, viewport: viewportDiagnostics() })
 reports.value.push({ fixtureReady: true, storeShared: useDataStore(pinia) === store, ...snapshot() })

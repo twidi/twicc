@@ -29,3 +29,61 @@ for (const provider of ['claude_code', 'codex']) test(`${provider}: fixture seed
         assert.ok(maximized.regions.some(region => region.kind === 'maximized' && region.slots.some(slot => slot.dockId === 'right-top')))
     }
 })
+
+test('suspension fixture uses production SessionView, KeepAlive, and scroller diagnostics', () => {
+    assert.match(fixture, /component: SessionView/)
+    assert.match(fixture, /h\(RouterView,.*h\(KeepAlive/)
+    assert.match(fixture, /function scrollerDiagnostics\(/)
+    assert.match(fixture, /\.setupState\.scrollerRef/)
+    assert.match(fixture, /getScrollAnchor\(\)/)
+    assert.match(fixture, /unref\(scroller\.positions\)/)
+    assert.match(fixture, /unref\(scroller\.suspended\)/)
+})
+
+test('suspension fixture exposes seeded history, comparison, and actual hide controls', () => {
+    assert.match(fixture, /async function runLargeHistorySuspension\(/)
+    assert.match(fixture, /seedHistory\(mainId, 2000\)/)
+    assert.match(fixture, /replacements = 60/)
+    assert.match(fixture, /secondaryActive\.value/)
+    assert.match(fixture, /await switchSession\(\)/)
+    assert.match(fixture, /await selectSubagent\(\)/)
+    assert.match(fixture, /await maximizeDock\(\)/)
+})
+
+test('large-history seed adds the requested rows through the session store', () => {
+    const start = fixture.indexOf('function seedHistory(')
+    const end = fixture.indexOf('\nconst originalDrain', start)
+    assert.ok(start >= 0 && end > start)
+    const added = []
+    const store = { sessionItems: { main: Array.from({ length: 100 }, (_, index) => ({ line_num: index + 1 })) },
+        sessions: { main: { last_line: 100 } },
+        addSessionItems(id, rows) { added.push(...rows); this.sessionItems[id].push(...rows) } }
+    const seed = new Function('store', 'DISPLAY_LEVEL', 'finalContent',
+        `${fixture.slice(start, end)}; return seedHistory`)(store, DISPLAY_LEVEL, text => ({ text }))
+    seed('main', 2000)
+    assert.equal(added.length, 1900)
+    assert.equal(added[0].line_num, 101)
+    assert.equal(added.at(-1).line_num, 2000)
+    assert.equal(store.sessions.main.last_line, 2000)
+    seed('main', 2000)
+    assert.equal(added.length, 1900)
+})
+
+test('suspension fixture exposes pending reveal and immediate reconciliation hide', () => {
+    assert.match(fixture, /async function runPendingRevealHide\(/)
+    assert.match(fixture, /scrollToKey\(/)
+    assert.match(fixture, /async function runReconcileHideReturn\(/)
+    assert.match(fixture, /store\.addSessionItems\(/)
+    assert.match(fixture, /await switchSession\(\)/)
+    assert.match(fixture, /window\.invisibleStreamingFixture = [\s\S]*runLargeHistorySuspension[\s\S]*runPendingRevealHide[\s\S]*runReconcileHideReturn/)
+})
+
+test('suspension diagnostics include viewport inputs and latest rows', () => {
+    assert.match(fixture, /function viewportDiagnostics\(/)
+    assert.match(fixture, /window\.innerWidth/)
+    assert.match(fixture, /window\.innerHeight/)
+    assert.match(fixture, /expectedViewport = null/)
+    assert.match(fixture, /requireViewport\(expectedViewport\)/)
+    assert.match(fixture, /function sessionRows\(/)
+    assert.match(fixture, /function scenarioReport\(/)
+})
