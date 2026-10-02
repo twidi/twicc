@@ -143,13 +143,17 @@ test('7. the Web Awesome controls that read the surface as a colour get it back,
 
 // The code editor (Files, Git and Artifacts tabs) shows the card, not a surface of its own. In dark a rule
 // already gives it the page surface token, which is transparent in a card; in light the CodeMirror theme
-// paints its own white. Inside a card the editor and its gutters are transparent in both schemes.
-test('8. inside a card the code editor and its gutters are transparent', () => {
+// paints its own white. Inside a card the editor is transparent in both schemes. Its gutter sticks over the
+// text that scrolls horizontally, so it takes the opaque flat colour of a card (--panel-solid) instead.
+test('8. inside a card the code editor is transparent and its gutter is opaque', () => {
     const src = strip(read('../components/editor/DiffEditor.vue'))
     const style = src.slice(src.indexOf('<style'))
-    const m = style.match(/\.panel-card \.cm-editor,\s*\.panel-card \.cm-gutters\s*\{([^}]*)\}/)
-    assert.ok(m, 'the rule')
+    const m = style.match(/\.panel-card \.cm-editor\s*\{([^}]*)\}/)
+    assert.ok(m, 'the editor rule')
     assert.equal(norm(m[1]), 'background: transparent !important;')
+    const g = style.match(/:root \.panel-card \.cm-gutters\s*\{([^}]*)\}/)
+    assert.ok(g, 'the gutter rule')
+    assert.equal(norm(g[1]), 'background: var(--panel-solid) !important;')
 })
 
 // The active line's gutter cell: the accent highlight of the app's highlighted rows (--glass-item-highlight,

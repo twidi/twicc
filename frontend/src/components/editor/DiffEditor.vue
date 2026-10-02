@@ -719,12 +719,19 @@ html.wa-dark {
   }
 }
 
-/* Inside a card (the Files, Git and Artifacts tabs) the editor and its gutters show the card, in light
-   as in dark: the CodeMirror light theme paints its own white, and the dark rule above only gets there
-   through the surface token, which is transparent in a card. */
-.panel-card .cm-editor,
-.panel-card .cm-gutters {
+/* Inside a card (the Files, Git and Artifacts tabs) the editor shows the card, in light as in dark: the
+   CodeMirror light theme paints its own white, and the dark rule above only gets there through the surface
+   token, which is transparent in a card. */
+.panel-card .cm-editor {
     background: transparent !important;
+}
+
+/* The gutter sticks over the text that scrolls under it horizontally: it needs an opaque fill. The flat
+   colour a card looks like (--panel-solid, both schemes) matches the transparent editor around it.
+   `:root` outranks the dark rule above (`html.wa-dark .cm-gutters`, also !important), which would
+   leave it transparent. */
+:root .panel-card .cm-gutters {
+    background: var(--panel-solid) !important;
 }
 
 /* The active line's gutter cell: the accent highlight of the app's highlighted rows, in both schemes
