@@ -968,6 +968,36 @@ function handleLinkClick(event) {
     font-size: 0.875em;
 }
 
+/* Links and tables in the app's colours: github-markdown-css paints links GitHub blue and
+   zebra-stripes the tables in two greys. The link is the theme's own link colour (the accent, a
+   shade darker in light and lighter in dark); the rows are a faint accent tint over whatever
+   surface the table sits on, the header a little stronger, the rules the app's divider colour.
+   Same specificity as github-markdown-css, later: the user's filled bubble (SessionItem.vue)
+   still wins with its own, more specific rules. */
+.markdown-body a {
+    color: var(--wa-color-text-link);
+}
+.markdown-body table th,
+.markdown-body table td {
+    border-color: var(--divider-color, var(--wa-color-surface-border));
+}
+.markdown-body table tr {
+    background-color: transparent;
+    border-top-color: var(--divider-color, var(--wa-color-surface-border));
+}
+.markdown-body table tr:nth-child(2n) {
+    background-color: color-mix(in oklab, var(--wa-color-brand-60) 6%, transparent);
+}
+.markdown-body table th {
+    background-color: color-mix(in oklab, var(--wa-color-brand-60) 12%, transparent);
+}
+.wa-dark .markdown-body table tr:nth-child(2n) {
+    background-color: color-mix(in oklab, var(--wa-color-brand-60) 10%, transparent);
+}
+.wa-dark .markdown-body table th {
+    background-color: color-mix(in oklab, var(--wa-color-brand-60) 18%, transparent);
+}
+
 /* The source stays lowercase so the raw text reads as a plain English phrase. */
 .markdown-body .md-container-label::first-letter,
 .markdown-body .md-line::first-letter {
