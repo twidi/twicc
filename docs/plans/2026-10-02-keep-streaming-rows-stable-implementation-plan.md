@@ -496,9 +496,53 @@ After placing the actual scrollbar at its physical bottom, initial geometry is:
 Final geometry is `scrollTop=3791.82`, `scrollHeight=4523`, `clientHeight=418`.
 
 Content renders and heights update, but the scrollbar does not remain at the bottom.
-This result does not establish a regression from the old publication action.
-No before/after browser comparison runs against the old action.
+A follow-up baseline comparison runs against the actual old action and the current action.
+Both providers reproduce the same failure with identical observations.
 The existing native scroll-anchor and geometry algorithms remain unchanged.
+
+### Old/current browser comparison
+
+The comparison uses the same real-SFC harness on 2026-10-02.
+Only the publication action changes. Fixture state, provider, 100 history rows, 20 prefixes, starting scroll, and settling code stay identical.
+
+Baseline source command:
+`cd /home/twidi/dev/twicc-poc && git show f2696fe1:frontend/src/stores/data.js`.
+
+The extracted slice starts at `        _onBufferDrain(` and ends before the next `        /**`.
+Its SHA-256 is `2a9e8eb2e13551caabaa8e4db15ef31c01773190b550b1922e8f7f1049b45f9a`.
+An exact-source assertion passes before browser execution.
+
+A throwaway module exports that exact old method, with actual `SYNTHETIC_ITEM` and `setParsedContent` imports.
+The harness invokes it with its reactive real store as `this`.
+Current runs invoke the real current Pinia action. The independent harness has no action subscribers.
+No alternative publication logic or product source edit is introduced.
+
+Browser controls execute these four finite runs:
+
+1. `Claude geometry baseline` — old action.
+2. `Claude geometry` — current action.
+3. `Codex geometry baseline` — old action.
+4. `Codex geometry` — current action.
+
+The comparison reads each completed diagnostics panel through `cua_repl`.
+For each provider, all 20 observations match exactly for prefix, rendered text, measured height, and scroll geometry.
+
+| Provider | Action | Initial scrollTop / scrollHeight / clientHeight | Final scrollTop / scrollHeight / clientHeight | Measured height | Bottom following |
+|---|---|---|---|---|---|
+| Claude | Old `f2696fe1` | 3786.363525390625 / 4205 / 418 | 3791.818115234375 / 4523 / 418 | 23.96875 → 359.84375 px | Fails |
+| Claude | Current | 3786.363525390625 / 4205 / 418 | 3791.818115234375 / 4523 / 418 | 23.96875 → 359.84375 px | Fails |
+| Codex | Old `f2696fe1` | 3786.363525390625 / 4205 / 418 | 3791.818115234375 / 4523 / 418 | 23.96875 → 359.84375 px | Fails |
+| Codex | Current | 3786.363525390625 / 4205 / 418 | 3791.818115234375 / 4523 / 418 | 23.96875 → 359.84375 px | Fails |
+
+All four runs render the final text, preserve target outer UIDs, and report no Vue warnings or `/api/` requests.
+All four reading-above phases preserve `scrollTop=200`.
+
+The bottom-following failure is pre-existing in this fixture. Stable-row publication does not introduce it.
+This comparison does not distinguish an existing product issue from a fixture/browser native-anchor limitation.
+No product geometry change is warranted within this scope.
+
+After execution, the temporary module and comparison controls are removed.
+The harness returns byte-for-byte to commit `ef5a6d6f`. Only this evidence record changes.
 
 Natural-session final JSONL reconciliation, collapse/reopen, display-mode changes, and thinking-state retention at completion remain unverified.
 The existing open Claude view is idle. Two naturally active session routes also show no mounted synthetic streaming row at inspection.
