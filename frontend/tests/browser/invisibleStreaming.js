@@ -6,7 +6,7 @@ import SessionItemsList from '../../src/components/session/detail/SessionItemsLi
 import SessionView from '../../src/views/SessionView.vue'
 import { useDataStore } from '../../src/stores/data'
 import { useSettingsStore } from '../../src/stores/settings'
-import { getParsedContent } from '../../src/utils/parsedContent'
+import { getParsedContent, setParsedContent } from '../../src/utils/parsedContent'
 import { DISPLAY_LEVEL, DISPLAY_MODE, SYNTHETIC_ITEM } from '../../src/constants'
 import { streamPublicationRegistry } from '../../src/utils/streamPublicationRegistry.js'
 import { destroySessionBuffers, isBufferActive } from '../../src/utils/streamingBuffer.js'
@@ -86,6 +86,7 @@ const counters = { bufferFrames: 0, bufferExecutions: 0, drains: 0, envelopes: 0
 const reports = ref([])
 const rateReadingAbove = ref(false), rateHideReturn = ref(false), rateBusy = ref(false)
 const latestRateReport = ref(null)
+const fixtureReady = ref(false), startupFailure = ref(null)
 const secondaryMounted = ref(false), secondaryActive = ref(false)
 function toggleSecondary() { secondaryMounted.value = true; secondaryActive.value = !secondaryActive.value }
 window.addEventListener('error', event => errors.push(String(event.error || event.message)))
@@ -234,12 +235,12 @@ function tag(instance) {
     return { file, uid: instance.$.uid, sessionId: instance.$props.sessionId, lineNum: instance.$props.lineNum ?? instance.$props.itemKey }
 }
 const app = createApp({ setup: () => () => [
-    h('div', { id: 'fixture-controls' }, [h('strong', `${provider} / ${baseline ? 'baseline aeaf1838' : publicationRateBaseline ? 'rate baseline 1f7d16ef' : 'implementation'}`),
-        h('label', [h('input', { type: 'checkbox', checked: rateReadingAbove.value, disabled: rateBusy.value, onChange: event => { rateReadingAbove.value = event.target.checked } }), 'Rate: read above bottom']),
-        h('label', [h('input', { type: 'checkbox', checked: rateHideReturn.value, disabled: rateBusy.value, onChange: event => { rateHideReturn.value = event.target.checked } }), 'Rate: route hide and return']),
-        h('button', { disabled: rateBusy.value, onClick: () => runPublicationRateScenario({ blockType: 'text', sourceKind: 'plain' }) }, 'Publication rate: plain text'),
-        h('button', { disabled: rateBusy.value, onClick: () => runPublicationRateScenario({ blockType: 'text', sourceKind: 'code' }) }, 'Publication rate: fenced code'),
-        h('button', { disabled: rateBusy.value, onClick: () => runPublicationRateScenario({ blockType: 'thinking', sourceKind: 'plain' }) }, 'Publication rate: open thinking'),
+    h('div', { id: 'fixture-controls' }, [h('span', { id: 'fixture-status' }, startupFailure.value ? `Startup failed: ${startupFailure.value}` : fixtureReady.value ? 'Fixture ready' : 'Fixture startup pending'), h('strong', `${provider} / ${baseline ? 'baseline aeaf1838' : publicationRateBaseline ? 'rate baseline 1f7d16ef' : 'implementation'}`),
+        h('label', [h('input', { type: 'checkbox', checked: rateReadingAbove.value, disabled: !fixtureReady.value || rateBusy.value, onChange: event => { rateReadingAbove.value = event.target.checked } }), 'Rate: read above bottom']),
+        h('label', [h('input', { type: 'checkbox', checked: rateHideReturn.value, disabled: !fixtureReady.value || rateBusy.value, onChange: event => { rateHideReturn.value = event.target.checked } }), 'Rate: route hide and return']),
+        h('button', { disabled: !fixtureReady.value || rateBusy.value, onClick: () => runPublicationRateScenario({ blockType: 'text', sourceKind: 'plain' }) }, 'Publication rate: plain text'),
+        h('button', { disabled: !fixtureReady.value || rateBusy.value, onClick: () => runPublicationRateScenario({ blockType: 'text', sourceKind: 'code' }) }, 'Publication rate: fenced code'),
+        h('button', { disabled: !fixtureReady.value || rateBusy.value, onClick: () => runPublicationRateScenario({ blockType: 'thinking', sourceKind: 'plain' }) }, 'Publication rate: open thinking'),
         h('button', { onClick: () => readingAbove() }, 'Read above bottom'),
         h('button', { onClick: () => runHiddenThinking() }, 'Closed thinking: 1000 hidden deltas'),
         h('button', { onClick: () => runVisible('text') }, 'Visible text'),
@@ -352,9 +353,24 @@ function finalItemText(item) {
     if (parsed.payload?.summary) return parsed.payload.summary.map(block => block.text ?? '').join('')
     return parsed.payload?.item?.content?.map(block => block.text ?? '').join('') ?? ''
 }
+function replacementEvidence(source, visualItem, component, element) {
+    assert(visualItem, 'Final production visual item is missing')
+    const finalVisualText = finalItemText(visualItem)
+    assert(finalVisualText === source, 'Final production visual item loses source text')
+    const componentItem = {}
+    if (component) setParsedContent(componentItem, component.$props.content)
+    assert(component && finalItemText(componentItem) === source,
+        'Final production component loses source text')
+    assert(element?.isConnected && component.$el === element && element.innerText.trim().length > 0,
+        'Final replacement component is not rendered in the production DOM')
+    return { finalVisualText, finalVisualEqualsSource: true, finalRenderingEqualsSource: true,
+        finalComponentContent: component.$props.content, finalDOMText: element.innerText }
+}
 async function runPublicationRateScenario({ blockType = 'text', sourceKind = 'plain',
     readingAbove = rateReadingAbove.value, hideReturn = rateHideReturn.value } = {}) {
+    assert(fixtureReady.value && !startupFailure.value, 'Fixture startup is not ready')
     assert(!rateBusy.value, 'A publication rate scenario already runs')
+    const errorStartIndex = errors.length
     assert(blockType === 'text' || blockType === 'thinking', 'Invalid publication block type')
     assert(sourceKind === 'plain' || sourceKind === 'code', 'Invalid publication source kind')
     rateBusy.value = true
@@ -464,6 +480,18 @@ async function runPublicationRateScenario({ blockType = 'text', sourceKind = 'pl
         result.finalDOMText = listInstance(mainId)?.$el.querySelector(`[data-line-num="${result.realLine}"]`)?.innerText ?? null
         result.geometryAfter = geometry(mainId)
         result.scrollerAfter = scrollerDiagnostics(listInstance(mainId))
+        // Capture retirement geometry before the explicit rendering probe changes a reading-above viewport.
+        result.renderProbeMovesViewport = readingAbove
+        if (readingAbove) {
+            await scroller.scrollToKey(result.realLine, { align: 'start', maxAttempts: 12 })
+            await settle(450)
+        }
+        const finalVisualItem = store.getSessionVisualItems(mainId).find(item => item.lineNum === result.realLine)
+        const finalElement = listInstance(mainId)?.$el.querySelector(`.session-item[data-line-num="${result.realLine}"]`)
+        const finalComponent = [...instances.values()].find(instance =>
+            instance.$options.__file?.endsWith('SessionItem.vue') && instance.$props.sessionId === mainId &&
+            instance.$props.lineNum === result.realLine && instance.$el === finalElement)
+        Object.assign(result, replacementEvidence(result.source, finalVisualItem, finalComponent, finalElement))
         assert(result.canonicalEqualsSource, 'Canonical text loses feed characters')
         assert(result.finalTextEqualsSource && result.retired, 'Final retirement loses source text or keeps streaming state')
         if (!readingAbove) assert(result.displayedEqualsSource && result.parsedDisplayedEqualsSource, 'Visible displayed text does not complete before retirement')
@@ -487,7 +515,7 @@ async function runPublicationRateScenario({ blockType = 'text', sourceKind = 'pl
         result.counters = { ...counters }
         result.bufferRAFExecutions = counters.bufferExecutions
         result.parsedEnvelopeChanges = counters.envelopes
-        result.errors.push(...errors)
+        result.errors.push(...errors.slice(errorStartIndex))
         destroyFixtureSessionBuffers(mainId)
         if (store.localState.streamingBlocks[mainId]) {
             delete store.localState.streamingBlocks[mainId]
@@ -840,7 +868,17 @@ window.invisibleStreamingFixture = { store, router, provider, baseline, publicat
     clear(id = currentId()) { destroyFixtureSessionBuffers(id); delete store.localState.streamingBlocks[id]; store.recomputeVisualItems(id) },
     exportEvidence() { return JSON.stringify({ reports: reports.value, requests, errors, lifetimes }, null, 2) },
 }
-await settle(450)
-if (viewInstance()?.$.setupState.layout.render.value.mode !== 'tabs') await runDockPreflight()
-else reports.value.push({ dockPreflightSkipped: true, viewport: viewportDiagnostics() })
-reports.value.push({ fixtureReady: true, storeShared: useDataStore(pinia) === store, ...snapshot() })
+async function initializeFixture() {
+    try {
+        await settle(450)
+        if (viewInstance()?.$.setupState.layout.render.value.mode !== 'tabs') await runDockPreflight()
+        else reports.value.push({ dockPreflightSkipped: true, viewport: viewportDiagnostics() })
+        fixtureReady.value = true
+        reports.value.push({ fixtureReady: true, storeShared: useDataStore(pinia) === store, ...snapshot() })
+    } catch (error) {
+        startupFailure.value = String(error)
+        errors.push(startupFailure.value)
+        reports.value.push({ fixtureReady: false, startupFailure: startupFailure.value, ...snapshot() })
+    }
+}
+await initializeFixture()

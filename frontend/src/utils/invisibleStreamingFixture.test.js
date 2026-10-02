@@ -240,3 +240,52 @@ test('rate reports distinguish document visibility, registry activity, and actua
     assert.match(fixture, /viewActive: listInstance\(mainId\)\?\.\$props.viewActive/)
     assert.match(fixture, /visibilityChanges/)
 })
+
+test('startup keeps rate controls disabled until preflight succeeds and retains failure state', async () => {
+    assert.match(fixture, /disabled: !fixtureReady.value \|\| rateBusy.value/g)
+    assert.match(fixture, /id: 'fixture-status'/)
+    const start = fixture.indexOf('async function initializeFixture(')
+    assert.ok(start > 0)
+    const code = fixture.slice(start, fixture.indexOf('\nawait initializeFixture()', start))
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
+    for (const failed of [false, true]) {
+        const ready = { value: false }, failure = { value: null }, reports = { value: [] }, errors = []
+        let release
+        const pending = new Promise(resolve => { release = resolve })
+        const initialize = new AsyncFunction('fixtureReady', 'startupFailure', 'reports', 'errors', 'settle', 'viewInstance',
+            'runDockPreflight', 'viewportDiagnostics', 'useDataStore', 'pinia', 'store', 'snapshot',
+            `${code}; return initializeFixture()`)
+        const work = initialize(ready, failure, reports, errors, async () => {},
+            () => ({ $: { setupState: { layout: { render: { value: { mode: 'dock' } } } } } }),
+            async () => { await pending; if (failed) throw Error('preflight failed') }, () => ({}), () => 1, {}, 1, () => ({}))
+        await Promise.resolve()
+        assert.equal(ready.value, false)
+        release()
+        await work
+        assert.equal(ready.value, !failed)
+        assert.equal(failure.value, failed ? 'Error: preflight failed' : null)
+        assert.equal(reports.value.at(-1).fixtureReady, !failed)
+        assert.deepEqual(errors, failed ? ['Error: preflight failed'] : [])
+    }
+})
+test('replacement evidence rejects missing, stale, or disconnected production rendering', () => {
+    const start = fixture.indexOf('function replacementEvidence(')
+    assert.ok(start > 0)
+    const end = fixture.indexOf('\nasync function runPublicationRateScenario(', start)
+    const evidence = new Function('getParsedContent', 'finalItemText', 'assert', 'setParsedContent',
+        `${fixture.slice(start, end)}; return replacementEvidence`)(item => item.parsed, item => item.parsed.text,
+        (value, message) => assert.ok(value, message), (item, parsed) => { item.parsed = parsed })
+    const element = { isConnected: true, innerText: 'final body' }
+    const component = { $el: element, $props: { content: { text: 'final body' } } }
+    const visual = { parsed: { text: 'final body' } }
+    assert.equal(evidence('final body', visual, component, element).finalRenderingEqualsSource, true)
+    assert.throws(() => evidence('final body', null, component, element), /visual/)
+    assert.throws(() => evidence('final body', { parsed: { text: 'stale' } }, component, element), /visual/)
+    assert.throws(() => evidence('final body', visual, { ...component, $props: { content: { text: 'stale' } } }, element), /component/)
+    assert.throws(() => evidence('final body', visual, component, { ...element, isConnected: false }), /rendered/)
+})
+test('rate errors exclude earlier scenario errors while export keeps the global list', () => {
+    assert.match(fixture, /const errorStartIndex = errors.length/)
+    assert.match(fixture, /result.errors.push\(\.\.\.errors.slice\(errorStartIndex\)\)/)
+    assert.match(fixture, /exportEvidence\(\).*reports: reports.value, requests, errors, lifetimes/)
+})

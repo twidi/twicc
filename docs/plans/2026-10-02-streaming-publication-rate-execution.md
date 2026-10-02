@@ -147,3 +147,37 @@ A large deadline catch-up can trigger a costly Markdown render.
 Tasks 1–2 independent review closes before Task 3 dispatch, according to the controller's task brief.
 Task 3 and whole-change review remain pending with the controller.
 No server restart, dependency installation, migration, merge, or main-checkout write runs for this task.
+
+## Task 3 review correction round 1
+
+Independent review finds one startup race, one final-render evidence gap, and one error-attribution issue.
+The fixture keeps rate buttons and options disabled until the real startup preflight succeeds.
+`#fixture-status` displays pending, ready, or failed startup state.
+Startup failure records an explicit `fixtureReady: false` report and keeps rate controls disabled.
+The exposed scenario also rejects calls before readiness.
+
+Final retirement now checks the production visual item and its exact parsed text.
+It checks the mounted production `SessionItem` content against the complete source.
+It verifies that component owns the connected replacement DOM element and renders nonempty visible text.
+These checks supplement canonical/displayed checks and the final raw item comparison.
+Reading-above runs capture retirement geometry before an explicit scroll-to-replacement rendering probe.
+`renderProbeMovesViewport` identifies this probe. The recorded retirement anchor excludes the probe's navigation.
+
+Each scenario records the initial global error-array length and includes only later errors.
+The overall fixture export retains all global errors.
+
+RED command:
+
+```bash
+node --test frontend/src/utils/invisibleStreamingFixture.test.js
+```
+
+Result: 19 tests, 16 pass, 3 expected failures. Log: `/tmp/task3-round1-red.log`.
+The regressions exercise deferred startup, failed startup, stale/missing visual content, stale component content, and disconnected rendering.
+
+GREEN uses the same command: 19 tests, 19 pass, 0 fail. Log: `/tmp/task3-round1-green.log`.
+Both `node --check` commands and `git diff --check` pass again.
+The earlier 155 targeted and 1,577 full results describe the pre-correction commit.
+No full-suite rerun follows this small fixture-only correction, as the controller instructs.
+Production code and adapter generation stay unchanged.
+Controller browser revalidation and independent re-review remain pending after the correction commit.
