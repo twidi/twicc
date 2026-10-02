@@ -3775,4 +3775,22 @@ html.wa-dark .usage-lane-time {
         }
     }
 }
+
+/* Reduced motion, mobile: the drawer and its toggle no longer slide: they take their place at
+   once, and the drawer fades in and out instead (the veil already fades). */
+@media (width < 640px) and (prefers-reduced-motion: reduce) {
+    .sidebar {
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity var(--transition-duration) ease, visibility 0s linear var(--transition-duration);
+    }
+    .sidebar-toggle {
+        transition: none;
+    }
+    .project-view-wrapper:has(.sidebar-toggle-checkbox:checked) .sidebar {
+        opacity: 1;
+        visibility: visible;
+        transition-delay: 0s;
+    }
+}
 </style>

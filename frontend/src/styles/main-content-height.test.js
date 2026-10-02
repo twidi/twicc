@@ -19,3 +19,13 @@ test('1. .main-content may be shorter than its content (the card scrolls, not th
     assert.ok(/\n\s*min-height: 0;/.test(m[1]), 'min-height: 0')
     assert.ok(/\n\s*height: 100%;/.test(m[1]), 'height: 100% stays')
 })
+
+test('mobile sidebar drawer: no slide under reduced motion, it fades instead', () => {
+    const block = view.match(/@media \(width < 640px\) and \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}\n/)
+    assert.ok(block, 'a mobile + reduced-motion block')
+    const css = block[1]
+    assert.match(css, /\.sidebar \{[^}]*opacity: 0;[^}]*visibility: hidden;[^}]*transition: opacity/)
+    assert.match(css, /\.sidebar-toggle \{\s*transition: none;/)
+    assert.match(css, /:checked\) \.sidebar \{[^}]*opacity: 1;[^}]*visibility: visible;/)
+    assert.ok(!/translate|transform/.test(css), 'the reduced-motion block moves nothing')
+})
