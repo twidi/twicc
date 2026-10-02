@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import * as buffer from './streamingBuffer.js'
+import { createStreamPublicationIdentity, streamPublicationRegistry } from './streamPublicationRegistry.js'
 
 const INTERVAL = 1000 / 30
 const TOLERANCE = 1e-7
@@ -220,4 +221,94 @@ test('low arrival rate applies minimum progress only at eligible publications', 
     assert.equal(h.publications.at(-1).text.length, 68)
     h.frame(269)
     assert.equal(h.publications.at(-1).text.length, 101)
+}))
+
+for (const boundary of ['activation', 'snapshot', 'flush']) {
+    test(`${boundary} publishes complete text inside the interval`, () => harness(h => {
+        h.feed('x'.repeat(1000), 0)
+        h.frame(16)
+        const stale = [...h.pending.keys()][0]
+        h.feed('suffix', 20)
+        if (boundary === 'activation') {
+            buffer.setBufferActive('session', 'message', 0, false)
+            h.feed('hidden', 21)
+            assert.equal(h.pending.size, 0)
+            buffer.setBufferActive('session', 'message', 0, true)
+        } else if (boundary === 'snapshot') buffer.snapshotBuffer('session', 'message', 0)
+        else assert.equal(buffer.flushBuffer('session', 0), 'x'.repeat(1000) + 'suffix')
+        const full = 'x'.repeat(1000) + 'suffix' + (boundary === 'activation' ? 'hidden' : '')
+        assert.equal(h.publications.length, 2)
+        assert.equal(h.publications.at(-1).text, full)
+        assert.equal(h.pending.size, 0)
+        if (boundary === 'flush') return
+        buffer.snapshotBuffer('session', 'message', 0)
+        assert.equal(h.publications.length, 2)
+        h.feed('new', 22)
+        const handles = [...h.pending.keys()]
+        h.invokeCanceled(stale, 23)
+        assert.deepEqual([...h.pending.keys()], handles)
+        h.frame(37)
+        assert.equal(h.publications.length, 2)
+        h.frame(56)
+        assert.equal(h.publications.at(-1).text, full + 'new')
+    }))
+}
+for (const boundary of ['activation', 'snapshot']) for (const reentry of ['feed', 'suspend', 'replace']) {
+    test(`${boundary} callback preserves ${reentry} lifecycle`, () => harness(h => {
+        let first = true
+        buffer.initBuffer('session', 0, text => {
+            h.record(text)
+            if (!first) return
+            first = false
+            if (reentry === 'replace') buffer.initBuffer('session', 0, h.record, options)
+            buffer.feedDelta('session', 0, 'suffix')
+            if (reentry === 'suspend') buffer.setBufferActive('session', 'message', 0, false)
+        }, { ...options, active: boundary !== 'activation' })
+        h.feed('initial', 0)
+        if (boundary === 'activation') buffer.setBufferActive('session', 'message', 0, true)
+        else buffer.snapshotBuffer('session', 'message', 0)
+        assert.equal(h.pending.size, reentry === 'suspend' ? 0 : 1)
+        h.frame(16)
+        if (reentry !== 'replace') assert.equal(h.publications.length, 1)
+        h.frame(300)
+        assert.equal(buffer.flushBuffer('session', 0), reentry === 'replace' ? 'suffix' : 'initialsuffix')
+        if (reentry !== 'suspend') assert.equal(h.publications.at(-1).text, reentry === 'replace' ? 'suffix' : 'initialsuffix')
+    }))
+}
+test('managed terminal replacement survives cleanup and old ownership release', () => harness(h => {
+    const oldIdentity = createStreamPublicationIdentity('session', 'message', 0)
+    const newIdentity = createStreamPublicationIdentity('session', 'message', 0)
+    const state = { viewActive: true, bodyActive: true, intersection: 'inside' }
+    let newOwner
+    buffer.initBuffer('session', 0, text => {
+        h.record(text)
+        buffer.initBuffer('session', 0, h.record, { messageId: 'message', publicationIdentity: newIdentity })
+        newOwner = streamPublicationRegistry.acquire(newIdentity, state)
+        buffer.feedDelta('session', 0, 'replacement')
+    }, { messageId: 'message', publicationIdentity: oldIdentity })
+    const oldOwner = streamPublicationRegistry.acquire(oldIdentity, state)
+    try {
+        h.feed('old', 0)
+        assert.equal(buffer.flushBuffer('session', 0), 'old')
+        streamPublicationRegistry.release(oldOwner)
+        assert.equal(buffer.isBufferActive('session', 'message', 0, newIdentity), true)
+        h.frame(300)
+        assert.equal(h.publications.at(-1).text, 'replacement')
+        assert.equal(buffer.flushBuffer('session', 0), 'replacement')
+        assert.equal(buffer.flushBuffer('session', 0), null)
+    } finally { streamPublicationRegistry.release(oldOwner); streamPublicationRegistry.release(newOwner) }
+}))
+test('distinct block snapshots preserve the other block interval', () => harness(h => {
+    const other = []
+    buffer.initBuffer('session', 1, text => other.push({ time: performance.now(), text }), options)
+    h.feed('x'.repeat(1000), 0)
+    buffer.feedDelta('session', 1, 'y'.repeat(1000))
+    h.frame(16)
+    h.feed('suffix', 20)
+    buffer.snapshotBuffer('session', 'message', 0)
+    h.frame(32)
+    assert.equal(other.length, 1)
+    h.frame(50)
+    assert.equal(other.length, 2)
+    gaps(other)
 }))

@@ -212,32 +212,42 @@ test('exit-only streaming rows stay unchanged and reopening uses current text', 
     } finally { unmount(); assert.equal(timers.size, 0) }
 })
 function withFrames(run) {
-    const oldRequest = globalThis.requestAnimationFrame, oldCancel = globalThis.cancelAnimationFrame
+    const oldRequest = globalThis.requestAnimationFrame, oldCancel = globalThis.cancelAnimationFrame, oldPerformance = globalThis.performance
     const frames = new Map(), cancelled = []
-    let id = 0, time = performance.now()
+    let id = 0, time = 0
+    globalThis.performance = { now: () => time }
     globalThis.requestAnimationFrame = callback => { frames.set(++id, callback); return id }
     globalThis.cancelAnimationFrame = handle => { cancelled.push(handle); frames.delete(handle) }
-    try { run({ frames, cancelled, drain() {
+    const frame = (ms = 16) => {
+        time += ms
+        const batch = [...frames]
+        for (const [handle] of batch) frames.delete(handle)
+        for (const [, callback] of batch) callback(-999)
+    }
+    try { run({ frames, cancelled, frame, drain() {
         for (let count = 0; frames.size && count < 1000; count++) {
-            const [handle, callback] = frames.entries().next().value
-            frames.delete(handle); callback(time += 100)
+            frame(100)
         }
         assert.equal(frames.size, 0)
     } }) } finally {
         destroyAllBuffers()
         globalThis.requestAnimationFrame = oldRequest; globalThis.cancelAnimationFrame = oldCancel
+        globalThis.performance = oldPerformance
     }
 }
 for (const [provider, thinking, name] of [
     ['claude', false, 'retirement flushes the latest text before removing a Claude block'],
     ['codex', true, 'retirement flushes Codex stream_uuid and transfers thinking state'],
-]) test(name, () => withFrames(({ frames }) => {
+]) test(name, () => withFrames(({ frames, frame }) => {
     const f = makeFixture({ blockType: thinking ? 'thinking' : 'text' }), observed = []
     initBuffer(f.sessionId, f.blockIndex, text => {
         assert.equal(f.store.localState.streamingBlocks[f.sessionId].blocks.length, 1)
         publish(f, text); observed.push(getParsedContent(f.row).message.content[0])
-    }, { active: true, visibilityManaged: false })
+    }, { messageId: 'message', publicationIdentity: f.block.publicationIdentity })
+    const owner = streamPublicationRegistry.acquire(f.block.publicationIdentity, { viewActive: true, bodyActive: true, intersection: 'inside' })
     feedDelta(f.sessionId, f.blockIndex, 'complete pending text')
+    frame()
+    assert.ok(f.block.displayedText.length < 'complete pending text'.length)
     assert.equal(frames.size, 1)
     const item = { line_num: 42, kind: thinking ? 'reasoning' : 'assistant_message', group_head: 42 }
     setParsedContent(item, { uuid: 'uuid', message: { id: 'message', content: [{ type: thinking ? 'thinking' : 'text' }] } })
@@ -250,6 +260,8 @@ for (const [provider, thinking, name] of [
     assert.equal(observed.at(-1)[thinking ? 'thinking' : 'text'], 'complete pending text')
     assert.equal(f.store.localState.streamingBlocks[f.sessionId], undefined)
     assert.equal(frames.size, 0)
+    assert.equal(flushBuffer(f.sessionId, f.blockIndex), null)
+    streamPublicationRegistry.release(owner)
     if (thinking) {
         assert.equal(f.store.isDetailOpen(f.sessionId, 'line:42:0'), true)
         assert.equal(f.store.isDetailOpen(f.sessionId, `line:${f.lineNum}:0`), false)
@@ -335,9 +347,50 @@ test('hidden retirement removes buffer without patching retained row', () => wit
     block.uuid = 'final-uuid'
     f.store.streamBlockDelta(f.sessionId, 'hidden-retirement', 0, 'canonical final text')
     const before = getParsedContent(f.row)
-    f.store._retireStreamingBlocks(f.sessionId, [{ kind: 'reasoning', line_num: 99, stream_uuid: 'final-uuid' }])
+    const item = { kind: 'reasoning', line_num: 99, stream_uuid: 'final-uuid' }
+    setParsedContent(item, { message: { content: [{ type: 'thinking', thinking: block.text }] } })
+    f.store._retireStreamingBlocks(f.sessionId, [item])
+    assert.equal(getParsedContent(item).message.content[0].thinking, 'canonical final text')
+    assert.equal(flushBuffer(f.sessionId, 0), null)
     assert.equal(block.text, 'canonical final text')
     assert.strictEqual(getParsedContent(f.row), before)
     assert.equal(f.store.localState.streamingBlocks[f.sessionId], undefined)
     assert.equal(frames.size, 0)
 }))
+
+for (const blockType of ['text', 'thinking']) {
+    test(`${blockType} stop keeps capped publications and completes canonical text`, () => withFrames(({ frame, frames }) => {
+        const f = makeFixture({ blockType })
+        f.store.recomputeVisualItems = () => {
+            const block = f.store.localState.streamingBlocks[f.sessionId].blocks[0]
+            replaceRows(f, [makeRow(block, f.lineNum)])
+        }
+        f.store.streamBlockStart(f.sessionId, 'rate-message', 0, blockType)
+        const block = f.store.localState.streamingBlocks[f.sessionId].blocks[0]
+        const rows = f.store.localState.sessionVisualItems[f.sessionId]
+        const cache = f.store.localState.visualItemCache[f.sessionId]
+        const row = cache.get(f.lineNum)
+        const owner = streamPublicationRegistry.acquire(block.publicationIdentity, { viewActive: true, bodyActive: true, intersection: 'inside' })
+        try {
+            const full = 'x'.repeat(10000) + 'suffix'
+            f.store.streamBlockDelta(f.sessionId, 'rate-message', 0, 'x'.repeat(10000))
+            frame()
+            const prefix = getParsedContent(row)
+            f.store.streamBlockDelta(f.sessionId, 'rate-message', 0, 'suffix')
+            assert.equal(block.text, full)
+            assert.ok(block.displayedText.length < full.length)
+            frame()
+            assert.strictEqual(getParsedContent(row), prefix)
+            assert.strictEqual(f.store.localState.sessionVisualItems[f.sessionId], rows)
+            assert.strictEqual(f.store.localState.visualItemCache[f.sessionId], cache)
+            assert.strictEqual(cache.get(f.lineNum), row)
+            f.store.recomputeVisualItems = () => {}
+            f.store.streamBlockStop(f.sessionId, 'rate-message', 0)
+            assert.equal(block.stopped, true)
+            assert.equal(frames.size, 1)
+            for (let i = 0; i < 16; i++) frame()
+            assert.equal(getParsedContent(row).message.content[0][blockType === 'thinking' ? 'thinking' : 'text'], full)
+            assert.equal(frames.size, 0)
+        } finally { streamPublicationRegistry.release(owner); deps.clearBlockInactivityTimer(block) }
+    }))
+}

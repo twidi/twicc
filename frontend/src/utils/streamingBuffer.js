@@ -213,7 +213,7 @@ export function flushBuffer(sessionId, blockIndex) {
     if (buf) {
         const text = buf.flush()
         buf.destroy()
-        buffers.delete(k)
+        if (buffers.get(k) === buf) buffers.delete(k)
         return text
     }
     return null
