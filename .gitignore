@@ -339,3 +339,8 @@ AGENTS.local.md
 # Optional rate-only browser fixture adapters.
 /frontend/src/stores/publicationRateBaselineData.js
 /frontend/src/utils/publicationRateBaselineBuffer.js
+
+# Optional owned Markdown browser fixture copies and generation record.
+/frontend/src/components/ui/MarkdownRenderingBaseline.vue
+/frontend/src/components/ui/MarkdownRenderingCurrent.vue
+/frontend/tests/browser/.markdown-rendering-generation.json
