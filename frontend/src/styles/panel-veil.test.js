@@ -163,3 +163,26 @@ test('9. the active line gutter takes the accent highlight, in light and in dark
     assert.equal(norm(m[0].replace(/^[^{]*\{|\}$/g, '')), 'background: var(--glass-item-highlight) !important;')
     assert.ok(!/html\.wa-dark \{[^}]*\.cm-activeLineGutter/.test(style.replace(/\s+/g, ' ')), 'no dark-only block left')
 })
+
+// Retouches: the shared-session viewer has the lit canvas behind its page, like the SPA.
+test('6. the share viewer imports the canvas sheet (gradient auras), and it is not an SPA-only file any more', () => {
+    const share = read('../share-session/main.js')
+    assert.ok(share.includes("import '../styles/surfaces.css'"))
+    assert.ok(share.indexOf("import '../styles/surfaces.css'") > share.indexOf("import '../styles/glow.css'"))
+    assert.ok(!read('surfaces.css').includes('SPA only'))
+})
+
+test('7. the share viewer wears the SPA\'s transcript looks: tinted neutrals first, then callouts, tags, quote and tool cards, scrollbars', () => {
+    const share = read('../share-session/main.js')
+    const at = (name) => share.indexOf(`import '../styles/${name}.css'`)
+    for (const name of ['neutral-tint', 'callouts', 'tags', 'quote-card', 'tool-cards', 'scrollbars']) assert.ok(at(name) > 0, name)
+    assert.ok(at('neutral-tint') < at('transcript-tokens'), 'the tinted scale before the sheets that read it')
+    assert.ok(at('surfaces') < at('callouts') && at('callouts') < at('tags') && at('tags') < at('quote-card') && at('quote-card') < at('tool-cards'), 'the SPA order')
+})
+
+test('8. the shared transcript sits in a card (.panel-card), like the chat of the app: inside it the surface token is transparent, so the lit looks show', () => {
+    const list = read('../share-session/ShareItemsList.vue')
+    assert.ok(list.includes('<div class="session-items-list share-items-list panel-card" :aria-busy'))
+    const app = read('../share-session/ShareSessionApp.vue')
+    assert.ok(app.includes('overflow: hidden; position: relative; margin-block: .5rem; }'))
+})

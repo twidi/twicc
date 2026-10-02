@@ -160,7 +160,7 @@ onUnmounted(() => window.removeEventListener('popstate', onPopState))
 
 <template>
     <div class="share-shell">
-        <header class="share-header">
+        <header class="share-header glass-sticky">
             <div class="share-title">
                 <ProviderIcon v-if="providerIcon" :provider="meta.provider" />
                 <strong>{{ meta.title || 'Shared session' }}</strong>
@@ -216,8 +216,11 @@ onUnmounted(() => window.removeEventListener('popstate', onPopState))
             :stack="subagentStack" @close="closeSubagent" @clear="clearSubagents" />
 
         <GlobalMediaPreview />
-        <footer class="share-footer"><BrandLogo :size="16" /> Shared with
-            <a href="https://github.com/twidi/twicc" target="_blank" rel="noopener noreferrer">TwiCC</a></footer>
+        <footer class="share-footer glass-sticky">
+            <a class="share-footer-link" href="https://github.com/twidi/twicc" target="_blank" rel="noopener noreferrer">
+                <BrandLogo :size="32" /> <span>Shared with <u>TwiCC</u></span>
+            </a>
+        </footer>
     </div>
 </template>
 
@@ -234,23 +237,18 @@ html, body { height: 100%; margin: 0; }
 .share-shell { max-width: 60rem; margin: 0 auto; padding: 0 1rem; height: 100%;
     display: flex; flex-direction: column; }
 .share-header { flex: 0 0 auto; display: flex; justify-content: space-between;
-    align-items: center; gap: 1rem; padding: .5rem 0;
+    align-items: center; gap: 1rem; }
+/* Full-bleed glass bars. Both the header and the footer are glass (the .glass-sticky layer of glass.css:
+   the tinted translucent fill with its blur, painted by ::before); the layer is pushed to the viewport
+   edges with margin-inline: calc(50% - 50vw), while the content stays within the centered .share-shell
+   (max-width 60rem). The page never scrolls vertically (the transcript scrolls internally), so 50vw has
+   no scrollbar gap. Same height for both. */
+.share-header, .share-footer { --share-bar-height: 3rem; min-height: var(--share-bar-height);
     position: relative; z-index: 1; }
-/* Full-bleed surface + shadow: the header content stays within the centered
-   .share-shell (max-width 60rem), but its background and drop shadow extend to
-   the viewport edges through a pseudo-element — margin-inline: calc(50% - 50vw)
-   pushes it out to the full width. The page never scrolls vertically (the
-   transcript scrolls internally), so 50vw has no scrollbar gap. */
-.share-header::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    margin-inline: calc(50% - 50vw);
-    background: var(--wa-color-surface-default);
-    box-shadow: var(--depth-2);
-    z-index: -1;
-    pointer-events: none;
-}
+.share-header::before, .share-footer::before { margin-inline: calc(50% - 50vw); }
+.share-header::before { border-bottom: 1px solid var(--glass-border); box-shadow: var(--depth-2); }
+.share-footer::before { border-top: 1px solid var(--glass-border);
+    box-shadow: 0 -2px 8px -4px color-mix(in oklab, var(--wa-color-brand-60) 25%, transparent); }
 /* Indented to roughly line up with the transcript cards. Kept on the title, not
    .share-header, so the header box stays centred and the full-bleed ::before
    surface/shadow still reaches both viewport edges. */
@@ -265,13 +263,16 @@ html, body { height: 100%; margin: 0; }
 .share-menu-field wa-select { font-weight: 400; }
 .share-menu-field wa-slider { margin-top: .5rem; }
 .share-banner { flex: 0 0 auto; }
+/* A card, like the chat of the app (.panel-card, surfaces.css): inside it the surface token is
+   transparent, so the lit looks of the tool cards, quotes and details show instead of an opaque fill. */
 .share-items-list { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
-    overflow: hidden; position: relative; }
+    overflow: hidden; position: relative; margin-block: .5rem; }
 .share-items-list .session-items { flex: 1; min-height: 0; }
-.share-footer { flex: 0 0 auto; text-align: center; color: var(--wa-color-text-quiet);
-    background: var(--wa-color-surface-default); font-size: var(--wa-font-size-s);
-    line-height: 1.2; padding: .5rem 0; }
-.share-footer a { color: inherit; text-decoration: underline; }
+.share-footer { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
+/* The logo and the whole sentence are one link. */
+.share-footer-link { display: inline-flex; align-items: center; gap: .5rem; color: var(--wa-color-text-quiet);
+    font-size: var(--wa-font-size-m); text-decoration: none; }
+.share-footer-link:hover, .share-footer-link:focus-visible { color: var(--wa-color-text-normal); }
 /* Print: let everything flow (the scroller still only renders its virtualized
    window, but at least it isn't clipped to one viewport). */
 @media print {

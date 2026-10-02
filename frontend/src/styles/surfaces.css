@@ -1,6 +1,7 @@
 /* Floating panels on a lit canvas — visual refresh step 1.
    Design: docs/plans/2026-09-26-floating-panels-design.md.
-   SPA only: the share bundle imports transcript-tokens.css, not this file.
+   Shared by the SPA (main.js) and the shared-session viewer (share-session/main.js), which wants the
+   canvas behind its page; the card classes below are only used by the SPA.
 
    Declaration order matters (all three blocks match <html>): light tokens on
    :root, dark overrides on .wa-dark (same specificity, later wins), then the

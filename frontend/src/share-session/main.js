@@ -26,12 +26,23 @@ import '@awesome.me/webawesome/dist/components/dialog/dialog.js'
 import '@awesome.me/webawesome/dist/components/tooltip/tooltip.js'
 import '@awesome.me/webawesome/dist/components/popover/popover.js'
 
+// Light/dark neutral steps tinted with the accent hue, like the SPA's (before every sheet that reads them).
+import '../styles/neutral-tint.css'
 import '../styles/transcript-tokens.css'
 import '../styles/depth.css'
 import '../styles/glass.css'
 import '../styles/motion.css'
 // Accent glow: buttons, focus and toggles look the same as in the SPA.
 import '../styles/glow.css'
+// The lit canvas behind the page (the gradient auras), like the SPA's.
+import '../styles/surfaces.css'
+// The transcript's looks, shared with the SPA: callouts, tags, the quote and code cards, the tool cards, the
+// scrollbars.
+import '../styles/callouts.css'
+import '../styles/tags.css'
+import '../styles/quote-card.css'
+import '../styles/tool-cards.css'
+import '../styles/scrollbars.css'
 import ShareSessionApp from './ShareSessionApp.vue'
 import ShareDocApp from './ShareDocApp.vue'
 import ShareRecentApp from './ShareRecentApp.vue'   // 3.20

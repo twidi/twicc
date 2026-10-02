@@ -5,7 +5,7 @@
    Only the colours: the shape, the shadow and the joining of a run of cards (squared inner
    corners, a shared edge) stay with SessionItem.vue. The card is the part `base`: Web Awesome
    paints the surface token there, transparent inside cards, so the gradient shows.
-   The solid surface is --surface-solid (surfaces.css). SPA only. */
+   The solid surface is --surface-solid (surfaces.css). Shared with the shared-session viewer. */
 wa-details.item-details {
     --tool-c: var(--wa-color-brand-60);
 }

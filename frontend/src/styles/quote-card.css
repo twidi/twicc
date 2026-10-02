@@ -8,8 +8,8 @@
    Nested quotes alternate a flat lighter card and a stronger one, so they read without relying
    on the surface colour (transparent inside cards). CSS cannot count depth, hence the
    enumeration; a container counts as a level of its own.
-   The solid surface is --surface-solid (surfaces.css, SPA only), falling back to the surface
-   token where there is no such thing (the share viewer, where nothing is translucent).
+   The solid surface is --surface-solid (surfaces.css), falling back to the surface
+   token where there is no such thing (the artifact shell, where nothing is translucent).
    Imported by MarkdownContent.vue (inlined in its style block: the order against
    github-markdown-css matters, same specificity) and by the components that use .quote-card. */
 .markdown-body,
