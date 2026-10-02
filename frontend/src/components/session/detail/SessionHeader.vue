@@ -25,6 +25,7 @@ import CostDisplay from '../../ui/CostDisplay.vue'
 import AppTooltip from '../../ui/AppTooltip.vue'
 import { useSharesStore } from '../../../stores/shares'
 import { toggleSessionMute } from '../../../composables/useSessionMute'
+import { useCodeCommentsStore } from '../../../stores/codeComments'
 
 const props = defineProps({
     sessionId: {
@@ -41,6 +42,7 @@ const props = defineProps({
 const store = useDataStore()
 const settingsStore = useSettingsStore()
 const sharesStore = useSharesStore()
+const codeCommentsStore = useCodeCommentsStore()
 
 // Share entry point (main session only). Disabled when no share host is configured.
 // Routes through the globally-mounted dialogs in ProjectView (via the shared
@@ -389,6 +391,11 @@ onClickOutside(headerRef, () => {
     isCompactExpanded.value = false
 })
 
+// Unsent code comments of the session, whichever tab they were written in. The indicator is part of the
+// session's status, with the process state: next to the process icon when the header is compact and
+// closed, in the process chip of the panel and of the full header otherwise.
+const codeCommentsCount = computed(() => codeCommentsStore.countBySession(session.value?.project_id, props.sessionId))
+
 // A request waiting for the user. Its hand lives with the actions, which the
 // collapsed compact header hides, so the compact live group shows it too.
 const hasPendingRequest = computed(() => store.getPendingRequests(props.sessionId).length > 0)
@@ -566,8 +573,12 @@ defineExpose({
                  the collapsed header hides. Unframed. Its cells are as wide as the segments of the controls
                  under them, and sit right above: the process state over the stop button, the ring over the
                  panel toggle, so the right edge of the two rows reads as one column. -->
-            <div v-if="contextUsagePercentage != null || hasPendingRequest || processState" class="compact-status">
-                <div class="compact-status-cell compact-status-cell--state">
+            <div v-if="contextUsagePercentage != null || hasPendingRequest || processState || codeCommentsCount > 0" class="compact-status">
+                <!-- The status icons (code comments, then the process state) are one group, centred over the stop
+                     segment below; the context ring has the toggle's share. -->
+                <div v-if="codeCommentsCount > 0 || hasPendingRequest || processState" class="compact-status-cell compact-status-cell--state">
+                    <CodeCommentsIndicator v-if="codeCommentsCount > 0" :count="codeCommentsCount" />
+
                     <wa-icon
                         v-if="hasPendingRequest"
                         :id="`session-header-${sessionId}-compact-pending`"
@@ -936,9 +947,13 @@ defineExpose({
             </div>
 
             <!-- Process: status chip (indicator first, then turn duration and memory) + control buttons -->
-            <div v-if="!session.draft && !session.ephemeral && processState" class="meta-process">
+            <div v-if="!session.draft && !session.ephemeral && (processState || codeCommentsCount > 0)" class="meta-process">
                 <span class="process-chip">
+                    <!-- The code comments come first: they belong to the status, with the process state. -->
+                    <CodeCommentsIndicator :count="codeCommentsCount" />
+
                     <ProcessIndicator
+                        v-if="processState"
                         :id="`session-header-${sessionId}-process-indicator`"
                         :state="processState.state"
                         :has-active-crons="hasActiveCrons"
@@ -946,24 +961,24 @@ defineExpose({
                         size="small"
                         :animate-states="animateStates"
                     />
-                    <AppTooltip :for="`session-header-${sessionId}-process-indicator`">{{ processTooltip }}</AppTooltip>
+                    <AppTooltip v-if="processState" :for="`session-header-${sessionId}-process-indicator`">{{ processTooltip }}</AppTooltip>
 
                     <ProcessDuration
-                        v-if="processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at"
+                        v-if="processState?.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at"
                         :state-changed-at="processState.state_changed_at"
                         :id="`session-header-${sessionId}-process-duration`"
                         class="process-duration"
                     />
-                    <AppTooltip v-if="processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at" :for="`session-header-${sessionId}-process-duration`">Assistant turn duration</AppTooltip>
+                    <AppTooltip v-if="processState?.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at" :for="`session-header-${sessionId}-process-duration`">Assistant turn duration</AppTooltip>
 
                     <span
-                        v-if="processState.memory"
+                        v-if="processState?.memory"
                         :id="`session-header-${sessionId}-process-memory`"
                         class="process-memory"
                     >
                         {{ formatMemory(processState.memory) }}
                     </span>
-                    <AppTooltip v-if="processState.memory" :for="`session-header-${sessionId}-process-memory`">{{ providerLabel }} memory usage</AppTooltip>
+                    <AppTooltip v-if="processState?.memory" :for="`session-header-${sessionId}-process-memory`">{{ providerLabel }} memory usage</AppTooltip>
                 </span>
 
                 <wa-button-group v-if="canInterruptTurn || canStopProcess || canStopAgent" class="process-actions" label="Process controls">
@@ -1640,6 +1655,8 @@ wa-divider {
 }
 .compact-status-cell--state {
     width: var(--compact-pill-button-width);
+    /* The icons sit close together; the group is centred on the cell and may be wider than it. */
+    gap: var(--wa-space-xs);
 }
 .compact-status-cell--ring {
     width: calc(var(--compact-pill-button-width) + var(--compact-pill-chevron-width));
