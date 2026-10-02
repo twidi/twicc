@@ -1,5 +1,5 @@
 <script setup>
-import { STREAMING_VIEW_CONTEXT } from '../../../composables/streamPublicationKeys.js'
+import { MARKDOWN_RENDER_VIEW_CONTEXT, STREAMING_VIEW_CONTEXT } from '../../../composables/streamPublicationKeys.js'
 import { computed, watch, ref, reactive, provide, nextTick, inject, onMounted, onBeforeUnmount, onActivated, onDeactivated, unref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDebounceFn } from '@vueuse/core'
@@ -476,6 +476,10 @@ const showSkeleton = computed(() => reveal.hidden.value && !unavailableReason.va
 // it. Only while the chat is on screen and revealed.
 provide(STREAMING_VIEW_CONTEXT, computed(() => props.viewActive && sessionActive.value &&
     !isLoading.value && !reveal.hidden.value && showVirtualScroller.value))
+
+// Markdown must render before the initial reveal can measure its content.
+provide(MARKDOWN_RENDER_VIEW_CONTEXT, computed(() => props.viewActive && sessionActive.value &&
+    !isLoading.value && showVirtualScroller.value))
 
 const isRevealed = () => sessionActive.value && !isLoading.value && !reveal.hidden.value && showVirtualScroller.value
 const entrance = useChatEntrance({ items: visualItems, getKey: item => item.lineNum, isRevealed })
