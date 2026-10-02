@@ -54,7 +54,8 @@ const USER_SCROLL_LISTENER_OPTIONS = { passive: true }
  *
  * @param {Object} options - Configuration options
  * @param {import('vue').Ref<Array>} options.items - Reactive array of items to virtualize
- * @param {Function} options.itemKey - Function to extract unique key from item: (item) => key
+ * @param {(item: Object) => string|number} options.itemKey - Extract a unique String/Number key.
+ * VirtualScrollerItem supports this key contract.
  * @param {number} [options.minItemHeight=24] - Minimum/estimated height for unmeasured items
  * @param {number} [options.buffer=500] - Buffer in pixels for loading items
  * @param {number} [options.unloadBuffer=1000] - Buffer in pixels before unloading items

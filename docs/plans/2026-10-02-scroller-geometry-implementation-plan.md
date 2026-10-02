@@ -233,7 +233,7 @@ Use the existing installed dependency tree. Do not install dependencies to run t
 **Files:** browser fixtures/preparation, exact ignore entries, execution report.
 **Consumes:** completed production implementation. No production debug hooks.
 
-- [ ] Step 1: Add preparation/readiness/report RED tests before fixture implementation.
+- [x] Step 1: Add preparation/readiness/report RED tests before fixture implementation.
   Baseline is pinned to `56a1600a:frontend/src/composables/useVirtualScroll.js`.
   Generate only `frontend/src/composables/useVirtualScrollGeometryBaseline.js` and `frontend/tests/browser/.scroller-geometry-generation.json`.
   Use exclusive writes, saved digest/path ownership, rollback of owned files only, and guarded removal after tab closure.
@@ -248,7 +248,7 @@ Use the existing installed dependency tree. Do not install dependencies to run t
   If recovery manifest creation also fails, report all failures and preserve the remaining files.
   Removal validates schema, pinned source, allowed paths, and actual digest; delete the manifest last.
   Test failed manifest creation plus failed adapter rollback, recovery-write failure, racing files, modified adapters, and cleanup retry.
-- [ ] Step 2: Implement an isolated real-composable fixture with one implementation per page and explicit ready/failed controls.
+- [x] Step 2: Implement an isolated real-composable fixture with one implementation per page and explicit ready/failed controls.
   The current imports production directly; the optional baseline copy keeps same-directory imports and unchanged executable source.
   Use the same rows/measurement sequence/container conditions in both modes.
   Wrap the existing itemKey input to count actual key extraction. Compare old/new entry references outside the measured operation.
@@ -262,7 +262,7 @@ Use the existing installed dependency tree. Do not install dependencies to run t
   Exercise same-index missing content and failure/recovery using fixture-only read substitutions; all mutation fetches remain blocked.
   Add session-pagination validation through the actual SessionList component with controlled read responses, including filtered short pages.
   Reject inherited baseline query flags in the production conversation entry; it always imports current production components.
-- [ ] Step 5: Run FIXTURE, GEOMETRY, SCROLL, EVENTS_LOADING, FULL, BUILD, and WHITESPACE.
+- [x] Step 5: Run FIXTURE, GEOMETRY, SCROLL, EVENTS_LOADING, FULL, BUILD, and WHITESPACE.
   Record exact commands/counts/exits. The controller independently runs final full/build checks after all fixes.
 - [ ] Step 6: Use existing browser tooling and servers for desktop and mobile viewport comparisons and Claude/Codex conversation checks.
   Apply viewport overrides after navigation; record actual DOM dimensions, feed conditions, module warm state, and all failures.

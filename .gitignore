@@ -344,3 +344,7 @@ AGENTS.local.md
 /frontend/src/components/ui/MarkdownRenderingBaseline.vue
 /frontend/src/components/ui/MarkdownRenderingCurrent.vue
 /frontend/tests/browser/.markdown-rendering-generation.json
+
+# Generated scroller geometry browser baseline; ownership manifest controls cleanup.
+/frontend/src/composables/useVirtualScrollGeometryBaseline.js
+/frontend/tests/browser/.scroller-geometry-generation.json
