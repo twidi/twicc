@@ -70,3 +70,64 @@ test('actual browser entry enables ready controls and publishes bounded action r
     assert.equal(JSON.parse(nodes['scroller-geometry-report'].textContent).status, 'failed')
     assert.equal(JSON.parse(nodes['scroller-geometry-report'].textContent).moduleWarm, false)
 })
+test('bounded conversation timeout stays inconclusive and ignores late settlement', async () => {
+    const { runBoundedScrollerAction } = await import('./scrollerConversationHarness.js')
+    let deadline, lateResolve, cleared = 0
+    const clock = { now: () => 100, setTimeout: callback => { deadline = callback; return 1 }, clearTimeout: () => { cleared++ } }
+    const promise = runBoundedScrollerAction(() => new Promise(resolve => { lateResolve = resolve }), { timeoutMs: 20000, clock })
+    await Promise.resolve(); deadline()
+    const report = await promise
+    assert.equal(report.status, 'failed/inconclusive'); assert.equal(report.requiresReload, true)
+    assert.equal(report.timedOut, true); assert.equal(report.timeoutMs, 20000)
+    lateResolve('late success'); await Promise.resolve(); await Promise.resolve()
+    assert.equal(report.status, 'failed/inconclusive'); assert.equal(report.result, undefined)
+    assert.equal(cleared, 1)
+})
+test('bounded successful and rejected actions release deadlines without requiring reload', async () => {
+    const { runBoundedScrollerAction } = await import('./scrollerConversationHarness.js')
+    let cleared = 0
+    const clock = { now: () => 100, setTimeout: () => 1, clearTimeout: () => { cleared++ } }
+    const passed = await runBoundedScrollerAction(() => 'done', { clock })
+    assert.equal(passed.status, 'passed'); assert.equal(passed.result, 'done'); assert.equal(passed.requiresReload, false)
+    const failed = await runBoundedScrollerAction(() => { throw new Error('failure') }, { clock })
+    assert.equal(failed.status, 'failed/inconclusive'); assert.match(failed.error, /failure/)
+    assert.equal(failed.requiresReload, false); assert.equal(cleared, 2)
+})
+test('conversation recovery switches actual sessions without creating unsupported pane routes', async () => {
+    const { recoverScrollerConversation } = await import('./scrollerConversationHarness.js')
+    let switches = 0
+    const fixture = { ids: { mainId: 'main', otherId: 'other' }, router: { currentRoute: { value: { params: { sessionId: 'main' } } } },
+        navigate() { throw new Error('Pane navigation must not perform session recovery') },
+        async switchSession() { switches++; fixture.router.currentRoute.value.params.sessionId = switches === 1 ? 'other' : 'main' } }
+    const result = await recoverScrollerConversation(fixture)
+    assert.equal(switches, 2); assert.deepEqual(result, { hiddenSessionId: 'other', restoredSessionId: 'main' })
+})
+test('actual conversation button locks after deadline and late success cannot publish a pass', async () => {
+    const { runBoundedScrollerAction } = await import('./scrollerConversationHarness.js')
+    const source = readFileSync(new URL('./scrollerGeometryConversation.js', import.meta.url), 'utf8')
+    const body = source.slice(source.indexOf('function add('), source.indexOf('function list('))
+    let deadline, lateResolve, calls = 0
+    const clock = { now: () => 100, setTimeout: callback => { deadline = callback; return 1 }, clearTimeout() {} }
+    const launch = new Function('runBoundedScrollerAction', 'action', `
+        const document = { createElement: () => ({}) }, controls = { append() {} };
+        const status = {}, evidence = {}, reports = [], buttons = [];
+        let ready = true, busy = false, locked = false, activeAction = null;
+        const actionDeadlineMs = 20000;
+        function diagnostics() { return { controls: { ready, busy, locked, activeAction } } }
+        ${body}
+        add('Native pending action', action);
+        return { button: buttons[0], status, evidence, reports, state: () => ({ ready, busy, locked }) };
+    `)
+    const ui = launch((action, options) => runBoundedScrollerAction(action, { ...options, clock }),
+        () => { calls++; return new Promise(resolve => { lateResolve = resolve }) })
+    const pending = ui.button.onclick()
+    assert.equal(ui.reports[0].status, 'pending'); assert.equal(ui.button.disabled, true)
+    assert.equal(JSON.parse(ui.evidence.textContent).controls.busy, true)
+    await Promise.resolve(); deadline(); await pending
+    assert.deepEqual(ui.state(), { ready: false, busy: false, locked: true })
+    assert.equal(ui.button.disabled, true); assert.match(ui.status.textContent, /reload required/)
+    assert.equal(JSON.parse(ui.evidence.textContent).reports[0].deadlineAt, 20100)
+    lateResolve('late success'); await Promise.resolve(); await Promise.resolve()
+    await ui.button.onclick()
+    assert.equal(calls, 1); assert.equal(ui.reports[0].status, 'failed/inconclusive')
+})

@@ -4,8 +4,10 @@ import SessionList from '../../src/components/session/list/SessionList.vue'
 import { useSettingsStore } from '../../src/stores/settings'
 import { DISPLAY_LEVEL, DISPLAY_MODE } from '../../src/constants'
 import { waitForMarkdownCondition as waitFor } from './markdownRenderingHarness.js'
+import { runBoundedScrollerAction, recoverScrollerConversation } from './scrollerConversationHarness.js'
 const reports = [], requests = []
-let fixture, ready = false, busy = false
+let fixture, ready = false, busy = false, locked = false, activeAction = null
+const actionDeadlineMs = 20000
 const controls = document.createElement('section')
 controls.style.cssText = 'position:fixed;bottom:0;left:0;z-index:2000;background:Canvas;max-height:22vh;overflow:auto;padding:4px'
 const status = document.createElement('strong'); status.id = 'scroller-conversation-status'; status.textContent = 'Startup pending'
@@ -15,17 +17,36 @@ const buttons = []
 function check(value, message) { if (!value) throw new Error(message) }
 function diagnostics() {
     return { viewport: { width: innerWidth, height: innerHeight }, visibility: document.visibilityState,
+        controls: { ready, busy, locked, actionDeadlineMs, activeAction },
         provider: fixture?.provider, moduleWarm: Boolean(fixture), feed: 'Seeded synthetic read-only data; bounded browser controls',
         geometry: fixture?.geometry(), requests: [...requests], snapshot: fixture?.snapshot() }
 }
 function add(label, action) {
     const button = document.createElement('button'); button.textContent = label; button.disabled = true
     button.onclick = async () => {
-        if (!ready || busy) return
-        busy = true; buttons.forEach(b => { b.disabled = true })
-        try { reports.push({ name: label, status: 'passed', result: await action(), ...diagnostics() }) }
-        catch (error) { reports.push({ name: label, status: 'failed/inconclusive', error: String(error), ...diagnostics() }) }
-        finally { busy = false; buttons.forEach(b => { b.disabled = !ready }); evidence.textContent = JSON.stringify({ reports, ...diagnostics() }, null, 2) }
+        if (!ready || busy || locked) return
+        busy = true
+        activeAction = { name: label, startedAt: performance.now(), deadlineMs: actionDeadlineMs }
+        activeAction.deadlineAt = activeAction.startedAt + actionDeadlineMs
+        buttons.forEach(b => { b.disabled = true })
+        const report = { name: label, status: 'pending', ...diagnostics() }
+        reports.push(report)
+        status.textContent = `Scroller conversation running: ${label}`
+        evidence.textContent = JSON.stringify({ reports, ...diagnostics() }, null, 2)
+        try {
+            const outcome = await runBoundedScrollerAction(action, { timeoutMs: actionDeadlineMs })
+            Object.assign(report, outcome)
+            if (outcome.requiresReload) { locked = true; ready = false }
+        } catch (error) {
+            Object.assign(report, { status: 'failed/inconclusive', error: String(error) })
+        } finally {
+            busy = false; activeAction = null
+            buttons.forEach(b => { b.disabled = !ready || locked })
+            status.textContent = locked ? 'Scroller conversation inconclusive; reload required'
+                : `Scroller conversation ${report.status}: ${label}`
+            Object.assign(report, diagnostics())
+            evidence.textContent = JSON.stringify({ reports, ...diagnostics() }, null, 2)
+        }
     }
     buttons.push(button); controls.append(button)
 }
@@ -140,10 +161,10 @@ add('Missing content recovery', async () => {
     check(failedRequests === 1, 'Failed gap load loops or duplicates')
     itemRead.fail = false
     // A real KeepAlive recovery lifecycle supplies the next demand; no automatic retry policy is added.
-    await fixture.navigate('other'); await fixture.navigate('main')
+    const lifecycle = await recoverScrollerConversation(fixture)
     const result = await reveal(item.line_num, 'Recovered same-index content marker.')
     itemRead = null
-    return { failedRequests, requestsAfterRecovery: requests.length - before, result }
+    return { lifecycle, failedRequests, requestsAfterRecovery: requests.length - before, result }
 })
 add('Filtered session pagination', async () => {
     check(!pageRead, 'Pagination acceptance runs once per fresh page')
@@ -173,13 +194,28 @@ add('Filtered session pagination', async () => {
 try {
     const query = new URLSearchParams(location.search)
     if (query.has('baseline') || query.has('publicationRateBaseline')) throw new Error('Production conversation entry rejects baseline adapters')
-    await import('./invisibleStreaming.js')
-    fixture = window.invisibleStreamingFixture
-    await waitFor(() => document.querySelector('#fixture-status')?.textContent === 'Fixture ready')
-    check(!fixture.baseline && !fixture.publicationRateBaseline, 'Production current components required')
+    busy = true
+    activeAction = { name: 'startup', startedAt: performance.now(), deadlineMs: actionDeadlineMs }
+    activeAction.deadlineAt = activeAction.startedAt + actionDeadlineMs
+    evidence.textContent = JSON.stringify({ status: 'pending', ...diagnostics() }, null, 2)
+    const startup = await runBoundedScrollerAction(async () => {
+        await import('./invisibleStreaming.js')
+        const loaded = window.invisibleStreamingFixture
+        await waitFor(() => document.querySelector('#fixture-status')?.textContent === 'Fixture ready')
+        check(!loaded.baseline && !loaded.publicationRateBaseline, 'Production current components required')
+        return loaded
+    }, { timeoutMs: actionDeadlineMs })
+    if (startup.status !== 'passed') {
+        locked = startup.requiresReload
+        reports.push({ name: 'startup', ...startup })
+        throw new Error(startup.error)
+    }
+    fixture = startup.result
+    busy = false; activeAction = null
     installReads(); ready = true; status.textContent = 'Scroller conversation ready'
     buttons.forEach(b => { b.disabled = false }); evidence.textContent = JSON.stringify({ status: 'ready', ...diagnostics() }, null, 2)
 } catch (error) {
-    status.textContent = 'Scroller conversation startup failed'
-    evidence.textContent = JSON.stringify({ status: 'failed', error: String(error), ...diagnostics() }, null, 2)
+    busy = false; activeAction = null
+    status.textContent = locked ? 'Scroller conversation startup inconclusive; reload required' : 'Scroller conversation startup failed'
+    evidence.textContent = JSON.stringify({ status: 'failed/inconclusive', error: String(error), reports, ...diagnostics() }, null, 2)
 }
