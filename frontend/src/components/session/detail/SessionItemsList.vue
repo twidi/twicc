@@ -1,6 +1,6 @@
 <script setup>
 import { STREAMING_VIEW_CONTEXT } from '../../../composables/streamPublicationKeys.js'
-import { computed, watch, ref, reactive, provide, nextTick, inject, onMounted, onBeforeUnmount, onActivated, onDeactivated } from 'vue'
+import { computed, watch, ref, reactive, provide, nextTick, inject, onMounted, onBeforeUnmount, onActivated, onDeactivated, unref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDebounceFn } from '@vueuse/core'
 import { useDataStore } from '../../../stores/data'
@@ -655,7 +655,7 @@ onActivated(() => {
 // transitions from true to false, the actual resume just happened (possibly
 // deferred because the container was hidden). Apply any post-resume overrides.
 watch(
-    () => scrollerRef.value?.suspended?.value,
+    () => unref(scrollerRef.value?.suspended),
     (newVal, oldVal) => {
         if (oldVal === true && newVal === false) {
             nextTick(() => handlePostResume())
@@ -670,7 +670,7 @@ watch(
  */
 function handlePostResume() {
     const scroller = scrollerRef.value
-    if (!scroller || scroller.suspended?.value) return
+    if (!scroller || unref(scroller.suspended)) return
 
     if (
         itemCountAtDeactivation !== null

@@ -86,5 +86,21 @@ Do not use rendered-window `itemKey()` calls or logpoint timing as geometry-buil
 Task 4 self-review checked actual scroller access and corrected exposed-ref reads with `unref()`.
 The first independent review found an offscreen reconciliation setup.
 The fixture now measures the visible streamed row and checks its returned anchor before any explicit reveal.
-Review closure is pending with the controller.
+The final whole-priority review found one parent integration defect.
+`SessionItemsList.vue` read the exposed `suspended` boolean through `.value`.
+That read missed deferred resume and consumed the near-bottom override while Chat remained hidden.
+The controller extended the file map only for `SessionItemsList.vue` and its focused resume test.
+The fix uses `unref()` in the watcher and the post-resume guard.
+The focused test runs the actual parent watcher and handler against a real Vue-exposed scroller proxy.
+It verifies that hidden activation retains saved state, actual resume applies the bottom override once, and a no-new-row return clears state without scrolling.
+This extension adds one component test file and three production-line edits; it does not change parent stream-swap cancellation.
+
+The new test failed before the fix: the hidden return attempted one bottom scroll, and the no-new-row return cleared state early.
+After the fix, the focused test passed 2/2.
+The scoped set passed **99/99** across the new test, both scroller test files, streaming rows, and the browser fixture contract.
+`SessionItemsList.vue` compiled with the main checkout's installed Vue SFC compiler through the existing read-only resolver.
+`node --check` for the new test and `git diff --check` passed.
+The resolver emitted Node's experimental-loader warning.
+The full frontend suite was not rerun for this scoped correction; its earlier 1,529/1,531 result and two direct dependency-file failures remain recorded above.
+Final scoped review and browser acceptance remain pending.
 No browser acceptance claim is made.
