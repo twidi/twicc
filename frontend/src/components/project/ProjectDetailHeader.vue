@@ -722,7 +722,8 @@ function handleUnarchive() {
 }
 
 :where(html.compact-height) .detail-title-row {
-    padding-block: var(--wa-space-xs);
+    /* No top padding: the main area's own padding is the space above, like the sidebar's. */
+    padding-block: 0 var(--wa-space-xs);
 }
 
 :where(html.compact-height) .detail-stats,

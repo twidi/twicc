@@ -1059,7 +1059,6 @@ defineExpose({
     gap: var(--wa-space-xs);
     min-width: 0;  /* Allow text truncation */
     padding-inline: var(--wa-space-xs);
-    padding-top: var(--wa-space-xs);
 }
 
 /* Row 2: the project badge under the markers, left-aligned; the compact-only pieces sit on the right. */

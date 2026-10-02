@@ -529,7 +529,7 @@ onBeforeUnmount(() => {
     display: flex;
     flex-direction: column;
     height: 100%;
-    padding-top: var(--wa-space-s);
+    padding-top: 0;
     width: 100%;
     /* clip with a gap-sized margin: the card's shadow paints into .main-content's padding. */
     overflow: clip;
