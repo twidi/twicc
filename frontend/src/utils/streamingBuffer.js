@@ -1,3 +1,5 @@
+import { streamPublicationRegistry } from './streamPublicationRegistry.js'
+
 /**
  * Adaptive-rate text buffer for streaming blocks.
  *
@@ -151,6 +153,8 @@ class BlockBuffer {
     destroy() {
         this.active = false
         this.cancel()
+        this.releaseBinding?.()
+        this.releaseBinding = null
     }
 }
 
@@ -172,7 +176,20 @@ export function initBuffer(sessionId, blockIndex, onDrain, options = {}) {
     const k = key(sessionId, blockIndex)
     const existing = buffers.get(k)
     if (existing) existing.destroy()
-    buffers.set(k, new BlockBuffer(onDrain, options))
+    buffers.delete(k)
+    const { messageId = null, publicationIdentity = null, visibilityManaged = false } = options
+    if (visibilityManaged && (!publicationIdentity || publicationIdentity.sessionId !== sessionId ||
+        publicationIdentity.messageId !== messageId || publicationIdentity.blockIndex !== blockIndex)) {
+        throw new Error('Managed streaming buffer requires a matching publication identity')
+    }
+    const buf = new BlockBuffer(onDrain, { ...options, active: visibilityManaged ? false : options.active ?? true })
+    buffers.set(k, buf)
+    if (visibilityManaged) {
+        buf.releaseBinding = streamPublicationRegistry.bindBlock(publicationIdentity, {
+            setActive(active) { if (buffers.get(k) === buf) buf.setActive(active) },
+            snapshot() { if (buffers.get(k) === buf) buf.snapshot() },
+        })
+    }
 }
 
 /** Feed a delta into the buffer. */

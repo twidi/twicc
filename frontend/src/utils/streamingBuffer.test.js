@@ -71,3 +71,20 @@ test('mismatched message and destroyed buffers cannot publish', () => frames(({ 
     assert.deepEqual(publications, [])
     assert.equal(buffer.setBufferActive('session', 'message', 0, true), false)
 }))
+
+test('managed buffers ignore active option and follow exact registry generation', async () => {
+    const { createStreamPublicationIdentity, streamPublicationRegistry } = await import('./streamPublicationRegistry.js')
+    frames(({ pending, publications }) => {
+        const identity = createStreamPublicationIdentity('session', 'message', 0)
+        buffer.initBuffer('session', 0, text => publications.push(text), { messageId: 'message', publicationIdentity: identity, active: true, visibilityManaged: true })
+        buffer.feedDelta('session', 0, 'hidden')
+        assert.equal(pending.size, 0)
+        assert.equal(buffer.isBufferActive('session', 'message', 0, identity), false)
+        const owner = streamPublicationRegistry.acquire(identity, { viewActive: true, bodyActive: true, intersection: 'inside' })
+        assert.deepEqual(publications, ['hidden'])
+        assert.equal(buffer.isBufferActive('session', 'message', 0, identity), true)
+        assert.equal(buffer.isBufferActive('session', 'message', 0, createStreamPublicationIdentity('session', 'message', 0)), false)
+        streamPublicationRegistry.release(owner)
+        assert.equal(buffer.isBufferActive('session', 'message', 0, identity), false)
+    })
+})
