@@ -1261,19 +1261,27 @@ defineExpose({
 }
 
 .stat {
+    position: relative;
     display: flex;
     flex-direction: column;
     justify-content: center;
+    /* Trial: the content of each cell is centred (it was left-aligned). */
+    align-items: center;
     gap: 2px;
     flex: 1 1 auto;
     padding: calc(var(--wa-space-xs) / 2) calc(var(--wa-space-m) / 2);
 }
 
+/* Trial: the labels (Messages, Activity, Cost, Model, Context) are not drawn. They stay in the DOM,
+   visually hidden, for screen readers; each cell also has a tooltip. To bring them back, restore the
+   rule that sized and spaced them (font-size 3xs, 0.07em letter spacing, uppercase, quiet colour). */
 .stat-label {
-    font-size: var(--wa-font-size-3xs);
-    letter-spacing: 0.07em;
-    text-transform: uppercase;
-    color: var(--wa-color-text-quiet);
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
 }
 
 .stat-value {
