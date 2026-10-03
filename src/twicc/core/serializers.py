@@ -264,12 +264,13 @@ def serialize_session(session):
         "has_tasks": bool(session.tasks),
         "has_goals": bool(session.goals),
         # Per-session artifacts (files under <data_dir>/artifacts/<id>/). The
-        # frontend shows an Artifacts tab when ``has_artifacts`` is true and
-        # mounts it on ``artifacts_dir``. ``has_artifacts`` is monotonic and
-        # flips false->true live via the ``artifacts_available`` WS message;
-        # ``artifacts_dir`` is only sent when present so list payloads stay lean.
+        # Artifacts tab is always present and mounts on ``artifacts_dir``, which
+        # is therefore always sent — the folder may not exist on disk yet (the
+        # backend creates it on the first write into it). ``has_artifacts`` says
+        # whether anything was ever seen in it: monotonic, flips false->true
+        # live via the ``artifacts_available`` WS message.
         "has_artifacts": has_artifacts,
-        "artifacts_dir": str(get_session_artifacts_dir(session.id)) if has_artifacts else None,
+        "artifacts_dir": str(get_session_artifacts_dir(session.id)),
         # Provider plan file (Claude Code: ``<claude home>/plans/<slug>.md``). The
         # frontend shows a read-only Plan tab when ``has_plan`` is true and
         # fetches the markdown from ``/api/sessions/<id>/plan/``. Provider-

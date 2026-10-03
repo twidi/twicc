@@ -232,8 +232,7 @@ async function viewFileInFilesTab(absolutePath, { lineNum = null, preferPlanTab 
     absolutePath = normalizePosixPath(absolutePath)
 
     // Artifacts live outside the project file roots, in their own tab.
-    // artifactsDir is only set when the session has artifacts (so the tab
-    // exists), which naturally gates this branch.
+    // artifactsDir is null until the session row is loaded, which gates this branch.
     if (artifactsDir.value && absolutePath.startsWith(artifactsDir.value + '/')) {
         const relativePath = absolutePath.slice(artifactsDir.value.length + 1)
         navigateInTab('artifacts', buildFilesRouteParams({ rootKey: 'artifacts', filePath: relativePath }))
@@ -380,10 +379,13 @@ const planRouteDocPath = computed(() => {
 const session = computed(() => store.getSession(sessionId.value))
 
 // ─── Artifacts tab ───────────────────────────────────────────────────────────
-// The tab remains present when the session owns artifacts OR when its project
-// context can see at least one bookmark. A worktree inherits its main project's
-// bookmarks; workspace and global scopes then expand visibility independently
-// of the owning project's raw main/worktree identity.
+// The tab is present for every real session. The "Session artifacts" root is
+// always offered, even while empty (the folder is created on the first write
+// into it). A draft has no folder yet (its id may change when the provider
+// creates the real session), so it has no tab. A
+// worktree inherits its main project's bookmarks; workspace and global scopes
+// then expand visibility independently of the owning project's raw
+// main/worktree identity.
 const artifactMainProjectId = computed(() => {
     const projectId = session.value?.project_id
     return projectId ? store.getMainRepoProjectId(projectId) : null
@@ -398,9 +400,6 @@ const sessionArtifactBookmarks = computed(() => computeSessionArtifactBookmarks(
     workspaces: workspacesStore.workspaces,
     workspaceContainsProject: workspacesStore.workspaceContainsProject,
 }))
-const hasArtifacts = computed(() =>
-    !!session.value?.has_artifacts || sessionArtifactBookmarks.value.length > 0,
-)
 const artifactsDir = computed(() => session.value?.artifacts_dir || null)
 const artifactsExternalRoots = computed(() =>
     artifactsDir.value ? [{ key: 'artifacts', label: 'Artifacts', path: artifactsDir.value }] : []
@@ -588,8 +587,8 @@ const activeTabId = computed(() => {
 
 // The dockable tool tabs — single source for the tool-tab roster (id, label, FA icon) and its
 // presence condition. `present` gates everything downstream: the resolver input, the ←/→ order,
-// the keyboard shortcuts, the template, and the redirect guard. Only Files and Terminal are always
-// present; Git/Artifacts/Orchestration are conditional (future tabs may be too). `redirectReady` is
+// the keyboard shortcuts, the template, and the redirect guard. Files, Terminal and Browser are
+// always present; Artifacts (real sessions only), Git/Orchestration/Plan/Tasks/Workflows are conditional (future tabs may be too). `redirectReady` is
 // "enough data is loaded to safely redirect away from an absent tab's URL" — git needs the project
 // row (its repo-ness depends on it), the others just the session row. Chat + subagents are
 // center-only, so they're not in here.
@@ -599,7 +598,7 @@ const TOOL_TABS = [
     { id: 'terminal', label: 'Terminal', icon: 'terminal', present: () => true },
     { id: 'tasks', label: 'Tasks', icon: 'square-check', present: () => hasTasks.value, redirectReady: () => !!session.value },
     { id: 'plan', label: 'Plan', icon: 'list-check', present: () => hasPlan.value, redirectReady: () => !!session.value },
-    { id: 'artifacts', label: 'Artifacts', icon: 'shapes', present: () => hasArtifacts.value, redirectReady: () => !!session.value && store.artifactBookmarksLoaded },
+    { id: 'artifacts', label: 'Artifacts', icon: 'shapes', present: () => !session.value?.draft },
     { id: 'orchestration', label: 'Orchestration', icon: 'diagram-project', present: () => hasSpawnRoot.value || hasSubagents.value, redirectReady: () => !!session.value && subagentsResolved.value },
     { id: 'workflows', label: 'Workflows', icon: 'sitemap', present: () => hasWorkflows.value, redirectReady: () => !!session.value },
     { id: 'browser', label: 'Browser', icon: 'globe', present: () => true },
@@ -2635,6 +2634,7 @@ onBeforeUnmount(() => {
                         :external-roots="artifactsExternalRoots"
                         :root-restriction="artifactsDir"
                         :show-root-selector="false"
+                        lazy-root
                         root-label="Session artifacts"
                         :preview-by-default="true"
                         :artifact-bookmark-session-id="session?.id"

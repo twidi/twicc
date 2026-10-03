@@ -11,6 +11,8 @@ const props = defineProps({
     fullPath: { type: String, default: '' },
     writable: { type: Boolean, default: false },
     writableLoading: { type: Boolean, default: false },
+    // Menu of a lazy root (see FileTreePanel `lazyRoot`): only the creation actions
+    createOnly: { type: Boolean, default: false },
     // Whether "Upload files…" is offered (the owning panel has an upload origin)
     canUpload: { type: Boolean, default: false },
     // 'files' = Files tab (full file ops), 'git-index' = uncommitted changes, 'git-commit' = committed
@@ -171,9 +173,10 @@ watch([() => props.x, () => props.y], () => {
                     <wa-icon slot="icon" name="upload"></wa-icon>
                     Upload files…
                 </wa-dropdown-item>
-                <wa-divider v-if="nodeType === 'directory'"></wa-divider>
+                <wa-divider v-if="nodeType === 'directory' && !createOnly"></wa-divider>
 
                 <wa-dropdown-item
+                    v-if="!createOnly"
                     value="rename"
                     :disabled="writableLoading || !writable"
                 >
@@ -181,6 +184,7 @@ watch([() => props.x, () => props.y], () => {
                     Rename
                 </wa-dropdown-item>
                 <wa-dropdown-item
+                    v-if="!createOnly"
                     value="move"
                     :disabled="writableLoading || !writable"
                 >
@@ -188,6 +192,7 @@ watch([() => props.x, () => props.y], () => {
                     Move
                 </wa-dropdown-item>
                 <wa-dropdown-item
+                    v-if="!createOnly"
                     value="delete"
                     class="danger-item"
                     :disabled="writableLoading || !writable"
@@ -195,7 +200,7 @@ watch([() => props.x, () => props.y], () => {
                     <wa-icon slot="icon" name="trash"></wa-icon>
                     Delete
                 </wa-dropdown-item>
-                <wa-divider></wa-divider>
+                <wa-divider v-if="!createOnly"></wa-divider>
             </template>
 
             <!-- ═══ Git index mode: git operations ═══ -->
@@ -228,7 +233,7 @@ watch([() => props.x, () => props.y], () => {
             </template>
 
             <!-- ═══ Downloads (files only — directories would need an archive) ═══ -->
-            <template v-if="canDownload">
+            <template v-if="canDownload && !createOnly">
                 <wa-dropdown-item value="download">
                     <wa-icon slot="icon" name="download"></wa-icon>
                     {{ isFilesMode ? 'Download' : 'Download file' }}
@@ -240,22 +245,24 @@ watch([() => props.x, () => props.y], () => {
                 <wa-divider></wa-divider>
             </template>
 
-            <!-- ═══ Copy actions (always available) ═══ -->
-            <wa-dropdown-item value="copy-name">
-                <wa-icon slot="icon" name="copy"></wa-icon>
-                <div>Copy name</div>
-                <div class="copy-preview">{{ nodeName }}</div>
-            </wa-dropdown-item>
-            <wa-dropdown-item value="copy-relative-path">
-                <wa-icon slot="icon" name="copy"></wa-icon>
-                <div>Copy relative path</div>
-                <div class="copy-preview">{{ relativePath }}</div>
-            </wa-dropdown-item>
-            <wa-dropdown-item value="copy-full-path">
-                <wa-icon slot="icon" name="copy"></wa-icon>
-                <div>Copy full path</div>
-                <div class="copy-preview">{{ fullPath }}</div>
-            </wa-dropdown-item>
+            <!-- ═══ Copy actions (always available, except on a create-only menu) ═══ -->
+            <template v-if="!createOnly">
+                <wa-dropdown-item value="copy-name">
+                    <wa-icon slot="icon" name="copy"></wa-icon>
+                    <div>Copy name</div>
+                    <div class="copy-preview">{{ nodeName }}</div>
+                </wa-dropdown-item>
+                <wa-dropdown-item value="copy-relative-path">
+                    <wa-icon slot="icon" name="copy"></wa-icon>
+                    <div>Copy relative path</div>
+                    <div class="copy-preview">{{ relativePath }}</div>
+                </wa-dropdown-item>
+                <wa-dropdown-item value="copy-full-path">
+                    <wa-icon slot="icon" name="copy"></wa-icon>
+                    <div>Copy full path</div>
+                    <div class="copy-preview">{{ fullPath }}</div>
+                </wa-dropdown-item>
+            </template>
         </wa-dropdown>
     </Teleport>
 </template>

@@ -137,6 +137,13 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    // The root is a folder created on first write (see FilesPanel `lazyRoot`):
+    // its context menu offers only New file / New folder / Upload files and is
+    // never gated on a writable check (the folder may not exist yet).
+    lazyRoot: {
+        type: Boolean,
+        default: false,
+    },
     /** Context menu mode: 'files' (full file ops), 'git-index' (uncommitted), 'git-commit' (committed) */
     contextMenuMode: {
         type: String,
@@ -1053,6 +1060,7 @@ const contextMenu = ref({
     path: '',
     name: '',
     type: 'file',
+    createOnly: false,
     writable: false,
     writableLoading: false,
     stagedStatus: null,
@@ -1072,22 +1080,24 @@ const apiPrefix = computed(() => {
 })
 
 async function onContextMenu(data) {
+    const createOnly = props.lazyRoot && data.isRoot
     contextMenu.value = {
         visible: true,
         x: data.x,
         y: data.y,
         path: data.path,
-        name: data.name,
+        name: createOnly ? (props.rootLabel || data.name) : data.name,
         type: data.type,
-        writable: false,
-        writableLoading: props.contextMenuMode === 'files',
+        createOnly,
+        writable: createOnly,
+        writableLoading: !createOnly && props.contextMenuMode === 'files',
         stagedStatus: data.stagedStatus || null,
         unstagedStatus: data.unstagedStatus || null,
         status: data.status || null,
     }
 
     // In files mode, check writable status via API. In git modes, skip.
-    if (props.contextMenuMode !== 'files') return
+    if (createOnly || props.contextMenuMode !== 'files') return
 
     try {
         const res = await apiFetch(
@@ -1472,6 +1482,7 @@ defineExpose({
                 :node-type="contextMenu.type"
                 :relative-path="computeRelativePath(contextMenu.path)"
                 :full-path="computeFullPath(contextMenu.path)"
+                :create-only="contextMenu.createOnly"
                 :writable="contextMenu.writable"
                 :writable-loading="contextMenu.writableLoading"
                 :can-upload="!!uploadOrigin"

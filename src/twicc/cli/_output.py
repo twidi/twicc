@@ -111,8 +111,8 @@ FULL_HELP = (
 
 _TOPOLOGY_FULL_LEAD = (
     "Emit the full serializer payload for every node — agent settings as stored, "
-    "`artifacts_dir` as the serializer reports it (set only once the backend has "
-    "seen an artifact, so always `null` from a terminal), none of the CLI-added "
+    "`artifacts_dir` as the serializer reports it (always the session's artifacts "
+    "folder, even while empty), none of the CLI-added "
     "keys (`project_directory`, `scratch_dir`, `orchestration_scratch_dir`, "
     "`question_widget`) — minus its `process` block, which sits at "
     "`nodes[].process` — and that full `process` block. Disabled by default: each "

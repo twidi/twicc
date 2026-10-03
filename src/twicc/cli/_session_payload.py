@@ -20,7 +20,7 @@ def cli_session_payloads(sessions: Iterable) -> list[dict]:
     """Serialize and enrich ``sessions`` (``Session`` rows), in input order.
 
     One query at most, for the project directories the cache lacks.
-    ``artifacts_dir`` is always the path to write to. (``has_artifacts`` says
+    ``artifacts_dir`` (from the serializer) is always the path to write to. (``has_artifacts`` says
     whether it holds anything only when the backend runs the command — MCP,
     RPC; in a terminal process the artifacts watcher never started and it is
     always ``False``, ``artifacts_watcher.session_has_artifacts``.) Agent
@@ -29,7 +29,7 @@ def cli_session_payloads(sessions: Iterable) -> list[dict]:
     stored values on a subagent row, which runs inside its parent's process.
     """
     from twicc.core.serializers import serialize_session
-    from twicc.paths import get_session_artifacts_dir, get_session_scratch_dir
+    from twicc.paths import get_session_scratch_dir
     from twicc.projects import project_directories_cached
     from twicc.providers.helpers import AgentSettings, get_provider_helpers
 
@@ -39,7 +39,6 @@ def cli_session_payloads(sessions: Iterable) -> list[dict]:
     for session in sessions:
         data = serialize_session(session)
         data["project_directory"] = directories.get(session.project_id) if session.project_id else None
-        data["artifacts_dir"] = str(get_session_artifacts_dir(session.id))
         data["scratch_dir"] = str(get_session_scratch_dir(session.id))
         data["orchestration_scratch_dir"] = (session.annotations or {}).get("scratch_dir") or None
         settings = AgentSettings.from_session(session)

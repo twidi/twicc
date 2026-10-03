@@ -1827,6 +1827,25 @@ def validate_standalone_root(path, root):
     return None
 
 
+def ensure_session_artifacts_root(path, root):
+    """Create ``path`` when it is a session's artifacts folder that does not exist yet.
+
+    The folder is only created at agent start, so an older or never-started
+    session has none, while its Artifacts tab always offers writing into it.
+    Does nothing for any other path: ``path`` must be the standalone ``root``
+    itself and equal ``get_session_artifacts_dir`` of a single session id.
+    """
+    from twicc.paths import get_artifacts_dir, get_session_artifacts_dir
+
+    if not root:
+        return
+    path = os.path.normpath(path)
+    if path != os.path.normpath(root) or os.path.dirname(path) != str(get_artifacts_dir()):
+        return
+    if path == str(get_session_artifacts_dir(os.path.basename(path))):
+        os.makedirs(path, exist_ok=True)
+
+
 async def standalone_directory_tree(request):
     """GET directory tree listing for any absolute directory path.
 
@@ -2350,6 +2369,7 @@ async def _standalone_file_modify(request, action):
         error = validate_standalone_root(parent_dir, root)
         if error:
             return error
+        await asyncio.to_thread(ensure_session_artifacts_root, parent_dir, root)
         name = (data.get("name") or "").strip()
         if not name:
             return JsonResponse({"error": "Missing 'name' field"}, status=400)

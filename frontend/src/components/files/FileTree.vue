@@ -319,6 +319,7 @@ function emitContextMenu(x, y) {
         path: nodePath.value,
         name: node.name || props.node.name,
         type: node.type || props.node.type,
+        isRoot: props.isRoot,
         x,
         y,
         stagedStatus: node.staged_status || null,

@@ -735,12 +735,10 @@ export function initStaticCommands(router) {
             label: 'Switch to Artifacts Tab',
             icon: 'images',
             category: 'navigation',
-            // Only sessions that have artifacts on disk expose the tab
-            // (mirrors SessionView's `hasArtifacts`).
+            // Not for a draft: it has no artifacts folder yet.
             when: () => {
                 const sessionId = routeSessionId()
-                if (!sessionId) return false
-                return !!data.getSession(sessionId)?.has_artifacts
+                return !!sessionId && !data.getSession(sessionId)?.draft
             },
             action: () => {
                 const name = isAllProjectsMode() ? 'projects-session-artifacts' : 'session-artifacts'

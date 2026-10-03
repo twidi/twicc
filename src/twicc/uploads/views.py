@@ -32,7 +32,7 @@ from django.http import Http404, HttpResponse, JsonResponse
 from twicc.file_tree import validate_path
 from twicc.uploads import locks, store
 from twicc.uploads.broadcast import broadcast_upload_state
-from twicc.views import validate_standalone_root
+from twicc.views import ensure_session_artifacts_root, validate_standalone_root
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +369,8 @@ async def _check_scope(
         root = (root or "").strip() or None
         scope = {"kind": "standalone", "root": root}
         error = validate_standalone_root(target_dir, root)
+        if error is None:
+            await asyncio.to_thread(ensure_session_artifacts_root, target_dir, root)
         if error is None and not await asyncio.to_thread(os.path.isdir, target_dir):
             error = _error("Directory not found", 404)
         return scope, error

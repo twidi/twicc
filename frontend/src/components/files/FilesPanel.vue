@@ -82,6 +82,14 @@ const props = defineProps({
         type: String,
         default: null,
     },
+    // The root folder may not exist on disk yet (the backend creates it on the
+    // first write into it): a missing root shows as an empty tree instead of an
+    // error, and its context menu only offers New file / New folder / Upload files.
+    // Used by the Artifacts tab.
+    lazyRoot: {
+        type: Boolean,
+        default: false,
+    },
     // Open markdown / SVG files directly in their rendered preview (the eye
     // toggle stays available). Used by the Artifacts tab.
     previewByDefault: {
@@ -340,6 +348,11 @@ async function fetchTree(dirPath) {
 
             // If the directory was not found, mark this root as missing and
             // surface it as a route issue without switching to another root.
+            if (res.status === 404 && props.lazyRoot) {
+                tree.value = { name: dirPath.split('/').pop(), type: 'directory', loaded: true, children: [] }
+                loadedDirectory.value = dirPath
+                return
+            }
             if (res.status === 404 && selectedRootKey.value) {
                 missingRoots.value = new Set([...missingRoots.value, selectedRootKey.value])
                 routeRootIssue.value = makeRouteIssue(
@@ -1159,6 +1172,7 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
                 :search-placeholder="artifactBookmarks.length ? 'Filter artifacts...' : 'Filter files...'"
                 :commented-paths="commentedPaths"
                 enable-context-menu
+                :lazy-root="lazyRoot"
                 mode="files"
                 @file-select="handleFileSelect"
                 @refresh="refresh"
