@@ -796,6 +796,26 @@ class BaseProviderHelpers:
         messages = self.get_user_messages(items, limit=1)
         return messages[0].text if messages else None
 
+    def get_title_source(self, session_id: str) -> str | None:
+        """Return the text a title suggestion for ``session_id`` is generated from.
+
+        All the session's user messages, bounded by :func:`build_title_source`
+        (beginning and end of a long conversation, each message clipped), or
+        ``None`` when the session has no user message with text. Sync method —
+        wrap in :func:`sync_to_async` at the call site.
+        """
+        from twicc.core.enums import ItemKind
+        from twicc.core.models import SessionItem
+        from twicc.title_transcript import build_title_source
+
+        items = (
+            SessionItem.objects
+            .filter(session_id=session_id, kind=ItemKind.USER_MESSAGE)
+            .order_by("line_num")
+            .iterator()
+        )
+        return build_title_source([message.text for message in self.get_user_messages(items)])
+
     def get_indexable_messages(self, items: Iterable[SessionItem]) -> list[IndexableMessage]:
         """Extract indexable messages from ``items``.
 

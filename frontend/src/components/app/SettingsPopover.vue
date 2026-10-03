@@ -1900,6 +1900,7 @@ function onChangelogClose() {
                                 :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
                             >
                                 GPT-6 Luna for every session
+                                <span class="radio-note">(much faster than Haiku)</span>
                                 <span
                                     v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
                                     class="radio-note"

@@ -24,6 +24,8 @@ import logging
 from openai_codex import TextInput
 from openai_codex.generated.v2_all import AskForApproval, ReasoningEffort, SandboxMode
 
+from twicc.title_transcript import title_rejection_reasons
+
 from .bin import make_codex_config
 from .sdk_wrappers import TwiccAsyncCodex
 
@@ -32,11 +34,10 @@ logger = logging.getLogger(__name__)
 SUGGESTION_TIMEOUT_SECONDS = 15
 # The attempt budget is shared with the other provider: the WS handler falls
 # back to it when this one gives up (``asgi._handle_suggest_title``). Two
-# attempts per provider keeps the worst case (4 × 15s) under the 5-attempt
-# single-provider budget this replaced, and spreading the retries over two
-# models covers a flaky answer better than five shots at the same one. That
-# bound covers the model calls only: building the client can download the Codex
-# runtime on a pruned cache, which is deliberately outside the timeout below.
+# attempts per provider, and spreading the retries over two models covers a
+# flaky answer better than five shots at the same one. That bound covers the
+# model calls only: building the client can download the Codex runtime on a
+# pruned cache, which is deliberately outside the timeout below.
 MAX_RETRIES = 2
 
 # Fixed SDK model name for Codex title generation. The global title-suggestion
@@ -56,7 +57,7 @@ async def generate_title(user_message: str, system_prompt: str) -> str | None:
     response too long, SDK errors). No delay between retries.
 
     Args:
-        user_message: The user's message text
+        user_message: The text to summarize (the user's messages, already bounded)
         system_prompt: The system prompt with {text} placeholder
 
     Returns:
@@ -121,15 +122,11 @@ async def _call_codex(
     any failure.
 
     Args:
-        user_message: The user's message text
+        user_message: The text to summarize (the user's messages, already bounded)
         system_prompt: The system prompt with {text} placeholder
         source: Source identifier for logging
         attempt: Current attempt number (for logging)
     """
-    # Truncate long messages
-    if len(user_message) > 2000:
-        user_message = user_message[:2000] + "…"
-
     full_prompt = system_prompt.replace("{text}", user_message)
 
     # Guarded, and outside the timeout below: resolving the config downloads the
@@ -184,17 +181,10 @@ async def _call_codex(
     try:
         suggestion = await asyncio.wait_for(_execute(), timeout=SUGGESTION_TIMEOUT_SECONDS)
 
-        # Basic validation
-        if not suggestion:
+        if reasons := title_rejection_reasons(suggestion):
             logger.warning(
-                "Codex title suggestion: empty response (source=%s, attempt=%d/%d)",
-                source, attempt, MAX_RETRIES,
-            )
-            return None
-        if len(suggestion) > 200:
-            logger.warning(
-                "Codex title suggestion: too long (%d chars, source=%s, attempt=%d/%d): %s",
-                len(suggestion), source, attempt, MAX_RETRIES, suggestion,
+                "Codex title suggestion rejected: %s (source=%s, attempt=%d/%d): %r",
+                "; ".join(reasons), source, attempt, MAX_RETRIES, suggestion,
             )
             return None
 

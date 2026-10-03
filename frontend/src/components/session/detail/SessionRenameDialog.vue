@@ -162,8 +162,6 @@ function open({ showHint = false, session = null } = {}) {
     if (!titleGenerationEnabled.value) return
 
     const sessionId = currentSession.id
-    const existingSuggestion = store.getTitleSuggestion(sessionId)
-
     if (currentSession.draft || currentSession.ephemeral) {
         // DRAFT: use message from store, redo if message changed
         const currentPrompt = draftPromptFor(currentSession)
@@ -171,14 +169,15 @@ function open({ showHint = false, session = null } = {}) {
 
         if (!currentPrompt) return  // No message, no suggestion
 
-        if (!existingSuggestion || previousPrompt !== currentPrompt) {
+        if (!store.getTitleSuggestion(sessionId) || previousPrompt !== currentPrompt) {
             startSuggestion(sessionId, currentPrompt)
         }
     } else {
-        // EXISTING or NEW SESSION: use first message from DB
-        if (!existingSuggestion) {
-            startSuggestion(sessionId, null)
-        }
+        // EXISTING or NEW SESSION: the backend reads the user messages from the
+        // DB. Asked again at every opening, never served from the store: the
+        // conversation moves on, and a suggestion kept from an earlier opening
+        // (or from the auto-applied first message) would describe an older state.
+        startSuggestion(sessionId, null)
     }
 }
 
@@ -209,23 +208,24 @@ function applySuggestion() {
 }
 
 /**
- * Request a new title suggestion using the stored prompt.
+ * Request a new title suggestion.
  *
- * Also the "Try again" action of the error state. A send that never reached
- * the server left no stored prompt, so it falls back to where ``open`` reads
- * it: the draft's own message, or the session's first message in the DB.
+ * Also the "Try again" action of the error state. A draft sends its own
+ * message again (the stored prompt, or the draft's current one when the send
+ * never reached the server). A real session sends no prompt, so the backend
+ * rebuilds the source from the conversation as it is now.
  */
 function regenerateSuggestion() {
     if (!props.session) return
 
     const sessionId = props.session.id
-    const prompt = store.getTitleSuggestionSourcePrompt(sessionId) || draftPromptFor(props.session)
     const isDraft = props.session.draft || props.session.ephemeral
+    const prompt = isDraft ? (store.getTitleSuggestionSourcePrompt(sessionId) || draftPromptFor(props.session)) : null
 
-    if (prompt) {
-        startSuggestion(sessionId, prompt)
-    } else if (!isDraft) {
+    if (!isDraft) {
         startSuggestion(sessionId, null)
+    } else if (prompt) {
+        startSuggestion(sessionId, prompt)
     } else {
         // A draft left with no message: there is nothing to summarize, so drop
         // the error rather than leaving an inert button on screen.

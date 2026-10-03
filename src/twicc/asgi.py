@@ -58,6 +58,7 @@ from twicc.providers.helpers import (
     get_provider_helpers_registry,
 )
 from twicc.external_notifications import notify_agent_event
+from twicc.title_transcript import clip_message, has_title_content
 from twicc.synced_settings import _settings_lock, prepare_settings_for_client, read_synced_settings, write_synced_settings
 from twicc.workspaces import read_workspaces
 from twicc.layouts import read_layouts
@@ -1646,8 +1647,11 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         and generates through the session provider.
 
         Modes:
-        - prompt provided: Use prompt directly (draft/new session or regenerate)
-        - sessionId only (existing session): Fetch first message from DB
+        - prompt provided: Use prompt directly (draft/new session), clipped to
+          the per-message bound
+        - sessionId only (existing session): Build the source from the user
+          messages of the whole conversation in the DB (beginning and end of a
+          long one, see ``title_transcript``)
 
         **Provider fallback.** The requested provider is only a preference: when
         it is not running (disabled, or mid ``starting``/``stopping``) or when
@@ -1688,27 +1692,34 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
         requested_provider = TITLE_SUGGESTION_MODEL_PROVIDERS.get(title_model, provider)
 
-        # The source prompt belongs to the SESSION's provider (a DB read that
+        # The source text belongs to the SESSION's provider (a DB read that
         # needs no running provider), never to the provider that generates the
         # title. Resolved before any availability check so "this session has no
-        # first message" answers straight away instead of failing on a provider
-        # gate that has nothing to do with it.
-        if not prompt:
+        # user message" answers straight away instead of failing on a provider
+        # gate that has nothing to do with it. ``prompt`` stays what the client
+        # sent (echoed back as ``sourcePrompt``, which a draft compares with its
+        # current message); ``source`` is what the model summarizes.
+        if prompt:
+            # A client prompt with nothing to summarize ("..." or only symbols)
+            # is answered ``no_prompt`` like an empty one: the model is not asked.
+            source = clip_message(prompt) if has_title_content(prompt) else None
+        else:
             try:
                 source_helpers = get_provider_helpers(provider)
-                prompt = await sync_to_async(source_helpers.get_first_user_message)(session_id)
+                source = await sync_to_async(source_helpers.get_title_source)(session_id)
             except Exception:
                 # Degrades to "no prompt available": there is nothing to
                 # summarize and nothing to retry with, which is exactly what
                 # ``no_prompt`` means to the client. The reply still goes out.
-                logger.exception("suggest_title: reading the first message of %s failed", session_id)
-                prompt = None
+                logger.exception("suggest_title: reading the user messages of %s failed", session_id)
+                source = None
+            prompt = source
 
         suggestion = None
         title_provider = None
         error = None
 
-        if not prompt:
+        if not source:
             error = "no_prompt"
         else:
             candidates = [requested_provider] + [
@@ -1725,7 +1736,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 for candidate in available:
                     try:
                         suggestion = await get_provider_helpers(candidate).generate_title(
-                            prompt, system_prompt,
+                            source, system_prompt,
                         )
                     except Exception:
                         # A provider that raises is a provider that failed: the

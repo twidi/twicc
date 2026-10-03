@@ -6,14 +6,19 @@ import logging
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, ResultMessage
 
+from twicc.title_transcript import title_rejection_reasons
+
 logger = logging.getLogger(__name__)
 
-SUGGESTION_TIMEOUT_SECONDS = 15
+# Measured on 49 calls: the median is 17s, the 95th percentile 39s and the
+# maximum 51s (the CLI alone takes ~10s to answer a trivial prompt). 15s cut
+# off about half of them. A title that takes longer is preferred to no title.
+SUGGESTION_TIMEOUT_SECONDS = 60
 # The attempt budget is shared with the other provider: the WS handler falls
 # back to it when this one gives up (``asgi._handle_suggest_title``). Two
-# attempts per provider keeps the worst case (4 × 15s) under the 5-attempt
-# single-provider budget this replaced, and spreading the retries over two
-# models covers a flaky answer better than five shots at the same one.
+# attempts per provider, and spreading the retries over two models covers a
+# flaky answer better than five shots at the same one. The worst case is
+# 2 × 60s here before the fallback, on purpose.
 MAX_RETRIES = 2
 
 
@@ -25,7 +30,7 @@ async def generate_title(user_message: str, system_prompt: str) -> str | None:
     response too long, SDK errors). No delay between retries.
 
     Args:
-        user_message: The user's message text
+        user_message: The text to summarize (the user's messages, already bounded)
         system_prompt: The system prompt with {text} placeholder
 
     Returns:
@@ -50,15 +55,11 @@ async def _call_haiku(
     Returns the suggested title, or None on any failure.
 
     Args:
-        user_message: The user's message text
+        user_message: The text to summarize (the user's messages, already bounded)
         system_prompt: The system prompt with {text} placeholder
         source: Source identifier for logging
         attempt: Current attempt number (for logging)
     """
-    # Truncate long messages
-    if len(user_message) > 2000:
-        user_message = user_message[:2000] + "…"
-
     full_prompt = system_prompt.replace("{text}", user_message)
 
     from twicc.provider_homes import provider_env_overlay
@@ -109,16 +110,10 @@ async def _call_haiku(
     try:
         suggestion = await asyncio.wait_for(_execute(), timeout=SUGGESTION_TIMEOUT_SECONDS)
 
-        # Basic validation
-        if not suggestion:
+        if reasons := title_rejection_reasons(suggestion):
             logger.warning(
-                "Title suggestion: empty response (source=%s, attempt=%d/%d)", source, attempt, MAX_RETRIES
-            )
-            return None
-        if len(suggestion) > 200:
-            logger.warning(
-                "Title suggestion: too long (%d chars, source=%s, attempt=%d/%d): %s",
-                len(suggestion), source, attempt, MAX_RETRIES, suggestion,
+                "Title suggestion rejected: %s (source=%s, attempt=%d/%d): %r",
+                "; ".join(reasons), source, attempt, MAX_RETRIES, suggestion,
             )
             return None
 
