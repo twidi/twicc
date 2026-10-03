@@ -16,6 +16,7 @@ import { getRegisteredProviders, getProviderHelpers, getProviderOptions } from '
 import { useRoute } from 'vue-router'
 import { clearTabRouteParams } from '../utils/granularRoutes'
 import { sessionRouteLocation } from '../utils/sessionRoute'
+import { isLaunchedEphemeral } from '../utils/ephemeralSessions.js'
 import { computeSidebarSessionBlocks } from '../utils/sidebarSessions'
 import { isSessionUnread } from '../utils/sessions'
 import { userTurnBackgroundShellCount } from '../utils/backgroundWork'
@@ -390,6 +391,15 @@ export function initStaticCommands(router) {
         return route.params.sessionId || null
     }
 
+    /**
+     * Session ID from the current route when its view offers tabs. A launched
+     * ephemeral session shows only its answer: no tab to switch to.
+     */
+    function toolTabsSessionId() {
+        const sessionId = routeSessionId()
+        return sessionId && !isLaunchedEphemeral(data.getSession(sessionId)) ? sessionId : null
+    }
+
     /** Project ID from the current route (if any) */
     function routeProjectId() {
         return route.params.projectId || null
@@ -655,7 +665,7 @@ export function initStaticCommands(router) {
             label: 'Switch to Chat Tab',
             icon: 'comment',
             category: 'navigation',
-            when: () => !!routeSessionId(),
+            when: () => !!toolTabsSessionId(),
             action: () => {
                 const name = isAllProjectsMode() ? 'projects-session' : 'session'
                 router.push({
@@ -673,7 +683,7 @@ export function initStaticCommands(router) {
             label: 'Switch to Files Tab',
             icon: 'file-code',
             category: 'navigation',
-            when: () => !!routeSessionId(),
+            when: () => !!toolTabsSessionId(),
             action: () => {
                 const name = isAllProjectsMode() ? 'projects-session-files' : 'session-files'
                 router.push({
@@ -692,7 +702,7 @@ export function initStaticCommands(router) {
             icon: 'code-branch',
             category: 'navigation',
             when: () => {
-                const sessionId = routeSessionId()
+                const sessionId = toolTabsSessionId()
                 if (!sessionId) return false
                 const session = data.getSession(sessionId)
                 if (!session) return false
@@ -717,7 +727,7 @@ export function initStaticCommands(router) {
             label: 'Switch to Terminal Tab',
             icon: 'terminal',
             category: 'navigation',
-            when: () => !!routeSessionId(),
+            when: () => !!toolTabsSessionId(),
             action: () => {
                 const name = isAllProjectsMode() ? 'projects-session-terminal' : 'session-terminal'
                 router.push({
@@ -737,7 +747,7 @@ export function initStaticCommands(router) {
             category: 'navigation',
             // Not for a draft: it has no artifacts folder yet.
             when: () => {
-                const sessionId = routeSessionId()
+                const sessionId = toolTabsSessionId()
                 return !!sessionId && !data.getSession(sessionId)?.draft
             },
             action: () => {
@@ -760,7 +770,7 @@ export function initStaticCommands(router) {
             // Only sessions that belong to a spawned-session orchestration tree
             // expose the tab (mirrors SessionView's `hasSpawnRoot`).
             when: () => {
-                const sessionId = routeSessionId()
+                const sessionId = toolTabsSessionId()
                 if (!sessionId) return false
                 return !!data.getSession(sessionId)?.spawn_root
             },
@@ -784,7 +794,7 @@ export function initStaticCommands(router) {
             // Only sessions with at least one tracked plan-like document
             // expose the tab (mirrors SessionView's `hasPlan`).
             when: () => {
-                const sessionId = routeSessionId()
+                const sessionId = toolTabsSessionId()
                 if (!sessionId) return false
                 return (data.getSession(sessionId)?.plan_paths?.length ?? 0) > 0
             },
@@ -808,7 +818,7 @@ export function initStaticCommands(router) {
             // Only sessions that carry a task/todo/plan snapshot expose the tab
             // (mirrors SessionView's `hasTasks`).
             when: () => {
-                const sessionId = routeSessionId()
+                const sessionId = toolTabsSessionId()
                 if (!sessionId) return false
                 return !!data.getSessionTasks(sessionId)
             },
@@ -832,7 +842,7 @@ export function initStaticCommands(router) {
             // Only sessions with at least one workflow run expose the tab
             // (mirrors SessionView's `hasWorkflows`).
             when: () => {
-                const sessionId = routeSessionId()
+                const sessionId = toolTabsSessionId()
                 if (!sessionId) return false
                 return !!data.getSession(sessionId)?.has_workflows
             },
@@ -853,7 +863,7 @@ export function initStaticCommands(router) {
             label: 'Switch to Browser Tab',
             icon: 'globe',
             category: 'navigation',
-            when: () => !!routeSessionId(),
+            when: () => !!toolTabsSessionId(),
             action: () => {
                 const name = isAllProjectsMode() ? 'projects-session-browser' : 'session-browser'
                 router.push({

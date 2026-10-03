@@ -628,8 +628,7 @@ const absentActiveToolTab = computed(() => {
 // navigation / bookmark / back-forward to /git on a non-git session, or /orchestration with no
 // spawn tree. Driven by the registry (replaces three near-identical per-tab watchers). Guards: skip
 // while deactivated (KeepAlive) and if the route belongs to another session.
-watch(absentActiveToolTab, (tab) => {
-    if (!tab) return
+function redirectToSessionBase() {
     if (!isActive.value) return
     if (route.params.sessionId !== sessionId.value) return
     router.replace({
@@ -637,6 +636,17 @@ watch(absentActiveToolTab, (tab) => {
         params: { projectId: filterProjectId.value, sessionId: sessionId.value },
         query: route.query,
     })
+}
+
+watch(absentActiveToolTab, (tab) => {
+    if (tab) redirectToSessionBase()
+}, { immediate: true })
+
+// A launched ephemeral session has no tab at all (it shows only its answer), so any tab or subagent
+// URL — typed by hand, back/forward, the draft's old URL — goes back to the base route.
+const ephemeralOffMainTab = computed(() => isLaunchedEphemeral(session.value) && activeTabId.value !== 'main')
+watch(ephemeralOffMainTab, (offMain) => {
+    if (offMain) redirectToSessionBase()
 }, { immediate: true })
 
 function toolTabRouteLocation(tab, params = {}) {
@@ -1452,7 +1462,7 @@ function toggleMaximizeFocusedPane() {
 // `handled` is flipped back so App.vue swallows the key only when something happened (so
 // e.g. Alt+Shift+Enter in single pane, with nothing to maximize, stays inert).
 function handleLayoutShortcut(event) {
-    if (!isActive.value) return
+    if (!isActive.value || isLaunchedEphemeral(session.value)) return
     let acted = false
     if (event.detail?.action === 'maximize') acted = toggleMaximizeFocusedPane()
     else if (event.detail?.action === 'minimize') acted = minimizeFocusedPane()
