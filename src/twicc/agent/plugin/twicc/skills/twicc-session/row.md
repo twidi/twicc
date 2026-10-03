@@ -5,13 +5,12 @@ Metadata, agent settings and live process state of one session. MCP tool: `mcp__
 ## Usage
 
 ```bash
-$TWICC session <SESSION_ID|self|parent> [--slim|--full]
+$TWICC session <SESSION_ID|self|parent> [--full]
 ```
 
 - Works on any session row: regular session, subagent, or a session with no user message yet.
 - For several ids, use `sessions get <ID>...`: same row, plus a `known` flag.
-- `--slim` / `--full` choose the projection. They go before or after the id, and apply to the row alone: with a sub-command, before or after the id, they are refused (exit 2) — write `session <ID> agents --full`. Mutually exclusive (exit 2).
-- **Default: `--full` until 2026-10-01, `--slim` from that date** (`--slim` then becomes a no-op; `--full` keeps working on both sides). Until then a call with neither flag prints a one-line notice on stderr (RPC: `warnings` key; never on MCP).
+- `--full` — the full projection; the default is the reduced one. It goes before or after the id and applies to the row alone: with a sub-command, before or after the id, it is refused (exit 2) — write `session <ID> agents --full`.
 - Exit 1 (a `validation_error` on stdout) when no session has that id, or `self` / `parent` cannot be resolved.
 
 ## Output format
@@ -45,7 +44,7 @@ $TWICC session <SESSION_ID|self|parent> [--slim|--full]
 }
 ```
 
-`--slim` returns the row `sessions` returns (example in `list.md` of the `twicc-sessions` skill), with `process: {state, background_work_in_progress}`.
+The default (reduced) projection is the row `sessions` returns (example in `list.md` of the `twicc-sessions` skill), with `process: {state, background_work_in_progress}`.
 
 ### Key fields
 
@@ -76,7 +75,7 @@ $TWICC session <SESSION_ID|self|parent> [--slim|--full]
 ```bash
 $TWICC session abc123-def456
 $TWICC session abc123-def456 --full
-$TWICC session self --slim
+$TWICC session self
 ```
 
 ## Related commands

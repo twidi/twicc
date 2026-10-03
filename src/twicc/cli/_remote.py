@@ -37,7 +37,6 @@ from typing import NamedTuple
 import click
 import httpx
 import orjson
-import typer
 
 from twicc.cli._drop_request.attachments import _sniff_mime
 from twicc.cli._drop_request.prompt import (
@@ -93,26 +92,19 @@ class Resolved(NamedTuple):
 #   ``resolve_spawned_by_filter`` / ``resolve_spawn_tree_filter`` /
 #   ``resolve_descendants_filter`` / ``resolve_siblings_filter`` in
 #   ``cli/_drop_request/whoami.py``. Present on ``sessions``, ``search``,
-#   ``processes`` (all four keywords), ``processes stop`` / ``processes wait``
-#   (``spawned_by`` / ``descendants`` only), and ``send-messages``
-#   (``spawned_by`` / ``descendants`` / ``siblings``). ``spawn_tree`` and
+#   and ``send-messages`` (``spawned_by`` / ``descendants`` / ``siblings``). ``spawn_tree`` and
 #   ``siblings`` reject ``parent`` themselves, but they still accept ``self`` —
 #   so both belong here. (On ``topology`` ``siblings`` is a boolean flag, never
 #   a ``self`` / ``parent`` string, so listing it here can't misfire there.)
 # - Session-id positionals (Click param name ``session_id``). ``send-message``,
 #   ``update-session``, ``topology`` and ``session`` (with its subcommands)
 #   truly RESOLVE ``self`` / ``parent`` from the local session, so they must be
-#   rejected over --remote. ``process`` (plus ``process stop`` / ``process
-#   wait``) treats the id literally (a session *named* "self" — implausible), so
-#   rejecting it is conservative but harmless: such an id is meaningless against
-#   a remote anyway.
-# - Variadic session-id positionals: ``processes stop`` (``session_ids``),
-#   ``processes wait`` (``items`` — a mixed list of ids and statuses),
-#   ``update-sessions`` (``session_ids`` — every batch sub-command) and
-#   ``send-messages`` (``session_ids``). Like ``update-session``, both
+#   rejected over --remote.
+# - Variadic session-id positionals: ``update-sessions`` (``session_ids`` —
+#   every batch sub-command) and ``send-messages`` (``session_ids``). Like ``update-session``, both
 #   ``update-sessions`` and ``send-messages`` truly RESOLVE ``self`` in their
 #   explicit ids, so rejecting it over --remote is meaningful, not just
-#   conservative. The batch readers ``sessions get`` / ``processes get`` use
+#   conservative. The batch reader ``sessions get`` uses
 #   plain ``session_ids`` too; including the name stays harmless there (they
 #   don't special-case ``self`` / ``parent``, so the value would never
 #   legitimately be either).
@@ -255,7 +247,7 @@ def _navigate(argv: list[str]) -> tuple[str, dict]:
             # In resilient mode resolve_command returns sub=None for an unknown
             # token instead of raising. This also covers a subcommand placed
             # before a group's required positional (wrong order, e.g.
-            # ``process wait <id>``): the positional swallows the subcommand and
+            # ``session wait-reply <id>``): the positional swallows the subcommand and
             # the next token is not a command — rejected here exactly as the
             # local CLI and the remote server would reject it.
             raise RemoteUsageError(f"unknown command: {' '.join(argv)}")
@@ -636,18 +628,13 @@ def inline_prompt(argv: list[str], resolved: Resolved) -> list[str]:
     return list(argv)
 
 
-# Registry paths of the blocking long-poll commands. The server holds the
-# response open up to the command's own ``--timeout``, so the HTTP read timeout
-# must be at least that long (+ a margin) — see :func:`_request_timeout`.
-_WAIT_PATHS: frozenset[str] = frozenset({"process/wait", "processes/wait"})
-
 # The answer-waits hold the response open up to their ``--wait-timeout`` (a
 # 300 s default), not a ``--timeout``: without their own entry they would get
 # :data:`_DEFAULT_TIMEOUT` and be cut by the client long before the server
 # answers.
 _WAIT_REPLY_PATHS: frozenset[str] = frozenset({"session/wait-reply", "sessions/wait-reply"})
 
-# Read-timeout margin (seconds) added on top of a wait command's ``--timeout``
+# Read-timeout margin (seconds) added on top of a wait command's own timeout
 # so the local read does not race the server's own deadline.
 _WAIT_TIMEOUT_MARGIN = 15.0
 
@@ -681,16 +668,10 @@ def _endpoint_url(base: str, path: str) -> str:
 def _request_timeout(resolved: Resolved) -> httpx.Timeout:
     """Pick the httpx timeout for this command.
 
-    For the long-poll ``wait`` commands the server holds the response up to the
-    command's ``--timeout``; the local **read** timeout is therefore set to that
-    value plus :data:`_WAIT_TIMEOUT_MARGIN` so the client never gives up before
-    the server answers. The bound ``timeout`` param already folds in the Click
-    default when the flag is omitted — but ``wait``'s ``--timeout`` is required,
-    so an omitted flag leaves it ``None`` (the server will reject the missing
-    option fast); in that case fall back to :data:`_DEFAULT_TIMEOUT`.
-
-    The two answer-waits (``session wait-reply``, ``sessions wait-reply``) are
-    sized to their ``--wait-timeout`` the same way.
+    The two answer-waits (``session wait-reply``, ``sessions wait-reply``) hold
+    the response up to their ``--wait-timeout``; the local **read** timeout is
+    therefore set to that value plus :data:`_WAIT_TIMEOUT_MARGIN` so the client
+    never gives up before the server answers.
 
     ``--wait-reply`` gets the same treatment on top of its own ``--timeout``:
     the server holds the connection for the drop request *and* the wait.
@@ -698,11 +679,7 @@ def _request_timeout(resolved: Resolved) -> httpx.Timeout:
     The connect timeout is always the short, constant :data:`_CONNECT_TIMEOUT`.
     """
     read = _DEFAULT_TIMEOUT
-    if resolved.path in _WAIT_PATHS:
-        command_timeout = resolved.params.get("timeout")
-        if isinstance(command_timeout, (int, float)) and command_timeout > 0:
-            read = float(command_timeout) + _WAIT_TIMEOUT_MARGIN
-    elif resolved.path in _WAIT_REPLY_PATHS:
+    if resolved.path in _WAIT_REPLY_PATHS:
         wait_timeout = resolved.params.get("wait_timeout")
         if not isinstance(wait_timeout, (int, float)) or wait_timeout <= 0:
             wait_timeout = _DEFAULT_WAIT_TIMEOUT
@@ -828,11 +805,6 @@ def forward(url: str, token: str | None, argv: list[str]) -> int:
     error = envelope.get("error")
     if error is not None:
         print(error, file=sys.stderr)
-    # typer.echo rather than the print() above: a closed fd 2 makes sys.stderr
-    # None, and print() would then fall back to stdout and corrupt the JSON the
-    # caller is parsing. click.echo drops the write instead.
-    for warning in envelope.get("warnings") or ():
-        typer.echo(warning, err=True)
 
     return envelope["exit_code"]
 

@@ -1,23 +1,19 @@
-"""Tests for the dated cutover to slim session listings.
+"""Tests for the reduced session projection.
 
-Design: docs/plans/2026-09-23-session-listing-slim-cutover-design.md. The four
-commands that return several sessions (``sessions``, ``sessions get``,
-``session agents``, ``topology``) switch to their reduced projection on
-``LISTING_CUTOVER``, the date the pagination envelope also becomes the default.
-``--full`` stays as the way back. Every pinned value is **naive**, like the
-constant.
+The four commands that return several sessions (``sessions``, ``sessions get``,
+``session agents``, ``topology``) return the reduced projection by default;
+``--full`` brings the full payload back and ``--slim`` is an accepted no-op.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import orjson
 import pytest
 from django.utils import timezone
 
 from twicc.agent.states import AgentState
-from twicc.cli import _output
 from twicc.cli import session as cli_session
 from twicc.cli import sessions as cli_sessions
 from twicc.cli import sessions_get as cli_sessions_get
@@ -26,27 +22,10 @@ from twicc.cli.topology import main as topology_main
 from twicc.core.models import ProcessRun, Project, Session, SessionType
 from twicc.core.serializers import SESSION_LISTING_FIELDS
 
-PAST = datetime(2000, 1, 1)     # noqa: DTZ001 — naive, like the constant
-FUTURE = datetime(2200, 1, 1)   # noqa: DTZ001 — naive, like the constant
-
 TWICC_PID = 4343
 FULL_PROCESS_KEYS = {"id", "state", "background_work_in_progress", "started_at", "last_state_change_at", "pid"}
 SLIM_KEYS = set(SESSION_LISTING_FIELDS) | {"process"}
 TOPOLOGY_SLIM_KEYS = set(TOPOLOGY_SESSION_FIELDS) | {"directory"}
-
-# The two notice texts, matched by content rather than by position.
-LISTING_NOTICE = "returns the reduced session projection by default"
-TOPOLOGY_NOTICE = "reduces each node's `process` block"
-
-
-@pytest.fixture
-def before(monkeypatch):
-    monkeypatch.setattr(_output, "LISTING_CUTOVER", FUTURE)
-
-
-@pytest.fixture
-def after(monkeypatch):
-    monkeypatch.setattr(_output, "LISTING_CUTOVER", PAST)
 
 
 @pytest.fixture(autouse=True)
@@ -141,63 +120,26 @@ def assert_slim(name, rows):
 
 
 @pytest.mark.parametrize("name", LISTINGS)
-def test_before_a_flagless_listing_is_full_and_announced(before, tree, capsysbinary, name):
+def test_a_flagless_listing_is_reduced(tree, capsysbinary, name):
     rows, err = listing(name, tree, capsysbinary)
     assert rows
-    assert_full(name, rows)
-    assert f"`{name}` {LISTING_NOTICE}" in err
-    assert "2200-01-01" in err
-
-
-@pytest.mark.parametrize("name", LISTINGS)
-def test_before_slim_is_the_new_shape_already(before, tree, capsysbinary, name):
-    rows, err = listing(name, tree, capsysbinary, slim=True)
-    assert_slim(name, rows)
-    assert LISTING_NOTICE not in err
-
-
-@pytest.mark.parametrize("name", LISTINGS)
-def test_before_full_is_unannounced(before, tree, capsysbinary, name):
-    rows, err = listing(name, tree, capsysbinary, full=True)
-    assert_full(name, rows)
-    assert LISTING_NOTICE not in err
-
-
-@pytest.mark.parametrize("name", LISTINGS)
-@pytest.mark.parametrize("flags", [{}, {"slim": True}])
-def test_after_slim_is_the_default_and_the_flag_a_no_op(after, tree, capsysbinary, name, flags):
-    rows, err = listing(name, tree, capsysbinary, **flags)
     assert_slim(name, rows)
     assert err == ""
 
 
 @pytest.mark.parametrize("name", LISTINGS)
-def test_after_full_still_brings_the_full_payload_back(after, tree, capsysbinary, name):
+def test_full_brings_the_full_payload_back(tree, capsysbinary, name):
     rows, err = listing(name, tree, capsysbinary, full=True)
     assert_full(name, rows)
     assert err == ""
 
 
-def test_after_the_three_listings_share_one_key_set(after, tree, capsysbinary):
+def test_the_three_listings_share_one_key_set(tree, capsysbinary):
     keys = {
         name: {k for row in listing(name, tree, capsysbinary)[0] for k in row} - {"known"}
         for name in LISTINGS
     }
     assert keys["sessions"] == keys["sessions get"] == keys["session agents"] == SLIM_KEYS
-
-
-def test_the_notice_date_is_read_at_call_time(tree, capsysbinary, monkeypatch):
-    """`paginated=True` silences the lookup notice, so the date can only come
-    from the slim one — built from the pinned constant, not the import-time string."""
-    monkeypatch.setattr(_output, "LISTING_CUTOVER", datetime(2199, 3, 4))  # noqa: DTZ001
-    _, err = listing("sessions get", tree, capsysbinary, paginated=True)
-    assert "2199-03-04" in err
-    assert LISTING_NOTICE in err
-
-
-def test_both_flags_are_a_programming_error():
-    with pytest.raises(ValueError):
-        _output.slim_notice("sessions", True, True)
 
 
 # --- topology ---------------------------------------------------------------
@@ -209,15 +151,7 @@ def run_topology(capsysbinary, **flags):
     return {node["id"]: node for node in payload["nodes"]}, err
 
 
-def test_topology_before_keeps_its_shape_and_announces(before, tree, capsysbinary):
-    nodes, err = run_topology(capsysbinary)
-    assert set(nodes["slim-root"]["session"]) == TOPOLOGY_SLIM_KEYS
-    assert set(nodes["slim-root"]["process"]) == FULL_PROCESS_KEYS
-    assert TOPOLOGY_NOTICE in err
-    assert "--full" in err
-
-
-def test_topology_after_reduces_the_process_block(after, tree, capsysbinary):
+def test_topology_reduces_the_process_block(tree, capsysbinary):
     nodes, err = run_topology(capsysbinary)
     assert set(nodes["slim-root"]["session"]) == TOPOLOGY_SLIM_KEYS
     assert nodes["slim-root"]["process"] == {"state": "assistant_turn", "background_work_in_progress": None}
@@ -225,31 +159,21 @@ def test_topology_after_reduces_the_process_block(after, tree, capsysbinary):
     assert err == ""
 
 
-def test_topology_slim_before_is_the_new_shape_already(before, tree, capsysbinary):
-    nodes, err = run_topology(capsysbinary, slim=True)
-    assert nodes["slim-root"]["process"] == {"state": "assistant_turn", "background_work_in_progress": None}
-    assert TOPOLOGY_NOTICE not in err
-
-
-@pytest.mark.parametrize("side", ["before", "after"])
-def test_topology_full_is_full_on_both_sides(tree, capsysbinary, request, side):
-    request.getfixturevalue(side)
+def test_topology_full_is_full(tree, capsysbinary):
     nodes, err = run_topology(capsysbinary, full=True)
     assert "cwd" in nodes["slim-root"]["session"]
     assert "process" not in nodes["slim-root"]["session"], "it lives at node level"
     assert set(nodes["slim-root"]["process"]) == FULL_PROCESS_KEYS
-    assert TOPOLOGY_NOTICE not in err
+    assert err == ""
 
 
-@pytest.mark.parametrize("side", ["before", "after"])
-def test_topology_without_processes_has_nothing_to_announce(tree, capsysbinary, request, side):
-    request.getfixturevalue(side)
+def test_topology_without_processes_has_nothing_to_announce(tree, capsysbinary):
     nodes, err = run_topology(capsysbinary, include_processes=False)
     assert all(node["process"] is None for node in nodes.values())
     assert err == ""
 
 
-def test_the_rest_view_keeps_five_fields_after_the_date(after, tree):
+def test_the_rest_view_keeps_the_full_process_block(tree):
     """``build_topology``'s defaults are what `views.session_topology` gets."""
     root = Session.objects.get(id="slim-root")
     data = build_topology(root, include_processes=True, full_sessions=True, twicc_pid=TWICC_PID)
@@ -277,35 +201,33 @@ def mcp_argv(tool, arguments):
     return render_argv(prepared.spec, prepared.arguments)
 
 
-@pytest.mark.parametrize("args", [
-    ("--full-sessions",),
-    ("--full",),
-])
-def test_the_alias_is_full_from_the_command_line(after, tree, args):
-    result = cli("topology", "slim-root", *args)
+def test_full_reaches_topology_from_the_command_line(tree):
+    result = cli("topology", "slim-root", "--full")
     assert result.exit_code == 0, result.output
     node = orjson.loads(result.stdout)["nodes"][0]
     assert "cwd" in node["session"]
     assert set(node["process"]) == FULL_PROCESS_KEYS
 
 
-def test_the_alias_is_full_through_mcp_and_rpc(after, tree):
+def test_full_reaches_topology_through_mcp_and_rpc(tree):
     from twicc.rpc.invoker import invoke
 
-    result = invoke(mcp_argv("topology", {"session_id": "slim-root", "full_sessions": True}))
+    result = invoke(mcp_argv("topology", {"session_id": "slim-root", "full": True}))
     assert result.exit_code == 0, result.error
     node = result.result["nodes"][0]
     assert "cwd" in node["session"]
     assert set(node["process"]) == FULL_PROCESS_KEYS
 
 
-def test_no_full_sessions_never_cancels_full(after, tree):
-    from twicc.rpc.invoker import invoke
+def test_the_full_sessions_alias_is_gone(tree):
+    assert cli("topology", "slim-root", "--full-sessions").exit_code == 2
 
-    argv = mcp_argv("topology", {"session_id": "slim-root", "full": True, "full_sessions": False})
-    result = invoke(argv)
-    assert result.exit_code == 0, result.error
-    assert "cwd" in result.result["nodes"][0]["session"]
+
+def test_slim_alone_is_accepted_and_ignored(tree):
+    result = cli("topology", "slim-root", "--slim")
+    assert result.exit_code == 0, result.output
+    node = orjson.loads(result.stdout)["nodes"][0]
+    assert set(node["process"]) == {"state", "background_work_in_progress"}
 
 
 @pytest.mark.parametrize("argv", [
@@ -323,86 +245,32 @@ def test_slim_and_full_are_mutually_exclusive(tree, argv):
     result = invoke(argv)
     assert result.exit_code == 2
     assert "--slim and --full" in result.error
-    assert result.warnings == (), "refused in the wrapper, before any notice"
 
 
-def test_the_alias_is_named_when_it_conflicts(tree):
-    from twicc.rpc.invoker import invoke
-
-    assert cli("topology", "slim-root", "--slim", "--full-sessions").exit_code == 2
-    result = invoke(mcp_argv("topology", {"session_id": "slim-root", "slim": True, "full_sessions": True}))
-    assert result.exit_code == 2
-    assert "(or --full-sessions)" in result.error
-
-
-def test_rpc_carries_both_notices_in_order(before, tree):
-    from twicc.rpc.invoker import invoke
-
-    warnings = invoke(["sessions", "--project", tree.id]).warnings
-    assert len(warnings) == 2
-    assert "--paginated" in warnings[0]
-    assert LISTING_NOTICE in warnings[1]
-
-
-@pytest.mark.parametrize("argv", [
-    ["sessions", "get", "slim-root"],
-    ["topology", "slim-root"],
-])
-def test_mcp_is_never_notified(before, tree, argv):
-    """MCP silences every notice: `sessions get`'s lookup notice and slim notice, and `topology`'s."""
-    from twicc.mcp.identity import mcp_call
-    from twicc.rpc.invoker import invoke
-
-    token = mcp_call.set(True)
-    try:
-        result = invoke(argv)
-    finally:
-        mcp_call.reset(token)
-    assert result.exit_code == 0, result.error
-    assert result.warnings == ()
-
-
-def test_the_flags_reach_the_mcp_schema():
+def test_only_full_reaches_the_schemas():
+    from twicc.mcp.tools import tools_by_name
     from twicc.rpc.generator import build_registry
 
     registry = build_registry()
     for path in ("sessions", "sessions/get", "session/agents", "topology", "session"):
-        params = {p.name: p for p in registry[path].params}
-        for flag in ("slim", "full"):
-            assert params[flag].is_flag and params[flag].json_type == "boolean", (path, flag)
-    assert {"slim", "full"}.isdisjoint(p.name for p in registry["session/messages"].params)
-    assert registry["topology"].json_schema["properties"]["full_sessions"]["type"] == "boolean"
-    from twicc.mcp.tools import tools_by_name
+        props = registry[path].json_schema["properties"]
+        assert props["full"]["type"] == "boolean", path
+        assert "slim" not in props, path
+    assert "full" not in registry["session/messages"].json_schema["properties"]
+    assert "full_sessions" not in registry["topology"].json_schema["properties"]
 
     props = tools_by_name()["whoami"].json_schema["properties"]
-    assert props["slim"]["type"] == props["full"]["type"] == "boolean"
+    assert props["full"]["type"] == "boolean"
+    assert "slim" not in props
 
 
-def test_the_help_texts_match_the_side_of_the_cutover_we_are_on():
-    """Evaluated at import, so no fixture can flip them: read the effective cutover.
-
-    Asserts a fixed substring, never ``SLIM_CUTOVER_NOTICE in description`` —
-    past the date the constant is ``""``, which every string contains.
-    """
+def test_the_help_texts_describe_the_reduced_default():
     from twicc.mcp.tools import iter_mcp_tools, tools_by_name
 
     described = {t.name: t.description for t in iter_mcp_tools()}
     ids_help = tools_by_name()["sessions_get"].json_schema["properties"]["session_ids"]["description"]
-    announcing = {"sessions", "sessions_get", "session_agents", "session"}
-
-    if _output.listing_cutover_passed():
-        assert not any(LISTING_NOTICE in described[n] for n in announcing)
-        assert not described["topology"].startswith("DEPRECATION")
-        assert not described["whoami"].startswith("DEPRECATION")
-        assert "reduced projection" in ids_help
-    else:
-        for name in announcing:
-            assert "reduced session projection by default" in described[name], name
-        assert described["sessions_get"].startswith("DEPRECATION")
-        assert described["topology"].startswith("DEPRECATION")
-        assert described["whoami"].startswith("DEPRECATION")
-        assert "`session self` payload" in described["whoami"]
-        assert "the full session metadata or a placeholder" in ids_help
+    assert not any(d.startswith("DEPRECATION") for d in described.values())
+    assert "reduced projection" in ids_help
 
 
 NEW_SLIM_FIELDS = {
@@ -421,7 +289,7 @@ DROPPED_FIELDS = {
 def test_the_reduced_projection_keeps_everything_but_the_dropped_fields(tree, capsysbinary):
     assert NEW_SLIM_FIELDS <= set(SESSION_LISTING_FIELDS)
     assert "context_max" in SESSION_LISTING_FIELDS
-    slim_rows, _ = listing("sessions", tree, capsysbinary, slim=True)
+    slim_rows, _ = listing("sessions", tree, capsysbinary)
     full_rows, _ = listing("sessions", tree, capsysbinary, full=True)
     for slim_row, full_row in zip(slim_rows, full_rows, strict=True):
         assert set(full_row) - set(slim_row) == DROPPED_FIELDS

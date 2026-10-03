@@ -108,8 +108,7 @@ def test_allowlist_excludes_known_write_commands():
         "create-session",
         "send-message",
         "send-messages",
-        "processes/stop",
-        "process/stop",
+        "sessions/stop",
         "artifacts/bookmark",
         "artifacts/unbookmark",
         "create-workspace",
@@ -143,8 +142,6 @@ def test_token_allows_read_command(client, protected, tokens_store, invoke_calls
 
 def test_token_allows_write_command(client, protected, tokens_store, invoke_calls):
     tokens_store["secret"] = _record()
-    # A write route that is not retired: past 2026-10-01 `processes/stop`
-    # answers with its removal error before reaching `invoke`.
     res = _post(client, "/rpc/sessions/stop", headers={"Authorization": "Bearer secret"})
     assert res.status_code == 200
     assert invoke_calls == [["sessions", "stop"]]
@@ -180,7 +177,7 @@ def test_cookie_allows_read_command(client, protected, tokens_store, invoke_call
 
 def test_cookie_blocks_write_command(client, protected, tokens_store, invoke_calls, transactional_db):
     _login(client)
-    res = _post(client, "/rpc/processes/stop")
+    res = _post(client, "/rpc/sessions/stop")
     assert res.status_code == 403
     assert invoke_calls == []
 

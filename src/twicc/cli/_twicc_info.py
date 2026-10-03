@@ -9,8 +9,7 @@ process (no in-memory state to consult) and reach the live TwiCC by:
 3. Verifying the recorded PID is still alive (``psutil.pid_exists``).
 
 If the file is missing (TwiCC not running, or shut down cleanly) or the
-PID has been recycled / cleared by the kernel, the CLI exits with a
-descriptive error rather than returning ambiguous data.
+PID has been recycled / cleared by the kernel, callers get ``None`` rather than ambiguous data.
 """
 
 from __future__ import annotations
@@ -19,8 +18,6 @@ from typing import NamedTuple
 
 import orjson
 import psutil
-
-from twicc.cli._output import emit_error
 
 
 class TwiCCInfo(NamedTuple):
@@ -66,13 +63,3 @@ def resolve_live_twicc() -> TwiCCInfo | None:
         started_at=data.get("started_at"),
     )
 
-
-def resolve_live_twicc_or_exit() -> TwiCCInfo:
-    """Return :func:`resolve_live_twicc` or exit the CLI with a clear error."""
-    info = resolve_live_twicc()
-    if info is None:
-        emit_error(
-            "Error: TwiCC is not running (no live twicc.info.json found).",
-            code=1,
-        )
-    return info

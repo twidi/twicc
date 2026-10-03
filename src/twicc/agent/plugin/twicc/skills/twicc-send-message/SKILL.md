@@ -157,7 +157,7 @@ Without `--wait-reply`:
 - `$TWICC update-session <session_id> settings` — change agent settings before sending. Skill: `twicc-update-session`.
 - `$TWICC session <session_id> stop` — stop the live agent. Skill: `twicc-session`.
 - `$TWICC sessions --state awaiting_user_input` — find sessions blocked on user input. Skill: `twicc-sessions`.
-- `$TWICC session <session_id>` — one session's row (reduced from 2026-10-01; `--full` for every field). Skill: `twicc-session`.
+- `$TWICC session <session_id>` — one session's row (reduced; `--full` for every field). Skill: `twicc-session`.
 - `$TWICC sessions --project <PROJECT>` — find session ids. Skill: `twicc-sessions`.
 
 ## How to present results

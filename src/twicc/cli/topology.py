@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from twicc.cli._output import emit_error, emit_json, slim_notice
+from twicc.cli._output import emit_error, emit_json
 from twicc.cli._process_state import load_process_rows, serialize_compact_process
 
 
@@ -34,7 +34,6 @@ def main(
     session_id: str,
     *,
     include_processes: bool = True,
-    slim: bool = False,
     full: bool = False,
     annotation: list[str] | None = None,
     siblings: bool = False,
@@ -43,11 +42,6 @@ def main(
     import django
 
     django.setup()
-    # The cutover only changes the `process` block: without one there is
-    # nothing to announce. ``full`` alone decides the session projection.
-    slim_processes = (
-        slim_notice("topology", slim, full, kind="topology") if include_processes else False
-    )
 
     from twicc.core.models import SessionType
 
@@ -71,7 +65,7 @@ def main(
         seed,
         include_processes=include_processes,
         full_sessions=full,
-        slim_processes=slim_processes,
+        slim_processes=not full,
         annotation_filters=annotation_filters,
         mark_siblings=siblings,
     )
@@ -96,8 +90,7 @@ def build_topology(
 
     ``slim_processes`` reduces each read ``process`` block to ``{state,
     background_work_in_progress}``. Its default keeps the six fields, which the
-    REST view relies on: only the CLI resolves it from ``--slim`` / ``--full``
-    and the cutover.
+    REST view relies on: only the CLI reduces them, unless ``--full``.
 
     ``annotation_filters`` preserves the full tree but enriches every node with
     a ``matches_annotations`` flag when provided.

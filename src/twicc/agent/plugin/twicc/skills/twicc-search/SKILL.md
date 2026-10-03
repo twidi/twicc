@@ -36,7 +36,6 @@ $TWICC search '<query>' [OPTIONS]
 
 - `--limit N` — max hits (default: 20).
 - `--offset N` — skip first N for pagination (default: 0).
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size is **20**. **Before 2026-10-01 the flag is opt-in and a call without it is unchanged; from that date the envelope is the only shape and the flag is an accepted no-op.** Passing it works on both sides.
 - `--project <PROJECT>` — scope hits to a project (path or id; **drop the leading dash** on ids). A normal project also includes its git worktrees' sessions (a worktree's sessions belong to its main repository); a worktree project is scoped to its own only. Mutually exclusive with `--workspace`. Combines (AND) with the query and every other filter. For an arbitrary set of unrelated projects, use `project_id:` query terms instead.
 - `--workspace ID` — scope hits to all projects in the given workspace, each member project's git worktrees included. Mutually exclusive with `--project`.
 - `--include-hidden` — include hits from hidden sessions (excluded by default).
@@ -53,7 +52,7 @@ $TWICC search '<query>' [OPTIONS]
   - `KEY:in:V1,V2,...` — annotation key equals one of the listed values; escape a literal comma with `\,`.
   - Values are inferred as typed: `true`/`false` → boolean, `null` → null, integers and floats parsed numerically, everything else → string (same rules as `create-session --annotation`).
   - Example: `--spawn-tree self --annotation role=implementer`
-  - The filter is resolved against the database first, then scopes the index query, so `total_hits` counts the hits that really match — no over-report, no missing page.
+  - The filter is resolved against the database first, then scopes the index query, so `pagination.total` counts the hits that really match — no over-report, no missing page.
   - When `--annotation` is set, three extra keys appear in the output (absent on the unfiltered path):
     - `annotation_filtered: true` — signals that annotation filtering was active.
     - `exhausted: bool` — `true` when this page reaches the end of the results.
@@ -82,7 +81,7 @@ Default field is `body` (message content) — bare keywords search there automat
 
 ```json
 {
-  "hits": [
+  "items": [
     {
       "score": 12.34,
       "session_id": "abc-123",
@@ -94,10 +93,8 @@ Default field is `body` (message content) — bare keywords search there automat
       "snippet": "<b>highlighted</b> match text..."
     }
   ],
-  "total_hits": 150,
   "query": "websocket",
-  "limit": 20,
-  "offset": 0
+  "pagination": {"limit": 20, "offset": 0, "total": 150, "has_more": true}
 }
 ```
 
@@ -124,14 +121,14 @@ $TWICC search 'bug' --annotation priority:in:high,critical --annotation status:e
 ## Related commands
 
 - `$TWICC session <session_id> content <line_num>` — fetch the full item at a search result's `line_num`. Skill: `twicc-session`.
-- `$TWICC session <session_id>` — one session's row (reduced from 2026-10-01; `--full` for every field). Skill: `twicc-session`.
+- `$TWICC session <session_id>` — one session's row (reduced; `--full` for every field). Skill: `twicc-session`.
 - `$TWICC topology <ID|self>` — discover the spawned-session tree before scoping search. Skill: `twicc-topology`.
 - `$TWICC sessions --project <PROJECT>` — browse sessions in the same project. Skill: `twicc-sessions`.
 - `$TWICC project <PROJECT>` — project details. Skill: `twicc-project`.
 
 ## How to present results
 
-1. Summarize total hits (`total_hits`).
+1. Summarize total hits (`pagination.total`).
 2. Show snippets stripped of HTML tags, with session ID and role for context.
-3. If `--paginated` reports `has_more: true`, offer to fetch the next page with `--offset`.
+3. If `pagination.has_more` is `true`, offer to fetch the next page with `--offset`.
 4. You are in TwiCC — link to a session: `[link text](/project/{project_id}/session/{session_id})`.

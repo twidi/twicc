@@ -39,7 +39,7 @@ You may share **your own session or any session in your spawn subtree** — sess
 ### List
 
 ```bash
-$TWICC share [--kind session|artifact] [--session ID|self|parent] [--project PROJECT] [--include-revoked] [--limit N] [--offset N] [--paginated]
+$TWICC share [--kind session|artifact] [--session ID|self|parent] [--project PROJECT] [--include-revoked] [--limit N] [--offset N]
 ```
 
 - `--kind session|artifact` — filter by share kind.
@@ -48,7 +48,6 @@ $TWICC share [--kind session|artifact] [--session ID|self|parent] [--project PRO
 - `--include-revoked` — include revoked rows.
 - `--limit N` — maximum rows, default 20.
 - `--offset N` — rows to skip, default 0.
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size is **20**. **Before 2026-10-01 the flag is opt-in and a call without it keeps its shape (its default page is 20 now, it was 50); from that date the envelope is the only shape and the flag is an accepted no-op.** Passing it works on both sides.
 
 ### Show
 
@@ -194,7 +193,7 @@ Advance an in-scope frozen share to current content. `--timeout N` defaults to 3
 ### List
 
 ```json
-[
+{"items": [
   {
     "id": "shr_abc123",
     "kind": "session",
@@ -208,7 +207,7 @@ Advance an in-scope frozen share to current content. `--timeout N` defaults to 3
     "view_count": 0,
     "created_by": {"kind": "agent", "session": {"id": "session-1", "title": "Builder", "project_id": "-project"}}
   }
-]
+], "pagination": {"limit": 20, "offset": 0, "total": 1, "has_more": false}}
 ```
 
 ### Show

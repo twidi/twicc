@@ -41,7 +41,6 @@ Results are ordered by most recently updated. Read-only: works without the serve
 - `--scope <project|workspace|all>` — filter by each bookmark's own visibility scope (independent of `--project` / `--workspace`). `--scope all` lists only the ones bookmarked everywhere.
 - `--limit N` — max results (default: 20).
 - `--offset N` — skip first N for pagination (default: 0).
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size is **20**. **Before 2026-10-01 the flag is opt-in and a call without it is unchanged; from that date the envelope is the only shape and the flag is an accepted no-op.** Passing it works on both sides.
 
 ### Bookmark
 
@@ -89,7 +88,7 @@ Removes the bookmark for that `(session, path)`. Symmetric with `bookmark` — t
 ### Listing
 
 ```json
-[
+{"items": [
   {
     "id": 3,
     "name": "Layout playground",
@@ -102,7 +101,7 @@ Removes the bookmark for that `(session, path)`. Symmetric with `bookmark` — t
     "created_at": "2026-06-16T22:22:04.856926+00:00",
     "updated_at": "2026-06-16T22:22:04.856938+00:00"
   }
-]
+], "pagination": {"limit": 20, "offset": 0, "total": 1, "has_more": false}}
 ```
 
 `scope` is the bookmark's own visibility scope; `root` is the session's artifacts directory; `relative_path` is the key you pass to `bookmark` / `unbookmark`.
@@ -143,10 +142,10 @@ $TWICC artifacts unbookmark self report.md
 ## Related commands
 
 - `$TWICC sessions` — list sessions (find the SESSION_ID that owns an artifact). Skill: `twicc-sessions`.
-- `$TWICC session <session_id>` — one session's row (reduced from 2026-10-01; `--full` for every field). Skill: `twicc-session`.
+- `$TWICC session <session_id>` — one session's row (reduced; `--full` for every field). Skill: `twicc-session`.
 
 ## How to present results
 
 1. Show each bookmark's name, scope, and `relative_path`; group by session or project when listing many.
-2. If `--paginated` reports `has_more: true`, offer to fetch the next page with `--offset`.
+2. If `pagination.has_more` is `true`, offer to fetch the next page with `--offset`.
 3. You are in TwiCC — link to a bookmarked artifact: `[link text](/project/{project_id}/artifacts/{id})`.

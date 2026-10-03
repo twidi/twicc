@@ -5,12 +5,12 @@ The provider-internal subagents a session spawned. MCP tool: `mcp__twicc__sessio
 ## Usage
 
 ```bash
-$TWICC session <SESSION_ID> agents [--limit N] [--offset N] [--paginated] [--slim | --full]
+$TWICC session <SESSION_ID> agents [--limit N] [--offset N] [--full]
 ```
 
 - The provider-internal subagents, most recently active first. Not the sessions created with `create-session`: see `topology`.
 - Fails on a subagent.
-- Rows as `sessions` returns them (skill: `twicc-sessions`). **Default: `--full` until 2026-10-01, `--slim` from that date** (`--slim` then becomes a no-op; `--full` keeps working on both sides). Until then a call with neither flag prints a one-line notice on stderr (RPC: `warnings` key; never on MCP).
+- Rows as `sessions` returns them (skill: `twicc-sessions`). Reduced by default; `--full` for the full payload. The result is `{items, pagination}` (20 per page).
 - `process` is always `null`: a subagent runs inside its parent's process.
 
 ## Examples

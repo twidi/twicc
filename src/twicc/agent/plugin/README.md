@@ -1,6 +1,6 @@
 # TwiCC Agent Plugin
 
-This directory contains the TwiCC plugin for Claude Code agents. The plugin exposes a set of **skills** — structured instruction files that tell an agent how to use TwiCC's CLI to query sessions, projects, workspaces, processes, and more.
+This directory contains the TwiCC plugin for Claude Code agents. The plugin exposes a set of **skills** — structured instruction files that tell an agent how to use TwiCC's CLI to query sessions, projects, workspaces, and more.
 
 ## Structure
 

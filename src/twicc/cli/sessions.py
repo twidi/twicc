@@ -1,8 +1,6 @@
 """CLI implementation for the ``twicc sessions`` subcommand."""
 
-from twicc.cli._output import (
-    PAGINATED_DEFAULT_LIMIT, emit_error, emit_list, pagination_notice, resolve_limit, slim_notice,
-)
+from twicc.cli._output import emit_error, emit_list, resolve_limit
 
 
 def build_filtered_queryset(
@@ -209,8 +207,6 @@ def main(
     descendants: str | None = None,
     siblings: str | None = None,
     annotation: list[str] | None = None,
-    paginated: bool = False,
-    slim: bool = False,
     full: bool = False,
     provider: str | None = None,
     state: list[str] | None = None,
@@ -228,9 +224,6 @@ def main(
     import django
 
     django.setup()
-    paginated = pagination_notice("sessions", paginated, default_limit=PAGINATED_DEFAULT_LIMIT)
-    slim = slim_notice("sessions", slim, full)
-
 
     qs, process_rows = build_filtered_queryset(
         project=project,
@@ -256,17 +249,17 @@ def main(
     from twicc.cli._session_payload import cli_session_payloads
     from twicc.core.serializers import slim_session
 
-    limit = resolve_limit(limit, paginated=paginated, default=PAGINATED_DEFAULT_LIMIT)
-    total = qs.count() if paginated else None
+    limit = resolve_limit(limit)
+    total = qs.count()
     sessions = qs[offset : offset + limit]
     data = cli_session_payloads(sessions)
-    if slim:
+    if not full:
         data = [slim_session(row) for row in data]
 
     if process_rows is None:
         process_rows = load_process_rows(
             [row["id"] for row in data], resolve_listing_twicc_pid(),
         )
-    attach_process_blocks(data, process_rows, slim=slim)
+    attach_process_blocks(data, process_rows, slim=not full)
 
-    emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)
+    emit_list(data, limit=limit, offset=offset, total=total)

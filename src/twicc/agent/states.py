@@ -39,9 +39,9 @@ def get_process_memory(pid: int) -> int | None:
 # the three deliberate-stop call sites, each shared by the UI and the CLI/MCP:
 #
 # - ``manual``   — the Stop gesture (``kill_process`` over the WS,
-#                  ``process stop`` / ``processes stop``)
+#                  ``sessions stop`` / ``session <id> stop``)
 # - ``force``    — the hard-kill gesture (Shift-click on Stop, Shift +
-#                  triple-Escape, ``process stop --force``); the default reason
+#                  triple-Escape, ``sessions stop --force``); the default reason
 #                  of :meth:`BaseAgentManager.hard_kill_agent`
 # - ``archived`` — archiving a session (both surfaces go through
 #                  ``core.services.session_update.apply_session_archived_change``)

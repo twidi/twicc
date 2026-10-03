@@ -41,11 +41,11 @@ RPC_SCOPE_READ = "read"
 # registry paths (see ``twicc.rpc.generator.build_registry``): the bare group
 # name for a listing (e.g. ``sessions``), ``group/subcommand`` otherwise.
 #
-# ``processes/wait``, ``process/wait`` and ``session/wait-reply`` are long-polls:
-# they block but never mutate, so they qualify as reads under the
-# mutation-is-the-line rule. ``session/wait-reply`` matters for ``batch_read``,
-# which only accepts reads. ``sessions/wait-reply`` is the plural of the same wait,
-# and read for the same reason: it polls and never writes.
+# ``session/wait-reply`` is a long-poll: it blocks but never mutates, so it
+# qualifies as a read under the mutation-is-the-line rule. It matters for
+# ``batch_read``, which only accepts reads. ``sessions/wait-reply`` is the
+# plural of the same wait, and read for the same reason: it polls and never
+# writes.
 # ``artifacts`` is the listing only — ``artifacts/bookmark`` and
 # ``artifacts/unbookmark`` write and are deliberately excluded.
 COOKIE_READONLY_COMMANDS: frozenset[str] = frozenset(
@@ -66,11 +66,6 @@ COOKIE_READONLY_COMMANDS: frozenset[str] = frozenset(
         "sessions/wait-reply",
         "session/pending-requests",
         "artifacts",
-        "processes",
-        "processes/get",
-        "processes/wait",
-        "process",
-        "process/wait",
         "topology",
         "search",
         "status",

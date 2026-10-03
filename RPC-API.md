@@ -105,10 +105,6 @@ wait. Over HTTP this means:
 Keep `--wait-timeout` modest and resume from the returned cursor, or raise the
 relevant client/proxy idle limits.
 
-The `process`, `process/*`, `processes` and `processes/*` routes stop working on
-2026-10-01 (exit `64`, error naming the replacement); use the `session` /
-`sessions` routes.
-
 ### Some commands are local-only
 
 A few commands are host-bound or interactive and are **not** exposed over the API:

@@ -1,4 +1,4 @@
-"""``twicc process <ID> stop`` sub-command.
+"""``twicc session <ID> stop`` sub-command.
 
 Drops a ``kind="process:stop"`` payload in ``<data_dir>/drop-requests/`` so
 the live TwiCC server asks the agent manager to kill the agent attached

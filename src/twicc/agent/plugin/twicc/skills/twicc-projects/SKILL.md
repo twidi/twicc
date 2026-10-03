@@ -36,26 +36,25 @@ $TWICC projects [OPTIONS]
 
 - `--limit N` — max results (default: 20).
 - `--offset N` — skip first N for pagination (default: 0).
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total` and `has_more`, so you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size is **20**. **Before 2026-10-01 the flag is opt-in and a call without it is unchanged; from that date the envelope is the only shape and the flag is an accepted no-op.** Passing it works on both sides.
 - `--include-archived` — include archived projects (excluded by default).
 - `--workspace ID` — only projects belonging to this workspace.
 
 ### Batch lookup
 
 ```bash
-$TWICC projects get <PROJECT> [<PROJECT>...] [--paginated]
+$TWICC projects get <PROJECT> [<PROJECT>...]
 ```
 
 Each `PROJECT` is a directory path or a project ID (**drop the leading dash** on ids — the CLI re-adds it). Returns one entry per value in input order (duplicates collapsed). No filter flags — archived projects are returned like active ones.
 
-- `--paginated` — wrap the result in `{"items": [...]}` — **no `pagination`**: one entry per value asked, nothing to page. **Before 2026-10-01 the result is a bare array and the flag opts in; from that date `{"items": [...]}` is the only shape and the flag is an accepted no-op.** Until then a call without it prints a one-line notice on stderr (in the RPC envelope's `warnings`; never on MCP).
+- The result is `{"items": [...]}` with **no `pagination`**: one entry per value asked, nothing to page.
 
 ## Output format
 
 ### Listing
 
 ```json
-[
+{"items": [
   {
     "id": "-home-twidi-dev-myproject-abc123",
     "directory": "/home/twidi/dev/myproject",
@@ -76,23 +75,14 @@ Each `PROJECT` is a directory path or a project ID (**drop the leading dash** on
     "workspaces": ["backend", "home-side-projects"],
     "worktrees": ["-home-twidi-dev-myproject--worktrees-feature-x"]
   }
-]
+], "pagination": {"limit": 20, "offset": 0, "total": 1, "has_more": false}}
 ```
 
 ### Batch lookup (`get`)
 
 Same shape per entry, plus a `known` boolean. When `known: false`, all other fields are `null`.
 
-Before 2026-10-01 (without `--paginated`), a bare array:
-
-```json
-[
-  {"id": "-home-twidi-dev-myproject", "name": "My Project", ..., "known": true},
-  {"id": "-typo-or-unknown", "name": null, ..., "known": false}
-]
-```
-
-From 2026-10-01, or with `--paginated` now, the same entries under `items` (no `pagination`):
+The entries sit under `items` (no `pagination`):
 
 ```json
 {"items": [
@@ -141,7 +131,7 @@ $TWICC projects get home-twidi-dev-myproj  # by id, dash dropped
 ## How to present results
 
 1. Show project name (or directory if no name) and session count.
-2. If `--paginated` reports `has_more: true`, offer to fetch the next page with `--offset`.
+2. If `pagination.has_more` is `true`, offer to fetch the next page with `--offset`.
 3. You are in TwiCC — link to a project: `[link text](/project/{project_id})`.
 4. Only include cost information if explicitly asked.
 5. For `get` output: flag `known: false` entries as unknown (typo or never existed).

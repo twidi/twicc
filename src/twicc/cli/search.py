@@ -1,6 +1,6 @@
 """CLI implementation for the ``twicc search`` subcommand."""
 
-from twicc.cli._output import PAGINATED_DEFAULT_LIMIT, emit_error, emit_list, pagination_notice, resolve_limit
+from twicc.cli._output import emit_error, emit_list, resolve_limit
 
 
 def main(
@@ -17,7 +17,6 @@ def main(
     project: str | None = None,
     workspace: str | None = None,
     annotation: list[str] | None = None,
-    paginated: bool = False,
 ) -> None:
     """Execute a raw Tantivy search and print JSON results to stdout.
 
@@ -36,12 +35,6 @@ def main(
     ``django.setup()`` so an ordinary full-text query stays Django-free. The
     typer wrapper guarantees the filiation filters are mutually exclusive.
     """
-    # Above the conditional django.setup() below: the notice must fire for every
-    # search, not only the ones that touch the DB. shape="object" selects the
-    # text naming the key renames — search is the one listing whose current
-    # output is not a bare array.
-    paginated = pagination_notice("search", paginated, default_limit=PAGINATED_DEFAULT_LIMIT, shape="object")
-
     if (
         spawned_by in ("self", "parent")
         or spawn_tree is not None
@@ -70,7 +63,7 @@ def main(
     except RuntimeError as e:
         emit_error(str(e), code=1)
 
-    limit = resolve_limit(limit, paginated=paginated, default=PAGINATED_DEFAULT_LIMIT)
+    limit = resolve_limit(limit)
 
     annotation_filters = None
     if annotation:
@@ -122,14 +115,10 @@ def main(
     except RuntimeError as exc:
         emit_error(f"Error: {exc}", code=1)
 
-    # ``search`` is the one listing whose historical shape is already an object,
-    # so the unpaginated branch emits it untouched; ``--paginated`` maps it onto
-    # the envelope every other listing uses. Whatever is not a pagination fact
-    # (the echoed query, the annotation flags, a parse error) stays top-level.
+    # Whatever is not a pagination fact (the echoed query, the annotation
+    # flags, a parse error) stays top-level.
     emit_list(
         result["hits"],
-        paginated=paginated,
-        plain=result,  # untouched, key order included
         limit=limit,
         offset=offset,
         total=result["total_hits"],

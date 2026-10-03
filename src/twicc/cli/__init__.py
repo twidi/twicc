@@ -22,11 +22,7 @@ ensure_env_loaded()
 
 from twicc.cli._drop_request.project import derive_project_id  # noqa: E402
 from twicc.cli._output import (  # noqa: E402
-    CUTOVER_NOTICE, CUTOVER_NOTICE_OBJECT, CUTOVER_NOTICE_PAGED, FULL_HELP, LOOKUP_CUTOVER_NOTICE,
-    LOOKUP_ENVELOPE_HELP, PAGINATED_DEFAULT_LIMIT, PAGINATED_HELP, PEERS_CUTOVER_NOTICE,
-    SESSIONS_GET_IDS_HELP, SLIM_CUTOVER_NOTICE, SLIM_HELP, TOPOLOGY_CUTOVER_NOTICE,
-    TOPOLOGY_FULL_HELP, TOPOLOGY_SLIM_HELP, WHOAMI_CUTOVER_NOTICE, WHOAMI_HELP, emit_error,
-    limit_help, listing_cutover_passed, refuse_if_removed, removal_help, removed_command,
+    FULL_HELP, SESSIONS_GET_IDS_HELP, TOPOLOGY_FULL_HELP, WHOAMI_HELP, emit_error, limit_help,
 )
 from twicc.cli._session_group import HELP_REQUESTED, SessionGroup  # noqa: E402
 from twicc.cli._wait_reply import WAIT_BACKGROUND_HELP  # noqa: E402
@@ -77,7 +73,7 @@ def run() -> None:
 
 projects_app = typer.Typer(
     name="projects",
-    help=CUTOVER_NOTICE + "List projects, or look up specific project_ids in batch.",
+    help="List projects, or look up specific project_ids in batch.",
     invoke_without_command=True,
 )
 app.add_typer(projects_app)
@@ -86,9 +82,9 @@ app.add_typer(projects_app)
 @projects_app.callback(invoke_without_command=True)
 def _projects_default(
     ctx: typer.Context,
-    limit: int = typer.Option(None, help=limit_help("projects", PAGINATED_DEFAULT_LIMIT)),
+    limit: int = typer.Option(None, help=limit_help("projects")),
     offset: int = typer.Option(0, help="Skip first N projects."),
-    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
+    paginated: bool = typer.Option(False, "--paginated", hidden=True),
     include_archived: bool = typer.Option(False, "--include-archived", help="Include archived projects."),
     workspace: str = typer.Option(None, "--workspace", help="Filter by workspace ID (only projects belonging to that workspace)."),
 ) -> None:
@@ -98,13 +94,12 @@ def _projects_default(
 
     from twicc.cli.projects import main as projects_main
 
-    projects_main(limit=limit, offset=offset, archived=include_archived, workspace=workspace,
-                  paginated=paginated)
+    projects_main(limit=limit, offset=offset, archived=include_archived, workspace=workspace)
 
 
 @projects_app.command(
     name="get",
-    help=LOOKUP_CUTOVER_NOTICE + (
+    help=(
         "Look up projects by id or path (placeholder for missing, includes archived).\n\n"
         "Unlike ``twicc projects``, ``get`` takes no filter flags: when the "
         "caller names the projects it cares about, the archived-by-default "
@@ -129,7 +124,7 @@ def _projects_get(
             "projects."
         ),
     ),
-    paginated: bool = typer.Option(False, "--paginated", help=LOOKUP_ENVELOPE_HELP),
+    paginated: bool = typer.Option(False, "--paginated", hidden=True),
 ) -> None:
     """Look up projects by id or path (placeholder for missing, includes archived).
 
@@ -139,7 +134,7 @@ def _projects_get(
     """
     from twicc.cli.projects_get import main as projects_get_main
 
-    projects_get_main([derive_project_id(pid)[0] for pid in project_ids], paginated=paginated)
+    projects_get_main([derive_project_id(pid)[0] for pid in project_ids])
 
 
 @app.command()
@@ -159,7 +154,7 @@ def project(
 
 workspaces_app = typer.Typer(
     name="workspaces",
-    help=CUTOVER_NOTICE + "List workspaces, or look up specific workspace_ids in batch.",
+    help="List workspaces, or look up specific workspace_ids in batch.",
     invoke_without_command=True,
 )
 app.add_typer(workspaces_app)
@@ -168,9 +163,9 @@ app.add_typer(workspaces_app)
 @workspaces_app.callback(invoke_without_command=True)
 def _workspaces_default(
     ctx: typer.Context,
-    limit: int = typer.Option(None, help=limit_help("workspaces", PAGINATED_DEFAULT_LIMIT)),
+    limit: int = typer.Option(None, help=limit_help("workspaces")),
     offset: int = typer.Option(0, help="Skip first N workspaces."),
-    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
+    paginated: bool = typer.Option(False, "--paginated", hidden=True),
     include_archived: bool = typer.Option(False, "--include-archived", help="Include archived workspaces."),
 ) -> None:
     """List all workspaces as JSON (in their stored order, default action)."""
@@ -179,12 +174,12 @@ def _workspaces_default(
 
     from twicc.cli.workspaces import main as workspaces_main
 
-    workspaces_main(limit=limit, offset=offset, archived=include_archived, paginated=paginated)
+    workspaces_main(limit=limit, offset=offset, archived=include_archived)
 
 
 @workspaces_app.command(
     name="get",
-    help=LOOKUP_CUTOVER_NOTICE + (
+    help=(
         "Look up workspaces by id (placeholder for missing, includes archived).\n\n"
         "Unlike ``twicc workspaces``, ``get`` takes no filter flags: when the "
         "caller names the workspaces it cares about, the archived-by-default "
@@ -205,7 +200,7 @@ def _workspaces_get(
             "explicit ids."
         ),
     ),
-    paginated: bool = typer.Option(False, "--paginated", help=LOOKUP_ENVELOPE_HELP),
+    paginated: bool = typer.Option(False, "--paginated", hidden=True),
 ) -> None:
     """Look up workspaces by id (placeholder for missing, includes archived).
 
@@ -215,7 +210,7 @@ def _workspaces_get(
     """
     from twicc.cli.workspaces_get import main as workspaces_get_main
 
-    workspaces_get_main(workspace_ids, paginated=paginated)
+    workspaces_get_main(workspace_ids)
 
 
 @app.command()
@@ -230,7 +225,7 @@ def workspace(
 
 sessions_app = typer.Typer(
     name="sessions",
-    help=CUTOVER_NOTICE + SLIM_CUTOVER_NOTICE + "List sessions, or look up specific session_ids in batch.",
+    help="List sessions, or look up specific session_ids in batch.",
     invoke_without_command=True,
 )
 app.add_typer(sessions_app)
@@ -247,8 +242,8 @@ def _sessions_default(
         ),
     ),
     workspace: str = typer.Option(None, "--workspace", help="Filter by workspace ID (only sessions of projects in that workspace, worktrees included). Mutually exclusive with --project."),
-    limit: int = typer.Option(None, help=limit_help("sessions", PAGINATED_DEFAULT_LIMIT)),
-    slim: bool = typer.Option(False, "--slim", help=SLIM_HELP),
+    limit: int = typer.Option(None, help=limit_help("sessions")),
+    slim: bool = typer.Option(False, "--slim", hidden=True),
     full: bool = typer.Option(False, "--full", help=FULL_HELP),
     provider: str = typer.Option(
         None, "--provider",
@@ -279,7 +274,7 @@ def _sessions_default(
         ),
     ),
     offset: int = typer.Option(0, help="Skip first N sessions."),
-    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
+    paginated: bool = typer.Option(False, "--paginated", hidden=True),
     include_archived: bool = typer.Option(False, "--include-archived", help="Include archived sessions."),
     include_hidden: bool = typer.Option(False, "--include-hidden", help="Include hidden sessions in the listing."),
     only_hidden: bool = typer.Option(False, "--only-hidden", help="Show ONLY hidden sessions (mutually exclusive with --include-hidden)."),
@@ -382,8 +377,6 @@ def _sessions_default(
         descendants=descendants,
         siblings=siblings,
         annotation=annotation,
-        paginated=paginated,
-        slim=slim,
         full=full,
         provider=provider,
         state=state,
@@ -641,9 +634,8 @@ def _sessions_wait_reply(
 
 @sessions_app.command(
     name="get",
-    # An explicit help, not the docstring: the deprecation prefix must precede
-    # it, and the help is also the MCP tool description.
-    help=LOOKUP_CUTOVER_NOTICE + SLIM_CUTOVER_NOTICE + (
+    # An explicit help, not the docstring: the help is also the MCP tool description.
+    help=(
         "Look up sessions by id (placeholder for missing, includes subagents).\n\n"
         "Unlike ``twicc sessions``, ``get`` takes no filter flags: when the "
         "caller names the sessions it cares about, layering archived / "
@@ -657,9 +649,9 @@ def _sessions_get(
         metavar="SESSION_ID...",
         help=SESSIONS_GET_IDS_HELP,
     ),
-    slim: bool = typer.Option(False, "--slim", help=SLIM_HELP),
+    slim: bool = typer.Option(False, "--slim", hidden=True),
     full: bool = typer.Option(False, "--full", help=FULL_HELP),
-    paginated: bool = typer.Option(False, "--paginated", help=LOOKUP_ENVELOPE_HELP),
+    paginated: bool = typer.Option(False, "--paginated", hidden=True),
 ) -> None:
     """Look up sessions by id (placeholder for missing, includes subagents)."""
     if slim and full:
@@ -667,13 +659,13 @@ def _sessions_get(
 
     from twicc.cli.sessions_get import main as sessions_get_main
 
-    sessions_get_main(session_ids, slim=slim, full=full, paginated=paginated)
+    sessions_get_main(session_ids, full=full)
 
 
 session_app = typer.Typer(
     name="session",
     cls=SessionGroup,
-    help=SLIM_CUTOVER_NOTICE + "Inspect a session.",
+    help="Inspect a session.",
     invoke_without_command=True,
 )
 app.add_typer(session_app)
@@ -686,7 +678,7 @@ def _session_default(
         "The session ID (for normal sessions or agents) to look up, or 'self' "
         "(your own session) or 'parent' (the session that spawned you)."
     )),
-    slim: bool = typer.Option(False, "--slim", help=SLIM_HELP),
+    slim: bool = typer.Option(False, "--slim", hidden=True),
     full: bool = typer.Option(False, "--full", help=FULL_HELP),
 ) -> None:
     """Show a single session as JSON."""
@@ -727,13 +719,13 @@ def _session_default(
 
     from twicc.cli.session import main as session_main
 
-    session_main(session_id, slim=slim, full=full)
+    session_main(session_id, full=full)
 
 
-@session_app.command(help=CUTOVER_NOTICE_PAGED + "Show session item(s) content as JSON.")
+@session_app.command(help="Show session item(s) content as JSON.")
 def content(
     ctx: typer.Context,
-    range: str = typer.Argument(None, help="Line number or range (e.g. '5' or '10-20'). Optional when --contains, --limit/--offset or --tail is given."),
+    range: str = typer.Argument(None, help="Line number or range (e.g. '5' or '10-20'). Optional: without any selector, the first page of items is returned."),
     contains: list[str] = typer.Option(
         [],
         "--contains",
@@ -743,19 +735,18 @@ def content(
             "Combinable with a line/range to scope the search."
         ),
     ),
-    limit: int = typer.Option(None, "--limit", help=limit_help("items", None, suffix=" Applied after the range and --contains.")),
+    limit: int = typer.Option(None, "--limit", help=limit_help("items", suffix=" Applied after the range and --contains.")),
     offset: int = typer.Option(0, "--offset", help="Skip first N matching items."),
     tail: int = typer.Option(None, "--tail", help="Return the last N matching items (mutually exclusive with --limit/--offset)."),
-    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
+    paginated: bool = typer.Option(False, "--paginated", hidden=True),
 ) -> None:
     """Show session item(s) content as JSON."""
     from twicc.cli.session import content as session_content
 
-    session_content(ctx.obj, range_str=range, contains=contains, limit=limit, offset=offset,
-                    tail=tail, paginated=paginated)
+    session_content(ctx.obj, range_str=range, contains=contains, limit=limit, offset=offset, tail=tail)
 
 
-@session_app.command(help=CUTOVER_NOTICE_PAGED + "Show all user/assistant messages of a session as JSON (cross-provider).")
+@session_app.command(help="Show all user/assistant messages of a session as JSON (cross-provider).")
 def messages(
     ctx: typer.Context,
     range: str = typer.Option(None, "--range", help="Restrict to a line number or range (e.g. '5' or '10-20')."),
@@ -782,16 +773,16 @@ def messages(
             "Applied before --tail/--limit/--offset."
         ),
     ),
-    limit: int = typer.Option(None, "--limit", help=limit_help("messages", None)),
+    limit: int = typer.Option(None, "--limit", help=limit_help("messages")),
     offset: int = typer.Option(0, "--offset", help="Skip first N messages."),
-    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
+    paginated: bool = typer.Option(False, "--paginated", hidden=True),
     tail: int = typer.Option(None, "--tail", help="Return the last N messages (mutually exclusive with --limit/--offset)."),
 ) -> None:
     """Show all user/assistant messages of a session as JSON (cross-provider)."""
     from twicc.cli.session import messages as session_messages
 
     session_messages(ctx.obj, range_str=range, role=role, contains=contains, is_final=is_final,
-                     limit=limit, offset=offset, tail=tail, paginated=paginated)
+                     limit=limit, offset=offset, tail=tail)
 
 
 @session_app.command("wait-reply")
@@ -931,10 +922,9 @@ def _session_stop(
     """Stop the live agent attached to this session.
 
     Idempotent: stopping a session whose process is already gone still
-    reports ``stopped``. Same operation as ``process <ID> stop``, which this
-    is meant to replace.
+    reports ``stopped``.
     """
-    from twicc.cli.process_stop import stop_cmd
+    from twicc.cli.session_stop import stop_cmd
 
     stop_cmd(ctx.obj, timeout=timeout, force=force)
 
@@ -1047,14 +1037,14 @@ def _session_cancel_questions(
                timeout=timeout)
 
 
-@session_app.command(help=CUTOVER_NOTICE + SLIM_CUTOVER_NOTICE + "List subagents of a session as JSON.")
+@session_app.command(help="List subagents of a session as JSON.")
 def agents(
     ctx: typer.Context,
-    limit: int = typer.Option(None, help=limit_help("subagents", PAGINATED_DEFAULT_LIMIT)),
-    slim: bool = typer.Option(False, "--slim", help=SLIM_HELP),
+    limit: int = typer.Option(None, help=limit_help("subagents")),
+    slim: bool = typer.Option(False, "--slim", hidden=True),
     full: bool = typer.Option(False, "--full", help=FULL_HELP),
     offset: int = typer.Option(0, help="Skip first N subagents."),
-    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
+    paginated: bool = typer.Option(False, "--paginated", hidden=True),
 ) -> None:
     """List subagents of a session as JSON."""
     if slim and full:
@@ -1062,7 +1052,7 @@ def agents(
 
     from twicc.cli.session import agents as session_agents
 
-    session_agents(ctx.obj, limit=limit, offset=offset, paginated=paginated, slim=slim, full=full)
+    session_agents(ctx.obj, limit=limit, offset=offset, full=full)
 
 
 @session_app.command()
@@ -1080,12 +1070,12 @@ def plan(
     session_plan(ctx.obj, list_docs=list_docs, doc_path=path)
 
 
-@session_app.command(help=CUTOVER_NOTICE + "List the session's workflows as JSON (Claude Code only).")
+@session_app.command(help="List the session's workflows as JSON (Claude Code only).")
 def workflows(
     ctx: typer.Context,
-    limit: int = typer.Option(None, help=limit_help("workflows", PAGINATED_DEFAULT_LIMIT)),
+    limit: int = typer.Option(None, help=limit_help("workflows")),
     offset: int = typer.Option(0, help="Skip first N workflows."),
-    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
+    paginated: bool = typer.Option(False, "--paginated", hidden=True),
     result: bool = typer.Option(
         False,
         "--result",
@@ -1104,8 +1094,7 @@ def workflows(
     """List the session's workflows as JSON (Claude Code only)."""
     from twicc.cli.session import workflows as session_workflows
 
-    session_workflows(ctx.obj, limit=limit, offset=offset, paginated=paginated,
-                      result=result, full=full)
+    session_workflows(ctx.obj, limit=limit, offset=offset, result=result, full=full)
 
 
 @session_app.command()
@@ -1121,7 +1110,7 @@ def workflow(
 
 artifacts_app = typer.Typer(
     name="artifacts",
-    help=CUTOVER_NOTICE + "List bookmarked artifacts, or bookmark / unbookmark one.",
+    help="List bookmarked artifacts, or bookmark / unbookmark one.",
     invoke_without_command=True,
 )
 app.add_typer(artifacts_app)
@@ -1174,9 +1163,9 @@ def _artifacts_default(
             "everywhere. Independent of --project / --workspace."
         ),
     ),
-    limit: int = typer.Option(None, help=limit_help("bookmarks", PAGINATED_DEFAULT_LIMIT)),
+    limit: int = typer.Option(None, help=limit_help("bookmarks")),
     offset: int = typer.Option(0, help="Skip first N bookmarks."),
-    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
+    paginated: bool = typer.Option(False, "--paginated", hidden=True),
 ) -> None:
     """List bookmarked artifacts as JSON (most recently updated first, default action)."""
     if ctx.invoked_subcommand is not None:
@@ -1193,7 +1182,6 @@ def _artifacts_default(
         scope=scope,
         limit=limit,
         offset=offset,
-        paginated=paginated,
     )
 
 
@@ -1286,7 +1274,7 @@ def _artifacts_unbookmark(
 
 share_app = typer.Typer(
     name="share",
-    help=CUTOVER_NOTICE + "List / show shares (read). Manage share links (create/revoke/…).",
+    help="List / show shares (read). Manage share links (create/revoke/…).",
     invoke_without_command=True,
 )
 app.add_typer(share_app)
@@ -1299,8 +1287,8 @@ def _share_default(
     session: str = typer.Option(None, "--session", help="Filter by session id; accepts 'self' and 'parent'."),
     project: str = typer.Option(None, "--project", help="Filter by project (worktrees included)."),
     include_revoked: bool = typer.Option(False, "--include-revoked", help="Include revoked shares."),
-    limit: int = typer.Option(None, help=limit_help("shares", PAGINATED_DEFAULT_LIMIT)), offset: int = typer.Option(0),
-    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
+    limit: int = typer.Option(None, help=limit_help("shares")), offset: int = typer.Option(0),
+    paginated: bool = typer.Option(False, "--paginated", hidden=True),
 ) -> None:
     """List shares as JSON (default action; read-only, direct DB)."""
     if ctx.invoked_subcommand is not None:
@@ -1317,8 +1305,7 @@ def _share_default(
     from twicc.cli.share import list_main
     list_main(kind=kind, session=session,
               project=derive_project_id(project)[0] if project else None,
-              include_revoked=include_revoked, limit=limit, offset=offset,
-              paginated=paginated)
+              include_revoked=include_revoked, limit=limit, offset=offset)
 
 
 @share_app.command(name="show")
@@ -1445,7 +1432,7 @@ def usage() -> None:
     usage_main()
 
 
-@app.command(help=TOPOLOGY_CUTOVER_NOTICE + "Show the spawned-session tree containing a session as JSON.")
+@app.command(help="Show the spawned-session tree containing a session as JSON.")
 def topology(
     session_id: str = typer.Argument(
         help=(
@@ -1462,13 +1449,8 @@ def topology(
             "data marked unavailable."
         ),
     ),
-    slim: bool = typer.Option(False, "--slim", help=TOPOLOGY_SLIM_HELP),
+    slim: bool = typer.Option(False, "--slim", hidden=True),
     full: bool = typer.Option(False, "--full", help=TOPOLOGY_FULL_HELP),
-    full_sessions: bool = typer.Option(
-        False,
-        "--full-sessions/--no-full-sessions",
-        help="Deprecated alias of --full, kept for existing callers.",
-    ),
     annotation: list[str] = typer.Option(
         [],
         "--annotation",
@@ -1492,480 +1474,17 @@ def topology(
     ),
 ) -> None:
     """Show the spawned-session tree containing a session as JSON."""
-    # The alias only ever adds: `--no-full-sessions` never cancels `--full`.
-    full = full or full_sessions
     if slim and full:
-        emit_error("Error: --slim and --full (or --full-sessions) are mutually exclusive.", code=2)
+        emit_error("Error: --slim and --full are mutually exclusive.", code=2)
 
     from twicc.cli.topology import main as topology_main
 
     topology_main(
         session_id,
         include_processes=processes,
-        slim=slim,
         full=full,
         annotation=annotation,
         siblings=siblings,
-    )
-
-
-processes_app = typer.Typer(
-    name="processes",
-    # No CUTOVER_NOTICE: the command stops on the date its envelope would
-    # have become the default, so announcing the envelope would be moot.
-    help=removal_help("processes") + "List live TwiCC processes, or look up specific session_ids.",
-    invoke_without_command=True,
-    hidden=listing_cutover_passed(),
-)
-app.add_typer(processes_app)
-
-
-@processes_app.callback(invoke_without_command=True)
-def _processes_default(
-    ctx: typer.Context,
-    provider: str = typer.Option(None, "--provider", help="Filter by backend provider (e.g. 'claude_code', 'codex')."),
-    state: str = typer.Option(
-        None,
-        "--state",
-        help=(
-            "Filter by state: 'starting', 'assistant_turn' (actively generating), "
-            "'awaiting_user_input' (blocked on a user click), or 'user_turn' "
-            "(turn finished, awaiting next user message). 'dead' is never returned."
-        ),
-    ),
-    limit: int = typer.Option(None, help=limit_help("processes", 20)),
-    offset: int = typer.Option(0, help="Skip first N processes."),
-    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
-    include_hidden: bool = typer.Option(False, "--include-hidden", help="Include processes of hidden sessions."),
-    only_hidden: bool = typer.Option(False, "--only-hidden", help="Show ONLY processes of hidden sessions (mutually exclusive with --include-hidden)."),
-    spawned_by: str = typer.Option(
-        None,
-        "--spawned-by",
-        help=(
-            "Filter to processes of sessions spawned by the given session_id, 'self' "
-            "for the current session, or 'parent' for the session that spawned the "
-            "current one (= my siblings, myself included). Implies --include-hidden "
-            "by default: a filiation query surfaces every matching child whatever "
-            "its visibility. Mutually exclusive with --spawn-tree."
-        ),
-    ),
-    spawn_tree: str = typer.Option(
-        None,
-        "--spawn-tree",
-        help=(
-            "Filter to processes of every session in the spawn tree that contains "
-            "the given session_id — any id in the tree works (root, middle, or "
-            "leaf): the CLI looks it up and resolves to the tree it belongs to. "
-            "Use 'self' for the tree containing the current session. Mutually "
-            "exclusive with --spawned-by and --descendants. Implies "
-            "--include-hidden by default."
-        ),
-    ),
-    descendants: str = typer.Option(
-        None,
-        "--descendants",
-        help=(
-            "Filter to processes of the proper descendants of the given session_id "
-            "(every session transitively spawned by it, at any depth, target "
-            "excluded), 'self' for the descendants of the current session, or "
-            "'parent' for the descendants of the current session's spawner (= my "
-            "siblings, their subtrees, and my own subtree). Mutually exclusive with "
-            "--spawned-by, --spawn-tree and --siblings. Implies --include-hidden by default."
-        ),
-    ),
-    siblings: str = typer.Option(
-        None,
-        "--siblings",
-        help=(
-            "Filter to processes of the siblings of the given session_id — the "
-            "other sessions spawned by the same parent — or 'self' for the current "
-            "session's siblings. The target itself is always excluded (use "
-            "--spawned-by parent to include yourself). 'parent' is not supported. "
-            "Mutually exclusive with --spawned-by, --spawn-tree and --descendants. "
-            "Implies --include-hidden by default."
-        ),
-    ),
-    annotation: list[str] = typer.Option(
-        [],
-        "--annotation",
-        help=(
-            "Filter sessions by annotation. Repeatable, AND-combined. "
-            "Operators: KEY=VALUE, KEY!=VALUE, KEY:exists, KEY:not-exists, "
-            "KEY:in:V1,V2. KEY is a dotted path. Values are typed "
-            "(true/false/null/int/float/string), same rules as "
-            "create-session --annotation. Requires --spawned-by, --spawn-tree, "
-            "--descendants, or --siblings. See twicc-sessions skill for details."
-        ),
-    ),
-) -> None:
-    """List currently running processes of the live TwiCC instance as JSON (default action)."""
-    # Runs before Click parses a subcommand's own arguments, so past the
-    # cutover the refusal wins over a missing one.
-    refuse_if_removed("processes", ctx.invoked_subcommand)
-    if ctx.invoked_subcommand is not None:
-        return
-    removed_command("processes")
-
-    if include_hidden and only_hidden:
-        emit_error("Error: --include-hidden and --only-hidden are mutually exclusive.", code=2)
-
-    if sum(x is not None for x in (spawned_by, spawn_tree, descendants, siblings)) > 1:
-        emit_error(
-            "Error: --spawned-by, --spawn-tree, --descendants and --siblings are mutually exclusive.",
-            code=2,
-        )
-
-    if annotation and not any((spawned_by, spawn_tree, descendants, siblings)):
-        emit_error(
-            "Error: --annotation requires --spawned-by, --spawn-tree, "
-            "--descendants, or --siblings on processes listing.",
-            code=2,
-        )
-
-    from twicc.cli.processes import main as processes_main
-
-    processes_main(
-        provider=provider,
-        state=state,
-        limit=limit,
-        offset=offset,
-        include_hidden=include_hidden,
-        only_hidden=only_hidden,
-        spawned_by=spawned_by,
-        spawn_tree=spawn_tree,
-        descendants=descendants,
-        siblings=siblings,
-        annotation=annotation,
-        paginated=paginated,
-    )
-
-
-@processes_app.command(
-    name="get",
-    help=removal_help("processes get") + (
-        "Look up live process state for one or more session_ids (placeholder for "
-        "missing).\n\n"
-        "Unlike ``twicc processes``, ``get`` takes no filter flags: when the caller "
-        "names the sessions it cares about, layering ``--provider`` / ``--state`` "
-        "would only blur the meaning of the placeholder rows."
-    ),
-)
-def _processes_get(
-    session_ids: list[str] = typer.Argument(
-        ...,
-        metavar="SESSION_ID...",
-        help=(
-            "One or more session IDs to look up. The output mirrors the input "
-            "order (duplicates collapsed, first occurrence wins). Each entry "
-            "is either the live process row or a placeholder with state=\"dead\" "
-            "when no live process exists for that ID; a session_known flag "
-            "distinguishes typos from genuinely-stopped sessions."
-        ),
-    ),
-) -> None:
-    """Look up live process state for one or more session_ids (placeholder for missing)."""
-    removed_command("processes get")
-    from twicc.cli.processes_get import main as processes_get_main
-
-    processes_get_main(session_ids)
-
-
-@processes_app.command(
-    name="stop",
-    help=removal_help("processes stop") + (
-        "Batch-stop live agent processes (idempotent, tolerant to skipped IDs).\n\n"
-        "Explicit session_ids and filtered session_ids are merged, then pre-checked "
-        "locally before dropping kill requests. Exit 0 always when the command "
-        "completes — callers inspect each entry's ``status`` for the per-id outcome."
-    ),
-)
-def _processes_stop(
-    session_ids: list[str] | None = typer.Argument(
-        None,
-        metavar="SESSION_ID...",
-        help=(
-            "Optional session IDs whose live agent process should be stopped. "
-            "If omitted, pass --spawned-by or --descendants to select "
-            "sessions; --annotation can narrow that scope."
-        ),
-    ),
-    timeout: int = typer.Option(
-        30,
-        "--timeout",
-        help=(
-            "Seconds to wait for the server's final status across the whole "
-            "batch (drops are processed in parallel server-side, so this is "
-            "a wall-clock budget, not N×30). Entries with no final status "
-            "by the deadline are reported with status=\"timeout\". Must be > 0."
-        ),
-    ),
-    force: bool = typer.Option(
-        False,
-        "--force",
-        help=(
-            "Hard kill every selected process: SIGKILL the process tree now, "
-            "bypassing the grace window (no clean turn finalization). For "
-            "wedged processes."
-        ),
-    ),
-    spawned_by: str = typer.Option(
-        None,
-        "--spawned-by",
-        help=(
-            "Stop processes of sessions spawned by the given session_id, 'self' "
-            "for the current session."
-        ),
-    ),
-    descendants: str = typer.Option(
-        None,
-        "--descendants",
-        help=(
-            "Stop processes of the proper descendants of the given session_id, "
-            "or 'self'."
-        ),
-    ),
-    annotation: list[str] = typer.Option(
-        [],
-        "--annotation",
-        help=(
-            "Filter selected sessions by annotation. Repeatable, AND-combined. "
-            "Requires --spawned-by or --descendants."
-        ),
-    ),
-) -> None:
-    """Batch-stop live agent processes (idempotent, tolerant to skipped IDs)."""
-    removed_command("processes stop")
-    if sum(x is not None for x in (spawned_by, descendants)) > 1:
-        emit_error(
-            "Error: --spawned-by and --descendants are mutually exclusive.",
-            code=2,
-        )
-
-    from twicc.cli.processes_stop import stop_cmd
-
-    stop_cmd(
-        session_ids or [],
-        timeout=timeout,
-        force=force,
-        spawned_by=spawned_by,
-        descendants=descendants,
-        annotation=annotation,
-    )
-
-
-@processes_app.command(
-    name="wait",
-    help=removal_help("processes wait") + (
-        "Block until multiple session_ids reach matching virtual states.\n\n"
-        "Explicit session_ids and filtered session_ids are merged into one wait pool. "
-        "Unknown explicit session_ids (no Session row AND no ProcessRun for this "
-        "TwiCC) are skipped silently and do NOT participate in --all / --first. If "
-        "every session_id is skipped, exits 0 (vacuous truth — nothing to wait for)."
-    ),
-)
-def _processes_wait(
-    items: list[str] | None = typer.Argument(
-        None,
-        metavar="ITEM...",
-        help=(
-            "A single list mixing optional session_ids and required statuses, "
-            "auto-discriminated by value. If session_ids are omitted, pass one "
-            "scope filter (--spawned-by or --descendants) to select sessions; "
-            "--annotation can narrow that scope. Explicit session_ids and "
-            "filtered session_ids are merged."
-        ),
-    ),
-    timeout: float = typer.Option(
-        ...,
-        "--timeout",
-        help=(
-            "Required. Seconds to wait before giving up (exit 5). Must be > 0. "
-            "Wall-clock budget for the entire batch (all session_ids are "
-            "polled in parallel)."
-        ),
-    ),
-    wait_all: bool = typer.Option(
-        True,
-        "--all/--first",
-        help=(
-            "--all (default): wait until EVERY active session_id has matched "
-            "at least one status. --first: stop as soon as one has matched. "
-            "Inactive (skipped_unknown) session_ids participate in neither."
-        ),
-    ),
-    transition: bool = typer.Option(
-        False,
-        "--transition",
-        help=(
-            "Only evaluate a match for a session_id after observing at least "
-            "one state transition since the initial snapshot. Applied "
-            "per-session — each id must transition before it can match."
-        ),
-    ),
-    spawned_by: str = typer.Option(
-        None,
-        "--spawned-by",
-        help=(
-            "Wait on sessions spawned by the given session_id, 'self' for the "
-            "current session."
-        ),
-    ),
-    descendants: str = typer.Option(
-        None,
-        "--descendants",
-        help=(
-            "Wait on the proper descendants of the given session_id, or "
-            "'self' for the current session."
-        ),
-    ),
-    annotation: list[str] = typer.Option(
-        [],
-        "--annotation",
-        help=(
-            "Filter selected sessions by annotation. Repeatable, AND-combined. "
-            "Requires --spawned-by or --descendants."
-        ),
-    ),
-) -> None:
-    """Block until multiple session_ids reach matching virtual states."""
-    removed_command("processes wait")
-    if sum(x is not None for x in (spawned_by, descendants)) > 1:
-        emit_error(
-            "Error: --spawned-by and --descendants are mutually exclusive.",
-            code=2,
-        )
-
-    from twicc.cli.processes_wait import wait_cmd
-
-    wait_cmd(
-        items or [],
-        timeout=timeout,
-        wait_all=wait_all,
-        transition=transition,
-        spawned_by=spawned_by,
-        descendants=descendants,
-        annotation=annotation,
-    )
-
-
-process_app = typer.Typer(
-    name="process",
-    help=removal_help("process") + "Inspect or control a session's live process.",
-    invoke_without_command=True,
-    hidden=listing_cutover_passed(),
-)
-app.add_typer(process_app)
-
-
-@process_app.callback(invoke_without_command=True)
-def _process_default(
-    ctx: typer.Context,
-    session_id: str = typer.Argument(help="The session ID of the running process."),
-) -> None:
-    """Show the currently running process for a session as JSON (default action)."""
-    refuse_if_removed("process", ctx.invoked_subcommand)
-    ctx.obj = session_id
-    if ctx.invoked_subcommand is not None:
-        return
-    removed_command("process")
-
-    from twicc.cli.process import main as process_main
-
-    process_main(session_id)
-
-
-@process_app.command(
-    name="stop",
-    help=removal_help("process stop") + (
-        "Stop the live agent process attached to the session.\n\n"
-        "Equivalent to clicking the UI's *Stop process* button: asks the agent "
-        "manager to kill the agent with ``reason=\"manual\"``. Idempotent — if no live "
-        "agent is currently attached, the command still exits 0.\n\n"
-        "``--force`` hard-kills (SIGKILL the process tree) without the grace window."
-    ),
-)
-def process_stop(
-    ctx: typer.Context,
-    timeout: int = typer.Option(
-        30,
-        "--timeout",
-        help=(
-            "Seconds to wait for the server's final status before giving up. "
-            "The request is not cancelled; the kill may still apply on the "
-            "server side."
-        ),
-    ),
-    force: bool = typer.Option(
-        False,
-        "--force",
-        help=(
-            "Hard kill: SIGKILL the process tree now, bypassing the grace "
-            "window (no clean turn finalization). For a wedged process."
-        ),
-    ),
-) -> None:
-    """Stop the live agent process attached to the session."""
-    removed_command("process stop")
-    from twicc.cli.process_stop import stop_cmd
-
-    stop_cmd(
-        ctx.obj,
-        timeout=timeout,
-        force=force,
-    )
-
-
-@process_app.command(
-    name="wait",
-    help=removal_help("process wait") + (
-        "Block until the live process reaches any of the listed states.\n\n"
-        "Polls the DB locally every 250 ms; the live TwiCC writes process transitions "
-        "to the same row this command reads. Exits 0 on match, 5 on timeout, 2 if "
-        "TwiCC is not running, 1 on validation errors."
-    ),
-)
-def process_wait(
-    ctx: typer.Context,
-    statuses: list[str] = typer.Argument(
-        ...,
-        metavar="STATUS...",
-        help=(
-            "One or more virtual states to wait for (any-of match). "
-            "Valid values: starting, assistant_turn, awaiting_user_input, "
-            "user_turn, dead. 'dead' matches when no live ProcessRun "
-            "exists for the session."
-        ),
-    ),
-    timeout: float = typer.Option(
-        ...,
-        "--timeout",
-        help=(
-            "Required. Seconds to wait for a matching state before giving "
-            "up (exit 5). Must be > 0. No default — pass --timeout=N "
-            "explicitly to bound the wait."
-        ),
-    ),
-    transition: bool = typer.Option(
-        False,
-        "--transition",
-        help=(
-            "Only evaluate the match after observing at least one state "
-            "transition since the initial snapshot. Useful to wait for the "
-            "next change rather than the current value. Note: 'wait dead "
-            "--transition' on an already-dead session can never match (the "
-            "row is frozen) and will always timeout."
-        ),
-    ),
-) -> None:
-    """Block until the live process reaches any of the listed states."""
-    removed_command("process wait")
-    from twicc.cli.process_wait import wait_cmd
-
-    wait_cmd(
-        ctx.obj,
-        statuses,
-        timeout=timeout,
-        transition=transition,
     )
 
 
@@ -1997,7 +1516,7 @@ def codex(ctx: typer.Context) -> None:
     codex_main(ctx.args)
 
 
-@app.command(help=CUTOVER_NOTICE_OBJECT + "Query the TwiCC search index using raw Tantivy query syntax.")
+@app.command(help="Query the TwiCC search index using raw Tantivy query syntax.")
 def search(
     query: str = typer.Argument(help="Tantivy query string (e.g. 'websocket', 'body:websocket AND from_role:user')"),
     project: str = typer.Option(
@@ -2018,9 +1537,9 @@ def search(
             "member's git worktrees included. Mutually exclusive with --project."
         ),
     ),
-    limit: int = typer.Option(None, help=limit_help("session groups", PAGINATED_DEFAULT_LIMIT)),
+    limit: int = typer.Option(None, help=limit_help("session groups")),
     offset: int = typer.Option(0, help="Skip first N session groups."),
-    paginated: bool = typer.Option(False, "--paginated", help=PAGINATED_HELP),
+    paginated: bool = typer.Option(False, "--paginated", hidden=True),
     include_hidden: bool = typer.Option(False, "--include-hidden", help="Include hidden sessions in search results."),
     only_hidden: bool = typer.Option(False, "--only-hidden", help="Search ONLY hidden sessions (mutually exclusive with --include-hidden)."),
     spawned_by: str = typer.Option(
@@ -2113,7 +1632,6 @@ def search(
         project=derive_project_id(project)[0] if project is not None else None,
         workspace=workspace,
         annotation=annotation,
-        paginated=paginated,
     )
 
 
@@ -2165,7 +1683,7 @@ app.add_typer(token_app)
 # ``whoami`` resolves the TwiCC session owning the calling process via PID
 # ancestry. The function performs lazy Django setup inside its body.
 from twicc.cli.whoami import whoami_cmd  # noqa: E402
-app.command("whoami", help=WHOAMI_CUTOVER_NOTICE + WHOAMI_HELP)(whoami_cmd)
+app.command("whoami", help=WHOAMI_HELP)(whoami_cmd)
 
 
 # ``create-workspace`` / ``update-workspace`` / ``delete-workspace`` write
@@ -2211,7 +1729,7 @@ app.add_typer(settings_app)
 from twicc.cli.peers import peers_cmd  # noqa: E402
 app.command(
     name="peers",
-    help=PEERS_CUTOVER_NOTICE + (
+    help=(
         "List peer instances approved for cross-instance messaging.\n\n"
         "Peers are other TwiCC instances the user has paired with (friend-request "
         "flow, managed in the web UI only). Use this to resolve a peer's id or "

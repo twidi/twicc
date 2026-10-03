@@ -13,14 +13,11 @@ which is the whole point of routing both through ``parse_item_content``.
 
 from __future__ import annotations
 
-from datetime import datetime
-
 import orjson
 import pytest
 import typer
 from django.utils import timezone
 
-from twicc.cli import _output
 from twicc.cli import session as cli_session
 from twicc.core.enums import ItemKind
 from twicc.core.models import Project, Session, SessionItem, SessionType
@@ -313,13 +310,10 @@ def test_get_user_messages_still_stops_at_the_limit(project, provider, lines, mo
 
 
 @pytest.mark.parametrize(("provider", "lines"), TURNS)
-def test_cli_messages_exposes_final_on_every_entry(project, provider, lines, capsysbinary, monkeypatch):
+def test_cli_messages_exposes_final_on_every_entry(project, provider, lines, capsysbinary):
     session = make_session(project, provider)
     add_items(session, lines)
 
-    # Pinned past ``LISTING_CUTOVER``, where every listing is wrapped in the
-    # ``{items, pagination}`` envelope. Naive, like the constant it replaces.
-    monkeypatch.setattr(_output, "LISTING_CUTOVER", datetime(2000, 1, 1))  # noqa: DTZ001
     cli_session.messages(session.id)
 
     entries = orjson.loads(capsysbinary.readouterr().out)["items"]
@@ -374,8 +368,8 @@ def test_without_the_flag_nothing_is_filtered_out(project, provider, lines, caps
 
 
 def run_messages_paginated(session, capsysbinary, **kwargs):
-    """Call the CLI with ``--paginated`` and return the raw envelope."""
-    cli_session.messages(session.id, paginated=True, **kwargs)
+    """Call the CLI and return the raw ``{items, pagination}`` envelope."""
+    cli_session.messages(session.id, **kwargs)
     return orjson.loads(capsysbinary.readouterr().out)
 
 

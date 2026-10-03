@@ -104,18 +104,18 @@ def read_one(capsysbinary):
 # ---------------------------------------------------------------------------
 
 
-def test_slim_carries_the_state_and_the_background_work(project, live_backend, capsysbinary):
+def test_default_carries_the_state_and_the_background_work(project, live_backend, capsysbinary):
     make_session(project)
     make_run("s1")
 
-    cli_sessions.main(project=project.id, slim=True)
+    cli_sessions.main(project=project.id)
 
     assert read(capsysbinary)[0]["process"] == {"state": "assistant_turn", "background_work_in_progress": None}
 
 
-@pytest.mark.parametrize("projection", [{"slim": True}, {"full": True}])
+@pytest.mark.parametrize("projection", [{}, {"full": True}])
 def test_background_work_rides_the_block_whatever_the_state(project, live_backend, capsysbinary, projection):
-    """A shell left running shows on a ``user_turn`` row, in both projections."""
+    """A shell left running shows on a ``user_turn`` row, in both projections (default and ``full``)."""
     work = {"subagents": 0, "shells": 1, "monitors": 0, "scheduled_wakeup_at": None, "goal": False}
     make_session(project)
     make_run("s1", state=AgentState.USER_TURN, background_work_in_progress=work)
@@ -132,7 +132,7 @@ def test_a_dead_row_reports_no_background_work(project, live_backend, capsysbina
     make_session(project)
     make_run("s1", state=AgentState.DEAD, background_work_in_progress={"shells": 1})
 
-    cli_sessions.main(project=project.id, slim=True)
+    cli_sessions.main(project=project.id)
 
     assert read(capsysbinary)[0]["process"] == {"state": "dead", "background_work_in_progress": None}
 
@@ -142,7 +142,7 @@ def test_the_full_block_carries_the_six_non_redundant_fields(project, live_backe
 
     ``provider``, ``session_id``, ``session_title`` and ``project_id`` — which
     ``serialize_process_row`` returns for the ``processes`` family — would be
-    duplicates here, in both projections.
+    duplicates here, in both projections (default and ``full``).
     """
     make_session(project)
     make_run("s1", agent_pid=777)
@@ -181,7 +181,7 @@ def test_no_backend_is_dead_like_any_other_absence(project, no_backend, capsysbi
     make_session(project)
     make_run("s1")  # a row from a previous instance: no live pid, no match
 
-    cli_sessions.main(project=project.id, slim=True)
+    cli_sessions.main(project=project.id)
 
     assert read(capsysbinary)[0]["process"] == {"state": "dead", "background_work_in_progress": None}
 
@@ -196,7 +196,7 @@ def test_a_blocked_agent_surfaces_as_awaiting_user_input(project, live_backend, 
     make_session(project)
     make_run("s1", AgentState.ASSISTANT_TURN, awaiting_user_input=True)
 
-    cli_sessions.main(project=project.id, slim=True)
+    cli_sessions.main(project=project.id)
 
     assert read(capsysbinary)[0]["process"] == {"state": "awaiting_user_input", "background_work_in_progress": None}
 
@@ -207,7 +207,7 @@ def test_a_subagent_has_no_process_of_its_own(project, live_backend, capsysbinar
     make_session(project, "sub1", type=SessionType.SUBAGENT, parent_session=parent)
     make_run("sub1")  # a row that must NOT be read back
 
-    cli_sessions_get.main(["sub1"], slim=True)
+    cli_sessions_get.main(["sub1"])
 
     assert read(capsysbinary)[0]["process"] is None
 
@@ -226,7 +226,7 @@ def test_a_row_from_another_instance_is_ignored(project, live_backend, capsysbin
     make_session(project)
     make_run("s1", twicc_pid=TWICC_PID + 1)
 
-    cli_sessions.main(project=project.id, slim=True)
+    cli_sessions.main(project=project.id)
 
     assert read(capsysbinary)[0]["process"] == {"state": "dead", "background_work_in_progress": None}
 
@@ -254,7 +254,7 @@ def test_an_unknown_pid_matches_nothing_rather_than_legacy_rows(project):
 def test_an_unknown_id_keeps_the_shape_of_a_known_one(project, live_backend, capsysbinary):
     make_session(project)
 
-    cli_sessions_get.main(["s1", "nope"], slim=True)
+    cli_sessions_get.main(["s1", "nope"])
 
     known, unknown = read(capsysbinary)
     assert set(known) == set(unknown)
@@ -268,7 +268,7 @@ def test_a_just_started_session_reports_its_process_before_it_is_known(project, 
     """
     make_run("brand-new")
 
-    cli_sessions_get.main(["brand-new"], slim=True)
+    cli_sessions_get.main(["brand-new"])
 
     entry = read(capsysbinary)[0]
     assert entry["known"] is False
@@ -286,20 +286,20 @@ def test_subagent_listings_carry_the_key_so_the_projections_stay_aligned(
     parent = make_session(project)
     make_session(project, "sub1", type=SessionType.SUBAGENT, parent_session=parent)
 
-    cli_session.agents("s1", slim=True)
+    cli_session.agents("s1")
 
     assert read(capsysbinary)[0]["process"] is None
 
 
-def test_the_three_listings_share_one_slim_key_set(project, live_backend, capsysbinary):
+def test_the_three_listings_share_one_reduced_key_set(project, live_backend, capsysbinary):
     parent = make_session(project)
     make_session(project, "sub1", type=SessionType.SUBAGENT, parent_session=parent)
 
-    cli_sessions.main(project=project.id, slim=True)
+    cli_sessions.main(project=project.id)
     listing = set(read(capsysbinary)[0])
-    cli_session.agents("s1", slim=True)
+    cli_session.agents("s1")
     agents = set(read(capsysbinary)[0])
-    cli_sessions_get.main(["s1"], slim=True)
+    cli_sessions_get.main(["s1"])
     batch = set(read(capsysbinary)[0])
 
     assert listing == agents
@@ -312,7 +312,7 @@ def test_a_subagent_listing_asks_the_database_nothing(project, live_backend, cap
     make_session(project, "sub1", type=SessionType.SUBAGENT, parent_session=parent)
 
     with CaptureQueriesContext(connection) as queries:
-        cli_session.agents("s1", slim=True)
+        cli_session.agents("s1")
 
     assert not [q for q in queries.captured_queries if "core_processrun" in q["sql"]]
 
@@ -356,7 +356,7 @@ def test_the_newest_row_answers_even_when_it_is_the_dead_one(project, live_backe
     old = make_run("s1", AgentState.ASSISTANT_TURN)
     make_run("s1", AgentState.DEAD, started_at=old.started_at + timedelta(minutes=5))
 
-    cli_sessions.main(project=project.id, slim=True)
+    cli_sessions.main(project=project.id)
 
     assert read(capsysbinary)[0]["process"] == {"state": "dead", "background_work_in_progress": None}
 
@@ -367,13 +367,13 @@ def test_an_older_dead_row_does_not_hide_the_live_one(project, live_backend, cap
     old = make_run("s1", AgentState.DEAD)
     make_run("s1", AgentState.USER_TURN, started_at=old.started_at + timedelta(minutes=5))
 
-    cli_sessions.main(project=project.id, slim=True)
+    cli_sessions.main(project=project.id)
 
     assert read(capsysbinary)[0]["process"] == {"state": "user_turn", "background_work_in_progress": None}
 
 
 def test_a_subagent_is_null_in_full_mode_too(project, live_backend, capsysbinary):
-    """Full mode reads ``parent_session_id`` from the serializer, slim from the
+    """Full mode reads ``parent_session_id`` from the serializer, the reduced one from the
     listing projection — two different sources, so both need pinning."""
     parent = make_session(project)
     make_session(project, "sub1", type=SessionType.SUBAGENT, parent_session=parent)
@@ -436,20 +436,20 @@ def _ids(capsysbinary):
 
 def test_active_keeps_every_state_but_dead(three_states, capsysbinary):
     """`user_turn` counts: the agent is loaded and idle, not gone."""
-    cli_sessions.main(project=three_states.id, active=True, slim=True)
+    cli_sessions.main(project=three_states.id, active=True)
 
     assert _ids(capsysbinary) == {"gen", "idle"}
 
 
 def test_a_state_filter_selects_exactly_its_bucket(three_states, capsysbinary):
-    cli_sessions.main(project=three_states.id, state=["assistant_turn"], slim=True)
+    cli_sessions.main(project=three_states.id, state=["assistant_turn"])
 
     assert _ids(capsysbinary) == {"gen"}
 
 
 def test_dead_is_the_complement_not_a_query(three_states, capsysbinary):
     """`dead` is the absence of a row, so it cannot be read off `ProcessRun`."""
-    cli_sessions.main(project=three_states.id, state=["dead"], slim=True)
+    cli_sessions.main(project=three_states.id, state=["dead"])
 
     assert _ids(capsysbinary) == {"gone"}
 
@@ -459,10 +459,10 @@ def test_awaiting_user_input_is_its_own_bucket(project, live_backend, capsysbina
     make_session(project, "blocked")
     make_run("blocked", AgentState.ASSISTANT_TURN, awaiting_user_input=True)
 
-    cli_sessions.main(project=project.id, state=["assistant_turn"], slim=True)
+    cli_sessions.main(project=project.id, state=["assistant_turn"])
     assert _ids(capsysbinary) == set()
 
-    cli_sessions.main(project=project.id, state=["awaiting_user_input"], slim=True)
+    cli_sessions.main(project=project.id, state=["awaiting_user_input"])
     assert _ids(capsysbinary) == {"blocked"}
 
 
@@ -472,16 +472,16 @@ def test_no_backend_means_nothing_is_active_and_everything_is_dead(
     make_session(project, "s1")
     make_run("s1")  # a previous instance's row: no live pid, no match
 
-    cli_sessions.main(project=project.id, active=True, slim=True)
+    cli_sessions.main(project=project.id, active=True)
     assert _ids(capsysbinary) == set()
 
-    cli_sessions.main(project=project.id, state=["dead"], slim=True)
+    cli_sessions.main(project=project.id, state=["dead"])
     assert _ids(capsysbinary) == {"s1"}
 
 
 def test_the_filter_runs_before_the_window(three_states, capsysbinary):
     """`total` counts what matches, not what the page happened to hold."""
-    cli_sessions.main(project=three_states.id, active=True, limit=1, paginated=True, slim=True)
+    cli_sessions.main(project=three_states.id, active=True, limit=1)
 
     payload = orjson.loads(capsysbinary.readouterr().out)
     assert len(payload["items"]) == 1
@@ -492,7 +492,7 @@ def test_the_filter_runs_before_the_window(three_states, capsysbinary):
 def test_the_filter_does_not_cost_a_second_query(three_states, capsysbinary):
     """The rows read to filter are the rows used to decorate."""
     with CaptureQueriesContext(connection) as queries:
-        cli_sessions.main(project=three_states.id, active=True, slim=True)
+        cli_sessions.main(project=three_states.id, active=True)
 
     assert len([q for q in queries.captured_queries if "core_processrun" in q["sql"]]) == 1
 
@@ -502,7 +502,7 @@ def test_a_provider_filter_is_a_plain_column(project, live_backend, capsysbinary
     Session.objects.filter(id="claude-one").update(provider="codex")
     make_session(project, "claude-two")
 
-    cli_sessions.main(project=project.id, provider="codex", slim=True)
+    cli_sessions.main(project=project.id, provider="codex")
 
     assert _ids(capsysbinary) == {"claude-one"}
 
@@ -543,10 +543,10 @@ def test_a_dead_row_is_not_active(project, live_backend, capsysbinary):
     make_session(project, "stopped")
     make_run("stopped", AgentState.DEAD)
 
-    cli_sessions.main(project=project.id, active=True, slim=True)
+    cli_sessions.main(project=project.id, active=True)
     assert _ids(capsysbinary) == set()
 
-    cli_sessions.main(project=project.id, state=["dead"], slim=True)
+    cli_sessions.main(project=project.id, state=["dead"])
     assert _ids(capsysbinary) == {"stopped"}
 
 
@@ -589,19 +589,19 @@ def invoke(project, live_backend):
 
 def test_the_bare_listing_shows_everything(invoke):
     """Pins ``--active``'s default: flipped on, every plain call would lie."""
-    assert invoke("sessions", "--slim") == {"gen", "gone"}
+    assert invoke("sessions") == {"gen", "gone"}
 
 
 def test_active_travels_from_the_command_line(invoke):
-    assert invoke("sessions", "--active", "--slim") == {"gen"}
+    assert invoke("sessions", "--active") == {"gen"}
 
 
 def test_state_travels_from_the_command_line(invoke):
-    assert invoke("sessions", "--state", "dead", "--slim") == {"gone"}
+    assert invoke("sessions", "--state", "dead") == {"gone"}
 
 
 def test_provider_travels_from_the_command_line(invoke):
-    assert invoke("sessions", "--provider", "codex", "--slim") == {"gone"}
+    assert invoke("sessions", "--provider", "codex") == {"gone"}
 
 
 def test_a_bad_filter_exits_one_from_the_command_line(invoke):
@@ -624,10 +624,10 @@ def test_active_does_not_lift_the_hidden_default(project, live_backend, capsysbi
     make_session(project, "shy", hidden=True)
     make_run("shy")
 
-    cli_sessions.main(project=project.id, active=True, slim=True)
+    cli_sessions.main(project=project.id, active=True)
     assert _ids(capsysbinary) == set()
 
-    cli_sessions.main(project=project.id, active=True, include_hidden=True, slim=True)
+    cli_sessions.main(project=project.id, active=True, include_hidden=True)
     assert _ids(capsysbinary) == {"shy"}
 
 
@@ -637,10 +637,10 @@ def test_active_does_not_lift_the_archived_default(project, live_backend, capsys
     make_session(project, "filed", archived=True)
     make_run("filed")
 
-    cli_sessions.main(project=project.id, active=True, slim=True)
+    cli_sessions.main(project=project.id, active=True)
     assert _ids(capsysbinary) == set()
 
-    cli_sessions.main(project=project.id, active=True, archived=True, slim=True)
+    cli_sessions.main(project=project.id, active=True, archived=True)
     assert _ids(capsysbinary) == {"filed"}
 
 
@@ -667,7 +667,7 @@ def test_several_states_are_or_combined(three_states, capsysbinary):
     five buckets, and a single-valued flag cannot ask for it.
     """
     cli_sessions.main(
-        project=three_states.id, state=["assistant_turn", "user_turn"], slim=True,
+        project=three_states.id, state=["assistant_turn", "user_turn"],
     )
 
     assert _ids(capsysbinary) == {"gen", "idle"}
@@ -679,7 +679,7 @@ def test_dead_unions_with_a_live_bucket(three_states, capsysbinary):
     It has to come out of the query as "not in the live set", which is a
     different shape from the id list the live buckets produce.
     """
-    cli_sessions.main(project=three_states.id, state=["assistant_turn", "dead"], slim=True)
+    cli_sessions.main(project=three_states.id, state=["assistant_turn", "dead"])
 
     assert _ids(capsysbinary) == {"gen", "gone"}
 
@@ -688,14 +688,14 @@ def test_naming_every_state_filters_nothing(three_states, capsysbinary):
     """The identity case, kept cheap rather than unioning five buckets."""
     from twicc.cli._process_state import VALID_VIRTUAL_STATES
 
-    cli_sessions.main(project=three_states.id, state=sorted(VALID_VIRTUAL_STATES), slim=True)
+    cli_sessions.main(project=three_states.id, state=sorted(VALID_VIRTUAL_STATES))
 
     assert _ids(capsysbinary) == {"gen", "idle", "gone"}
 
 
 def test_repeating_the_flag_unions_from_the_command_line(invoke):
     """Two `--state` used to keep the last one silently; now they add up."""
-    assert invoke("sessions", "--state", "assistant_turn", "--state", "dead", "--slim") == {
+    assert invoke("sessions", "--state", "assistant_turn", "--state", "dead") == {
         "gen", "gone",
     }
 

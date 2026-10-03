@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import typer
 
-from twicc.cli._output import PEERS_ENVELOPE_HELP, pagination_notice
-
 
 def peers_cmd(
-    paginated: bool = typer.Option(False, "--paginated", help=PEERS_ENVELOPE_HELP),
+    paginated: bool = typer.Option(False, "--paginated", hidden=True),
 ) -> None:
     """List peer instances approved for cross-instance messaging.
 
@@ -22,7 +20,6 @@ def peers_cmd(
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "twicc.settings")
     import django
     django.setup()
-    paginated = pagination_notice("peers", paginated, default_limit=None, shape="peers")
 
     from twicc.cli._output import emit_json
     from twicc.core.models import Peer, PeerState
@@ -40,4 +37,4 @@ def peers_cmd(
         }
         for peer in Peer.objects.filter(state__in=[PeerState.ACTIVE, PeerState.BROKEN])
     ]
-    emit_json({"items": peers} if paginated else {"peers": peers})
+    emit_json({"items": peers})

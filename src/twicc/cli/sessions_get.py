@@ -11,8 +11,7 @@ Unknown session_ids (no Session row in the DB) get a placeholder entry
 with ``known: false`` and every session field set to ``null`` — the
 serializer's keys plus ``CLI_ENRICHED_KEYS`` — so the output shape is
 uniform with ``known: true`` entries. Callers can then
-``zip(ids, output)`` (``output["items"]`` from 2026-10-01, or with
-``--paginated``) and read any field directly, only checking
+``zip(ids, output["items"])`` and read any field directly, only checking
 ``known`` when they need to disambiguate.
 
 ``process`` is the exception: it is joined from ``ProcessRun``, whose row
@@ -22,7 +21,7 @@ can legitimately carry a live process block.
 
 from __future__ import annotations
 
-from twicc.cli._output import emit_json, pagination_notice, slim_notice
+from twicc.cli._output import emit_json
 from twicc.cli._session_payload import CLI_ENRICHED_KEYS, cli_session_payloads
 
 
@@ -51,25 +50,22 @@ def _build_placeholder_template() -> dict:
     return {k: None for k in serialize_session(sample)} | dict.fromkeys(CLI_ENRICHED_KEYS)
 
 
-def main(session_ids: list[str], *, slim: bool = False, full: bool = False, paginated: bool = False) -> None:
+def main(session_ids: list[str], *, full: bool = False) -> None:
     """Emit one JSON entry per session_id (placeholder when missing).
 
-    The slim mode (``--slim``, or the default past the cutover) applies the same
-    projection as ``twicc sessions``, on the placeholders too: a batch whose rows
-    changed shape depending on whether the id resolved would be worse than no
+    The reduced projection (the default; ``full`` turns it off) is the same as
+    ``twicc sessions``, on the placeholders too: a batch whose rows changed
+    shape depending on whether the id resolved would be worse than no
     projection at all.
     """
     import django
 
     django.setup()
-    paginated = pagination_notice("sessions get", paginated, default_limit=None, shape="lookup")
-    slim = slim_notice("sessions get", slim, full)
 
     from twicc.core.models import Session
 
     # Dedupe while preserving caller order: the output mirrors the input
-    # 1-to-1 so scripts can zip(ids, output) (output["items"] from 2026-10-01,
-    # or with --paginated) without re-mapping.
+    # 1-to-1 so scripts can zip(ids, output["items"]) without re-mapping.
     unique_ids: list[str] = []
     seen: set[str] = set()
     for sid in session_ids:
@@ -92,7 +88,7 @@ def main(session_ids: list[str], *, slim: bool = False, full: bool = False, pagi
 
     from twicc.core.serializers import slim_session
 
-    project = slim_session if slim else (lambda entry: entry)
+    project = (lambda entry: entry) if full else slim_session
 
     # Enrich the known rows in one call (one query at most for their projects).
     known_ids = [sid for sid in unique_ids if sid in sessions_by_id]
@@ -126,7 +122,7 @@ def main(session_ids: list[str], *, slim: bool = False, full: bool = False, pagi
     attach_process_blocks(
         results,
         load_process_rows(unique_ids, resolve_listing_twicc_pid()),
-        slim=slim,
+        slim=not full,
     )
 
-    emit_json({"items": results} if paginated else results)
+    emit_json({"items": results})

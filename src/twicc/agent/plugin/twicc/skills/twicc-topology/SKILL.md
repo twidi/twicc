@@ -1,7 +1,7 @@
 ---
 name: twicc-topology
 description: Show the spawned-session tree around a session, rooted at its top-level ancestor, with session metadata, process state, and aggregate child/cost data.
-argument-hint: <session_id|self> [--no-processes] [--slim|--full] [--siblings]
+argument-hint: <session_id|self> [--no-processes] [--full] [--siblings]
 ---
 
 # TwiCC Topology
@@ -41,8 +41,7 @@ $TWICC topology <SESSION_ID|self> [OPTIONS]
 ### Options
 
 - `--processes / --no-processes` — include compact live process state when a TwiCC backend is running. Defaults to `--processes`; if no backend is running, topology is still returned with process data marked unavailable.
-- `--full` — emit the full serializer payload for every node — agent settings as stored, `artifacts_dir` as the serializer reports it (set only once the backend has seen an artifact, so always `null` from a terminal), none of the CLI-added keys (`project_directory`, `scratch_dir`, `orchestration_scratch_dir`, `question_widget`) — minus its `process` block, which topology carries per node as `nodes[].process` — and the full six-field `process` block. Off by default: each `nodes[].session` block carries only the slim subset listed below. Use this only when you actually need extra fields for every node; otherwise call `$TWICC session <ID> --full` for the few nodes you care about. `--full-sessions` is a deprecated alias of `--full`.
-- `--slim` — reduce each node's `process` block to `{state, background_work_in_progress}`. **Before 2026-10-01 the block keeps its six fields by default and `--slim` opts in; from that date the reduced block is the default and `--slim` is an accepted no-op.** Until then a call with neither flag (and with processes requested) prints a one-line notice on stderr (in the RPC `warnings` key; never on MCP). Mutually exclusive with `--full` / `--full-sessions` (exit `2`).
+- `--full` — emit the full serializer payload for every node — agent settings as stored, `artifacts_dir` as the serializer reports it (set only once the backend has seen an artifact, so always `null` from a terminal), none of the CLI-added keys (`project_directory`, `scratch_dir`, `orchestration_scratch_dir`, `question_widget`) — minus its `process` block, which topology carries per node as `nodes[].process` — and the full six-field `process` block. Off by default: each `nodes[].session` block carries only the slim subset listed below. Use this only when you actually need extra fields for every node; otherwise call `$TWICC session <ID> --full` for the few nodes you care about.
 - `--annotation KEY[OP]VALUE` — annotate every node with a `matches_annotations` boolean indicating whether that node's `annotations` match the expression. The full tree is always preserved (no pruning). Repeatable; multiple flags are AND-combined. Five operators:
   - `KEY=VALUE` — annotation key equals VALUE.
   - `KEY!=VALUE` — annotation key differs from VALUE (or key absent).
@@ -85,7 +84,7 @@ $TWICC topology <SESSION_ID|self> [OPTIONS]
         "total_cost": 1.23,
         "directory": "/home/twidi/dev/myproject"
       },
-      "process": {"id": 42, "state": "user_turn", "background_work_in_progress": null, "started_at": "...", "last_state_change_at": "...", "pid": 12345},
+      "process": {"state": "user_turn", "background_work_in_progress": null},
       "direct_child_count": 1,
       "descendant_count": 1,
       "subtree_total_cost": 2.34,
@@ -108,7 +107,7 @@ $TWICC topology <SESSION_ID|self> [OPTIONS]
         "total_cost": 1.11,
         "directory": "/home/twidi/dev/myproject"
       },
-      "process": {"id": null, "state": "dead", "background_work_in_progress": null, "started_at": null, "last_state_change_at": null, "pid": null},
+      "process": {"state": "dead", "background_work_in_progress": null},
       "direct_child_count": 0,
       "descendant_count": 0,
       "subtree_total_cost": 1.11,
@@ -133,7 +132,7 @@ $TWICC topology <SESSION_ID|self> [OPTIONS]
 - `nodes[].subtree_total_cost` — sum of `session.total_cost` for this node and all descendants, or `null` when none has cost.
 - `nodes[].matches_annotations` — `true` if this node's annotations match all `--annotation` predicates; `false` otherwise. Absent when no `--annotation` is passed. The tree is never pruned: all nodes are present regardless.
 - `nodes[].matches_siblings` — `true` if this node is a sibling of the anchor (shares the anchor's parent, anchor itself excluded); `false` otherwise. Absent when `--siblings` is not passed. The tree is never pruned.
-- `process.state` — `starting`, `assistant_turn`, `awaiting_user_input`, `user_turn`, or `dead`; `process` is `null` when process data is unavailable or not requested. The example shows the six-field block, the default until 2026-10-01; from that date the default block is `{"state": …, "background_work_in_progress": …}` alone, and `--full` keeps the six fields.
+- `process.state` — `starting`, `assistant_turn`, `awaiting_user_input`, `user_turn`, or `dead`; `process` is `null` when process data is unavailable or not requested. The default block is `{"state": …, "background_work_in_progress": …}`; `--full` adds `id`, `started_at`, `last_state_change_at` and `pid`.
 - `process.background_work_in_progress` — what still runs behind the agent, **whatever `state` says**; `null` when nothing does (always on `dead`). Else `{"subagents": N, "shells": N, "monitors": N, "scheduled_wakeup_at": ISO-8601 or null, "goal": bool}`:
   - `subagents` — live subagents. `shells` — shell commands still running, the session's or its subagents'; Claude Code counts only backgrounded ones, Codex every command whose process has not exited (one it is still polling mid-turn included; a subagent's once its first output reports it running). `monitors` — Claude Code `Monitor` tools. `scheduled_wakeup_at` — a pending Claude Code `ScheduleWakeup`. `goal` — a Codex `/goal` continuation.
   - `user_turn` with `shells > 0`: the turn is over, a shell still runs. TwiCC never auto-stops an idle session in that case (stopping it would kill the shell).
@@ -144,7 +143,7 @@ $TWICC topology <SESSION_ID|self> [OPTIONS]
 
 - `0` — Success
 - `1` — Session not found, `self` could not resolve, or the target is a provider-internal subagent
-- `2` — Bad CLI usage: `--slim` with `--full` / `--full-sessions`, an invalid `--annotation`, an unknown option or a missing argument
+- `2` — Bad CLI usage: an invalid `--annotation`, an unknown option or a missing argument
 
 ## Examples
 
@@ -164,7 +163,7 @@ $TWICC topology self --siblings
 - `$TWICC sessions --spawned-by <ID|self>` — list direct children. Skill: `twicc-sessions`.
 - `$TWICC sessions --spawned-by <ID|self> --active` — list children with a live process. Skill: `twicc-sessions`.
 - `$TWICC send-message <SESSION_ID>` — message a discovered session. Skill: `twicc-send-message`.
-- `$TWICC session <SESSION_ID>` — inspect one node's session row (reduced from 2026-10-01; `--full` for every field). Skill: `twicc-session`.
+- `$TWICC session <SESSION_ID>` — inspect one node's session row (reduced; `--full` for every field). Skill: `twicc-session`.
 
 ## How to present results
 

@@ -105,8 +105,8 @@ This is exceptional cleanup, not normal synchronization.
 Use direct-child listing for ordinary control:
 
 ```bash
-$TWICC sessions --spawned-by self --active --slim
-$TWICC sessions --spawned-by self --annotation status=blocked --slim
+$TWICC sessions --spawned-by self --active
+$TWICC sessions --spawned-by self --annotation status=blocked
 $TWICC sessions get <CHILD_ID>...
 ```
 

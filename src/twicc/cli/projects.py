@@ -1,6 +1,6 @@
 """CLI implementation for the ``twicc projects`` subcommand."""
 
-from twicc.cli._output import PAGINATED_DEFAULT_LIMIT, emit_error, emit_list, pagination_notice, resolve_limit
+from twicc.cli._output import emit_error, emit_list, resolve_limit
 
 
 def main(
@@ -9,13 +9,11 @@ def main(
     offset: int = 0,
     archived: bool = False,
     workspace: str | None = None,
-    paginated: bool = False,
 ) -> None:
     """List all projects as JSON to stdout."""
     import django
 
     django.setup()
-    paginated = pagination_notice("projects", paginated, default_limit=PAGINATED_DEFAULT_LIMIT)
 
     from twicc.core.models import Project
     from twicc.core.serializers import serialize_project
@@ -38,8 +36,8 @@ def main(
             emit_error(f"Error: workspace '{workspace}' not found.", code=1)
         qs = qs.filter(id__in=ws.get("projectIds", []))
 
-    limit = resolve_limit(limit, paginated=paginated, default=PAGINATED_DEFAULT_LIMIT)
-    total = qs.count() if paginated else None
+    limit = resolve_limit(limit)
+    total = qs.count()
     projects = list(qs[offset : offset + limit])
 
     # Build project_id -> [workspace_id] index for the listing.
@@ -64,4 +62,4 @@ def main(
         serialized["worktrees"] = worktrees_by_main.get(p.id, [])
         data.append(serialized)
 
-    emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)
+    emit_list(data, limit=limit, offset=offset, total=total)

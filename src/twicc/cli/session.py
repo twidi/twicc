@@ -6,9 +6,7 @@ import orjson
 
 import typer
 
-from twicc.cli._output import (
-    PAGINATED_DEFAULT_LIMIT, emit_error, emit_json, emit_list, pagination_notice, resolve_limit, slim_notice,
-)
+from twicc.cli._output import emit_error, emit_json, emit_list, resolve_limit
 
 
 def _get_session(session_id: str):
@@ -68,7 +66,7 @@ def _slice_window(seq, total: int, *, limit: int | None, offset: int, tail: int 
 def build_session_payload(session, *, slim: bool) -> dict:
     """The row `session <id>` emits: enriched, projected, then its process block.
 
-    Shared with `whoami` (new shape), which already holds the row.
+    Shared with `whoami`, which already holds the row.
     """
     from twicc.cli._process_state import (
         attach_process_blocks,
@@ -91,7 +89,7 @@ def build_session_payload(session, *, slim: bool) -> dict:
     return data
 
 
-def main(session_id: str, *, slim: bool = False, full: bool = False) -> None:
+def main(session_id: str, *, full: bool = False) -> None:
     """Print one session row: any ``Session`` row with that id, as ``sessions get``.
 
     Carries the same ``process`` block ``sessions`` puts on every row, built by
@@ -99,22 +97,20 @@ def main(session_id: str, *, slim: bool = False, full: bool = False) -> None:
     thing, so answering the live state on one and omitting it on the other
     sent a caller after a single session through the listing to get it.
 
-    Reduced by default from the cutover (full plus a notice before it);
-    ``--full`` / ``--slim`` choose. The transcript readers (content, messages,
+    Reduced by default; ``--full`` returns every field. The transcript readers (content, messages,
     agents, plan, workflows, workflow) keep ``_get_session``; this reads
     metadata, which exists as soon as the row does.
     """
     import django
 
     django.setup()
-    slim = slim_notice("session", slim, full)
 
     from twicc.core.models import Session
 
     session = Session.objects.filter(id=session_id).first()
     if session is None:
         emit_error(f"Error: session '{session_id}' not found.", code=1)
-    emit_json(build_session_payload(session, slim=slim))
+    emit_json(build_session_payload(session, slim=not full))
 
 
 def content(
@@ -125,14 +121,12 @@ def content(
     limit: int | None = None,
     offset: int = 0,
     tail: int | None = None,
-    paginated: bool = False,
 ) -> None:
     """Fetch session item(s) by line/range and/or content substring(s), print as JSON to stdout.
 
-    Every selector is optional but at least one must be given — a bare call
-    would dump the whole session, and raw items are the heaviest payload the CLI
-    can produce. ``paginated`` counts as one: it supplies its own page size, so
-    it cannot dump anything either. Combined, they apply in this order:
+    Every selector is optional: a bare call returns the first page, since raw
+    items are the heaviest payload the CLI can produce. Combined, they apply in
+    this order:
     ``range_str`` scopes the lines, ``contains`` filters within that scope, then
     ``limit``/``offset`` (or ``tail``) window the matches. ``contains`` is a list
     of case-insensitive substrings AND-combined (an item must contain every term)
@@ -158,22 +152,7 @@ def content(
 
     from twicc.core.models import SessionItem
 
-    # Above the selector guard below, which counts ``paginated`` as one: past the
-    # cutover the flag is always set, so the guard stops firing and a bare
-    # ``content`` call returns the first page instead of an error. Bounded, which
-    # is all the guard ever protected against.
-    paginated = pagination_notice("session content", paginated, default_limit=None)
-
     contains = contains or []
-    if (
-        range_str is None and not contains and limit is None and not offset
-        and tail is None and not paginated
-    ):
-        emit_error(
-            "Error: provide a line/range argument, --contains, --limit/--offset, "
-            "--tail, or --paginated.",
-            code=1,
-        )
 
     if tail is not None:
         if limit is not None or offset:
@@ -181,7 +160,7 @@ def content(
         if tail <= 0:
             emit_error(f"Error: --tail must be a positive integer (got {tail}).", code=1)
     else:
-        limit = resolve_limit(limit, paginated=paginated, default=None)
+        limit = resolve_limit(limit)
 
     _get_session(session_id)
 
@@ -193,10 +172,8 @@ def content(
         items = items.filter(content__icontains=term)
     items = items.order_by("line_num")
 
-    # ``tail`` needs the count to place its window, whether or not the envelope
-    # is asked for; ``paginated`` needs it for ``total``.
-    total = items.count() if (tail is not None or paginated) else None
-    selected = _slice_window(items, total or 0, limit=limit, offset=offset, tail=tail)
+    total = items.count()
+    selected = _slice_window(items, total, limit=limit, offset=offset, tail=tail)
 
     # Wrap each item with its line number; parse the raw content string into a real JSON object.
     data = [{"line_num": item.line_num, "content": orjson.loads(item.content)} for item in selected]
@@ -206,12 +183,12 @@ def content(
         # and let ``has_more`` mean "there are matches before it".
         window_offset = max(0, total - tail)
         emit_list(
-            data, paginated=paginated, limit=tail, offset=window_offset,
+            data, limit=tail, offset=window_offset,
             total=total, has_more=window_offset > 0,
         )
         return
 
-    emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)
+    emit_list(data, limit=limit, offset=offset, total=total)
 
 
 TRI_STATE_TOKENS = {"true": True, "false": False, "null": None}
@@ -228,7 +205,6 @@ def messages(
     limit: int | None = None,
     offset: int = 0,
     tail: int | None = None,
-    paginated: bool = False,
 ) -> None:
     """Fetch user/assistant messages of a session and print as JSON to stdout.
 
@@ -261,7 +237,7 @@ def messages(
     caller asks for a set that excludes it. Asking for all three values is the
     identity: byte-for-byte the no-flag answer, not merely the same entries.
 
-    ``paginated`` adds the shared envelope. ``total`` counts what the window was
+    ``total`` counts what the window was
     applied to, which differs per branch: when something actually filters after
     extraction — ``contains``, or an ``is_final`` set that leaves a value out —
     the window sits on the extracted messages, so the count is exact. Otherwise
@@ -281,8 +257,6 @@ def messages(
     from twicc.core.enums import ItemKind
     from twicc.core.models import SessionItem
     from twicc.providers.helpers import get_provider_helpers
-
-    paginated = pagination_notice("session messages", paginated, default_limit=None)
 
     session = _get_session(session_id)
 
@@ -321,8 +295,8 @@ def messages(
             emit_error(f"Error: --tail must be a positive integer (got {tail}).", code=1)
     else:
         # After the exclusivity check, so an explicit --limit alongside --tail is
-        # still rejected rather than silently replaced by the paginated default.
-        limit = resolve_limit(limit, paginated=paginated, default=None)
+        # still rejected rather than silently replaced by the default page size.
+        limit = resolve_limit(limit)
 
     if role == "user":
         kinds = [ItemKind.USER_MESSAGE]
@@ -357,7 +331,7 @@ def messages(
         # No post-extraction filter: window at the DB level, then extract (existing
         # behaviour — the window counts raw items, so dropped-empty extractions may
         # shrink the result).
-        total = qs.count() if (tail is not None or paginated) else 0
+        total = qs.count()
         items = list(_slice_window(qs, total, limit=limit, offset=offset, tail=tail))
         selected = list(helpers.get_indexable_messages(items))
 
@@ -377,22 +351,19 @@ def messages(
         # covers, and let ``has_more`` mean "there are messages before it".
         window_offset = max(0, total - tail)
         emit_list(
-            data, paginated=paginated, limit=tail, offset=window_offset,
+            data, limit=tail, offset=window_offset,
             total=total, has_more=window_offset > 0,
         )
         return
 
-    emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)
+    emit_list(data, limit=limit, offset=offset, total=total)
 
 
-def agents(session_id: str, *, limit: int | None = None, offset: int = 0,
-          paginated: bool = False, slim: bool = False, full: bool = False) -> None:
+def agents(session_id: str, *, limit: int | None = None, offset: int = 0, full: bool = False) -> None:
     """List subagents of a session as JSON to stdout."""
     import django
 
     django.setup()
-    paginated = pagination_notice("session agents", paginated, default_limit=PAGINATED_DEFAULT_LIMIT)
-    slim = slim_notice("session agents", slim, full)
 
     from twicc.cli._session_payload import cli_session_payloads
     from twicc.core.models import Session
@@ -404,10 +375,10 @@ def agents(session_id: str, *, limit: int | None = None, offset: int = 0,
         emit_error(f"Error: session '{session_id}' is a subagent, not a parent session.", code=1)
 
     qs = Session.objects.filter(parent_session_id=session_id).order_by("-mtime")
-    limit = resolve_limit(limit, paginated=paginated, default=PAGINATED_DEFAULT_LIMIT)
-    total = qs.count() if paginated else None
+    limit = resolve_limit(limit)
+    total = qs.count()
     data = cli_session_payloads(qs[offset : offset + limit])
-    if slim:
+    if not full:
         data = [slim_session(row) for row in data]
 
     # Every row here is a subagent, which runs inside its parent's process and
@@ -417,7 +388,7 @@ def agents(session_id: str, *, limit: int | None = None, offset: int = 0,
     for row in data:
         row["process"] = None
 
-    emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)
+    emit_list(data, limit=limit, offset=offset, total=total)
 
 
 def plan(session_id: str, *, list_docs: bool = False, doc_path: str | None = None) -> None:
@@ -533,7 +504,7 @@ def _workflow_envelope(run, session_cutoff=None) -> dict:
 
 
 def workflows(session_id: str, *, limit: int | None = None, offset: int = 0,
-             paginated: bool = False, result: bool = False, full: bool = False) -> None:
+             result: bool = False, full: bool = False) -> None:
     """List a session's workflows as JSON to stdout (newest first).
 
     A run's execution trace is the bulk of its envelope — on the heaviest run
@@ -549,15 +520,14 @@ def workflows(session_id: str, *, limit: int | None = None, offset: int = 0,
     import django
 
     django.setup()
-    paginated = pagination_notice("session workflows", paginated, default_limit=PAGINATED_DEFAULT_LIMIT)
 
     from twicc.core.models import Workflow
 
     session = _get_session(session_id)
 
     qs = Workflow.objects.filter(session_id=session_id).order_by("-updated_at")
-    limit = resolve_limit(limit, paginated=paginated, default=PAGINATED_DEFAULT_LIMIT)
-    total = qs.count() if paginated else None
+    limit = resolve_limit(limit)
+    total = qs.count()
     data = [_workflow_envelope(w, session.cutoff) for w in qs[offset : offset + limit]]
 
     if not full:
@@ -566,7 +536,7 @@ def workflows(session_id: str, *, limit: int | None = None, offset: int = 0,
             dropped |= set(WORKFLOW_RESULT_FIELDS)
         data = [{k: v for k, v in run.items() if k not in dropped} for run in data]
 
-    emit_list(data, paginated=paginated, limit=limit, offset=offset, total=total)
+    emit_list(data, limit=limit, offset=offset, total=total)
 
 
 def workflow(session_id: str, workflow_id: str) -> None:

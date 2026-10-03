@@ -41,7 +41,7 @@ Decide the visibility, notification, and permission policy up front. Propagate i
 ## Collect results
 
 - Read children as they report (`send-message parent` lands in your turn) and pull any child anytime with `$TWICC session <id> messages --tail N`.
-- Track your direct children with `$TWICC sessions --spawned-by self --active --slim` (`sessions get <ID>` for one spawned seconds ago); add `--annotation` only with that scope or another filiation scope.
+- Track your direct children with `$TWICC sessions --spawned-by self --active` (`sessions get <ID>` for one spawned seconds ago); add `--annotation` only with that scope or another filiation scope.
 - Wait only on **your direct children**, named by id:
 
 ```bash
@@ -67,7 +67,7 @@ The shared scratch is internal plumbing of your tree, not a place the user can b
 
 - `$TWICC create-session <PROMPT>` — spawn a manager or worker. Skill: `twicc-create-session`.
 - `$TWICC topology self` — map and cost your tree. Skill: `twicc-topology`.
-- `$TWICC sessions --spawned-by self --slim` — track your direct children: each row carries its `process` block, finished ones included (`dead`); `--active` narrows to the ones still running. Careful: `user_turn` counts as active (the agent is loaded and idle), so a worker that just finished is still `--active`; `--state assistant_turn` is the one that means "still generating". `process.background_work_in_progress` says what a child still runs, whatever its state: `null`, or `{subagents, shells, monitors, scheduled_wakeup_at, goal}` (live subagents; shell commands still running; Claude Code `Monitor` tools; a pending Claude Code `ScheduleWakeup`; a Codex `/goal` continuation). A worker in `user_turn` with `shells > 0` has finished its turn but still runs a shell, and is never idle-stopped; a silent child in `assistant_turn` waits on its subagents, Monitors or wake-up — its answer may already be written. A child spawned seconds ago is not listed yet: `sessions get <ID>`. Skill: `twicc-sessions`.
+- `$TWICC sessions --spawned-by self` — track your direct children: each row carries its `process` block, finished ones included (`dead`); `--active` narrows to the ones still running. Careful: `user_turn` counts as active (the agent is loaded and idle), so a worker that just finished is still `--active`; `--state assistant_turn` is the one that means "still generating". `process.background_work_in_progress` says what a child still runs, whatever its state: `null`, or `{subagents, shells, monitors, scheduled_wakeup_at, goal}` (live subagents; shell commands still running; Claude Code `Monitor` tools; a pending Claude Code `ScheduleWakeup`; a Codex `/goal` continuation). A worker in `user_turn` with `shells > 0` has finished its turn but still runs a shell, and is never idle-stopped; a silent child in `assistant_turn` waits on its subagents, Monitors or wake-up — its answer may already be written. A child spawned seconds ago is not listed yet: `sessions get <ID>`. Skill: `twicc-sessions`.
 - `$TWICC sessions wait-reply <ID>...` / `sessions stop <ID>...` — wait on or stop direct child batches.
 - `$TWICC session <ID> messages` — pull a child's transcript. Skill: `twicc-session`.
 - `$TWICC send-message <ID> <TEXT>` — steer or follow up one child. Skill: `twicc-send-message`.

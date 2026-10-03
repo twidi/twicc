@@ -1,10 +1,8 @@
-"""The shared stop mechanism, behind ``processes stop`` and ``sessions stop``.
+"""The shared stop mechanism, behind ``sessions stop``.
 
-It had **no** test of its own: `processes stop`'s two tests assert pre-flight
-guards that return before reaching any of this, and `sessions stop`'s suite
-mocks the whole function to test selection. Extracting it into a shared module
-made that gap worse — one defect here would now be two broken commands — so
-ten mutants survived the full suite until this file existed.
+It had **no** test of its own: `sessions stop`'s suite mocks the whole
+function to test selection, so mutants survived the full suite until this
+file existed.
 
 What matters here is the contract every caller reads: one entry per input id,
 in input order, with a status that says what actually happened.
@@ -50,8 +48,7 @@ def make_run(sid):
 
 def test_an_unknown_id_is_reported_not_dropped(project, db):
     """One entry per input id is the contract of the shared function:
-    `processes stop` emits the list as is, `sessions stop` re-keys it by id
-    under `results`."""
+    `sessions stop` re-keys it by id under `results`."""
     result = _stop_batch.stop_session_ids(
         ["ghost"], timeout=1, force=False, twicc_pid=TWICC_PID,
     )
@@ -90,8 +87,8 @@ def test_a_stale_session_is_refused_with_its_own_status(project, db):
 
 
 def test_the_output_follows_the_input_order(project, db):
-    """`processes stop` emits this list as is and `sessions stop` keys it
-    under `results` in the same order, so a reordering breaks both."""
+    """`sessions stop` keys it under `results` in the same order, so a
+    reordering breaks it."""
     result = _stop_batch.stop_session_ids(
         ["c", "a", "b"], timeout=1, force=False, twicc_pid=TWICC_PID,
     )
@@ -155,27 +152,3 @@ def test_the_caller_is_skipped_before_any_submission(project, monkeypatch):
     assert entry["request_uuid"] is None
     assert "`session self stop`" in entry["error"]
     assert entry["session_known"] is True
-
-
-def test_processes_stop_passes_no_caller(project, monkeypatch, capsysbinary):
-    """The retired command keeps stopping the caller until its removal."""
-    from twicc.cli import processes_stop
-
-    monkeypatch.setattr("twicc.cli._drop_request.transport.ensure_server_available", lambda: None)
-    monkeypatch.setattr(
-        "twicc.cli._twicc_info.resolve_live_twicc", lambda: type("I", (), {"pid": TWICC_PID})(),
-    )
-    # A real caller, so a mutant that resolved it and passed `caller_id=`
-    # would be seen (with no caller it would pass `None` and survive).
-    me = make_session(project, "me")
-    monkeypatch.setattr("twicc.cli._drop_request.whoami.resolve_current_session", lambda: me)
-    seen = {}
-
-    def fake_stop(ids, **kwargs):
-        seen.update(kwargs, ids=list(ids))
-        return []
-
-    monkeypatch.setattr("twicc.cli._stop_batch.stop_session_ids", fake_stop)
-    processes_stop.stop_cmd(["me"], timeout=5)
-    assert seen["ids"] == ["me"], "the caller reaches the stopper"
-    assert "caller_id" not in seen

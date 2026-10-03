@@ -12,9 +12,9 @@ $TWICC session <SESSION_ID> messages [OPTIONS]
 - `--role user|assistant` — one side only.
 - `--contains TEXT` — messages whose `text` contains the substring. Repeatable, **AND-combined**, **case-insensitive**. Matches the extracted text, not the raw JSONL (unlike `content --contains`).
 - `--is-final true|false|null` — messages whose `is_final` has one of these values. Repeatable, **OR-combined**. Without it, nothing is filtered: `null` is dropped only when you ask for a set without it, and all three values filter nothing.
-- `--limit N` / `--offset N` — a window. **Until 2026-10-01 a call without `--limit` returns every message; from that date it pages at 20**: pass `--limit` or `--tail` when you need more, and read `has_more`.
+- `--limit N` / `--offset N` — a window. A call without `--limit` pages at **20**: pass `--limit` or `--tail` when you need more, and read `has_more`.
 - `--tail N` — the last N messages. Mutually exclusive with `--limit`/`--offset`.
-- `--paginated` — wraps the result in `{items, pagination}` (`limit`, `offset`, `total`, `has_more`) and pages at **20** without `--limit`. **Opt-in until 2026-10-01, then the only behaviour.** Under `--tail N`, the window reported is the one it covers, and `has_more` means messages remain **before** it.
+- The result is `{items, pagination}` (`limit`, `offset`, `total`, `has_more`). Under `--tail N`, the window reported is the one it covers, and `has_more` means messages remain **before** it.
 
 `--contains` and `--is-final` apply before the window. Without them (or with `--is-final` listing all three values), `total` counts raw items, some of which hold no text: `has_more` can be a rare false positive, never a false negative.
 
@@ -28,8 +28,6 @@ Exit 1 with `session not found` while a new session has no user message yet: not
   {"line_num": 4, "text": "Sure — what do you need?", "role": "assistant", "timestamp": "2025-03-10T14:30:02+00:00", "is_final": true}
  ], "pagination": {"limit": 20, "offset": 0, "total": 2, "has_more": false}}
 ```
-
-Without `--paginated` (until 2026-10-01): the bare `items` array.
 
 `is_final` — `true`: the assistant message that **closes a turn**. `false`: an intermediate one, between tool calls. `null`: unknown — always on a user message, and on an assistant message with no marker, or one TwiCC does not recognise.
 
@@ -62,7 +60,7 @@ Why no filter: `--is-final true` spans the **whole session**, so mid-turn it ret
 
 ```bash
 $TWICC session parent messages --tail 1
-$TWICC session abc123 messages --role assistant --is-final true --tail 5   # the answers, without the commentary (from 2026-10-01 a bare call pages at the 20 OLDEST)
+$TWICC session abc123 messages --role assistant --is-final true --tail 5   # the answers, without the commentary
 $TWICC session abc123 messages --role assistant --is-final false --tail 5  # the intermediate messages only
 $TWICC session abc123 messages --range 120-160                             # a window found with `search`
 $TWICC session abc123 messages --contains auth

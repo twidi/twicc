@@ -1,7 +1,7 @@
 ---
 name: twicc-session
 description: Inspect, wait on, unblock, or stop a single session — view metadata, read raw item content by line number, read user/assistant messages, list subagents, read its plan, list/inspect its workflows, see what it is waiting on and answer its question, or stop its live agent. Use when you or the user want to examine a session, read conversation content, explore subagent activity, block until it answers, unblock a session waiting on a human, or stop its agent.
-argument-hint: <session_id|self|parent> [--slim|--full] [content|messages|agents|plan|wait-reply|pending-requests|answer-questions|cancel-questions|stop|workflows|workflow]
+argument-hint: <session_id|self|parent> [--full] [content|messages|agents|plan|wait-reply|pending-requests|answer-questions|cancel-questions|stop|workflows|workflow]
 ---
 
 # TwiCC Session

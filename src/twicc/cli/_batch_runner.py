@@ -3,7 +3,7 @@
 Generalises a single-session drop-request flow to a set of sessions: resolve the
 target ids (explicit ids merged with the optional ``--spawned-by`` /
 ``--descendants`` / ``--siblings`` / ``--annotation`` scope, same union semantics
-as ``twicc sessions`` / ``processes stop`` — explicit ids first, scope-selected
+as ``twicc sessions`` / ``sessions stop`` — explicit ids first, scope-selected
 ids appended, deduplicated), drop one request per id reusing the *exact same*
 ``kind`` + payload the singular command would emit, poll every status file under
 a single ``--timeout`` wall-clock budget (the watcher processes the drops in

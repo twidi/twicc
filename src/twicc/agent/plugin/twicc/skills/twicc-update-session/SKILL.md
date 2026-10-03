@@ -93,4 +93,4 @@ Server (exit 3): every local code — the common ones above and each sub-command
 - `$TWICC info [models|agent-settings|presets]` — discover providers, models, agent-settings values and presets before editing a session. Skill: `twicc-info`.
 - `$TWICC session <session_id> stop` — stop the agent without touching the row. Skill: `twicc-session`.
 - `$TWICC send-message <session_id>` — send a message (settings unchanged). Skill: `twicc-send-message`.
-- `$TWICC session <session_id>` — one session's row (reduced from 2026-10-01; `--full` for every field). Skill: `twicc-session`.
+- `$TWICC session <session_id>` — one session's row (reduced; `--full` for every field). Skill: `twicc-session`.

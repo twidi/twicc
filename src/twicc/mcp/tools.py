@@ -22,22 +22,14 @@ import click
 from mcp import types as mcp_types
 
 from twicc.cli._local_only import LOCAL_ONLY_COMMANDS
-from twicc.cli._output import RETIRED_COMMANDS, listing_cutover_passed
 from twicc.mcp.batch_contract import BATCH_INPUT_SCHEMAS, BATCH_OUTPUT_SCHEMA, BATCH_NAMES
 from twicc.mcp.descriptions import MCP_DESCRIPTIONS
 from twicc.rpc.generator import CommandSpec, build_registry
 from twicc.rpc.invoker import get_command
 from twicc.rpc.permissions import COOKIE_READONLY_COMMANDS
 
-# The MCP surface: local-only minus whoami, plus the settings group — and,
-# past the cutover, the retired `process` / `processes` groups. Evaluated at
-# import, like the help texts: the tools leave the list at the first backend
-# start past the date (docs/plans/2026-09-23-process-commands-removal-design.md).
-MCP_EXCLUDED_ROOTS: frozenset[str] = frozenset(
-    (set(LOCAL_ONLY_COMMANDS) - {"whoami"})
-    | {"settings"}
-    | ({"process", "processes"} if listing_cutover_passed() else set())
-)
+# The MCP surface: local-only minus whoami, plus the settings group.
+MCP_EXCLUDED_ROOTS: frozenset[str] = frozenset((set(LOCAL_ONLY_COMMANDS) - {"whoami"}) | {"settings"})
 
 # Read-only annotation source and enforced eligibility for batch_read.
 # This does not change individual-tool availability.
@@ -66,15 +58,6 @@ def tool_title_for(path: str) -> str:
     """Human-readable title: ``update-session/settings`` → ``Update session settings``."""
     words = path.replace("/", " ").replace("-", " ").replace("_", " ")
     return words[:1].upper() + words[1:]
-
-
-#: MCP tool name of each retired command → its ``RETIRED_COMMANDS`` key. Kept
-#: here, not in ``_output``, which every command imports and which must not pull
-#: in the MCP layer. Past the cutover, a call to one of these names answers with
-#: the removal message whether or not the tool is still listed.
-RETIRED_MCP_TOOLS: dict[str, str] = {
-    tool_name_for(command.replace(" ", "/")): command for command in RETIRED_COMMANDS
-}
 
 
 @cache

@@ -9,7 +9,7 @@ sessions queried by their own id (the same single-node fallback that
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import orjson
 import pytest
@@ -18,20 +18,6 @@ from django.utils import timezone
 from twicc.cli._drop_request.whoami import resolve_spawn_tree_filter
 from twicc.cli._session_scope import merge_session_scope_ids
 from twicc.core.models import Project, Session, SessionType
-
-
-@pytest.fixture(autouse=True)
-def _before_the_pagination_cutover(monkeypatch):
-    """Pin the clock below ``LISTING_CUTOVER``.
-
-    These tests assert the pre-cutover shape (a bare array). Past the date it
-    changes, so without this they would go red on 2026-10-01 for a reason that
-    has nothing to do with what they cover.
-    The pinned value is naive, like the constant it replaces.
-    """
-    from twicc.cli import _output
-
-    monkeypatch.setattr(_output, "LISTING_CUTOVER", datetime(2200, 1, 1))  # noqa: DTZ001
 
 
 @pytest.fixture
@@ -117,5 +103,5 @@ def test_sessions_cli_returns_standalone_session_filtered_by_its_own_spawn_tree(
     cli_sessions.main(spawn_tree="STANDALONE")
 
     out = capsysbinary.readouterr().out
-    rows = orjson.loads(out)
+    rows = orjson.loads(out)["items"]
     assert {r["id"] for r in rows} == {"STANDALONE"}

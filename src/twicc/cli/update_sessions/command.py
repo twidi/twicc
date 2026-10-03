@@ -12,7 +12,7 @@ Deliberately excluded from the batch surface:
 
 Unlike ``update-session`` (where the single id is a parent-callback argument),
 the session selector here is a positional ``SESSION_ID...`` list on each
-sub-command, mirroring ``processes stop``. So the values the singular command
+sub-command, mirroring ``sessions stop``. So the values the singular command
 took positionally move to options: ``pin --mode`` and ``annotations --op``.
 The shared ``--spawned-by`` / ``--descendants`` / ``--annotation`` scope
 filters are merged (union) with the explicit ids, explicit ids first.
@@ -46,7 +46,7 @@ _VALID_PIN_MODES: tuple[str, ...] = ("project", "workspace", "all")
 
 
 # Shared help strings — every sub-command reuses the same scope-filter and
-# timeout wording (kept identical to ``processes stop`` semantics).
+# timeout wording (kept identical to ``sessions stop`` semantics).
 _SESSION_IDS_HELP = (
     "Sessions to update. Optional if you pass --spawned-by or --descendants "
     "(explicit ids and scope-selected ids are merged, explicit first). "

@@ -111,8 +111,8 @@ def serialize_network_denial(denial):
 
 
 #: The reduced projection that ``sessions``, ``sessions get``, ``session agents``,
-#: ``session <id>`` and ``whoami`` return by default from the cutover (or with
-#: ``--slim`` before it). Lives next to the serializer on purpose: a new field
+#: ``session <id>`` and ``whoami`` return by default (``--full`` returns the
+#: full payload). Lives next to the serializer on purpose: a new field
 #: gets classified the moment it is added, instead of silently landing in the
 #: full payload and never being reconsidered.
 #:

@@ -7,11 +7,12 @@ List a session's workflow runs, or show one (Claude Code only). MCP tools: `mcp_
 ### Workflows — list runs
 
 ```bash
-$TWICC session <SESSION_ID> workflows [--limit N] [--offset N] [--paginated] [--result] [--full]
+$TWICC session <SESSION_ID> workflows [--limit N] [--offset N] [--result] [--full]
 ```
 
 This session's workflow runs, newest first (**Claude Code** only; the session's `has_workflows` says whether any exist). Each row: `id`, `workflowName`, `summary`, `status`, `statusKind`, `startTime`, `durationMs`, `agentCount`, `totalTokens`, `totalToolCalls`, `phases`, `phaseCompletion`, `scriptPath`, `defaultModel`.
 
+- The result is `{items, pagination}` (20 per page);
 - `--result` — adds each run's `result`: to read conclusions, not to choose a run.
 - `--full` — the whole envelope, execution trace included (`workflowProgress`, `script`, `logs`, `args`, `result`). **Can be megabytes** (a prompt and a result preview per agent). For one run, use `workflow <ID>`.
 

@@ -2,7 +2,7 @@
 
 Watches ``<data_dir>/drop-requests/`` for new ``<request_uuid>.json`` files
 dropped by the TwiCC CLI (``create-session``, ``send-message``,
-``send-messages``, ``update-session``, ``update-sessions``, ``process stop``,
+``send-messages``, ``update-session``, ``update-sessions``, ``sessions stop``,
 ...). Reads the ``payload.kind``,
 dispatches to the matching service in ``twicc.core.services.*``, and
 writes a ``<request_uuid>.status.json`` file the CLI polls. Cleanup of

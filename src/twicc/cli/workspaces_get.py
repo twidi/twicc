@@ -18,13 +18,11 @@ No Django setup is needed: workspaces live in a JSON file, not the DB.
 
 from __future__ import annotations
 
-from twicc.cli._output import emit_json, pagination_notice
+from twicc.cli._output import emit_json
 
 
-def main(workspace_ids: list[str], *, paginated: bool = False) -> None:
+def main(workspace_ids: list[str]) -> None:
     """Emit one JSON entry per workspace_id (placeholder when missing)."""
-    paginated = pagination_notice("workspaces get", paginated, default_limit=None, shape="lookup")
-
     from twicc.workspaces import read_workspaces
 
     # Dedupe while preserving caller order.
@@ -60,4 +58,4 @@ def main(workspace_ids: list[str], *, paginated: bool = False) -> None:
             entry["known"] = True
         results.append(entry)
 
-    emit_json({"items": results} if paginated else results)
+    emit_json({"items": results})

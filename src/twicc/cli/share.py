@@ -3,9 +3,7 @@ down). ``url`` uses the backend Share URL builder. With ``shareBaseUrl`` unset
 or unusable, unredacted rows use the relative ``/share/<token>/`` path. Links
 only resolve on the dedicated Share origin."""
 
-from twicc.cli._output import (
-    PAGINATED_DEFAULT_LIMIT, emit_error, emit_json, emit_list, pagination_notice, resolve_limit,
-)
+from twicc.cli._output import emit_error, emit_json, emit_list, resolve_limit
 
 
 def _base_url(current: dict) -> str:
@@ -31,10 +29,9 @@ def _redacted_kinds(current: dict) -> set[str]:
 
 def list_main(*, kind: str | None = None, session: str | None = None,
               project: str | None = None, include_revoked: bool = False,
-              limit: int | None = None, offset: int = 0, paginated: bool = False) -> None:
+              limit: int | None = None, offset: int = 0) -> None:
     import django
     django.setup()
-    paginated = pagination_notice("share", paginated, default_limit=PAGINATED_DEFAULT_LIMIT)
 
     from django.db.models import Q
 
@@ -61,8 +58,8 @@ def list_main(*, kind: str | None = None, session: str | None = None,
         # filter belongs in the query rather than in a post-slice loop: a page is
         # then full, and the row count the window sees is the one the caller gets.
         qs = qs.filter(revoked_at__isnull=True)
-    limit = resolve_limit(limit, paginated=paginated, default=PAGINATED_DEFAULT_LIMIT)
-    total = qs.count() if paginated else None
+    limit = resolve_limit(limit)
+    total = qs.count()
     rows = list(qs[offset:offset + limit])
     current = read_synced_settings()
     base = _base_url(current)
@@ -78,7 +75,7 @@ def list_main(*, kind: str | None = None, session: str | None = None,
         else:
             data["url"] = build_share_url(base, data["url_path"]) if base else data["url_path"]
         out.append(data)
-    emit_list(out, paginated=paginated, limit=limit, offset=offset, total=total)
+    emit_list(out, limit=limit, offset=offset, total=total)
 
 
 def show_main(share_id: str) -> None:

@@ -1,16 +1,11 @@
-"""The shared machinery behind ``processes stop`` and ``sessions stop``.
+"""The machinery behind ``sessions stop``.
 
-Both commands answer "stop these agents"; they differ in how they choose the
-ids and in the envelope they emit. The drop-per-id submission, the per-id
-pre-check, the single-deadline poll loop and the per-id **entry** live here so
-the two cannot drift into reporting the same operation differently; each
-command shapes its envelope (``processes stop`` a bare array until its removal,
-``sessions stop`` ``{summary, results}``), and only ``sessions stop`` passes
-``caller_id``.
+The drop-per-id submission, the per-id pre-check, the single-deadline poll loop
+and the per-id **entry** live here; the command shapes its ``{summary,
+results}`` envelope and passes ``caller_id``.
 
-The selection stays at the call site: ``processes stop`` takes explicit ids
-plus filiation scopes, ``sessions stop`` takes the whole ``sessions`` filter
-family narrowed to what is actually running.
+The selection stays at the call site: ``sessions stop`` takes the whole
+``sessions`` filter family narrowed to what is actually running.
 """
 
 from __future__ import annotations

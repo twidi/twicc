@@ -20,10 +20,7 @@ Human-only commands (``password``, the ``claude`` / ``codex`` passthroughs,
 from __future__ import annotations
 
 import contextvars
-import logging
-import os
 import sys
-from datetime import datetime
 
 import orjson
 import typer
@@ -82,380 +79,35 @@ def emit_error(message: str, *, code: int = 1) -> None:
     raise typer.Exit(code)
 
 
-#: The page size of every listing (from 2026-10-01 for ``session content`` /
-#: ``messages``, which return everything by default until then), and the one
-#: ``--paginated`` supplies when the caller passes no ``--limit``: the flag
-#: promises a page and a "does another follow?" answer, which only means
-#: something if the page is actually bounded.
+#: The page size of every listing: what a call without ``--limit`` returns.
 PAGINATED_DEFAULT_LIMIT = 20
 
 
-def resolve_limit(limit: int | None, *, paginated: bool, default: int | None) -> int | None:
-    """Page size to apply: the caller's, else the mode's.
+def resolve_limit(limit: int | None) -> int:
+    """Page size to apply: the caller's, else :data:`PAGINATED_DEFAULT_LIMIT`.
 
     ``limit`` is ``None`` when the option was not passed — every paginated
     command declares it that way so an explicit ``--limit 20`` stays
-    distinguishable from the default. ``default`` is what the command uses
-    without ``--paginated`` (``None`` on the two commands that return
-    everything by default).
+    distinguishable from the default.
     """
-    if limit is not None:
-        return limit
-    return PAGINATED_DEFAULT_LIMIT if paginated else default
+    return PAGINATED_DEFAULT_LIMIT if limit is None else limit
 
 
-_NOTICE_LOGGER = logging.getLogger("twicc.cli.cutover")
-
-#: Local wall-clock instant at which the bare listing shape and the full session
-#: payload stop being the defaults. Naive on purpose: "midnight on the 1st"
-#: means midnight where the instance runs, not in UTC — the announcement and the
-#: code then say the same thing on every host. Changing the date is a one-line
-#: edit here; nothing else in the codebase encodes it. Design:
-#: docs/plans/2026-09-08-pagination-cutover-design.md and
-#: docs/plans/2026-09-23-session-listing-slim-cutover-design.md
-#: TWICC_LISTING_CUTOVER (undocumented, tests only) replaces it when set; see
-#: docs/plans/2026-09-23-cli-consistency-before-cutover-design.md, section 8.
-_BUILT_IN_LISTING_CUTOVER = datetime(2026, 10, 1)  # noqa: DTZ001 — local time, as announced
-LISTING_CUTOVER_ENV = "TWICC_LISTING_CUTOVER"
 
 
-def _listing_cutover_from_env(default: datetime) -> datetime:
-    raw = os.environ.get(LISTING_CUTOVER_ENV, "").strip()
-    if not raw:
-        return default
-    try:
-        value = datetime.fromisoformat(raw)
-    except ValueError:
-        value = None
-    if value is None or value.tzinfo is not None:
-        _NOTICE_LOGGER.warning(
-            "Ignoring %s=%r: expected a naive ISO date or date-time; using %s.",
-            LISTING_CUTOVER_ENV, raw, default.isoformat(),
-        )
-        return default
-    return value
+def limit_help(noun: str, *, suffix: str = "") -> str:
+    """Help for a listing's ``--limit``."""
+    return f"Max number of {noun} to return (default: {PAGINATED_DEFAULT_LIMIT})." + suffix
 
 
-LISTING_CUTOVER = _listing_cutover_from_env(_BUILT_IN_LISTING_CUTOVER)
 
-
-def listing_cutover_passed(now: datetime | None = None) -> bool:
-    """True once the envelope is the only shape and ``--paginated`` is a no-op,
-    and the reduced session projection is the default and ``--slim`` a no-op.
-
-    ``now`` is injectable for tests and **must be naive**: it is compared against
-    a naive constant, and mixing the two raises ``TypeError``.
-    """
-    if now is not None and now.tzinfo is not None:
-        raise ValueError(
-            "listing_cutover_passed() compares local wall-clock times: pass a naive "
-            "datetime (datetime.now(), not timezone.now())."
-        )
-    return (now or datetime.now()) >= LISTING_CUTOVER  # noqa: DTZ005 — local time
-
-
-#: Up to one notice per migration per invocation (a flagless ``sessions`` call
-#: records two), drained by the RPC invoker into its result. A ContextVar rather
-#: than a field on ``_Sink``: the terminal path has no sink.
-_notices: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
-    "cutover_notices", default=None
-)
-
-
-def _in_mcp_call() -> bool:
-    """True when the running command was dispatched by the MCP server.
-
-    Agents read ``paginated``, ``slim`` and ``full`` off the tool schema and get
-    the new shape without being told, so they are the one caller that is never
-    notified. The import is
-    lazy and reached only in API mode: ``twicc.mcp.identity`` pulls in
-    ``django.utils.crypto``, and this module is imported by every command.
-    """
-    from twicc.mcp.identity import mcp_call
-
-    return mcp_call.get()
-
-
-def pagination_notice(command: str, paginated: bool, *, default_limit: int | None,
-                      shape: str = "array") -> bool:
-    """Resolve the pagination mode, announcing the cutover while it is still ahead.
-
-    Returns what ``paginated`` should be from here on: always ``True`` past the
-    cutover, where the flag is accepted but means nothing. Before it, the
-    caller's own value — and when the caller passed nothing, a notice is
-    recorded so the migration does not arrive unannounced.
-
-    ``command`` is the full CLI path (``"session content"``, not ``"content"``)
-    so the message names something the reader can paste back. ``default_limit``
-    is what the command already hands to :func:`resolve_limit`; a default equal
-    to :data:`PAGINATED_DEFAULT_LIMIT` means the page size is not changing, so
-    the notice names the shape alone. ``shape`` is ``"object"`` for the one listing whose current
-    output is not a bare array, ``"lookup"`` for a batch lookup (``{"items":
-    [...]}`` with no ``pagination``) and ``"peers"`` for ``peers`` (its list moves
-    from ``peers`` to ``items``); those two never carry the page-size clause.
-    """
-    if listing_cutover_passed():
-        return True
-    if paginated:
-        return paginated  # already migrated: nothing to say
-    if _capture.get() is not None and _in_mcp_call():
-        return paginated
-
-    when = LISTING_CUTOVER.strftime("%Y-%m-%d")
-    if shape == "lookup":
-        change = f"`{command}` returns {{\"items\": [...]}} instead of a bare array"
-    elif shape == "peers":
-        change = "`peers` returns its list under `items` instead of `peers`"
-    elif shape == "object":
-        change = (
-            f"`{command}` renames `hits` to `items` and `total_hits` to "
-            "`pagination.total`, moves `limit`/`offset` under `pagination`"
-        )
-    else:
-        change = (
-            f"`{command}` returns {{\"items\": [...], \"pagination\": {{...}}}} "
-            "instead of a bare array"
-        )
-    if shape in ("array", "object") and default_limit != PAGINATED_DEFAULT_LIMIT:
-        change += f", and pages at {PAGINATED_DEFAULT_LIMIT} by default"
-    message = (
-        f"twicc: from {when}, {change}. Pass --paginated now to get that shape "
-        "today; after that date the flag is accepted but does nothing."
-    )
-    _record_notice(message)
-    return paginated
-
-
-def slim_notice(command: str, slim: bool, full: bool, *, kind: str = "listing") -> bool:
-    """Resolve the slim mode, announcing the cutover while it is still ahead.
-
-    Returns what ``slim`` should be from here on: ``--full`` always wins, then
-    ``--slim``; with neither, ``True`` past the cutover and ``False`` before it,
-    where a notice is recorded so the migration does not arrive unannounced.
-
-    The cutover shortcut comes after the two flags, unlike in
-    :func:`pagination_notice`: placed first, it would turn ``--full`` into a
-    no-op past the date. ``command`` is the full CLI path, as for :func:`pagination_notice`.
-    ``kind`` is ``"topology"`` for the one command whose change is its
-    ``process`` block, its sessions being reduced already, and ``"whoami"`` for
-    the one whose flagless call keeps its own object (not a session row) until
-    the cutover.
-    """
-    if slim and full:
-        raise ValueError("slim and full are mutually exclusive.")
-    if full:
-        return False
-    if slim:
-        return True
-    if listing_cutover_passed():
-        return True
-    if _capture.get() is not None and _in_mcp_call():
-        return False
-
-    # Formatted here, not from _CUTOVER_DATE: a test that pins the constant
-    # must see its own date in the notice.
-    when = LISTING_CUTOVER.strftime("%Y-%m-%d")
-    if kind == "topology":
-        change = (
-            f"`{command}` reduces each node's `process` block to {{\"state\"}} by "
-            "default. Pass --full to get the full session and process block on "
-            "every node"
-        )
-    elif kind == "whoami":
-        change = (
-            "`whoami` returns the `session self` payload — the session row with its "
-            "`process` block inside, reduced by default — instead of its current "
-            "object (`session_id` becomes `id`, `agent_settings.<field>` becomes "
-            "`<field>`, `current_working_directory` becomes `git_directory`). Pass "
-            "--full to get that row in full"
-        )
-    else:
-        change = (
-            f"`{command}` returns the reduced session projection by default "
-            "(what --slim returns today) instead of the full payload. Pass --full "
-            "to keep the full payload"
-        )
-    message = (
-        f"twicc: from {when}, {change}, or --slim to get the new shape today; "
-        "after that date --slim is accepted but does nothing."
-    )
-    _record_notice(message)
-    return False
-
-
-#: Retired command → its replacement. The single source for the wrappers, the
-#: help texts, and the RPC / MCP refusals. Design:
-#: docs/plans/2026-09-23-process-commands-removal-design.md
-RETIRED_COMMANDS = {
-    "processes": "sessions --active",
-    "processes get": "sessions get",
-    "processes stop": "sessions stop",
-    "processes wait": "sessions wait-reply",
-    "process": "session <id>",
-    "process stop": "session <id> stop",
-    "process wait": "session <id> wait-reply",
-}
-
-
-def removal_message(command: str) -> str:
-    """The error a retired command answers with past the cutover.
-
-    One builder for every channel — the terminal, the RPC view and the MCP
-    pre-check — so the three never drift. The date is read at call time.
-    """
-    when = LISTING_CUTOVER.strftime("%Y-%m-%d")
-    return (
-        f"Error: `twicc {command}` was removed on {when}. "
-        f"Use `twicc {RETIRED_COMMANDS[command]}` instead."
-    )
-
-
-def removed_command(command: str) -> None:
-    """Announce a retired command before the cutover; refuse it after.
-
-    Exit 64 (bad usage), not 1: ``process <id>`` already exits 1 for "no
-    running process", and a script testing that code must not read a retired
-    command as "not running".
-    """
-    if listing_cutover_passed():
-        emit_error(removal_message(command), code=64)
-    if _capture.get() is not None and _in_mcp_call():
-        return
-    when = LISTING_CUTOVER.strftime("%Y-%m-%d")
-    _record_notice(
-        f"twicc: `twicc {command}` stops working on {when}. "
-        f"Use `twicc {RETIRED_COMMANDS[command]}` instead."
-    )
-
-
-def refuse_if_removed(group: str, subcommand: str | None) -> None:
-    """Past the cutover, refuse ``group`` or ``group subcommand``; else do nothing.
-
-    Called first in the group callback, which Click runs before it parses the
-    subcommand's own arguments: the refusal then wins over a missing argument.
-    """
-    if listing_cutover_passed():
-        removed_command(group if subcommand is None else f"{group} {subcommand}")
-
-
-def _record_notice(message: str) -> None:
-    """Carry one notice to the caller, on the channel native to it."""
-    recorded = _notices.get()
-    if recorded is not None:
-        # In-process (RPC): the caller reads it off the envelope.
-        recorded.append(message)
-    else:
-        # Terminal: typer.echo, never print(file=sys.stderr) — a closed fd 2
-        # makes sys.stderr None, and print() would then fall back to stdout and
-        # corrupt the JSON payload. click.echo drops the write instead.
-        typer.echo(message, err=True)
-    if _NOTICE_LOGGER.hasHandlers():
-        _NOTICE_LOGGER.warning("%s", message)
-
-
-def cutover_help(before: str, after: str) -> str:
-    """Pick the help text that is true right now.
-
-    Every help string here is also data: Click's help becomes the JSON-Schema
-    ``description`` (``twicc/rpc/schema.py``) and then the MCP tool schema, so a
-    string that outlives its behaviour actively misinforms agents. Deriving it
-    from :data:`LISTING_CUTOVER` means it flips itself on the date — no
-    second edit, and no release to cut on or after the cutover just to correct a
-    sentence.
-
-    Evaluated at import: a CLI process is short-lived, so it always reads true;
-    the backend builds its MCP schema at startup and carries the old wording
-    until the first restart past the date. A description one restart stale, with
-    no effect on behaviour.
-    """
-    return after if listing_cutover_passed() else before
-
-
-_CUTOVER_DATE = LISTING_CUTOVER.strftime("%Y-%m-%d")
-
-#: Prepended to each listing's own help while the bare shape is still emitted.
-#: Empty afterwards, so the notice disappears from ``--help`` and from the MCP
-#: tool descriptions the day the migration is over.
-CUTOVER_NOTICE = cutover_help(
-    f"DEPRECATION: from {_CUTOVER_DATE} this returns {{items, pagination}} instead "
-    "of a bare array. Pass --paginated now to get that shape today. ",
-    "",
-)
-
-#: Same, for the two commands whose flagless page size also changes on the date.
-CUTOVER_NOTICE_PAGED = cutover_help(
-    f"DEPRECATION: from {_CUTOVER_DATE} this returns {{items, pagination}} instead "
-    f"of a bare array, and pages at {PAGINATED_DEFAULT_LIMIT} by default. Pass "
-    "--paginated now to get that shape today. ",
-    "",
-)
-
-#: Same as :data:`CUTOVER_NOTICE`, for the one listing whose current shape is
-#: already an object (``search``).
-CUTOVER_NOTICE_OBJECT = cutover_help(
-    f"DEPRECATION: from {_CUTOVER_DATE} this renames `hits` to `items` and "
-    "`total_hits` to `pagination.total`, and moves `limit`/`offset` under "
-    "`pagination`. Pass --paginated now to get that shape today. ",
-    "",
-)
-
-PAGINATED_HELP = cutover_help(
-    "Wrap the result in {items, pagination} with limit/offset/total/has_more, "
-    "so a caller knows whether another page follows. Without an explicit --limit "
-    f"the page size is {PAGINATED_DEFAULT_LIMIT}, so the answer always describes a "
-    f"real page. Off by default until {_CUTOVER_DATE}, when the envelope becomes "
-    "the only shape and this flag turns into an accepted no-op.",
-    "Accepted and ignored: the envelope is the default. Kept so scripts that "
-    "migrated during the deprecation window keep working untouched.",
-)
-
-
-def limit_help(noun: str, default: int | None, *, suffix: str = "") -> str:
-    """Help for a listing's ``--limit``, true on both sides of the cutover.
-
-    ``default`` is what the command passes to :func:`resolve_limit` — the page
-    size without ``--paginated``. Past the cutover every listing pages at
-    :data:`PAGINATED_DEFAULT_LIMIT`, so the second form drops the distinction.
-    """
-    shown = "no limit" if default is None else str(default)
-    before = f"Max number of {noun} to return (default: {shown}"
-    # A command whose default equals the constant: the flag changes nothing for it.
-    before += ")." if default == PAGINATED_DEFAULT_LIMIT else f"; {PAGINATED_DEFAULT_LIMIT} with --paginated)."
-    after = f"Max number of {noun} to return (default: {PAGINATED_DEFAULT_LIMIT})."
-    return cutover_help(before + suffix, after + suffix)
-
-
-SLIM_HELP = cutover_help(
-    "Return a reduced projection of each session: every field except the "
-    "payloads you fetch per session (tasks, plan_paths, goals, layout), the "
-    "redundant timestamps (mtime, last_started_at, last_updated_at, "
-    "last_stopped_at, last_viewed_at), the cost breakdown (self_cost, "
-    "subagents_cost), slug, browser_url and compute_version_up_to_date; its "
-    "`process` block is {state, background_work_in_progress} (null on a subagent). "
-    f"Off by default until {_CUTOVER_DATE}, when it becomes the default and this "
-    "flag turns into an accepted no-op.",
-    "Accepted and ignored: the reduced projection is the default. Kept so scripts "
-    "that migrated during the deprecation window keep working untouched.",
-)
-
-FULL_HELP = cutover_help(
-    "Return the full session payload — every field of the session payload. It is "
-    f"the default until {_CUTOVER_DATE}; pass --full now to keep it after that "
-    "date. Mutually exclusive with --slim.",
+FULL_HELP = (
     "Return the full session payload — every field of the session payload — "
     "instead of the default reduced projection, which drops the per-session "
     "payloads, the redundant timestamps, the cost breakdown, slug, browser_url "
-    "and compute_version_up_to_date. Mutually exclusive with --slim.",
+    "and compute_version_up_to_date. Mutually exclusive with --slim."
 )
 
-TOPOLOGY_SLIM_HELP = cutover_help(
-    "Reduce each node's `process` block to `{state, background_work_in_progress}`. "
-    "Each node's `session` is already the reduced subset. Off by default until "
-    f"{_CUTOVER_DATE}, when it becomes the default and this flag turns into an "
-    "accepted no-op.",
-    "Accepted and ignored: each node's `process` block is reduced to "
-    "`{state, background_work_in_progress}` by default.",
-)
 
 _TOPOLOGY_FULL_LEAD = (
     "Emit the full serializer payload for every node — agent settings as stored, "
@@ -469,153 +121,50 @@ _TOPOLOGY_FULL_LEAD = (
     "context_usage, context_max, total_cost, directory)"
 )
 
-TOPOLOGY_FULL_HELP = cutover_help(
-    f"{_TOPOLOGY_FULL_LEAD}. Its `process` block keeps its six fields until "
-    f"{_CUTOVER_DATE}; from that date it is `{{state, background_work_in_progress}}` "
-    "alone. Mutually exclusive with --slim.",
+TOPOLOGY_FULL_HELP = (
     f"{_TOPOLOGY_FULL_LEAD}, and its `process` block is "
-    "`{state, background_work_in_progress}` alone. Mutually exclusive with --slim.",
+    "`{state, background_work_in_progress}` alone. Mutually exclusive with --slim."
 )
 
-_SESSIONS_GET_IDS_HELP = (
+SESSIONS_GET_IDS_HELP = (
     "One or more session IDs to look up. The output mirrors the input "
     "order (duplicates collapsed, first occurrence wins). Each entry "
-    "is either {entry} or a placeholder with "
-    "`known: false` when no Session row exists for that id. "
+    "is either the session's reduced projection (its full metadata with --full) "
+    "or a placeholder with `known: false` when no Session row exists for that id. "
     "Subagents, archived and hidden sessions are returned just like "
     "regular ones — the listing filters don't apply when you name "
     "explicit ids."
 )
 
-SESSIONS_GET_IDS_HELP = cutover_help(
-    _SESSIONS_GET_IDS_HELP.format(entry="the full session metadata"),
-    _SESSIONS_GET_IDS_HELP.format(
-        entry="the session's reduced projection (its full metadata with --full)",
-    ),
-)
 
-#: Prepended to the help of the session commands whose default becomes the
-#: reduced projection (``sessions``, ``sessions get``, ``session agents``,
-#: ``session <id>``) while the full payload is still their default. Empty
-#: afterwards, like :data:`CUTOVER_NOTICE`.
-SLIM_CUTOVER_NOTICE = cutover_help(
-    f"DEPRECATION: from {_CUTOVER_DATE} this returns the reduced session projection "
-    "by default (what --slim returns today). Pass --full to keep the full payload. ",
-    "",
-)
 
-#: Prepended to the help of the three batch lookups while they still return a
-#: bare array. Empty afterwards, like :data:`CUTOVER_NOTICE`.
-LOOKUP_CUTOVER_NOTICE = cutover_help(
-    f"DEPRECATION: from {_CUTOVER_DATE} this returns {{items}} instead of a bare "
-    "array. Pass --paginated now to get that shape today. ",
-    "",
-)
-
-#: Same, for ``peers``, whose list sits under ``peers`` today.
-PEERS_CUTOVER_NOTICE = cutover_help(
-    f"DEPRECATION: from {_CUTOVER_DATE} this returns its list under {{items}} "
-    "instead of {peers}. Pass --paginated now to get that shape today. ",
-    "",
-)
-
-LOOKUP_ENVELOPE_HELP = cutover_help(
-    "Wrap the result in {items} — no pagination: one entry per id asked. Off by "
-    f"default until {_CUTOVER_DATE}, when it becomes the only shape and this flag "
-    "an accepted no-op.",
-    "Accepted and ignored: the result is always wrapped in {items}.",
-)
-
-PEERS_ENVELOPE_HELP = cutover_help(
-    "Wrap the result in {items} — no pagination: every approved peer. Off by "
-    f"default until {_CUTOVER_DATE}, when it becomes the only shape and this flag "
-    "an accepted no-op.",
-    "Accepted and ignored: the result is always wrapped in {items}.",
-)
-
-#: Prepended to the help of ``whoami`` while its flagless call still returns its
-#: own object. Empty afterwards, like :data:`CUTOVER_NOTICE`.
-WHOAMI_CUTOVER_NOTICE = cutover_help(
-    f"DEPRECATION: from {_CUTOVER_DATE} this returns the `session self` payload "
-    "(the session row, reduced by default, with its `process` block inside) "
-    "instead of the current object. Pass --slim or --full now to get that shape "
-    "today. ",
-    "",
-)
-
-WHOAMI_HELP = cutover_help(
-    "Print details of the calling session (found by walking the PID ancestry; "
-    f"over MCP, from the connection). Without --slim or --full, until {_CUTOVER_DATE}: "
-    "a JSON object with session_id, title, project_id, project_directory, "
-    "current_working_directory, artifacts_dir, scratch_dir, "
-    "orchestration_scratch_dir (only inside an orchestration), the resolved "
-    "agent_settings, the session payload, and the nine-field `process` row. "
-    "With --slim or --full: the `session self` payload — the session row, "
-    "reduced or in full, with its `process` block inside. From a plain terminal, "
-    "this command exits 1.",
+WHOAMI_HELP = (
     "Print the calling session (found by walking the PID ancestry; over MCP, "
     "from the connection): the `session self` payload — the session row, reduced by default "
     "(--full for every field), with its `process` block inside. From a plain "
-    "terminal, this command exits 1.",
-)
-
-WHOAMI_SLIM_HELP = cutover_help(
-    "Return the `session self` payload, reduced. Without --slim or --full, this "
-    f"command returns its current object until {_CUTOVER_DATE}.",
-    "Return the `session self` payload, reduced (the default).",
-)
-
-WHOAMI_FULL_HELP = cutover_help(
-    "Return the `session self` payload in full — every field of the session "
-    "payload. Without --slim or --full, this command returns its current object "
-    f"until {_CUTOVER_DATE}.",
-    "Return the `session self` payload in full — every field of the session payload.",
-)
-
-#: Same, for ``topology``, whose change is its ``process`` block.
-TOPOLOGY_CUTOVER_NOTICE = cutover_help(
-    f"DEPRECATION: from {_CUTOVER_DATE} each node's `process` block is reduced to "
-    "`{state, background_work_in_progress}` by default. Pass --full to get the full "
-    "session and process block on every node. ",
-    "",
+    "terminal, this command exits 1."
 )
 
 
-def removal_help(command: str) -> str:
-    """Help prefix of a retired command, true on both sides of the cutover."""
-    replacement = RETIRED_COMMANDS[command]
-    return cutover_help(
-        f"DEPRECATION: stops working on {_CUTOVER_DATE}; use `twicc {replacement}` instead. ",
-        f"REMOVED on {_CUTOVER_DATE}: use `twicc {replacement}` instead. ",
-    )
+WHOAMI_FULL_HELP = "Return the `session self` payload in full — every field of the session payload."
 
 
 def emit_list(
     items: list,
     *,
-    paginated: bool,
-    plain=None,
     limit: int | None = None,
     offset: int = 0,
     total: int | None = None,
     has_more: bool | None = None,
     extra: dict | None = None,
 ) -> None:
-    """Emit a listing, optionally wrapped in the shared pagination envelope.
+    """Emit a listing wrapped in the shared pagination envelope.
 
-    Without ``paginated`` the payload is emitted exactly as it always was —
-    ``items`` for the nine array-returning commands, or ``plain`` for the one
-    (``search``) whose historical shape is already an object. That branch is
-    the compatibility contract: existing scripts must keep parsing what they
-    parse today.
+    The payload is ``{"items": [...], "pagination": {...}}``. ``pagination``
+    always carries the same four keys, on every command, so a caller never
+    has to test for their presence:
 
-    With ``paginated`` the payload becomes ``{"items": [...], "pagination":
-    {...}}``. ``pagination`` always carries the same four keys, on every
-    command, so a caller never has to test for their presence:
-
-    - ``limit`` / ``offset`` — the window that was applied (``limit`` is
-      ``None`` when the command has no default limit and none was asked for,
-      meaning everything was returned).
+    - ``limit`` / ``offset`` — the window that was applied.
     - ``total`` — the number of rows the filters match, or ``None`` when it
       cannot be known without an unreasonable amount of work.
     - ``has_more`` — whether another page follows.
@@ -625,10 +174,6 @@ def emit_list(
     (``--tail``) must do. ``extra`` carries command-specific top-level keys
     (``search``'s ``query``, ...) that are not pagination facts.
     """
-    if not paginated:
-        emit_json(items if plain is None else plain)
-        return
-
     if has_more is None:
         has_more = limit is not None and total is not None and offset + limit < total
 

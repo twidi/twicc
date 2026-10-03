@@ -20,8 +20,7 @@ Hidden sessions are included. ``sessions`` hides them when *listing*, but
 which are hidden by convention — would be a lie. Archived ones need no
 thought: archiving already kills the agent, so none of them is ever running.
 
-The stopping itself is :mod:`twicc.cli._stop_batch`, shared with
-``processes stop``.
+The stopping itself is :mod:`twicc.cli._stop_batch`.
 """
 
 from __future__ import annotations
@@ -108,10 +107,8 @@ def main(
     current = resolve_current_session()
     caller_id = current.id if current is not None else None
 
-    # Explicit ids are UNIONED with the filters, as in `processes stop`,
-    # `processes wait`, `send-messages` and `update-sessions`. An earlier
-    # version replaced them, which silently turned a migrated
-    # `processes stop <id> --descendants self` into a one-agent stop.
+    # Explicit ids are UNIONED with the filters, as in `send-messages` and
+    # `update-sessions`.
     explicit = resolve_explicit_ids(session_ids)
     seen = set(explicit)
 
@@ -138,8 +135,7 @@ def main(
 
     # Named ids are NOT narrowed to the live set: naming one is the caller
     # saying "stop this", and the underlying service is idempotent. Dropping
-    # them would also make the output unalignable with the input, where
-    # `processes stop` reports `skipped_*` per id.
+    # them would also make the output unalignable with the input.
     targets = explicit + selected
     entries = stop_session_ids(
         targets, timeout=timeout, force=force, twicc_pid=twicc_pid, caller_id=caller_id,

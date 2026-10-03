@@ -620,8 +620,7 @@ def wait_for_replies(
     which is the other way a wait concludes. A turn that crashed or was refused
     does not end the batch: the others may still answer, and the caller asked
     for an answer.
-    Sessions still waiting when that happens get ``outcome: "pending"``, the
-    word ``processes wait`` already uses for the same situation.
+    Sessions still waiting when that happens get ``outcome: "pending"``.
 
     ``wait_background`` applies the rule of the module docstring to every
     session alike: a final message counts only when it is read while nothing

@@ -1,12 +1,10 @@
 """Peer CLI surface: peers / peer-message / peer-send (in-process invoker)."""
 
 import asyncio
-from datetime import datetime
 
 import pytest
 from django.db.models.query import QuerySet
 
-from twicc.cli import _output
 from twicc.cli._drop_request import transport
 from twicc.core.models import Peer, PeerMessage, PeerMessageDirection, PeerMessageStatus, PeerState
 from twicc.core.services.peer_tokens import mint_token
@@ -43,7 +41,6 @@ def _active_peer(**kw):
 
 @pytest.mark.django_db(transaction=True)
 def test_peers_lists_active_and_broken_only(monkeypatch):
-    monkeypatch.setattr(_output, "LISTING_CUTOVER", datetime(2200, 1, 1))  # noqa: DTZ001
     _active_peer()
     _active_peer(name="bob", base_url="https://bob.example.com", state=PeerState.BROKEN,
                  token_ours=mint_token())
@@ -53,7 +50,7 @@ def test_peers_lists_active_and_broken_only(monkeypatch):
                  state=PeerState.REVOKED, token_ours=None, token_theirs=None)
     res = invoke(["peers"])
     assert res.exit_code == 0
-    peers = res.result["peers"]
+    peers = res.result["items"]
     assert {p["name"] for p in peers} == {"alice", "bob"}
     for p in peers:
         assert set(p) == {"id", "name", "state", "broken_reason", "last_contact_at"}

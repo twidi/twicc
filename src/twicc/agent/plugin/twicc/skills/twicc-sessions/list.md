@@ -36,25 +36,22 @@ $TWICC sessions [OPTIONS]
   - `KEY:in:V1,V2,...` — equals one of the values; escape a literal comma with `\,`.
   - Values are typed: `true`/`false` → boolean, `null` → null, integers and floats numeric, anything else → string (same rules as `create-session --annotation`).
 
-### Projection: `--slim` / `--full`
+### Projection
 
-- `--slim` — the reduced row: every field except the payloads you fetch per session (`tasks`, `plan_paths`, `goals`, `layout` — the flags `has_tasks`, `has_goals`, `has_plan`, `has_artifacts`, `has_workflows` say what there is to fetch), the redundant timestamps (`mtime`, `last_started_at`, `last_updated_at`, `last_stopped_at`, `last_viewed_at`), the cost breakdown (`self_cost`, `subagents_cost`), `slug`, `browser_url` and `compute_version_up_to_date`. Its `process` block is `{state, background_work_in_progress}`.
-- `--full` — the full payload, the one `session <ID> --full` returns.
-- **Default: `--full` before 2026-10-01, `--slim` from that date** (`--slim` then becomes an accepted no-op; `--full` keeps working on both sides). Until then a call with neither flag prints a one-line notice on stderr (RPC envelope: `warnings` key; never on MCP), next to the `--paginated` one.
-- Mutually exclusive (exit `2`). `sessions get` takes them too, placeholders included.
+- Default — the reduced row: every field except the payloads you fetch per session (`tasks`, `plan_paths`, `goals`, `layout` — the flags `has_tasks`, `has_goals`, `has_plan`, `has_artifacts`, `has_workflows` say what there is to fetch), the redundant timestamps (`mtime`, `last_started_at`, `last_updated_at`, `last_stopped_at`, `last_viewed_at`), the cost breakdown (`self_cost`, `subagents_cost`), `slug`, `browser_url` and `compute_version_up_to_date`. Its `process` block is `{state, background_work_in_progress}`.
+- `--full` — the full payload, the one `session <ID> --full` returns. `sessions get` takes it too, placeholders included.
 
 ### Pagination
 
 - `--limit N` — max results (default 20). `--offset N` — skip the first N (default 0).
-- `--paginated` — wrap the result in `{items, pagination}` with `limit`, `offset`, `total`, `has_more`: you know whether another page follows instead of guessing from the page size. Without an explicit `--limit` the page size is **20**.
-- **Before 2026-10-01 `--paginated` opts in and a call without it keeps its bare-array shape (its rows gain new keys and values now — see the fields below); from that date the envelope is the only shape and the flag an accepted no-op.** Passing it works on both sides.
+- The result is always `{items, pagination}` with `limit`, `offset`, `total`, `has_more`: you know whether another page follows instead of guessing from the page size.
 
 ## Output format
 
-The reduced projection (`--slim` before 2026-10-01, the default from that date):
+The default reduced projection:
 
 ```json
-[
+{"items": [
   {
     "id": "abc123-def456", "project_id": "-home-twidi-dev-myproject", "provider": "claude_code",
     "title": "Implement user authentication", "annotations": {"role": "reviewer"},
@@ -74,10 +71,10 @@ The reduced projection (`--slim` before 2026-10-01, the default from that date):
     "claude_in_chrome": false, "fast_mode": false, "question_widget": true,
     "process": {"state": "user_turn", "background_work_in_progress": null}
   }
-]
+], "pagination": {"limit": 20, "offset": 0, "total": 1, "has_more": false}}
 ```
 
-With `--full` (the default before 2026-10-01), each row is the full payload (`session <ID> --full`): the fields above plus `mtime`, `last_started_at` / `last_updated_at` / `last_stopped_at` / `last_viewed_at`, `slug`, `compute_version_up_to_date`, `self_cost` / `subagents_cost`, `layout`, `browser_url`, `tasks`, `plan_paths`, `goals` — and a six-field `process` block.
+With `--full`, each row is the full payload (`session <ID> --full`): the fields above plus `mtime`, `last_started_at` / `last_updated_at` / `last_stopped_at` / `last_viewed_at`, `slug`, `compute_version_up_to_date`, `self_cost` / `subagents_cost`, `layout`, `browser_url`, `tasks`, `plan_paths`, `goals` — and a six-field `process` block.
 
 ### The `process` block
 
@@ -133,11 +130,11 @@ $TWICC sessions --annotation status:exists --annotation priority:in:high,critica
 ## Related commands
 
 - `$TWICC sessions get <ID>...` — the same rows for known ids. File: `get.md`.
-- `$TWICC session <session_id|self|parent>` — one session's row, same `--slim` / `--full` (exit 1 when no row has that id, or `self` / `parent` cannot be resolved). Skill: `twicc-session`.
+- `$TWICC session <session_id|self|parent>` — one session's row, same `--full` option (exit 1 when no row has that id, or `self` / `parent` cannot be resolved). Skill: `twicc-session`.
 - `$TWICC topology <ID|self>` — map a spawned-session tree. Skill: `twicc-topology`.
 
 ## How to present results
 
 1. Show session title, date, and message count.
-2. If `--paginated` reports `has_more: true`, offer the next page with `--offset`.
+2. If `pagination.has_more` is `true`, offer the next page with `--offset`.
 3. Include cost and model only if explicitly asked.

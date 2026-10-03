@@ -28,29 +28,17 @@ Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never 
 ## Usage
 
 ```bash
-$TWICC peers [--paginated]
+$TWICC peers
 ```
 
-No arguments. One option:
-
-- `--paginated` — wrap the list in `{"items": [...]}` instead of `{"peers": [...]}` — **no `pagination`**: every approved peer, nothing to page. **Before 2026-10-01 the list sits under `peers` and the flag opts in; from that date `{"items": [...]}` is the only shape and the flag is an accepted no-op.** Until then a call without it prints a one-line notice on stderr (in the RPC envelope's `warnings`; never on MCP).
+No arguments. The list sits under `items` with **no `pagination`**: every approved peer, nothing to page.
 
 ## Output format
 
-Before 2026-10-01 (without `--paginated`):
-
-```json
-{"peers": [
-  {"id": "peer_a1b2c3d4", "name": "David", "state": "active", "broken_reason": "", "last_contact_at": "2026-07-24T12:00:00+00:00"},
-  {"id": "peer_e5f6a7b8", "name": "Old laptop", "state": "broken", "broken_reason": "remote_credential_rejected", "last_contact_at": null}
-]}
-```
-
-From 2026-10-01, or with `--paginated` now, the same list under `items`:
-
 ```json
 {"items": [
-  {"id": "peer_a1b2c3d4", "name": "David", "state": "active", "broken_reason": "", "last_contact_at": "2026-07-24T12:00:00+00:00"}
+  {"id": "peer_a1b2c3d4", "name": "David", "state": "active", "broken_reason": "", "last_contact_at": "2026-07-24T12:00:00+00:00"},
+  {"id": "peer_e5f6a7b8", "name": "Old laptop", "state": "broken", "broken_reason": "remote_credential_rejected", "last_contact_at": null}
 ]}
 ```
 
@@ -65,8 +53,6 @@ From 2026-10-01, or with `--paginated` now, the same list under `items`:
 
 ```bash
 $TWICC peers
-# → {"peers":[{"id":"peer_a1b2c3d4","name":"David","state":"active","broken_reason":"","last_contact_at":"..."}]}
-$TWICC peers --paginated
 # → {"items":[{"id":"peer_a1b2c3d4","name":"David","state":"active","broken_reason":"","last_contact_at":"..."}]}
 ```
 

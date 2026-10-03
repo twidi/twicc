@@ -1,34 +1,18 @@
-"""`session <id>`: flags on both sides of the id, keywords, lookup rule, date."""
+"""`session <id>`: flags on both sides of the id, keywords, lookup rule."""
 
 from __future__ import annotations
 
 import asyncio
-import importlib
-from datetime import datetime
 
 import orjson
 import pytest
 from typer.testing import CliRunner
 
-from twicc.cli import _output, app
+from twicc.cli import app
 from twicc.cli import session as cli_session
 from twicc.core.models import Project, Session, SessionType
 from twicc.rpc.generator import build_registry, render_argv
 from twicc.rpc.invoker import invoke
-
-PAST = datetime(2000, 1, 1)     # noqa: DTZ001
-FUTURE = datetime(2200, 1, 1)   # noqa: DTZ001
-NOTICE = "returns the reduced session projection by default"
-
-
-@pytest.fixture
-def before(monkeypatch):
-    monkeypatch.setattr(_output, "LISTING_CUTOVER", FUTURE)
-
-
-@pytest.fixture
-def after(monkeypatch):
-    monkeypatch.setattr(_output, "LISTING_CUTOVER", PAST)
 
 
 @pytest.fixture(autouse=True)
@@ -68,7 +52,7 @@ def first_row(result):
     ("session", "--full", "sc-root"),
     ("session", "--full", "--", "sc-root"),
 ])
-def test_full_on_either_side_of_the_id(after, rows, argv):
+def test_full_on_either_side_of_the_id(rows, argv):
     result = cli(*argv)
     assert result.exit_code == 0, result.output
     assert "layout" in orjson.loads(result.stdout)
@@ -88,7 +72,7 @@ def test_a_group_flag_before_a_subcommand_is_refused(rows, argv):
     assert "--slim / --full apply to `session <id>` alone, not to `agents`" in result.error
 
 
-def test_the_subcommand_keeps_its_own_flag(after, rows):
+def test_the_subcommand_keeps_its_own_flag(rows):
     result = invoke(["session", "sc-root", "agents", "--full"])
     assert result.exit_code == 0, result.error
     assert "layout" in first_row(result.result)
@@ -100,7 +84,7 @@ def test_both_flags_are_refused(rows):
     assert "--slim and --full are mutually exclusive" in result.error
 
 
-def test_the_mcp_argv_is_the_bare_call(after, rows):
+def test_the_mcp_argv_is_the_bare_call(rows):
     registry = build_registry()
     argv = render_argv(registry["session"], {"session_id": "sc-root", "full": True})
     assert argv == ["session", "--full", "--", "sc-root"]
@@ -112,22 +96,7 @@ def test_the_mcp_argv_is_the_bare_call(after, rows):
     ]
 
 
-def test_before_the_flagless_call_is_full_and_announced(before, rows, capsysbinary):
-    cli_session.main("sc-root")
-    out, err = capsysbinary.readouterr()
-    row = orjson.loads(out)
-    assert "layout" in row and "project_directory" in row
-    assert f"`session` {NOTICE}" in err.decode()
-
-
-@pytest.mark.parametrize("flags", [{"full": True}, {"slim": True}])
-def test_before_a_flag_is_unannounced(before, rows, capsysbinary, flags):
-    cli_session.main("sc-root", **flags)
-    _, err = capsysbinary.readouterr()
-    assert err == b""
-
-
-def test_after_the_flagless_call_is_reduced(after, rows, capsysbinary):
+def test_the_flagless_call_is_reduced(rows, capsysbinary):
     cli_session.main("sc-root")
     out, err = capsysbinary.readouterr()
     row = orjson.loads(out)
@@ -136,7 +105,7 @@ def test_after_the_flagless_call_is_reduced(after, rows, capsysbinary):
     assert err == b""
 
 
-def test_a_row_with_no_user_message_is_served(before, rows, capsysbinary):
+def test_a_row_with_no_user_message_is_served(rows, capsysbinary):
     cli_session.main("sc-child", full=True)
     assert orjson.loads(capsysbinary.readouterr().out)["id"] == "sc-child"
 
@@ -151,7 +120,7 @@ def test_the_transcript_readers_still_refuse_such_a_row(rows):
     assert invoke(["session", "sc-child", "messages"]).exit_code == 1
 
 
-def test_a_subagent_keeps_stored_settings_and_no_process(before, rows, capsysbinary):
+def test_a_subagent_keeps_stored_settings_and_no_process(rows, capsysbinary):
     """Review focus 5."""
     cli_session.main("sc-sub", full=True)
     row = orjson.loads(capsysbinary.readouterr().out)
@@ -179,9 +148,7 @@ def test_self_reaches_a_subcommand(rows, monkeypatch):
     assert seen == ["sc-root"]
 
 
-@pytest.mark.parametrize("pinned", [FUTURE, PAST])
-def test_full_is_the_full_payload_on_both_sides(monkeypatch, rows, capsysbinary, pinned):
-    monkeypatch.setattr(_output, "LISTING_CUTOVER", pinned)
+def test_full_is_the_full_payload(rows, capsysbinary):
     cli_session.main("sc-root", full=True)
     out, err = capsysbinary.readouterr()
     row = orjson.loads(out)
@@ -221,12 +188,8 @@ def test_session_self_stop_submits_the_resolved_id(rows, monkeypatch):
     child = Session.objects.get(id="sc-child")
     monkeypatch.setattr("twicc.cli._drop_request.whoami.resolve_current_session", lambda: child)
     seen = []
-    # Not the dotted string "twicc.cli.process_stop.stop_cmd": depending on
-    # import order, `twicc.cli.process_stop` is the `process stop` command
-    # function (src/twicc/cli/__init__.py:1771), which hides the submodule.
-    # Patch the module object itself.
     monkeypatch.setattr(
-        importlib.import_module("twicc.cli.process_stop"), "stop_cmd",
+        "twicc.cli.session_stop.stop_cmd",
         lambda session_id, **kw: seen.append(session_id),
     )
     invoke(["session", "self", "stop", "--timeout", "1"])

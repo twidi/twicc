@@ -105,7 +105,7 @@ $TWICC create-session --provider claude_code 'Hello'
 - `$TWICC sessions --spawned-by self --active` — track sessions you spawned (`sessions get <ID>` for one spawned seconds ago). Skill: `twicc-sessions`.
 - `$TWICC topology self` — map the spawned-session tree around you. Skill: `twicc-topology`.
 - `$TWICC update-session <session_id> settings` — change agent settings. Skill: `twicc-update-session`.
-- `$TWICC session <session_id>` — one session's row (reduced from 2026-10-01; `--full` for every field). Skill: `twicc-session`.
+- `$TWICC session <session_id>` — one session's row (reduced; `--full` for every field). Skill: `twicc-session`.
 - `$TWICC sessions --project <PROJECT>` — browse sessions in the project. Skill: `twicc-sessions`.
 
 ## How to present results

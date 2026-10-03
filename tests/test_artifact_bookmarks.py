@@ -1,5 +1,4 @@
 import asyncio
-from datetime import datetime
 from pathlib import Path
 
 import orjson
@@ -11,20 +10,6 @@ from django.utils import timezone
 from twicc import paths
 from twicc.core.models import ArtifactBookmark, PinMode, Project, Session, SessionType
 from twicc.core.services import artifact_bookmark_mutation as abm
-
-
-@pytest.fixture(autouse=True)
-def _before_the_pagination_cutover(monkeypatch):
-    """Pin the clock below ``LISTING_CUTOVER``.
-
-    These tests assert the pre-cutover shape (a bare array). Past the date it
-    changes, so without this they would go red on 2026-10-01 for a reason that
-    has nothing to do with what they cover.
-    The pinned value is naive, like the constant it replaces.
-    """
-    from twicc.cli import _output
-
-    monkeypatch.setattr(_output, "LISTING_CUTOVER", datetime(2200, 1, 1))  # noqa: DTZ001
 
 
 @pytest.fixture
@@ -271,11 +256,11 @@ def test_cli_artifacts_listing_and_scope_filter(session, project, artifacts_root
     from twicc.cli import artifacts as cli_artifacts
 
     cli_artifacts.main()
-    out = orjson.loads(capfd.readouterr().out)
+    out = orjson.loads(capfd.readouterr().out)["items"]
     assert {b["name"] for b in out} == {"A", "B"}
 
     cli_artifacts.main(scope="all")
-    out = orjson.loads(capfd.readouterr().out)
+    out = orjson.loads(capfd.readouterr().out)["items"]
     assert [b["name"] for b in out] == ["A"]
 
 
