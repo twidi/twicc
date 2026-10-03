@@ -1911,6 +1911,12 @@ export const useDataStore = defineStore('data', {
                     // bindDraftSession for providers that reassign the id (Codex).
                     delete this.sessions[sessionId]
                     this.removeMruSession(sessionId)
+                    // A discarded draft keeps no attachments. `keepInStore` is
+                    // excluded: a sent draft's medias are already cleared by the
+                    // sender, and the failed-send recovery re-saves its own copy.
+                    this.clearAttachmentsForSession(sessionId).catch(err =>
+                        console.warn('Failed to delete draft medias from IndexedDB:', err)
+                    )
                 }
                 // Delete from IndexedDB
                 deleteDraftSessionFromDb(sessionId).catch(err =>
@@ -6155,6 +6161,7 @@ export const useDataStore = defineStore('data', {
                 if (!projectId) {
                     // Corrupted entry — no project ID means we can't check the API, just remove it
                     deleteDraftSessionFromDb(sessionId).catch(() => {})
+                    this.clearAttachmentsForSession(sessionId).catch(() => {})
                     if (this.sessions[sessionId]?.draft) {
                         delete this.sessions[sessionId]
                     }
@@ -6429,10 +6436,33 @@ export const useDataStore = defineStore('data', {
                     }
                     this.localState.attachments[media.sessionId].set(media.id, media)
                 }
+                // Not awaited: the existence checks must not delay the app mount.
+                this._dropOrphanAttachments()
             } catch (err) {
                 console.warn('Failed to load attachments from IndexedDB:', err)
             }
-        }
+        },
+
+        /**
+         * Drop the hydrated attachments of sessions that no longer exist
+         * (medias leaked by a discarded draft). Hydration runs before any real
+         * session is loaded, so only the hydrated draft sessions are known
+         * locally: the other ids (real sessions with a composer draft) are asked
+         * to the backend, and only a 404 drops the medias. Any other answer or a
+         * network error keeps them. Hidden sessions answer 404 as well, so a
+         * hidden session's composer attachments are dropped too.
+         */
+        async _dropOrphanAttachments() {
+            const candidates = Object.keys(this.localState.attachments).filter(id => !this.sessions[id])
+            for (const sessionId of candidates) {
+                try {
+                    const response = await apiFetch(`/api/sessions/${sessionId}/`, { method: 'HEAD' })
+                    if (response.status === 404) await this.clearAttachmentsForSession(sessionId)
+                } catch {
+                    // Network error: keep the medias, the next startup retries.
+                }
+            }
+        },
     }
 })
 

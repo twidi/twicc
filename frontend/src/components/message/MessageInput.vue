@@ -20,7 +20,7 @@ import { vPopoverFocusFix } from '../../directives/vPopoverFocusFix'
 import {
     draftMediaToMediaItem,
     mediasToSdkFormat,
-    resizeImageIfNeeded,
+    resizeMediasForSend,
 } from '../../utils/fileUtils'
 import { toast } from '../../composables/useToast'
 import { useCodeCommentsStore, formatAllComments } from '../../stores/codeComments'
@@ -1415,6 +1415,7 @@ async function openAtFromButton() {
 
 /**
  * Handle paste event to capture images from clipboard.
+ * Attaches every accepted file from the clipboard, one after the other.
  * Only processes image files from clipboard, and only when the active
  * provider actually accepts images.
  */
@@ -1424,16 +1425,21 @@ async function onPaste(event) {
     const items = event.clipboardData?.items
     if (!items) return
 
+    // Collect every file synchronously: the clipboard items are only readable
+    // during the event dispatch, not after the first await.
     const accepted = attachmentSupport.value.acceptedMimeTypes
+    const files = []
     for (const item of items) {
         if (item.kind === 'file' && accepted.includes(item.type)) {
             const file = item.getAsFile()
-            if (file) {
-                event.preventDefault()
-                await processFile(file)
-                return // Process only the first image
-            }
+            if (file) files.push(file)
         }
+    }
+    if (files.length === 0) return
+
+    event.preventDefault()
+    for (const file of files) {
+        await processFile(file)
     }
 }
 
@@ -1599,23 +1605,10 @@ async function handleSend() {
     // Codex re-resizes server-side so we hand it the stored blob.
     if (attachmentCount.value > 0) {
         const medias = store.getAttachments(props.sessionId)
-        const imageCount = medias.filter(m => m.type === 'image').length
-        const helpersForSend = getProviderHelpers(session.value?.provider)
         const effectiveModel = selectedModel.value ?? settings.providerStore.value?.defaultModel
-        const targetDim = helpersForSend?.getEffectiveImageDimension({
-            model: effectiveModel,
-            numImages: imageCount,
-        }) ?? null
-        const processedMedias = targetDim === null
-            ? medias
-            : await Promise.all(medias.map(async media => {
-                if (media.type !== 'image') return media
-                const { data, mimeType } = await resizeImageIfNeeded(
-                    media.data, media.mimeType, targetDim,
-                )
-                if (data === media.data && mimeType === media.mimeType) return media
-                return { ...media, data, mimeType }
-            }))
+        const processedMedias = await resizeMediasForSend(
+            medias, getProviderHelpers(session.value?.provider), effectiveModel,
+        )
         const { images, documents } = mediasToSdkFormat(processedMedias)
         if (images.length > 0) {
             payload.images = images

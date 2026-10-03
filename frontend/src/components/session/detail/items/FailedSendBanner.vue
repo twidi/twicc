@@ -9,7 +9,8 @@ import { computed, inject } from 'vue'
 import { useDataStore } from '../../../../stores/data'
 import { sendWsMessage } from '../../../../composables/useWebSocket'
 import { generateUUID } from '../../../../utils/crypto'
-import { mediasToSdkFormat } from '../../../../utils/fileUtils'
+import { mediasToSdkFormat, resizeMediasForSend } from '../../../../utils/fileUtils'
+import { getProviderHelpers, getProviderStore } from '../../../../providers'
 
 const props = defineProps({
     // Parsed content of the synthetic item (carries ``failedSend``)
@@ -69,12 +70,21 @@ function getEntry() {
  * whatever the payload carries, so omitting them would reset the session's
  * forced settings to "use global default".
  */
-function retry() {
+async function retry() {
     const entry = getEntry()
     if (!entry) return
     const session = store.getSession(props.sessionId)
     const requestId = generateUUID()
-    const { images, documents } = mediasToSdkFormat(entry.medias || [])
+    // Same send-time resize as the composer. The model is the one the payload
+    // below re-sends: the session's stored model, else the provider's default.
+    const medias = await resizeMediasForSend(
+        entry.medias || [],
+        getProviderHelpers(session?.provider),
+        session?.selected_model ?? getProviderStore(session?.provider)?.defaultModel,
+    )
+    // A concurrent Retry / Edit / Delete may have consumed the entry meanwhile.
+    if (getEntry() !== entry) return
+    const { images, documents } = mediasToSdkFormat(medias)
     const payload = {
         type: 'send_message',
         session_id: props.sessionId,

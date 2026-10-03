@@ -1,7 +1,7 @@
 // frontend/src/utils/fileUtils.js
 // File validation, base64 encoding, and type detection for document uploads
 
-import { generateUUID } from './crypto'
+import { generateUUID } from './crypto.js'
 
 // =============================================================================
 // Constants
@@ -245,6 +245,34 @@ export function resizeImageIfNeeded(base64Data, mimeType, maxDim = MAX_IMAGE_DIM
         img.onerror = () => reject(new Error('Failed to load image for resizing'))
         img.src = `data:${mimeType};base64,${base64Data}`
     })
+}
+
+/**
+ * Re-resize the images of a draft for the model that will receive them.
+ *
+ * Stored images are at ``MAX_IMAGE_DIMENSION`` (Opus 4.7's native size). The
+ * provider helper decides the send-time cap from (model, image count):
+ * Sonnet/Haiku want 1568 px, Anthropic caps requests with >20 images at
+ * 2000 px, Codex re-resizes server-side (``null`` = ship the stored blob).
+ * Shared by every path that builds an SDK payload from stored medias (send,
+ * failed-send retry) so they cannot drift apart.
+ *
+ * @param {DraftMedia[]} medias - Stored medias
+ * @param {{ getEffectiveImageDimension?: Function }|null} helpers - Provider helpers
+ * @param {string|null|undefined} model - Model that will receive the medias
+ * @param {Function} [resize=resizeImageIfNeeded] - Resize implementation (injectable for tests)
+ * @returns {Promise<DraftMedia[]>} Medias, images replaced by their resized copy when needed
+ */
+export async function resizeMediasForSend(medias, helpers, model, resize = resizeImageIfNeeded) {
+    const imageCount = medias.filter(m => m.type === FILE_TYPES.IMAGE).length
+    const targetDim = helpers?.getEffectiveImageDimension?.({ model, numImages: imageCount }) ?? null
+    if (targetDim === null) return medias
+    return Promise.all(medias.map(async media => {
+        if (media.type !== FILE_TYPES.IMAGE) return media
+        const { data, mimeType } = await resize(media.data, media.mimeType, targetDim)
+        if (data === media.data && mimeType === media.mimeType) return media
+        return { ...media, data, mimeType }
+    }))
 }
 
 // =============================================================================
