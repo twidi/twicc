@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { applyBackgroundWork } from './wsProcessState.js'
+import { applyBackgroundWork, dropsProcessStateOnRemoval, shouldNotifyProcessState } from './wsProcessState.js'
 
 const work = { subagents: 0, shells: 1, monitors: 0, scheduled_wakeup_at: null, goal: false }
 
@@ -47,4 +47,20 @@ test('outside user_turn, or for work other than shells, nothing to recompute', (
         applyBackgroundWork(idle, { session_id: 's2', background_work_in_progress: { ...work, shells: 0, subagents: 1 } }),
         false,
     )
+})
+
+test('a session leaving the store takes its real process state along', () => {
+    const processStates = {
+        real: { state: 'assistant_turn' },
+        agent: { state: 'assistant_turn', synthetic: true },
+    }
+    assert.equal(dropsProcessStateOnRemoval(processStates, 'real'), true)
+    // A subagent's synthetic state belongs to the run model (unloadSession cleans it).
+    assert.equal(dropsProcessStateOnRemoval(processStates, 'agent'), false)
+    assert.equal(dropsProcessStateOnRemoval(processStates, 'unknown'), false)
+})
+
+test('a resync restores a state without notifying; a regular message notifies', () => {
+    assert.equal(shouldNotifyProcessState({ state: 'user_turn', resync: true }), false)
+    assert.equal(shouldNotifyProcessState({ state: 'user_turn' }), true)
 })

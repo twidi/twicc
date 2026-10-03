@@ -11,6 +11,9 @@ import { backgroundWorkStatusKey, buildBackgroundWorkStatusLines } from '../util
 import { DISPLAY_LEVEL, DISPLAY_MODE, INITIAL_ITEMS_COUNT, PROCESS_STATE, SYNTHETIC_ITEM } from '../constants'
 import { getProviderHelpers, getProviderStore } from '../providers'
 import { getSessionCutoffMs, isSessionUnread } from '../utils/sessions'
+import { descendantActiveProcessStates, hasRunningAgent } from '../utils/orchestrationActivity'
+import { dropsProcessStateOnRemoval } from '../composables/wsProcessState'
+import { summarizeProcessActivity } from '../utils/processActivity'
 import {
     resolveDraftProvider,
     resolveProjectDefaultProvider,
@@ -1287,6 +1290,32 @@ export const useDataStore = defineStore('data', {
         hasSubagents: (state) => (rootSessionId) => hasTreeAgents(state.localState, rootSessionId),
         /** The session's agent tree, nested by launcher — see ``buildAgentTree``. */
         getAgentTree: (state) => (rootSessionId) => buildAgentTree(state.localState, rootSessionId),
+        /** Whether at least one of the session's subagents (any depth) runs now — see ``isAgentRunning``. */
+        hasRunningSubagent: (state) => (rootSessionId) => hasRunningAgent(
+            buildAgentTree(state.localState, rootSessionId),
+            agentId => !!state.processStates[agentId]?.synthetic,
+        ),
+        /**
+         * Live process states of the visible sessions spawned under this one, at
+         * any depth, outside user_turn — see ``descendantActiveProcessStates``.
+         */
+        getDescendantActiveProcessStates: (state) => (sessionId) =>
+            descendantActiveProcessStates(state.processStates, state.sessions, sessionId),
+        /**
+         * What the Orchestration indicators of a session show: ``sessions`` is the
+         * badge summary of its active descendant sessions (null when none), and
+         * ``subagentsRunning`` whether one of its subagents runs. Shared by the
+         * tab label and the panel's view switch.
+         */
+        getOrchestrationActivity() {
+            return (sessionId) => {
+                const descendants = this.getDescendantActiveProcessStates(sessionId)
+                return {
+                    sessions: descendants.length ? summarizeProcessActivity(descendants) : null,
+                    subagentsRunning: this.hasRunningSubagent(sessionId),
+                }
+            }
+        },
 
         // Get cached agent link for a tool_id in a session
         // Returns: { agentId, isBackground } or undefined (not in cache)
@@ -1651,10 +1680,18 @@ export const useDataStore = defineStore('data', {
          * etc.) to ``unloadSession`` so the same teardown logic is shared
          * with reconciliation-driven unloads; then drops the row itself
          * from ``sessions`` and removes it from the MRU.
+         *
+         * Also drops the session's real process state (see
+         * ``dropsProcessStateOnRemoval``): every aggregated badge (projects,
+         * workspaces, favicon, Orchestration tab) would otherwise keep counting
+         * a frozen entry. Unhiding a live session re-sends its state (``resync``).
          * @param {string} sessionId
          */
         removeSession(sessionId) {
             this.unloadSession(sessionId)
+            if (dropsProcessStateOnRemoval(this.processStates, sessionId)) {
+                this._dropProcessState(sessionId)
+            }
             delete this.sessions[sessionId]
             this.removeMruSession(sessionId)
         },
@@ -4839,6 +4876,36 @@ export const useDataStore = defineStore('data', {
         },
 
         /**
+         * Forget a session's process: its ``processStates`` entry, its streaming
+         * blocks and buffers, and the drafts of answers to its pending requests.
+         * Used when the process dies, and when the session goes hidden (no state
+         * will ever arrive for it again). Does not recompute visual items: the
+         * caller decides.
+         * @param {string} sessionId
+         */
+        _dropProcessState(sessionId) {
+            // Remove dead processes from the map
+            delete this.processStates[sessionId]
+            // Clean up any lingering streaming blocks and buffers
+            const lingering = this.localState.streamingBlocks[sessionId]
+            if (lingering) {
+                for (const block of lingering.blocks) {
+                    clearBlockInactivityTimer(block)
+                }
+            }
+            destroySessionBuffers(sessionId)
+            delete this.localState.streamingBlocks[sessionId]
+            // The process is gone, and so are its pending requests and the
+            // forms that carried them — drop whatever answers the user had
+            // started typing into them. Waiting for the next
+            // ``active_processes`` sweep would leave them behind for as
+            // long as this tab stays connected.
+            sweepPendingRequestDrafts(new Set(), Date.now(), sessionId).catch(err =>
+                console.warn('Failed to sweep pending request drafts from IndexedDB:', err)
+            )
+        },
+
+        /**
          * Set process state for a session (from WebSocket process_state message).
          * Removes the entry when state is 'dead'.
          * @param {string} sessionId
@@ -4880,25 +4947,7 @@ export const useDataStore = defineStore('data', {
                 : null
 
             if (state === 'dead') {
-                // Remove dead processes from the map
-                delete this.processStates[sessionId]
-                // Clean up any lingering streaming blocks and buffers
-                const lingering = this.localState.streamingBlocks[sessionId]
-                if (lingering) {
-                    for (const block of lingering.blocks) {
-                        clearBlockInactivityTimer(block)
-                    }
-                }
-                destroySessionBuffers(sessionId)
-                delete this.localState.streamingBlocks[sessionId]
-                // The process is gone, and so are its pending requests and the
-                // forms that carried them — drop whatever answers the user had
-                // started typing into them. Waiting for the next
-                // ``active_processes`` sweep would leave them behind for as
-                // long as this tab stays connected.
-                sweepPendingRequestDrafts(new Set(), Date.now(), sessionId).catch(err =>
-                    console.warn('Failed to sweep pending request drafts from IndexedDB:', err)
-                )
+                this._dropProcessState(sessionId)
             } else {
                 this.processStates[sessionId] = {
                     state,
@@ -4926,6 +4975,11 @@ export const useDataStore = defineStore('data', {
                     // Always recomputed by the backend for the snapshot, so its
                     // absence means "nothing runs in the background".
                     background_work_in_progress: extra.background_work_in_progress || null,
+                    // The sessions that spawned this one, parent first, up to
+                    // the spawn root (Orchestration tab). Absent = spawned by none.
+                    // An optimistic state (no backend frame yet) keeps the known
+                    // chain: spawned_by never changes.
+                    spawn_ancestors: extra.spawn_ancestors ?? this.processStates[sessionId]?.spawn_ancestors ?? [],
                 }
 
                 // Auto-unarchive: running and archived are mutually exclusive.
@@ -5038,6 +5092,8 @@ export const useDataStore = defineStore('data', {
                         // background shells, …), whatever `state` says.
                         // Recomputed for every snapshot; null when nothing.
                         background_work_in_progress: p.background_work_in_progress || null,
+                        // Parent first, up to the spawn root (Orchestration tab).
+                        spawn_ancestors: p.spawn_ancestors || [],
                     }
 
                     // Auto-unarchive: running and archived are mutually exclusive.

@@ -105,3 +105,44 @@ def get_pending_session_attributes(
     at agent start time, when the ``Session`` row does not exist yet).
     """
     return _pending.get(session_id)
+
+
+def is_pending_hidden(session_id: str) -> bool:
+    """Whether a session with no row yet was created hidden."""
+    pending = _pending.get(session_id)
+    return pending is not None and pending.hidden
+
+
+class SessionVisibilityFlags(NamedTuple):
+    hidden: bool
+    mute_on_user_turn: bool
+    # False when no row exists yet: the flags come from the pending entry (or
+    # default to visible / unmuted) and must not be cached.
+    from_row: bool
+
+
+def read_session_visibility_flags(session_id: str) -> SessionVisibilityFlags:
+    """Read ``hidden`` / ``mute_on_user_turn`` for a live session (sync).
+
+    The row only appears when the watcher ingests the first JSONL line, so a
+    session created hidden reads as visible until then — and every broadcast
+    it makes in that window escapes the hidden gates. The pending entry holds
+    the creation-time flags for exactly that window.
+
+    The watcher pops the entry and creates the row in one sync call
+    (``create_session_sync``, run through thread-sensitive ``sync_to_async``),
+    and this reader runs the same way, on the same thread: a read can never
+    fall between the pop and the row.
+    """
+    from twicc.core.models import Session
+
+    row = Session.objects.filter(pk=session_id).values_list("hidden", "mute_on_user_turn").first()
+    if row is not None:
+        hidden, mute_on_user_turn = row
+        return SessionVisibilityFlags(hidden=bool(hidden), mute_on_user_turn=mute_on_user_turn is True, from_row=True)
+    pending = _pending.get(session_id)
+    if pending is None:
+        return SessionVisibilityFlags(hidden=False, mute_on_user_turn=False, from_row=False)
+    return SessionVisibilityFlags(
+        hidden=pending.hidden, mute_on_user_turn=pending.mute_on_user_turn is True, from_row=False,
+    )

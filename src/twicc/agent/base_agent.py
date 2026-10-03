@@ -976,9 +976,11 @@ class BaseAgent:
         (through ``sync_to_async``) would be far too expensive.
 
         The row does not exist until the provider's watcher ingests the first
-        JSONL line, so an unknown session reads as visible AND is not cached —
-        otherwise a session created hidden would latch ``False`` forever, since
-        no flip (and therefore no ``set_hidden``) ever follows a creation.
+        JSONL line. Until then the creation-time flag comes from the pending
+        session attributes (a session created hidden is hidden from its first
+        frame), and the answer is NOT cached — otherwise a session would latch
+        that transient read forever, since no flip (and therefore no
+        ``set_hidden``) ever follows a creation.
         Provider-agnostic — ``hidden`` is a cross-provider ``Session`` column —
         so it lives here and every provider's agent inherits it.
         """
@@ -987,19 +989,16 @@ class BaseAgent:
         if self._hidden is not None:
             return self._hidden
 
-        from twicc.core.models import Session
-        known = await sync_to_async(
-            lambda: Session.objects.filter(pk=self.session_id)
-            .values_list("hidden", flat=True).first()
-        )()
-        if known is None:
-            return False  # no row yet — stay uncached and ask again next time
+        from twicc.pending_session_attributes import read_session_visibility_flags
+        flags = await sync_to_async(read_session_visibility_flags)(self.session_id)
+        if not flags.from_row:
+            return flags.hidden  # no row yet — stay uncached and ask again next time
 
         # Re-check after the await: a ``set_hidden`` push may have landed while
         # the read was in flight, and a push is authoritative over a snapshot
         # taken before it.
         if self._hidden is None:
-            self._hidden = bool(known)
+            self._hidden = flags.hidden
         return self._hidden
 
     # ------------------------------------------------------------------

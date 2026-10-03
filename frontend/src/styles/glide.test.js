@@ -342,7 +342,7 @@ test('the two segmented controls use SegmentedControl', () => {
     assert.ok(!task.includes('onFavorChange'))
 
     const orch = read('../components/orchestration/OrchestrationPanel.vue')
-    assert.match(templateOf(orch), /<SegmentedControl\s+v-if="canSwitchView"\s+class="orch-view-switch"\s+label="Tree to show"\s+:model-value="view"\s+:options="VIEW_OPTIONS"\s+@update:model-value="selectedView = \$event"\s*\/>/)
+    assert.match(templateOf(orch), /<SegmentedControl\s+v-if="canSwitchView"\s+class="orch-view-switch"\s+label="Tree to show"\s+:model-value="view"\s+:options="VIEW_OPTIONS"\s+@update:model-value="selectedView = \$event"\s*>/)
     assert.match(scriptOf(orch), /import SegmentedControl from '\.\.\/ui\/SegmentedControl\.vue'/)
     assert.ok(!orch.includes('wa-button-group'), 'no wa-button-group left')
 })

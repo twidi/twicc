@@ -10,6 +10,7 @@ import TabBar from '../../ui/TabBar.vue'
 import { insetRectStyle, NO_INSETS } from '../../../utils/panelInsets'
 import GitChangeStats from '../../git/GitChangeStats.vue'
 import UploadTabStatus from '../../files/UploadTabStatus.vue'
+import OrchestrationTabActivity from '../../orchestration/OrchestrationTabActivity.vue'
 
 const props = defineProps({
     region: { type: Object, required: true },
@@ -22,6 +23,8 @@ const props = defineProps({
     tabChangeStats: { type: Function, default: null },
     // (tabId) -> upload status ({ count, percent, allStalled }) shown next to a tab's label, or null.
     tabUploadStatus: { type: Function, default: null },
+    // (tabId) -> Orchestration activity ({ sessions, subagentsRunning }) shown next to a tab's label, or null.
+    tabOrchestrationActivity: { type: Function, default: null },
     // When true this region is the maximized one (fills the whole layout area): its tab bar shows a
     // restore button instead of minimize/maximize, and the per-tab placement arrows are hidden (the
     // only exit is restore).
@@ -123,6 +126,7 @@ function onEmptyBarDblClick(event) {
                     <span class="dock-tab-label">{{ t.label }}</span>
                     <GitChangeStats v-if="tabChangeStats" :stats="tabChangeStats(t.id)" />
                     <UploadTabStatus v-if="tabUploadStatus" :status="tabUploadStatus(t.id)" />
+                    <OrchestrationTabActivity v-if="tabOrchestrationActivity" :activity="tabOrchestrationActivity(t.id)" />
                 </SessionTabLink>
                 <TabPlacementMenu
                     v-if="!maximized"

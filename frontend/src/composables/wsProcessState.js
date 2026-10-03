@@ -22,3 +22,33 @@ export function applyBackgroundWork(processStates, message, nowSeconds = Date.no
     processState.background_work_in_progress = message.background_work_in_progress || null
     return backgroundWorkStatusKey(processState, nowSeconds) !== previousKey
 }
+
+/**
+ * Whether a session leaving the store (`session_removed`: it went hidden) takes
+ * its process state along.
+ *
+ * A real process state must go: the backend never broadcasts a hidden
+ * session's state again (not even `dead`), and with the row gone nothing could
+ * tell it is hidden, so every aggregated badge would keep counting it. A
+ * synthetic subagent state is the run model's, cleaned up by `unloadSession`.
+ *
+ * @param {Object} processStates - The store's `processStates` map.
+ * @param {string} sessionId
+ * @returns {boolean}
+ */
+export function dropsProcessStateOnRemoval(processStates, sessionId) {
+    const processState = processStates[sessionId]
+    return !!processState && !processState.synthetic
+}
+
+/**
+ * Whether a `process_state` message may notify (toast, sound, browser
+ * notification). A `resync` (a session made visible again mid-run) restores a
+ * state the client dropped: it is no transition, so it notifies nothing.
+ *
+ * @param {Object} message - The `process_state` message.
+ * @returns {boolean}
+ */
+export function shouldNotifyProcessState(message) {
+    return !message.resync
+}

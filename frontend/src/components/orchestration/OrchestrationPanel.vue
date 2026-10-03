@@ -25,6 +25,7 @@ import OrchestrationNode from './OrchestrationNode.vue'
 import AgentTreeNode from './AgentTreeNode.vue'
 import CostDisplay from '../ui/CostDisplay.vue'
 import SegmentedControl from '../ui/SegmentedControl.vue'
+import OrchestrationTabActivity from './OrchestrationTabActivity.vue'
 import { useDataStore } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
 import { agentForestCost } from '../../utils/agentTreeMetrics'
@@ -65,6 +66,8 @@ const runningAgentCount = computed(() => {
 })
 // All-inclusive cost of the agent tree, resolved exactly like each node's own.
 const agentTotalCost = computed(() => agentForestCost(store, agentTree.value))
+// The tab label's indicators, repeated on the view switch's inactive segment.
+const orchestrationActivity = computed(() => store.getOrchestrationActivity(props.sessionId))
 const canSwitchView = computed(() => props.hasSpawnTree && hasAgents.value)
 // The two trees the view switch offers.
 const VIEW_OPTIONS = [
@@ -272,7 +275,15 @@ onUnmounted(() => {
                         :model-value="view"
                         :options="VIEW_OPTIONS"
                         @update:model-value="selectedView = $event"
-                    />
+                    >
+                        <!-- Only the view NOT shown: the other category, when it is busy. -->
+                        <template #option-sessions>
+                            <OrchestrationTabActivity v-if="view !== 'sessions'" class="orch-switch-activity" only="sessions" :activity="orchestrationActivity" />
+                        </template>
+                        <template #option-agents>
+                            <OrchestrationTabActivity v-if="view !== 'agents'" class="orch-switch-activity" only="subagents" :activity="orchestrationActivity" />
+                        </template>
+                    </SegmentedControl>
                     <span
                         v-if="view === 'sessions' && nodeCount"
                         class="orch-autorefresh"
@@ -344,6 +355,11 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* The status icon on the view switch's inactive segment sits 2px lower, on both segments. */
+.orch-switch-activity {
+    transform: translateY(2px);
+}
+
 .orchestration-panel {
     display: flex;
     flex-direction: column;

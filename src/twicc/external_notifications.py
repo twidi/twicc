@@ -109,6 +109,19 @@ def notify_agent_event(
         logger.exception("External notification dispatch failed for session %s", info.session_id)
 
 
+def note_agent_state(info: AgentInfo) -> None:
+    """Record ``info`` as the session's last seen state, without notifying.
+
+    The detection baseline. Also called alone for a state re-broadcast that is
+    not a transition (a session made visible again mid-run), so the next real
+    transition compares against the state the user can now see.
+    """
+    if info.state == AgentState.DEAD:
+        _last_seen.pop(info.session_id, None)
+    else:
+        _last_seen[info.session_id] = (info.state, len(info.pending_requests))
+
+
 def _detect_and_send(
     info: AgentInfo,
     session_title: str | None,
@@ -120,10 +133,7 @@ def _detect_and_send(
     pending_count = len(info.pending_requests)
     # Keep the baseline current even when no target is configured, so enabling
     # targets later starts from fresh state instead of replaying old events.
-    if info.state == AgentState.DEAD:
-        _last_seen.pop(info.session_id, None)
-    else:
-        _last_seen[info.session_id] = (info.state, pending_count)
+    note_agent_state(info)
 
     # Sync call on the async broadcast path: fine in practice — the settings
     # cache is warmed long before any agent broadcast (bootstrap / WS connect

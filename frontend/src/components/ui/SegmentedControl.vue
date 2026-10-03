@@ -8,6 +8,9 @@
  * semantics stay Web Awesome's. The group's label is its accessible name only: the
  * caller shows its own visible label.
  *
+ * An option can carry trailing content (an activity indicator, say) through a slot named
+ * `option-<value>`, shown after its label.
+ *
  * Usage:
  *   <SegmentedControl label="Favor" v-model="favor"
  *       :options="[{ value: 'cost', label: 'Cost' }, { value: 'speed', label: 'Speed', icon: 'bolt' }]" />
@@ -58,6 +61,7 @@ useGlideInk({
             <wa-radio v-for="option in options" :key="option.value" appearance="button" :value="option.value">
                 <wa-icon v-if="option.icon" :name="option.icon" class="segmented-icon"></wa-icon>
                 {{ option.label }}
+                <slot :name="`option-${option.value}`" :option="option"></slot>
             </wa-radio>
         </wa-radio-group>
     </div>

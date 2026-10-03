@@ -22,6 +22,8 @@ const props = defineProps({
     tabChangeStats: { type: Function, default: null },
     // (tabId) -> upload status ({ count, percent, allStalled }) shown next to a tab's label, or null.
     tabUploadStatus: { type: Function, default: null },
+    // (tabId) -> Orchestration activity ({ sessions, subagentsRunning }) shown next to a tab's label, or null.
+    tabOrchestrationActivity: { type: Function, default: null },
     registerTarget: { type: Function, required: true },
     unregisterTarget: { type: Function, required: true },
 })
@@ -690,6 +692,7 @@ onBeforeUnmount(() => {
             :tab-href="tabHref"
             :tab-change-stats="tabChangeStats"
             :tab-upload-status="tabUploadStatus"
+            :tab-orchestration-activity="tabOrchestrationActivity"
             :maximized="true"
             :register-target="registerTarget"
             :unregister-target="unregisterTarget"
@@ -714,6 +717,7 @@ onBeforeUnmount(() => {
                 :tab-href="tabHref"
                 :tab-change-stats="tabChangeStats"
                 :tab-upload-status="tabUploadStatus"
+                :tab-orchestration-activity="tabOrchestrationActivity"
                 :register-target="registerTarget"
                 :unregister-target="unregisterTarget"
                 @select="(id) => emit('select-tab', id)"
@@ -734,6 +738,7 @@ onBeforeUnmount(() => {
                 :tab-href="tabHref"
                 :tab-change-stats="tabChangeStats"
                 :tab-upload-status="tabUploadStatus"
+                :tab-orchestration-activity="tabOrchestrationActivity"
                 @action="onGutterAction"
             />
 
@@ -758,6 +763,7 @@ onBeforeUnmount(() => {
                 :tab-href="tabHref"
                 :tab-change-stats="tabChangeStats"
                 :tab-upload-status="tabUploadStatus"
+                :tab-orchestration-activity="tabOrchestrationActivity"
                 :dock-of="layout.dockOf"
                 :register-target="registerTarget"
                 :unregister-target="unregisterTarget"

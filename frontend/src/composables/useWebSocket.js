@@ -7,7 +7,7 @@ import { useWebSocket as useVueWebSocket, useDebounceFn, useThrottleFn } from '@
 import { useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { applySessionItemsAdded } from './wsSessionItems'
-import { applyBackgroundWork } from './wsProcessState'
+import { applyBackgroundWork, shouldNotifyProcessState } from './wsProcessState'
 import { useSharesStore } from '../stores/shares'
 import { useAuthStore } from '../stores/auth'
 import { useReconciliation } from './useReconciliation'
@@ -1505,6 +1505,7 @@ export function useWebSocket() {
                     stopping: msg.stopping,
                     label: msg.label,
                     background_work_in_progress: msg.background_work_in_progress,
+                    spawn_ancestors: msg.spawn_ancestors,
                 })
                 // Ensure the session is present in data.sessions so the cross-filter
                 // active block (sessions with a running process) can surface it
@@ -1516,8 +1517,10 @@ export function useWebSocket() {
                         console.warn(`Failed to hydrate session ${msg.session_id} from process_state`, err)
                     })
                 }
-                // Show toast + sound + browser notifications for process state changes
-                notifyProcessStateChange(msg, previousProcessState, route)
+                // Show toast + sound + browser notifications for process state changes.
+                // A resync (a session made visible again mid-run) restores a state the
+                // client dropped: it is no transition, so it notifies nothing.
+                if (shouldNotifyProcessState(msg)) notifyProcessStateChange(msg, previousProcessState, route)
                 break
             }
             case 'process_label': {

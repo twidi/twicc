@@ -41,6 +41,7 @@ import ProcessIndicator from '../components/ui/ProcessIndicator.vue'
 import CodeCommentsIndicator from '../components/ui/CodeCommentsIndicator.vue'
 import GitChangeStats from '../components/git/GitChangeStats.vue'
 import UploadTabStatus from '../components/files/UploadTabStatus.vue'
+import OrchestrationTabActivity from '../components/orchestration/OrchestrationTabActivity.vue'
 import { useCodeCommentsStore } from '../stores/codeComments'
 import { useFramePoolStore } from '../stores/framePool'
 import { useUploadsStore } from '../stores/uploads'
@@ -525,6 +526,13 @@ const gitCommentsCount = computed(() =>
 const gitIndexStatus = ref(null)
 function toolTabChangeStats(tabId) {
     return tabId === 'git' ? gitIndexStatus.value : null
+}
+// What is being done right now under this session, shown next to the Orchestration tab's label:
+// its visible descendant sessions outside user_turn (aggregated like the project badges, without
+// unread), and whether one of its subagents runs.
+const orchestrationActivity = computed(() => store.getOrchestrationActivity(sessionId.value))
+function toolTabOrchestrationActivity(tabId) {
+    return tabId === 'orchestration' ? orchestrationActivity.value : null
 }
 // Upload status of the Files / Artifacts tab (spec §6.11): the aggregate of the uploads started
 // from that panel of this session, shown next to the tab's label.
@@ -2334,6 +2342,7 @@ onBeforeUnmount(() => {
             :tab-href="sessionTabHref"
             :tab-change-stats="toolTabChangeStats"
             :tab-upload-status="toolTabUploadStatus"
+            :tab-orchestration-activity="toolTabOrchestrationActivity"
             :register-target="registerLayoutTarget"
             :unregister-target="unregisterLayoutTarget"
             @select-tab="onLayoutSelectTab"
@@ -2418,6 +2427,7 @@ onBeforeUnmount(() => {
                     {{ tab.label }}
                     <GitChangeStats :stats="toolTabChangeStats(tab.id)" />
                     <UploadTabStatus :status="toolTabUploadStatus(tab.id)" />
+                    <OrchestrationTabActivity :activity="toolTabOrchestrationActivity(tab.id)" />
                     <CodeCommentsIndicator
                         v-if="toolTabCommentsCount(tab.id) !== null"
                         :count="toolTabCommentsCount(tab.id)"

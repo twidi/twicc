@@ -145,7 +145,7 @@
     font-size: var(--wa-font-size-m);
 }
 
-/* Pulse the awaiting-user hand, matching AggregatedProcessIndicator's
+/* Pulse the awaiting-user hand, matching ProcessActivityIndicator's
    ``pending-pulse`` (1.5s, 1→0.3). The working robot is animated instead (global
    ``robot-working`` class, styles/robot-working.css). */
 .orch-status-icon--pulse-pending {

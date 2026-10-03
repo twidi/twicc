@@ -45,7 +45,7 @@ const props = defineProps({
 // neutral grey rather than the alarming red used elsewhere.
 // ``pulse`` mirrors the live indicators used everywhere else: the robot is animated
 // while the agent works (``work`` → the shared ``robot-working``) and the hand pulses
-// while a request awaits the user (AggregatedProcessIndicator's ``pending-pulse``,
+// while a request awaits the user (ProcessActivityIndicator's ``pending-pulse``,
 // 1.5s). Static states carry no ``pulse``.
 const PROCESS_STATUS = {
     starting:            { label: 'Starting',        icon: 'hourglass-start',    color: 'var(--wa-color-warning-60)' },

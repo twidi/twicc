@@ -57,7 +57,7 @@ from twicc.providers.helpers import (
     get_provider_helpers,
     get_provider_helpers_registry,
 )
-from twicc.external_notifications import notify_agent_event
+from twicc.external_notifications import note_agent_state, notify_agent_event
 from twicc.title_transcript import clip_message, has_title_content
 from twicc.synced_settings import _settings_lock, prepare_settings_for_client, read_synced_settings, write_synced_settings
 from twicc.workspaces import read_workspaces
@@ -245,11 +245,17 @@ def get_bulk_session_and_project_display(
     return result
 
 
-async def broadcast_process_state(info: AgentInfo) -> None:
+async def broadcast_process_state(info: AgentInfo, *, resync: bool = False) -> None:
     """Broadcast a process state change to all connected clients.
 
     This is the callback registered with the agent manager to handle
     state change notifications.
+
+    ``resync`` re-states a live agent's current state that is NOT a
+    transition — a session made visible again mid-run, whose state the
+    clients dropped when it was hidden. The message carries ``resync: true``
+    so the frontend restores the state without any notification, and the
+    external notifications only move their baseline.
 
     When transitioning out of assistant_turn (e.g. to user_turn or dead),
     we delay the broadcast by 1 second to allow the file watcher to sync
@@ -271,21 +277,26 @@ async def broadcast_process_state(info: AgentInfo) -> None:
     # broadcast that drives toast / sound / browser notifications on the
     # frontend (via notifyProcessStateChange) and hydrates the
     # "active processes" cross-filter; a hidden session must produce
-    # none of those even mid-flight.
-    from twicc.core.models import Session
-    session_flags = await sync_to_async(
-        lambda: Session.objects.filter(pk=info.session_id)
-        .values_list("hidden", "mute_on_user_turn")
-        .first()
-    )()
-    is_hidden, mute_on_user_turn = session_flags or (False, False)
-    if is_hidden:
+    # none of those even mid-flight. A session created hidden is hidden
+    # before its row exists too (the flag waits in the pending attributes).
+    from twicc.core.spawn_ancestors import get_spawn_ancestors
+    from twicc.pending_session_attributes import read_session_visibility_flags
+    flags = await sync_to_async(read_session_visibility_flags)(info.session_id)
+    if flags.hidden:
         return
+    mute_on_user_turn = flags.mute_on_user_turn
 
     channel_layer = get_channel_layer()
     message = serialize_agent_info(info)
     message["type"] = "process_state"
     message["mute_on_user_turn"] = mute_on_user_turn is True
+    if resync:
+        message["resync"] = True
+    # Who spawned this session, up to the spawn root: lets the frontend tell
+    # which live processes sit under a given session (Orchestration tab).
+    spawn_ancestors = await sync_to_async(get_spawn_ancestors)(info.session_id)
+    if spawn_ancestors:
+        message["spawn_ancestors"] = list(spawn_ancestors)
 
     # Let the provider attach any state it owns (e.g. Claude Code's
     # ``active_crons``). Each provider routes its own keys via its helper.
@@ -304,16 +315,26 @@ async def broadcast_process_state(info: AgentInfo) -> None:
     if project_parent_name is not None:
         message["project_parent_name"] = project_parent_name
 
+    # The awaits above leave a window for a hide to land (its ``session_removed``
+    # would then precede this frame, and the client would re-create a state
+    # nothing could tell is hidden): look once more, right before sending.
+    if (await sync_to_async(read_session_visibility_flags)(info.session_id)).hidden:
+        return
+
     # External notifications (Apprise) mirror the browser notifications this
     # broadcast drives in the frontend; the hook sits after the hidden-session
     # early-return so hidden sessions never notify. Fire-and-forget inside.
-    notify_agent_event(
-        info,
-        session_title,
-        project_name,
-        project_parent_name,
-        mute_on_user_turn is True,
-    )
+    # A resync is no event: only the baseline moves.
+    if resync:
+        note_agent_state(info)
+    else:
+        notify_agent_event(
+            info,
+            session_title,
+            project_name,
+            project_parent_name,
+            mute_on_user_turn is True,
+        )
 
     await channel_layer.group_send(
         "updates",
@@ -595,8 +616,15 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         # Send current active processes to the connecting client,
         # enriched with session titles, project names, and active crons.
         if self._should_send("active_processes"):
+            from twicc.core.spawn_ancestors import get_spawn_ancestors
+            from twicc.pending_session_attributes import is_pending_hidden
+
+            def is_hidden(session_id: str) -> bool:
+                # A session created hidden has no row yet: its flag is pending.
+                return session_id in hidden_session_ids or is_pending_hidden(session_id)
+
             processes = registry.get_active_agents()
-            serialized = [serialize_agent_info(p) for p in processes if p.session_id not in hidden_session_ids]
+            serialized = [serialize_agent_info(p) for p in processes if not is_hidden(p.session_id)]
             if serialized:
                 display_info = await get_bulk_session_and_project_display(serialized)
                 for proc in serialized:
@@ -615,17 +643,40 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                             Provider(proc["provider"])
                         ).enrich_agent_state(proc, proc["session_id"])
             enriched = {proc["session_id"]: proc for proc in serialized}
-            current = registry.get_active_agents()
             starting = ephemeral_runs.pending_snapshot()
+
+            def final_snapshot(infos):
+                # The hidden cut is re-done here, in one sync call: during the
+                # awaits above, a session may have been hidden, or a session
+                # created hidden may have got its row (the watcher pops its
+                # pending entry and creates the row on this same thread, so
+                # the two reads below cannot straddle that).
+                from twicc.core.models import Session
+
+                ids = [info.session_id for info in infos]
+                hidden_now = set(Session.objects.filter(id__in=ids, hidden=True).values_list("id", flat=True))
+                kept = [
+                    info for info in infos
+                    if info.session_id not in hidden_now and not is_pending_hidden(info.session_id)
+                ]
+                # Same field as the process_state broadcast (Orchestration tab).
+                ancestors = {
+                    info.session_id: get_spawn_ancestors(info.session_id)
+                    for info in kept
+                    if not (info.extra and info.extra.get("ephemeral"))
+                }
+                return kept, ancestors
+
+            current, spawn_ancestors_by_id = await sync_to_async(final_snapshot)(registry.get_active_agents())
             serialized = []
             for info in current:
-                if info.session_id in hidden_session_ids:
-                    continue
                 proc = serialize_agent_info(info)
                 old = enriched.get(info.session_id, {})
                 for key in ("session_title", "project_name", "project_parent_name", "active_crons"):
                     if key in old:
                         proc[key] = old[key]
+                if spawn_ancestors_by_id.get(info.session_id):
+                    proc["spawn_ancestors"] = list(spawn_ancestors_by_id[info.session_id])
                 serialized.append(proc)
             await self.send_json({
                 "type": "active_processes", "processes": serialized,

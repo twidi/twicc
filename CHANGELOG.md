@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Orchestration activity** — The Orchestration tab shows at a glance when its sessions or subagents are working.
+
 ### Changed
 
 - **Artifacts tab always available** — The tab now shows for every session, even before it has any artifact. Right-click "Session artifacts" to create a file or folder, or upload files.

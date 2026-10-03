@@ -74,6 +74,7 @@ async def unhide_session(session) -> SessionVisibilityResult:
     await _apply_flip(session, new_hidden=False)
     await _broadcast_session_updated(session)
     await _broadcast_project_updated(session.project_id)
+    await _broadcast_live_process_state(session.id)
     return _ok(session)
 
 
@@ -213,6 +214,27 @@ async def _broadcast_session_removed(session_id: str) -> None:
         "type": "broadcast",
         "data": {"type": "session_removed", "session_id": session_id},
     })
+
+
+async def _broadcast_live_process_state(session_id: str) -> None:
+    """Re-state the live agent's process state once the session is visible again.
+
+    Hiding made clients drop the session's process state, and no state is
+    broadcast while it is hidden — so a session unhidden mid-run would show no
+    activity until its next transition. Sent after ``session_updated``, so the
+    row is back first, as a ``resync`` (no notification: nothing happened).
+    Best-effort: a failure must not fail the flip.
+    """
+    # Local imports: crosses the services -> agent / ASGI layers.
+    from twicc.agent.registry import get_agent_manager_registry
+    from twicc.asgi import broadcast_process_state
+
+    try:
+        info = get_agent_manager_registry().get_agent_info(session_id)
+        if info is not None:
+            await broadcast_process_state(info, resync=True)
+    except Exception:
+        logger.exception("Failed to re-broadcast the process state of unhidden session %s", session_id)
 
 
 async def _broadcast_session_updated(session) -> None:

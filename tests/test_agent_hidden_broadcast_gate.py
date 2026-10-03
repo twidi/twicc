@@ -166,6 +166,28 @@ def test_missing_row_reads_as_visible_and_is_not_cached():
 
 
 @pytest.mark.django_db(transaction=True)
+def test_missing_row_of_a_session_created_hidden_reads_as_hidden():
+    """Before its row exists, a session created hidden is hidden all the same.
+
+    The flag waits in the pending session attributes until the watcher creates
+    the row; reading only the row let the first frames of a hidden session out.
+    """
+    from twicc.pending_session_attributes import (
+        pop_pending_session_attributes,
+        set_pending_session_attributes,
+    )
+
+    set_pending_session_attributes("s-pending", hidden=True)
+    try:
+        agent = _make_agent("s-pending")
+        assert asyncio.run(agent._is_session_hidden()) is True
+        assert agent._hidden is None, "a pending read must not be cached"
+        assert _run_broadcast(agent, {"type": "stream_block_delta", "text": "hi"}) == []
+    finally:
+        pop_pending_session_attributes("s-pending")
+
+
+@pytest.mark.django_db(transaction=True)
 def test_a_push_wins_over_a_stale_db_read():
     """set_hidden landing during the read must not be overwritten by it."""
     project = Project.objects.create(id="-p", directory="/tmp")
@@ -259,4 +281,65 @@ def test_hide_session_mutes_the_live_agent_before_the_recompute():
         ("push", "s-e2e", True),
         ("session_removed", "s-e2e"),
         ("project_updated", "-p"),
+    ]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_unhide_session_restates_the_live_agent_state_after_the_row():
+    """Hiding made clients drop the session's process state; nothing is broadcast
+    while it is hidden. Unhiding a live session must re-state it — after the row
+    is back, and as a resync (no notification: nothing happened)."""
+    from twicc.agent.states import AgentInfo, AgentState
+    from twicc.core.services import session_visibility
+
+    project = Project.objects.create(id="-p", directory="/tmp")
+    session = Session.objects.create(
+        id="s-unhide", project=project, provider=Provider.CODEX.value,
+        type=SessionType.SESSION, hidden=True, permission_mode="yolo",
+        question_widget=False,
+    )
+    info = AgentInfo(
+        session_id="s-unhide", project_id="-p", provider=Provider.CODEX,
+        state=AgentState.ASSISTANT_TURN, previous_state=AgentState.STARTING,
+        started_at=1.0, state_changed_at=2.0, last_activity=2.0,
+    )
+
+    calls = []
+
+    def _push(session_id, hidden):
+        calls.append(("push", session_id, hidden))
+
+    async def _updated(session):
+        calls.append(("session_updated", session.id))
+
+    async def _project(project_id):
+        calls.append(("project_updated", project_id))
+
+    async def _broadcast(agent_info, *, resync=False):
+        calls.append(("process_state", agent_info.session_id, resync))
+
+    class _Registry:
+        def get_agent_info(self, session_id):
+            return info if session_id == "s-unhide" else None
+
+    with patch.object(session_visibility, "_push_hidden_to_live_agent", _push), \
+            patch.object(session_visibility, "_broadcast_session_updated", _updated), \
+            patch.object(session_visibility, "_broadcast_project_updated", _project), \
+            patch("twicc.asgi.broadcast_process_state", _broadcast), \
+            patch("twicc.agent.registry.get_agent_manager_registry", return_value=_Registry()):
+        async def unhide_with_writer():
+            from twicc.providers import db_writer
+            db_writer.start_db_writer()
+            try:
+                return await session_visibility.unhide_session(session)
+            finally:
+                await db_writer.stop_db_writer()
+        result = asyncio.run(unhide_with_writer())
+
+    assert result.success, result.errors
+    assert calls == [
+        ("push", "s-unhide", False),
+        ("session_updated", "s-unhide"),
+        ("project_updated", "-p"),
+        ("process_state", "s-unhide", True),
     ]

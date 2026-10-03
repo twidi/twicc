@@ -101,6 +101,29 @@ def test_hidden_session_still_emits_no_process_state_or_apprise_event():
     assert notify.call_count == 0
 
 
+@pytest.mark.django_db(transaction=True)
+def test_session_created_hidden_emits_nothing_before_its_row_exists():
+    """The row appears on the first JSONL line; the hidden flag waits in the pending attributes."""
+    from twicc.pending_session_attributes import (
+        pop_pending_session_attributes,
+        set_pending_session_attributes,
+    )
+
+    set_pending_session_attributes("mute-notification", hidden=True)
+    layer = SimpleNamespace(group_send=AsyncMock())
+    notify = Mock()
+    try:
+        with patch("twicc.asgi.get_channel_layer", return_value=layer), \
+                patch("twicc.asgi.notify_agent_event", notify):
+            asyncio.run(broadcast_process_state(_info(AgentState.STARTING)))
+            asyncio.run(broadcast_process_state(_info(AgentState.ASSISTANT_TURN)))
+    finally:
+        pop_pending_session_attributes("mute-notification")
+
+    assert layer.group_send.await_count == 0
+    assert notify.call_count == 0
+
+
 def _notification_settings():
     return {
         "externalNotificationTargets": [{
@@ -164,3 +187,110 @@ def test_muted_session_still_sends_pending_request_apprise_event():
 
     assert len(spawned) == 1
     assert spawned[0][1] == "Codex has a question for you"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_resync_restates_the_state_without_notifying():
+    """A session made visible again mid-run: its state is re-sent, flagged
+    ``resync``, and only moves the external-notification baseline."""
+    project = Project.objects.create(
+        id="-mute-notification", directory="/tmp/mute-notification"
+    )
+    Session.objects.create(
+        id="mute-notification",
+        project=project,
+        provider=Provider.CODEX.value,
+        type=SessionType.SESSION,
+    )
+    layer = SimpleNamespace(group_send=AsyncMock())
+    helpers = SimpleNamespace(enrich_agent_state=AsyncMock())
+    notify = Mock()
+    with patch("twicc.asgi.get_channel_layer", return_value=layer), \
+            patch("twicc.asgi.get_provider_helpers", return_value=helpers), \
+            patch(
+                "twicc.asgi.get_session_and_project_display",
+                new=AsyncMock(return_value=("Session", "Project", None)),
+            ), \
+            patch("twicc.asgi.notify_agent_event", notify):
+        asyncio.run(broadcast_process_state(_info(AgentState.USER_TURN), resync=True))
+
+    message = layer.group_send.await_args.args[1]["data"]
+    assert message["resync"] is True
+    assert notify.call_count == 0
+    assert external_notifications._last_seen["mute-notification"] == (AgentState.USER_TURN, 0)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_regular_broadcast_carries_no_resync_flag():
+    layer = SimpleNamespace(group_send=AsyncMock())
+    helpers = SimpleNamespace(enrich_agent_state=AsyncMock())
+    with patch("twicc.asgi.get_channel_layer", return_value=layer), \
+            patch("twicc.asgi.get_provider_helpers", return_value=helpers), \
+            patch(
+                "twicc.asgi.get_session_and_project_display",
+                new=AsyncMock(return_value=(None, None, None)),
+            ), \
+            patch("twicc.asgi.notify_agent_event"):
+        asyncio.run(broadcast_process_state(_info(AgentState.USER_TURN)))
+
+    assert "resync" not in layer.group_send.await_args.args[1]["data"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_session_created_muted_is_muted_before_its_row_exists():
+    from twicc.pending_session_attributes import (
+        pop_pending_session_attributes,
+        set_pending_session_attributes,
+    )
+
+    set_pending_session_attributes("mute-notification", mute_on_user_turn=True)
+    layer = SimpleNamespace(group_send=AsyncMock())
+    helpers = SimpleNamespace(enrich_agent_state=AsyncMock())
+    notify = Mock()
+    try:
+        with patch("twicc.asgi.get_channel_layer", return_value=layer), \
+                patch("twicc.asgi.get_provider_helpers", return_value=helpers), \
+                patch(
+                    "twicc.asgi.get_session_and_project_display",
+                    new=AsyncMock(return_value=(None, None, None)),
+                ), \
+                patch("twicc.asgi.notify_agent_event", notify):
+            asyncio.run(broadcast_process_state(_info(AgentState.USER_TURN)))
+    finally:
+        pop_pending_session_attributes("mute-notification")
+
+    assert layer.group_send.await_args.args[1]["data"]["mute_on_user_turn"] is True
+    assert notify.call_args.args[-1] is True
+
+
+@pytest.mark.django_db(transaction=True)
+def test_session_hidden_while_the_broadcast_awaits_emits_nothing():
+    """A hide landing between the first flag read and the send must not let the frame out
+    after ``session_removed``: the client would re-create a state nothing marks hidden."""
+    from asgiref.sync import sync_to_async
+
+    project = Project.objects.create(
+        id="-mute-notification", directory="/tmp/mute-notification"
+    )
+    Session.objects.create(
+        id="mute-notification",
+        project=project,
+        provider=Provider.CODEX.value,
+        type=SessionType.SESSION,
+    )
+
+    async def display_then_hide(*args):
+        await sync_to_async(lambda: Session.objects.filter(id="mute-notification").update(hidden=True))()
+        return ("Session", "Project", None)
+
+    layer = SimpleNamespace(group_send=AsyncMock())
+    helpers = SimpleNamespace(enrich_agent_state=AsyncMock())
+    notify = Mock()
+    with patch("twicc.asgi.get_channel_layer", return_value=layer), \
+            patch("twicc.asgi.get_provider_helpers", return_value=helpers), \
+            patch("twicc.asgi.get_session_and_project_display", new=display_then_hide), \
+            patch("twicc.asgi.notify_agent_event", notify):
+        asyncio.run(broadcast_process_state(_info(AgentState.USER_TURN)))
+
+    assert layer.group_send.await_count == 0
+    assert notify.call_count == 0

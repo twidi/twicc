@@ -538,7 +538,7 @@ test('17. the working pill template: phrase spans, dots, calm class (§5.1)', ()
 test('18. the breathing unread eye: five rules, six sites (§6)', () => {
     const PULSE = 'motion-status-pulse 2.4s ease-in-out infinite'
     for (const [file, selector] of [
-        ['../components/ui/AggregatedProcessIndicator.vue', '.unread-indicator'],
+        ['../components/ui/ProcessActivityIndicator.vue', '.unread-indicator'],
         ['../components/session/list/SessionListItem.vue', '.unread-indicator'],
         ['../components/session/list/SessionListItem.vue', '.compact-unread-indicator'],
         ['../components/app/CommandPalette.vue', '.palette-unread-icon'],
