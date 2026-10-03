@@ -8,30 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **New design and logo** — TwiCC gets its own visual identity: a new style that replaces the theme choice, and a new logo. To turn off heavy effects on a slower device, use **Reduce effects** (Settings → General).
 - **Claude Sonnet 5.5** — support for Anthropic's new Sonnet model, now the latest Sonnet (Sonnet 5 remains selectable).
 - **GPT-6.1 Sol** — support for OpenAI's new Sol model, now the latest Sol (GPT-6 Sol remains selectable).
 - **File upload** — Upload files into any folder of the Files or Artifacts tab from its context menu, handy from a phone or another computer.
-- **Resumed subagents** — A subagent shows as running again when the agent sends it a new message or task.
-- **Background shells** — A new status (green terminal icon) shows when the provider reports that the agent has finished its turn but a shell it started is still running. Such sessions are no longer stopped automatically.
-- **Forgotten background shells** — When a shell is still running 5 minutes after the agent (or one of its subagents) finished working, TwiCC tells the agent which shell it is, so it can check it or stop it.
+- **Background work in the UI** — A subagent shows as running again when it gets a new message. A new status (green terminal icon) shows that the agent finished its turn while a shell it started still runs; such sessions are no longer stopped automatically. If that shell is still running 5 minutes later, TwiCC reminds the agent so it can check or stop it.
+- **Background work in the CLI, skills, RPC API and MCP** — A session's process information tells what still runs in the background (subagents, shells…). The commands that wait for an agent's reply can also wait until that work is over.
 - **Uncommitted changes on the Git tab** — The Git tab's label shows how many files are modified, added or deleted, without opening it.
-- **Background work in the CLI, skills, RPC API and MCP** — A session's process information now tells what still runs in the background (subagents, shells…), whatever the session's state.
-- **Wait for background work** — The commands (CLI, skills, RPC API and MCP) that wait for an agent's reply can now also wait until its background work is over, and return the answer that follows it.
 
 ### Changed
 
-- **New logo** — TwiCC gets its own robot, with a bit more soul.
 - **Message timestamps while the agent works** — The time now also shows under the agent's last message while it is still working, not only once its turn is over.
 - **Claude Agent SDK** — Upgrade from 0.2.159 to 0.2.163 (bundled Claude Code CLI: 2.1.281 → 2.1.286)
 - **Codex runtime** — Update from v0.156.1 to v0.160.0.
-
-### Fixed
-
-- **SQLite empty rebuilds** — Migration 0146 now skips unrelated foreign key scans when Django rebuilds newly created empty tables. Incoming references and independent writes still validate before commit.
-
-- **SQLite migration checks** — Known empty-table and nonunique-index operations skip unrelated foreign key scans. Relation changes validate affected tables before commit. Unknown effects retain global validation. Logs report migration and check durations separately. `TWICC_SQLITE_STANDARD_MIGRATIONS=1` selects standard Django behavior.
-
-- **Docked panels on medium screens** — Opening a panel over the conversation no longer shifts the layout and leaves an empty strip on the right.
 
 ## [1.94.3] - 2026-09-24
 
