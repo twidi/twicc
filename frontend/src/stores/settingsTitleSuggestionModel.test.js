@@ -61,3 +61,44 @@ test('maps each forced model to its provider', () => {
         luna: 'codex',
     })
 })
+
+test('labels the forced title models like the settings options', () => {
+    assert.deepEqual(
+        { ...constants.TITLE_SUGGESTION_MODEL_LABELS },
+        { haiku: 'Claude Haiku', luna: 'GPT-6 Luna' },
+    )
+})
+
+test('maps a provider to the title model that runs on it', () => {
+    assert.equal(constants.titleModelForProvider('claude_code'), 'haiku')
+    assert.equal(constants.titleModelForProvider('codex'), 'luna')
+    assert.equal(constants.titleModelForProvider('unknown'), null)
+    assert.equal(constants.titleModelForProvider(undefined), null)
+})
+
+test('the default title model follows the session provider unless one is forced', () => {
+    const resolve = constants.resolveSessionTitleModel
+
+    assert.equal(resolve('provider', 'claude_code'), 'haiku')
+    assert.equal(resolve('provider', 'codex'), 'luna')
+    assert.equal(resolve('luna', 'claude_code'), 'luna')
+    assert.equal(resolve('haiku', 'codex'), 'haiku')
+    assert.equal(resolve('provider', 'unknown'), null)
+    assert.equal(resolve(undefined, 'codex'), 'luna')
+})
+
+test('offers the other enabled title models as alternatives', () => {
+    const alternatives = constants.titleModelAlternatives
+    const both = ['claude_code', 'codex']
+
+    assert.deepEqual(alternatives('haiku', both), ['luna'])
+    assert.deepEqual(alternatives('luna', both), ['haiku'])
+    assert.deepEqual(alternatives('luna', new Set(both)), ['haiku'])
+    // A disabled provider is not offered.
+    assert.deepEqual(alternatives('haiku', ['claude_code']), [])
+    assert.deepEqual(alternatives('luna', ['codex']), [])
+    assert.deepEqual(alternatives('luna', ['claude_code']), ['haiku'])
+    // Nothing displayed yet: every enabled model is an alternative.
+    assert.deepEqual(alternatives(null, both), ['haiku', 'luna'])
+    assert.deepEqual(alternatives('haiku', undefined), [])
+})

@@ -313,9 +313,13 @@ export function interruptSession(sessionId) {
  * @param {string} sessionId - The session ID (draft or canonical)
  * @param {string|null} prompt - Optional prompt text (for draft/new sessions)
  * @param {string} systemPrompt - System prompt with {text} placeholder
+ * @param {Object} [options]
+ * @param {string} [options.model] - Title model to use instead of the effective
+ *     setting (a one-off choice: the setting is not touched).
+ * @param {boolean} [options.noFallback] - Fail instead of using another provider.
  * @returns {boolean} - True if message was sent, false if no provider could be resolved or WS is down
  */
-export function requestTitleSuggestion(sessionId, prompt = null, systemPrompt) {
+export function requestTitleSuggestion(sessionId, prompt = null, systemPrompt, options = {}) {
     // ``provider`` travels in the payload because draft sessions don't exist in
     // the backend DB yet — the backend can't resolve them via the ``Session``
     // table, so the frontend (which knows the provider from draft creation
@@ -336,7 +340,8 @@ export function requestTitleSuggestion(sessionId, prompt = null, systemPrompt) {
         // in settings, so asking for it here would make the backend report a
         // fallback the user was never shown as one. The backend keeps its own
         // fallback for what only it can see (quota, errors, hot toggles).
-        titleSuggestionModel: useSettingsStore().getEffectiveTitleSuggestionModel,
+        titleSuggestionModel: options.model || useSettingsStore().getEffectiveTitleSuggestionModel,
+        noFallback: options.noFallback,
     })
     return sendWsMessage(message)
 }

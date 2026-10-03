@@ -6,6 +6,7 @@ export function buildTitleSuggestionRequest({
     systemPrompt,
     prompt = null,
     titleSuggestionModel,
+    noFallback = false,
 }) {
     const message = {
         type: 'suggest_title',
@@ -15,5 +16,8 @@ export function buildTitleSuggestionRequest({
         titleSuggestionModel: resolveTitleSuggestionModel(titleSuggestionModel),
     }
     if (prompt) message.prompt = prompt
+    // Set when the user picked this provider explicitly: the backend must not
+    // answer with another one if it fails.
+    if (noFallback) message.noFallback = true
     return message
 }

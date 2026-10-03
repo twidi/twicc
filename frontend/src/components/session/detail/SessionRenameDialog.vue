@@ -4,6 +4,12 @@ import { useDataStore } from '../../../stores/data'
 import { useSettingsStore } from '../../../stores/settings'
 import { requestTitleSuggestion } from '../../../composables/useWebSocket'
 import { getProviderLabel } from '../../../providers'
+import {
+    TITLE_SUGGESTION_MODEL_LABELS,
+    resolveSessionTitleModel,
+    titleModelAlternatives,
+    titleModelForProvider,
+} from '../../../constants'
 
 const props = defineProps({
     session: {
@@ -45,6 +51,32 @@ const suggestionEntry = computed(() => {
     return store.getTitleSuggestionEntry(props.session.id)
 })
 
+// The title model asked for explicitly with a "Try with …" link; null means
+// the default one for this session (the settings, then the session's provider).
+// A one-off choice for this dialog: the setting is never touched.
+const chosenTitleModel = ref(null)
+
+const defaultTitleModel = computed(() =>
+    resolveSessionTitleModel(settingsStore.getEffectiveTitleSuggestionModel, props.session?.provider),
+)
+const requestedTitleModel = computed(() => chosenTitleModel.value || defaultTitleModel.value)
+
+// What the user is looking at: the model that produced the suggestion (which
+// is not the requested one after a backend fallback), else the requested one.
+// While a request runs, the stored suggestion is the previous one's: only the
+// requested model is true.
+const displayedTitleModel = computed(() => {
+    if (isLoadingSuggestion.value) return requestedTitleModel.value
+    return (suggestion.value && titleModelForProvider(suggestionEntry.value?.titleProvider))
+        || requestedTitleModel.value
+})
+const displayedTitleModelLabel = computed(() => TITLE_SUGGESTION_MODEL_LABELS[displayedTitleModel.value] || null)
+
+// The other enabled title models, to try instead of the displayed one.
+const alternativeTitleModels = computed(() =>
+    titleModelAlternatives(displayedTitleModel.value, settingsStore.enabledProviders),
+)
+
 // Why there is no suggestion, when the user can act on it. ``no_prompt`` is
 // excluded on purpose: nothing to summarize is not a failure, and the section
 // stays hidden exactly as it did before.
@@ -78,21 +110,24 @@ function draftPromptFor(session) {
 function startSuggestion(sessionId, prompt) {
     suggestionSendFailed.value = false
     isLoadingSuggestion.value = true
-    if (!requestTitleSuggestion(sessionId, prompt, titleSystemPrompt.value)) {
+    // An explicit choice is strict: when the user turns a model down for
+    // another, the backend must not answer with the one they turned down.
+    const options = chosenTitleModel.value ? { model: chosenTitleModel.value, noFallback: true } : {}
+    if (!requestTitleSuggestion(sessionId, prompt, titleSystemPrompt.value, options)) {
         isLoadingSuggestion.value = false
         suggestionSendFailed.value = true
     }
 }
 
-// The backend generated through another provider than the one the settings
-// asked for: a runtime failure, or a session whose own provider is disabled
-// under "match session provider". A forced choice whose provider is disabled
-// never lands here — it is already resolved before the request leaves.
-const fallbackProviderLabel = computed(() => {
+// The backend generated through another provider than the one requested: a
+// runtime failure, or a session whose own provider is disabled under "match
+// session provider". A forced choice whose provider is disabled never lands
+// here — it is already resolved before the request leaves — and neither does an
+// explicit "Try with …" (strict).
+const isFallbackSuggestion = computed(() => {
     const entry = suggestionEntry.value
-    if (!entry?.suggestion || !entry.titleProvider) return null
-    if (!entry.requestedProvider || entry.titleProvider === entry.requestedProvider) return null
-    return getProviderLabel(entry.titleProvider)
+    if (!entry?.suggestion || !entry.titleProvider || !entry.requestedProvider) return false
+    return entry.titleProvider !== entry.requestedProvider
 })
 
 const providerLabel = computed(() => getProviderLabel(props.session?.provider))
@@ -143,6 +178,7 @@ function focusTitleInput() {
 function open({ showHint = false, session = null } = {}) {
     errorMessage.value = ''
     suggestionSendFailed.value = false
+    chosenTitleModel.value = null
     showContextHint.value = showHint
 
     // Use the session passed directly, falling back to props.session
@@ -234,6 +270,18 @@ function regenerateSuggestion() {
 }
 
 /**
+ * Generate the suggestion with another title model than the displayed one.
+ * Only for this dialog: the setting is untouched. Regenerating afterwards keeps
+ * the choice.
+ * @param {string} model - A ``TITLE_SUGGESTION_MODEL`` value.
+ */
+function trySuggestionWith(model) {
+    if (isLoadingSuggestion.value) return
+    chosenTitleModel.value = model
+    regenerateSuggestion()
+}
+
+/**
  * Save the session title.
  * For draft sessions: store locally in the session object.
  * For real sessions: call the API to rename.
@@ -309,9 +357,10 @@ defineExpose({
             >
                 <div class="suggestion-header">
                     <span class="suggestion-label">Suggestion:</span>
-                    <span v-if="fallbackProviderLabel" class="suggestion-fallback">
-                        via {{ fallbackProviderLabel }}
+                    <span v-if="displayedTitleModelLabel" class="suggestion-model">
+                        {{ displayedTitleModelLabel }}
                     </span>
+                    <span v-if="isFallbackSuggestion" class="suggestion-fallback">(fallback)</span>
                     <wa-button
                         v-if="suggestion"
                         variant="neutral"
@@ -322,10 +371,24 @@ defineExpose({
                     >
                         <wa-icon name="rotate" label="Regenerate"></wa-icon>
                     </wa-button>
+                    <!-- One-off choice of another title model: a quiet text link
+                         pushed to the right of the header line, wrapping under it
+                         (still right-aligned) when the dialog is narrow. -->
+                    <span v-if="alternativeTitleModels.length" class="suggestion-tries">
+                        <a
+                            v-for="model in alternativeTitleModels"
+                            :key="model"
+                            href="#"
+                            class="suggestion-try"
+                            :class="{ 'is-disabled': isLoadingSuggestion }"
+                            :aria-disabled="isLoadingSuggestion ? 'true' : null"
+                            @click.prevent="trySuggestionWith(model)"
+                        >Try with {{ TITLE_SUGGESTION_MODEL_LABELS[model] }}</a>
+                    </span>
                 </div>
                 <div v-if="isLoadingSuggestion" class="suggestion-loading">
                     <wa-spinner size="small"></wa-spinner>
-                    <span>Generating...</span>
+                    <span>Generating{{ displayedTitleModelLabel ? ` with ${displayedTitleModelLabel}` : '' }}...</span>
                 </div>
                 <div v-else-if="suggestionErrorMessage" class="suggestion-error">
                     <span>{{ suggestionErrorMessage }}</span>
@@ -425,8 +488,10 @@ defineExpose({
 
 .suggestion-header {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: var(--wa-space-xs);
+    column-gap: var(--wa-space-xs);
+    row-gap: var(--wa-space-2xs);
 }
 
 .suggestion-label {
@@ -440,9 +505,40 @@ defineExpose({
     color: var(--wa-color-text-quiet);
 }
 
+.suggestion-model {
+    font-weight: var(--wa-font-weight-semibold);
+}
+
 .suggestion-fallback {
     color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-xs);
+}
+
+.suggestion-tries {
+    /* Right edge of the header line; when it wraps, it stays right-aligned. */
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--wa-space-xs);
+    margin-inline-start: auto;
+}
+
+.suggestion-try {
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-text-quiet);
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.suggestion-try:hover {
+    color: var(--wa-color-brand);
+    text-decoration: underline;
+}
+
+.suggestion-try.is-disabled {
+    opacity: 0.5;
+    pointer-events: none;
 }
 
 .suggestion-error {

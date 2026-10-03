@@ -1637,7 +1637,8 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             "provider": "claude_code" | "codex",
             "titleSuggestionModel": "provider" | "haiku" | "luna",
             "systemPrompt": "System prompt with {text} placeholder",
-            "prompt": "optional prompt text for draft/new sessions"
+            "prompt": "optional prompt text for draft/new sessions",
+            "noFallback": true  // optional: only try the requested provider
         }
 
         Requires systemPrompt and provider from the frontend (no fallback).
@@ -1653,7 +1654,8 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
           messages of the whole conversation in the DB (beginning and end of a
           long one, see ``title_transcript``)
 
-        **Provider fallback.** The requested provider is only a preference: when
+        **Provider fallback.** Unless the request says ``"noFallback": true``, the
+        requested provider is only a preference: when
         it is not running (disabled, or mid ``starting``/``stopping``) or when
         its generation fails for any reason (quota, timeout, empty or oversized
         answer), the other title-capable providers are tried in turn. The UI
@@ -1678,6 +1680,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         title_model = content.get("titleSuggestionModel")
         system_prompt = content.get("systemPrompt")
         prompt = content.get("prompt")
+        no_fallback = content.get("noFallback") is True
 
         if not session_id or not system_prompt or not provider_key:
             return
@@ -1722,9 +1725,9 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         if not source:
             error = "no_prompt"
         else:
-            candidates = [requested_provider] + [
-                p for p in TITLE_CAPABLE_PROVIDERS if p != requested_provider
-            ]
+            candidates = [requested_provider]
+            if not no_fallback:
+                candidates += [p for p in TITLE_CAPABLE_PROVIDERS if p != requested_provider]
             available = [p for p in candidates if is_provider_running(p)]
             if not available:
                 logger.warning(

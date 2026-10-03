@@ -57,18 +57,26 @@ def test_message_at_the_limit_is_kept_whole():
     assert clip_message(text + "x") != text + "x"
 
 
-def test_superseded_default_prompt_is_dropped_but_a_custom_one_is_kept():
+def test_superseded_default_prompts_are_dropped_but_a_custom_one_is_kept():
     from twicc import synced_settings as ss
 
-    old_default = ss._SUPERSEDED_TITLE_SYSTEM_PROMPTS[0]
-    stored = {"titleSystemPrompt": old_default}
-    assert ss._migrate_legacy_settings(stored) is True
-    assert "titleSystemPrompt" not in stored
+    current = ss.SYNCED_SETTINGS_DEFAULTS["titleSystemPrompt"]
+    assert len(ss._SUPERSEDED_TITLE_SYSTEM_PROMPTS) == 1
+    for old_default in ss._SUPERSEDED_TITLE_SYSTEM_PROMPTS:
+        assert old_default != current and "{text}" in old_default
+        stored = {"titleSystemPrompt": old_default}
+        assert ss._migrate_legacy_settings(stored) is True
+        assert "titleSystemPrompt" not in stored
 
-    custom = {"titleSystemPrompt": old_default + "\n\nAlways put the key words first."}
-    assert ss._migrate_legacy_settings(custom) is False
-    assert custom["titleSystemPrompt"].endswith("key words first.")
-    assert old_default != ss.SYNCED_SETTINGS_DEFAULTS["titleSystemPrompt"]
+        custom = {"titleSystemPrompt": old_default + "\n\nAlways put the key words first."}
+        assert ss._migrate_legacy_settings(custom) is False
+        assert custom["titleSystemPrompt"].endswith("key words first.")
+
+    # The current default is a value like any other: it is left as stored.
+    untouched = {"titleSystemPrompt": current}
+    assert ss._migrate_legacy_settings(untouched) is False
+    assert untouched["titleSystemPrompt"] == current
+
 
 
 def test_bound_is_per_message_not_global():

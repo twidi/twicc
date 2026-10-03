@@ -47,6 +47,7 @@ def _suggest_title_frames(
     running=None,
     outcomes=None,
     first_messages=None,
+    no_fallback=None,
 ):
     """Run ``_handle_suggest_title`` against fake providers, return the frames sent.
 
@@ -82,6 +83,8 @@ def _suggest_title_frames(
     }
     if title_model is not None:
         payload["titleSuggestionModel"] = title_model
+    if no_fallback is not None:
+        payload["noFallback"] = no_fallback
 
     async_to_sync(consumer._handle_suggest_title)(payload)
     return frames
@@ -375,3 +378,76 @@ def test_a_malformed_payload_answers_nothing(monkeypatch, payload, reason):
     async_to_sync(consumer._handle_suggest_title)(payload)
 
     assert frames == [], reason
+
+
+def test_no_fallback_generates_with_the_requested_provider_only(monkeypatch):
+    """"Try with …" asks for one provider: success looks like any other success."""
+    frames = _suggest_title_frames(
+        monkeypatch,
+        session_provider=Provider.CLAUDE_CODE,
+        title_model="luna",
+        no_fallback=True,
+    )
+
+    assert frames == [{
+        "type": "title_suggested",
+        "sessionId": "session-1",
+        "suggestion": "codex: Claude prompt",
+        "sourcePrompt": "Claude prompt",
+        "requestedProvider": "codex",
+        "titleProvider": "codex",
+        "error": None,
+    }]
+
+
+def test_no_fallback_reports_a_failure_instead_of_using_the_other_provider(monkeypatch):
+    """The other provider would answer with what the user just turned down."""
+    frames = _suggest_title_frames(
+        monkeypatch,
+        session_provider=Provider.CLAUDE_CODE,
+        title_model="luna",
+        outcomes={Provider.CODEX: "none"},
+        no_fallback=True,
+    )
+
+    assert frames == [{
+        "type": "title_suggested",
+        "sessionId": "session-1",
+        "suggestion": None,
+        "sourcePrompt": "Claude prompt",
+        "requestedProvider": "codex",
+        "titleProvider": None,
+        "error": "generation_failed",
+    }]
+
+
+def test_no_fallback_reports_a_provider_that_is_not_running(monkeypatch):
+    frames = _suggest_title_frames(
+        monkeypatch,
+        session_provider=Provider.CODEX,
+        title_model="haiku",
+        running={Provider.CODEX},
+        no_fallback=True,
+    )
+
+    assert frames == [{
+        "type": "title_suggested",
+        "sessionId": "session-1",
+        "suggestion": None,
+        "sourcePrompt": "Codex prompt",
+        "requestedProvider": "claude_code",
+        "titleProvider": None,
+        "error": "no_provider_available",
+    }]
+
+
+@pytest.mark.parametrize("flag", [False, None, "true", 1])
+def test_only_an_explicit_true_disables_the_fallback(monkeypatch, flag):
+    frames = _suggest_title_frames(
+        monkeypatch,
+        session_provider=Provider.CLAUDE_CODE,
+        outcomes={Provider.CLAUDE_CODE: "none"},
+        no_fallback=flag,
+    )
+
+    assert frames[0]["titleProvider"] == "codex"

@@ -231,3 +231,53 @@ export function resolveEffectiveTitleSuggestionModel(value, enabledProviders) {
     )
     return alternative || TITLE_SUGGESTION_MODEL.PROVIDER
 }
+
+/**
+ * Display names of the forced title models, as the Settings > Titles options
+ * and the rename dialog show them.
+ */
+export const TITLE_SUGGESTION_MODEL_LABELS = Object.freeze({
+    [TITLE_SUGGESTION_MODEL.HAIKU]: 'Claude Haiku',
+    [TITLE_SUGGESTION_MODEL.LUNA]: 'GPT-6 Luna',
+})
+
+/**
+ * The forced title model that runs on ``provider``, or null when none does.
+ * @param {string|null|undefined} provider
+ * @returns {string|null}
+ */
+export function titleModelForProvider(provider) {
+    return Object.keys(TITLE_SUGGESTION_MODEL_PROVIDERS).find(
+        (model) => TITLE_SUGGESTION_MODEL_PROVIDERS[model] === provider,
+    ) || null
+}
+
+/**
+ * The title model a session's suggestion runs on by default.
+ *
+ * A forced model is the default for every session. ``provider`` follows the
+ * session: Haiku for a Claude Code session, Luna for a Codex one. Null when the
+ * session's provider has no title model.
+ * @param {string} effectiveModel - ``getEffectiveTitleSuggestionModel``.
+ * @param {string|null|undefined} sessionProvider
+ * @returns {string|null}
+ */
+export function resolveSessionTitleModel(effectiveModel, sessionProvider) {
+    const model = resolveTitleSuggestionModel(effectiveModel)
+    if (model !== TITLE_SUGGESTION_MODEL.PROVIDER) return model
+    return titleModelForProvider(sessionProvider)
+}
+
+/**
+ * The title models the user can try instead of ``currentModel``: every other
+ * forced model whose provider is enabled.
+ * @param {string|null} currentModel
+ * @param {string[]|Set<string>} enabledProviders
+ * @returns {string[]}
+ */
+export function titleModelAlternatives(currentModel, enabledProviders) {
+    const enabled = enabledProviders instanceof Set ? enabledProviders : new Set(enabledProviders || [])
+    return Object.keys(TITLE_SUGGESTION_MODEL_PROVIDERS).filter(
+        (model) => model !== currentModel && enabled.has(TITLE_SUGGESTION_MODEL_PROVIDERS[model]),
+    )
+}

@@ -23,6 +23,7 @@ import {
     DEFAULT_MAX_CACHED_SESSIONS,
     SPONSOR_URL,
     TITLE_SUGGESTION_MODEL,
+    TITLE_SUGGESTION_MODEL_LABELS,
     TITLE_SUGGESTION_MODEL_PROVIDERS,
 } from '../../constants'
 import NotificationSettings from './NotificationSettings.vue'
@@ -1889,7 +1890,7 @@ function onChangelogClose() {
                                 :value="TITLE_SUGGESTION_MODEL.HAIKU"
                                 :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.HAIKU]"
                             >
-                                Claude Haiku for every session
+                                {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.HAIKU] }} for every session
                                 <span
                                     v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.HAIKU]"
                                     class="radio-note"
@@ -1899,7 +1900,7 @@ function onChangelogClose() {
                                 :value="TITLE_SUGGESTION_MODEL.LUNA"
                                 :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
                             >
-                                GPT-6 Luna for every session
+                                {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.LUNA] }} for every session
                                 <span class="radio-note">(much faster than Haiku)</span>
                                 <span
                                     v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"

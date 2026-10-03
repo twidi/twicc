@@ -37,3 +37,19 @@ test('keeps a fixed model and an explicit prompt in the request', () => {
         titleSuggestionModel: 'luna',
     })
 })
+
+test('asks the backend not to fall back only when the choice is explicit', () => {
+    const base = {
+        sessionId: 'session-1',
+        provider: 'claude_code',
+        systemPrompt: 'Summarize {text}',
+        titleSuggestionModel: 'luna',
+    }
+
+    const strict = titleSuggestion.buildTitleSuggestionRequest?.({ ...base, noFallback: true })
+    const loose = titleSuggestion.buildTitleSuggestionRequest?.(base)
+
+    assert.equal(strict.noFallback, true)
+    assert.equal(strict.titleSuggestionModel, 'luna')
+    assert.equal('noFallback' in loose, false)
+})
