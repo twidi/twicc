@@ -217,6 +217,7 @@ All configuration goes through environment variables, set in `~/.twicc/.env`:
 | `CLAUDE_CONFIG_DIR`   | `~/.claude` | Claude Code home (sessions, settings, plugins…) — the CLI's own variable, absolute path |
 | `CLAUDE_SECURESTORAGE_CONFIG_DIR` | *(follows `CLAUDE_CONFIG_DIR`)* | Where Claude Code keeps its credentials; leave it **empty** (`CLAUDE_SECURESTORAGE_CONFIG_DIR=`) to keep the default credentials next to a relocated home |
 | `CODEX_HOME`          | `~/.codex`  | Codex home (sessions, `auth.json`, `config.toml`…) — the CLI's own variable, absolute path |
+| `TWICC_CODEX_MAX_AGENT_THREADS` | `9` | Codex: maximum number of agent threads open at once in one session, **root included** (`9` = the main agent + 8 subagents). Codex's own default is 4, which only allows 3 subagents. Applies to new and resumed sessions, and overrides `[features.multi_agent_v2]` in `~/.codex/config.toml` |
 
 A key defined in the `.env` wins over the process environment. The three provider home keys are read **only** from the `.env`: an inherited `CLAUDE_CONFIG_DIR` / `CODEX_HOME` exported in your shell is ignored (with a warning at startup) — write it in the `.env` as a plain `KEY=VALUE` line. `TWICC_DATA_DIR` is the one variable read **only** from the environment, because it locates the `.env`: `TWICC_DATA_DIR=<dir>` (default `~/.twicc/`) moves the data directory (database, logs, settings).
 

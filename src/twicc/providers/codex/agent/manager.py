@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import time
 from typing import Any, ClassVar
 
@@ -46,6 +47,13 @@ logger = logging.getLogger(__name__)
 # time to land — pushing earlier would be overwritten. Matches the rename
 # verify's delay.
 _RESUME_TITLE_REPUSH_DELAY = 5.0
+
+# Codex multi-agent v2 caps the agent tree at 4 threads by default — the root
+# counts, so only 3 subagents — and a finished subagent with queued mail is not
+# evicted to make room. 9 allows 8 subagents. Override with the environment
+# variable below (same unit: root included).
+_CODEX_MAX_AGENT_THREADS_ENV = "TWICC_CODEX_MAX_AGENT_THREADS"
+_CODEX_MAX_AGENT_THREADS_DEFAULT = 9
 
 
 class CodexAgentManager(BaseAgentManager):
@@ -768,6 +776,7 @@ class CodexAgentManager(BaseAgentManager):
                 thread_config, enabled=settings.question_widget is not False,
             )
             _apply_update_plan(thread_config)
+            _apply_multi_agent_thread_limit(thread_config)
             if approvals_reviewer is ApprovalsReviewer.auto_review:
                 # Give the workspace sandbox direct network access. Do not turn
                 # on Codex's managed network proxy here: without an administrator
@@ -981,6 +990,30 @@ def _twicc_mcp_server_config(session_id: str) -> dict:
         "tool_timeout_sec": 600,
         "startup_timeout_sec": 30,
     }
+
+
+def _codex_max_agent_threads() -> int:
+    """Agent-tree size limit (root included): the env override, else the default."""
+    raw = os.environ.get(_CODEX_MAX_AGENT_THREADS_ENV, "").strip()
+    if not raw:
+        return _CODEX_MAX_AGENT_THREADS_DEFAULT
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        logger.warning(
+            "Ignoring %s=%r (expected an integer >= 1); using %d",
+            _CODEX_MAX_AGENT_THREADS_ENV, raw, _CODEX_MAX_AGENT_THREADS_DEFAULT,
+        )
+        return _CODEX_MAX_AGENT_THREADS_DEFAULT
+    return value
+
+
+def _apply_multi_agent_thread_limit(thread_config: dict) -> None:
+    """Raise Codex's per-session agent-thread limit for this thread (multi-agent v2)."""
+    features = thread_config.setdefault("features", {})
+    features["multi_agent_v2"] = {"max_concurrent_threads_per_session": _codex_max_agent_threads()}
 
 
 def _apply_codex_mcp_context_mode(thread_config: dict) -> None:
