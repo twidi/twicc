@@ -9,6 +9,7 @@ import {
 } from '../../utils/markdown.js'
 import { createMarkdownRenderCoordinator, MARKDOWN_RENDER_CANCELLED } from '../../utils/markdownRenderCoordinator.js'
 import { markdownReferenceContextKey, markdownBlockCacheKey } from '../../utils/markdownRenderCache.js'
+import { STREAMING_ROW_CONTEXT } from '../../composables/streamPublicationKeys.js'
 import { useMarkdownRenderEligibility } from '../../composables/useMarkdownRenderEligibility.js'
 import { hashString } from '../../utils/hash.js'
 import { useSettingsStore } from '../../stores/settings'
@@ -65,6 +66,9 @@ const fileLinks = inject('markdownFileLinks', null)
 const rewriteContentMediaUrl = inject('rewriteContentMediaUrl', null)
 
 const blocks = ref([])
+// An unpublished offscreen document must not collapse a row whose geometry is retained.
+const rowContext = inject(STREAMING_ROW_CONTEXT, null)
+const releaseInitialHeight = rowContext?.reserveInitialHeight?.() ?? (() => {})
 const componentInstance = getCurrentInstance()
 const container = ref(null)
 const rendering = ref(true)
@@ -548,6 +552,7 @@ const coordinator = createMarkdownRenderCoordinator({
             })
         }
         if (isCurrent()) emit('rendered')
+        if (result.blocks.length > 0) releaseInitialHeight()
     },
     onState: state => { rendering.value = state.rendering },
     onError: error => {
@@ -565,6 +570,7 @@ watch(eligible, value => {
     coordinator.setEligible(value)
 }, { immediate: true, flush: 'sync' })
 onScopeDispose(() => {
+    releaseInitialHeight()
     disposed = true
     toolRevision++
     coordinator.dispose()

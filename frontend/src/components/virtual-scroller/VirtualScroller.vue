@@ -120,6 +120,8 @@ const props = defineProps({
 // ═══════════════════════════════════════════════════════════════════════════
 
 const emit = defineEmits([
+    /** Navigation input, before the browser performs the scroll. */
+    'user-scroll',
     /**
      * Emitted when the visible/rendered range changes.
      * Payload: { startIndex, endIndex, visibleStartIndex, visibleEndIndex }
@@ -279,7 +281,8 @@ function unregisterItemObserver(element) {
 // Provide the observer registration functions to child items
 provide(RESIZE_OBSERVER_KEY, {
     register: registerItemObserver,
-    unregister: unregisterItemObserver
+    unregister: unregisterItemObserver,
+    getItemHeight,
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -307,6 +310,7 @@ const {
     scrollToBottom: composableScrollToBottom,
     scrollToEdge: composableScrollToEdge,
     getScrollState: composableGetScrollState,
+    getScrollRevision,
     updateViewportHeight,
     syncScrollPosition,
     isAtBottom,
@@ -330,6 +334,7 @@ const {
     unloadBuffer: props.unloadBuffer,
     containerRef,
     preventAutoScrollToBottom: props.preventAutoScrollToBottom,
+    onUserScroll: event => emit('user-scroll', event),
 })
 
 // Publication observation has its own epoch. Retained rows become unknown on recovery.
@@ -718,6 +723,7 @@ defineExpose({
     scrollToBottom,
     scrollToEdge,
     getScrollState,
+    getScrollRevision,
     getVisibleRange,
     // Additional utility methods that may be useful
     isAtBottom,
@@ -762,6 +768,7 @@ defineExpose({
             v-for="{ item, index, key } in renderedItems"
             :key="key"
             :item-key="key"
+            :estimated-height="minItemHeight"
             :min-height="itemMinHeight ? itemMinHeight(item) : null"
             :class="itemClass ? itemClass(item) : null"
             :style="itemStyle ? itemStyle(item) : null"

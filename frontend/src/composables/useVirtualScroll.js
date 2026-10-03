@@ -60,6 +60,7 @@ const USER_SCROLL_LISTENER_OPTIONS = { passive: true }
  * @param {number} [options.buffer=500] - Buffer in pixels for loading items
  * @param {number} [options.unloadBuffer=1000] - Buffer in pixels before unloading items
  * @param {import('vue').Ref<HTMLElement|null>} options.containerRef - Ref to the scroll container element
+ * @param {Function} [options.onUserScroll] - Called synchronously for navigation input
  * @returns {Object} Virtual scroll state and methods
  */
 export function useVirtualScroll(options) {
@@ -604,8 +605,6 @@ export function useVirtualScroll(options) {
 
         const anchorKey = anchorItem.key
         const anchorOriginalTop = anchorItem.top
-        // Offset = how far into the anchor item the viewport starts
-        const offsetInAnchor = currentScrollTop - anchorOriginalTop
 
         // 2. APPLY all height changes to the cache
         for (const [key, { newHeight, oldHeight }] of actualUpdates) {
@@ -621,19 +620,19 @@ export function useVirtualScroll(options) {
         const newAnchorItem = newPosArray.find(p => p.key === anchorKey)
 
         if (newAnchorItem) {
-            const newScrollTop = newAnchorItem.top + offsetInAnchor
-
-            // Safety checks
-            if (Number.isFinite(newScrollTop) && newScrollTop >= 0) {
-                // Clamp to valid range
-                const maxScrollTop = Math.max(0, totalHeight.value - viewportHeight.value)
-                const clampedScrollTop = Math.min(newScrollTop, maxScrollTop)
-
-                // Only update if there's an actual difference (avoid micro-corrections)
-                if (Math.abs(clampedScrollTop - currentScrollTop) > 0.5) {
-                    container.scrollTop = clampedScrollTop
-                    scrollTop.value = clampedScrollTop
+            const heightDelta = newAnchorItem.top - anchorOriginalTop
+            if (Number.isFinite(heightDelta) && Math.abs(heightDelta) > 0.5) {
+                // Firefox's compositor can already be farther into a touch gesture
+                // than the main-thread scrollTop. An absolute write discards that
+                // movement. Apply only the height delta to the browser's position.
+                if (typeof container.scrollBy === 'function') {
+                    container.scrollBy({ top: heightDelta, behavior: 'instant' })
+                } else {
+                    const maxScrollTop = Math.max(0, totalHeight.value - viewportHeight.value)
+                    container.scrollTop = Math.max(0, Math.min(currentScrollTop + heightDelta, maxScrollTop))
                 }
+                // The browser can clamp the correction at a scroll boundary.
+                scrollTop.value = container.scrollTop
             }
         }
 
@@ -760,6 +759,7 @@ export function useVirtualScroll(options) {
     function noteUserScroll(event) {
         if (suspended.value || disposed) return
         userScrollSeq++
+        options.onUserScroll?.(event)
         if (event.type === 'wheel' || (event.type === 'pointerdown' && event.target === containerRef.value)) {
             endSmooth()
         }
@@ -771,6 +771,7 @@ export function useVirtualScroll(options) {
         if (suspended.value || disposed) return
         if (!SCROLL_KEYS.has(event.key)) return
         userScrollSeq++
+        options.onUserScroll?.(event)
         if (!event.defaultPrevented) endSmooth()
     }
 
@@ -1114,6 +1115,11 @@ export function useVirtualScroll(options) {
         if (generation !== lifecycleGeneration || suspended.value || disposed) return false
         jump({ behavior: 'auto' })
         return false
+    }
+
+    /** Navigation ownership changes on input and explicit scrolls, not height compensation. */
+    function getScrollRevision() {
+        return userScrollSeq + explicitScrollSeq
     }
 
     /**
@@ -1858,6 +1864,7 @@ export function useVirtualScroll(options) {
         scrollToBottom,
         scrollToEdge,
         getScrollState,
+        getScrollRevision,
         isAtBottom,
         isAtTop,
         // Reactive "near bottom" flag — written by VirtualScroller's

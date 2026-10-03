@@ -150,3 +150,82 @@ test('same-key replacement preserves geometry and resize and empty topology publ
     assert.equal(scroll.spacerBeforeHeight.value, 0)
     assert.equal(scroll.spacerAfterHeight.value, 0)
 })
+
+for (const [name, initialHeight, measuredHeight] of [['growth', 20, 56], ['shrink', 56, 20]]) {
+    test(`height ${name} above the viewport preserves asynchronous user scrolling`, t => {
+        // Firefox APZ can show a newer offset than the main-thread scrollTop.
+        // Absolute writes replace that newer offset. Relative writes retain it.
+        let layoutTop = 305, visualTop = 290
+        const relativeCalls = [], absoluteCalls = []
+        const container = {
+            clientHeight: 100,
+            get scrollTop() { return layoutTop },
+            set scrollTop(value) { absoluteCalls.push(value); layoutTop = visualTop = value },
+            scrollBy(options) {
+                relativeCalls.push(options)
+                layoutTop += options.top
+                visualTop += options.top
+            },
+            addEventListener() {}, removeEventListener() {},
+        }
+        const { scroll } = setup(t, { container })
+        scroll.seedItemHeight(1, initialHeight)
+        scroll.syncScrollPosition()
+        const before = visualTop
+        scroll.batchUpdateItemHeights(new Map([[1, measuredHeight]]))
+        assert.equal(visualTop, before + measuredHeight - initialHeight,
+            'height compensation must retain the newer position produced by the gesture')
+        assert.deepEqual(relativeCalls, [{ top: measuredHeight - initialHeight, behavior: 'instant' }])
+        assert.deepEqual(absoluteCalls, [])
+        assert.equal(scroll.scrollTop.value, layoutTop)
+    })
+}
+
+test('height compensation follows the browser accepted scroll position at an edge', t => {
+    let top = 205
+    const container = {
+        clientHeight: 100,
+        get scrollTop() { return top },
+        set scrollTop(value) { top = Math.min(value, 210) },
+        scrollBy({ top: delta }) { top = Math.min(top + delta, 210) },
+        addEventListener() {}, removeEventListener() {},
+    }
+    const { scroll } = setup(t, { container })
+    scroll.syncScrollPosition()
+    scroll.batchUpdateItemHeights(new Map([[1, 56]]))
+    assert.equal(container.scrollTop, 210)
+    assert.equal(scroll.scrollTop.value, 210, 'render ranges must use the accepted offset')
+})
+
+test('estimated total height does not suppress a real anchor height correction', t => {
+    let top = 736
+    const container = {
+        clientHeight: 100,
+        get scrollTop() { return top },
+        set scrollTop(value) { top = value },
+        scrollBy({ top: delta }) { top += delta },
+        addEventListener() {}, removeEventListener() {},
+    }
+    const { scroll } = setup(t, { container })
+    scroll.syncScrollPosition()
+    scroll.batchUpdateItemHeights(new Map([[1, 56]]))
+    assert.equal(container.scrollTop, 772,
+        'the browser, rather than unmeasured height estimates, owns the scroll boundary')
+})
+
+
+test('scroll revision changes on navigation input and explicit navigation, but not height compensation', t => {
+    const listeners = new Map()
+    const container = { scrollTop: 200, clientHeight: 100, scrollHeight: 800,
+        addEventListener(type, handler) { listeners.set(type, handler) }, removeEventListener() {} }
+    const { scroll } = setup(t, { container })
+    const initial = scroll.getScrollRevision()
+    listeners.get('wheel')({ type: 'wheel', target: container })
+    assert.equal(scroll.getScrollRevision(), initial + 1)
+    scroll.scrollToIndex(5)
+    assert.equal(scroll.getScrollRevision(), initial + 2)
+    scroll.batchUpdateItemHeights(new Map([[1, 30]]))
+    assert.equal(scroll.getScrollRevision(), initial + 2)
+    listeners.get('keydown')({ key: 'PageUp', defaultPrevented: false })
+    assert.equal(scroll.getScrollRevision(), initial + 3)
+})

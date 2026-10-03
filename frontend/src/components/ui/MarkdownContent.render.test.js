@@ -22,6 +22,7 @@ function harness(t, options = {}) {
     const document = options.document ?? { createElement: () => ({ innerHTML: '', querySelectorAll: () => [] }) }
     const dependencies = {
         ref, computed, watch, nextTick, onScopeDispose, props, settingsStore, document,
+        inject: () => options.rowContext ?? null, STREAMING_ROW_CONTEXT: Symbol(),
         getCurrentInstance: () => ({ proxy: 'component-proxy', appContext: { config: { errorHandler: options.errorHandler ?? ((...args) => reports.push(args)) } } }),
         console: { error: (...args) => reports.push(args) },
         useMarkdownRenderEligibility: () => ({ eligible }),
@@ -299,3 +300,29 @@ for (const pipeline of ['renderOneBlock', 'renderNestedMarkdown']) {
         })
     }
 }
+
+
+test('a row reserves its height until its first Markdown publication', async t => {
+    const held = deferred(), reservations = []
+    let reserved = 0
+    const h = harness(t, { rowContext: { reserveInitialHeight() {
+        reserved++; reservations.push(true)
+        let released = false
+        return () => { if (!released) { released = true; reserved-- } }
+    } }, render: () => held.promise })
+    h.eligible.value = false; h.props.source = 'pending'; await flush()
+    assert.equal(reserved, 1, 'offscreen Markdown must retain a real row height')
+    h.eligible.value = true; await flush()
+    held.resolve('<p>ready</p>'); await flush()
+    assert.equal(reserved, 0)
+    h.props.source = 'updated'; await flush()
+    assert.equal(reservations.length, 1, 'updates retain the existing DOM and need no new reservation')
+    h.scope.stop(); assert.equal(reserved, 0)
+})
+test('disposed unpublished Markdown releases its height reservation', async t => {
+    let reserved = 0
+    const h = harness(t, { rowContext: { reserveInitialHeight() { reserved++; return () => reserved-- } } })
+    h.eligible.value = false; h.props.source = 'pending'; await flush()
+    assert.equal(reserved, 1)
+    h.scope.stop(); assert.equal(reserved, 0)
+})

@@ -1214,6 +1214,14 @@ function onItemResized() {
     }
 }
 
+/** A gesture owns the scroll immediately, including during the stability wait. */
+function onUserScroll() {
+    if (edgeScrollOperation) edgeScrollOperation.cancelled = true
+    isAutoScrollingToBottom.value = false
+    pendingScrollToBottom = null
+    resolveStability()
+}
+
 /**
  * Scroll to bottom and wait until the scroll position stabilizes.
  *
@@ -1247,11 +1255,20 @@ async function scrollToEdgeUntilStable(edge, options = {}) {
     const scroller = scrollerRef.value
     if (!scroller) return
 
+    const requestedRevision = scroller.getScrollRevision()
+
     // If a scroll operation is already in progress, wait for it to complete
     // This prevents concurrent calls from interfering with each other
     if (edgeScrollOperation) {
         const previousEdge = edgeScrollOperation.edge
+        // A different edge replaces the old intent before its final correction.
+        if (previousEdge !== edge) {
+            edgeScrollOperation.cancelled = true
+            isAutoScrollingToBottom.value = false
+            resolveStability()
+        }
         await edgeScrollOperation.promise
+        if (scrollerRef.value !== scroller || scroller.getScrollRevision() !== requestedRevision) return
         // After waiting, the previous operation already reached this same edge,
         // so we can return early unless this is an initial scroll that needs
         // visibility handling. A different edge is a new intent — carry on.
@@ -1262,12 +1279,14 @@ async function scrollToEdgeUntilStable(edge, options = {}) {
 
     // Create a new promise for this operation and store it
     let resolveScrollPromise
-    edgeScrollOperation = {
+    const operation = {
         edge,
+        cancelled: false,
         promise: new Promise(resolve => {
             resolveScrollPromise = resolve
         }),
     }
+    edgeScrollOperation = operation
 
     try {
         // Only the bottom edge feeds the "follow the conversation" logic; a
@@ -1284,6 +1303,7 @@ async function scrollToEdgeUntilStable(edge, options = {}) {
         // Scroll to the edge: at the bottom this brings the anchor sentinel into
         // view so native scroll anchoring engages for any subsequent height growth.
         jump({ behavior: 'auto' })
+        const jumpRevision = scroller.getScrollRevision()
 
         // Wait for stability: no more resize events for STABILITY_DEBOUNCE_MS,
         // OR an absolute MAX_STABILITY_WAIT_MS ceiling (whichever comes first).
@@ -1303,7 +1323,9 @@ async function scrollToEdgeUntilStable(edge, options = {}) {
             // Use requestAnimationFrame + setTimeout to ensure we start AFTER
             // the initial batch of resize events has a chance to arrive.
             requestAnimationFrame(() => {
+                if (edgeScrollOperation !== operation || operation.cancelled) return
                 setTimeout(() => {
+                    if (edgeScrollOperation !== operation || operation.cancelled) return
                     // Start the stability timer only after giving resize events a chance to fire
                     // If no resize events have arrived by now and reset this timer,
                     // we're already stable
@@ -1318,7 +1340,8 @@ async function scrollToEdgeUntilStable(edge, options = {}) {
 
         // Final scroll to ensure we're at the very edge — not while inactive: the
         // wait was ended by onDeactivated and the scroller is suspended.
-        if (sessionActive.value) jump({ behavior: 'auto' })
+        if (sessionActive.value && !operation.cancelled && scrollerRef.value === scroller &&
+            scroller.getScrollRevision() === jumpRevision) jump({ behavior: 'auto' })
 
         isAutoScrollingToBottom.value = false
 
@@ -1330,7 +1353,7 @@ async function scrollToEdgeUntilStable(edge, options = {}) {
         isInitialScrolling.value = false
     } finally {
         // Clear the operation and resolve it so any waiters can proceed
-        edgeScrollOperation = null
+        if (edgeScrollOperation === operation) edgeScrollOperation = null
         resolveScrollPromise()
     }
 }
@@ -1422,16 +1445,22 @@ async function executePendingLoad() {
     gapRetryPending = false
     const current = () => gapRequest === owner && owner.generation === gapGeneration && canLoadGap() &&
         scrollerRef.value === owner.scroller
-    const wasAtBottom = owner.scroller.isAtBottom?.() ?? false
+    const scrollRevision = owner.scroller.getScrollRevision()
+    const initialState = owner.scroller.getScrollState()
+    // History loading preserves an actual bottom position. The observer's 150px
+    // "near bottom" zone also contains readers who have started scrolling up.
+    const wasAtBottom = owner.scroller.isAtBottom() &&
+        initialState.scrollHeight - initialState.scrollTop - initialState.clientHeight <= 5
+    const ownsScroll = () => current() && owner.scroller.getScrollRevision() === scrollRevision
     let succeeded = false
     try {
         await store.loadSessionItemsRanges(props.projectId, props.sessionId, lineNumsToRanges(lines), props.parentSessionId)
         succeeded = true
-        if (current() && wasAtBottom) {
+        if (ownsScroll() && wasAtBottom) {
             const state = owner.scroller.getScrollState()
             if (state.scrollHeight - state.scrollTop - state.clientHeight > 5) {
                 await nextTick()
-                if (current()) scrollToBottomUntilStable()
+                if (ownsScroll()) scrollToBottomUntilStable()
             }
         }
     } catch {
@@ -2277,6 +2306,7 @@ defineExpose({
                     :class="{ 'initial-scrolling': reveal.hidden.value }"
                     @update="onScrollerUpdate"
                     @scroll="onGapScroll"
+                    @user-scroll="onUserScroll"
                     @item-resized="onItemResized"
                     @became-visible="onScrollerBecameVisible"
                 >

@@ -14,8 +14,8 @@ function mount(t, { height = 140 } = {}) {
     const props = Vue.reactive({ projectId: 'p', sessionId: 's', parentSessionId: null, viewActive: true })
     const visualItems = Vue.ref([{ lineNum: 1 }, { lineNum: 2 }]), sessionActive = Vue.ref(true)
     const suspended = Vue.ref(false), calls = [], requests = [], corrections = []
-    const viewport = { height }
-    const scroller = { suspended, getScrollState: () => ({ clientHeight: viewport.height, scrollTop: 0, scrollHeight: 400 }), isAtBottom: () => true }
+    const viewport = { height, top: 400 - height, scrollHeight: 400, revision: 0 }
+    const scroller = { suspended, getScrollState: () => ({ clientHeight: viewport.height, scrollTop: viewport.top, scrollHeight: viewport.scrollHeight }), isAtBottom: () => true, getScrollRevision: () => viewport.revision }
     const scrollerRef = Vue.ref(scroller)
     const store = { loadSessionItemsRanges(...args) { calls.push(args); const request = deferred(); requests.push(request); return request.promise } }
     let api
@@ -138,3 +138,40 @@ for (const opportunity of ['measured update', 'scroll']) {
         assert.equal(v.calls.length, 1, 'no-progress settlement still cannot self-loop')
     })
 }
+
+for (const navigation of ['user input', 'explicit navigation']) {
+    test(`gap settlement does not override ${navigation} during the request`, async t => {
+        const v = mount(t)
+        v.api.onScrollerUpdate(range); await debounce()
+        v.viewport.revision++
+        v.viewport.top -= 60
+        // The bottom observer deliberately still reports true during its delivery delay.
+        setParsedContent(v.visualItems.value[0], {})
+        v.requests[0].resolve(true); await flush()
+        assert.equal(v.corrections.length, 0)
+    })
+}
+test('gap growth still follows the bottom when no newer scroll intent exists', async t => {
+    const v = mount(t)
+    v.api.onScrollerUpdate(range); await debounce()
+    v.viewport.scrollHeight += 200
+    v.requests[0].resolve(true); await flush()
+    assert.equal(v.corrections.length, 1)
+})
+test('a stale bottom observer cannot turn an upper-history gap into bottom navigation', async t => {
+    const v = mount(t)
+    v.viewport.top = 0
+    v.api.onScrollerUpdate(range); await debounce()
+    v.requests[0].resolve(true); await flush()
+    assert.equal(v.corrections.length, 0)
+})
+
+
+test("history loading preserves a reader inside the observer's near-bottom zone", async t => {
+    const v = mount(t)
+    v.viewport.top -= 50
+    v.api.onScrollerUpdate(range); await debounce()
+    v.viewport.scrollHeight += 200
+    v.requests[0].resolve(true); await flush()
+    assert.equal(v.corrections.length, 0)
+})

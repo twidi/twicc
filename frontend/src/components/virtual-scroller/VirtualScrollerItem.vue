@@ -18,7 +18,7 @@
  * NOTE: This component is client-only (SSR is not supported due to
  * ResizeObserver and DOM measurement requirements).
  */
-import { ref, onMounted, onUnmounted, inject, provide } from 'vue'
+import { computed, ref, nextTick, onMounted, onUnmounted, inject, provide } from 'vue'
 import { RESIZE_OBSERVER_KEY, ROW_VISIBILITY_OBSERVER_KEY } from './virtualScrollerKeys.js'
 
 import { STREAMING_ROW_CONTEXT } from '../../composables/streamPublicationKeys.js'
@@ -42,6 +42,8 @@ const props = defineProps({
      * whose new content renders asynchronously (see VirtualScroller's
      * itemMinHeight prop).
      */
+    /** Cached or estimated geometry while a child has not published its first render. */
+    estimatedHeight: { type: Number, default: 50 },
     minHeight: {
         type: Number,
         default: null
@@ -55,29 +57,39 @@ const props = defineProps({
 /**
  * Reference to the item wrapper element.
  */
+const resizeObserverContext = inject(RESIZE_OBSERVER_KEY, null)
+
 const itemRef = ref(null)
 const intersection = ref('unknown')
 const visibilityContext = inject(ROW_VISIBILITY_OBSERVER_KEY, null)
 let releaseVisibility = null
-provide(STREAMING_ROW_CONTEXT, { intersection, scrollerActive: visibilityContext?.scrollerActive || ref(false) })
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Shared ResizeObserver (Injected from Parent)
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * Shared ResizeObserver context from VirtualScroller parent.
- * Provides register/unregister functions for observing elements.
- *
- * NOTE: Will be null if this component is used outside of a VirtualScroller.
- */
-const resizeObserverContext = inject(RESIZE_OBSERVER_KEY, null)
+const pendingInitialRenders = ref(0)
+// Child setup can read layout before its readiness registration rerenders this wrapper.
+const initialMount = ref(true)
+function reserveInitialHeight() {
+    pendingInitialRenders.value++
+    let released = false
+    return () => {
+        if (released) return
+        released = true
+        pendingInitialRenders.value--
+    }
+}
+const heightFloor = computed(() => initialMount.value || pendingInitialRenders.value > 0
+    ? Math.max(resizeObserverContext?.getItemHeight?.(props.itemKey) ?? props.estimatedHeight, props.minHeight ?? 0)
+    : props.minHeight)
+provide(STREAMING_ROW_CONTEXT, {
+    intersection,
+    scrollerActive: visibilityContext?.scrollerActive || ref(false),
+    reserveInitialHeight,
+})
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Lifecycle
 // ═══════════════════════════════════════════════════════════════════════════
 
 onMounted(() => {
+    nextTick(() => { initialMount.value = false })
     if (!itemRef.value) return
     releaseVisibility = visibilityContext?.observe(itemRef.value, state => { intersection.value = state })
     if (!resizeObserverContext) {
@@ -106,7 +118,7 @@ onUnmounted(() => {
         ref="itemRef"
         class="virtual-scroller-item"
         :data-item-key="props.itemKey"
-        :style="props.minHeight != null ? { minHeight: props.minHeight + 'px' } : null"
+        :style="heightFloor != null ? { minHeight: heightFloor + 'px' } : null"
     >
         <slot />
     </div>
