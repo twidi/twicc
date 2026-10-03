@@ -307,7 +307,7 @@ const datesId = useId()
                 <wa-button
                     v-if="!isClosed"
                     variant="danger"
-                    appearance="filled"
+                    appearance="outlined"
                     size="small"
                     :id="stopGoalId"
                     :disabled="sendingLocked"

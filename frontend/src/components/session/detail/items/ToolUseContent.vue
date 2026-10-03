@@ -996,7 +996,7 @@ startResultFetch()
                             :id="`stop-agent-${props.toolId}`"
                             size="small"
                             variant="danger"
-                            appearance="filled"
+                            appearance="outlined"
                             class="stop-agent-button"
                             :loading="stoppingAgent"
                             :disabled="stoppingAgent"

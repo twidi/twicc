@@ -1630,7 +1630,7 @@ defineExpose({ activeIndex })
                     <wa-button
                         id="terminal-disconnect-button"
                         variant="danger"
-                        appearance="filled"
+                        appearance="outlined"
                         size="small"
                         class="disconnect-button reduced-height"
                         @click="handleKillOrDisconnect"
