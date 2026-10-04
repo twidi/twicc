@@ -36,6 +36,9 @@ from twicc.agent_settings_presets import (
     write_agent_settings_presets,
 )
 from twicc.core.enums import Provider
+from twicc.core.services.attachments import lifecycle as attachment_lifecycle
+from twicc.core.services.attachments import planner as attachment_planner
+from twicc.core.services.attachments.staging import AttachmentError
 from twicc.core.services.session_creation import create_session_from_payload
 from twicc.core.services.title_suggestion import suggest_title
 from twicc.agent import ephemeral as ephemeral_runs
@@ -1116,6 +1119,16 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             logger.warning("send_message missing or invalid session_id: %r", session_id)
             await self.send_json(frame)
             return
+        # Composer refs: shape only (no disk access), answered at once (spec §6.6, §8).
+        try:
+            attachment_planner.validate_attachment_frame(content)
+        except AttachmentError as exc:
+            frame = {"type": "error", "code": exc.code, "message": str(exc), "session_id": session_id}
+            if request_id := content.get("request_id"):
+                frame["request_id"] = request_id
+            logger.warning("send_message for %s rejected: %s", session_id, exc)
+            await self.send_json(frame)
+            return
         _spawn_detached(
             self._run_send_message(session_id, content),
             label=f"send_message({session_id})",
@@ -1159,7 +1172,9 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             "text": "The message text",       // May be empty for settings-only updates
             "title": "Optional session title",  // Only for new sessions
             "images": [...],  // Optional: array of SDK ImageBlockParam objects
-            "documents": [...]  // Optional: array of SDK DocumentBlockParam objects
+            "documents": [...],  // Optional: array of SDK DocumentBlockParam objects
+            "attachments": [{"bucket": ..., "id": ...}, ...]  // Optional: composer refs,
+                                                               // exclusive with images/documents
         }
 
         This handles both new sessions and existing sessions:
@@ -1185,6 +1200,12 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         # frontend can match an error to the exact send it made (and run its
         # recovery flow: restore the draft, drop the optimistic message).
         request_id = content.get("request_id")
+        # Composer refs, already shape-checked inline by ``_handle_send_message``
+        # (re-read here: pure, and it keeps direct callers of this method safe).
+        try:
+            attachment_refs = attachment_planner.validate_attachment_frame(content)
+        except AttachmentError:
+            attachment_refs = None
 
         async def send_error(message: str, *, code: str, **extra) -> None:
             frame: dict = {"type": "error", "code": code, "message": message, **extra}
@@ -1193,6 +1214,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             if session_id:
                 frame["session_id"] = session_id
             await self.send_json(frame)
+
+        if attachment_refs is None:
+            await send_error("Invalid attachments", code=attachment_planner.ERROR_INVALID_ATTACHMENTS)
+            return
 
         # Validate required fields (text is allowed to be empty for settings-only updates)
         if not session_id or not project_id:
@@ -1338,7 +1363,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
                 # If no text/attachments and no process is running, we're done:
                 # settings are saved to DB and broadcast, nothing to send.
-                has_content = bool(text) or bool(images) or bool(documents)
+                has_content = bool(text) or bool(images) or bool(documents) or bool(attachment_refs)
                 has_process = manager.get_agent_info(session_id) is not None
                 if not has_content and not has_process:
                     return
@@ -1351,11 +1376,21 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 # (single safety net — front should have corrected, but just in case)
                 effective_agent_settings = helpers.enforce_agent_settings_consistency(effective_agent_settings)
 
+                # Composer attachments: planned off the loop once the settings
+                # are resolved (spec §6.6); passed only when there are refs, so
+                # a legacy send keeps its exact manager call.
+                plan_kwargs = {}
+                if attachment_refs:
+                    plan_kwargs["attachment_plan"] = await self._plan_existing_session_attachments(
+                        manager, session_id, provider, effective_agent_settings, cwd, text, attachment_refs,
+                    )
+
                 # Session exists: send message to it
                 delivered = await manager.send_to_session(
                     session_id, project_id, cwd, text,
                     settings=effective_agent_settings,
                     images=images, documents=documents,
+                    **plan_kwargs,
                 )
             else:
                 # New session: delegate to the shared service so the WS path
@@ -1381,18 +1416,23 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                     # (drop-request files, CLI) keeps the default False.
                     "hybrid": bool(content.get("hybrid")),
                     "ephemeral": bool(content.get("ephemeral")),
+                    # Composer refs, planned by the service (trusted path:
+                    # allow_attachments below, like allow_hybrid).
+                    "attachments": [ref._asdict() for ref in attachment_refs],
                     **agent_settings_kwargs_from_frontend_payload(content),
                 }
 
                 result = await create_session_from_payload(
-                    payload, allow_hybrid=True, allow_ephemeral=True, ephemeral_admission=ephemeral_admission,
+                    payload, allow_hybrid=True, allow_ephemeral=True, allow_attachments=True,
+                    ephemeral_admission=ephemeral_admission,
                 )
                 if not result.success:
                     # Translate the first error to the WS-specific error frame shape.
                     # The frontend already understands the error codes the service emits
                     # (provider_disabled, project_not_found, etc.).
                     first = result.errors[0]
-                    await send_error(first.message, code=first.code)
+                    extra = {"names": list(result.error_names)} if result.error_names else {}
+                    await send_error(first.message, code=first.code, **extra)
                     return
                 # Success: the new agent started with the first message as its
                 # opening prompt. Mark it delivered so the ack below confirms
@@ -1404,7 +1444,11 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             # carries a specific code (agent_starting, hybrid_composer_busy, …);
             # plain RuntimeErrors fall back to the generic send_failed.
             logger.warning("send_message failed: %s", type(e).__name__ if ephemeral_admission and ephemeral_admission.ephemeral else e)
-            await send_error(str(e), code=getattr(e, "code", None) or "send_failed")
+            names = getattr(e, "names", ())
+            await send_error(
+                str(e), code=getattr(e, "code", None) or "send_failed",
+                **({"names": list(names)} if names else {}),
+            )
         except Exception as e:
             # Unexpected errors - log full traceback
             if ephemeral_admission and ephemeral_admission.ephemeral:
@@ -1421,14 +1465,51 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         # delivery confirmation for messages Claude Code accepts mid-turn —
         # those are folded into the running turn and never get their own
         # user_message line in the JSONL.
-        if delivered and request_id:
-            await self.send_json({
-                "type": "send_ack",
-                "request_id": request_id,
-                "session_id": session_id,
-            })
+        #
+        # Then the server release of the delivered composer refs (spec
+        # §6.1.4): a detached, best-effort task started AFTER the ack attempt
+        # whatever its outcome (a closed socket, a frame without request_id),
+        # since a delivered send is never retried.
+        try:
+            if delivered and request_id:
+                await self.send_json({
+                    "type": "send_ack",
+                    "request_id": request_id,
+                    "session_id": session_id,
+                })
+        finally:
+            if delivered and attachment_refs:
+                attachment_lifecycle.delivery_release(attachment_refs)()
 
         return delivered
+
+    async def _plan_existing_session_attachments(
+        self, manager, session_id: str, provider: Provider, effective_settings: AgentSettings, cwd: str,
+        text: str, refs: tuple,
+    ):
+        """Plan the composer *refs* of a message to the existing *session_id* (spec §6.6).
+
+        Runs after the settings are resolved and enforced; the plan itself runs
+        off the event loop. A staging or plan error is raised as
+        ``SendDeliveryError`` (with the ``names`` of the entries concerned), so
+        it goes through the usual error frame with the ``request_id``.
+        """
+        try:
+            target = await resolve_existing_session_plan_target(
+                session_id=session_id,
+                provider=provider.value,
+                effective_settings=effective_settings,
+                directory=cwd,
+                # A follow-up never targets an ephemeral run: those accept one message only.
+                ephemeral=False,
+                live_agent=manager.get_live_agent(session_id),
+            )
+            return await attachment_planner.plan_attachments_off_loop(refs, target, text=text)
+        except AttachmentError as exc:
+            code, message, names = attachment_planner.describe_attachment_error(exc)
+            error = SendDeliveryError(message, code=code)
+            error.names = names
+            raise error from exc
 
     async def _handle_set_session_hybrid(self, content: dict) -> None:
         """Switch an existing session to hybrid CLI mode (one-way).

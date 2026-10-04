@@ -11,12 +11,13 @@ larger one became a file. Ranks count every entry of a kind, native and file ali
 Design: docs/plans/2026-10-03-composer-attachments-any-file-design.md §6.3-§6.6.
 """
 
+import asyncio
 import mimetypes
 from pathlib import Path
 
 from twicc.core.services.attachments import images
 from twicc.core.services.attachments.images import HEAD_BYTES, base64_size, head_opens_as_raster, sniff_image_format
-from twicc.core.services.attachments.staging import AttachmentError, load_entry
+from twicc.core.services.attachments.staging import ERROR_MISSING, AttachmentError, load_entry, validate_ref
 from twicc.core.services.attachments.types import (
     AttachmentPlan,
     AttachmentRef,
@@ -27,6 +28,7 @@ from twicc.core.services.attachments.types import (
 )
 
 __all__ = [
+    "ERROR_INVALID_ATTACHMENTS",
     "ERROR_REQUIRES_ARTIFACTS",
     "ERROR_WITH_COMMAND",
     "HEAD_BYTES",
@@ -39,12 +41,15 @@ __all__ = [
     "MODE_FILE",
     "MODE_INLINE",
     "AttachmentPlanError",
+    "describe_attachment_error",
     "detect_kind",
     "detect_kind_from_head",
     "is_hybrid_command",
     "is_utf8_text",
     "plan_attachments",
+    "plan_attachments_off_loop",
     "read_head",
+    "validate_attachment_frame",
 ]
 
 KIND_IMAGE = "image"
@@ -57,6 +62,7 @@ KIND_OTHER = "other"
 MODE_INLINE = "inline"
 MODE_FILE = "file"
 
+ERROR_INVALID_ATTACHMENTS = "invalid_attachments"
 ERROR_REQUIRES_ARTIFACTS = "attachment_requires_artifacts"
 ERROR_WITH_COMMAND = "attachments_with_command"
 
@@ -131,6 +137,19 @@ class AttachmentPlanError(AttachmentError):
     def __init__(self, code: str, message: str | None = None, *, names: tuple[str, ...] = ()):
         super().__init__(code, message)
         self.names = names
+
+
+def describe_attachment_error(exc: AttachmentError) -> tuple[str, str, tuple[str, ...]]:
+    """``(code, message, names)`` of a staging or plan error, for an error frame or result.
+
+    The names of the entries concerned (``attachment_requires_artifacts``) are appended to the
+    message, so a caller that only shows the message still lists them.
+    """
+    names = tuple(getattr(exc, "names", ()) or ())
+    message = str(exc)
+    if names:
+        message = f"{message}: {', '.join(names)}"
+    return exc.code, message, names
 
 
 def _policy(target: PlanTarget):
@@ -259,3 +278,54 @@ def plan_attachments(refs: tuple[AttachmentRef, ...], target: PlanTarget, *, tex
                 ERROR_REQUIRES_ARTIFACTS, "Ephemeral sessions only accept native attachments", names=names
             )
     return AttachmentPlan(target, tuple(planned))
+
+
+async def plan_attachments_off_loop(
+    refs: tuple[AttachmentRef, ...], target: PlanTarget, *, text: str,
+) -> AttachmentPlan:
+    """:func:`plan_attachments` in a worker thread, so a slow decode never blocks the event loop.
+
+    An ``OSError`` (the staged file vanished or became unreadable between the load of its entry
+    and the read of its bytes) becomes ``attachment_missing``: the entry is no longer usable.
+    """
+    try:
+        return await asyncio.to_thread(plan_attachments, refs, target, text=text)
+    except OSError as exc:
+        raise AttachmentError(ERROR_MISSING, "Attachment not found") from exc
+
+
+# ── Frame shape (spec §6.6, §8) ──
+
+_LEGACY_FIELDS = ("images", "documents")
+
+
+def validate_attachment_frame(payload: dict) -> tuple[AttachmentRef, ...]:
+    """The composer refs of a ``send_message`` payload, in add order, after the shape checks.
+
+    Only the shape is checked (no disk access), so it can run inline in the receive loop. An absent,
+    ``None`` or empty ``attachments`` means no attachment content. Raises :class:`AttachmentError`
+    (``invalid_attachments``) for a value that is not a list, a malformed ref, an id that is not a
+    canonical UUID, the same ``{bucket, id}`` twice, or refs together with a non-empty legacy
+    ``images`` / ``documents`` field.
+    """
+    raw = payload.get("attachments")
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise AttachmentError(ERROR_INVALID_ATTACHMENTS, "attachments must be a list")
+    if not raw:
+        return ()
+    if any(payload.get(field) for field in _LEGACY_FIELDS):
+        raise AttachmentError(ERROR_INVALID_ATTACHMENTS, "attachments cannot be combined with images or documents")
+    refs: list[AttachmentRef] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise AttachmentError(ERROR_INVALID_ATTACHMENTS, "Each attachment must be an object")
+        try:
+            ref = validate_ref(item)
+        except AttachmentError as exc:
+            raise AttachmentError(ERROR_INVALID_ATTACHMENTS, str(exc)) from None
+        if ref in refs:
+            raise AttachmentError(ERROR_INVALID_ATTACHMENTS, "The same attachment is listed twice")
+        refs.append(ref)
+    return tuple(refs)

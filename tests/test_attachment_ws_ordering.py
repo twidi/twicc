@@ -5,6 +5,7 @@ A fake planner (the admitted send body) blocks on ``asyncio.Event`` objects.
 """
 
 import asyncio
+import uuid
 from contextlib import ExitStack
 from unittest.mock import AsyncMock, patch
 
@@ -93,7 +94,8 @@ def _consumer(planner: FakePlanner) -> WSConsumer:
 def _send(session_id: str, text: str, *, refs: bool = False) -> dict:
     frame = {"type": "send_message", "session_id": session_id, "project_id": "p", "provider": "codex", "text": text}
     if refs:
-        frame["attachments"] = [{"bucket": "b", "id": text}]
+        # A canonical UUID per message: the inline shape check rejects any other id.
+        frame["attachments"] = [{"bucket": "b", "id": str(uuid.uuid5(uuid.NAMESPACE_URL, text))}]
     else:
         frame["images"] = []
     return frame

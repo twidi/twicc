@@ -169,7 +169,7 @@ def test_claude_manager_starts_a_resume_for_a_file_only_composer_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No live agent and no text: the committed content alone qualifies as a message."""
-    from twicc.core.services.attachments.types import AttachmentPlan, PlanTarget
+    from twicc.core.services.attachments.types import AttachmentPlan, AttachmentRef, PlanTarget
     from twicc.providers.claude_code.agent.manager import ClaudeCodeAgentManager
 
     manager = ClaudeCodeAgentManager()
@@ -178,7 +178,9 @@ def test_claude_manager_starts_a_resume_for_a_file_only_composer_message(
     monkeypatch.setattr(manager, "_commit_attachment_plan", AsyncMock(return_value=content))
     start = AsyncMock()
     monkeypatch.setattr(manager, "_start_agent", start)
-    plan = AttachmentPlan(PlanTarget("claude_code", False, False, "opus", False, "first_party"), (object(),))
+    # Only ``ref`` is read from an entry once the commit is faked (the parked-send release).
+    entry = SimpleNamespace(ref=AttachmentRef("bucket", "6f1c1f0e-8a8e-4c55-9d1e-0b0c8f6c1a01"))
+    plan = AttachmentPlan(PlanTarget("claude_code", False, False, "opus", False, "first_party"), (entry,))
 
     delivered = asyncio.run(manager.send_to_session(
         "session-id", "project-id", "/tmp", "", AgentSettings(), attachment_plan=plan,
@@ -327,3 +329,20 @@ def test_codex_file_only_record_without_text_is_a_user_message() -> None:
 
     record["twicc_attachments"] = FILE_ONLY_ATTACHMENTS
     assert compute.compute_item_kind(record) == ItemKind.USER_MESSAGE
+
+
+@pytest.mark.django_db
+def test_create_session_still_requires_text_with_composer_refs() -> None:
+    """Composer refs do not stand in for the prompt either (the WS path allows them)."""
+    result = asyncio.run(create_session_from_payload(
+        {
+            "session_id": "new-session",
+            "project_id": "some-project",
+            "provider": "claude_code",
+            "text": "",
+            "attachments": [{"bucket": "b", "id": "6f1c1f0e-8a8e-4c55-9d1e-0b0c8f6c1a01"}],
+        },
+        allow_attachments=True,
+    ))
+    assert result.success is False
+    assert [e.code for e in (result.errors or [])] == ["empty_text"]

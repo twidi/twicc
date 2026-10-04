@@ -24,6 +24,10 @@ from asgiref.sync import sync_to_async
 from twicc.agent.system_prompt import compose_addendum
 from twicc.agent import ephemeral as ephemeral_runs
 from twicc.agent.exceptions import SendDeliveryError
+from twicc.core.services.attachments import planner as attachment_planner
+from twicc.core.services.attachments import target as plan_target
+from twicc.core.services.attachments.planner import ERROR_INVALID_ATTACHMENTS
+from twicc.core.services.attachments.staging import AttachmentError
 from twicc.core.enums import Provider
 from twicc.pending_agent_settings import set_pending_agent_settings
 from twicc.pending_session_attributes import set_pending_session_attributes
@@ -49,13 +53,22 @@ class SessionCreationResult(NamedTuple):
     provider: str | None
     project_id: str | None
     errors: list[SessionCreationError] | None
+    # File names of the composer attachments an error concerns (``attachment_requires_artifacts``),
+    # for the WS error frame. Kept out of ``SessionCreationError`` so the drop-request status
+    # payload (``errors`` as dicts) keeps its shape.
+    error_names: tuple[str, ...] = ()
 
 
 async def create_session_from_payload(
     payload: dict, *, allow_hybrid: bool = False, allow_ephemeral: bool = False,
-    ephemeral_admission=None,
+    allow_attachments: bool = False, ephemeral_admission=None,
 ) -> SessionCreationResult:
-    """Admit ephemeral creation before any asynchronous operation or buffer write."""
+    """Admit ephemeral creation before any asynchronous operation or buffer write.
+
+    ``allow_attachments`` is a TRUSTED switch like ``allow_hybrid``: only the WS handler passes
+    ``True``. Any other caller (drop-request files) gets ``invalid_attachments`` for a payload
+    carrying composer ``attachments`` refs.
+    """
     session_id = payload.get("session_id")
     ephemeral = allow_ephemeral and bool(payload.get("ephemeral"))
     try:
@@ -81,7 +94,7 @@ async def create_session_from_payload(
                 )])
         result = await _create_session_from_payload(
             payload, allow_hybrid=allow_hybrid, ephemeral=ephemeral,
-            ephemeral_admission=ephemeral_admission,
+            allow_attachments=allow_attachments, ephemeral_admission=ephemeral_admission,
         )
         return result
     finally:
@@ -93,7 +106,7 @@ async def create_session_from_payload(
 
 async def _create_session_from_payload(
     payload: dict, *, allow_hybrid: bool = False, ephemeral: bool = False,
-    ephemeral_admission=None,
+    allow_attachments: bool = False, ephemeral_admission=None,
 ) -> SessionCreationResult:
     """Create a new session from a normalised payload.
 
@@ -120,6 +133,10 @@ async def _create_session_from_payload(
     - ``title``: optional, max 200 chars.
     - ``images``, ``documents``: lists of SDK block dicts (already validated
       by the caller — the service does not re-validate attachments).
+    - ``attachments``: composer refs ``[{bucket, id}, ...]``, accepted only
+      with ``allow_attachments=True`` (the WS path). They are planned once the
+      settings are resolved and enforced, BEFORE any ``set_pending_*`` stash,
+      so a plan error leaves no stash behind.
     - ``worktree_branch``, ``worktree_path``, ``worktree_start_from``:
       optional (CLI only). When ``worktree_branch`` is set, a new git
       worktree of the source project is created at ``worktree_path`` and the
@@ -175,6 +192,20 @@ async def _create_session_from_payload(
     layout = payload.get("layout")
 
     errors: list[SessionCreationError] = []
+    attachment_refs: tuple = ()
+    if not allow_attachments:
+        if payload.get("attachments") is not None:
+            # Composer refs come only from the web composer (phase 1): never silently ignore them.
+            errors.append(SessionCreationError(
+                "attachments", ERROR_INVALID_ATTACHMENTS, "attachments are only accepted from the web composer",
+            ))
+    else:
+        try:
+            attachment_refs = attachment_planner.validate_attachment_frame(payload)
+        except AttachmentError as e:
+            errors.append(SessionCreationError("attachments", e.code, str(e)))
+    if errors:
+        return SessionCreationResult(False, None, None, None, errors)
     if not session_id:
         errors.append(SessionCreationError("session_id", "missing", "session_id is required"))
     if not project_id:
@@ -332,12 +363,7 @@ async def _create_session_from_payload(
             return SessionCreationResult(False, None, None, None, [
                 SessionCreationError("title", "invalid_title", title_result.error)
             ])
-        if not ephemeral:
-            set_pending_title(session_id, title_result.title)
-
-    # --- stash agent settings (consumed by the watcher when it creates
-    #     the Session row from the JSONL) ---------------------------
-    set_pending_agent_settings(session_id, agent_settings)
+        title = title_result.title
 
     # --- resolve to effective settings: None -> global synced default --
     effective = helpers.resolve_agent_settings(agent_settings)
@@ -358,6 +384,30 @@ async def _create_session_from_payload(
         return SessionCreationResult(False, None, None, None, [
             SessionCreationError(e.field, e.code, e.message) for e in hidden_errors
         ])
+
+    # --- composer attachments: plan BEFORE any stash (spec §6.6) ------
+    # Needs the resolved model and context, so it runs after the settings
+    # above; off the event loop (image decode). A plan error leaves no
+    # ``set_pending_*`` stash behind.
+    attachment_plan = None
+    if attachment_refs:
+        try:
+            target = await plan_target.resolve_plan_target(
+                provider=provider.value, effective_settings=effective, directory=cwd,
+                hybrid=hybrid, ephemeral=ephemeral, live_agent=None,
+            )
+            attachment_plan = await attachment_planner.plan_attachments_off_loop(attachment_refs, target, text=text)
+        except AttachmentError as e:
+            code, message, names = attachment_planner.describe_attachment_error(e)
+            return SessionCreationResult(
+                False, None, None, None, [SessionCreationError("attachments", code, message)], error_names=names,
+            )
+
+    # --- stash title and agent settings (consumed by the watcher when it
+    #     creates the Session row from the JSONL) ----------------------
+    if title is not None and not ephemeral:
+        set_pending_title(session_id, title)
+    set_pending_agent_settings(session_id, agent_settings)
 
     # --- compose the TwiCC system-prompt addendum --------------------
     # Frozen at creation time and persisted on the row by the watcher.
@@ -430,6 +480,7 @@ async def _create_session_from_payload(
             settings=effective, images=images, documents=documents,
             ephemeral_admission=ephemeral_admission,
             **({"ephemeral": True} if ephemeral else {}),
+            **({"attachment_plan": attachment_plan} if attachment_plan is not None else {}),
         )
     except RuntimeError as e:
         return SessionCreationResult(False, None, None, None, [

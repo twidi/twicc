@@ -17,7 +17,7 @@ import contextlib
 import logging
 import os
 import shutil
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 from twicc.core.services.attachments import staging
@@ -235,6 +235,47 @@ async def release_refs(refs: tuple[AttachmentRef, ...]) -> None:
                 first_error = exc
     if first_error is not None:
         raise first_error
+
+
+# ── Server release at delivery (spec §6.1.4) ──
+
+# Strong references to the running delivery releases: asyncio keeps only a weak one.
+_DELIVERY_RELEASE_TASKS: set[asyncio.Task] = set()
+
+
+async def _release_delivered(refs: tuple[AttachmentRef, ...]) -> None:
+    try:
+        await release_refs(refs)
+    except Exception:
+        # ``release_refs`` already logged each failing ref; the retention reaper removes the rest.
+        logger.warning("Composer attachments: delivery release incomplete, left to retention", exc_info=True)
+
+
+def delivery_release(refs: tuple[AttachmentRef, ...]) -> Callable[[], None]:
+    """A callback that releases *refs* once their send is delivered.
+
+    Calling it never blocks and never raises: it schedules a detached, best-effort task on the
+    running loop (the release takes the creation and upload locks, so it must not delay the ack
+    nor run under a manager lock). Only the first call schedules anything. A failure is logged and
+    the entries are left to the retention reaper. No refs: the callback does nothing.
+    """
+    refs = tuple(refs)
+    called = False
+
+    def _release() -> None:
+        nonlocal called
+        if called or not refs:
+            return
+        called = True
+        try:
+            task = asyncio.get_running_loop().create_task(_release_delivered(refs))
+        except RuntimeError:
+            logger.warning("Composer attachments: no running loop for the delivery release, left to retention")
+            return
+        _DELIVERY_RELEASE_TASKS.add(task)
+        task.add_done_callback(_DELIVERY_RELEASE_TASKS.discard)
+
+    return _release
 
 
 # ── Status (spec §6.1.2) ──

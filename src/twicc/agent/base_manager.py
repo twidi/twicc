@@ -119,6 +119,17 @@ class BaseAgentManager:
             return None
         return agent.get_info()
 
+    def get_live_agent(self, session_id: str) -> BaseAgent | None:
+        """The agent that would receive a message to *session_id* now, or ``None`` (absent or DEAD).
+
+        Read-only lookup, without ``_lock``: used to shape a composer attachment
+        plan (spec §6.2), which the manager then re-checks under its own rules.
+        """
+        agent = self._agents.get(session_id)
+        if agent is None or agent.state == AgentState.DEAD:
+            return None
+        return agent
+
     def touch_agent_activity(self, session_id: str) -> bool:
         """Refresh ``last_activity`` so the idle-timeout countdown resets.
 

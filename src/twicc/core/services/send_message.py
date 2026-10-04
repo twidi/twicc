@@ -58,6 +58,8 @@ async def send_message_to_session_from_payload(payload: dict) -> SendMessageResu
       the title comes from; see :mod:`twicc.core.services.session_creation`).
     - ``images``, ``documents``: lists of SDK block dicts (already validated
       by the caller — the service does not re-validate attachments).
+    - ``attachments`` (composer refs) is refused with ``invalid_attachments``:
+      only the web composer sends them, through the WS path.
 
     Business-rule rejections (returned as ``success=False``):
     - ``session_not_found``: no row in DB for that id.
@@ -77,6 +79,11 @@ async def send_message_to_session_from_payload(payload: dict) -> SendMessageResu
     documents = payload.get("documents") or []
 
     errors: list[SendMessageError] = []
+    if payload.get("attachments") is not None:
+        # Composer refs come only from the web composer (phase 1): never silently ignore them.
+        return SendMessageResult(False, None, None, None, [SendMessageError(
+            "attachments", "invalid_attachments", "attachments are only accepted from the web composer",
+        )])
     if not session_id:
         errors.append(SendMessageError("session_id", "missing", "session_id is required"))
     if not text and not images and not documents:
