@@ -36,6 +36,7 @@ from .states import AgentInfo, AgentState
 
 if TYPE_CHECKING:
     from twicc.core.enums import Provider
+    from twicc.core.services.attachments.types import AttachmentContent, AttachmentPlan, PreparedAttachments
     from twicc.providers.helpers import AgentSettings
 
 logger = logging.getLogger(__name__)
@@ -378,6 +379,56 @@ class BaseAgentManager:
             self._stop_event = None
 
     # ------------------------------------------------------------------
+    # Composer attachments (called by subclasses, never under ``_lock``)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def _prepare_attachment_plan(
+        plan: AttachmentPlan, *, session_id: str | None,
+    ) -> PreparedAttachments:
+        """Run the slow prepare step off the event loop (spec §7.1).
+
+        Must be awaited before any manager lock. A cancellation does not stop
+        the worker thread: its pre-copies are discarded once it ends, so they
+        never wait for the retention reaper.
+        """
+        from twicc.core.services.attachments import committer
+
+        task = asyncio.ensure_future(
+            asyncio.to_thread(committer.prepare_attachments, plan, session_id=session_id)
+        )
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            def _discard_late(done: asyncio.Future) -> None:
+                if not done.cancelled() and done.exception() is None:
+                    committer.discard_prepared(done.result())
+
+            task.add_done_callback(_discard_late)
+            raise
+
+    async def _commit_attachment_plan(
+        self, plan: AttachmentPlan, *, session_id: str, text: str,
+    ) -> AttachmentContent:
+        """Prepare then finish *plan* for a known *session_id*, back to back (spec §7.1).
+
+        For the paths whose session id is known at entry. Must be awaited
+        before any manager lock. Finish runs on the loop with no await between
+        it and the end of prepare, so a cancellation can never leave it half
+        done in a thread while the pre-copies are removed. Owns the pre-copies:
+        they are discarded whatever happens. Raises ``SendDeliveryError``
+        (``attachment_missing`` / ``attachment_commit_failed``), which callers
+        propagate as is: it is never swallowed by an agent's error handling.
+        """
+        from twicc.core.services.attachments import committer
+
+        prepared = await self._prepare_attachment_plan(plan, session_id=session_id)
+        try:
+            return committer.finish_attachments(prepared, session_id=session_id, text=text)
+        finally:
+            committer.discard_prepared(prepared)
+
+    # ------------------------------------------------------------------
     # Lifecycle helpers (called by subclasses)
     # ------------------------------------------------------------------
 
@@ -434,9 +485,11 @@ class BaseAgentManager:
 
         Provider-specific factory kwargs go through ``settings`` (universal)
         and ``_create_agent`` overrides. Provider-specific start kwargs
-        (e.g. ``images``/``documents`` for Claude Code) are forwarded through
+        (e.g. ``images``/``documents`` for Claude Code, or the committed
+        composer attachment ``content``) are forwarded through
         ``start_kwargs`` to ``_register_and_start`` and ultimately to
-        ``agent.start``.
+        ``agent.start``. Callers pass ``content`` only when they have one, so
+        default calls keep their exact legacy kwargs.
 
         Must be called while holding ``self._lock``.
         """

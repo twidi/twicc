@@ -1066,6 +1066,12 @@ class BaseAgent:
         - Drive the state machine through STARTING → ASSISTANT_TURN → USER_TURN
           (or → DEAD on failure).
         - Never raise: errors are reported via the DEAD state and ``error``.
+
+        Providers that deliver composer attachments accept an optional
+        keyword ``content: AttachmentContent | None``: the ordered native
+        parts, the structured manifest and the raw user text, already
+        committed by the manager. ``content.user_text`` is the only part the
+        context fold may touch.
         """
         raise NotImplementedError
 
@@ -1076,6 +1082,8 @@ class BaseAgent:
         agent, ``False`` when a synchronous delivery error was swallowed and
         surfaced via the DEAD-state broadcast instead. Callers use the result
         to emit a positive delivery acknowledgement to the frontend.
+
+        Accepts the same optional ``content`` keyword as :meth:`start`.
         """
         raise NotImplementedError
 

@@ -135,6 +135,58 @@ def test_claude_prompt_keeps_the_text_block_when_text_is_present(
     assert content == [IMAGE_BLOCK, {"type": "text", "text": "Look at this"}]
 
 
+def _file_only_content():
+    from pathlib import Path
+
+    from twicc.core.services.attachments.types import AttachmentContent, AttachmentManifest, ManifestEntry
+
+    manifest = AttachmentManifest(
+        "session-id",
+        Path("/data/artifacts/session-id/attachments"),
+        (ManifestEntry(1, "movie.mp4", "video", 1, 1, "file", "movie.mp4"),),
+    )
+    return AttachmentContent((), manifest, "")
+
+
+def test_claude_prompt_of_a_file_only_composer_message_is_the_manifest_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No native part, no text: the manifest is the single (and last) text block."""
+    agent = _make_claude_agent(monkeypatch)
+
+    async def _run() -> list[dict]:
+        stream = await agent._build_query_prompt("", None, None, content=_file_only_content())
+        return (await anext(stream))["message"]["content"]
+
+    content = asyncio.run(_run())
+    assert len(content) == 1
+    assert content[0]["type"] == "text"
+    assert content[0]["text"].startswith("<twicc:attachments>\n")
+    assert content[0]["text"].endswith("1. movie.mp4 (video 1 of 1, file)\n</twicc:attachments>")
+
+
+def test_claude_manager_starts_a_resume_for_a_file_only_composer_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No live agent and no text: the committed content alone qualifies as a message."""
+    from twicc.core.services.attachments.types import AttachmentPlan, PlanTarget
+    from twicc.providers.claude_code.agent.manager import ClaudeCodeAgentManager
+
+    manager = ClaudeCodeAgentManager()
+    monkeypatch.setattr(manager, "_check_ephemeral_readonly", lambda *args: None)
+    content = _file_only_content()
+    monkeypatch.setattr(manager, "_commit_attachment_plan", AsyncMock(return_value=content))
+    start = AsyncMock()
+    monkeypatch.setattr(manager, "_start_agent", start)
+    plan = AttachmentPlan(PlanTarget("claude_code", False, False, "opus", False, "first_party"), (object(),))
+
+    delivered = asyncio.run(manager.send_to_session(
+        "session-id", "project-id", "/tmp", "", AgentSettings(), attachment_plan=plan,
+    ))
+    assert delivered is True
+    assert start.await_args.kwargs["content"] is content
+
+
 def test_claude_prompt_falls_back_to_an_empty_text_block(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

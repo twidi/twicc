@@ -3,6 +3,7 @@ Claude Code agent: wraps a single SDK client instance for one TwiCC session.
 """
 
 import asyncio
+import base64
 import logging
 import re
 import shlex
@@ -48,6 +49,8 @@ from twicc.agent.states import build_background_work
 from twicc.context_injection import apply_goal_instruction, apply_pending_context
 from twicc.core.enums import Provider
 from twicc.core.models import Session
+from twicc.core.services.attachments.manifest import build_manifest
+from twicc.core.services.attachments.types import AttachmentContent
 from twicc.pending_session_attributes import get_pending_session_attributes
 from twicc.providers.helpers import AgentSettings
 
@@ -89,6 +92,36 @@ _MONITOR_STARTED_RE = re.compile(r"\bMonitor started \(task ([^,\s)]+),", re.IGN
 _BASH_OUTPUT_PATH_RE = re.compile(r"Output is being written to: (\S+?)\.?(?:\s|$)")
 # Bound of the tool_use id -> (parent, command) map (spec §5.2).
 _TOOL_USE_PARENTS_MAX = 1024
+
+# Claude ``document`` blocks carry the file name as ``title``, truncated (spec §7.3).
+_DOCUMENT_TITLE_MAX = 200
+
+
+def _native_blocks(content: AttachmentContent) -> list[dict]:
+    """The SDK content blocks of the inline entries, in manifest order (spec §7.5).
+
+    Images and PDFs are base64 sources; a text entry is a ``text`` document
+    source. Documents are titled with the entry's original name: the inline
+    manifest entries align one to one with ``content.native_parts``.
+    """
+    inline_entries = [entry for entry in content.manifest.entries if entry.mode == "inline"]
+    if len(inline_entries) != len(content.native_parts):
+        raise ValueError("The native parts do not match the inline manifest entries")
+    blocks: list[dict] = []
+    for entry, part in zip(inline_entries, content.native_parts):
+        if part.kind == "text":
+            source = {"type": "text", "media_type": part.media_type, "data": part.data}
+        else:
+            source = {
+                "type": "base64",
+                "media_type": part.media_type,
+                "data": base64.b64encode(part.data).decode("ascii"),
+            }
+        if part.kind == "image":
+            blocks.append({"type": "image", "source": source})
+        else:
+            blocks.append({"type": "document", "source": source, "title": entry.name[:_DOCUMENT_TITLE_MAX]})
+    return blocks
 
 
 @dataclass(slots=True)
@@ -844,6 +877,8 @@ class ClaudeCodeAgent(BaseAgent):
         text: str,
         images: list[dict] | None,
         documents: list[dict] | None,
+        *,
+        content: AttachmentContent | None = None,
     ) -> AsyncIterator[dict]:
         """Build prompt for SDK query() as an async generator.
 
@@ -857,10 +892,20 @@ class ClaudeCodeAgent(BaseAgent):
             text: The message text
             images: Optional list of SDK ImageBlockParam objects
             documents: Optional list of SDK DocumentBlockParam objects
+            content: Committed composer attachments (spec §7.5). When given,
+                it replaces ``text``/``images``/``documents``: the native
+                blocks in manifest order, then the manifest as its own text
+                block, then the folded ``content.user_text`` LAST (the CLI
+                reads the last text block as the prompt, so a slash command
+                keeps working). Only that user-text part is folded, and it is
+                omitted when the fold yields nothing.
 
         Returns:
             An async iterator yielding a single transport message dict.
         """
+        if content is not None:
+            return await self._build_attachment_query_prompt(content)
+
         # Reconcile the dynamic Context block, then fold any queued
         # <twicc:context> block into the user text. This is the single chokepoint
         # for Claude Code outgoing user messages — both start() and send() build
@@ -892,6 +937,24 @@ class ClaudeCodeAgent(BaseAgent):
         if text or not content_blocks:
             content_blocks.append({"type": "text", "text": text})
 
+        return self._single_message_stream(content_blocks)
+
+    async def _build_attachment_query_prompt(self, content: AttachmentContent) -> AsyncIterator[dict]:
+        """The ordered prompt of a composer-attachments message (see ``_build_query_prompt``)."""
+        # Built first: a malformed content fails before the one-shot pending
+        # context is consumed.
+        content_blocks = _native_blocks(content)
+        content_blocks.append({"type": "text", "text": build_manifest(content.manifest)})
+        # Same chokepoint and order as the legacy path, on the user-text part only.
+        await self._reconcile_context()
+        user_text = apply_pending_context(self.session_id, content.user_text)
+        user_text = apply_goal_instruction(user_text)
+        if user_text:
+            content_blocks.append({"type": "text", "text": user_text})
+        return self._single_message_stream(content_blocks)
+
+    @staticmethod
+    def _single_message_stream(content_blocks: list[dict]) -> AsyncIterator[dict]:
         async def _message_stream() -> AsyncIterator[dict]:
             yield {
                 "type": "user",
@@ -909,6 +972,8 @@ class ClaudeCodeAgent(BaseAgent):
         *,
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
+        content: AttachmentContent | None = None,
+        on_delivered: Callable[[], Any] | None = None,
     ) -> None:
         """Start the process and send the first message.
 
@@ -922,6 +987,11 @@ class ClaudeCodeAgent(BaseAgent):
                    create a new session with the session_id as the custom UUID.
             images: Optional list of SDK ImageBlockParam objects
             documents: Optional list of SDK DocumentBlockParam objects
+            content: Optional committed composer attachments; replaces
+                ``prompt``/``images``/``documents`` in the first message
+            on_delivered: Accepted so the manager forwards the same start
+                kwargs to SDK and hybrid agents; the SDK start never invokes
+                it (its delivery is known when ``start`` returns)
 
         Raises:
             RuntimeError: If the process is already started
@@ -1223,7 +1293,7 @@ class ClaudeCodeAgent(BaseAgent):
             attach_elicitation_handler(self._client, self._handle_elicitation_request)
 
             # Build query prompt as async generator (streaming mode)
-            query_prompt = await self._build_query_prompt(prompt, images, documents)
+            query_prompt = await self._build_query_prompt(prompt, images, documents, content=content)
             await self._client.query(query_prompt)
 
             self._logger.debug(
@@ -2017,6 +2087,7 @@ class ClaudeCodeAgent(BaseAgent):
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
         shell_notice: bool = False,
+        content: AttachmentContent | None = None,
     ) -> bool:
         """Send a follow-up message to the process.
 
@@ -2024,6 +2095,8 @@ class ClaudeCodeAgent(BaseAgent):
             text: The message text to send
             images: Optional list of SDK ImageBlockParam objects
             documents: Optional list of SDK DocumentBlockParam objects
+            content: Optional committed composer attachments; replaces
+                ``text``/``images``/``documents`` (see ``_build_query_prompt``)
             shell_notice: ``True`` for TwiCC's background shell notice: the
                 notice does not start a new notice episode
 
@@ -2060,7 +2133,7 @@ class ClaudeCodeAgent(BaseAgent):
             await self._clear_waiting_label()
 
             # Build query prompt as async generator (streaming mode)
-            query_prompt = await self._build_query_prompt(text, images, documents)
+            query_prompt = await self._build_query_prompt(text, images, documents, content=content)
             await self._client.query(query_prompt)
             return True
 

@@ -26,6 +26,7 @@ from .agent import ClaudeCodeAgent
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from twicc.core.services.attachments.types import AttachmentPlan
     from twicc.providers.claude_code.agent.hybrid.signals import HybridHookOutcome, HybridJsonlSignals
     from twicc.providers.helpers import AgentSettings
 
@@ -41,6 +42,17 @@ logger = logging.getLogger(__name__)
 # answer the same question ("may this session come back?") and must stay
 # aligned, whichever one is read first.
 _NO_CRON_RESTART_REASONS = DELIBERATE_STOP_REASONS | {"shutdown"}
+
+
+def _parked_content_kwargs(pending: dict) -> dict:
+    """The ``content`` kwarg of a parked send, or nothing for the legacy shape.
+
+    ``_pending_after_restart`` entries are either the legacy
+    ``{text, images, documents}`` or that plus the committed composer
+    ``content``; a legacy entry keeps its exact legacy call.
+    """
+    content = pending.get("content")
+    return {"content": content} if content is not None else {}
 
 
 def _get_session_slug_sync(session_id: str) -> str | None:
@@ -106,7 +118,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         # Stored when the user sends text + startup settings changes during USER_TURN:
         # the agent must be killed and restarted, and this content is sent after
         # cron restart (if any) or directly with the new agent.
-        self._pending_after_restart: dict[str, dict] = {}  # session_id -> {text, images, documents}
+        # session_id -> {text, images, documents} (legacy) or that plus the
+        # committed composer attachment ``content``.
+        self._pending_after_restart: dict[str, dict] = {}
         # Settings a background shell held back, applied once the last one
         # ends (see ``_after_background_work_change``); cancelled at shutdown.
         self._deferred_settings_tasks: dict[str, asyncio.Task[None]] = {}
@@ -126,6 +140,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
         cancel_cron_restart: bool = True,
+        attachment_plan: AttachmentPlan | None = None,
     ) -> bool:
         """Send a message to an existing session, applying settings changes as needed.
 
@@ -154,12 +169,27 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             message was delivered now — settings-only update, or a
             restart-deferred send whose user_message line will confirm it.
 
+        ``attachment_plan`` (composer attachments) is committed at entry,
+        before ``_lock`` (spec §7.1); the resulting structured content then
+        goes to ``agent.send``, to the resume start, or into
+        ``_pending_after_restart``. A commit error propagates as
+        ``SendDeliveryError`` and nothing is sent.
+
         Raises:
             RuntimeError: If the agent cannot be started or message cannot be sent
+            SendDeliveryError: If the attachments cannot be committed
         """
         from twicc.providers.helpers import AgentSettingCategory, get_provider_helpers
 
         provider_helpers = get_provider_helpers(Provider.CLAUDE_CODE)
+
+        content = None
+        if attachment_plan is not None and attachment_plan.entries:
+            # Refuse a read-only ephemeral target before promoting anything.
+            self._check_ephemeral_readonly(session_id)
+            content = await self._commit_attachment_plan(attachment_plan, session_id=session_id, text=text)
+        # Only when there is content: legacy calls keep their exact kwargs.
+        content_kwargs = {"content": content} if content is not None else {}
 
         async with self._lock:
             self._check_ephemeral_readonly(session_id)
@@ -169,7 +199,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             if cancel_cron_restart:
                 self._cancel_cron_restart_task(session_id)
 
-            has_content = bool(text) or bool(images) or bool(documents)
+            has_content = bool(text) or bool(images) or bool(documents) or content is not None
 
             if session_id in self._agents:
                 agent = self._agents[session_id]
@@ -203,7 +233,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                         await agent.apply_live_settings(settings)
                         delivered = False
                         if has_content:
-                            delivered = await agent.send(text, images=images, documents=documents)
+                            delivered = await agent.send(
+                                text, images=images, documents=documents, **content_kwargs,
+                            )
                         return delivered
 
                     if has_startup_changes:
@@ -217,6 +249,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                         if has_content:
                             self._pending_after_restart[session_id] = {
                                 "text": text, "images": images, "documents": documents,
+                                **content_kwargs,
                             }
                         # _on_state_change(DEAD) fires once DEAD is reached:
                         # - if has_crons: launches cron restart task (which will
@@ -236,6 +269,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                                 resume=True, settings=settings,
                                 images=pending.get("images"),
                                 documents=pending.get("documents"),
+                                **_parked_content_kwargs(pending),
                             )
                         # If has_crons → cron restart task handles it.
                         # Delivery is deferred to after the restart, so this is
@@ -247,7 +281,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                         await agent.apply_live_settings(settings)
                         delivered = False
                         if has_content:
-                            delivered = await agent.send(text, images=images, documents=documents)
+                            delivered = await agent.send(
+                                text, images=images, documents=documents, **content_kwargs,
+                            )
                         return delivered
 
                 elif agent.state == AgentState.ASSISTANT_TURN:
@@ -264,7 +300,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                         await agent.set_permission_mode(settings.permission_mode)
                     delivered = False
                     if has_content:
-                        delivered = await agent.send(text, images=images, documents=documents)
+                        delivered = await agent.send(
+                            text, images=images, documents=documents, **content_kwargs,
+                        )
                     return delivered
 
                 else:
@@ -276,7 +314,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
 
             # No live agent — a message is required to start one. Attachments
             # alone qualify: Claude Code accepts a user message made only of
-            # image / document blocks.
+            # image / document blocks (or of composer attachment content).
             if not has_content:
                 raise RuntimeError(
                     "Cannot start a new agent without a message"
@@ -287,6 +325,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                 session_id, project_id, cwd, text, resume=True,
                 settings=settings,
                 images=images, documents=documents,
+                **content_kwargs,
             )
             return True
 
@@ -302,6 +341,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         documents: list[dict] | None = None,
         ephemeral: bool = False,
         ephemeral_admission=None,
+        attachment_plan: AttachmentPlan | None = None,
     ) -> str:
         """Create a new session with a client-provided session ID.
 
@@ -313,9 +353,21 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         the input ``session_id`` (the CLI accepts the client-supplied UUID
         via ``--session-id``).
 
+        ``attachment_plan`` is committed at entry, before ``_lock``, for the
+        draft id (which is the canonical id here); the content then goes to
+        the new agent's ``start``.
+
         Raises:
             RuntimeError: If an agent already exists for this session_id
+            SendDeliveryError: If the attachments cannot be committed
         """
+        content_kwargs = {}
+        if attachment_plan is not None and attachment_plan.entries:
+            self._check_ephemeral_readonly(session_id, ephemeral_admission)
+            content_kwargs["content"] = await self._commit_attachment_plan(
+                attachment_plan, session_id=session_id, text=text,
+            )
+
         async with self._lock:
             self._check_ephemeral_readonly(session_id, ephemeral_admission)
             if session_id in self._agents:
@@ -337,6 +389,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                 settings=settings,
                 images=images, documents=documents,
                 ephemeral=ephemeral, ephemeral_admission=ephemeral_admission,
+                **content_kwargs,
             )
 
     async def discard_active_tool(self, session_id: str, tool_use_id: str) -> bool:
@@ -1072,6 +1125,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             # Attachments alone are a message too — never gate on text only.
             if pending and (
                 pending.get("text") or pending.get("images") or pending.get("documents")
+                or pending.get("content") is not None
             ):
                 agent = self._agents.get(session_id)
                 if agent and agent.state == AgentState.USER_TURN:
@@ -1080,6 +1134,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                         pending["text"],
                         images=pending.get("images"),
                         documents=pending.get("documents"),
+                        **_parked_content_kwargs(pending),
                     )
         except asyncio.CancelledError:
             logger.info("Cron restart task cancelled for session %s", session_id)
@@ -1340,6 +1395,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                     agent.session_id, agent.project_id, agent.cwd,
                     pending["text"], resume=True, settings=requested_settings,
                     images=pending.get("images"), documents=pending.get("documents"),
+                    **_parked_content_kwargs(pending),
                 )
         else:
             # Only live/idle changes → apply via SDK methods
