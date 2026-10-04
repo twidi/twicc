@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - **Orchestration activity** — The Orchestration tab shows at a glance when its sessions or subagents are working.
+- **Task progress** — The Tasks tab shows how many tasks are done out of the total, and a green check once all are done.
 
 ### Changed
 

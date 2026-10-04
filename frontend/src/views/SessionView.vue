@@ -42,6 +42,8 @@ import CodeCommentsIndicator from '../components/ui/CodeCommentsIndicator.vue'
 import GitChangeStats from '../components/git/GitChangeStats.vue'
 import UploadTabStatus from '../components/files/UploadTabStatus.vue'
 import OrchestrationTabActivity from '../components/orchestration/OrchestrationTabActivity.vue'
+import TaskTabProgress from '../components/tasks/TaskTabProgress.vue'
+import { countTasks } from '../utils/todoList'
 import { useCodeCommentsStore } from '../stores/codeComments'
 import { useFramePoolStore } from '../stores/framePool'
 import { useUploadsStore } from '../stores/uploads'
@@ -533,6 +535,11 @@ function toolTabChangeStats(tabId) {
 const orchestrationActivity = computed(() => store.getOrchestrationActivity(sessionId.value))
 function toolTabOrchestrationActivity(tabId) {
     return tabId === 'orchestration' ? orchestrationActivity.value : null
+}
+// Done / total task counts shown next to the Tasks tab's label (a check once every task is done).
+const taskProgress = computed(() => countTasks(store.getSessionTasks(sessionId.value)?.items))
+function toolTabTaskProgress(tabId) {
+    return tabId === 'tasks' ? taskProgress.value : null
 }
 // Upload status of the Files / Artifacts tab (spec §6.11): the aggregate of the uploads started
 // from that panel of this session, shown next to the tab's label.
@@ -2343,6 +2350,7 @@ onBeforeUnmount(() => {
             :tab-change-stats="toolTabChangeStats"
             :tab-upload-status="toolTabUploadStatus"
             :tab-orchestration-activity="toolTabOrchestrationActivity"
+            :tab-task-progress="toolTabTaskProgress"
             :register-target="registerLayoutTarget"
             :unregister-target="unregisterLayoutTarget"
             @select-tab="onLayoutSelectTab"
@@ -2428,6 +2436,7 @@ onBeforeUnmount(() => {
                     <GitChangeStats :stats="toolTabChangeStats(tab.id)" />
                     <UploadTabStatus :status="toolTabUploadStatus(tab.id)" />
                     <OrchestrationTabActivity :activity="toolTabOrchestrationActivity(tab.id)" />
+                    <TaskTabProgress :progress="toolTabTaskProgress(tab.id)" />
                     <CodeCommentsIndicator
                         v-if="toolTabCommentsCount(tab.id) !== null"
                         :count="toolTabCommentsCount(tab.id)"

@@ -24,6 +24,7 @@ const props = defineProps({
     tabUploadStatus: { type: Function, default: null },
     // (tabId) -> Orchestration activity ({ sessions, subagentsRunning }) shown next to a tab's label, or null.
     tabOrchestrationActivity: { type: Function, default: null },
+    tabTaskProgress: { type: Function, default: null },
     registerTarget: { type: Function, required: true },
     unregisterTarget: { type: Function, required: true },
 })
@@ -693,6 +694,7 @@ onBeforeUnmount(() => {
             :tab-change-stats="tabChangeStats"
             :tab-upload-status="tabUploadStatus"
             :tab-orchestration-activity="tabOrchestrationActivity"
+            :tab-task-progress="tabTaskProgress"
             :maximized="true"
             :register-target="registerTarget"
             :unregister-target="unregisterTarget"
@@ -718,6 +720,7 @@ onBeforeUnmount(() => {
                 :tab-change-stats="tabChangeStats"
                 :tab-upload-status="tabUploadStatus"
                 :tab-orchestration-activity="tabOrchestrationActivity"
+                :tab-task-progress="tabTaskProgress"
                 :register-target="registerTarget"
                 :unregister-target="unregisterTarget"
                 @select="(id) => emit('select-tab', id)"
@@ -739,6 +742,7 @@ onBeforeUnmount(() => {
                 :tab-change-stats="tabChangeStats"
                 :tab-upload-status="tabUploadStatus"
                 :tab-orchestration-activity="tabOrchestrationActivity"
+                :tab-task-progress="tabTaskProgress"
                 @action="onGutterAction"
             />
 
@@ -764,6 +768,7 @@ onBeforeUnmount(() => {
                 :tab-change-stats="tabChangeStats"
                 :tab-upload-status="tabUploadStatus"
                 :tab-orchestration-activity="tabOrchestrationActivity"
+                :tab-task-progress="tabTaskProgress"
                 :dock-of="layout.dockOf"
                 :register-target="registerTarget"
                 :unregister-target="unregisterTarget"
