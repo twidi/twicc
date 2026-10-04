@@ -238,6 +238,7 @@ cache/
 /scratch
 /shares
 /uploads
+/composer-attachments
 
 # Another data-dir subdirectory surfacing at the worktree root when the data dir
 # is the worktree itself: the project icon files (a real per-worktree dir, never
