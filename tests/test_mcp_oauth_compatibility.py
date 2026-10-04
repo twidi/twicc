@@ -217,7 +217,7 @@ def test_cimd_fresh_and_cached_clients_support_loopback_ports(config, monkeypatc
     async def run():
         async with client() as c:
             # Only the outbound metadata request uses MockTransport; no DNS or network I/O.
-            monkeypatch.setattr(module.socket, "getaddrinfo", lambda *a, **kw: [(2, 1, 6, "", ("8.8.8.8", 443))])
+            monkeypatch.setattr("socket.getaddrinfo", lambda *a, **kw: [(2, 1, 6, "", ("8.8.8.8", 443))])
             monkeypatch.setattr(module.httpx, "AsyncClient", lambda **kw: actual_client(
                 transport=httpx.MockTransport(respond), **kw,
             ))

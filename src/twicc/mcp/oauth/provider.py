@@ -1,10 +1,8 @@
 """MCP SDK provider backed by TwiCC models."""
 
 import asyncio
-import ipaddress
 import re
 import secrets
-import socket
 from datetime import timedelta
 from urllib.parse import urlsplit
 
@@ -16,6 +14,7 @@ from mcp.shared.auth import OAuthClientInformationFull
 
 from twicc.core.models import McpConnection, McpOAuthClient, McpOAuthCredential, McpOAuthRequest
 from twicc.mcp.identity import ExternalGrant
+from twicc.mcp.pinned_https import request
 from .config import base_url, resource_url
 from .storage import changed, digest, exchange_or_error, write
 from . import protection
@@ -97,30 +96,12 @@ async def _fetch_metadata(client_id):
     if url.scheme != "https" or not url.hostname or url.username or url.password or url.fragment:
         return None
     try:
-        addresses = await asyncio.to_thread(socket.getaddrinfo, url.hostname, url.port or 443, type=socket.SOCK_STREAM)
-        if not addresses or any(not ipaddress.ip_address(a[4][0]).is_global for a in addresses):
+        response = await request(client_id, method="GET", timeout=5, response_cap=65536, required_status=200)
+        if response.status_code != 200 or response.overflow:
             return None
-        address = addresses[0][4][0]
-        host = f"[{address}]" if ":" in address else address
-        target = f"https://{host}:{url.port or 443}{url.path or '/'}"
-        if url.query:
-            target += "?" + url.query
-        async with (
-            httpx.AsyncClient(timeout=5, follow_redirects=False, trust_env=False) as client,
-            client.stream(
-                "GET", target, headers={"Host": url.netloc}, extensions={"sni_hostname": url.hostname}
-            ) as response,
-        ):
-            if response.status_code != 200:
-                return None
-            data = bytearray()
-            async for part in response.aiter_bytes():
-                data.extend(part)
-                if len(data) > 65536:
-                    return None
         import orjson
 
-        metadata = orjson.loads(data)
+        metadata = orjson.loads(response.body)
         if not isinstance(metadata, dict) or metadata.get("client_id") != client_id:
             return None
         supported = metadata.get("token_endpoint_auth_methods_supported")
