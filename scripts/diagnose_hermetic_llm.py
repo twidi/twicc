@@ -18,6 +18,7 @@ Exit codes: 0 all good, 1 at least one FAIL or INCONCLUSIVE, 2 the diagnostic co
 """
 import argparse
 import asyncio
+import inspect
 import json
 import os
 import re
@@ -30,6 +31,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 from typing import NamedTuple
+from uuid import uuid4
 
 PASS, FAIL, INCONCLUSIVE, SKIP, WARN = "PASS", "FAIL", "INCONCLUSIVE", "SKIP", "WARN"
 STATUSES = (PASS, FAIL, INCONCLUSIVE, SKIP, WARN)
@@ -281,6 +283,17 @@ def check_o4_features(report: Report) -> None:
 O5_FORBIDDEN_TOOL_MARKERS = ("apply_patch", "exec_command", "spawn_agent")
 
 
+def skills_block_problems(output: str) -> list[str]:
+    """Problems of the rendered skills block. Observed on codex 0.160.0: the block is kept but empty
+    ("### Available skills" then the closing tag). A block without that header is a format change: it fails."""
+    skills = re.search(r"### Available skills\n(.*?)</skills_instructions>", output, re.DOTALL)
+    if "<skills_instructions>" in output and skills is None:
+        return ["the skills block format changed: no '### Available skills' header before its closing tag"]
+    if skills is not None and skills.group(1).strip():
+        return ["the skills block lists a skill"]
+    return []
+
+
 def check_o5_prompt_input(report: Report) -> None:
     from twicc.providers.codex.hermetic import process_overrides
     from twicc.providers.codex.hermetic_catalog import ensure_catalog
@@ -314,10 +327,7 @@ def check_o5_prompt_input(report: Report) -> None:
     if "read-only" not in output.lower():
         problems.append("no read-only sandbox in the prompt")
     problems += [f"{marker!r} is in the prompt" for marker in O5_FORBIDDEN_TOOL_MARKERS if marker in output]
-    # Observed on codex 0.160.0: the skills block is kept but empty ("### Available skills" then the closing tag).
-    skills = re.search(r"### Available skills\n(.*?)</skills_instructions>", output, re.DOTALL)
-    if skills is not None and skills.group(1).strip():
-        problems.append("the skills block lists a skill")
+    problems += skills_block_problems(output)
     if problems:
         report.add("O5", FAIL, "; ".join(problems))
     else:
@@ -410,10 +420,25 @@ def check_o8_claude_options(report: Report) -> None:
     for flag in ("--tools", "--setting-sources", "--strict-mcp-config", "--disable-slash-commands", "--permission-mode"):
         if flag not in help_text:
             problems.append(f"the CLI no longer lists {flag}")   # --max-turns is hidden from --help
+    versions = _claude_versions(transport._cli_path)
     if problems:
-        report.add("O8", FAIL, "; ".join(problems))
+        report.add("O8", FAIL, f"{versions}; " + "; ".join(problems))
     else:
-        report.add("O8", PASS, "the options and the CLI command carry every restriction; the CLI lists the flags")
+        report.add(
+            "O8", PASS, f"{versions}; the options and the CLI command carry every restriction; the CLI lists the flags",
+        )
+
+
+def _claude_versions(cli_path) -> str:
+    """The Claude Agent SDK version, the CLI version it bundles, and the version of the CLI it will launch."""
+    from claude_agent_sdk import __version__ as sdk_version
+    from claude_agent_sdk._cli_version import __cli_version__
+
+    try:
+        launched = _run([str(cli_path), "--version"]).stdout.strip() or "no output"
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        launched = f"unavailable ({exc!r})"
+    return f"claude-agent-sdk {sdk_version}; bundled claude CLI {__cli_version__}; {cli_path} --version: {launched}"
 
 
 def _pgrep_count(pattern: str) -> int:
@@ -506,11 +531,474 @@ def _check_o9_claude(report: Report) -> None:
 
 
 # --------------------------------------------------------------------------------------
-# Live checks (filled in by later tasks)
+# Live checks: shared verdict logic (pure, unit-tested)
 # --------------------------------------------------------------------------------------
 
+# Provider calls made by ``--live`` (spec §9.1), printed before the confirmation.
+PLANNED_LIVE_CALLS = {
+    # D1/D2 1, D3 1, canaries D4, D5, D6a, D6b, D7 5, D8 1, their five controls 5.
+    "codex": 13,
+    # D9/D10 1, D11a 1, six canaries 6, D12 up to 3, six controls 6.
+    "claude": 17,
+}
+
+D2_INPUT_TOKEN_BUDGET = 3000
+
+
+def planned_live_calls(want_codex: bool, want_claude: bool) -> int:
+    return PLANNED_LIVE_CALLS["codex"] * want_codex + PLANNED_LIVE_CALLS["claude"] * want_claude
+
+
+def live_gate_refusal(*, yes: bool, interactive: bool, ask) -> str | None:
+    """``None`` when the live checks may run, else the abort reason (exit code 2)."""
+    if yes:
+        return None
+    refusal = "live checks need --yes or an interactive confirmation"
+    if not interactive:
+        return refusal
+    try:
+        answer = ask("Proceed? [y/N] ")
+    except EOFError:
+        return refusal
+    return None if answer.strip().lower().startswith("y") else refusal
+
+
+class ControlRun(NamedTuple):
+    """What a deliberately unrestricted control turn did."""
+
+    text: str
+    item_types: list[str]
+    item_texts: list[str]
+    handler_calls: list[str]
+
+
+class HermeticRun(NamedTuple):
+    """What a hermetic turn did. ``returned`` is true only when ``run_turn`` returned normally."""
+
+    returned: bool = False
+    text: str = ""
+    input_tokens: int | None = None
+    start: dict | None = None
+    disabled_mcp_servers: tuple[str, ...] = ()
+    refused_method: str | None = None
+    violation: str | None = None   # HermeticGuardViolation reason
+    timed_out: bool = False
+    error: str | None = None       # any other exception (repr)
+
+
+TIMED_OUT = f"timed out after {LIVE_CALL_TIMEOUT_SECONDS} s"
+
+
+def _types_contain(item_types, fragment: str) -> bool:
+    return any(fragment.lower() in (name or "").lower() for name in item_types)
+
+
+def write_control_effect(control: ControlRun, *, file_created: bool) -> bool:
+    return file_created or "commandExecution" in control.item_types
+
+
+def read_control_effect(control: ControlRun, token: str) -> bool:
+    return token in control.text
+
+
+def web_control_effect(control: ControlRun) -> bool:
+    return _types_contain(control.item_types, "webSearch")
+
+
+def mcp_control_effect(control: ControlRun) -> bool:
+    return "DIAG-PONG" in "".join(control.item_texts) or _types_contain(control.item_types, "mcp")
+
+
+def interact_control_effect(control: ControlRun) -> bool:
+    return bool(control.handler_calls) or _types_contain(control.item_types, "userInput")
+
+
+def canary_verdict(
+    *,
+    control: ControlRun | None,
+    control_error: str | None,
+    control_effect: bool,
+    hermetic: HermeticRun,
+    hermetic_effect: str | None,
+) -> tuple[str, str]:
+    """Spec §9.3: an effect or a forbidden item in the hermetic run is a ``FAIL`` whatever the control showed;
+    otherwise a control that failed or showed no effect makes the canary ``INCONCLUSIVE``.
+
+    ``hermetic_effect`` is the description of the effect the hermetic run produced, ``None`` when it produced none.
+    """
+    if hermetic.violation is not None:
+        return FAIL, f"guard violation: {hermetic.violation}"
+    if hermetic.error is not None:
+        return FAIL, f"the hermetic run failed: {hermetic.error}"
+    if hermetic_effect is not None:
+        return FAIL, hermetic_effect
+    if control_error is not None:
+        return INCONCLUSIVE, f"the control failed: {control_error}"
+    if control is None or not control_effect:
+        return INCONCLUSIVE, "the control showed no effect: adjust the prompt, not the assertion"
+    if hermetic.timed_out:
+        return INCONCLUSIVE, f"the hermetic run {TIMED_OUT}"
+    if not hermetic.returned:
+        return INCONCLUSIVE, "the hermetic run did not return"
+    return PASS, "the control showed the effect; the hermetic run answered text only"
+
+
+def d2_verdict(text: str, input_tokens: int | None) -> tuple[str, str]:
+    detail = f"input_tokens={input_tokens} (budget {D2_INPUT_TOKEN_BUDGET}); answer {text[:60]!r}"
+    ok = "OK" in text and input_tokens is not None and input_tokens < D2_INPUT_TOKEN_BUDGET
+    return (PASS if ok else FAIL), detail
+
+
+def d3_verdict(text: str) -> tuple[str, str]:
+    normalized = re.sub(r"[\W_]+", "", text).upper()
+    if normalized in ("NONE", ""):
+        return PASS, "the model names no tool"
+    return FAIL, f"the model answered {text[:120]!r}"
+
+
+def d8_verdict(repo_line: str | None, global_line: str | None, text: str) -> tuple[str, str]:
+    if repo_line is None and global_line is None:
+        return SKIP, "no suitable line in the repository or global AGENTS.md"
+    if repo_line is not None and repo_line in text:
+        return FAIL, "the repository AGENTS.md line is reproduced"
+    if global_line is not None and global_line in text:
+        return WARN, "the global AGENTS.md line is reproduced (known residue R1)"
+    return PASS, "no instruction line is reproduced"
+
+
+async def guarded(report: Report, ids: tuple[str, ...], fn, *args) -> None:
+    """Run one check; an unexpected exception becomes a ``FAIL`` for each of ``ids`` it did not report yet."""
+    try:
+        result = fn(*args)
+        if inspect.isawaitable(result):
+            await result
+    except Exception as exc:
+        reported = {c.id for c in report.checks}
+        for check_id in ids:
+            if check_id not in reported:
+                report.add(check_id, FAIL, f"unexpected error: {exc!r}")
+
+
+# --------------------------------------------------------------------------------------
+# Live checks: Codex (D1-D8)
+# --------------------------------------------------------------------------------------
+
+def _temp_path(prefix: str) -> Path:
+    return Path(tempfile.gettempdir()) / f"{prefix}-{uuid4().hex}.txt"
+
+
+async def user_mcp_server_names() -> tuple[str, ...]:
+    """The user's MCP server names, from a plain app-server (no stub override, no hermetic catalogue)."""
+    from twicc.providers.codex.bin import make_codex_config
+    from twicc.providers.codex.hermetic import _read_mcp_server_names
+    from twicc.providers.codex.sdk_wrappers import TwiccAsyncCodex
+
+    cwd = Path(tempfile.mkdtemp(prefix="hermetic-diag-config-"))
+    codex = None
+    try:
+        codex = TwiccAsyncCodex(config=await make_codex_config(cwd=str(cwd)))
+        await codex._ensure_initialized()
+        return await _read_mcp_server_names(codex, cwd)
+    finally:
+        if codex is not None:
+            await codex.close()
+        shutil.rmtree(cwd, ignore_errors=True)
+
+
+async def codex_control(
+    prompt: str, *, sandbox, user_servers, thread_extra=None, overrides=(), install_handler=False,
+) -> ControlRun:
+    """The positive control: plain ``make_codex_config()`` plus only ``overrides``, the user's MCP servers disabled,
+    in a fresh temporary directory (never the user's project)."""
+    from openai_codex import TextInput
+    from openai_codex.generated.v2_all import AskForApproval, ReasoningEffort
+
+    from twicc.providers.codex.bin import make_codex_config
+    from twicc.providers.codex.sdk_wrappers import TwiccAsyncCodex
+    from twicc.providers.codex.title_suggest import TITLE_MODEL
+
+    cwd = Path(tempfile.mkdtemp(prefix="hermetic-diag-control-"))
+    codex = None
+    calls: list[str] = []
+    try:
+        config = await make_codex_config(cwd=str(cwd), config_overrides=tuple(overrides))
+        codex = TwiccAsyncCodex(config=config)
+        if install_handler:   # records, never refuses: the control must be able to reach the tool
+            def record(method, params):
+                calls.append(method)
+                return {"answers": {}} if method == "item/tool/requestUserInput" else {"decision": "accept"}
+            codex._client._sync._approval_handler = record
+        await codex._ensure_initialized()
+        thread_cfg = {"mcp_servers": {name: {"enabled": False} for name in user_servers}, **(thread_extra or {})}
+        thread = await codex.thread_start_with_policy(
+            model=TITLE_MODEL, ephemeral=True, cwd=str(cwd), sandbox=sandbox,
+            approval_policy=AskForApproval.model_validate("never"), config=thread_cfg,
+        )
+        handle = await thread.turn_with_policy(TextInput(prompt), effort=ReasoningEffort.low)
+        types, texts, text = [], [], []
+        async for event in handle.stream():
+            if event.method == "item/completed":
+                item = event.payload.item
+                data = item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+                types.append(data.get("type"))
+                texts.append(json.dumps(data))
+                if data.get("type") == "agentMessage":
+                    text.append(data.get("text", ""))
+        return ControlRun("".join(text), types, texts, calls)
+    finally:
+        if codex is not None:
+            await codex.close()
+        shutil.rmtree(cwd, ignore_errors=True)
+
+
+async def _control(prompt: str, *, user_servers, **kwargs) -> tuple[ControlRun | None, str | None]:
+    """Run a control; any failure is returned as text (the canary becomes ``INCONCLUSIVE``)."""
+    from openai_codex.generated.v2_all import SandboxMode
+
+    if user_servers is None:
+        return None, "the user's MCP server list could not be read, so the control cannot disable them"
+    try:
+        return await bounded(codex_control(
+            prompt, sandbox=SandboxMode.danger_full_access, user_servers=user_servers, **kwargs,
+        )), None
+    except TimeoutError:
+        return None, TIMED_OUT
+    except Exception as exc:
+        return None, repr(exc)
+
+
+async def _hermetic(plan, prompt: str) -> HermeticRun:
+    """One hermetic turn through ``hermetic_codex(plan)``; every outcome becomes a ``HermeticRun``."""
+    from openai_codex.generated.v2_all import ReasoningEffort
+
+    from twicc.providers.codex.hermetic import hermetic_codex
+    from twicc.providers.hermetic import HermeticGuardViolation
+
+    seen: dict = {}
+
+    async def go():
+        async with hermetic_codex(plan) as thread:
+            seen.update(start=thread.start, disabled=tuple(thread.disabled_mcp_servers), thread=thread)
+            result = await thread.run_turn(prompt, effort=ReasoningEffort.low)
+            return result, thread.refused_method
+
+    def partial(**kwargs) -> HermeticRun:
+        thread = seen.get("thread")
+        return HermeticRun(
+            start=seen.get("start"), disabled_mcp_servers=seen.get("disabled", ()),
+            refused_method=thread.refused_method if thread is not None else None, **kwargs,
+        )
+
+    try:
+        result, refused = await bounded(go())
+    except HermeticGuardViolation as exc:
+        return partial(violation=exc.reason)
+    except TimeoutError:
+        return partial(timed_out=True)
+    except Exception as exc:
+        return partial(error=repr(exc))
+    return HermeticRun(
+        returned=True, text=result.text, input_tokens=result.input_tokens, start=result.start,
+        disabled_mcp_servers=seen["disabled"], refused_method=refused,
+    )
+
+
+async def _neutral_plan(extra_config_overrides: tuple[str, ...] = ()):
+    from twicc.providers.codex.hermetic import _prepare_hermetic_codex_for_diagnostic
+    from twicc.providers.codex.title_suggest import TITLE_MODEL
+
+    return await _prepare_hermetic_codex_for_diagnostic(
+        TITLE_MODEL, catalog_variant="neutral", extra_config_overrides=extra_config_overrides,
+    )
+
+
+def _add(report: Report, check_id: str, verdict: tuple[str, str], *, advisory: bool = False, suffix: str = "") -> None:
+    status, reason = verdict
+    report.add(check_id, status, reason + suffix, advisory=advisory, depends_on="D1")
+
+
+async def check_d1_d2(report: Report) -> None:
+    from twicc.providers.codex.hermetic import _field, prepare_hermetic_codex
+    from twicc.providers.codex.title_suggest import TITLE_MODEL
+    from twicc.providers.hermetic import HermeticConfigError
+
+    try:
+        plan = await prepare_hermetic_codex(TITLE_MODEL)
+    except HermeticConfigError as exc:
+        report.add("D1", FAIL, f"cannot prepare the production plan: {exc.reason}: {exc}")
+        return
+    run = await _hermetic(plan, PROMPTS["TRIVIAL"])
+    if run.start is None:   # the thread never started: the failure belongs to D1
+        if run.timed_out:
+            report.add("D1", INCONCLUSIVE, f"the start {TIMED_OUT}")
+        else:
+            report.add("D1", FAIL, f"the thread did not start: {run.violation or run.error}")
+        return
+    start = run.start
+    report.add("D1", PASS, (
+        f"model {_field(start, 'model')!r}, sandbox {_field(start, 'sandbox')!r}, "
+        f"approval_policy {_field(start, 'approval_policy', 'approvalPolicy')!r}, "
+        f"instruction_sources {start.get('instruction_sources', start.get('instructionSources'))!r}"
+    ))
+    if run.violation is not None:
+        report.add("D2", FAIL, f"guard violation: {run.violation}", depends_on="D1")
+    elif run.timed_out:
+        report.add("D2", INCONCLUSIVE, f"the trivial turn {TIMED_OUT}", depends_on="D1")
+    elif run.error is not None:
+        report.add("D2", FAIL, f"the trivial turn failed: {run.error}", depends_on="D1")
+    else:
+        _add(report, "D2", d2_verdict(run.text, run.input_tokens))
+
+
+async def check_d3(report: Report) -> None:
+    run = await _hermetic(await _neutral_plan(), PROMPTS["TOOLS"])
+    if run.returned:
+        _add(report, "D3", d3_verdict(run.text), advisory=True)
+    elif run.timed_out:
+        _add(report, "D3", (INCONCLUSIVE, TIMED_OUT), advisory=True)
+    else:
+        _add(report, "D3", (FAIL, f"guard violation: {run.violation}" if run.violation else run.error), advisory=True)
+
+
+async def check_d4(report: Report, user_servers) -> None:
+    path = _temp_path("hermetic-diag")
+    prompt = PROMPTS["WRITE"].format(path=path)
+    try:
+        control, control_error = await _control(prompt, user_servers=user_servers)
+        effect = control is not None and write_control_effect(control, file_created=path.exists())
+        path.unlink(missing_ok=True)
+        run = await _hermetic(await _neutral_plan(), prompt)
+        created = path.exists()
+        hermetic_effect = f"the hermetic run created {path}" if created else None
+        _add(report, "D4", canary_verdict(
+            control=control, control_error=control_error, control_effect=effect, hermetic=run,
+            hermetic_effect=hermetic_effect,
+        ))
+    finally:
+        path.unlink(missing_ok=True)
+
+
+async def check_d5(report: Report, user_servers) -> None:
+    token = uuid4().hex
+    path = Path(tempfile.gettempdir()) / f"hermetic-diag-read-{uuid4().hex}.txt"
+    prompt = PROMPTS["READ"].format(path=path)
+    try:
+        path.write_text(token)
+        control, control_error = await _control(prompt, user_servers=user_servers)
+        effect = control is not None and read_control_effect(control, token)
+        run = await _hermetic(await _neutral_plan(), prompt)
+        hermetic_effect = "the hermetic answer contains the token" if token in run.text else None
+        _add(report, "D5", canary_verdict(
+            control=control, control_error=control_error, control_effect=effect, hermetic=run,
+            hermetic_effect=hermetic_effect,
+        ))
+    finally:
+        path.unlink(missing_ok=True)
+
+
+async def check_d6a(report: Report, user_servers) -> None:
+    prompt = PROMPTS["WEB"].format(url="https://example.com/")
+    control, control_error = await _control(prompt, user_servers=user_servers, overrides=('web_search="live"',))
+    effect = control is not None and web_control_effect(control)
+    run = await _hermetic(await _neutral_plan(), prompt)
+    _add(report, "D6a", canary_verdict(
+        control=control, control_error=control_error, control_effect=effect, hermetic=run, hermetic_effect=None,
+    ))
+
+
+def d6b_hermetic_effect(run: HermeticRun, user_servers) -> str | None:
+    """The D6b hermetic effect: the stub or a user server left enabled, or the stub's answer in the text."""
+    if run.start is not None and "diag_stub" not in run.disabled_mcp_servers:
+        return "the stub MCP server is not disabled at thread level"
+    if run.start is not None and user_servers is not None and not set(user_servers) <= set(run.disabled_mcp_servers):
+        missing = sorted(set(user_servers) - set(run.disabled_mcp_servers))
+        return f"user MCP servers not disabled: {', '.join(missing)}"
+    if "DIAG-PONG" in run.text:
+        return "the hermetic answer contains DIAG-PONG"
+    return None
+
+
+async def check_d6b(report: Report, user_servers) -> None:
+    fd, name = tempfile.mkstemp(prefix="hermetic-diag-mcp-stub-", suffix=".py")
+    os.close(fd)
+    stub_path = Path(name)
+    try:
+        stub_path.write_text(MCP_STUB)
+        stub_overrides = (
+            f"mcp_servers.diag_stub.command={json.dumps(sys.executable)}",
+            f"mcp_servers.diag_stub.args={json.dumps([str(stub_path)])}",
+        )
+        control, control_error = await _control(PROMPTS["MCP"], user_servers=user_servers, overrides=stub_overrides)
+        effect = control is not None and mcp_control_effect(control)
+        run = await _hermetic(await _neutral_plan(stub_overrides), PROMPTS["MCP"])
+        count = "unknown" if user_servers is None else len(user_servers)
+        _add(report, "D6b", canary_verdict(
+            control=control, control_error=control_error, control_effect=effect, hermetic=run,
+            hermetic_effect=d6b_hermetic_effect(run, user_servers),
+        ), suffix=f" (user MCP servers disabled: {count})")
+    finally:
+        stub_path.unlink(missing_ok=True)
+
+
+def d7_hermetic_effect(run: HermeticRun) -> str | None:
+    if run.refused_method is not None:
+        return f"the refusing handler was invoked: {run.refused_method}"
+    return None
+
+
+async def check_d7(report: Report, user_servers) -> None:
+    control, control_error = await _control(
+        PROMPTS["INTERACT"], user_servers=user_servers, install_handler=True,
+        thread_extra={"features.default_mode_request_user_input": True, "suppress_unstable_features_warning": True},
+    )
+    effect = control is not None and interact_control_effect(control)
+    run = await _hermetic(await _neutral_plan(), PROMPTS["INTERACT"])
+    _add(report, "D7", canary_verdict(
+        control=control, control_error=control_error, control_effect=effect, hermetic=run,
+        hermetic_effect=d7_hermetic_effect(run),
+    ))
+
+
+async def check_d8(report: Report) -> None:
+    from twicc.provider_homes import codex_home
+
+    repo_line = leak_line(REPO_ROOT / "AGENTS.md")
+    global_line = leak_line(codex_home().path / "AGENTS.md")
+    if repo_line is None and global_line is None:
+        _add(report, "D8", d8_verdict(None, None, ""), advisory=True)
+        return
+    run = await _hermetic(await _neutral_plan(), PROMPTS["LEAK"])
+    if run.returned:
+        _add(report, "D8", d8_verdict(repo_line, global_line, run.text), advisory=True)
+    elif run.timed_out:
+        _add(report, "D8", (INCONCLUSIVE, TIMED_OUT), advisory=True)
+    else:
+        _add(report, "D8", (FAIL, f"guard violation: {run.violation}" if run.violation else run.error), advisory=True)
+
+
+CODEX_CANARY_IDS = ("D3", "D4", "D5", "D6a", "D6b", "D7", "D8")
+
+
 async def run_codex_live(report: Report) -> None:
-    """Live Codex checks D1-D8: not implemented yet."""
+    """Live Codex checks D1-D8 (spec §9.3); every provider call is bounded."""
+    await guarded(report, ("D1", "D2"), check_d1_d2, report)
+    d1 = next((c for c in report.checks if c.id == "D1"), None)
+    if d1 is None or d1.status != PASS:   # no token spent on checks that cannot pass
+        reported = {c.id for c in report.checks}
+        for check_id in ("D2", *CODEX_CANARY_IDS):
+            if check_id not in reported:
+                report.add(check_id, SKIP, "depends on D1", depends_on="D1")
+        return
+    try:
+        user_servers = await bounded(user_mcp_server_names())
+    except Exception as exc:
+        user_servers = None
+        print(f"cannot read the user's MCP servers ({exc!r}): the controls will be INCONCLUSIVE", file=sys.stderr)
+    await guarded(report, ("D3",), check_d3, report)
+    for check_id, check in (("D4", check_d4), ("D5", check_d5), ("D6a", check_d6a), ("D6b", check_d6b),
+                            ("D7", check_d7)):
+        await guarded(report, (check_id,), check, report, user_servers)
+    await guarded(report, ("D8",), check_d8, report)
 
 
 async def run_claude_live(report: Report) -> None:
@@ -530,7 +1018,24 @@ def _git_dir(repo_root: Path, option: str) -> str:
     return str(Path(repo_root, proc.stdout.strip()).resolve())
 
 
-async def _prerequisites(report: Report, want_codex: bool, want_claude: bool) -> None:
+async def _prerequisites(report: Report, want_codex: bool, want_claude: bool, live: bool) -> None:
+    await _runtime_prerequisites(report, want_codex, want_claude)
+    if report.could_not_run is not None or not live:
+        return
+    if want_codex:
+        from twicc.providers.codex.auth import check_auth_status as codex_logged_in
+
+        if not await codex_logged_in():
+            report.abort("Codex is not logged in (codex login status); the live checks need the login")
+            return
+    if want_claude:
+        from twicc.providers.claude_code.auth import check_auth_status as claude_logged_in
+
+        if not await claude_logged_in():
+            report.abort("Claude Code is not logged in (claude auth status); the live checks need the login")
+
+
+async def _runtime_prerequisites(report: Report, want_codex: bool, want_claude: bool) -> None:
     if want_codex:
         from twicc.providers.codex.runtime import ensure_codex_runtime, is_runtime_ready
 
@@ -555,27 +1060,28 @@ async def _prerequisites(report: Report, want_codex: bool, want_claude: bool) ->
 
 
 async def _run_all(report: Report, want_codex: bool, want_claude: bool, live: bool) -> None:
-    await _prerequisites(report, want_codex, want_claude)
+    await _prerequisites(report, want_codex, want_claude, live)
     if report.could_not_run is not None:
         return
+    # Each check is guarded: an unexpected exception is reported as a FAIL of that check, never a lost report.
     if want_codex:
-        check_o1_versions(report)
-        for check in (check_o2_bundled, check_o3_round_trip, check_o4_features, check_o5_prompt_input,
-                      check_o6_neutral_dir, check_o7_warnings):
-            check(report)
+        for check_id, check in (("O1", check_o1_versions), ("O2", check_o2_bundled), ("O3", check_o3_round_trip),
+                                ("O4", check_o4_features), ("O5", check_o5_prompt_input),
+                                ("O6", check_o6_neutral_dir), ("O7", check_o7_warnings)):
+            await guarded(report, (check_id,), check, report)
     if want_claude:
-        check_o8_claude_options(report)
+        await guarded(report, ("O8",), check_o8_claude_options, report)
     if want_codex:
-        await _check_o9_codex(report)
+        await guarded(report, ("O9-i", "O9-ii", "O9-iv"), _check_o9_codex, report)
     if want_claude:
-        _check_o9_claude(report)
+        await guarded(report, ("O9-iii",), _check_o9_claude, report)
     if not live:
         return
     if want_codex:
         await run_codex_live(report)
     if want_claude:
-        await run_claude_live(report)
-    check_d14_neutral_dir_still_empty(report)
+        await guarded(report, ("D9",), run_claude_live, report)
+    await guarded(report, ("D14",), check_d14_neutral_dir_still_empty, report)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -600,10 +1106,18 @@ def main(argv: list[str] | None = None) -> int:
     refusal = worktree_refusal(
         os.environ, _git_dir(REPO_ROOT, "--git-dir"), _git_dir(REPO_ROOT, "--git-common-dir"),
     )
+    want_codex, want_claude = args.provider in ("codex", "all"), args.provider in ("claude", "all")
+    if refusal is None and args.live:
+        print(f"live checks: {planned_live_calls(want_codex, want_claude)} provider calls planned", file=info)
+
+        def ask(question: str) -> str:   # on the info stream, so --json keeps stdout parsable
+            print(question, end="", file=info, flush=True)
+            return sys.stdin.readline()
+
+        refusal = live_gate_refusal(yes=args.yes, interactive=sys.stdin.isatty(), ask=ask)
     if refusal is not None:
         report.abort(refusal)
     else:
-        want_codex, want_claude = args.provider in ("codex", "all"), args.provider in ("claude", "all")
         asyncio.run(_run_all(report, want_codex, want_claude, args.live))
         if not args.live:
             print("live checks not run (use --live)", file=info)
