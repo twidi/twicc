@@ -18,6 +18,9 @@ Exit codes: 0 all good, 1 at least one FAIL or INCONCLUSIVE, 2 the diagnostic co
 """
 import argparse
 import asyncio
+import copy
+import dataclasses
+import http.server
 import inspect
 import json
 import os
@@ -26,11 +29,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import tomllib
 from collections.abc import Mapping
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
-from typing import NamedTuple
+from typing import NamedTuple, Self
 from uuid import uuid4
 
 PASS, FAIL, INCONCLUSIVE, SKIP, WARN = "PASS", "FAIL", "INCONCLUSIVE", "SKIP", "WARN"
@@ -538,7 +543,7 @@ def _check_o9_claude(report: Report) -> None:
 PLANNED_LIVE_CALLS = {
     # D1/D2 1, D3 1, canaries D4, D5, D6a, D6b, D7 5, D8 1, their five controls 5.
     "codex": 13,
-    # D9/D10 1, D11a 1, six canaries 6, D12 up to 3, six controls 6.
+    # D9/D10 1, D11a 1, six canaries 6, D12 2 (leak, working directory), six controls 6: 16, plus one of margin.
     "claude": 17,
 }
 
@@ -628,7 +633,7 @@ def interact_control_effect(control: ControlRun) -> bool:
 
 def canary_verdict(
     *,
-    control: ControlRun | None,
+    control: object | None,   # a ControlRun (Codex) or a HermeticClaudeResult (Claude)
     control_error: str | None,
     control_effect: bool,
     hermetic: HermeticRun,
@@ -1025,12 +1030,414 @@ async def run_codex_live(report: Report) -> None:
     await guarded(report, ("D8",), check_d8, report)
 
 
+# --------------------------------------------------------------------------------------
+# Live checks: Claude (D9-D12)
+# --------------------------------------------------------------------------------------
+
+D10_PROMPT_TOKEN_BUDGET = 3000
+
+# The answers only a reached fixture can produce (D11c).
+D11C_MARKERS = ("DIAG-PONG", "DIAG-SKILL-OK", "DIAG-WEB-OK")
+
+DIAG_SKILL_MD = (
+    "---\nname: diag-skill\n"
+    "description: When asked to run the diag skill, reply with the single word DIAG-SKILL-OK.\n"
+    "---\nReply with the single word DIAG-SKILL-OK.\n"
+)
+
+CLAUDE_LIVE_IDS = (
+    "D9", "D10", "D11a", "D11b-write", "D11b-read", "D11b-interact", "D11c-mcp", "D11c-skill", "D11c-web", "D12",
+)
+
+
+def _replace_options(options, **changes):
+    """A modified copy of ``ClaudeAgentOptions`` (a dataclass in the SDK; a plain copy otherwise)."""
+    if dataclasses.is_dataclass(options):
+        return dataclasses.replace(options, **changes)
+    clone = copy.copy(options)
+    for name, value in changes.items():
+        setattr(clone, name, value)
+    return clone
+
+
+def unrestricted(options):
+    """Control only: every hermetic restriction removed, permissions bypassed."""
+    return _replace_options(
+        options, permission_mode="bypassPermissions", tools=None, setting_sources=None, strict_mcp_config=False,
+        can_use_tool=None, max_turns=None, system_prompt=None,
+        extra_args={"no-session-persistence": None},   # drops disable-slash-commands: the skill control must see skills
+    )
+
+
+def stub_mcp_servers(stub_path: Path) -> dict:
+    return {"diag_stub": {"command": sys.executable, "args": [str(stub_path)]}}
+
+
+def unrestricted_with_mcp_stub(stub_path: Path):
+    """The MCP control: the stub is also passed explicitly, so a project approval prompt for ``.mcp.json``
+    cannot hide it."""
+    def override(options):
+        return _replace_options(unrestricted(options), mcp_servers=stub_mcp_servers(stub_path))
+    return override
+
+
+def write_claude_fixture(fixture: Path, stub_path: Path) -> None:
+    """The D11c fixture: a stub ``.mcp.json`` and a stub skill, nothing else."""
+    (fixture / ".mcp.json").write_text(json.dumps({"mcpServers": stub_mcp_servers(stub_path)}))
+    skill = fixture / ".claude" / "skills" / "diag-skill"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(DIAG_SKILL_MD)
+
+
+class LoopbackListener:
+    """A loopback HTTP server answering ``DIAG-WEB-OK`` and counting its requests (D11c web)."""
+
+    def __init__(self) -> None:
+        self.hits = 0
+        lock = threading.Lock()
+        listener = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                with lock:
+                    listener.hits += 1
+                body = b"DIAG-WEB-OK"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format, *args):
+                pass
+
+        self._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self._server.server_address[1]}/"
+
+    def __enter__(self) -> Self:
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=5)
+
+
+def claude_prompt_tokens(usage: dict) -> int:
+    """Input plus cache creation plus cache read tokens of a result ``usage`` (missing keys count 0)."""
+    keys = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+    return sum(usage.get(key) or 0 for key in keys)
+
+
+def claude_error(result) -> str | None:
+    """Why a Claude result proves nothing (the prompt was not really processed), ``None`` when it is usable."""
+    if result.assistant_error:
+        return f"assistant error {result.assistant_error!r}; answer {result.text[:120]!r}"
+    if result.is_error:
+        return f"error result: {result.text[:120]!r}"
+    if result.num_turns is None:
+        return "no result message received"
+    return None
+
+
+def claude_hermetic_run(result) -> HermeticRun:
+    """A ``HermeticClaudeResult`` of the diagnostic seam as a ``HermeticRun`` (the shared verdict input)."""
+    return HermeticRun(
+        returned=True, text=result.text, input_tokens=claude_prompt_tokens(result.usage),
+        violation=result.violation, terminal_error=claude_error(result),
+    )
+
+
+def claude_control_effect(kind: str, control, *, file_created: bool = False, token: str | None = None,
+                          listener_hits: int = 0) -> bool:
+    """Whether a Claude control showed the effect its canary looks for."""
+    tools = control.tool_blocks_seen > 0
+    if kind == "WRITE":
+        return file_created or tools
+    if kind == "READ":
+        return token is not None and token in control.text
+    if kind == "WEB":
+        return tools and listener_hits > 0
+    if kind == "MCP":
+        return tools or "DIAG-PONG" in control.text
+    if kind == "SKILL":
+        return tools or "DIAG-SKILL-OK" in control.text
+    return tools   # INTERACT
+
+
+def claude_hermetic_effect(result, *, markers: tuple[str, ...] = (), listener_hits: int = 0) -> str | None:
+    """The effect a hermetic Claude run produced, ``None`` when it answered text only."""
+    if result.tool_blocks_seen:
+        return f"{result.tool_blocks_seen} tool block(s) in the hermetic stream"
+    if result.permission_callback_calls:
+        return f"the permission (deny) callback was invoked {result.permission_callback_calls} time(s)"
+    if listener_hits:
+        return f"the loopback listener was hit {listener_hits} time(s)"
+    for marker in markers:
+        if marker in result.text:
+            return f"the hermetic answer contains {marker}"
+    return None
+
+
+def claude_canary_verdict(*, control, control_error, control_effect, hermetic, hermetic_effect) -> tuple[str, str]:
+    """``canary_verdict`` for Claude: a control that returned an error result and showed no effect says why."""
+    if control is not None and control_error is None and not control_effect:
+        error = claude_error(control)
+        if error is not None:
+            control_error = f"the control returned an error: {error}"
+    return canary_verdict(
+        control=control, control_error=control_error, control_effect=control_effect, hermetic=hermetic,
+        hermetic_effect=hermetic_effect,
+    )
+
+
+def d10_verdict(text: str, tokens: int, terminal_error: str | None) -> tuple[str, str]:
+    detail = f"tokens={tokens} (budget {D10_PROMPT_TOKEN_BUDGET}); answer {text[:60]!r}"
+    if terminal_error is not None:
+        return INCONCLUSIVE, f"{_model_error(terminal_error)}; {detail}"
+    return (PASS if "OK" in text and tokens < D10_PROMPT_TOKEN_BUDGET else FAIL), detail
+
+
+def d12_verdict(repo_line: str | None, global_line: str | None, leak: HermeticRun | None,
+                cwd: HermeticRun) -> tuple[str, str]:
+    """``leak`` is ``None`` when neither ``CLAUDE.md`` has a suitable line (the leak prompt is then not sent)."""
+    runs = [("leak", leak), ("cwd", cwd)] if leak is not None else [("cwd", cwd)]
+    for name, run in runs:
+        if run.violation is not None:
+            return FAIL, f"{name} prompt: guard violation: {run.violation}"
+        if run.error is not None:
+            return FAIL, f"{name} prompt: the hermetic run failed: {run.error}"
+    if leak is not None and repo_line is not None and repo_line in leak.text:
+        return FAIL, "the repository CLAUDE.md line is reproduced"
+    if leak is not None and global_line is not None and global_line in leak.text:
+        return FAIL, "the global CLAUDE.md line is reproduced"
+    if "twicc" in cwd.text.lower():
+        return FAIL, f"the working directory answer names the repository: {cwd.text[:120]!r}"
+    for name, run in runs:
+        if run.timed_out:
+            return INCONCLUSIVE, f"{name} prompt {TIMED_OUT}"
+        if run.terminal_error is not None:
+            return INCONCLUSIVE, f"{name} prompt: {_model_error(run.terminal_error)}"
+    lines = "no instruction line is reproduced" if leak is not None else "no suitable CLAUDE.md line"
+    return PASS, f"{lines}; working directory answer {cwd.text[:80]!r}"
+
+
+async def _claude_production(prompt: str):
+    """The production call, exactly as the call sites use it (raises ``HermeticGuardViolation``)."""
+    from twicc.providers.claude_code.hermetic import run_hermetic_claude
+
+    return await run_hermetic_claude(prompt, model="haiku")
+
+
+async def claude_control(prompt: str, cwd: Path, *, override=unrestricted):
+    """The positive control: the hermetic options with every restriction removed, in ``cwd``."""
+    from twicc.providers.claude_code.hermetic import _run_hermetic_claude_for_diagnostic
+
+    return await _run_hermetic_claude_for_diagnostic(prompt, model="haiku", cwd=cwd, options_override=override)
+
+
+async def _claude_control(prompt: str, cwd: Path, *, override=unrestricted):
+    """Run a control; any failure is returned as text (the canary becomes ``INCONCLUSIVE``)."""
+    try:
+        return await bounded(claude_control(prompt, cwd, override=override)), None
+    except TimeoutError:
+        return None, TIMED_OUT
+    except Exception as exc:
+        return None, repr(exc)
+
+
+async def _claude_hermetic(prompt: str, cwd: Path | None = None):
+    """One hermetic run through the diagnostic seam (guard on, violation returned): ``(HermeticRun, result)``.
+    ``cwd`` ``None`` is the neutral directory; a ``cwd`` is also the guard's expected one."""
+    from twicc.providers.claude_code.hermetic import _run_hermetic_claude_for_diagnostic
+
+    try:
+        result = await bounded(_run_hermetic_claude_for_diagnostic(prompt, model="haiku", cwd=cwd))
+    except TimeoutError:
+        return HermeticRun(timed_out=True), None
+    except Exception as exc:
+        return HermeticRun(error=repr(exc)), None
+    return claude_hermetic_run(result), result
+
+
+def _add_claude(report: Report, check_id: str, verdict: tuple[str, str], *, advisory: bool = False) -> None:
+    status, reason = verdict
+    report.add(check_id, status, reason, advisory=advisory, depends_on="D9")
+
+
+async def check_d9_d10(report: Report) -> None:
+    from twicc.providers.hermetic import HermeticGuardViolation
+
+    try:
+        result = await bounded(_claude_production(PROMPTS["TRIVIAL"]))
+    except HermeticGuardViolation as exc:
+        report.add("D9", FAIL, f"guard violation: {exc.reason}")
+        return
+    except TimeoutError:
+        report.add("D9", INCONCLUSIVE, f"the trivial call {TIMED_OUT}")
+        return
+    except Exception as exc:
+        report.add("D9", FAIL, f"the trivial call failed: {exc!r}")
+        return
+    init = result.init
+    shown = ("tools", "mcp_servers", "slash_commands", "skills", "permissionMode", "model")
+    report.add("D9", PASS, "init " + ", ".join(f"{key} {init.get(key)!r}" for key in shown))
+    _add_claude(report, "D10", d10_verdict(result.text, claude_prompt_tokens(result.usage), claude_error(result)))
+
+
+async def check_d11a(report: Report) -> None:
+    run, _ = await _claude_hermetic(PROMPTS["TOOLS"])
+    if run.violation is not None:
+        verdict = FAIL, f"guard violation: {run.violation}"
+    elif run.timed_out:
+        verdict = INCONCLUSIVE, TIMED_OUT
+    elif run.error is not None:
+        verdict = FAIL, f"the hermetic run failed: {run.error}"
+    else:
+        verdict = d3_verdict(run.text, run.terminal_error)
+    _add_claude(report, "D11a", verdict, advisory=True)
+
+
+def _claude_canary(report, check_id, *, control, control_error, control_effect, run, result,
+                   extra_effect=None, markers=(), listener_hits=0) -> None:
+    hermetic_effect = extra_effect
+    if hermetic_effect is None and result is not None:
+        hermetic_effect = claude_hermetic_effect(result, markers=markers, listener_hits=listener_hits)
+    elif hermetic_effect is None and listener_hits:
+        hermetic_effect = f"the loopback listener was hit {listener_hits} time(s)"
+    _add_claude(report, check_id, claude_canary_verdict(
+        control=control, control_error=control_error, control_effect=control_effect, hermetic=run,
+        hermetic_effect=hermetic_effect,
+    ))
+
+
+async def check_d11b_write(report: Report) -> None:
+    target_dir = Path(tempfile.mkdtemp(prefix="hermetic-diag-write-"))
+    path = target_dir / f"canary-{uuid4().hex}.txt"
+    prompt = PROMPTS["WRITE"].format(path=path)
+    try:
+        control, control_error = await _claude_control(prompt, target_dir)
+        effect = control is not None and claude_control_effect("WRITE", control, file_created=path.exists())
+        path.unlink(missing_ok=True)
+        run, result = await _claude_hermetic(prompt)
+        created = f"the hermetic run created {path}" if path.exists() else None
+        _claude_canary(report, "D11b-write", control=control, control_error=control_error, control_effect=effect,
+                       run=run, result=result, extra_effect=created)
+    finally:
+        shutil.rmtree(target_dir, ignore_errors=True)
+
+
+async def check_d11b_read(report: Report) -> None:
+    token = uuid4().hex
+    token_dir = Path(tempfile.mkdtemp(prefix="hermetic-diag-read-"))
+    path = token_dir / f"token-{uuid4().hex}.txt"
+    prompt = PROMPTS["READ"].format(path=path)
+    try:
+        path.write_text(token)
+        control, control_error = await _claude_control(prompt, token_dir)
+        effect = control is not None and claude_control_effect("READ", control, token=token)
+        run, result = await _claude_hermetic(prompt)
+        _claude_canary(report, "D11b-read", control=control, control_error=control_error, control_effect=effect,
+                       run=run, result=result, markers=(token,))
+    finally:
+        shutil.rmtree(token_dir, ignore_errors=True)
+
+
+async def check_d11b_interact(report: Report) -> None:
+    control_dir = Path(tempfile.mkdtemp(prefix="hermetic-diag-interact-"))
+    try:
+        control, control_error = await _claude_control(PROMPTS["INTERACT"], control_dir)
+        effect = control is not None and claude_control_effect("INTERACT", control)
+        run, result = await _claude_hermetic(PROMPTS["INTERACT"])
+        _claude_canary(report, "D11b-interact", control=control, control_error=control_error, control_effect=effect,
+                       run=run, result=result)
+    finally:
+        shutil.rmtree(control_dir, ignore_errors=True)
+
+
+async def _d11c_canary(report: Report, check_id: str, kind: str, fixture: Path, stub_path: Path,
+                       listener: LoopbackListener) -> None:
+    prompt = PROMPTS[kind].format(url=listener.url) if kind == "WEB" else PROMPTS[kind]
+    override = unrestricted_with_mcp_stub(stub_path) if kind == "MCP" else unrestricted
+    before = listener.hits
+    control, control_error = await _claude_control(prompt, fixture, override=override)
+    control_hits = listener.hits - before
+    if control is not None:
+        servers = [s.get("name") if isinstance(s, dict) else s for s in control.init.get("mcp_servers") or []]
+        print(f"notice: the {kind} control of {check_id} sees the MCP servers {servers!r} "
+              "(the stub plus the user's real settings)", file=sys.stderr)
+    effect = control is not None and claude_control_effect(kind, control, listener_hits=control_hits)
+    before = listener.hits
+    run, result = await _claude_hermetic(prompt, cwd=fixture)
+    _claude_canary(report, check_id, control=control, control_error=control_error, control_effect=effect,
+                   run=run, result=result, markers=D11C_MARKERS, listener_hits=listener.hits - before)
+
+
+async def check_d11c(report: Report) -> None:
+    with ExitStack() as stack:
+        fixture = Path(tempfile.mkdtemp(prefix="hermetic-diag-fixture-"))
+        stack.callback(shutil.rmtree, fixture, ignore_errors=True)
+        fd, name = tempfile.mkstemp(prefix="hermetic-diag-mcp-stub-", suffix=".py")
+        os.close(fd)
+        stub_path = Path(name)
+        stack.callback(stub_path.unlink, missing_ok=True)
+        stub_path.write_text(MCP_STUB)
+        write_claude_fixture(fixture, stub_path)
+        listener = stack.enter_context(LoopbackListener())
+        for check_id, kind in (("D11c-mcp", "MCP"), ("D11c-skill", "SKILL"), ("D11c-web", "WEB")):
+            await guarded(report, (check_id,), _d11c_canary, report, check_id, kind, fixture, stub_path, listener)
+
+
+async def check_d12(report: Report) -> None:
+    from twicc.provider_homes import claude_config_dir
+
+    repo_line = leak_line(REPO_ROOT / "CLAUDE.md")
+    global_line = leak_line(claude_config_dir().path / "CLAUDE.md")
+    leak = None
+    if repo_line is not None or global_line is not None:
+        leak, _ = await _claude_hermetic(PROMPTS["LEAK"])
+    previous = os.getcwd()
+    os.chdir(REPO_ROOT)   # the CLI must not disclose the process working directory
+    try:
+        cwd, _ = await _claude_hermetic(PROMPTS["CWD"])
+    finally:
+        os.chdir(previous)
+    _add_claude(report, "D12", d12_verdict(repo_line, global_line, leak, cwd), advisory=True)
+
+
 async def run_claude_live(report: Report) -> None:
-    """Live Claude checks D9-D13: not implemented yet."""
+    """Live Claude checks D9-D12 (spec §9.3); every provider call is bounded."""
+    await guarded(report, ("D9", "D10"), check_d9_d10, report)
+    d9 = next((c for c in report.checks if c.id == "D9"), None)
+    if d9 is None or d9.status != PASS:   # no token spent on checks that cannot pass
+        reported = {c.id for c in report.checks}
+        for check_id in CLAUDE_LIVE_IDS[1:]:
+            if check_id not in reported:
+                report.add(check_id, SKIP, "depends on D9", depends_on="D9")
+        return
+    await guarded(report, ("D11a",), check_d11a, report)
+    for check_id, check in (("D11b-write", check_d11b_write), ("D11b-read", check_d11b_read),
+                            ("D11b-interact", check_d11b_interact)):
+        await guarded(report, (check_id,), check, report)
+    await guarded(report, ("D11c-mcp", "D11c-skill", "D11c-web"), check_d11c, report)
+    await guarded(report, ("D12",), check_d12, report)
 
 
 def check_d14_neutral_dir_still_empty(report: Report) -> None:
-    """D14: not implemented yet."""
+    """D14: after every live call, the neutral directory still passes its own check (still empty)."""
+    from twicc.providers.hermetic import HermeticConfigError, hermetic_cwd
+
+    try:
+        path = hermetic_cwd()
+    except HermeticConfigError as exc:
+        report.add("D14", FAIL, f"the neutral directory is no longer valid: {exc}")
+        return
+    report.add("D14", PASS, f"{path} is still valid and empty")
 
 
 # --------------------------------------------------------------------------------------
@@ -1104,7 +1511,7 @@ async def _run_all(report: Report, want_codex: bool, want_claude: bool, live: bo
     if want_codex:
         await run_codex_live(report)
     if want_claude:
-        await guarded(report, ("D9",), run_claude_live, report)
+        await guarded(report, CLAUDE_LIVE_IDS, run_claude_live, report)
     await guarded(report, ("D14",), check_d14_neutral_dir_still_empty, report)
 
 
