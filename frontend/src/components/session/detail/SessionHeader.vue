@@ -1388,6 +1388,11 @@ wa-divider {
     flex-shrink: 0;
 }
 
+.stop-button::part(label) {
+    scale: 1;
+    font-size: 1.3em;
+}
+
 .stop-button:hover {
     opacity: 1;
 }
