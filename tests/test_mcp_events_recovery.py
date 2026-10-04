@@ -20,8 +20,9 @@ from twicc.core.models import McpEventSubscription, Session, SessionItem
 from twicc.mcp.events import runtime as runtime_module
 from twicc.mcp.events.catalog import event_id
 from twicc.mcp.events.delivery import DeliveryService
-from twicc.mcp.events.methods import SubscriptionSnapshot
-from twicc.mcp.events.runtime import CursorWrite, EventsRuntime, TurnWrite
+from twicc.mcp.events.methods import EventMethods, SubscribeParams, SubscriptionSnapshot
+from twicc.mcp.events.runtime import AddCommand, CursorWrite, EventsRuntime, TurnWrite
+from twicc.mcp.identity import ExternalCaller, external_caller
 from twicc.mcp.oauth import config
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -290,6 +291,88 @@ def test_supervisor_barrier_recovers_dead_writer_and_retains_committed_commands(
         monitor = runtime.monitors[env.row.id]
         assert monitor.cursor_line == 4 and monitor.turn_started_at == 800
         assert monitor.secret == "committed-during-rebuild"
+    asyncio.run(run())
+
+
+def test_new_subscription_committed_after_supervisor_load_survives_rebuild(env, monkeypatch):
+    runtime = production_runtime(env)
+    Session.objects.filter(pk=env.session.pk).update(
+        created_at=env.clock.utcnow(), user_message_count=1, last_line=7,
+    )
+    loaded, release = threading.Event(), threading.Event()
+    original_load, original_add, original_tick = runtime._load_monitors, runtime.add, runtime._tick
+    loaded_ids, added = [], []
+
+    def load():
+        original_load()
+        loaded_ids.extend(runtime.monitors)
+        loaded.set()
+        assert release.wait(2)
+
+    monkeypatch.setattr(runtime, "_load_monitors", load)
+
+    async def run():
+        runtime.loop = asyncio.get_running_loop()
+        queued, ticked = asyncio.Event(), asyncio.Event()
+        commands = runtime.commands
+
+        def add(snapshot):
+            original_add(snapshot)
+            added.append(snapshot)
+            queued.set()
+
+        def tick():
+            original_tick()
+            runtime.request_stop()
+            runtime.loop.call_soon_threadsafe(ticked.set)
+
+        async def verified(*args):
+            pass
+
+        monkeypatch.setattr(runtime, "add", add)
+        monkeypatch.setattr(runtime, "_tick", tick)
+        # Exercise supervisor replacement of a terminated worker.
+        runtime.thread = threading.Thread(target=lambda: None)
+        runtime.thread.start()
+        await asyncio.to_thread(runtime.thread.join)
+        methods = EventMethods(runtime, SimpleNamespace(verify=verified),
+                               clock=env.clock.clock, data_dir=runtime.data_dir)
+        token = external_caller.set(ExternalCaller(env.row.connection_id, "Acceptance owner"))
+        try:
+            await runtime._supervise_once()
+            assert await asyncio.to_thread(loaded.wait, 2)
+            assert loaded_ids == [env.row.id]
+            assert await McpEventSubscription.objects.acount() == 1
+            result = await methods.subscribe(None, SubscribeParams.model_validate({
+                "name": "session.concluded",
+                "arguments": {"session_id": env.session.id, "since_line_num": 3},
+                "delivery": {"mode": "webhook", "url": "https://callback.example/new",
+                             "secret": "whsec_" + "c3Nz" * 8},
+            }))
+            await asyncio.wait_for(queued.wait(), 2)
+            saved = await McpEventSubscription.objects.aget(pk=result["id"])
+            assert saved.id not in loaded_ids and saved.id not in runtime.monitors
+            assert added[0].generation == (saved.id, saved.created_at)
+            # The real on-commit callback queues an AddCommand, without consuming it here.
+            with commands.mutex:
+                pending_commands = list(commands.queue)
+            assert pending_commands == [AddCommand(added[0])]
+            release.set()
+            await asyncio.wait_for(ticked.wait(), 2)
+        finally:
+            release.set()
+            await runtime.close()
+            external_caller.reset(token)
+        assert runtime.commands is commands and runtime.commands.empty()
+        assert set(runtime.monitors) == {env.row.id, saved.id}
+        monitor = runtime.monitors[saved.id]
+        assert monitor.generation == (saved.id, saved.created_at)
+        assert (monitor.cursor_line, monitor.initial_last_line, monitor.numbering) == (3, 7, 0)
+        assert monitor.first and not monitor.dormant and not monitor.pending_rebase
+        assert monitor.session_snapshot.ready and monitor.wait.since_line_num == 3
+        persisted = await McpEventSubscription.objects.aget(pk=saved.id)
+        assert SubscriptionSnapshot.from_row(persisted) == added[0]
+        assert await McpEventSubscription.objects.acount() == 2
     asyncio.run(run())
 
 

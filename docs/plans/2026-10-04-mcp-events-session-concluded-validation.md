@@ -64,6 +64,11 @@ Results are recorded only after execution completes.
 | `TWICC_DATA_DIR=$PWD uv run pytest -q tests/test_mcp*.py --tb=short` | **730 passed**, including final event additions, OAuth, CIMD, batch, tools, startup, and internal isolation. |
 | `TWICC_DATA_DIR=$PWD uv run pytest -q tests/test_codex_hardcoded_commands.py tests/test_history_facts.py tests/test_codex_recompute_persistence.py tests/test_watcher_source_identity.py tests/test_watcher_catch_up.py tests/test_live_sync_slices.py --tb=short` | **78 passed**. |
 
+Review fix validation: `TWICC_DATA_DIR=$PWD uv run pytest -q tests/test_mcp_events_recovery.py tests/test_mcp_events_runtime.py --tb=short` reports **43 passed**.
+The added case exercises a real subscribe committed after the supervisor reload snapshot.
+Its actual on-commit AddCommand creates the absent monitor; the persisted subscription remains intact.
+The earlier update-retention test remains separate. Focused Ruff and `git diff --check` also pass.
+
 The changed-file lint command builds its file list from `git diff --name-only f8839ac0 -- '*.py'`.
 It adds untracked Python files and executes `uvx ruff check` on those paths.
 The initial check reports six feature-scope findings, including the two missing watcher names.
@@ -148,7 +153,8 @@ The map follows §12 order and expands compound bullets into separate scenarios.
 | Older retrying reply re-detected after restart keeps later open turn and emits its ended | `acceptance::test_restart_pending_request_reuses_id_and_older_reply_keeps_later_turn_open` |
 | Old-generation retry and cursor cannot touch replacement subscription | `delivery::test_retry_rechecks_authority_and_cannot_write_recreated_generation`; `writer::test_old_generation_cannot_mutate_replacement_row` |
 | Shutdown drains turn writes; last-tick ended drop preserves open state for restart | `recovery::test_actual_ended_shutdown_boundary_and_restart`; `recovery::test_shutdown_join_is_nonblocking_and_dead_writer_drains` |
-| Supervisor barrier follows dead thread's writes but excludes later writes; committed add survives | `recovery::test_supervisor_barrier_recovers_dead_writer_and_retains_committed_commands`; `recovery::test_barrier_finishes_without_waiting_for_later_writes` |
+| Supervisor barrier follows dead thread's writes but excludes later writes; existing update survives | `recovery::test_supervisor_barrier_recovers_dead_writer_and_retains_committed_commands`; `recovery::test_barrier_finishes_without_waiting_for_later_writes` |
+| New subscription commits after supervisor load snapshot; its AddCommand creates the absent monitor | `recovery::test_new_subscription_committed_after_supervisor_load_survives_rebuild` |
 | Timestamp/guard/payload/fit exception after step retries same ID; no fallible work after posting | `recovery::test_post_step_failure_replays_same_id_from_unchanged_cursor`; `recovery::test_guard_failure_preserves_open_turn_then_emits_end`; `recovery::test_posted_emission_has_no_later_database_or_payload_work` |
 | Persistent step failure: bounded logs, capped backoff, skip after three, later answer delivered | `recovery::test_persistent_step_failure_bounds_logs_backoff_and_does_not_sleep_other_monitors`; `recovery::test_poison_batch_is_skipped_after_three_failures_and_later_answer_emits` |
 | Boot raw final: no false ended until compute catches up, then replied | `readiness::test_compute_commits_after_unclassified_scan_does_not_emit_false_end`; `readiness::test_unready_end_preserves_turn_wait_and_timer_until_two_ready_reads` |
