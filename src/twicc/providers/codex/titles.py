@@ -59,8 +59,8 @@ def _apply_sync_session_titles_job(job: SyncSessionTitlesJob) -> list[dict]:
     Sync — runs inside ``transaction.atomic`` on a worker thread via
     ``run_compute_sync`` inside :func:`db_writer._settle_async_job`. Reads
     the Codex sessions named in the map, updates the rows whose title
-    actually differs in a single ``bulk_update``, and returns them
-    serialised so the helper can broadcast ``session_updated`` for each.
+    actually differs, and returns them serialised for ``session_updated``.
+    Only conditional NULL transitions stamp the automatic origin.
     """
     from twicc.core.models import Session
     from twicc.core.serializers import serialize_session
@@ -73,10 +73,13 @@ def _apply_sync_session_titles_job(job: SyncSessionTitlesJob) -> list[dict]:
         for session in sessions:
             new_title = job.titles.get(session.id)
             if new_title and session.title != new_title:
-                session.title = new_title
+                stamped = Session.objects.filter(id=session.id, title__isnull=True).update(
+                    title=new_title, title_origin="auto",
+                )
+                if not stamped:
+                    Session.objects.filter(id=session.id).update(title=new_title)
+                session.refresh_from_db(fields=["title", "title_origin"])
                 changed.append(session)
-        if changed:
-            Session.objects.bulk_update(changed, ["title"], batch_size=50)
     return [serialize_session(s) for s in changed if not s.hidden]
 
 

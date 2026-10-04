@@ -2132,8 +2132,11 @@ async def _process_compute_message(msg: dict) -> None:
         # A subagent's compute may have folded plan-doc entries into its
         # top-level ancestor — broadcast_session_updated above skipped it (the
         # completed session is the subagent), so push the ancestor too.
-        if result.folded_ancestor_id:
-            await broadcast_session_updated(result.folded_ancestor_id)
+        broadcast_ids = {msg["session_id"]}
+        for target_id in (result.folded_ancestor_id, *result.title_updated_session_ids):
+            if target_id and target_id not in broadcast_ids:
+                await broadcast_session_updated(target_id)
+                broadcast_ids.add(target_id)
     except Exception:
         logger.exception("Error broadcasting applied session_complete")
         state.failed_count += 1

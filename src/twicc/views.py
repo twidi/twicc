@@ -1086,6 +1086,8 @@ async def session_detail(request, project_id, session_id, parent_session_id=None
         except orjson.JSONDecodeError:
             return JsonResponse({"error": "Invalid JSON"}, status=400)
 
+        needs_broadcast = False
+
         # Handle title update
         if "title" in data:
             try:
@@ -1103,9 +1105,11 @@ async def session_detail(request, project_id, session_id, parent_session_id=None
 
             # 1. Update DB immediately, under the shared DB write lock.
             session.title = title
+            session.title_origin = "user"
             await run_under_db_write_lock(
-                lambda: session.asave(update_fields=["title"])
+                lambda: session.asave(update_fields=["title", "title_origin"])
             )
+            needs_broadcast = True
 
             # 2. Re-index for full-text search (title is a searchable document)
             if search.is_initialized():
@@ -1122,7 +1126,6 @@ async def session_detail(request, project_id, session_id, parent_session_id=None
                 pass  # Non-critical: DB is already updated, watcher will sync
 
         # Handle archived update
-        needs_broadcast = False
         if "archived" in data:
             archived = data["archived"]
             if not isinstance(archived, bool):
@@ -1220,9 +1223,8 @@ async def session_detail(request, project_id, session_id, parent_session_id=None
             if await refresh_session_plan_existence(session):
                 needs_broadcast = True
 
-        # Broadcast session_updated for archived/pinned changes.
-        # Title changes don't need this: writing to JSONL triggers the
-        # file watcher which broadcasts session_updated automatically.
+        # Broadcast explicit changes, including unchanged title text that
+        # validates an automatic title.
         # Hidden sessions must not surface to the frontend via broadcast either.
         if needs_broadcast and not session.hidden:
             channel_layer = get_channel_layer()

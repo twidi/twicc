@@ -805,7 +805,7 @@ class BaseAgentManager:
             async def _persist_session_title() -> int:
                 return await sync_to_async(
                     Session.objects.filter(id=session_id).update
-                )(title=pending)
+                )(title=pending, title_origin="user")
             rows_updated = await run_under_db_write_lock(_persist_session_title)
         except Exception as e:
             logger.warning(
@@ -821,6 +821,9 @@ class BaseAgentManager:
                 session_id,
             )
             return False
+
+        # Publish the persisted choice even if provider writeback needs a retry.
+        await self._broadcast_session_updated(session_id)
 
         try:
             helpers = get_provider_helpers(agent.provider)

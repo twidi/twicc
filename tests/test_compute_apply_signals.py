@@ -24,7 +24,7 @@ def _run_compute_message(monkeypatch, outcome: str):
         monkeypatch.setattr(
             BaseSessionCompute,
             "apply_session_complete",
-            staticmethod(lambda _msg: ComputeApplyResult(outcome)),
+            staticmethod(lambda _msg: ComputeApplyResult(outcome, title_updated_session_ids=("other-target",))),
         )
 
         async def reject_broadcast(_session_id):

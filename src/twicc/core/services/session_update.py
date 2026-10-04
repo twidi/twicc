@@ -329,11 +329,11 @@ async def update_session_title_from_payload(payload: dict) -> UpdateSessionResul
     title = validation.title
 
     # --- DB write under the write lock ---------------------------------
-    # Matches ``views.py`` PATCH session: ``Session.asave(update_fields=["title"])``
-    # under the lock, then propagate to search + provider rename outside.
+    # Confirming unchanged text also validates the title as a user choice.
     session.title = title
+    session.title_origin = "user"
     await run_under_db_write_lock(
-        lambda: session.asave(update_fields=["title"])
+        lambda: session.asave(update_fields=["title", "title_origin"])
     )
 
     # --- search reindex (non-critical) ---------------------------------

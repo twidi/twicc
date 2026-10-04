@@ -631,6 +631,7 @@ class BaseSessionsWatcher:
         }
         if parsed.title:
             kwargs["title"] = parsed.title
+            kwargs["title_origin"] = "auto"
         if agent_settings is not None:
             for field, value in agent_settings._asdict().items():
                 if value is not None:
@@ -1109,6 +1110,24 @@ class BaseSessionsWatcher:
                 await broadcast_message(channel_layer, {
                     "type": "session_updated",
                     "session": serialize_session(session),
+                })
+
+        # A provider directive can target another session, including when
+        # this source is hidden. Apply each target's normal visibility gate.
+        broadcast_ids = {session.id}
+        if new_line_nums and parent_session is not None and (session.user_message_count > 0 or is_subagent):
+            broadcast_ids.add(parent_session.id)
+        for target_id in updates.title_updated_session_ids:
+            if target_id in broadcast_ids:
+                continue
+            broadcast_ids.add(target_id)
+            target = await get_session_by_id(target_id)
+            if target is not None and not target.hidden and (
+                target.user_message_count > 0 or target.type == SessionType.SUBAGENT
+            ):
+                await broadcast_message(channel_layer, {
+                    "type": "session_updated",
+                    "session": serialize_session(target),
                 })
 
         # Auto-add the project to workspaces whose patterns match its

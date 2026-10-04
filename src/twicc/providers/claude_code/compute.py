@@ -2622,10 +2622,12 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
         # tail-scan after we updated it, and we must refuse those.
         from .titles import check_protected_title, rename_session_in_jsonl
 
+        # Consume automatic echoes before protection can append a correction.
+        if self._should_skip_title_echo(target_session_id, title):
+            return False
         result = check_protected_title(target_session_id, title)
         if result.should_apply:
-            Session.objects.filter(id=target_session_id).update(title=title)
-            return True
+            return self._write_provider_title(target_session_id, title)
         if result.correction:
             # CLI wrote a stale title — re-write the correct one.
             # This places the correct title at the end of the JSONL,

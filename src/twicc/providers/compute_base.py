@@ -166,6 +166,7 @@ class ComputeApplyResult(NamedTuple):
 
     outcome: Literal["applied", "superseded", "missing"]
     folded_ancestor_id: str | None = None
+    title_updated_session_ids: tuple[str, ...] = ()
 
 
 class ToolResultInfo(NamedTuple):
@@ -1845,17 +1846,57 @@ class BaseSessionCompute:
         """
         return None
 
-    def apply_session_title(self, target_session_id: str, title: str) -> bool:
-        """
-        Persist ``title`` for ``target_session_id``; return ``True`` when applied.
+    @staticmethod
+    def apply_placeholder_title(target_session_id: str, title: str) -> bool:
+        """Stamp an initial title only if the database title is still NULL."""
+        return bool(Session.objects.filter(id=target_session_id, title__isnull=True).update(
+            title=title, title_origin='auto',
+        ))
 
-        The default implementation simply writes the new title to the DB.
-        Providers that need anti-stale-write protection (e.g. Claude Code
-        guarding against the CLI re-appending an old title) override this
-        to refuse the update and possibly re-write the correct value.
-        """
-        Session.objects.filter(id=target_session_id).update(title=title)
-        return True
+    @staticmethod
+    def _should_skip_title_echo(target_session_id: str, title: str) -> bool:
+        from twicc.title_echo import should_skip_automatic_title_echo
+
+        current = Session.objects.filter(id=target_session_id).values('title', 'title_origin').first()
+        return bool(current and should_skip_automatic_title_echo(target_session_id, title, **current))
+
+    @staticmethod
+    def _write_provider_title(target_session_id: str, title: str) -> bool:
+        """Stamp NULL transitions; leave the origin of existing titles intact."""
+        if BaseSessionCompute.apply_placeholder_title(target_session_id, title):
+            return True
+        return bool(Session.objects.filter(id=target_session_id).exclude(title=title).update(title=title))
+
+    def apply_session_title(self, target_session_id: str, title: str) -> bool:
+        """Apply a provider title unless it is a delayed automatic echo."""
+        if self._should_skip_title_echo(target_session_id, title):
+            return False
+        return self._write_provider_title(target_session_id, title)
+
+    @staticmethod
+    def _apply_title_maps(
+        placeholder_titles: dict[str, str],
+        provider_titles: dict[str, str],
+        apply_provider: Callable[[str, str], bool],
+    ) -> tuple[str, ...]:
+        """Return targets whose committed title/origin pair changes under the write lock."""
+        target_ids = dict.fromkeys((*placeholder_titles, *provider_titles))
+        before = {
+            row['id']: (row['title'], row['title_origin'])
+            for row in Session.objects.filter(id__in=target_ids).values('id', 'title', 'title_origin')
+        }
+        for target_id, title in placeholder_titles.items():
+            BaseSessionCompute.apply_placeholder_title(target_id, title)
+        for target_id, title in provider_titles.items():
+            apply_provider(target_id, title)
+        after = {
+            row['id']: (row['title'], row['title_origin'])
+            for row in Session.objects.filter(id__in=target_ids).values('id', 'title', 'title_origin')
+        }
+        return tuple(
+            target_id for target_id in target_ids
+            if target_id in after and before[target_id] != after[target_id]
+        )
 
     # ------------------------------------------------------------------
     # Provider metadata accessors
@@ -2803,7 +2844,8 @@ class BaseSessionCompute:
         # titles carried in the JSONL (Claude Code) come through the separate
         # ``extract_custom_title`` branch below and are unaffected.
         initial_title_set = session.title is not None
-        session_titles: dict[str, str] = {}
+        placeholder_titles: dict[str, str] = {}
+        provider_titles: dict[str, str] = {}
         user_message_count = 0
         affected_days: set[str] = set()
         seen_message_ids: set[str] = set()
@@ -2993,13 +3035,13 @@ class BaseSessionCompute:
             if item.kind == ItemKind.USER_MESSAGE and not initial_title_set:
                 title = self.extract_title_from_user_message(parsed)
                 if title:
-                    session_titles[session_id] = title
+                    placeholder_titles[session_id] = title
                     initial_title_set = True
             if item.kind == ItemKind.SYSTEM:
                 custom = self.extract_custom_title(parsed)
                 if custom is not None:
                     target_session_id, custom_title = custom
-                    session_titles[target_session_id or session_id] = custom_title
+                    provider_titles[target_session_id or session_id] = custom_title
             if item.kind == ItemKind.USER_MESSAGE:
                 user_message_count += 1
             if item.timestamp and (item.kind == ItemKind.USER_MESSAGE or item.cost):
@@ -3388,7 +3430,8 @@ class BaseSessionCompute:
                 # ``has_workflows``). Empty for providers without the hook.
                 **extra_session_fields,
             },
-            'titles': session_titles,
+            'placeholder_titles': placeholder_titles,
+            'provider_titles': provider_titles,
             'project_directory': project_directory,
             'affected_days': sorted(affected_days) if affected_days else None,
             'agent_links_backfill': agent_links_backfill or None,
@@ -3809,9 +3852,15 @@ class BaseSessionCompute:
             )
 
         # 8. Update session titles
-        titles = msg.get('titles', {})
-        for target_id, title in titles.items():
-            Session.objects.filter(id=target_id).update(title=title)
+        def apply_provider_title(target_id: str, title: str) -> bool:
+            # Full compute retains its existing lack of Claude protection corrections.
+            if BaseSessionCompute._should_skip_title_echo(target_id, title):
+                return False
+            return BaseSessionCompute._write_provider_title(target_id, title)
+
+        title_updated_session_ids = BaseSessionCompute._apply_title_maps(
+            msg.get('placeholder_titles', {}), msg.get('provider_titles', {}), apply_provider_title,
+        )
 
         # 9. Update project directory
         project_id = msg.get('project_id')
@@ -3848,7 +3897,7 @@ class BaseSessionCompute:
         if project_id:
             update_project_metadata(project_id)
 
-        return ComputeApplyResult("applied", folded_ancestor_id)
+        return ComputeApplyResult("applied", folded_ancestor_id, title_updated_session_ids)
 
     # ------------------------------------------------------------------
     # Watcher orchestration — concrete in later steps
@@ -3894,7 +3943,8 @@ class BaseSessionCompute:
         current_line_num = session.last_line
 
         # Track title updates (session_id -> title)
-        session_title_updates: dict[str, str] = {}
+        placeholder_titles: dict[str, str] = {}
+        provider_titles: dict[str, str] = {}
         # Track if we've already set initial title for this session (from first user message ever)
         initial_title_needs_set = session.title is None
 
@@ -4113,7 +4163,7 @@ class BaseSessionCompute:
             if item.kind == ItemKind.USER_MESSAGE and initial_title_needs_set:
                 title = self.extract_title_from_user_message(parsed)
                 if title:
-                    session_title_updates[session.id] = title
+                    placeholder_titles[session.id] = title
                     initial_title_needs_set = False
 
             # For subagents: create the link from the first line that
@@ -4158,7 +4208,7 @@ class BaseSessionCompute:
                 custom = self.extract_custom_title(parsed)
                 if custom is not None:
                     target_session_id, custom_title = custom
-                    session_title_updates[target_session_id or session.id] = custom_title
+                    provider_titles[target_session_id or session.id] = custom_title
 
         # Bulk create all items
         items_only = [item for item, _ in items_to_create]
@@ -4251,10 +4301,11 @@ class BaseSessionCompute:
 
         # Apply title updates through the provider's hook (which can refuse the
         # update and re-write a correction in the underlying storage).
-        for target_session_id, title in session_title_updates.items():
-            applied = self.apply_session_title(target_session_id, title)
-            if applied and target_session_id == session.id:
-                session.title = title
+        title_updated_session_ids = self._apply_title_maps(
+            placeholder_titles, provider_titles, self.apply_session_title,
+        )
+        if session.id in placeholder_titles or session.id in provider_titles:
+            session.refresh_from_db(fields=['title', 'title_origin'])
 
         # Update session tracking fields
         session.last_line = current_line_num
@@ -4456,6 +4507,7 @@ class BaseSessionCompute:
             agent_interaction_updates,
             stop_step.run_state_payloads,
             agent_run_signals.agents_resumed,
+            title_updated_session_ids,
         )
 
     @staticmethod
