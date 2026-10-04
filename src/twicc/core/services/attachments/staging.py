@@ -16,7 +16,7 @@ from pathlib import Path
 import orjson
 
 from twicc.core.services.attachments.types import AttachmentRef, PromotedEntry, StagedEntry
-from twicc.paths import get_composer_attachments_dir
+from twicc.paths import get_artifacts_dir, get_composer_attachments_dir
 from twicc.uploads.store import TEMP_FILE_PREFIX
 
 logger = logging.getLogger(__name__)
@@ -25,6 +25,8 @@ __all__ = [
     "ERROR_MISSING",
     "ERROR_NOT_READY",
     "AttachmentError",
+    "content_location",
+    "content_media_type",
     "entry_dir",
     "get_composer_attachments_dir",
     "load_entry",
@@ -72,6 +74,15 @@ def _validate_key(value: object, what: str) -> str:
     ):
         raise AttachmentError(ERROR_INVALID_REF, f"Invalid attachment {what}")
     return value
+
+
+def is_valid_bucket(value: object) -> bool:
+    """True when *value* is acceptable as the ``bucket`` of a ref."""
+    try:
+        _validate_key(value, "bucket")
+    except AttachmentError:
+        return False
+    return True
 
 
 def validate_ref(raw: object) -> AttachmentRef:
@@ -249,6 +260,94 @@ def load_entry(ref: AttachmentRef) -> StagedEntry:
     except OSError:
         raise AttachmentError(ERROR_NOT_READY, "The file is not readable") from None
     return StagedEntry(ref, filename, size, path, None)
+
+
+# ── Content ──
+
+# Kind detection never reads more than this from the start of a file.
+HEAD_BYTES = 64 * 1024
+OCTET_STREAM = "application/octet-stream"
+TEXT_PLAIN = "text/plain; charset=utf-8"
+_RASTER_MAGIC = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+# Text a browser could run or render as a document: never served inline, even as text/plain.
+_ACTIVE_SUFFIXES = frozenset(
+    {".htm", ".html", ".shtml", ".xht", ".xhtml", ".svg", ".svgz", ".xml", ".xsl", ".xslt", ".js", ".mjs", ".cjs"}
+)
+
+
+def content_location(entry: StagedEntry) -> Path:
+    """The real path of the bytes of a loaded entry.
+
+    A staged entry: its ``file/<filename>`` (already confined by :func:`load_entry`). A promoted
+    entry: its ``final_path``, only when it resolves to a regular file directly inside
+    ``artifacts/<session_id>/attachments/``. Raises :class:`AttachmentError` (``attachment_missing``)
+    otherwise.
+    """
+    if entry.promoted is None:
+        if entry.path is None:
+            raise AttachmentError(ERROR_MISSING, "Attachment not found")
+        return entry.path
+    promoted = entry.promoted
+    if not _is_plain_basename(promoted.session_id):
+        raise AttachmentError(ERROR_MISSING, "Invalid promotion record")
+    allowed = Path(os.path.realpath(get_artifacts_dir() / promoted.session_id / "attachments"))
+    real = Path(os.path.realpath(promoted.final_path))
+    if real.parent != allowed or not real.is_file():
+        raise AttachmentError(ERROR_MISSING, "The promoted file is outside its attachments directory")
+    return real
+
+
+def _read_head(path: Path) -> bytes:
+    with open(path, "rb") as file:
+        return file.read(HEAD_BYTES)
+
+
+def _is_utf8_text(head: bytes, size: int) -> bool:
+    """The text rule of spec §6.4 on a bounded head (a sequence cut at the head's end is tolerated)."""
+    if size == 0 or b"\x00" in head:
+        return False
+    try:
+        head.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        # Only a multi-byte sequence cut by the head boundary is tolerated.
+        return size > len(head) and exc.reason == "unexpected end of data" and exc.start >= len(head) - 3
+    return True
+
+
+def _looks_like_markup(head: bytes) -> bool:
+    return head.removeprefix(b"\xef\xbb\xbf").lstrip()[:1] == b"<"
+
+
+def content_media_type(entry: StagedEntry) -> tuple[str, bool]:
+    """``(media type, inline)`` for the content endpoint, from at most the first 64 KiB of the bytes.
+
+    Inline only for raster images (PNG, JPEG, GIF, WebP), PDF and UTF-8 plain text; everything else,
+    including text that is markup or script, is ``application/octet-stream`` served as an
+    attachment. The type always comes from the bytes: a file name can only refuse inline, never
+    grant it.
+    """
+    path = content_location(entry)
+    head = _read_head(path)
+    for magic, media_type in _RASTER_MAGIC:
+        if head.startswith(magic):
+            return media_type, True
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp", True
+    if head.startswith(b"%PDF-"):
+        return "application/pdf", True
+    size = path.stat().st_size
+    if (
+        _is_utf8_text(head, size)
+        and not _looks_like_markup(head)
+        and Path(entry.filename).suffix.lower() not in _ACTIVE_SUFFIXES
+    ):
+        return TEXT_PLAIN, True
+    return OCTET_STREAM, False
 
 
 # ── Upload completion hook ──

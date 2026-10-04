@@ -5,6 +5,8 @@
 - :func:`settle_entry_uploads`: the settle rule, run for every live upload of an entry.
 - :func:`reset_entry`, :func:`is_released`, :func:`touch_upload_entry`: the blocking entry work
   of a creation and of the transfer progress.
+- :func:`release_refs`, :func:`status_refs`, :func:`touch_refs`: release, status and heartbeat of
+  entries (the REST endpoints and the server release at delivery).
 
 ``twicc.uploads.views`` imports this module, so it is only imported here inside functions.
 Design: docs/plans/2026-10-03-composer-attachments-any-file-design.md §6.1.1 and §6.1.4.
@@ -121,7 +123,7 @@ def touch_entry(ref: AttachmentRef) -> None:
     """Set an existing entry directory's mtime to now; never creates it, never touches its markers."""
     entry = staging.entry_dir(ref)
     try:
-        if entry.is_symlink() or not entry.is_dir():
+        if entry.parent.is_symlink() or entry.is_symlink() or not entry.is_dir():
             return
         os.utime(entry)
     except OSError:
@@ -181,3 +183,151 @@ async def settle_entry_uploads(ref: AttachmentRef) -> None:
         response = await upload_views._run_locked(upload_id, settle, label="settle")
         if response.status_code not in _SETTLED_CODES:
             raise SettleError(upload_id, response.status_code)
+
+
+# ── Release (spec §6.1.4) ──
+
+
+def _write_release_tombstone(ref: AttachmentRef) -> None:
+    """Create ``<bucket>/.released/<attachment_id>`` (and its parents), refusing symlinked parents."""
+    marker = released_marker(ref)
+    bucket = marker.parent.parent
+    _require_plain_dir(bucket)
+    _require_plain_dir(marker.parent)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    _require_plain_dir(marker.parent)  # re-checked: created meanwhile by someone else
+    marker.touch()
+
+
+def remove_entry_dir(ref: AttachmentRef) -> None:
+    """Remove the entry directory; a symlinked entry is unlinked, never followed. Absent: nothing."""
+    entry = staging.entry_dir(ref)
+    _require_plain_dir(entry.parent)
+    if entry.is_symlink() or (entry.exists() and not entry.is_dir()):
+        entry.unlink()
+    elif entry.exists():
+        shutil.rmtree(entry)
+
+
+async def _release_one(ref: AttachmentRef) -> None:
+    async with composer_creation_guard():
+        # The tombstone first: even when the settle fails, no creation can recreate the entry.
+        await asyncio.to_thread(_write_release_tombstone, ref)
+        await settle_entry_uploads(ref)
+        await asyncio.to_thread(remove_entry_dir, ref)
+
+
+async def release_refs(refs: tuple[AttachmentRef, ...]) -> None:
+    """Release each entry: tombstone, settle of its uploads, removal of its directory.
+
+    Each entry is released under the creation lock (so no composer creation interleaves), its
+    uploads under their own locks. An absent entry still gets its tombstone. A promoted file in
+    ``artifacts/`` is never touched. Every ref is attempted; the first error (a
+    :class:`SettleError` leaves its entry in place) is raised once all were tried.
+    """
+    first_error: BaseException | None = None
+    for ref in refs:
+        try:
+            await _release_one(staging.validate_ref(ref))
+        except Exception as exc:
+            logger.warning("Composer attachments: cannot release %s", ref, exc_info=True)
+            if first_error is None:
+                first_error = exc
+    if first_error is not None:
+        raise first_error
+
+
+# ── Status (spec §6.1.2) ──
+
+STATE_PROMOTED = "promoted"
+STATE_READY = "ready"
+STATE_UPLOADING = "uploading"
+STATE_MISSING = "missing"
+
+
+def _live_uploads_by_key() -> dict[str, dict]:
+    """The newest non-terminal composer upload of each entry key."""
+    live: dict[str, dict] = {}
+    for meta in store.list_metadata():
+        origin = meta["origin"]
+        if store.is_terminal(meta["state"]) or not isinstance(origin, dict):
+            continue
+        if origin.get("panel") != COMPOSER_PANEL or not isinstance(origin.get("key"), str):
+            continue
+        current = live.get(origin["key"])
+        if current is None or str(meta["created_at"]) > str(current["created_at"]):
+            live[origin["key"]] = meta
+    return live
+
+
+def _upload_offset(meta: dict) -> int:
+    if meta["state"] == store.STATE_FINALIZING:
+        return meta["size"]
+    part = store.part_size(meta["id"])
+    return min(part, meta["size"]) if part is not None else meta["offset"]
+
+
+def _entry_state(ref: AttachmentRef) -> str | None:
+    """``promoted`` / ``ready`` from the markers, ``missing`` for a promoted entry whose file is gone,
+    ``None`` when the markers say nothing (the uploads decide)."""
+    try:
+        loaded = staging.load_entry(ref)
+    except staging.AttachmentError:
+        entry = staging.entry_dir(ref)
+        if os.path.lexists(entry / staging.PROMOTED_MARKER):
+            return STATE_MISSING  # a missing promoted target wins over an old ready.json
+        return None
+    if loaded.promoted is None:
+        return STATE_READY
+    try:
+        staging.content_location(loaded)
+    except staging.AttachmentError:
+        return STATE_MISSING
+    return STATE_PROMOTED
+
+
+def status_refs(refs: tuple[AttachmentRef, ...]) -> list[dict]:
+    """The state of each entry, in the requested order (blocking).
+
+    First match wins: ``promoted`` (its promoted file still exists), ``ready``, ``uploading`` (a
+    non-terminal upload targets it; with its ``client_id`` and ``offset``), ``missing``.
+    """
+    refs = tuple(staging.validate_ref(ref) for ref in refs)
+    live = _live_uploads_by_key() if refs else {}
+    statuses = []
+    for ref in refs:
+        item = {"bucket": ref.bucket, "id": ref.id}
+        state = _entry_state(ref)
+        meta = live.get(origin_key(ref))
+        if state is None and meta is not None:
+            item.update(state=STATE_UPLOADING, client_id=meta["client_id"], offset=_upload_offset(meta))
+        else:
+            item["state"] = state or STATE_MISSING
+        statuses.append(item)
+    return statuses
+
+
+# ── Heartbeat (spec §6.1.2 ``touch/``) ──
+
+HOLDER_DRAFT = "draft"
+HOLDER_SNAPSHOT = "snapshot"
+HOLDERS = frozenset({HOLDER_DRAFT, HOLDER_SNAPSHOT})
+
+
+def touch_refs(refs: tuple[AttachmentRef, ...], *, holder: str) -> None:
+    """Refresh the mtime of each existing entry (blocking); never creates one.
+
+    ``holder="draft"`` also removes ``committed.json``: the entry is a draft attachment again and
+    gets the 30-day retention. ``holder="snapshot"`` only touches. ``ValueError`` for another holder.
+    """
+    if holder not in HOLDERS:
+        raise ValueError(f"invalid holder: {holder!r}")
+    for ref in refs:
+        ref = staging.validate_ref(ref)
+        entry = staging.entry_dir(ref)
+        if holder == HOLDER_DRAFT and not entry.parent.is_symlink() and not entry.is_symlink() and entry.is_dir():
+            try:
+                (entry / staging.COMMITTED_MARKER).unlink(missing_ok=True)
+            except OSError:
+                logger.warning("Composer attachments: cannot remove the commit marker of %s", entry, exc_info=True)
+        touch_entry(ref)
