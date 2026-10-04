@@ -138,9 +138,9 @@ async function handleMove() {
         return
     }
 
-    const data = await response.json()
+    const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-        errorMessage.value = data.error || 'Failed to move'
+        errorMessage.value = data.error || `Failed to move (HTTP ${response.status})`
         isMoving.value = false
         return
     }

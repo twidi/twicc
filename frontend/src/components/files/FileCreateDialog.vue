@@ -78,9 +78,9 @@ async function handleSave() {
         return
     }
 
-    const data = await response.json()
+    const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-        errorMessage.value = data.error || 'Failed to create'
+        errorMessage.value = data.error || `Failed to create (HTTP ${response.status})`
         isSaving.value = false
         return
     }

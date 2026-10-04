@@ -52,9 +52,9 @@ async function handleDelete() {
         return
     }
 
-    const data = await response.json()
+    const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-        errorMessage.value = data.error || 'Failed to delete'
+        errorMessage.value = data.error || `Failed to delete (HTTP ${response.status})`
         isDeleting.value = false
         return
     }

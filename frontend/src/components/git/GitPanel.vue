@@ -1638,6 +1638,7 @@ onMounted(() => {
                         :lazy-load-fn="null"
                         :project-id="projectId"
                         :session-id="sessionId"
+                        :is-draft="isDraft"
                         :show-refresh="isViewingIndex"
                         :is-mobile="isMobile"
                         :commented-paths="commentedPaths"
@@ -1735,6 +1736,7 @@ onMounted(() => {
                                 ref="filePaneRef"
                                 :project-id="projectId"
                                 :session-id="sessionId"
+                                :is-draft="isDraft"
                                 :file-path="selectedFilePath"
                                 :active="active"
                                 diff-mode
