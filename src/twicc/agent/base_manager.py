@@ -467,6 +467,7 @@ class BaseAgentManager:
         ephemeral: bool = False,
         ephemeral_admission=None,
         ephemeral_ids: list[str],
+        prepared_attachments: PreparedAttachments | None = None,
         **start_kwargs: Any,
     ) -> str:
         """Build a provider agent, bind it to its canonical id, register and start.
@@ -491,6 +492,13 @@ class BaseAgentManager:
         ``agent.start``. Callers pass ``content`` only when they have one, so
         default calls keep their exact legacy kwargs.
 
+        ``prepared_attachments`` (composer attachments prepared before the
+        lock for a session whose canonical id is not known yet: a Codex new
+        session) is a factory kwarg, not a start kwarg: it goes to
+        ``_create_agent`` with ``initial_text=text``, which finishes it for the
+        canonical id before the binding below. Forwarded only when present, so
+        default calls keep their exact legacy factory kwargs.
+
         Must be called while holding ``self._lock``.
         """
         with provider_log_context(self.provider):
@@ -499,9 +507,13 @@ class BaseAgentManager:
                 "Creating agent for %s %s, project %s",
                 label, session_id, project_id,
             )
+            factory_kwargs: dict[str, Any] = {"ephemeral": True} if ephemeral else {}
+            if prepared_attachments is not None:
+                factory_kwargs["prepared_attachments"] = prepared_attachments
+                factory_kwargs["initial_text"] = text
             agent = await self._create_agent(
                 session_id, project_id, cwd, resume=resume, settings=settings,
-                **({"ephemeral": True} if ephemeral else {}),
+                **factory_kwargs,
             )
 
             # Once ``_create_agent`` returns, the agent owns external resources

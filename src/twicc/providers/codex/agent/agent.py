@@ -17,6 +17,7 @@ to Codex's reviewer agent, and ``yolo`` keeps command approvals dormant.
 from __future__ import annotations
 
 import asyncio
+import base64
 import concurrent.futures
 import logging
 import re
@@ -66,6 +67,8 @@ from twicc.agent.shell_notice import (
 from twicc.agent.states import build_background_work
 from twicc.context_injection import apply_pending_context
 from twicc.core.enums import Provider
+from twicc.core.services.attachments.manifest import build_manifest
+from twicc.core.services.attachments.types import AttachmentContent
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
 
 from ..permission_modes import resolve_codex_turn_overrides
@@ -120,6 +123,11 @@ _AUTO_REVIEW_RETRY_PROMPT = "Retry the exact action I just approved."
 # prompt — the exact text the official Codex TUI submits for "Yes, implement
 # this plan" (codex-rs/tui/src/chatwidget/plan_implementation.rs).
 _PLAN_IMPLEMENTATION_MESSAGE = "Implement the plan."
+
+
+def _content_kwargs(content: AttachmentContent | None) -> dict[str, AttachmentContent]:
+    """The ``content`` kwarg of a turn, or nothing: legacy turns keep their exact calls."""
+    return {"content": content} if content is not None else {}
 
 
 class _TrackedShell(NamedTuple):
@@ -465,6 +473,11 @@ class CodexAgent(BaseAgent):
         self._ephemeral_cost_unavailable = False
         self._codex = codex
         self._thread = thread
+        # The committed composer attachments of a brand-new session's first
+        # message: finished by the manager's ``_create_agent`` for the canonical
+        # id, after the start kwargs were fixed. ``start`` consumes and clears
+        # it once, so a later send or steer never replays it.
+        self._initial_content: AttachmentContent | None = None
         # Effective trust of the project, resolved once by the manager at
         # thread start/resume (trust design §13.4). While True, the per-turn
         # policy overrides are clamped to the untrusted-allowed set — which
@@ -701,6 +714,7 @@ class CodexAgent(BaseAgent):
         *,
         images: list[dict] | None = None,
         command: HardcodedCommand | None = None,
+        content: AttachmentContent | None = None,
         **kwargs: Any,
     ) -> None:
         """Wire the state-change callback and schedule the first turn.
@@ -709,6 +723,12 @@ class CodexAgent(BaseAgent):
         forwarded by the manager. ``documents`` is intentionally absent —
         Codex has no protocol for them, the manager drops them upstream
         with a warning.
+
+        ``content`` is the committed composer attachments of a resumed
+        session's message. A brand-new session's first message carries them in
+        ``_initial_content`` instead (finished by the manager's
+        ``_create_agent`` once the canonical id was known): consumed and
+        cleared here, once, ahead of the fixed legacy start kwargs.
 
         ``command`` is set on the "run a hardcoded command without opening a
         turn" paths: the manager passes empty text + ``command=…`` either to
@@ -721,6 +741,9 @@ class CodexAgent(BaseAgent):
         """
         self._note_external_send()
         self._state_change_callback = on_state_change
+        if self._initial_content is not None:
+            content, self._initial_content = self._initial_content, None
+            images = None
         # Whether this run is a (cold) resume of an existing thread rather than a
         # brand-new session. Read by ``CodexAgentManager._on_state_change`` to
         # decide whether to re-assert our title after the first turn — Codex
@@ -759,7 +782,7 @@ class CodexAgent(BaseAgent):
         self.last_activity = time.time()
         await self._notify_state_change()
 
-        self._schedule_turn(text, images)
+        self._schedule_turn(text, images, **_content_kwargs(content))
         return True
 
     async def send(
@@ -767,6 +790,7 @@ class CodexAgent(BaseAgent):
         text: str,
         *,
         images: list[dict] | None = None,
+        content: AttachmentContent | None = None,
         **kwargs: Any,
     ) -> bool:
         """Schedule a new turn, or steer the active one.
@@ -805,7 +829,7 @@ class CodexAgent(BaseAgent):
         if self.state == AgentState.ASSISTANT_TURN:
             monitor = getattr(self, "_goal_monitor", None)
             if monitor is not None:
-                turn_input = await self._build_turn_input(text, images)
+                turn_input = await self._build_turn_input(text, images, content=content)
                 try:
                     await monitor.steer(turn_input)
                 except TransportClosedError:
@@ -826,7 +850,7 @@ class CodexAgent(BaseAgent):
                 self._subagent_hold_active = False
                 await self._broadcast_process_label("")
                 self.last_activity = time.time()
-                self._schedule_turn(text, images)
+                self._schedule_turn(text, images, **_content_kwargs(content))
                 return True
 
             # ``_run_turn`` publishes ``_current_turn`` only after the
@@ -851,7 +875,7 @@ class CodexAgent(BaseAgent):
                     "Cannot steer: turn ended before steer could be issued",
                 )
 
-            turn_input = await self._build_turn_input(text, images)
+            turn_input = await self._build_turn_input(text, images, content=content)
             try:
                 await turn_handle.steer(turn_input)
             except TransportClosedError:
@@ -872,7 +896,7 @@ class CodexAgent(BaseAgent):
         self.last_activity = time.time()
         await self._notify_state_change()
 
-        self._schedule_turn(text, images)
+        self._schedule_turn(text, images, **_content_kwargs(content))
         return True
 
     async def _send_after_rejected_steer(self, turn_input: list[InputItem]) -> bool:
@@ -936,10 +960,12 @@ class CodexAgent(BaseAgent):
         await self._notify_state_change()
         return True
 
-    def _schedule_turn(self, text: str, images: list[dict] | None) -> None:
+    def _schedule_turn(
+        self, text: str, images: list[dict] | None, *, content: AttachmentContent | None = None,
+    ) -> None:
         """Spawn the background task that drives one turn end-to-end."""
         self._turn_task = asyncio.create_task(
-            self._run_turn(text, images),
+            self._run_turn(text, images, **_content_kwargs(content)),
             name=f"codex-turn-{self.session_id}",
         )
 
@@ -947,8 +973,13 @@ class CodexAgent(BaseAgent):
         self,
         text: str,
         images: list[dict] | None,
+        *,
+        content: AttachmentContent | None = None,
     ) -> list[InputItem]:
         """Convert the WS attachment payload to a Codex SDK ``Input`` list.
+
+        ``content`` (committed composer attachments, spec §7.5) replaces
+        ``text`` and ``images``: see :meth:`_build_attachment_turn_input`.
 
         Each WS image block is the Claude-shaped::
 
@@ -976,6 +1007,8 @@ class CodexAgent(BaseAgent):
         no-op when nothing changed. ``compute_base`` scrubs the block from the
         stored copy. See :mod:`twicc.context_injection`.
         """
+        if content is not None:
+            return await self._build_attachment_turn_input(content)
         await self._reconcile_context()
         text = apply_pending_context(self.session_id, text)
         items: list[InputItem] = []
@@ -1035,8 +1068,39 @@ class CodexAgent(BaseAgent):
             sandbox_policy=sandbox_policy,
         )
 
+    async def _build_attachment_turn_input(self, content: AttachmentContent) -> list[InputItem]:
+        """The ordered input of a composer-attachments message (spec §7.5).
+
+        The inline images as data-URL ``ImageInput`` items in manifest order
+        (never ``LocalImageInput``, whose own ``[Image #N]`` tags would
+        contradict the manifest numbering), then the manifest as its own
+        ``TextInput``, then the folded ``content.user_text`` as the last
+        ``TextInput``, omitted when the fold yields nothing. Same chokepoint
+        and fold as the legacy path (``_reconcile_context`` →
+        ``apply_pending_context``; Codex has no goal instruction), applied to
+        the user-text part only.
+        """
+        # Built first: a malformed content fails before the one-shot pending
+        # context is consumed.
+        inline_entries = [entry for entry in content.manifest.entries if entry.mode == "inline"]
+        if len(inline_entries) != len(content.native_parts):
+            raise ValueError("The native parts do not match the inline manifest entries")
+        items: list[InputItem] = []
+        for part in content.native_parts:
+            if part.kind != "image":
+                raise ValueError(f"Codex has no native input for a {part.kind} attachment")
+            data = base64.b64encode(part.data).decode("ascii")
+            items.append(ImageInput(url=f"data:{part.media_type};base64,{data}"))
+        items.append(TextInput(build_manifest(content.manifest)))
+        await self._reconcile_context()
+        user_text = apply_pending_context(self.session_id, content.user_text)
+        if user_text:
+            items.append(TextInput(user_text))
+        return items
+
     async def _run_turn(
-        self, text: str, images: list[dict] | None, *, turn_handle: AsyncTurnHandle | None = None,
+        self, text: str, images: list[dict] | None, *,
+        content: AttachmentContent | None = None, turn_handle: AsyncTurnHandle | None = None,
     ) -> None:
         """Open one turn, wait for it to complete, transition to USER_TURN.
 
@@ -1075,7 +1139,7 @@ class CodexAgent(BaseAgent):
         # ``thread_start``, so the current turn keeps its policy but the
         # next one picks up the new picker value.
         if turn_handle is None:
-            turn_input = await self._build_turn_input(text, images)
+            turn_input = await self._build_turn_input(text, images, content=content)
             try:
                 turn_handle = await self._open_turn(turn_input)
             except asyncio.CancelledError:
