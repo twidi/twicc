@@ -9,7 +9,7 @@ import queue
 import threading
 from typing import NamedTuple
 
-from django.db import close_old_connections
+from django.db import close_old_connections, connections
 from django.db.models import Case, F, Value, When
 from django.db.models.functions import Greatest
 
@@ -29,6 +29,7 @@ from twicc.paths import get_data_dir
 logger = logging.getLogger(__name__)
 
 EPOCH_BACKSTOP_SECONDS = 5
+SUPERVISOR_INTERVAL_SECONDS = 5
 
 
 class AddCommand(NamedTuple):
@@ -86,6 +87,13 @@ class Monitor:
         self.has_session_snapshot = False
         self.session_read_at = None
         self.pending_rebase = self.numbering is None
+        self.failure_count = 0
+        self.failure_position = None
+        self.position_failures = 0
+        self.retry_at = 0
+        self.retry_wait = False
+        self.failure_log_at = None
+        self.failed_request_id = None
 
     @property
     def generation(self):
@@ -117,6 +125,7 @@ class Emission(NamedTuple):
     event_id: str
     body: bytes
     cursor: CursorWrite | None
+    state_writes: tuple = ()
 
 
 class RebaseWrite(NamedTuple):
@@ -146,6 +155,8 @@ class EventsRuntime:
         self.loop = None
         self.thread = None
         self.writer_task = None
+        self.supervisor_task = None
+        self.emission_lock = threading.RLock()
         self.stop_requested = threading.Event()
         # Only _worker and its synchronous helpers access this table.
         self.monitors = {}
@@ -166,37 +177,91 @@ class EventsRuntime:
         self.commands.put(RebaseCommand(session_id))
 
     async def start(self):
-        """Start the consumers. Supervisor and delivery lifecycle extend this seam."""
+        """Start consumers; even a failed initial load is supervised."""
         self.loop = asyncio.get_running_loop()
-        self.writer_task = asyncio.create_task(self.run_writer(), name="mcp-events-writer")
+        self._ensure_writer()
+        self.supervisor_task = asyncio.create_task(self._supervise(), name="mcp-events-supervisor")
+        try:
+            self._start_worker()
+        except Exception:
+            logger.exception("Could not start MCP events worker")
+
+    def _start_worker(self):
         self.thread = threading.Thread(target=self._worker, name="mcp-events-worker", daemon=True)
         self.thread.start()
 
-    def request_stop(self):
-        if not self.stop_requested.is_set():
-            self.stop_requested.set()
-            self.commands.put(StopCommand())
-
-    async def close(self):
-        """Join without blocking the loop, then drain posted state writes."""
-        self.request_stop()
-        if self.thread is not None:
-            await asyncio.to_thread(self.thread.join, 5)
-        if self.writer_task is None:
-            return
-        if self.writer_task.done():
+    def _ensure_writer(self):
+        if self.writer_task is None or self.writer_task.done():
+            if self.writer_task is not None and not self.writer_task.cancelled():
+                error = self.writer_task.exception()
+                if error is not None:
+                    logger.error("MCP events writer terminated: %s", type(error).__name__)
             self.writer_task = asyncio.create_task(self.run_writer(), name="mcp-events-writer")
+
+    async def _write_barrier(self):
+        """Flush prior posts, recovering writer death without replacing the barrier."""
+        self._ensure_writer()
         barrier = self.loop.create_future()
-        # Land behind call_soon_threadsafe writes already posted by the worker.
+        # Thread-safe posts already on the loop precede this callback.
         self.loop.call_soon(self.writes.put_nowait, WriteBarrier(barrier))
         try:
-            await asyncio.wait_for(barrier, 2)
+            while not barrier.done():
+                await asyncio.wait({barrier, self.writer_task}, return_when=asyncio.FIRST_COMPLETED)
+                if not barrier.done():
+                    self._ensure_writer()
+            await barrier
+        finally:
+            if not barrier.done():
+                barrier.cancel()
+
+    async def _supervise_once(self):
+        self._ensure_writer()
+        if self.thread is None or not self.thread.is_alive():
+            await self._write_barrier()
+            if not self.stop_requested.is_set():
+                self._start_worker()
+
+    async def _supervise(self):
+        while not self.stop_requested.is_set():
+            await asyncio.sleep(SUPERVISOR_INTERVAL_SECONDS)
+            if self.stop_requested.is_set():
+                return
+            try:
+                await self._supervise_once()
+            except Exception:
+                logger.exception("MCP events supervision failed")
+
+    def request_stop(self):
+        # Make stop and the worker's prepared emission commit indivisible.
+        with self.emission_lock:
+            if not self.stop_requested.is_set():
+                self.stop_requested.set()
+                self.commands.put(StopCommand())
+
+    async def close(self):
+        """Stop detection and delivery, then give state writes a bounded drain."""
+        if self.supervisor_task is not None:
+            self.supervisor_task.cancel()
+        self.request_stop()
+        if self.supervisor_task is not None:
+            with suppress(asyncio.CancelledError):
+                await self.supervisor_task
+        if self.thread is not None and self.thread.ident is not None:
+            await asyncio.to_thread(self.thread.join, 5)
+        deliveries = tuple(self.delivery_tasks)
+        for task in deliveries:
+            task.cancel()
+        if deliveries:
+            await asyncio.gather(*deliveries, return_exceptions=True)
+        if self.loop is None:
+            return
+        try:
+            await asyncio.wait_for(self._write_barrier(), 2)
         except TimeoutError:
             logger.warning("Timed out draining event state writes")
         finally:
             self.writer_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.writer_task
+            await asyncio.gather(self.writer_task, return_exceptions=True)
 
     def _worker(self):
         # Plain Thread does not inherit the backend-loop ContextVar.
@@ -207,8 +272,10 @@ class EventsRuntime:
             while self._drain_commands():
                 self._tick()
                 self.stop_requested.wait(POLL_INTERVAL_SECONDS)
+        except Exception:
+            logger.exception("MCP events worker terminated")
         finally:
-            close_old_connections()
+            connections.close_all()
 
     def _load_monitors(self):
         self.monitors = {}
@@ -287,14 +354,62 @@ class EventsRuntime:
                 monitor.dormant = True
             if monitor.dormant:
                 continue
-            snapshot = monitor.session_snapshot
-            if (monitor.pending_rebase or monitor.session_read_at is None
-                    or self.clock.monotonic() - monitor.session_read_at >= EPOCH_BACKSTOP_SECONDS):
-                snapshot = self._read_monitor_session(monitor)
-            if monitor.pending_rebase:
-                self._apply_rebase(monitor, snapshot)
+            if self.clock.monotonic() < monitor.retry_at:
                 continue
-            self._tick_monitor(monitor)
+            monitor.failed_request_id = None
+            try:
+                if monitor.retry_wait:
+                    monitor.wait = self._new_wait(monitor)
+                    monitor.retry_wait = False
+                snapshot = monitor.session_snapshot
+                if (monitor.pending_rebase or monitor.session_read_at is None
+                        or self.clock.monotonic() - monitor.session_read_at >= EPOCH_BACKSTOP_SECONDS):
+                    snapshot = self._read_monitor_session(monitor)
+                if monitor.pending_rebase:
+                    self._apply_rebase(monitor, snapshot)
+                else:
+                    self._tick_monitor(monitor)
+            except Exception:
+                self._monitor_failed(monitor)
+            else:
+                monitor.failure_count = monitor.position_failures = 0
+                monitor.failure_position = None
+
+    def _monitor_failed(self, monitor):
+        close_old_connections()
+        now = self.clock.monotonic()
+        monitor.failure_count += 1
+        position = (monitor.cursor_line, monitor.wait.scanned_up_to)
+        monitor.position_failures = monitor.position_failures + 1 if position == monitor.failure_position else 1
+        monitor.failure_position = position
+        monitor.retry_at = now + min(0.25 * 2 ** min(monitor.failure_count - 1, 8), 60)
+        if monitor.failure_count == 1:
+            logger.exception("MCP event monitor failed for subscription %s", monitor.id)
+            monitor.failure_log_at = now
+        elif now - monitor.failure_log_at >= 60:
+            logger.warning("MCP event monitor %s has failed %s consecutive ticks", monitor.id, monitor.failure_count)
+            monitor.failure_log_at = now
+        if monitor.position_failures >= 3:
+            monitor.retry_wait = False
+            if monitor.failed_request_id is not None:
+                self._remember_request(monitor, monitor.failed_request_id)
+        else:
+            # Constructor failures remain isolated and retry at the same pace.
+            monitor.retry_wait = True
+            try:
+                monitor.wait = self._new_wait(monitor)
+            except Exception:
+                pass
+            else:
+                monitor.retry_wait = False
+
+    @staticmethod
+    def _remember_request(monitor, request_id):
+        if request_id not in monitor.reported_request_ids:
+            monitor.reported_request_ids.add(request_id)
+            monitor.reported_request_order.append(request_id)
+            while len(monitor.reported_request_order) > 256:
+                monitor.reported_request_ids.discard(monitor.reported_request_order.popleft())
 
     def _apply_rebase(self, monitor, snapshot):
         """Prepare a new numbering from one ready snapshot, then post its CAS."""
@@ -354,6 +469,7 @@ class EventsRuntime:
                             if request.request_id not in monitor.reported_request_ids), None)
             if request is None:
                 return
+            monitor.failed_request_id = request.request_id
 
         item_timestamp = None
         if outcome in ("replied", "provider_error"):
@@ -418,23 +534,27 @@ class EventsRuntime:
                                  max(monitor.cursor_at, conclusion_time))
             wait = self._new_wait(monitor, cursor_line=next_cursor)
         turn = TurnWrite(*monitor.generation, turn_open, started, opened_by, start_line)
-        emission = Emission(*monitor.generation, occurrence["eventId"], body, cursor) if body is not None else None
+        emission = Emission(*monitor.generation, occurrence["eventId"], body, cursor, (turn,)) if body is not None else None
 
         # All queries, formatting and state preparation finish before posting.
         # A shutdown drop leaves the conclusion's state untouched for restart.
-        if self.stop_requested.is_set():
-            return
-        if body is not None and not self.post_emission(emission):
-            return
-        self.post_write(turn)
-        if body is None and cursor is not None:
-            self.post_write(cursor)
-        self._apply_turn(monitor, turn)
-        monitor.wait = wait
-        monitor.reported_request_ids, monitor.reported_request_order = request_ids, request_order
-        if cursor is not None:
-            monitor.cursor_line, monitor.cursor_at = cursor.cursor_line, cursor.cursor_at
-            monitor.first = False
+        with self.emission_lock:
+            if self.stop_requested.is_set():
+                return
+            if body is not None and not self.post_emission(emission):
+                return
+            # Production emissions admit these writes on the loop, together.
+            # Test sinks synchronously accept delivery at the posting boundary.
+            if body is None or self.emission_sink is not None:
+                self.post_write(turn)
+            if body is None and cursor is not None:
+                self.post_write(cursor)
+            self._apply_turn(monitor, turn)
+            monitor.wait = wait
+            monitor.reported_request_ids, monitor.reported_request_order = request_ids, request_order
+            if cursor is not None:
+                monitor.cursor_line, monitor.cursor_at = cursor.cursor_line, cursor.cursor_at
+                monitor.first = False
 
     def _detect_new_turn(self, monitor, info):
         if (info is None or info.state not in (AgentState.STARTING, AgentState.ASSISTANT_TURN)
@@ -477,11 +597,16 @@ class EventsRuntime:
         return True
 
     def _start_delivery(self, emission):
-        if self.stop_requested.is_set():
-            return
-        task = asyncio.create_task(self.delivery.deliver(emission), name="mcp-event-delivery")
-        self.delivery_tasks.add(task)
-        task.add_done_callback(self._delivery_finished)
+        with self.emission_lock:
+            if self.stop_requested.is_set():
+                return
+            task = asyncio.create_task(self.delivery.deliver(emission), name="mcp-event-delivery")
+            self.delivery_tasks.add(task)
+            task.add_done_callback(self._delivery_finished)
+            # A queued emission dropped at shutdown also drops its turn writes.
+            # Its transient worker memory is discarded when the worker exits.
+            for item in emission.state_writes:
+                self.writes.put_nowait(item)
 
     def _delivery_finished(self, task):
         self.delivery_tasks.discard(task)
@@ -501,7 +626,7 @@ class EventsRuntime:
                     if not item.future.done():
                         item.future.set_result(None)
                 else:
-                    await storage.write(lambda: self._apply_write(item))
+                    await storage.write(lambda item=item: self._apply_write(item))
             except Exception:
                 logger.exception("Event state write failed for subscription %s", getattr(item, "id", "unknown"))
             finally:
