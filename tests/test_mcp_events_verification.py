@@ -2,6 +2,8 @@
 
 import asyncio
 import base64
+import gc
+import weakref
 from datetime import UTC, datetime
 import time
 import ssl
@@ -210,7 +212,16 @@ async def test_all_cancelled_callers_leave_no_unhandled_failure():
         caller.cancel()
         await asyncio.gather(caller, return_exceptions=True)
         gate.set()
-        await asyncio.gather(leader, return_exceptions=True)
+        # A done callback signals completion without retrieving the exception.
+        # Awaiting/gathering the leader would mask a missing _finished retrieval.
+        completed = asyncio.Event()
+        leader.add_done_callback(lambda task: completed.set())
+        reference = weakref.ref(leader)
+        await completed.wait()
+        del leader, caller
+        await asyncio.sleep(0)
+        gc.collect()
+        assert reference() is None
         assert not service._inflight
         assert service._slots._value == 8
         assert not errors

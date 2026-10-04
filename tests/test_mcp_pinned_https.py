@@ -262,3 +262,29 @@ def test_cimd_failure_stays_none_without_classifier(monkeypatch, error):
     monkeypatch.setattr(provider, "request", failed)
     monkeypatch.setattr(pinned_https, "classify_send_error", lambda error: pytest.fail("CIMD has no classifier"))
     assert asyncio.run(provider.fetch_metadata("https://client.example/client.json")) is None
+
+
+@pytest.mark.parametrize("lengths,overflow", [([2048, 2048], False), ([2048, 2048, 1], True), ([3, 5000], True)])
+def test_streamed_response_stops_at_first_overflow_and_closes(monkeypatch, lengths, overflow):
+    consumed, closed = [], []
+
+    class Chunks(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for length in lengths:
+                consumed.append(length)
+                yield b"x" * length
+            if overflow:
+                pytest.fail("The transport reads after detecting overflow")
+
+        async def aclose(self):
+            closed.append(True)
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: dns("8.8.8.8"))
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: original(
+        transport=httpx.MockTransport(lambda request: httpx.Response(503, stream=Chunks())), **kwargs,
+    ))
+    response = asyncio.run(pinned_https.post_webhook("https://receiver.example/", headers={}, body=b"{}"))
+    assert response == (503, b"x" * 4096, overflow)
+    assert consumed == lengths
+    assert closed == [True]

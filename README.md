@@ -159,6 +159,8 @@ See [`SKILLS-AND-CLI.md`](SKILLS-AND-CLI.md) for the full reference, or run `twi
 
 ### External MCP access
 
+A connected client can subscribe to session conclusions; TwiCC then POSTs the session’s answer text to that client’s callback URL.
+
 The same MCP tools can also be handed to an MCP client **outside** TwiCC — a desktop assistant, a hosted agent — so it can inspect your projects, search your history, and create or drive sessions. You approve every connection: the connecting browser shows a verification code, TwiCC notifies your connected devices, and you type that code to authorize it. Connections are listed, named, and revoked one by one in **Settings → MCP**. TwiCC stays single-user — approving a client does not create a second account.
 
 Like sharing, external MCP is served on a **dedicated hostname**, separate from the app you log into, and protected by OAuth with PKCE. That host serves only MCP and its OAuth endpoints; the TwiCC interface is never reachable there. Leave it empty, or turn external access off, to keep TwiCC's MCP server internal — Claude Code and Codex sessions running inside TwiCC keep their automatic local access either way.

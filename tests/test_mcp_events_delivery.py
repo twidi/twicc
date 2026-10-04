@@ -26,6 +26,10 @@ BODY = b'{"data":{"reply":{"text":"private reply"}}}'
 
 @pytest.fixture
 def env(monkeypatch, tmp_path):
+    # Import consumers before patching config: routes/provider bind base_url.
+    from twicc.mcp.oauth import routes  # noqa: F401
+
+    monkeypatch.setattr("twicc.mcp.pinned_https.logger.disabled", False)
     monkeypatch.setattr("twicc.providers.db_writer._db_write_lock", asyncio.Lock())
     monkeypatch.setattr("twicc.providers.db_writer._db_writer_stop_event", asyncio.Event())
     monkeypatch.setattr("twicc.mcp.oauth.config.base_url", lambda: "https://mcp.example")
@@ -105,7 +109,12 @@ def test_authority_suppresses_and_only_deletes_revoked_or_resource_mismatch(env,
         async def forbidden(*args, **kwargs):
             pytest.fail("Suppressed authority must not contact the receiver")
         await delivery.DeliveryService(env.runtime, send=forbidden).deliver(env.emission)
-        assert env.runtime.writes.get_nowait() == env.emission.cursor
+        cursor = env.runtime.writes.get_nowait()
+        assert cursor == env.emission.cursor
+        if change in ("expired", "unconfigured"):
+            await storage.write(lambda: env.runtime._apply_write(cursor))
+            saved = await McpEventSubscription.objects.aget(pk="subscription")
+            assert saved.cursor_line == 20  # Suppressed delivery is still consumed.
         assert await McpEventSubscription.objects.filter(pk="subscription").aexists() is not deleted
         if change in ("revoked", "resource", "revoked_unconfigured"):
             await asyncio.sleep(0)
@@ -396,4 +405,17 @@ def test_configuration_becoming_empty_retains_subscription_between_attempts(env,
         assert len(reads) == 2
         assert env.runtime.commands.empty()
         assert env.runtime.writes.get_nowait() == env.emission.cursor
+    asyncio.run(run())
+
+
+def test_same_path_restored_instance_can_deliver_the_same_event(env):
+    async def run():
+        calls = []
+        async def send(*args, **kwargs):
+            calls.append(kwargs["headers"]["webhook-id"])
+            return PinnedResponse(204, b"", False)
+        restored = EventsRuntime(clock=env.clock.clock, data_dir=env.runtime.data_dir)
+        await delivery.DeliveryService(env.runtime, send=send).deliver(env.emission)
+        await delivery.DeliveryService(restored, send=send).deliver(env.emission)
+        assert calls == [env.emission.event_id, env.emission.event_id]
     asyncio.run(run())

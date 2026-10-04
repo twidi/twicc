@@ -642,6 +642,8 @@ class ClaudeCodeSessionsWatcher(BaseSessionsWatcher):
 
             from twicc.providers.claude_code.compute import (
                 INTERRUPTION_MARKER_PREFIX,
+                extract_text_from_content,
+                get_message_content,
                 is_command_message,
                 is_interruption_marker,
             )

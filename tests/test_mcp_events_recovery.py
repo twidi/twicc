@@ -30,6 +30,7 @@ env = test_mcp_events_turns.env
 
 @pytest.fixture(autouse=True)
 def writer_lock(monkeypatch):
+    monkeypatch.setattr(runtime_module.logger, "disabled", False)
     monkeypatch.setattr("twicc.providers.db_writer._db_write_lock", asyncio.Lock())
     monkeypatch.setattr("twicc.providers.db_writer._db_writer_stop_event", asyncio.Event())
 

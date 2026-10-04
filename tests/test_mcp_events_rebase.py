@@ -201,6 +201,9 @@ def test_two_overlapping_rebases_keep_fifo_cas_and_reject_old_cursor_lines(env):
                       CursorWrite(*env.monitor.generation, 1, 99, 1100)))
     env.row.refresh_from_db()
     assert (env.row.numbering, env.row.cursor_line, env.row.cursor_at) == (2, 1, 1100)
+    env.runtime._load_monitors()
+    env.runtime._tick()
+    assert not env.emissions and env.runtime.monitors[env.row.id].numbering == 2
 
 
 @pytest.mark.parametrize("loss", ["dropped", "cas_rejected"])

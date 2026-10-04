@@ -91,7 +91,8 @@ def test_truncation_is_maximal_complete_json_and_does_not_mutate(unit):
 
 
 @pytest.mark.parametrize("text", [None, "small text"])
-def test_non_text_oversize_drops_and_logs(text, caplog):
+def test_non_text_oversize_drops_and_logs(text, caplog, monkeypatch):
+    monkeypatch.setattr("twicc.mcp.events.delivery.logger.disabled", False)
     event = occurrence(text=text)
     event["data"]["session_title"] = "x" * MAX_BODY_BYTES
     assert fit_body(event) is None

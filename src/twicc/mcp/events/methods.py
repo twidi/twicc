@@ -12,7 +12,8 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 import math
 from types import MappingProxyType
-from typing import Any, Mapping, NamedTuple
+from collections.abc import Mapping
+from typing import Any, NamedTuple
 from urllib.parse import urlsplit
 
 from asgiref.sync import sync_to_async
@@ -107,7 +108,7 @@ def validate_url(value):
             and "#" not in value
         )
         # Accessing port validates both the numeric value and its range.
-        parsed.port
+        _ = parsed.port
     except ValueError:
         invalid("delivery.url has an invalid hostname or port")
     if not valid:
@@ -290,7 +291,7 @@ class EventMethods:
             with transaction.atomic():
                 row = McpEventSubscription.objects.filter(pk=identity, connection_id=caller.connection_id).first()
                 if row is None:
-                    return None
+                    return
                 generation = row.id, row.created_at
                 self._audit(caller, "events/unsubscribe", row)
                 row.delete()

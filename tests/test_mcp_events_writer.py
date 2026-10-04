@@ -16,6 +16,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 @pytest.fixture
 def state(monkeypatch, tmp_path):
+    monkeypatch.setattr("twicc.mcp.events.runtime.logger.disabled", False)
     monkeypatch.setattr("twicc.providers.db_writer._db_write_lock", asyncio.Lock())
     monkeypatch.setattr("twicc.providers.db_writer._db_writer_stop_event", asyncio.Event())
     clock = FakeClock()

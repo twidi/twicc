@@ -3,6 +3,7 @@
 import asyncio
 from datetime import UTC, datetime
 from hashlib import sha256
+from pathlib import Path
 
 import jsonschema
 import orjson
@@ -245,3 +246,15 @@ def test_provider_transcript_fixture_uses_real_wait(provider, tmp_path, monkeypa
         assert reply["text"] == "Events answer"
     finally:
         transport.backend_loop.reset(token)
+
+
+def test_complete_catalog_matches_authoritative_spec_json():
+    """Compare all descriptions and nested fields, not a sampled contract."""
+    spec = (Path(__file__).parents[1] / "docs/plans/2026-10-03-mcp-events-session-concluded-spec.md").read_text()
+    listing = spec.split("#### `events/list`", 1)[1].split("```json\n", 1)[1].split("```", 1)[0]
+    payload = spec.split("### 6.3 `payloadSchema`", 1)[1].split("```json\n", 1)[1].split("```", 1)[0]
+    expected = orjson.loads(listing)["events"][0]
+    expected["payloadSchema"] = orjson.loads(payload)
+    assert EVENT_DEFINITION == expected
+    assert INPUT_SCHEMA == expected["inputSchema"]
+    assert PAYLOAD_SCHEMA == expected["payloadSchema"]

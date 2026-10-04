@@ -547,10 +547,9 @@ async def wire_client(env):
     assert server.middleware.count(discovery_capability) == 1
     manager = StreamableHTTPSessionManager(app=server, json_response=True, stateless=True,
         security_settings=TransportSecuritySettings(enable_dns_rebinding_protection=False))
-    async with manager.run():
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=manager.handle_request), base_url="http://test",
+    async with manager.run(), httpx.AsyncClient(transport=httpx.ASGITransport(app=manager.handle_request), base_url="http://test",
             headers={"accept": "application/json, text/event-stream", "mcp-protocol-version": "2026-07-28"}) as client:
-            yield client
+        yield client
 
 
 def test_sdk_wire_discovery_list_and_field_errors(env):
@@ -599,3 +598,260 @@ def test_middleware_preserves_capabilities_and_other_methods(env):
         listed["events"][0]["name"] = "changed"
         assert catalog.EVENT_DEFINITION["name"] == "session.concluded"
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("size", [24, 64])
+@pytest.mark.parametrize("padding", [True, False])
+def test_secret_size_boundaries_succeed(env, size, padding):
+    secret = "whsec_" + base64.b64encode(b"s" * size).decode()
+    if not padding:
+        secret = secret.rstrip("=")
+    asyncio.run(subscribe(env, delivery={"mode": "webhook", "url": URL, "secret": secret}))
+    assert McpEventSubscription.objects.get().secret == secret
+    assert env.verification.calls[0][-1] == secret
+
+
+@pytest.mark.parametrize("valid_steps,reason", [(0, "not of type"), (1, "delivery.secret"),
+                                               (2, "delivery.url"), (3, "unknown_session")])
+def test_combined_invalid_schema_secret_url_lookup_precedence(env, valid_steps, reason):
+    arguments = {"session_id": "missing"} if valid_steps >= 1 else {"session_id": 7}
+    secret = SECRET if valid_steps >= 2 else "invalid"
+    url = URL if valid_steps >= 3 else "http://invalid/"
+
+    async def run():
+        with pytest.raises(MCPError) as caught:
+            await subscribe(env, arguments=arguments, delivery={"mode": "webhook", "url": url, "secret": secret})
+        assert caught.value.code == (-32011 if valid_steps == 3 else -32602)
+        assert reason in caught.value.data["reason"]
+        assert not env.verification.calls and not env.runtime.adds
+    asyncio.run(run())
+    assert not McpEventSubscription.objects.exists()
+
+
+def active_runtime(env, monkeypatch):
+    from twicc.cli import _wait_reply
+    from twicc.cli._drop_request import transport
+    from twicc.mcp.events.runtime import EventsRuntime
+    from twicc.providers.helpers import get_provider_helpers
+
+    Session.objects.filter(pk=env.session.pk).update(
+        compute_version=get_provider_helpers(env.session.provider).current_compute_version,
+    )
+    emissions, writes = [], []
+    runtime = EventsRuntime(clock=env.clock.clock, data_dir=env.methods.data_dir, post_emission=emissions.append)
+    monkeypatch.setattr(runtime, "post_write", writes.append)
+    monkeypatch.setattr(_wait_reply, "time", SimpleNamespace(monotonic=env.clock.monotonic))
+    monkeypatch.setattr("twicc.cli._twicc_info.resolve_live_twicc", lambda: SimpleNamespace(pid=1234))
+    env.methods.runtime = runtime
+    token = transport.backend_loop.set(object())
+    return runtime, emissions, writes, lambda: transport.backend_loop.reset(token)
+
+
+@pytest.mark.parametrize("kind", ["reply", "prompt_crash"])
+def test_verification_arrival_race_reaches_real_detector_and_delivers(env, monkeypatch, kind):
+    runtime, emissions, writes, reset = active_runtime(env, monkeypatch)
+
+    async def run():
+        env.verification.release.clear()
+        task = asyncio.create_task(subscribe(env))
+        await env.verification.wait_calls(1)
+        def arrive():
+            if kind == "reply":
+                append_assistant(env.session, 11)
+            else:
+                env.session.items.create(line_num=11, kind=ItemKind.USER_MESSAGE,
+                    content='{"message":{"content":"New turn"}}')
+                Session.objects.filter(pk=env.session.pk).update(last_line=11)
+        await storage.write(arrive)
+        env.verification.release.set()
+        await task
+    try:
+        asyncio.run(run())
+        runtime._drain_commands()
+        runtime._tick()
+        env.clock.advance(6)
+        runtime._tick()
+        runtime._tick()
+        assert [orjson.loads(event.body)["data"]["reply"]["outcome"] for event in emissions] == [
+            "replied" if kind == "reply" else "ended",
+        ]
+    finally:
+        reset()
+
+
+def test_refresh_with_queued_turn_write_preserves_monitor_and_delivers_again(env, monkeypatch):
+    runtime, emissions, writes, reset = active_runtime(env, monkeypatch)
+    try:
+        asyncio.run(subscribe(env))
+        runtime._drain_commands()
+        monitor = next(iter(runtime.monitors.values()))
+        append_assistant(env.session, 11)
+        runtime._tick()
+        assert len(emissions) == 1 and writes
+        # Neither the admitted turn write nor the pending delivery cursor has run.
+        assert McpEventSubscription.objects.get().cursor_line == 10
+        asyncio.run(subscribe(env, arguments={"session_id": "session", "since_line_num": 0}))
+        runtime._drain_commands()
+        assert runtime.monitors[monitor.id] is monitor and monitor.cursor_line == 11
+        runtime._tick()
+        env.clock.advance(6)
+        runtime._tick()
+        runtime._tick()
+        assert len(emissions) == 1
+        append_assistant(env.session, 12)
+        runtime._tick()
+        assert len(emissions) == 2
+    finally:
+        reset()
+
+
+def test_timely_refresh_wakes_dormant_monitor_with_fresh_wait_and_delivers(env, monkeypatch):
+    runtime, emissions, writes, reset = active_runtime(env, monkeypatch)
+    try:
+        asyncio.run(subscribe(env, ttlMs=1))
+        runtime._drain_commands()
+        monitor = next(iter(runtime.monitors.values()))
+        old_wait = monitor.wait
+        env.clock.advance(3599)
+        async def run():
+            env.verification.entered = asyncio.Queue()
+            env.verification.release.clear()
+            task = asyncio.create_task(subscribe(env))
+            await env.verification.wait_calls(1)
+            env.clock.advance(2)
+            await asyncio.to_thread(runtime._tick)
+            assert monitor.dormant
+            env.verification.release.set()
+            await task
+        asyncio.run(run())
+        runtime._drain_commands()
+        assert runtime.monitors[monitor.id] is monitor and not monitor.dormant and monitor.wait is not old_wait
+        runtime._tick()
+        assert not emissions
+        append_assistant(env.session, 11)
+        runtime._tick()
+        assert len(emissions) == 1
+    finally:
+        reset()
+
+
+@pytest.mark.parametrize("foreign", [False, True])
+@pytest.mark.parametrize("new_epoch", [0, 1])
+def test_recreated_generation_replays_original_cursor_and_delivers_same_id(env, monkeypatch, foreign, new_epoch):
+    runtime, emissions, writes, reset = active_runtime(env, monkeypatch)
+    try:
+        append_assistant(env.session, 5)
+        asyncio.run(subscribe(env, arguments={"session_id": "session", "since_line_num": 0}))
+        runtime._drain_commands()
+        first = next(iter(runtime.monitors.values()))
+        runtime._tick()
+        assert len(emissions) == 1
+        Session.objects.filter(pk=env.session.pk).update(history_epoch=new_epoch)
+        McpEventSubscription.objects.update(data_dir="/other" if foreign else env.methods.data_dir,
+                                            refresh_before=env.clock.utcnow())
+        asyncio.run(subscribe(env, arguments={"session_id": "session", "since_line_num": 0}))
+        runtime._drain_commands()
+        second = next(iter(runtime.monitors.values()))
+        assert second.generation != first.generation and second.cursor_line == 0
+        runtime._tick()
+        assert len(emissions) == 2
+        assert (emissions[0].event_id == emissions[1].event_id) is (new_epoch == 0)
+    finally:
+        reset()
+
+
+def test_timely_refresh_can_overshoot_limit_after_expiry(env):
+    asyncio.run(subscribe(env, ttlMs=1))
+    seed_rows(env, 49)
+    env.clock.advance(3599)
+    async def run():
+        env.verification.entered = asyncio.Queue()
+        env.verification.release.clear()
+        refresh = asyncio.create_task(subscribe(env))
+        await env.verification.wait_calls(1)
+        env.clock.advance(2)
+        # Only the new identity completes verification before the timely refresh.
+        async def new_identity(*args):
+            return None
+        env.verification.verify = new_identity
+        await subscribe(env, delivery={"mode": "webhook", "url": URL + "/new", "secret": SECRET})
+        env.verification.release.set()
+        await refresh
+    asyncio.run(run())
+    assert McpEventSubscription.objects.filter(refresh_before__gt=env.clock.utcnow()).count() == 51
+
+
+@pytest.mark.parametrize("evidence", ["none", "title", "prompt"])
+def test_history_cursor_opens_only_for_real_prompt_and_crash(env, monkeypatch, evidence):
+    runtime, emissions, writes, reset = active_runtime(env, monkeypatch)
+    try:
+        if evidence != "none":
+            env.session.items.create(line_num=11, kind=ItemKind.USER_MESSAGE if evidence == "prompt" else ItemKind.SYSTEM,
+                content='{"message":{"content":"Prompt"}}' if evidence == "prompt" else '{"type":"custom-title","customTitle":"Title"}')
+            Session.objects.filter(pk=env.session.pk).update(last_line=11)
+        asyncio.run(subscribe(env, arguments={"session_id": "session", "since_line_num": 10}))
+        runtime._drain_commands()
+        runtime._tick()
+        env.clock.advance(6)
+        runtime._tick()
+        runtime._tick()
+        assert len(emissions) == (1 if evidence == "prompt" else 0)
+        if emissions:
+            assert orjson.loads(emissions[0].body)["data"]["reply"]["outcome"] == "ended"
+    finally:
+        reset()
+
+
+def test_missing_secret_fails_before_lookup_or_verification(env):
+    async def run():
+        with pytest.raises(MCPError) as caught:
+            await subscribe(env, delivery={"mode": "webhook", "url": URL})
+        assert caught.value.code == -32602 and "delivery.secret" in caught.value.data["reason"]
+        assert not env.verification.calls
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("arrival", ["before-begin", "during-replacement"])
+@pytest.mark.parametrize("working_at_finish", [False, True])
+def test_subscribe_verification_overlaps_rebuild_and_queued_turn(env, monkeypatch, arrival, working_at_finish):
+    env.session.provider = "codex"
+    env.session.save(update_fields=["provider"])
+    runtime, emissions, writes, reset = active_runtime(env, monkeypatch)
+    try:
+        if arrival == "during-replacement":
+            Session.objects.filter(pk=env.session.pk).update(history_epoch=1, last_offset=0, compute_version=None)
+        async def run():
+            env.verification.release.clear()
+            task = asyncio.create_task(subscribe(env, arguments={"session_id": "session", "since_line_num": 0}))
+            await env.verification.wait_calls(1)
+            def finish():
+                from twicc.providers.helpers import get_provider_helpers
+                append_assistant(env.session, 2, "Rebuilt past answer")
+                Session.objects.filter(pk=env.session.pk).update(history_epoch=1, last_offset=200,
+                    compute_version=get_provider_helpers("codex").current_compute_version)
+                if working_at_finish:
+                    env.registry.set_agent("session", at=env.clock.epoch()+1, provider="codex")
+            await storage.write(finish)
+            env.verification.release.set()
+            await task
+        asyncio.run(run())
+        saved = McpEventSubscription.objects.get()
+        assert saved.numbering == (0 if arrival == "before-begin" else None)
+        runtime._drain_commands()
+        runtime._tick()
+        monitor = next(iter(runtime.monitors.values()))
+        assert monitor.numbering == 1 and monitor.cursor_line == 2
+        assert not emissions and monitor.turn_open is working_at_finish
+        if working_at_finish:
+            env.registry.remove_agent("session")
+            runtime._tick()
+            env.clock.advance(6)
+            runtime._tick()
+            runtime._tick()
+            assert orjson.loads(emissions[0].body)["data"]["reply"]["outcome"] == "ended"
+        else:
+            append_assistant(env.session, 3, "New answer")
+            runtime._tick()
+            assert orjson.loads(emissions[0].body)["data"]["reply"]["text"] == "New answer"
+    finally:
+        reset()
