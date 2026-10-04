@@ -12,8 +12,10 @@ from twicc.core.models import Session
 
 
 @pytest.fixture
-def runner():
+def runner(monkeypatch):
     module = import_module("twicc.title_auto_task")
+    # Keep error-log assertions independent of earlier CLI setup calls.
+    monkeypatch.setattr(module.logger, "disabled", False)
     yield module
     # Failed state-reset assertions must not contaminate the next test.
     module._wake = None

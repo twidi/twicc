@@ -27,6 +27,8 @@ OLD = NOW - timedelta(minutes=15)
 @pytest.fixture
 def env(monkeypatch):
     module = import_module("twicc.core.services.title_automation")
+    # CLI tests repeat Django setup, which disables existing test loggers.
+    monkeypatch.setattr(module.logger, "disabled", False)
     monkeypatch.setattr(db_writer, "_db_write_lock", asyncio.Lock())
     monkeypatch.setattr(db_writer, "_db_writer_stop_event", asyncio.Event())
     monkeypatch.setattr(pending_titles, "_pending", {})

@@ -10,6 +10,8 @@ $TWICC update-session '<SESSION_ID>' title '<NEW_TITLE>'
 
 - Trimmed; non-empty; ≤ 200 characters.
 - Also written to the provider's own session store.
+- Sets `title_origin` to `user`, including when the text stays unchanged. This validates the title and freezes automatic updates.
+- Session output exposes `title_origin`: `auto` permits automatic updates; `user` means validated; an empty string means legacy or unknown origin. Existing titles with an empty origin stay frozen.
 - No batch form: `update-sessions` has no `title`.
 
 ## Errors

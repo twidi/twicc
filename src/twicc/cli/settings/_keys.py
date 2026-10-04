@@ -20,8 +20,8 @@ NOTIFICATION_KEYS = frozenset({"externalNotificationTargets"})
 # get an entry here — ``tests/test_settings_cli.py`` enforces this so the help
 # never drifts out of sync.
 GENERIC_KEY_DESCRIPTIONS: dict[str, str] = {
-    "titleGenerationEnabled": "Generate a session title from the first user message.",
-    "titleAutoApply": "Apply generated titles automatically (vs. only suggesting them).",
+    "titleGenerationEnabled": "Enable title suggestions and automatic title generation.",
+    "titleAutoApply": "Generate first titles and update automatic titles in the backend (requires titleGenerationEnabled).",
     "titleSuggestionModel": (
         "Model used for title suggestions: provider, haiku, or luna. "
         "A provider that is disabled or failing falls back to the other one."
