@@ -62,7 +62,7 @@ def send_message_cmd(
             "written after this message counts, so the previous turn's "
             "answer is not returned in its place. The exit code never "
             "changes: the message was sent either way, so read `outcome`. "
-            "Without it, a separate wait must pass --from with the "
+            "Without it, a separate wait must pass --from-line with the "
             "`last_line` this command returns."
         ),
     ),

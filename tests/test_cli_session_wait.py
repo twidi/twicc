@@ -1,5 +1,5 @@
 """``twicc session <ID> wait-reply`` — waiting on a session nobody just prodded
-— or one you messaged yourself without ``--wait-reply`` (then pass ``--from``
+— or one you messaged yourself without ``--wait-reply`` (then pass ``--from-line``
 the ``last_line`` the send returned).
 
 Every other wait rides on a command that triggered the turn, so its cursor
@@ -228,7 +228,7 @@ def test_the_text_can_be_dropped(session, capsysbinary):
 
 @pytest.mark.parametrize("kwargs, message", [
     ({"timeout": 0}, "--wait-timeout must be > 0"),
-    ({"timeout": 1.0, "from_line": -1}, "--from must be >= 0"),
+    ({"timeout": 1.0, "from_line": -1}, "--from-line must be >= 0"),
 ])
 def test_bad_arguments_are_refused(session, capsysbinary, kwargs, message):
     with pytest.raises(typer.Exit) as exc:
@@ -273,12 +273,48 @@ def test_the_flags_travel_from_the_command_line(session, monkeypatch):
 
     result = CliRunner().invoke(app, [
         "session", "sw-session", "wait-reply",
-        "--from", "42", "--wait-timeout", "7", "--no-reply-text", "--wait-background",
+        "--from-line", "42", "--wait-timeout", "7", "--no-reply-text", "--wait-background",
     ])
 
     assert result.exit_code == 0, result.output
     assert seen == {"session_id": "sw-session", "from_line": 42, "since": None,
                     "timeout": 7.0, "want_text": False, "wait_background": True}
+
+
+def test_the_former_from_flag_still_names_the_cursor(session, monkeypatch):
+    from typer.testing import CliRunner
+
+    from twicc.cli import app
+
+    seen = {}
+
+    def probe(session_id, *, from_line, since, timeout, want_text, wait_background):
+        seen["from_line"] = from_line
+        raise typer.Exit(0)
+
+    monkeypatch.setattr("twicc.cli.session.wait_reply", probe)
+
+    legacy = CliRunner().invoke(app, ["session", "sw-session", "wait-reply", "--from", "42"])
+    assert legacy.exit_code == 0, legacy.output
+    assert seen["from_line"] == 42
+
+    both = CliRunner().invoke(app, [
+        "session", "sw-session", "wait-reply", "--from", "42", "--from-line", "42",
+    ])
+    assert both.exit_code == 1
+
+
+def test_the_former_from_flag_is_hidden_from_help_and_the_schema():
+    from typer.testing import CliRunner
+
+    from twicc.cli import app
+    from twicc.mcp.tools import tools_by_name
+
+    help_text = CliRunner().invoke(app, ["session", "x", "wait-reply", "--help"]).output
+    assert "--from-line" in help_text
+    assert "--from " not in help_text and "--from\n" not in help_text
+    props = tools_by_name()["session_wait_reply"].json_schema["properties"]
+    assert "from_line" in props and "from_legacy" not in props
 
 
 def test_the_defaults_are_the_documented_ones(session, monkeypatch):
@@ -359,7 +395,7 @@ def test_the_cli_help_carries_the_contract():
     assert "resumes from its `since_line_num`" in description
 
     # The two spellings of the cursor, and that they are one cursor. A
-    # description naming only `--from` sends an agent holding a timestamp to
+    # description naming only `--from-line` sends an agent holding a timestamp to
     # invent a line number.
     assert "--since is\nthe same cursor as an instant" in description
     assert "mutually exclusive" in description
@@ -503,9 +539,9 @@ def test_the_sub_command_answers_to_its_name(session, monkeypatch):
 
 @pytest.mark.parametrize("kwargs, message", [
     ({"timeout": 0}, "--wait-timeout must be > 0"),
-    ({"timeout": 1.0, "from_line": -1}, "--from must be >= 0"),
+    ({"timeout": 1.0, "from_line": -1}, "--from-line must be >= 0"),
     ({"timeout": 1.0, "since": "bogus"}, "--since"),
-    ({"timeout": 1.0, "from_line": 2, "since": "2026-09-19"}, "--from and --since"),
+    ({"timeout": 1.0, "from_line": 2, "since": "2026-09-19"}, "--from-line and --since"),
 ])
 def test_a_bad_flag_is_named_before_the_session_is_looked_up(db, capsysbinary, kwargs, message):
     """Every check runs before the lookup, and the session here does not exist.
@@ -582,7 +618,7 @@ def test_an_instant_becomes_the_line_below_the_first_one_after_it(session, timel
 
 def test_the_cursor_it_computes_is_the_cursor_the_wait_uses(session, timeline, capsysbinary):
     """The translation is not a separate feature: `--since` and the matching
-    `--from` must select the same line, or the two spellings drift apart."""
+    `--from-line` must select the same line, or the two spellings drift apart."""
     running(session)
 
     payload, code = run(capsysbinary, since="2026-09-19T12:01:00+00:00")
@@ -668,7 +704,7 @@ def test_the_two_cursors_are_mutually_exclusive(session, capsysbinary):
         cli_session.wait_reply("sw-session", from_line=2, since="2026-09-19", timeout=2.0)
 
     assert exc.value.exit_code == 1
-    assert b"--from and --since" in capsysbinary.readouterr().err
+    assert b"--from-line and --since" in capsysbinary.readouterr().err
 
 
 @pytest.mark.parametrize("since", [

@@ -154,7 +154,7 @@ def test_since_is_unchanged_on_a_ready_session(project, capsysbinary):
 
 def test_the_indexing_lag_case_returns_the_previous_answer(project, capsysbinary):
     """Documented and accepted: a send without --wait-reply, then a wait
-    without --from, before the new message is indexed."""
+    without --from-line, before the new message is indexed."""
     s = make(project, "a8")
     running(s)
     user(s, 2)

@@ -576,7 +576,7 @@ def wait_reply(session_id: str, *, from_line: int | None = None, since: str | No
     Omitted, the cursor goes after the session's last user message, so an
     answer already given is returned; while the session's compute is not
     current, it is its current ``last_line``. After a send without
-    ``--wait-reply``, pass ``--from`` the ``last_line`` the send returned. The
+    ``--wait-reply``, pass ``--from-line`` the ``last_line`` the send returned. The
     race that killed ``--transition`` does not apply: a marker read too late
     never moves again, but a session that is simply idle is observable, and an
     idle session with no answer past the cursor reports ``ended`` rather than
@@ -601,9 +601,9 @@ def wait_reply(session_id: str, *, from_line: int | None = None, since: str | No
     if timeout <= 0:
         emit_error(f"Error: --wait-timeout must be > 0 (got {timeout:g}).", code=1)
     if from_line is not None and from_line < 0:
-        emit_error(f"Error: --from must be >= 0 (got {from_line}).", code=1)
+        emit_error(f"Error: --from-line must be >= 0 (got {from_line}).", code=1)
     if from_line is not None and since is not None:
-        emit_error("Error: --from and --since name the same cursor; pass one.", code=1)
+        emit_error("Error: --from-line and --since name the same cursor; pass one.", code=1)
     # Parsed here rather than inside the lookup below, for the same reason the
     # two checks above run first: a bad instant is a bad instant, not a session
     # that does not exist.

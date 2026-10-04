@@ -58,7 +58,7 @@ SANCTIONED = {
     WAIT_DOC_LABEL: {"--wait-reply": 6, "--transition": 0},
     "SKILLS-AND-CLI.md": {"--wait-reply": 2, "--transition": 0},
     "session wait-reply --help": {"--wait-reply": 3, "--transition": 0},
-    "--from help": {"--wait-reply": 1, "--transition": 0},
+    "--from-line help": {"--wait-reply": 1, "--transition": 0},
 }
 
 
@@ -71,7 +71,7 @@ def _command():
 def _real_options() -> set[str]:
     # `secondary_opts` too: the day one of these turns into `--x/--no-x`,
     # documenting `--no-x` must not read as a flag the command refuses.
-    return {opt for param in _command().params for opt in (*param.opts, *param.secondary_opts)}
+    return {opt for param in _command().params if not param.hidden for opt in (*param.opts, *param.secondary_opts)}
 
 
 def _real_default(name: str):
@@ -116,7 +116,7 @@ def _section(numbered: list[tuple[int, str]], heading_prefix: str) -> list[tuple
 def _copyable_spans() -> list[tuple[str, int, str]]:
     """Every invocation or signature of this command a reader could copy.
 
-    A flag lives in a code span (`` `--from` ``) just as an invocation does, so
+    A flag lives in a code span (`` `--from-line` ``) just as an invocation does, so
     the span has to be recognised as an invocation rather than the line holding
     it: the three sending skills put theirs mid-paragraph, next to prose that
     names `--wait-reply` on purpose.
@@ -146,7 +146,7 @@ def _is_full_signature(label: str, span: str) -> bool:
     """The two spans that claim to list every option, anchored rather than guessed.
 
     Inferring it from "more than one bracket group" made the shape of a
-    sentence decide: a summary bullet showing `[--from N]` alone on purpose,
+    sentence decide: a summary bullet showing `[--from-line N]` alone on purpose,
     given a second bracket, turned into a signature that then had to grow the
     other three.
     """
@@ -459,7 +459,7 @@ def test_every_document_states_the_rule_the_code_implements():
 
 
 def test_no_document_still_states_the_rule_that_lost_lines():
-    """`--from N` and `--since T` are not interchangeable, and saying so was
+    """`--from-line N` and `--since T` are not interchangeable, and saying so was
     the claim both rewrites invalidated."""
     wrong = [
         (label, phrase)

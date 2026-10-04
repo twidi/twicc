@@ -8,14 +8,14 @@ The plural of `session <ID> wait-reply`: one loop polls them all. MCP tool: `mcp
 $TWICC sessions wait-reply [SESSION_ID...] [--since INSTANT] [--wait-first|--wait-all] [--wait-timeout N] [--no-reply-text] [--wait-background] [FILTERS]
 ```
 
-For sessions **nobody just messaged**: spawned earlier, steered from the UI, messaged by someone else — or messaged by you with `send-messages` without `--wait-reply` (then pass `--since` an instant taken before the send, or wait on each with `session <id> wait-reply --from <last_line>`). When you send the messages yourself, use `send-messages --wait-reply`: it reads each cursor server-side. **A send without `--wait-reply` is never followed by a wait without a cursor.**
+For sessions **nobody just messaged**: spawned earlier, steered from the UI, messaged by someone else — or messaged by you with `send-messages` without `--wait-reply` (then pass `--since` an instant taken before the send, or wait on each with `session <id> wait-reply --from-line <last_line>`). When you send the messages yourself, use `send-messages --wait-reply`: it reads each cursor server-side. **A send without `--wait-reply` is never followed by a wait without a cursor.**
 
 - **One budget covers the batch**: it costs one wall-clock wait, not N.
 - Each session concludes the same two ways the singular does: an answer, or a **pending request** only a human can clear. An answer arriving in the same poll wins.
 - `--wait-all` (default) waits for every one; `--wait-first` stops at the first to conclude, leaving the rest `outcome: pending`. A session whose turn crashed or was refused never ends a `--wait-first` batch.
 - `--wait-timeout` (default 300 s) — the budget for the whole batch.
 - `--no-reply-text` — drop each answer's `text`; `line_num` stays.
-- `--wait-background` — per session, a final message read while background work runs behind the agent (`background_work_in_progress` not `null`: a subagent, background shell, Monitor, scheduled wake-up or goal) does not count; the first final message read once that work has ended is the answer. A wait started or resumed after the work ended therefore counts the final messages already written. An idle agent with that work still running keeps the wait open; once a final message was ignored, an alive idle agent keeps it open until the next one comes, however late; a dead agent ends it (`ended`, carrying the ignored answer). Claude Code reopens a turn when a background shell ends. Codex answers after a process ends only if the agent waited for it within its turn: a process it left running on purpose brings no new answer, so such a wait ends in `timeout` with the last answer attached. On `timeout` or `pending`, the last ignored final message comes back (`line_num`, `text` unless `--no-reply-text`) with the current `background_work_in_progress`; to wait for the next answer, resume with `session <ID> wait-reply --from <its line_num> --wait-background` (from that `line_num`, not `since_line_num`). A pending request still ends the wait at once and carries no ignored final message: resuming from its `since_line_num` re-reads the final messages already written.
+- `--wait-background` — per session, a final message read while background work runs behind the agent (`background_work_in_progress` not `null`: a subagent, background shell, Monitor, scheduled wake-up or goal) does not count; the first final message read once that work has ended is the answer. A wait started or resumed after the work ended therefore counts the final messages already written. An idle agent with that work still running keeps the wait open; once a final message was ignored, an alive idle agent keeps it open until the next one comes, however late; a dead agent ends it (`ended`, carrying the ignored answer). Claude Code reopens a turn when a background shell ends. Codex answers after a process ends only if the agent waited for it within its turn: a process it left running on purpose brings no new answer, so such a wait ends in `timeout` with the last answer attached. On `timeout` or `pending`, the last ignored final message comes back (`line_num`, `text` unless `--no-reply-text`) with the current `background_work_in_progress`; to wait for the next answer, resume with `session <ID> wait-reply --from-line <its line_num> --wait-background` (from that `line_num`, not `since_line_num`). A pending request still ends the wait at once and carries no ignored final message: resuming from its `since_line_num` re-reads the final messages already written.
 - **A bare call is refused**: at least one id or one filter. A wait with no filter would poll every indexed session until the deadline.
 
 ### Selection
@@ -31,8 +31,8 @@ Filters: `--project`, `--workspace`, `--provider`, `--state`, `--active`, `--onl
 
 - **Each session starts after its own last user message**, so an answer already given is returned. Exception: while a session's compute is not current (e.g. right after a TwiCC restart), it starts at its current last line — pass `--since` an instant before the spawn or the send.
 - `--since` — the cursor as an **ISO 8601 instant** (`2026-09-30T14:05:00+00:00`), translated per session. **No offset means UTC**; a bare date means its midnight UTC. Only a line written strictly after it counts.
-- There is no `--from`: line 42 is a different place in every transcript, which is why an instant is what addresses a batch.
-- `--since` exists on `sessions wait-reply` and `session <ID> wait-reply` only (the singular also takes `--from`) — not on `create-session`, `send-message` or `send-messages`, whose `--wait-reply` reads the cursor server-side.
+- There is no `--from-line`: line 42 is a different place in every transcript, which is why an instant is what addresses a batch.
+- `--since` exists on `sessions wait-reply` and `session <ID> wait-reply` only (the singular also takes `--from-line`) — not on `create-session`, `send-message` or `send-messages`, whose `--wait-reply` reads the cursor server-side.
 - A named id with a live process but no indexed transcript yet (just spawned) is waited on from line 0; `--since` does not apply to it.
 
 ## Output format
@@ -49,7 +49,7 @@ Filters: `--project`, `--workspace`, `--provider`, `--state`, `--active`, `--onl
 
 ## Resuming a timed-out batch
 
-Re-running resumes, except for a session whose compute is not current; `--since <the instant the batch started>` resumes in every case. Per session: hand each block's `since_line_num` to `$TWICC session <ID> wait-reply --from`. With `--wait-background`, a re-run counts the final messages already written, the ignored ones included once the work has ended: to wait for the next answer, resume each session carrying an ignored final message from its `line_num` instead.
+Re-running resumes, except for a session whose compute is not current; `--since <the instant the batch started>` resumes in every case. Per session: hand each block's `since_line_num` to `$TWICC session <ID> wait-reply --from-line`. With `--wait-background`, a re-run counts the final messages already written, the ignored ones included once the work has ended: to wait for the next answer, resume each session carrying an ignored final message from its `line_num` instead.
 
 ## Known limit (Claude Code)
 
@@ -66,7 +66,7 @@ $TWICC sessions wait-reply --active --annotation role=implementer --since 2026-0
 
 ## Related commands
 
-- `$TWICC session <ID> wait-reply` — one session, with `--from`. Skill: `twicc-session`.
+- `$TWICC session <ID> wait-reply` — one session, with `--from-line`. Skill: `twicc-session`.
 - `$TWICC send-messages --wait-reply` — send and wait in one call. Skill: `twicc-send-messages`.
 - `$TWICC sessions` — preview what the filters select. File: `list.md`.
 

@@ -146,7 +146,7 @@ def send_messages_cmd(
             "is a wall-clock budget, not N x timeout. Without it, a separate "
             "wait must pass `sessions wait-reply` "
             "an instant taken before this command (--since), or `session <id> "
-            "wait-reply` the `last_line` of each entry (--from)."
+            "wait-reply` the `last_line` of each entry (--from-line)."
         ),
     ),
     wait_timeout: float = typer.Option(

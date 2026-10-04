@@ -479,7 +479,7 @@ def _sessions_wait_reply(
             "ISO 8601 "
             "— '2026-09-19T05:38:20+00:00', exactly what `session messages` "
             "returns, and also '2026-09-19 05:38:20' or a bare '2026-09-19' "
-            "for its midnight. No offset means UTC. There is no --from here: "
+            "for its midnight. No offset means UTC. There is no --from-line here: "
             "a line number belongs to one transcript and means something "
             "else in every other, which is why an instant is what addresses "
             "a batch. After `send-messages` without --wait-reply, pass an "
@@ -562,7 +562,7 @@ def _sessions_wait_reply(
     spawned earlier, steered from the UI, or messaged by someone else — or ones
     you messaged with `send-messages` without `--wait-reply` (then pass `--since`
     an instant taken before the send, or wait on each with `session <id>
-    wait-reply --from <last_line>`). One
+    wait-reply --from-line <last_line>`). One
     loop polls them all and one budget covers the batch, so it costs a
     wall-clock wait, not N of them.
 
@@ -589,7 +589,7 @@ def _sessions_wait_reply(
     Each session starts after its own last user message — so an answer already
     given is returned — (its current last line while its compute is not
     current), or above the instant --since names, translated per session.
-    There is no --from: line 42 is a different place in every transcript.
+    There is no --from-line: line 42 is a different place in every transcript.
     After `send-messages` without --wait-reply, pass --since an instant taken
     before the send.
 
@@ -612,7 +612,7 @@ def _sessions_wait_reply(
     Resuming a timed-out batch: re-running resumes, except for a session whose
     compute is not current; `--since <the instant the batch started>` resumes
     in every case. The per-session alternative is each block's
-    `since_line_num` handed to `session <ID> wait-reply --from`.
+    `since_line_num` handed to `session <ID> wait-reply --from-line`.
     """
     from twicc.cli.sessions_wait_reply import main as sessions_wait_reply_main
 
@@ -789,7 +789,7 @@ def messages(
 def _session_wait_reply(
     ctx: typer.Context,
     from_line: int = typer.Option(
-        None, "--from",
+        None, "--from-line",
         help=(
             "Only a line strictly past this one counts, which is what makes "
             "a timed-out wait resumable. Pass the `line_num` of an ending "
@@ -802,11 +802,12 @@ def _session_wait_reply(
             "`last_line` it returned."
         ),
     ),
+    from_legacy: int = typer.Option(None, "--from", hidden=True),
     since: str = typer.Option(
         None, "--since",
         help=(
             "The same cursor as an instant instead of a line, mutually "
-            "exclusive with --from: only a line written strictly after it "
+            "exclusive with --from-line: only a line written strictly after it "
             "counts, and an out-of-order timestamp can only push the cursor "
             "lower. A line with no timestamp is not a boundary; one below the "
             "boundary is not re-scanned. ISO 8601 — '2026-09-19T05:38:20+00:00', exactly what "
@@ -842,7 +843,7 @@ def _session_wait_reply(
     The same wait `--wait-reply` runs on the commands that send, on a session
     nobody just messaged: one spawned earlier, steered from the UI, or
     messaged by someone else — or one you messaged yourself without
-    `--wait-reply` (then pass `--from` the `last_line` the send returned).
+    `--wait-reply` (then pass `--from-line` the `last_line` the send returned).
     Nothing is sent by this command: pass the cursor, or it defaults to after
     the last user message.
 
@@ -862,17 +863,17 @@ def _session_wait_reply(
     a process it left running on purpose brings no new answer and the wait
     ends in `timeout`. A `timeout` then carries the last ignored final
     message, with the current `background_work_in_progress`: resume with
-    --from its `line_num` and the flag to wait for the next answer. A pending
+    --from-line its `line_num` and the flag to wait for the next answer. A pending
     request still ends the wait at once and carries no ignored final message.
 
     Exit 0 when it answered or blocked, 5 when neither came, 2 when TwiCC
-    stopped, 1 on a local refusal (a bad --from or --since, the two cursors
+    stopped, 1 on a local refusal (a bad --from-line or --since, the two cursors
     passed together, a non-positive --wait-timeout, an id with no session and
     no live process) or the wait itself breaking — so a script can chain on
     it. A session whose live process runs but which is not indexed yet (just
     spawned) is waited on from line 0.
 
-    --from is the cursor, and only a line strictly past it counts. --since is
+    --from-line is the cursor, and only a line strictly past it counts. --since is
     the same cursor as an instant, mutually exclusive with it: the wait starts
     just below the first line stamped strictly after that moment. A timestamp
     that goes backwards can only push the cursor lower, never past a line, and
@@ -894,6 +895,12 @@ def _session_wait_reply(
     `wait_failed`.
     """
     from twicc.cli.session import wait_reply as session_wait_reply
+
+    # `--from` is the former name of `--from-line`, kept (hidden) for scripts.
+    if from_legacy is not None:
+        if from_line is not None:
+            emit_error("Error: --from-line and --from name the same cursor; pass --from-line.", code=1)
+        from_line = from_legacy
 
     session_wait_reply(
         ctx.obj, from_line=from_line, since=since, timeout=wait_timeout,

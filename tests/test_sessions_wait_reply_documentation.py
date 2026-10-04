@@ -33,7 +33,7 @@ CODE_SPAN = re.compile(r"`([^`]+)`")
 #: `--include-hidden` and `--include-archived` are deliberately NOT here: the
 #: corrected prose now discusses them by name, which is exactly where the next
 #: copyable example naming a flag this command refuses would come from.
-CROSS_REFERENCES = {"--from", "--wait-reply"}
+CROSS_REFERENCES = {"--from-line", "--wait-reply"}
 
 #: Everything that shapes the wait rather than narrowing it. The filters are
 #: what is left, so a new option must be classified here or the documents are

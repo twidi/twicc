@@ -36,7 +36,7 @@ pass the session's ``last_line``, read server-side the instant the message was
 handed to the agent, which is what keeps them from returning the previous
 turn's answer. A batch carries one cursor per recipient: they are not at the
 same line, and a shared one would let a chatty session close a quiet one's
-wait. ``session <id> wait-reply`` takes ``--from`` / ``--since``, ``sessions
+wait. ``session <id> wait-reply`` takes ``--from-line`` / ``--since``, ``sessions
 wait-reply`` takes ``--since`` only (a line number belongs to one transcript);
 both default to :func:`default_wait_cursors` (after the last user message, the
 current ``last_line`` while the compute is not current).
@@ -144,7 +144,7 @@ WAIT_BACKGROUND_HELP = (
     "process it left running on purpose brings no new answer and such a wait "
     "ends in 'timeout'. On 'timeout', the last ignored final message is "
     "returned with the current `background_work_in_progress`: to wait for the "
-    "next answer, resume with `session <ID> wait-reply --from <its line_num> "
+    "next answer, resume with `session <ID> wait-reply --from-line <its line_num> "
     "--wait-background`. A pending request still ends the wait at once and "
     "carries no ignored final message."
 )
@@ -175,7 +175,7 @@ def degraded_reply(cursor: int, waited: float, exc: BaseException) -> dict:
 
 
 def default_wait_cursors(sessions) -> dict[str, int]:
-    """The cursor a wait starts from when neither --from nor --since is given.
+    """The cursor a wait starts from when neither --from-line nor --since is given.
 
     Strictly after the session's last user message (0 when it has none): the
     answer to the last thing it was told is returned even if it came before

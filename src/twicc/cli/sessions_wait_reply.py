@@ -1,7 +1,7 @@
 """``twicc sessions wait-reply`` — wait on several sessions nobody just messaged —
 or ones you messaged with ``send-messages`` without ``--wait-reply`` (then pass
 ``--since`` an instant taken before the send, or wait on each with ``session
-<id> wait-reply --from <last_line>``).
+<id> wait-reply --from-line <last_line>``).
 
 The plural of ``session <ID> wait-reply``, and the same loop: one poll drives
 every session, one wall-clock budget covers the batch, and each concludes on
@@ -14,7 +14,7 @@ each session starts after its own last user message, so an answer already
 given is returned (above its current ``last_line`` while its compute is not
 current, :func:`~twicc.cli._wait_reply.default_wait_cursors`), or above the
 instant ``--since`` names. There is deliberately
-no ``--from``: a line number belongs to one transcript and means something
+no ``--from-line``: a line number belongs to one transcript and means something
 else in every other, which is the whole reason ``--since`` exists.
 
 **Selection goes through the listing's** ``build_filtered_queryset``, and
