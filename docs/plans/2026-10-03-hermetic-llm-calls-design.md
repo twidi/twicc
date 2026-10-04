@@ -433,8 +433,8 @@ disabled shell, absence of tools). It does not detect a tool that is offered but
   which the site's classifier inspects). This is new behaviour at site 5: today `CodexAgent._is_unauthorized_error`
   classifies only a `terminal_error` notification and an exception from `thread_start` is inconclusive. Site 5 therefore
   gains a small classifier of exceptions (a JSON-RPC error carrying the same unauthorised markers as the notification
-  test); its behaviour with a logged-out account is unmeasured (9.4), so until measured the mapping is a best effort and
-  the fallback stays "inconclusive".
+  test); with a logged-out account `model/list`, `config/read` and `thread/start` all answer (measured, section 12), so
+  this classifier is a safety net for a server-side rejection, and the fallback stays "inconclusive".
 
 ### 5.7 Call-site mapping
 
@@ -444,7 +444,7 @@ disabled shell, absence of tools). It does not detect a tool that is offered but
 | 2 | `plan = await prepare_hermetic_codex(TITLE_MODEL)` **outside** the 15 s timeout, where `make_codex_config` runs today, then `run_hermetic_codex(plan, full_prompt, effort=low)` inside it, inside the retry loop | `text`; a `terminal_error` is a failed attempt, never a title candidate |
 | 3 | `run_hermetic_claude("ping", model="haiku")` inside the 30 s probe timeout | unchanged rule: any result without `authentication_failed` (an `is_error` result included, as today at `auth.py:318-322`) is a positive; `assistant_error == "authentication_failed"` is a negative; an exception, including a guard violation, is inconclusive |
 | 4 | `run_hermetic_claude("What model are you?", model="haiku")` inside the 30 s refresh timeout | none (the caller re-reads the stored expiry) |
-| 5 | `prepare_hermetic_codex(_REFRESH_MODEL)` and `run_hermetic_codex(plan, _REFRESH_PROMPT, effort=low)`, both inside the 30 s probe timeout where `make_codex_config` already runs | `terminal_error` classified with the existing unauthorised test. An unauthorised error raised by `model/list`, `config/read` or `thread/start` before the turn is classified like a `terminal_error` by the exception classifier of 5.6 (new behaviour, not "unchanged"), so a logged-out state still gives a negative (the logged-out behaviour of these requests was not measured: section 9.4) |
+| 5 | `prepare_hermetic_codex(_REFRESH_MODEL)` and `run_hermetic_codex(plan, _REFRESH_PROMPT, effort=low)`, both inside the 30 s probe timeout where `make_codex_config` already runs | `terminal_error` classified with the existing unauthorised test. An unauthorised error raised by `model/list`, `config/read` or `thread/start` before the turn is classified like a `terminal_error` by the exception classifier of 5.6 (new behaviour, not "unchanged"), so a logged-out state still gives a negative (measured: these requests still answer when logged out, section 12) |
 | 6 | same as 5 for the refresh | none (the caller re-reads the stored refresh time) |
 
 The preparation step therefore runs exactly where `make_codex_config` runs today at each site. The catalogue subprocess
@@ -677,9 +677,9 @@ Both providers:
 - D13. **Fail-closed negative tests (no model call; they run without `--live` and are numbered O9 in the offline list):**
   (i) Codex: `_prepare_hermetic_codex_for_diagnostic(..., catalog_path=<file whose shell_type is "bogus">)` (the diagnostic seam of
   5.1, which skips the validation) followed by `hermetic_codex(plan)` must raise `HermeticConfigError(reason="start")`: the
-  binary exits during initialisation (that the binary does reject such a catalogue is not measured yet: the first
-  implementation verifies it by hand, and D13(i) itself fails if the binary tolerates the value, which then calls for a
-  stricter validation in 5.4); the diagnostic checks that no `thread/start` was issued and that no child process
+  binary exits during initialisation (measured on codex 0.160.0: the binary rejects such a catalogue at start with
+  `failed to parse model_catalog_json ... unknown variant`, section 12; D13(i) itself fails if a later binary tolerates
+  the value, which then calls for a stricter validation in 5.4); the diagnostic checks that no `thread/start` was issued and that no child process
   is left running; (ii) Codex: asking for a slug absent from the bundled catalogue must raise
   `HermeticConfigError(reason="catalog")` before any app-server starts; (iii) Claude: `check_claude_init` given a forged
   `init` payload with a non-empty `tools` list must raise `HermeticGuardViolation`; (iv) Codex: `check_codex_model_list`
@@ -699,8 +699,7 @@ after the positive control has shown the prompt does induce the effect.
   CLIs may refresh their own token or cache files as they do in any use; that is outside its control.
 - It does not try to force a token refresh.
 - It does not log out: whether `model/list`, `config/read` and `thread/start` still answer when the Codex login is absent
-  (the negative path of site 5) is not measured by it. The first implementation must measure it once by hand and record
-  the result in section 12.
+  (the negative path of site 5) was measured once by hand and is recorded in section 12.
 
 ### 9.5 Maintenance rule
 
@@ -812,3 +811,17 @@ configuration, and failed (no file, no tool item) with the final one; `thread/st
 renders the injected context items without a model call; with the final set it shows a near-empty skills block, the
 global instruction file with the environment context, and the prompt (about 7 300 characters in total, against about
 68 000 today).
+
+### Implementation-time measurements (2026-10-04)
+
+Codex CLI 0.160.0, `openai_codex` 1.95.0. No measurement below made a model call.
+
+| Item | Result |
+|---|---|
+| Bogus catalogue (`shell_type` = `bogus`), O9-i | The binary exits at start (`failed to parse model_catalog_json ... unknown variant `bogus``). `hermetic_codex` raises `HermeticConfigError(reason="start")`, message starting "The Codex app-server did not start". No `thread/start`, no child left. |
+| Catalogue round trip, O3 | The binary reads back the hermetic entry unchanged. |
+| `debug prompt-input`, O5 | Skills block empty (nothing after `### Available skills`); permissions text `sandbox_mode` is `read-only`; no `apply_patch`, `exec_command` or `spawn_agent`; the repository `AGENTS.md` is absent; the home instruction file is injected (allowed). |
+| Logged-out Codex (throwaway `CODEX_HOME`, no `auth.json`) | `hermetic_codex(plan)` for the refresh model starts: `model/list`, `config/read` and `thread/start` all answer. No error shape to classify; `is_unauthorized_exception` needed no change. A logged-out state therefore surfaces at the turn (`terminal_error`), not before it. |
+| Token counts of D2 / D10 | Not measured yet: pending the live run (needs the user's go). |
+| Live canary results (D1-D14) | Not measured yet: pending the live run (needs the user's go). |
+| Cost of one full diagnostic run | Not measured yet: pending the live run (needs the user's go). |

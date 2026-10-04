@@ -326,14 +326,16 @@ async def probe_auth_via_codex_sdk() -> bool | None:
 
     ``codex login status`` (the gate) is a local check; like Claude's, its
     "logged in" verdict can outlive a server-side rejection. When we need
-    certainty (the user-initiated "Check again") we run one ephemeral turn and
-    watch the stream for the same terminal auth error the live agent treats as a
-    logout (:meth:`CodexAgent._is_unauthorized_error`), instead of blindly
-    draining like :func:`_codex_sdk_throwaway_call`.
+    certainty (the user-initiated "Check again") we run one hermetic turn
+    (:func:`run_hermetic_codex`, no tools, neutral directory) and inspect its
+    ``terminal_error`` for the same auth error the live agent treats as a logout
+    (:meth:`CodexAgent._is_unauthorized_error`).
 
     Returns:
         ``True``  — the turn ran to completion with no terminal auth error.
-        ``False`` — an unauthorized terminal error surfaced.
+        ``False`` — an unauthorized terminal error surfaced, or an unauthorized
+                    exception was raised before the turn (``model/list``,
+                    ``config/read``, ``thread/start``).
         ``None``  — inconclusive (timeout / transport / other terminal error);
                     the caller should keep the current state rather than guess.
     """

@@ -33,6 +33,8 @@ uv + npm · Django 6 ASGI (Uvicorn, Python ≥ 3.13) · Channels + InMemoryChann
 
 **Tests: pytest + pytest-django** (declared in the default `dev` dependency group, so `uv run` installs them in each checkout's own `.venv`, worktrees included). Main repo: `uv run pytest`. Worktree: `cd <worktree> && TWICC_DATA_DIR=$PWD uv run pytest`.
 
+**Hermetic LLM diagnostic:** after changing the small Codex model (`TITLE_MODEL`, `_REFRESH_MODEL`), updating Codex or its vendored SDK (`docs/codex-vendoring.md`), or updating the Claude Agent SDK, run `uv run python scripts/diagnose_hermetic_llm.py --provider all --live --yes` and do not ship on a `FAIL` or `INCONCLUSIVE`.
+
 **Codex real-binary integration tests** (`tests/test_codex_migration_integration.py`, rollout migration against the bundled `codex` in a throwaway `CODEX_HOME`) are skipped unless `TWICC_CODEX_INTEGRATION=1`; they need the runtime already downloaded. They never touch `~/.codex`.
 
 **uv — never target the ACTIVE environment.**
@@ -75,7 +77,7 @@ All persistent data (db, logs, config) lives in one data dir, resolved (centrali
 
 **The `.env` wins over the environment** — loaded once per process by `paths.ensure_env_loaded()` (on any `import twicc`), a key defined there replaces an inherited value. The provider home keys `CLAUDE_CONFIG_DIR`, `CLAUDE_SECURESTORAGE_CONFIG_DIR`, `CODEX_HOME` (official names, absolute paths, plain `KEY=VALUE` lines) are read **only** from the `.env` (an inherited value is dropped with a warning); `TWICC_DATA_DIR` is read **only** from the environment (it locates the `.env`). Every read of a provider path goes through `twicc/provider_homes.py` at call time (never an import-time constant), and every launched process gets `provider_env_overlay()` explicitly (purges re-apply it). Design: `docs/plans/2026-09-02-provider-home-dirs-design.md`.
 
-Contents: `.env` (infra config: ports, password hash, provider homes, `TWICC_NO_LOG_TRIM`), synced user config (`settings.json`, `workspaces.json`, `layouts.json` (named-layouts catalog), `terminal-config.json`, `message-snippets.json`, `seen-tips.json`, `seen-help.json`, `providers-status.json` (per-provider upstream status: current value, last incident, user acknowledgment), `{provider}-settings-presets.json`), `db/data.sqlite(+shm/+wal)`, `search-index/` (Tantivy), `drop-requests/` (CLI drop-files picked up by a watcher), `logs/` (`backend.log`, `frontend.log`, and in dev mode, `sdk/{provider}/{session_id}.jsonl`).
+Contents: `.env` (infra config: ports, password hash, provider homes, `TWICC_NO_LOG_TRIM`), synced user config (`settings.json`, `workspaces.json`, `layouts.json` (named-layouts catalog), `terminal-config.json`, `message-snippets.json`, `seen-tips.json`, `seen-help.json`, `providers-status.json` (per-provider upstream status: current value, last incident, user acknowledgment), `{provider}-settings-presets.json`), `db/data.sqlite(+shm/+wal)`, `search-index/` (Tantivy), `cache/` (generated hermetic Codex catalogues, safe to delete), `drop-requests/` (CLI drop-files picked up by a watcher), `logs/` (`backend.log`, `frontend.log`, and in dev mode, `sdk/{provider}/{session_id}.jsonl`).
 
 ## devctl.py — Dev Servers
 
