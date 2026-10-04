@@ -44,7 +44,8 @@ class DeliveryService:
             reason = ""
             if row.connection.revoked_at is not None:
                 reason = "revoked"
-            elif configured and row.connection.resource != config.resource_url():
+            # Match resource_url's construction without reading live config twice.
+            elif configured and row.connection.resource != configured + "/mcp":
                 reason = "resource_changed"
             if reason:
                 row.delete()

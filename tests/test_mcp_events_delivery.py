@@ -2,13 +2,14 @@
 
 import asyncio
 import base64
-from datetime import timedelta
+from datetime import datetime, timedelta
 import ssl
 from types import SimpleNamespace
 
 from django.db import transaction
 import pytest
 from standardwebhooks import Webhook
+from standardwebhooks.webhooks import WebhookVerificationError
 
 from tests.mcp_events_helpers import FakeClock
 from twicc.core.models import McpConnection, McpEventSubscription, McpOAuthClient
@@ -114,18 +115,18 @@ def test_authority_suppresses_and_only_deletes_revoked_or_resource_mismatch(env,
     asyncio.run(run())
 
 
-def test_rotation_between_attempts_uses_current_secrets_and_window(env):
+def test_rotation_between_attempts_uses_current_secrets_and_window(env, monkeypatch):
+    class VerificationTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return env.clock.utcnow()
+    monkeypatch.setattr("standardwebhooks.webhooks.datetime", VerificationTime)
+
     async def run():
         calls = []
 
         async def send(url, *, headers, body):
-            calls.append(headers)
-            signing_time = env.clock.utcnow().replace(microsecond=0)
-            expected_secret = SECRET if len(calls) == 1 else NEW_SECRET
-            expected = Webhook(expected_secret).sign("msg_frozen", signing_time, BODY.decode())
-            if len(calls) == 2:
-                expected += " " + Webhook(SECRET).sign("msg_frozen", signing_time, BODY.decode())
-            assert headers["webhook-signature"] == expected
+            calls.append((headers, body, env.clock.utcnow().replace(microsecond=0)))
             return PinnedResponse(503, b"", False)
 
         async def sleep(delay):
@@ -138,6 +139,19 @@ def test_rotation_between_attempts_uses_current_secrets_and_window(env):
 
         await delivery.DeliveryService(env.runtime, send=send, sleep=sleep).deliver(env.emission)
         assert len(calls) == 3
+        for (headers, body, signing_time), expected_secrets in zip(
+            calls, ((SECRET,), (NEW_SECRET, SECRET), (NEW_SECRET,)), strict=True,
+        ):
+            assert body is BODY
+            assert headers["webhook-id"] == "msg_frozen"
+            assert headers["webhook-timestamp"] == str(int(signing_time.timestamp()))
+            assert headers["webhook-signature"] == " ".join(
+                Webhook(secret).sign("msg_frozen", signing_time, BODY.decode()) for secret in expected_secrets
+            )
+            for secret in expected_secrets:
+                assert Webhook(secret).verify(body, headers) == {"data": {"reply": {"text": "private reply"}}}
+        with pytest.raises(WebhookVerificationError, match="No matching signature"):
+            Webhook(SECRET).verify(calls[2][1], calls[2][0])
     asyncio.run(run())
 
 
@@ -359,3 +373,27 @@ def test_unexpected_sender_failure_logs_frames_without_exception_message(env, ca
     assert SECRET not in caplog.text and "private reply" not in caplog.text
     assert "RuntimeError" in caplog.text and "test_mcp_events_delivery.py" in caplog.text
     assert sum("Unexpected webhook send exception" in record.message for record in caplog.records) == 3
+
+
+def test_configuration_becoming_empty_retains_subscription_between_attempts(env, monkeypatch):
+    reads = []
+    def base_url():
+        reads.append(None)
+        return "https://mcp.example" if len(reads) == 1 else ""
+    monkeypatch.setattr("twicc.mcp.oauth.config.base_url", base_url)
+
+    async def run():
+        calls, delays = [], []
+        async def send(url, *, headers, body):
+            calls.append((headers, body))
+            return PinnedResponse(503, b"", False)
+        async def sleep(delay):
+            delays.append(delay)
+            env.clock.advance(delay)
+        await delivery.DeliveryService(env.runtime, send=send, sleep=sleep).deliver(env.emission)
+        assert await McpEventSubscription.objects.filter(pk="subscription").aexists()
+        assert len(calls) == 1 and delays == [30]
+        assert len(reads) == 2
+        assert env.runtime.commands.empty()
+        assert env.runtime.writes.get_nowait() == env.emission.cursor
+    asyncio.run(run())
