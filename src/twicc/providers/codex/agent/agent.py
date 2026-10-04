@@ -53,7 +53,7 @@ from openai_codex.generated.v2_all import (
 import psutil
 from asgiref.sync import sync_to_async
 
-from twicc.agent import AgentState, BaseAgent, PendingRequest, SendDeliveryError, StateChangeCallback
+from twicc.agent import AgentInfo, AgentState, BaseAgent, PendingRequest, SendDeliveryError, StateChangeCallback
 from twicc.agent.shell_notice import (
     ShellInfo,
     ShellLookup,
@@ -70,6 +70,7 @@ from twicc.providers.helpers import AgentSettings, get_provider_helpers
 from ..permission_modes import resolve_codex_turn_overrides
 from ..sdk_wrappers import TwiccAsyncCodex, TwiccAsyncThread, service_tier_from_fast_mode
 from ..streaming_registry import get_streamed_item_registry
+from .active_tools import active_tool_from_item
 from .approvals import (
     ELICITATION_METHOD,
     REQUEST_USER_INPUT_METHOD,
@@ -512,6 +513,11 @@ class CodexAgent(BaseAgent):
         # Populated on ``item/started``, popped on ``item/completed``,
         # cleared on ``interrupt_or_kill``.
         self._items_by_id: dict[str, dict] = {}
+        # Tools currently running (``item/started`` seen, ``item/completed``
+        # not yet), keyed by item id — drives the "Codex is sleeping" status
+        # line through ``process_tools``. Same entry shape as the Claude agent.
+        self._active_tools: dict[str, dict[str, Any]] = {}
+        self._last_started_tool_id: str | None = None
         # Map of itemId → human-readable reason for tools the user ended
         # out of band: an approval refusal (Deny, Cancel turn, empty
         # permissions grant) recorded by ``_record_decision_outcome``, or a
@@ -2571,6 +2577,35 @@ class CodexAgent(BaseAgent):
         self._ephemeral_cost += cost
         self.ephemeral_usage["cost_usd"] = float(self._ephemeral_cost)
 
+    def _serialize_active_tools(self) -> list[dict]:
+        """Return ``_active_tools`` as a list of dicts ready for transport."""
+        return [
+            {"id": item_id, "name": entry["name"], "input": entry["input"], "streaming": False}
+            for item_id, entry in self._active_tools.items()
+        ]
+
+    def get_info(self) -> AgentInfo:
+        """Extend the base snapshot with the running tools (reconnect replay)."""
+        return super().get_info()._replace(
+            active_tools=tuple(self._serialize_active_tools()),
+            last_started_tool_id=self._last_started_tool_id,
+        )
+
+    async def _broadcast_process_tools(self) -> None:
+        """Broadcast the current list of running tools for the status line."""
+        await self._broadcast_stream_event({
+            "type": "process_tools",
+            "session_id": self.session_id,
+            "tools": self._serialize_active_tools(),
+            "last_started_id": self._last_started_tool_id,
+        })
+
+    async def _clear_active_tools(self) -> None:
+        if not self._active_tools:
+            return
+        self._active_tools.clear()
+        await self._broadcast_process_tools()
+
     async def _handle_stream_event(self, event: Any) -> None:
         """Translate one Codex SDK stream notification into TwiCC's WS protocol.
 
@@ -2651,6 +2686,11 @@ class CodexAgent(BaseAgent):
             return
 
         self._note_command_execution(method, payload)
+
+        if method == "turn/completed":
+            # Every tool of the turn is over: drop any entry whose
+            # ``item/completed`` never arrived (interrupt, failure).
+            await self._clear_active_tools()
 
         if method == "thread/tokenUsage/updated":
             if self.ephemeral and isinstance(payload, ThreadTokenUsageUpdatedNotification):
@@ -2749,6 +2789,10 @@ class CodexAgent(BaseAgent):
                     self._items_by_id[item_id] = inner.model_dump(
                         mode="json", by_alias=True,
                     )
+                    if (active := active_tool_from_item(inner)) is not None:
+                        self._active_tools[item_id] = {"name": active[0], "input": active[1]}
+                        self._last_started_tool_id = item_id
+                        await self._broadcast_process_tools()
                 # ``fileChange`` items announce an upcoming ``apply_patch``.
                 # Read the pre-patch contents synchronously so the watcher
                 # can splice them into the persisted ``patch_apply_end``
@@ -2857,6 +2901,8 @@ class CodexAgent(BaseAgent):
             item_id_for_cleanup = getattr(inner, "id", None)
             if item_id_for_cleanup:
                 self._items_by_id.pop(item_id_for_cleanup, None)
+                if self._active_tools.pop(item_id_for_cleanup, None) is not None:
+                    await self._broadcast_process_tools()
 
             # Multi-agent v2: the ``wait`` collaboration call returned, so
             # the parent is working again — drop the waiting label. The

@@ -1080,6 +1080,25 @@ export class CodexToolHelpers extends BaseToolHelpers {
         return aggregateExecCommandOutput(name, toolId, options)
     }
 
+    getVerb(name) {
+        // Gerund for the "Codex is …" status line, from the canonical tool
+        // names the backend ``process_tools`` feed sends (see
+        // ``providers/codex/agent/active_tools.py``).
+        if (!name) return null
+        if (name === 'clock__sleep') return 'sleeping'
+        if (FUNCTION_CALL_EXEC_TOOLS.has(name)) return 'running'
+        if (name === 'apply_patch') return 'editing'
+        if (name === 'web_search_call' || name === 'web__run') return 'searching'
+        if (name === VIEW_IMAGE_TOOL_NAME) return 'viewing'
+        if (name === IMAGE_GEN_TOOL_NAME) return 'generating an image'
+        if (name.startsWith(MCP_TOOL_NAME_PREFIX)) {
+            const server = name.split('__')[1] || 'mcp'
+            return `mcping (${server})`
+        }
+        // Unknown tool: never null, an empty phrase would read "Codex is".
+        return `using ${humanizeToolSegment(name.split('__').pop()).toLowerCase()}`.trim()
+    }
+
     getHeaderLabel(name, input, options) {
         // A control card (``followup_task`` / ``send_message`` /
         // ``interrupt_agent`` targeting an agent) reads its action label

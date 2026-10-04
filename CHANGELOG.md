@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Codex live status** — While Codex runs a tool, the status line under the conversation says what it is doing (e.g. "Codex is sleeping") instead of "thinking", and the `clock.sleep` card shows its duration ("Sleep for 45s").
 - **Orchestration activity** — The Orchestration tab shows at a glance when its sessions or subagents are working.
 - **Task progress** — The Tasks tab shows how many tasks are done out of the total, and a green check once all are done.
 
