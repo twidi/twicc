@@ -426,6 +426,7 @@ async def apply_session_archived_change(
     from twicc.agent.registry import get_agent_manager_registry
     from twicc.terminal import kill_all_tmux_terminals
 
+    was_archived = session.archived
     fields = ["archived"]
     session.archived = archived
     if also_unpin:
@@ -453,6 +454,10 @@ async def apply_session_archived_change(
         await get_agent_manager_registry().kill_agent(session.id, reason="archived")
         await _drop_dead_process_runs(session.id)
         await asyncio.to_thread(kill_all_tmux_terminals, f"s:{session.id}")
+        if not was_archived:
+            from twicc.title_auto_task import request_title_check
+
+            request_title_check(session.id, closing=True)
 
 
 async def _drop_dead_process_runs(session_id: str) -> None:

@@ -1209,6 +1209,11 @@ class BaseSessionsWatcher:
                 await asyncio.to_thread(search.commit)
             return result
 
+        if indexing.new_line_nums and indexed_session.type != SessionType.SUBAGENT:
+            from twicc.title_auto_task import request_title_check
+
+            request_title_check(indexing.session_id)
+
         try:
             if indexing.title_changed:
                 await asyncio.to_thread(search.reindex_session, indexing.session_id)

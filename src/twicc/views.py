@@ -1380,6 +1380,11 @@ async def bulk_archive_sessions(request):
     )
 
     if ids:
+        from twicc.title_auto_task import request_title_check
+
+        for session_id in ids:
+            request_title_check(session_id, closing=True)
+
         channel_layer = get_channel_layer()
         await channel_layer.group_send("updates", {
             "type": "broadcast",

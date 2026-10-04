@@ -674,6 +674,10 @@ class BaseAgentManager:
             if not getattr(agent, "ephemeral", False):
                 await self._update_session_stopped_at(agent)
             self._cleanup_dead(agent)
+            if not getattr(agent, "ephemeral", False) and agent.kill_reason in {"manual", "force"}:
+                from twicc.title_auto_task import request_title_check
+
+                request_title_check(agent.session_id, closing=True)
         elif info.state == AgentState.ASSISTANT_TURN:
             # Wake the paused usage sync loops: an agent starting real work may
             # want fresh quota data (e.g. an orchestrator checking usage) even
