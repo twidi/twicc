@@ -23,6 +23,8 @@ from pathlib import Path
 import orjson
 from channels.layers import get_channel_layer
 
+from twicc.providers.claude_code.hermetic import run_hermetic_claude
+
 logger = logging.getLogger(__name__)
 
 
@@ -239,36 +241,8 @@ def refresh_token_via_sdk(expires_at: int) -> bool:
 
 
 async def _sdk_throwaway_call() -> None:
-    """Make a minimal SDK call to trigger token refresh."""
-    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, ResultMessage
-
-    from twicc.provider_homes import provider_env_overlay
-
-    options = ClaudeAgentOptions(
-        model="haiku",
-        permission_mode="default",
-        extra_args={"no-session-persistence": None},
-        allowed_tools=[],
-        effort='low',
-        # Configured provider homes, explicit (see the SDK agent's env_option).
-        env=provider_env_overlay(),
-    )
-    client = ClaudeSDKClient(options=options)
-
-    async def _execute():
-        await client.connect()
-        await client.query("What model are you?")
-        async for msg in client.receive_messages():
-            if isinstance(msg, ResultMessage):
-                break
-
-    try:
-        await asyncio.wait_for(_execute(), timeout=_TOKEN_REFRESH_TIMEOUT)
-    finally:
-        try:
-            await client.disconnect()
-        except Exception:
-            pass
+    """Make a minimal hermetic SDK call to trigger token refresh."""
+    await asyncio.wait_for(run_hermetic_claude("What model are you?", model="haiku"), timeout=_TOKEN_REFRESH_TIMEOUT)
 
 
 async def probe_auth_via_sdk() -> bool | None:
@@ -288,50 +262,17 @@ async def probe_auth_via_sdk() -> bool | None:
         ``None``  — inconclusive (timeout, network, or any other error); the
                     caller should keep the current state rather than guess.
     """
-    from claude_agent_sdk import (
-        AssistantMessage,
-        ClaudeAgentOptions,
-        ClaudeSDKClient,
-        ResultMessage,
-    )
-
-    from twicc.provider_homes import provider_env_overlay
-
-    options = ClaudeAgentOptions(
-        model="haiku",
-        permission_mode="default",
-        extra_args={"no-session-persistence": None},
-        allowed_tools=[],
-        effort="low",
-        # Configured provider homes, explicit (see the SDK agent's env_option).
-        env=provider_env_overlay(),
-    )
-    client = ClaudeSDKClient(options=options)
-
     result: bool | None = None
-
-    async def _execute() -> None:
-        nonlocal result
-        await client.connect()
-        await client.query("ping")
-        async for msg in client.receive_messages():
-            if isinstance(msg, AssistantMessage) and msg.error == "authentication_failed":
-                result = False
-                return
-            if isinstance(msg, ResultMessage):
-                result = True
-                return
-
     try:
-        await asyncio.wait_for(_execute(), timeout=_AUTH_PROBE_TIMEOUT)
+        reply = await asyncio.wait_for(run_hermetic_claude("ping", model="haiku"), timeout=_AUTH_PROBE_TIMEOUT)
+        if reply.assistant_error == "authentication_failed":
+            result = False
+        elif reply.num_turns is None:
+            result = None  # the stream ended without a ResultMessage: inconclusive, as before
+        else:
+            result = True
     except Exception as e:
         logger.warning("Auth probe via SDK was inconclusive: %s", e)
-    finally:
-        try:
-            await client.disconnect()
-        except Exception:
-            pass
-
     return result
 
 

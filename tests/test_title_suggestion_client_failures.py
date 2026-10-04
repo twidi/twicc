@@ -10,13 +10,14 @@ from asgiref.sync import async_to_sync
 
 from twicc.providers.claude_code import title_suggest as claude_title_suggest
 from twicc.providers.codex import title_suggest as codex_title_suggest
+from twicc.providers.hermetic import HermeticConfigError
 
 
-def test_claude_returns_none_when_the_client_cannot_be_built(monkeypatch):
-    def _explode(*_args, **_kwargs):
-        raise RuntimeError("provider homes are unreadable")
+def test_claude_returns_none_when_the_hermetic_call_cannot_start(monkeypatch):
+    async def _explode(*_a, **_k):
+        raise HermeticConfigError("cwd", "neutral directory unusable")
 
-    monkeypatch.setattr(claude_title_suggest, "ClaudeSDKClient", _explode)
+    monkeypatch.setattr(claude_title_suggest, "run_hermetic_claude", _explode)
 
     assert async_to_sync(claude_title_suggest.generate_title)("hello", "Summarize: {text}") is None
 

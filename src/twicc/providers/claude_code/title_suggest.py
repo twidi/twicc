@@ -4,8 +4,7 @@ Title suggestion service using Claude Haiku via the Agent SDK.
 import asyncio
 import logging
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, ResultMessage
-
+from twicc.providers.claude_code.hermetic import run_hermetic_claude
 from twicc.title_transcript import title_rejection_reasons
 
 logger = logging.getLogger(__name__)
@@ -62,50 +61,17 @@ async def _call_haiku(
     """
     full_prompt = system_prompt.replace("{text}", user_message)
 
-    from twicc.provider_homes import provider_env_overlay
-
-    # Guarded: resolving the provider homes reads configuration that can raise.
-    # Unguarded, that would escape ``_call_haiku`` as an exception instead of
-    # the documented ``None``, skipping both the retry and the WS handler's
-    # fallback to the other provider.
-    try:
-        client = ClaudeSDKClient(options=ClaudeAgentOptions(
-            model="haiku",
-            permission_mode="default",
-            extra_args={"no-session-persistence": None},
-            allowed_tools=[],
-            effort='low',
-            # Configured provider homes, explicit (see the SDK agent's env_option).
-            env=provider_env_overlay(),
-        ))
-    except Exception as e:
-        logger.exception(
-            "Title suggestion: client unavailable (source=%s, attempt=%d/%d): %s",
-            source, attempt, MAX_RETRIES, e,
-        )
-        return None
-
+    # ``HermeticConfigError`` and ``HermeticGuardViolation`` from the helper land in
+    # the ``except Exception`` below and return ``None``, so the retry and the WS
+    # handler's fallback to the other provider still run.
     async def _execute() -> str:
-        """Run the full SDK interaction: connect, query, collect response."""
-        await client.connect()
-        await client.query(full_prompt)
-
-        response_text = ""
-        async for msg in client.receive_messages():
-            # Extract content from message
-            if hasattr(msg, "content"):
-                for block in msg.content:
-                    if hasattr(block, "text"):
-                        response_text += block.text
-            elif hasattr(msg, "message") and hasattr(msg.message, "content"):
-                for block in msg.message.content:
-                    if hasattr(block, "text"):
-                        response_text += block.text
-
-            if isinstance(msg, ResultMessage):
-                break
-
-        return response_text.strip()
+        """Run the hermetic call and return the answer text."""
+        result = await run_hermetic_claude(full_prompt, model="haiku")
+        if result.is_error or result.assistant_error:
+            raise RuntimeError(
+                f"hermetic Claude call failed (error={result.assistant_error!r}, is_error={result.is_error})"
+            )
+        return result.text
 
     try:
         suggestion = await asyncio.wait_for(_execute(), timeout=SUGGESTION_TIMEOUT_SECONDS)
@@ -129,8 +95,3 @@ async def _call_haiku(
     except Exception as e:
         logger.exception("Title suggestion error (source=%s, attempt=%d/%d): %s", source, attempt, MAX_RETRIES, e)
         return None
-    finally:
-        try:
-            await client.disconnect()
-        except Exception:
-            pass

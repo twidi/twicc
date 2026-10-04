@@ -12,6 +12,7 @@ import pytest
 from asgiref.sync import async_to_sync
 
 from twicc.providers.claude_code import title_suggest as claude_title_suggest
+from twicc.providers.claude_code.hermetic import HermeticClaudeResult
 from twicc.providers.codex import title_suggest as codex_title_suggest
 
 REPLY = "I will review the final task 7 changes. Plan and report paths are not available in this workspace"
@@ -21,21 +22,12 @@ class _FakeClaudeClient:
     answers: list[str] = []
     calls = 0
 
-    def __init__(self, options=None):
-        pass
 
-    async def connect(self):
-        pass
-
-    async def query(self, _prompt):
-        type(self).calls += 1
-
-    async def receive_messages(self):
-        text = type(self).answers[min(type(self).calls, len(type(self).answers)) - 1]
-        yield SimpleNamespace(content=[SimpleNamespace(text=text)])
-
-    async def disconnect(self):
-        pass
+async def _fake_run_hermetic_claude(prompt, *, model):
+    _FakeClaudeClient.calls += 1
+    text = _FakeClaudeClient.answers[min(_FakeClaudeClient.calls, len(_FakeClaudeClient.answers)) - 1]
+    return HermeticClaudeResult(text=text, assistant_error=None, is_error=False, usage={}, init={},
+                                num_turns=1, tool_blocks_seen=0, permission_callback_calls=0)
 
 
 class _FakeCodex:
@@ -87,7 +79,7 @@ def rejections(monkeypatch):
 @pytest.fixture
 def claude_client(monkeypatch):
     _FakeClaudeClient.calls = 0
-    monkeypatch.setattr(claude_title_suggest, "ClaudeSDKClient", _FakeClaudeClient)
+    monkeypatch.setattr(claude_title_suggest, "run_hermetic_claude", _fake_run_hermetic_claude)
     return _FakeClaudeClient
 
 
