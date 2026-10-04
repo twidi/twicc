@@ -2,9 +2,16 @@
 // MediaPreviewDialog.vue - Full-size preview dialog for media items (images, text, PDF).
 // Supports prev/next navigation via arrow keys and buttons.
 // Accepts a normalized MediaItem[] format shared by both draft attachments and conversation messages.
+// A composer attachment chip (spec 2026-10-03 §9.3) previews an image from
+// `src`, a text from `textContent` or `textUrl` (a local object URL or the
+// staging content endpoint, read up to TEXT_PREVIEW_LIMIT), and any other
+// kind as its icon, name and size.
 import { ref, computed, watch, onBeforeUnmount, useId } from 'vue'
 import AppTooltip from '../ui/AppTooltip.vue'
 import { usePanZoom } from '../../composables/usePanZoom'
+
+/** Bytes of a text attachment shown in its preview. */
+const TEXT_PREVIEW_LIMIT = 256 * 1024
 
 const props = defineProps({
     items: {
@@ -34,6 +41,49 @@ const nextButtonId = useId()
 const currentItem = computed(() => {
     if (props.items.length === 0) return null
     return props.items[currentIndex.value] || null
+})
+
+// Lazy text of the current item when it only has a `textUrl`.
+// { url, text, truncated, error, loading }
+const loadedText = ref(null)
+let textLoadSeq = 0
+
+async function loadText(url) {
+    const seq = ++textLoadSeq
+    loadedText.value = { url, text: '', truncated: false, error: false, loading: true }
+    try {
+        // Lazy: the preview module is only needed once a text preview opens.
+        const [{ readTextPreview }, { apiFetch }] = await Promise.all([
+            import('../../utils/composerAttachments'),
+            import('../../utils/api'),
+        ])
+        const fetchFn = url.startsWith('blob:') ? fetch : apiFetch
+        const { text, truncated } = await readTextPreview(url, { fetch: fetchFn, limit: TEXT_PREVIEW_LIMIT })
+        if (seq !== textLoadSeq) return
+        loadedText.value = { url, text, truncated, error: false, loading: false }
+    } catch {
+        if (seq !== textLoadSeq) return
+        loadedText.value = { url, text: '', truncated: false, error: true, loading: false }
+    }
+}
+
+// Only while the dialog is open: a closed dialog never reads a file.
+const isOpen = ref(false)
+
+function ensureText() {
+    const item = currentItem.value
+    if (!isOpen.value || item?.type !== 'txt' || item.textContent || !item.textUrl) return
+    if (loadedText.value?.url !== item.textUrl) loadText(item.textUrl)
+}
+
+watch(currentItem, ensureText)
+
+const currentText = computed(() => {
+    const item = currentItem.value
+    if (item?.type !== 'txt') return null
+    if (item.textContent) return { text: item.textContent, truncated: false, error: false, loading: false }
+    if (item.textUrl && loadedText.value?.url === item.textUrl) return loadedText.value
+    return null
 })
 
 // Navigation state
@@ -137,6 +187,8 @@ function open(index = 0) {
     if (dialogRef.value) {
         dialogRef.value.open = true
     }
+    isOpen.value = true
+    ensureText()
     document.addEventListener('keydown', onKeyDown)
 }
 
@@ -156,7 +208,10 @@ function close() {
  * Cleans up the document-level keydown listener and notifies the parent so
  * external state (e.g. the useMediaPreview singleton) can sync.
  */
-function onWaHide() {
+function onWaHide(event) {
+    // A nested tooltip's own wa-hide bubbles up to here: not a dialog close.
+    if (event && event.target !== dialogRef.value) return
+    isOpen.value = false
     document.removeEventListener('keydown', onKeyDown)
     emit('close')
 }
@@ -223,10 +278,28 @@ defineExpose({ open, close })
             </div>
 
             <!-- Text preview -->
-            <pre
-                v-else-if="currentItem?.type === 'txt' && currentItem.textContent"
-                class="preview-text"
-            >{{ currentItem.textContent }}</pre>
+            <div
+                v-else-if="currentText && !currentText.loading && !currentText.error"
+                class="preview-text-wrap"
+            >
+                <pre class="preview-text">{{ currentText.text }}</pre>
+                <div v-if="currentText.truncated" class="preview-truncated">
+                    Preview limited to the first {{ TEXT_PREVIEW_LIMIT / 1024 }} KB.
+                </div>
+            </div>
+            <div
+                v-else-if="currentText?.loading"
+                class="preview-placeholder"
+            >
+                <wa-spinner style="font-size: 2rem;"></wa-spinner>
+            </div>
+            <div
+                v-else-if="currentText?.error"
+                class="preview-placeholder"
+            >
+                <wa-icon name="file-lines" style="font-size: 3rem;"></wa-icon>
+                <span>Preview not available</span>
+            </div>
 
             <!-- PDF placeholder -->
             <div
@@ -235,6 +308,15 @@ defineExpose({ open, close })
             >
                 <wa-icon name="file-pdf" style="font-size: 3rem;"></wa-icon>
                 <span>PDF preview not yet supported</span>
+            </div>
+
+            <!-- Any other attachment kind: its icon, name and size -->
+            <div
+                v-else-if="currentItem?.icon"
+                class="preview-placeholder"
+            >
+                <wa-icon :name="currentItem.icon" style="font-size: 3rem;"></wa-icon>
+                <span>{{ currentItem.name }}<template v-if="currentItem.sizeLabel"> · {{ currentItem.sizeLabel }}</template></span>
             </div>
 
             <!-- Next button -->
@@ -361,6 +443,13 @@ defineExpose({ open, close })
     max-width: calc(90vw - 2rem);
     max-height: calc(90dvh - 100px);
     overflow: auto;
+}
+
+.preview-truncated {
+    padding: var(--wa-space-2xs) var(--wa-space-m);
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-text-quiet);
+    font-style: italic;
 }
 
 .preview-placeholder {

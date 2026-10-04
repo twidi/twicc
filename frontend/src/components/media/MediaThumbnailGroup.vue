@@ -2,7 +2,14 @@
 // MediaThumbnailGroup.vue - Display media items as clickable thumbnails with preview dialog.
 // Shared between draft attachments (with remove buttons) and conversation messages (read-only).
 // Accepts normalized MediaItem[] format.
-import { ref, computed } from 'vue'
+//
+// Composer attachment chips (spec 2026-10-03 §9.3) are items that also carry
+// `id`, `name`, `size`, `kind`, `state`, `progress` and `retryable` (built by
+// `attachmentChipItem`). They render as an ordered list of rows after the
+// legacy thumbnails: thumbnail or kind icon, name, size, upload progress, state
+// message, Retry (the `retry` event, keyed by attachment id) and Remove (the
+// same index-based `remove` event as the legacy thumbnails).
+import { ref, computed, useId } from 'vue'
 import MediaPreviewDialog from './MediaPreviewDialog.vue'
 import AppTooltip from '../ui/AppTooltip.vue'
 
@@ -17,19 +24,34 @@ const props = defineProps({
     }
 })
 
-const emit = defineEmits(['remove'])
+const emit = defineEmits(['remove', 'retry'])
 
 const previewDialogRef = ref(null)
+const idPrefix = useId()
 
 // Items that can be previewed (images and text, not PDF yet)
 const previewableTypes = ['image', 'txt']
 
+/** A composer attachment chip (see the header comment). */
+function isAttachmentItem(item) {
+    return typeof item?.id === 'string' && typeof item.kind === 'string' && typeof item.state === 'string'
+}
+
 /**
- * Check if a media item can be previewed in the dialog.
+ * Check if a media item can be previewed in the dialog. Every attachment chip
+ * opens it (image, text, or its kind icon).
  */
 function canPreview(item) {
-    return previewableTypes.includes(item.type)
+    return isAttachmentItem(item) || previewableTypes.includes(item.type)
 }
+
+/** Legacy thumbnails and attachment chips, each with its index in `items`. */
+const legacyEntries = computed(() =>
+    props.items.map((item, index) => ({ item, index })).filter(({ item }) => !isAttachmentItem(item))
+)
+const chipEntries = computed(() =>
+    props.items.map((item, index) => ({ item, index })).filter(({ item }) => isAttachmentItem(item))
+)
 
 /**
  * Previewable items for the dialog (filtered subset).
@@ -59,6 +81,12 @@ function handleRemove(event, index) {
     emit('remove', index)
 }
 
+/** Chip Retry: keyed by attachment id. */
+function handleRetry(event, item) {
+    event.stopPropagation()
+    emit('retry', item.id)
+}
+
 /**
  * Handle remove event from the preview dialog.
  * The dialog emits the index within previewableItems,
@@ -77,18 +105,30 @@ function handleDialogRemove(previewIndex) {
  * Get icon name for non-image media types.
  */
 function getIconName(item) {
+    if (item.icon) return item.icon
     if (item.type === 'pdf') return 'file-pdf'
     if (item.type === 'txt') return 'file-lines'
     return 'file'
 }
+
+// Thumbnails whose image failed to load (e.g. a staged entry released by the
+// server meanwhile): they fall back to the kind icon.
+const brokenSources = ref(new Set())
+function onThumbnailError(src) {
+    if (!src || brokenSources.value.has(src)) return
+    brokenSources.value = new Set([...brokenSources.value, src])
+}
+function chipThumbnail(item) {
+    return item.type === 'image' && item.src && !brokenSources.value.has(item.src) ? item.src : null
+}
 </script>
 
 <template>
-    <div class="media-thumbnail-group">
+    <div v-if="legacyEntries.length" class="media-thumbnail-group">
         <div
-            v-for="(item, index) in items"
+            v-for="{ item, index } in legacyEntries"
             :key="index"
-            :id="`media-thumb-${index}`"
+            :id="`${idPrefix}-thumb-${index}`"
             class="media-thumbnail"
             :class="{ 'can-preview': canPreview(item) }"
             @click="openPreview(index)"
@@ -109,22 +149,82 @@ function getIconName(item) {
             <!-- Remove button (only when removable) -->
             <button
                 v-if="removable"
-                :id="`media-thumb-remove-${index}`"
+                :id="`${idPrefix}-thumb-remove-${index}`"
                 class="thumbnail-remove"
                 @click="(e) => handleRemove(e, index)"
             >
                 <wa-icon name="xmark"></wa-icon>
             </button>
-            <AppTooltip :for="`media-thumb-remove-${index}`">Remove</AppTooltip>
+            <AppTooltip v-if="removable" :for="`${idPrefix}-thumb-remove-${index}`">Remove</AppTooltip>
 
             <!-- File name tooltip on hover (for non-images) -->
             <span v-if="item.type !== 'image' && item.name" class="thumbnail-name">
                 {{ item.name }}
             </span>
 
-            <AppTooltip v-if="item.name" :for="`media-thumb-${index}`">{{ item.name }}</AppTooltip>
+            <AppTooltip v-if="item.name" :for="`${idPrefix}-thumb-${index}`">{{ item.name }}</AppTooltip>
         </div>
     </div>
+
+    <!-- Composer attachment chips, in add order -->
+    <ol v-if="chipEntries.length" class="attachment-chips">
+        <li
+            v-for="{ item, index } in chipEntries"
+            :key="item.id"
+            class="attachment-chip"
+            :class="`is-${item.state}`"
+        >
+            <button
+                type="button"
+                class="chip-preview"
+                :aria-label="`Preview ${item.name}`"
+                @click="openPreview(index)"
+            >
+                <img
+                    v-if="chipThumbnail(item)"
+                    :src="chipThumbnail(item)"
+                    :alt="item.name"
+                    class="chip-thumbnail"
+                    @error="onThumbnailError(item.src)"
+                />
+                <wa-icon v-else :name="getIconName(item)"></wa-icon>
+            </button>
+            <div class="chip-body">
+                <span class="chip-name" :title="item.name">{{ item.name }}</span>
+                <span class="chip-meta">
+                    {{ item.sizeLabel }}<template v-if="item.statusText"> · <span class="chip-status">{{ item.statusText }}</span></template>
+                </span>
+                <wa-progress-bar
+                    v-if="item.state === 'uploading'"
+                    class="chip-progress"
+                    :value="item.progress"
+                    :label="`Upload of ${item.name}`"
+                ></wa-progress-bar>
+            </div>
+            <button
+                v-if="item.retryable"
+                :id="`${idPrefix}-chip-retry-${index}`"
+                type="button"
+                class="chip-action"
+                :aria-label="`Retry the upload of ${item.name}`"
+                @click="(e) => handleRetry(e, item)"
+            >
+                <wa-icon name="rotate-right"></wa-icon>
+            </button>
+            <AppTooltip v-if="item.retryable" :for="`${idPrefix}-chip-retry-${index}`">Retry</AppTooltip>
+            <button
+                v-if="removable"
+                :id="`${idPrefix}-chip-remove-${index}`"
+                type="button"
+                class="chip-action"
+                :aria-label="`Remove ${item.name}`"
+                @click="(e) => handleRemove(e, index)"
+            >
+                <wa-icon name="xmark"></wa-icon>
+            </button>
+            <AppTooltip v-if="removable" :for="`${idPrefix}-chip-remove-${index}`">Remove</AppTooltip>
+        </li>
+    </ol>
 
     <!-- Preview dialog -->
     <MediaPreviewDialog
@@ -140,6 +240,10 @@ function getIconName(item) {
     display: flex;
     flex-wrap: wrap;
     gap: var(--wa-space-s);
+}
+
+.media-thumbnail-group + .attachment-chips {
+    margin-top: var(--wa-space-m);
 }
 
 .media-thumbnail {
@@ -223,5 +327,107 @@ function getIconName(item) {
 
 .media-thumbnail:hover .thumbnail-name {
     opacity: 1;
+}
+
+/* Composer attachment chips: one row each, so the name, size, progress and
+   actions stay readable in the narrow popover on mobile. */
+.attachment-chips {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-xs);
+    max-height: min(50dvh, 24rem);
+    overflow-y: auto;
+}
+
+.attachment-chip {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-s);
+    min-width: 0;
+    padding: var(--wa-space-2xs);
+    border-radius: var(--wa-border-radius-s);
+    border: 1px solid var(--wa-color-border-neutral-tertiary);
+    background: var(--wa-color-surface-secondary);
+}
+
+.attachment-chip.is-failed,
+.attachment-chip.is-missing {
+    border-color: var(--wa-color-danger-border-normal);
+}
+
+/* Native <button> resets: WA native styles force a height on buttons. */
+.chip-preview,
+.chip-action {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    height: auto;
+    min-height: 0;
+    padding: 0;
+    border: none;
+    box-shadow: none;
+    background: none;
+    cursor: pointer;
+    color: var(--wa-color-text-quiet);
+}
+
+.chip-preview {
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: var(--wa-border-radius-s);
+    overflow: hidden;
+    background: var(--wa-color-surface-default);
+    font-size: 1.25rem;
+}
+
+.chip-thumbnail {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.chip-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-3xs);
+    flex: 1;
+    min-width: 0;
+}
+
+.chip-name {
+    font-size: var(--wa-font-size-s);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.chip-meta {
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-text-quiet);
+}
+
+.is-failed .chip-status,
+.is-missing .chip-status {
+    color: var(--wa-color-danger-on-quiet);
+}
+
+.chip-progress {
+    --track-height: 0.25rem;
+}
+
+.chip-action {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    font-size: 0.8rem;
+}
+
+.chip-action:hover {
+    background: var(--wa-color-surface-default);
+    color: var(--wa-color-text-normal);
 }
 </style>

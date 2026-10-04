@@ -1111,42 +1111,11 @@ export class BaseProviderHelpers {
         }
     }
 
-    // ─── Attachment capabilities ─────────────────────────────────────────
+    // ─── Legacy attachment resize ────────────────────────────────────────
     //
-    // Consumed by ``MessageInput.vue`` and ``addAttachment`` to gate the
-    // file picker, the paste handler, and the per-file processing pipeline
-    // (resize, max bytes) against what this provider can actually carry.
-    // Each provider declares its own ceiling; generic code never branches
-    // on the provider id itself.
-    //
-    // Shape:
-    //   {
-    //     images:            boolean,    // accept images at all?
-    //     documents:         boolean,    // accept PDF / TXT?
-    //     maxBytes:          number,     // hard per-file size cap (bytes)
-    //     acceptedMimeTypes: string[],   // exact list, used both for the
-    //                                    // <input accept> attribute and
-    //                                    // for MIME validation
-    //     resizeImages:      boolean,    // client-side downscale to
-    //                                    // MAX_IMAGE_DIMENSION before
-    //                                    // base64 encoding
-    //   }
-
-    /**
-     * Attachment capabilities for this provider's send pipeline. Default:
-     * provider accepts nothing — frontend hides the paperclip and refuses
-     * all file picks / pastes. Providers override with the formats and
-     * limits their runtime actually supports.
-     */
-    getAttachmentSupport() {
-        return {
-            images: false,
-            documents: false,
-            maxBytes: 0,
-            acceptedMimeTypes: [],
-            resizeImages: false,
-        }
-    }
+    // Composer attachments are staged uploads: the server decides how each
+    // file is sent (spec 2026-10-03). The hook below only serves legacy
+    // draft medias (old drafts and failed-send snapshots, base64 images).
 
     /**
      * Long-edge pixel cap to apply to images at send time for this

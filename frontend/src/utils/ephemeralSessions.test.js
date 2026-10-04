@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createEphemeralActions, createSendFailureActions, ephemeralFields, serializeDraftSession, isLaunchedEphemeral } from './ephemeralSessions.js'
+import { createEphemeralActions, createSendFailureActions, ephemeralFields, serializeDraftSession, isLaunchedEphemeral, summarizeEphemeralAttachments } from './ephemeralSessions.js'
+import { ephemeralPromptText } from '../providers/ephemeralContent.js'
 
 function fixture(overrides = {}) {
     const saved = new Map(), controls = new Map(), stopped = []
@@ -279,4 +280,48 @@ test('binding and recovery leave attachment records to their own rebind, then re
     finishRebind()
     await new Promise(resolve => setImmediate(resolve))
     assert.deepEqual(order.at(-1), ['rekey', 'canonical', recovered])
+})
+
+test('ephemeral summaries read the attachment metadata: name, MIME type and display kind, no bytes', () => {
+    const records = [
+        { id: 'a', sessionId: 'draft', bucket: 'draft', position: 0, name: 'chart.png', size: 9, mimeType: 'image/png', kind: 'image' },
+        { id: 'b', sessionId: 'draft', bucket: 'draft', position: 1, name: 'spec.pdf', size: 9, mimeType: 'application/pdf', kind: 'PDF' },
+        { id: 'c', sessionId: 'draft', bucket: 'draft', position: 2, name: 'notes.md', size: 9, mimeType: '', kind: 'text' },
+        { id: 'd', sessionId: 'draft', bucket: 'draft', position: 3, name: 'clip.mov', size: 9, mimeType: 'video/quicktime', kind: 'video' },
+        { id: 'e', sessionId: 'draft', bucket: 'draft', position: 4, name: 'song.mp3', size: 9, mimeType: 'audio/mpeg', kind: 'audio' },
+        { id: 'f', sessionId: 'draft', bucket: 'draft', position: 5, name: 'x.zip', size: 9, mimeType: 'application/zip', kind: 'other', previewUrl: 'blob:secret' },
+    ]
+    assert.deepEqual(summarizeEphemeralAttachments(records), [
+        { name: 'chart.png', media_type: 'image/png', kind: 'image' },
+        { name: 'spec.pdf', media_type: 'application/pdf', kind: 'PDF' },
+        { name: 'notes.md', media_type: '', kind: 'text' },
+        { name: 'clip.mov', media_type: 'video/quicktime', kind: 'video' },
+        { name: 'song.mp3', media_type: 'audio/mpeg', kind: 'audio' },
+        { name: 'x.zip', media_type: 'application/zip', kind: 'other' },
+    ])
+    // Legacy medias (old snapshots) keep their summary.
+    assert.deepEqual(summarizeEphemeralAttachments([
+        { name: 'a.png', mimeType: 'image/png', type: 'image', data: 'secret' },
+        { name: 'b.pdf', mimeType: 'application/pdf', type: 'pdf', data: 'secret' },
+    ]), [
+        { name: 'a.png', media_type: 'image/png', kind: 'image' },
+        { name: 'b.pdf', media_type: 'application/pdf', kind: 'document' },
+    ])
+})
+
+test('promotion summarizes the composer attachments of the send, else its legacy medias', () => {
+    const { store } = fixture()
+    store.promoteEphemeralSession('draft', {
+        text: 'hello',
+        attachments: [{ bucket: 'draft', id: 'a', name: 'clip.mov', size: 1, mimeType: 'video/quicktime', kind: 'video', previewUrl: 'blob:x' }],
+        medias: [],
+    })
+    const prompt = store.sessions.draft.ephemeralPrompt
+    assert.deepEqual(prompt.attachments, [{ name: 'clip.mov', media_type: 'video/quicktime', kind: 'video' }])
+    assert.equal(JSON.stringify(prompt).includes('blob:'), false)
+    assert.equal(ephemeralPromptText(prompt.text, prompt.attachments), 'hello\n\nAttachment: clip.mov (video/quicktime)')
+
+    const legacy = fixture().store
+    legacy.promoteEphemeralSession('draft', { text: '', medias: [{ name: 'a.png', mimeType: 'image/png', type: 'image', data: 'secret' }] })
+    assert.deepEqual(legacy.sessions.draft.ephemeralPrompt.attachments, [{ name: 'a.png', media_type: 'image/png', kind: 'image' }])
 })

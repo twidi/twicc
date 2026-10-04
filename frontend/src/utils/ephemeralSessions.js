@@ -20,11 +20,17 @@ export function serializeDraftSession(session) {
     return JSON.parse(JSON.stringify(record))
 }
 
-export function summarizeEphemeralAttachments(medias = []) {
-    return medias.map(media => ({
-        name: media.name || media.filename || 'Attachment',
-        media_type: media.mimeType || media.media_type || '',
-        kind: media.type === 'image' ? 'image' : 'document',
+/**
+ * Local prompt summary of the attachments of an ephemeral send: name, MIME
+ * type and kind, never bytes nor preview URLs. Composer attachment metadata
+ * (`{bucket, id, name, mimeType, kind}`, spec 2026-10-03 §9.4) keeps its
+ * display kind; a legacy media (old snapshot) maps to `image` / `document`.
+ */
+export function summarizeEphemeralAttachments(items = []) {
+    return items.map(item => ({
+        name: item.name || item.filename || 'Attachment',
+        media_type: item.mimeType || item.media_type || '',
+        kind: typeof item.bucket === 'string' ? item.kind : (item.type === 'image' ? 'image' : 'document'),
     }))
 }
 
@@ -100,7 +106,7 @@ export function createEphemeralActions({ saveControl, deleteControl, deleteSessi
             if (session.title) payload.title = session.title
             return payload
         },
-        promoteEphemeralSession(id, { text, medias = [] }) {
+        promoteEphemeralSession(id, { text, attachments = [], medias = [] }) {
             const session = this.sessions[id]
             if (!session?.draft || !session.ephemeral) return false
             const known = this.localState.ephemeralIds ||= {}
@@ -108,7 +114,7 @@ export function createEphemeralActions({ saveControl, deleteControl, deleteSessi
             Object.assign(session, {
                 draft: false, ephemeralPhase: 'running', ephemeralStartedAt: new Date().toISOString(),
                 ephemeralDraftId: id, ephemeralBound: false,
-                ephemeralPrompt: { text, attachments: summarizeEphemeralAttachments(medias) },
+                ephemeralPrompt: { text, attachments: summarizeEphemeralAttachments(attachments?.length ? attachments : (medias || [])) },
             })
             this.localState.optimisticMessages[id] = buildPrompt(session, session.ephemeralPrompt)
             this._saveDraftToIndexedDB(id)

@@ -42,56 +42,47 @@ function attachmentBlocks(payload) {
     ]
 }
 
-function attachmentMimeType(block) {
-    if (block?.source?.type === 'text') return 'text/plain'
-    if (block?.source?.type === 'base64') {
-        return block.source.media_type || 'application/octet-stream'
-    }
-    return ''
-}
-
-function attachmentMimeTypesAreCompatible(mimeTypes, capabilities) {
-    const acceptedMimeTypes = new Set(capabilities?.acceptedMimeTypes || [])
-    return mimeTypes.every(mimeType => acceptedMimeTypes.has(mimeType))
-}
-
-function peerAttachmentsAreCompatible(payload, capabilities) {
-    return attachmentMimeTypesAreCompatible(
-        attachmentBlocks(payload).map(attachmentMimeType),
-        capabilities,
-    )
-}
-
-export function peerAttachmentCompatibilityError(payload, capabilities, providerLabel) {
-    if (peerAttachmentsAreCompatible(payload, capabilities)) return ''
-    return `${providerLabel} cannot receive all attachments in this message. `
-        + 'Choose a session using a compatible provider.'
-}
-
-export function peerDeliveryTargetState(payload, target, contentReady, missingTargetError = '') {
+/**
+ * Delivery state of a chosen target: disabled until the content is ready, or
+ * without a target (with `missingTargetError` once the content is ready).
+ * Every attachment is accepted by every provider: the server decides how each
+ * file is sent (spec 2026-10-03 §9.7).
+ */
+export function peerDeliveryTargetState(target, contentReady, missingTargetError = '') {
     if (!target) {
         return { disabled: true, error: contentReady ? missingTargetError : '' }
     }
-    const error = peerAttachmentCompatibilityError(
-        payload,
-        target.capabilities,
-        target.providerLabel,
-    )
-    return { disabled: !contentReady || Boolean(error), error }
+    return { disabled: !contentReady, error: '' }
 }
 
-export function firstCompatiblePeerProvider(payload, providers) {
-    return providers.find(candidate =>
-        peerAttachmentsAreCompatible(payload, candidate.capabilities),
-    )?.provider ?? null
+function extensionForMediaType(mediaType) {
+    if (mediaType === 'application/pdf') return 'pdf'
+    if (mediaType === 'text/plain') return 'txt'
+    const subtype = (mediaType.split('/')[1] || '').split(/[;+]/)[0]
+    return /^[a-z0-9.-]+$/i.test(subtype) ? subtype : 'bin'
 }
 
-export function firstCompatiblePeerProviderForMetadata(metadata, providers) {
-    const mimeTypes = (Array.isArray(metadata) ? metadata : [])
-        .map(item => item?.media_type || '')
-    return providers.find(candidate =>
-        attachmentMimeTypesAreCompatible(mimeTypes, candidate.capabilities),
-    )?.provider ?? null
+/**
+ * A `File` from one peer attachment block (image or document), for the
+ * composer's attachment pipeline: its title (or a numbered default name) and
+ * its media type. Null for a block with no inline content.
+ *
+ * @param {object} block - SDK `image` / `document` block
+ * @param {number} index - position of the block in the message
+ * @returns {File|null}
+ */
+export function peerBlockToFile(block, index) {
+    const source = block?.source || {}
+    const title = typeof block?.title === 'string' && block.title.trim() ? block.title.trim() : ''
+    if (source.type === 'text' && typeof source.data === 'string') {
+        return new File([source.data], title || `peer-attachment-${index + 1}.txt`, { type: 'text/plain' })
+    }
+    if (source.type === 'base64' && typeof source.data === 'string') {
+        const mime = source.media_type || 'application/octet-stream'
+        const bytes = Uint8Array.from(atob(source.data), c => c.charCodeAt(0))
+        return new File([bytes], title || `peer-attachment-${index + 1}.${extensionForMediaType(mime)}`, { type: mime })
+    }
+    return null
 }
 
 export async function addPeerAttachmentsToDraft(payload, blockToFile, addAttachment) {

@@ -5,7 +5,7 @@
 // rendered by the provider's user-message renderer; this banner only reads
 // the synthetic parsed content's ``failedSend`` field and the store entry.
 
-import { computed, inject } from 'vue'
+import { computed, inject, ref } from 'vue'
 import { useDataStore } from '../../../../stores/data'
 import { sendWsMessage } from '../../../../composables/useWebSocket'
 import { generateUUID } from '../../../../utils/crypto'
@@ -60,6 +60,22 @@ const nothingLeftToSend = computed(() =>
     !!failedSend.value?.mediasDropped && !(failedSend.value?.text || '').trim()
         && !getEntry()?.attachments?.length
 )
+
+// A Retry or an Edit in progress (both await before consuming the entry):
+// every action waits for it, so a concurrent Delete never releases the refs
+// an Edit is putting back into the composer.
+const actionInProgress = ref(false)
+
+/** Run Retry or Edit alone: no other action starts until it settles. */
+async function guarded(action) {
+    if (actionInProgress.value) return
+    actionInProgress.value = true
+    try {
+        await action()
+    } finally {
+        actionInProgress.value = false
+    }
+}
 
 function getEntry() {
     const requestId = failedSend.value?.requestId
@@ -152,6 +168,7 @@ async function edit() {
 
 /** Delete the failed message: its staged refs are released (spec §6.1.4). */
 function discard() {
+    if (actionInProgress.value) return
     const entry = getEntry()
     if (!entry) return
     const refs = snapshotAttachmentRefs(entry)
@@ -184,8 +201,8 @@ function discard() {
                     size="small"
                     variant="danger"
                     appearance="outlined"
-                    :disabled="nothingLeftToSend"
-                    @click="retry"
+                    :disabled="nothingLeftToSend || actionInProgress"
+                    @click="guarded(retry)"
                 >
                     <wa-icon slot="start" name="rotate-right"></wa-icon>
                     Retry
@@ -195,13 +212,13 @@ function discard() {
                     size="small"
                     variant="neutral"
                     appearance="outlined"
-                    :disabled="nothingLeftToSend"
-                    @click="edit"
+                    :disabled="nothingLeftToSend || actionInProgress"
+                    @click="guarded(edit)"
                 >
                     <wa-icon slot="start" name="pen"></wa-icon>
                     Edit
                 </wa-button>
-                <wa-button size="small" variant="neutral" appearance="plain" @click="discard">
+                <wa-button size="small" variant="neutral" appearance="plain" :disabled="actionInProgress" @click="discard">
                     Delete
                 </wa-button>
             </div>

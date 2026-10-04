@@ -6,14 +6,23 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { reactive } from 'vue'
 import {
     COMPOSER_PANEL,
+    attachmentChipItem,
+    attachmentKindIcon,
+    attachmentPayloadFields,
+    canSendAttachments,
     createComposerAttachments,
+    formatAttachmentSize,
     getDisplayKind,
     mapAttachmentStatus,
+    readTextPreview,
     releaseRef,
+    sendComposerMessage,
     shouldAcceptCompletion,
+    snapshotAttachments,
     statusRefs,
     toAttachmentRefs,
     touchRefs,
@@ -112,7 +121,7 @@ function next(record, fields = {}) {
  * The real upload controller and the composer actions, over a fake backend.
  * `log` records every outside effect in order (storage writes, requests).
  */
-function createHarness() {
+function createHarness(options = {}) {
     const clock = createClock()
     const log = []
     const requests = []
@@ -216,6 +225,8 @@ function createHarness() {
             return `00000000-0000-4000-8000-${uuidSeq.toString(16).padStart(12, '0')}`
         },
         randomHex: n => `c${(hex++).toString(16)}`.padStart(n, '0'),
+        objectUrls: options.objectUrls,
+        previewUrlsInUse: options.previewUrlsInUse,
     })
     return {
         clock, log, requests, server, tusUploads, toasts, controller, rows, legacyRows, records, runtime, actions,
@@ -798,4 +809,289 @@ test('an upload entry created and removed before any watcher run still fails its
     await flush()
     assert.equal(runtime[record.id].state, 'failed')
     assert.equal(runtime[record.id].retryable, true)
+})
+
+// ── Composer send and chips (spec 2026-10-03 §9.3, §9.4) ─────────────────────
+
+test('canSendAttachments: Send only when every chip is ready; no attachment is fine', () => {
+    const id = '00000000-0000-4000-8000-0000000000a1'
+    const other = '00000000-0000-4000-8000-0000000000a2'
+    const records = [{ id, bucket: 's1', position: 0 }]
+    assert.equal(canSendAttachments(records, { [id]: { state: 'uploading' } }), false)
+    assert.equal(canSendAttachments(records, { [id]: { state: 'failed' } }), false)
+    assert.equal(canSendAttachments(records, { [id]: { state: 'ready' } }), true)
+    assert.equal(canSendAttachments([], {}), true)
+    assert.equal(canSendAttachments(records, { [id]: { state: 'missing' } }), false)
+    // No runtime state yet (hydrated, status not answered): not ready.
+    assert.equal(canSendAttachments(records, {}), false)
+    const two = [...records, { id: other, bucket: 's1', position: 1 }]
+    assert.equal(canSendAttachments(two, { [id]: { state: 'ready' }, [other]: { state: 'uploading' } }), false)
+    assert.equal(canSendAttachments(two, { [id]: { state: 'ready' }, [other]: { state: 'ready' } }), true)
+})
+
+test('attachmentPayloadFields: the refs in the composer order, nothing else', () => {
+    // A bound draft shows its canonical records, then the draft's own group:
+    // positions are per group, so the display order is the send order.
+    const records = [
+        { id: 'c0', bucket: 'canonical', position: 0, name: 'a.png', kind: 'image' },
+        { id: 'c1', bucket: 'canonical', position: 1, name: 'b.pdf', kind: 'PDF' },
+        { id: 'd0', bucket: 'draft', position: 0, name: 'c.mov', kind: 'video' },
+    ]
+    assert.deepEqual(attachmentPayloadFields(records), {
+        attachments: [{ bucket: 'canonical', id: 'c0' }, { bucket: 'canonical', id: 'c1' }, { bucket: 'draft', id: 'd0' }],
+    })
+    assert.deepEqual(attachmentPayloadFields([]), {})
+})
+
+test('snapshotAttachments keeps the send order and the six metadata fields', () => {
+    const records = [
+        { id: 'c1', sessionId: 'x', bucket: 'canonical', position: 1, name: 'b.pdf', size: 2, mimeType: 'application/pdf', kind: 'PDF' },
+        { id: 'd0', sessionId: 'x', bucket: 'draft', position: 0, name: 'c.mov', size: 3, mimeType: '', kind: 'video', previewUrl: 'blob:x' },
+    ]
+    assert.deepEqual(snapshotAttachments(records), [
+        { bucket: 'canonical', id: 'c1', name: 'b.pdf', size: 2, mimeType: 'application/pdf', kind: 'PDF' },
+        { bucket: 'draft', id: 'd0', name: 'c.mov', size: 3, mimeType: '', kind: 'video' },
+    ])
+})
+
+test('sendComposerMessage: ordered refs and no images/documents; register, then forget only the sent ids', () => {
+    const records = [
+        { id: 'i1', bucket: 's1', position: 0, name: 'one.png', size: 10, mimeType: 'image/png', kind: 'image' },
+        { id: 'i2', bucket: 's1', position: 1, name: 'movie.mp4', size: 20, mimeType: 'video/mp4', kind: 'video' },
+    ]
+    const calls = []
+    let frame = null
+    const payload = { type: 'send_message', session_id: 's1', text: 'hi', images: [{ type: 'image' }], documents: [] }
+    const ok = sendComposerMessage({
+        payload,
+        records,
+        previewUrlFor: id => (id === 'i1' ? 'blob:one' : null),
+        send: p => { calls.push('send'); frame = structuredClone(p); return true },
+        register: attachments => calls.push(['register', attachments]),
+        forget: ids => calls.push(['forget', ids]),
+    })
+    assert.equal(ok, true)
+    assert.deepEqual(frame.attachments, [{ bucket: 's1', id: 'i1' }, { bucket: 's1', id: 'i2' }])
+    assert.equal(Object.hasOwn(frame, 'images'), false)
+    assert.equal(Object.hasOwn(frame, 'documents'), false)
+    assert.equal(frame.text, 'hi')
+    assert.deepEqual(calls, [
+        'send',
+        ['register', [
+            { bucket: 's1', id: 'i1', name: 'one.png', size: 10, mimeType: 'image/png', kind: 'image', previewUrl: 'blob:one' },
+            { bucket: 's1', id: 'i2', name: 'movie.mp4', size: 20, mimeType: 'video/mp4', kind: 'video', previewUrl: null },
+        ]],
+        ['forget', ['i1', 'i2']],
+    ])
+})
+
+test('sendComposerMessage: a text-only send keeps its payload; a failed socket send registers and forgets nothing', () => {
+    const calls = []
+    const payload = { type: 'send_message', text: 'hi' }
+    assert.equal(sendComposerMessage({
+        payload, records: [], send: () => true, register: a => calls.push(['register', a]), forget: ids => calls.push(['forget', ids]),
+    }), true)
+    assert.deepEqual(payload, { type: 'send_message', text: 'hi' })
+    assert.deepEqual(calls, [['register', []]])
+    calls.length = 0
+    assert.equal(sendComposerMessage({
+        payload: { type: 'send_message', text: '' },
+        records: [{ id: 'x', bucket: 's', position: 0 }],
+        send: () => false,
+        register: a => calls.push(['register', a]),
+        forget: ids => calls.push(['forget', ids]),
+    }), false)
+    assert.deepEqual(calls, [])
+})
+
+test('an ordinary socket-send failure keeps the draft records, rows and uploads intact', async () => {
+    const h = createHarness()
+    const first = await h.add('s1', 'a.txt')
+    const second = await h.add('s1', 'b.bin', 'xx', 'application/octet-stream')
+    h.log.length = 0
+    const ok = sendComposerMessage({
+        payload: { type: 'send_message', text: '' },
+        records: h.actions.getRecords('s1'),
+        send: () => false,
+        register: () => { throw new Error('never registered') },
+        forget: ids => h.actions.forgetAttachments('s1', { ids }),
+    })
+    await flush()
+    assert.equal(ok, false)
+    assert.deepEqual(h.actions.getRecords('s1').map(r => r.id), [first.id, second.id])
+    assert.ok(h.rows.has(first.id) && h.rows.has(second.id))
+    assert.deepEqual(h.log, [])
+})
+
+test('post-send forget drops only the sent records; one added after the send survives', async () => {
+    const h = createHarness()
+    const sent = await h.add('s1', 'a.txt')
+    const records = h.actions.getRecords('s1')
+    const later = await h.add('s1', 'later.txt')
+    h.log.length = 0
+    await h.actions.forgetAttachments('s1', { ids: records.map(r => r.id) })
+    assert.deepEqual(h.actions.getRecords('s1').map(r => r.id), [later.id])
+    assert.deepEqual(h.log, [`delete ${sent.id}`, `delete-legacy ${sent.id}`])
+    // Forget never cancels nor releases.
+    assert.equal(h.requests.filter(r => r.method === 'DELETE').length, 0)
+})
+
+test('attachmentChipItem: six display kinds, previews from local object URLs, else the content endpoint once ready', () => {
+    const rec = (kind, name) => ({ id: `id-${kind}`, bucket: 'b', position: 0, name, size: 1234, mimeType: '', kind })
+    const ready = { state: 'ready', progress: 100, retryable: false, pauseReason: null }
+    const uploading = { state: 'uploading', progress: 40, retryable: false, pauseReason: null }
+
+    const localImage = attachmentChipItem(rec('image', 'a.png'), uploading, { previewUrl: 'blob:img' })
+    assert.equal(localImage.type, 'image')
+    assert.equal(localImage.src, 'blob:img')
+    assert.equal(localImage.progress, 40)
+    assert.equal(localImage.state, 'uploading')
+    const remoteImage = attachmentChipItem(rec('image', 'a.png'), ready)
+    assert.equal(remoteImage.src, '/api/composer-attachments/b/id-image/content')
+    const pendingImage = attachmentChipItem(rec('image', 'a.png'), uploading)
+    assert.equal(pendingImage.src, null)
+    assert.equal(pendingImage.icon, 'file-image')
+
+    assert.equal(attachmentChipItem(rec('text', 'a.txt'), uploading, { previewUrl: 'blob:txt' }).textUrl, 'blob:txt')
+    const remoteText = attachmentChipItem(rec('text', 'a.txt'), ready)
+    assert.equal(remoteText.type, 'txt')
+    assert.equal(remoteText.textUrl, '/api/composer-attachments/b/id-text/content')
+    assert.equal(attachmentChipItem(rec('text', 'a.txt'), uploading).textUrl, null)
+
+    const pdf = attachmentChipItem(rec('PDF', 'a.pdf'), ready)
+    assert.equal(pdf.type, 'pdf')
+    assert.equal(pdf.icon, 'file-pdf')
+    for (const [kind, icon] of [['video', 'file-video'], ['audio', 'file-audio'], ['other', 'file']]) {
+        const item = attachmentChipItem(rec(kind, `a.${kind}`), ready, { previewUrl: 'blob:never' })
+        assert.equal(item.type, 'other', kind)
+        assert.equal(item.src, null, kind)
+        assert.equal(item.textUrl, null, kind)
+        assert.equal(item.icon, icon, kind)
+        assert.equal(attachmentKindIcon(kind), icon)
+    }
+    const item = attachmentChipItem(rec('other', 'x.zip'), ready)
+    for (const key of ['id', 'name', 'size', 'kind', 'state', 'progress', 'retryable']) assert.ok(Object.hasOwn(item, key), key)
+    // No native/file indicator on a chip.
+    for (const key of ['mode', 'native', 'inline']) assert.equal(Object.hasOwn(item, key), false, key)
+})
+
+test('formatAttachmentSize: bytes, KB, MB, GB; the chip carries the label', () => {
+    assert.equal(formatAttachmentSize(0), '0 B')
+    assert.equal(formatAttachmentSize(1023), '1023 B')
+    assert.equal(formatAttachmentSize(1536), '1.5 KB')
+    assert.equal(formatAttachmentSize(5 * 1024 * 1024), '5.0 MB')
+    assert.equal(formatAttachmentSize(3 * 1024 ** 3), '3.0 GB')
+    assert.equal(formatAttachmentSize(undefined), '0 B')
+    const item = attachmentChipItem({ id: 'x', bucket: 'b', position: 0, name: 'x', size: 2048, kind: 'other' }, null)
+    assert.equal(item.sizeLabel, '2.0 KB')
+})
+
+test('attachmentChipItem: Retry for a failed chip with its File, or a paused transfer; state messages', () => {
+    const rec = { id: 'x', bucket: 'b', position: 0, name: 'x.bin', size: 1, mimeType: '', kind: 'other' }
+    const failed = attachmentChipItem(rec, { state: 'failed', progress: 0, retryable: true })
+    assert.equal(failed.retryable, true)
+    assert.equal(failed.statusText, 'Upload failed')
+    const stalled = attachmentChipItem(rec, { state: 'failed', progress: 0, retryable: false })
+    assert.equal(stalled.retryable, false)
+    assert.equal(stalled.statusText, 'Upload interrupted, attach the file again')
+    const missing = attachmentChipItem(rec, { state: 'missing', progress: 0, retryable: false })
+    assert.equal(missing.retryable, false)
+    assert.equal(missing.statusText, 'File no longer available')
+    const paused = attachmentChipItem(rec, { state: 'uploading', progress: 30, retryable: false, pauseReason: 'error' })
+    assert.equal(paused.retryable, true)
+    assert.equal(paused.statusText, 'Upload paused')
+    const offline = attachmentChipItem(rec, { state: 'uploading', progress: 30, retryable: false, pauseReason: 'network' })
+    assert.equal(offline.retryable, false)
+    assert.equal(offline.statusText, 'Waiting for the connection')
+    assert.equal(attachmentChipItem(rec, { state: 'ready', progress: 100 }).statusText, '')
+    // Not answered yet (hydrate): uploading, no Retry.
+    const unknown = attachmentChipItem(rec, null)
+    assert.equal(unknown.state, 'uploading')
+    assert.equal(unknown.retryable, false)
+})
+
+test('chip Retry of a paused transfer resumes the same upload through the controller', async () => {
+    const h = createHarness()
+    const record = await h.add()
+    const clientId = h.runtime[record.id].clientId
+    h.tusUploads.at(-1).options.onError(tusError(500, { upload: true }))
+    await flush()
+    assert.equal(h.runtime[record.id].pauseReason, 'error')
+    assert.equal(await h.actions.retryAttachment(record.id), true)
+    await flush()
+    assert.equal(h.runtime[record.id].clientId, clientId)
+    assert.equal(h.runtime[record.id].pauseReason, null)
+    assert.equal(h.posts().length, 1)
+})
+
+test('composer object URLs: image and text Files only; revoked once no composer nor optimistic bubble holds them', async () => {
+    const created = []
+    const revoked = []
+    let seq = 0
+    const objectUrls = {
+        create: file => { const url = `blob:${++seq}`; created.push([url, file.name]); return url },
+        revoke: url => revoked.push(url),
+    }
+    const inUse = reactive(new Set())
+    const h = createHarness({ objectUrls, previewUrlsInUse: () => inUse })
+    const image = await h.add('s1', 'a.png', 'png', 'image/png')
+    const pdf = await h.add('s1', 'a.pdf', 'pdf', 'application/pdf')
+    const video = await h.add('s1', 'a.mp4', 'mp4', 'video/mp4')
+    const text = await h.add('s1', 'a.txt', 'hello', 'text/plain')
+    assert.deepEqual(created, [['blob:1', 'a.png'], ['blob:2', 'a.txt']])
+    assert.equal(h.actions.getPreviewUrl(image.id), 'blob:1')
+    assert.equal(h.actions.getPreviewUrl(pdf.id), null)
+    assert.equal(h.actions.getPreviewUrl(video.id), null)
+    assert.equal(h.actions.getPreviewUrl(text.id), 'blob:2')
+
+    // Chip Remove: no other user, revoked at once.
+    await h.actions.releaseAttachments([{ bucket: image.bucket, id: image.id }])
+    assert.deepEqual(revoked, ['blob:1'])
+    assert.equal(h.actions.getPreviewUrl(image.id), null)
+
+    // Sent: the optimistic bubble holds the URL, the composer forgets the record.
+    inUse.add('blob:2')
+    await h.actions.forgetAttachments('s1', { ids: [text.id] })
+    await flush()
+    assert.deepEqual(revoked, ['blob:1'])
+    // The bubble goes away: the URL is revoked.
+    inUse.delete('blob:2')
+    await flush()
+    assert.deepEqual(revoked, ['blob:1', 'blob:2'])
+})
+
+test('readTextPreview reads at most the limit and reports the truncation', async () => {
+    const fetchFn = async url => (url === '/bad' ? new Response('no', { status: 404 }) : new Response('héllo world'))
+    assert.deepEqual(await readTextPreview('/ok', { fetch: fetchFn, limit: 1000 }), { text: 'héllo world', truncated: false })
+    assert.deepEqual(await readTextPreview('/ok', { fetch: fetchFn, limit: 6 }), { text: 'héllo', truncated: true })
+    await assert.rejects(readTextPreview('/bad', { fetch: fetchFn, limit: 10 }))
+})
+
+// ── Entry points (source contract) ───────────────────────────────────────────
+
+function readSource(path) {
+    return readFileSync(new URL(path, import.meta.url), 'utf8')
+}
+
+test('entry points: every file is accepted, the paperclip always shows, screenshots use addAttachment', () => {
+    const input = readSource('../components/message/MessageInput.vue')
+    assert.doesNotMatch(input, /:accept=|\baccept="/)
+    assert.doesNotMatch(input, /getAttachmentSupport|attachmentSupport|canAttachAnything|resizeMediasForSend\(\s*records/)
+    assert.match(input, /sendComposerMessage\(/)
+    assert.match(input, /canSendAttachments\(/)
+    const paste = input.slice(input.indexOf('async function onPaste('), input.indexOf('\n}\n', input.indexOf('async function onPaste(')))
+    assert.match(paste, /item\.kind === 'file'/)
+    assert.doesNotMatch(paste, /type|accepted/)
+
+    const popover = readSource('../components/message/AgentSettingsPopover.vue')
+    assert.doesNotMatch(popover, /removeNonImageAttachments|getAttachmentSupport|nonImageAttachments/)
+
+    const list = readSource('../components/session/detail/SessionItemsList.vue')
+    assert.match(list, /store\.addAttachment\(props\.sessionId, file\)/)
+    assert.match(readSource('../components/browser/BrowserPane.vue'), /store\.addAttachment\(props\.sessionId, file\)/)
+    assert.match(readSource('../components/files/FilePane.vue'), /dataStore\.addAttachment\(sessionId, file\)/)
+
+    const data = readSource('../stores/data.js')
+    assert.doesNotMatch(data, /removeNonImageAttachments/)
+    assert.match(data, /snapshotAttachments\(attachments/)
 })

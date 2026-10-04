@@ -58,6 +58,7 @@ import {
     createComposerAttachments,
     optimisticAttachmentFields,
     snapshotAttachmentRefs,
+    snapshotAttachments,
     toAttachmentRefs,
     uniqueRefs,
 } from '../utils/composerAttachments'
@@ -72,6 +73,23 @@ import { syncBaseline } from '../utils/syncBaseline'
 import { getParsedContent, setParsedContent, clearParsedContent, hasContent } from '../utils/parsedContent'
 import { createStreamPublicationIdentity } from '../utils/streamPublicationRegistry'
 import { initBuffer, feedDelta, flushBuffer, destroySessionBuffers, destroyAllBuffers, isBufferActive } from '../utils/streamingBuffer'
+
+/**
+ * The local preview URLs the optimistic bubbles show (`attachmentItems[].src`,
+ * always `blob:` object URLs). Reactive on the optimistic message map.
+ *
+ * @param {object} optimisticMessages - `sessionId → item`
+ * @returns {string[]}
+ */
+function optimisticPreviewUrls(optimisticMessages) {
+    const urls = []
+    for (const item of Object.values(optimisticMessages)) {
+        for (const attachment of getParsedContent(item)?.attachmentItems || []) {
+            if (attachment?.src) urls.push(attachment.src)
+        }
+    }
+    return urls
+}
 
 // Composer attachment actions (utils/composerAttachments.js), built once on
 // first use. The uploads store is imported lazily (no static store ↔ store
@@ -102,6 +120,9 @@ function composerAttachmentsFor(store) {
                 fetch: apiFetch,
                 uuid: generateUUID,
                 randomHex: randomHexFromUUID,
+                // A sent attachment's local preview stays alive while its
+                // optimistic bubble shows it (spec 2026-10-03 §9.4).
+                previewUrlsInUse: () => optimisticPreviewUrls(store.localState.optimisticMessages),
             })
             return composerAttachmentsInstance
         }).catch(error => {
@@ -682,11 +703,6 @@ export const useDataStore = defineStore('data', {
             // current upload attempt (`clientId`) and its upload key.
             // { attachmentId: {state, progress, retryable, pauseReason, clientId, uploadKey} }
             attachmentRuntime: {},
-
-            // Number of files currently being processed (encoded/resized) per session.
-            // { sessionId: number }
-            // Used to block the send button until all files are ready.
-            processingAttachments: {},
 
             // MRU (Most Recently Used) navigation tracking
             // Ordered array of { path, sessionId } entries, most recent first
@@ -1447,11 +1463,6 @@ export const useDataStore = defineStore('data', {
         // hybrid switch — committed on the next Send/Apply, droppable until then.
         isHybridStaged: (state) => (sessionId) =>
             state.localState.stagedHybrid[sessionId] === true,
-
-        // Whether any files are currently being processed (encoded/resized) for a session
-        isProcessingAttachments: (state) => (sessionId) => {
-            return (state.localState.processingAttachments[sessionId] || 0) > 0
-        },
 
         // Get display name for a project (uses cache, computes if missing)
         getProjectDisplayName: (state) => (projectId) => {
@@ -3648,7 +3659,7 @@ export const useDataStore = defineStore('data', {
          *   optimistic bubble)
          */
         registerOutgoingSend(sessionId, projectId, requestId, { text, attachments, medias, images, documents }) {
-            const ephemeralSend = this.promoteEphemeralSession(sessionId, { text, medias })
+            const ephemeralSend = this.promoteEphemeralSession(sessionId, { text, attachments, medias })
             const state = this.processStates[sessionId]?.state
             const optimisticShown = state !== PROCESS_STATE.ASSISTANT_TURN
             const startingSet = optimisticShown && !state
@@ -3661,12 +3672,12 @@ export const useDataStore = defineStore('data', {
             const noLineExpected = ephemeralSend || session?.provider === 'claude_code'
                 && !session?.hybrid
                 && state === PROCESS_STATE.ASSISTANT_TURN
-            const snapshotAttachments = (attachments || []).map(({ bucket, id, name, size, mimeType, kind }) =>
-                ({ bucket, id, name, size, mimeType: mimeType || '', kind }))
+            // Send order kept (never re-sorted by position); no preview URL.
+            const sentAttachments = snapshotAttachments(attachments || [])
             this.registerInflightSend(requestId, {
                 sessionId,
                 text,
-                ...(snapshotAttachments.length ? { attachments: snapshotAttachments } : {}),
+                ...(sentAttachments.length ? { attachments: sentAttachments } : {}),
                 medias: medias || [],
                 optimisticShown,
                 startingSet,
@@ -6324,11 +6335,15 @@ export const useDataStore = defineStore('data', {
          * legacy media rows with the same ids). Never cancels an upload nor
          * releases a staging entry (§6.1.4).
          * @param {string} sessionId
+         * @param {{ids?: string[]}} [options] - only these records (the
+         *   post-send clear: an attachment added after the send stays)
          */
-        async forgetAttachments(sessionId) {
-            if (!this.localState.attachmentRecords[sessionId]) return
-            const composer = await composerAttachmentsFor(this)
-            await composer.forgetAttachments(sessionId)
+        async forgetAttachments(sessionId, options) {
+            if (options?.ids ? !options.ids.length : !this.localState.attachmentRecords[sessionId]) return
+            // Once built, called synchronously: the records are gone before
+            // this returns its promise.
+            const composer = composerAttachmentsInstance || await composerAttachmentsFor(this)
+            await composer.forgetAttachments(sessionId, options)
         },
 
         /**
@@ -6459,6 +6474,16 @@ export const useDataStore = defineStore('data', {
         },
 
         /**
+         * The local preview object URL of a composer attachment (an image or
+         * text `File` added in this page session), or null.
+         * @param {string} attachmentId
+         * @returns {string|null}
+         */
+        getAttachmentPreviewUrl(attachmentId) {
+            return composerAttachmentsInstance?.getPreviewUrl(attachmentId) ?? null
+        },
+
+        /**
          * Delete the legacy `draftMedias` row with this id, and drop it from
          * its draft's `mediaIds` (§9.6): a removed attachment never comes back
          * through the migration.
@@ -6494,31 +6519,6 @@ export const useDataStore = defineStore('data', {
                 draft.mediaIds = draft.mediaIds.filter(id => id !== mediaId)
                 await saveDraftMessage(sessionId, draft)
             }
-        },
-
-        /**
-         * Remove every non-image attachment (PDF, TXT) from a draft.
-         *
-         * Used by the provider-switcher UX in the agent settings popover:
-         * Codex has no protocol for documents, so when a draft holds any
-         * PDF/TXT the Codex option is gated behind an explicit "remove
-         * the documents to continue" affordance. Returns the count of
-         * removed attachments so the caller can toast a confirmation.
-         *
-         * @param {string} sessionId - The session ID
-         * @returns {Promise<number>} Number of attachments removed
-         */
-        async removeNonImageAttachments(sessionId) {
-            const map = this.localState.attachments[sessionId]
-            if (!map || map.size === 0) return 0
-            const toRemove = []
-            for (const media of map.values()) {
-                if (media.type !== 'image') toRemove.push(media.id)
-            }
-            for (const id of toRemove) {
-                await this.removeAttachment(sessionId, id)
-            }
-            return toRemove.length
         },
 
         /**

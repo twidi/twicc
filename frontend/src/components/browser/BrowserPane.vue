@@ -703,8 +703,8 @@ function captureScreenshot() {
     })
 }
 
-// dataUrl → File → draft attachment (the same path a manual image upload
-// takes, so provider validation / resize / caps all apply).
+// dataUrl → File → composer attachment, through the same `addAttachment`
+// entry point as a file the user picks (staged upload, chip in the composer).
 async function attachScreenshot(dataUrl) {
     const blob = await (await fetch(dataUrl)).blob()
     const file = new File([blob], `browser-capture-${Date.now()}.png`, { type: 'image/png' })

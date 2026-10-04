@@ -221,14 +221,18 @@ export function uniqueRefs(refs) {
 
 /**
  * Snapshot metadata of composer records (in-flight send, §9.5): plain
- * `{bucket, id, name, size, mimeType, kind}` objects in position order. No
+ * `{bucket, id, name, size, mimeType, kind}` objects, in the given order. No
  * bytes: the staged entry holds the file.
+ *
+ * The order is the caller's send order (`composerRecordsFor`), never a sort
+ * by `position`: a bound draft shows records of two groups, and each group
+ * numbers its positions on its own.
  *
  * @param {object[]} records
  * @returns {Array<{bucket: string, id: string, name: string, size: number, mimeType: string, kind: string}>}
  */
 export function snapshotAttachments(records) {
-    return [...records].sort(byPosition).map(record => ({
+    return (records || []).map(record => ({
         bucket: record.bucket,
         id: record.id,
         name: record.name,
@@ -274,6 +278,204 @@ export function optimisticAttachmentFields(attachments) {
                 : null,
         })),
     }
+}
+
+/**
+ * True when the composer may send its attachments: every record is `ready`
+ * (D6). An empty list never blocks. A record with no runtime state yet (its
+ * `status/` answer is pending) is not ready.
+ *
+ * @param {Array<{id: string}>} records
+ * @param {object} runtimeStates - `id → {state, …}`
+ * @returns {boolean}
+ */
+export function canSendAttachments(records, runtimeStates) {
+    return (records || []).every(record => runtimeStates?.[record.id]?.state === ATTACHMENT_STATE.READY)
+}
+
+/**
+ * The attachment fields of a `send_message` frame (spec §8): `attachments`,
+ * the `{bucket, id}` refs in the given (composer display) order, or nothing.
+ *
+ * @param {Array<{bucket: string, id: string}>} records
+ * @returns {{attachments?: Array<{bucket: string, id: string}>}}
+ */
+export function attachmentPayloadFields(records) {
+    if (!records?.length) return {}
+    return { attachments: records.map(record => ({ bucket: record.bucket, id: record.id })) }
+}
+
+/**
+ * Send one composer message (§9.4). With attachments, the frame carries their
+ * ordered refs and never the legacy `images` / `documents` fields (mutually
+ * exclusive, §8). Only after a successful socket send: `register` receives
+ * the sent attachments' metadata (with the local `previewUrl` of each, for the
+ * optimistic bubble), then `forget` drops exactly the sent records locally
+ * (never a release: the server owns the entries now). A failed socket send
+ * changes nothing, so the draft stays intact.
+ *
+ * @param {object} options
+ * @param {object} options.payload - the frame; attachment fields are set on it
+ * @param {object[]} options.records - the composer records, in send order
+ * @param {(payload: object) => boolean} options.send
+ * @param {((attachments: object[]) => void)|null} [options.register]
+ * @param {(ids: string[]) => unknown} options.forget
+ * @param {(id: string) => string|null} [options.previewUrlFor]
+ * @returns {boolean} the socket send result
+ */
+export function sendComposerMessage({ payload, records, send, register = null, forget, previewUrlFor = () => null }) {
+    const sent = [...(records || [])]
+    if (sent.length) {
+        delete payload.images
+        delete payload.documents
+        Object.assign(payload, attachmentPayloadFields(sent))
+    }
+    if (!send(payload)) return false
+    if (register) {
+        register(snapshotAttachments(sent).map(attachment => ({
+            ...attachment,
+            previewUrl: previewUrlFor(attachment.id) || null,
+        })))
+    }
+    if (sent.length) forget(sent.map(record => record.id))
+    return true
+}
+
+const KIND_ICONS = Object.freeze({
+    image: 'file-image',
+    PDF: 'file-pdf',
+    text: 'file-lines',
+    video: 'file-video',
+    audio: 'file-audio',
+    other: 'file',
+})
+
+/** The icon name of a display kind. */
+export function attachmentKindIcon(kind) {
+    return KIND_ICONS[kind] || KIND_ICONS.other
+}
+
+/**
+ * A file size for a chip: bytes, then KB, MB, GB (1024 based, one decimal).
+ *
+ * @param {number} bytes
+ * @returns {string}
+ */
+export function formatAttachmentSize(bytes) {
+    const size = Number.isFinite(bytes) && bytes > 0 ? bytes : 0
+    if (size < 1024) return `${size} B`
+    const units = ['KB', 'MB', 'GB', 'TB']
+    let value = size / 1024
+    let unit = 0
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024
+        unit += 1
+    }
+    return `${value.toFixed(1)} ${units[unit]}`
+}
+
+function chipStatusText(state, retryable, pauseReason) {
+    switch (state) {
+        case ATTACHMENT_STATE.READY:
+            return ''
+        case ATTACHMENT_STATE.FAILED:
+            return retryable ? 'Upload failed' : 'Upload interrupted, attach the file again'
+        case ATTACHMENT_STATE.MISSING:
+            return 'File no longer available'
+        default:
+            if (pauseReason === 'error') return 'Upload paused'
+            if (pauseReason === 'network') return 'Waiting for the connection'
+            return 'Uploading'
+    }
+}
+
+/**
+ * One composer chip (§9.3) for `MediaThumbnailGroup`: the record fields, its
+ * upload state, and how to preview it. An image thumbnail and a text preview
+ * come from the local object URL while the `File` is in memory, else from the
+ * staging content endpoint once the entry is `ready`. Other kinds show an
+ * icon. `type` is the legacy media family the preview dialog understands
+ * (`image`, `txt`, `pdf`, or `other`). Retry is offered for a failed upload
+ * whose `File` is in memory, and for a transfer the controller paused on an
+ * error. No native/file indicator (D7).
+ *
+ * @param {{id: string, bucket: string, name: string, size: number, kind: string}} record
+ * @param {{state?: string, progress?: number, retryable?: boolean, pauseReason?: string|null}|null} runtime
+ * @param {{previewUrl?: string|null}} [options]
+ * @returns {object}
+ */
+export function attachmentChipItem(record, runtime, { previewUrl = null } = {}) {
+    const state = runtime?.state || ATTACHMENT_STATE.UPLOADING
+    const pauseReason = runtime?.pauseReason || null
+    const retryable = state === ATTACHMENT_STATE.FAILED
+        ? !!runtime?.retryable
+        : state === ATTACHMENT_STATE.UPLOADING && pauseReason === 'error'
+    const remote = state === ATTACHMENT_STATE.READY ? attachmentContentUrl(record) : null
+    let type = 'other'
+    let src = null
+    let textUrl = null
+    if (record.kind === 'image') {
+        src = previewUrl || remote
+        if (src) type = 'image'
+    } else if (record.kind === 'text') {
+        textUrl = previewUrl || remote
+        if (textUrl) type = 'txt'
+    } else if (record.kind === 'PDF') {
+        type = 'pdf'
+    }
+    return {
+        id: record.id,
+        name: record.name,
+        size: record.size,
+        sizeLabel: formatAttachmentSize(record.size),
+        kind: record.kind,
+        state,
+        progress: runtime?.progress ?? 0,
+        retryable,
+        statusText: chipStatusText(state, !!runtime?.retryable, pauseReason),
+        icon: attachmentKindIcon(record.kind),
+        type,
+        src,
+        textUrl,
+    }
+}
+
+/**
+ * Read the start of a text file for a preview: at most `limit` bytes, decoded
+ * as UTF-8 (a character cut by the limit is dropped). A local object URL or
+ * the staging content endpoint.
+ *
+ * @param {string} url
+ * @param {{fetch: Function, limit: number}} options
+ * @returns {Promise<{text: string, truncated: boolean}>} rejects on a failed answer
+ */
+export async function readTextPreview(url, { fetch: fetchFn, limit }) {
+    const res = await fetchFn(url)
+    if (!res.ok) throw new Error(`Preview failed (${res.status})`)
+    const decoder = new TextDecoder()
+    let text = ''
+    let read = 0
+    let truncated = false
+    const reader = res.body.getReader()
+    try {
+        for (;;) {
+            const { done, value } = await reader.read()
+            if (done) break
+            const room = limit - read
+            if (value.length > room) {
+                text += decoder.decode(value.subarray(0, room), { stream: true })
+                truncated = true
+                break
+            }
+            read += value.length
+            text += decoder.decode(value, { stream: true })
+        }
+    } finally {
+        if (truncated) reader.cancel().catch(() => {})
+        else reader.releaseLock()
+    }
+    if (!truncated) text += decoder.decode()
+    return { text, truncated }
 }
 
 /**
@@ -410,11 +612,21 @@ function plainRecord(record) {
  * @param {Function} deps.fetch - `apiFetch`
  * @param {() => string} deps.uuid
  * @param {(n: number) => string} deps.randomHex
+ * @param {{create: (file: File) => string, revoke: (url: string) => void}} [deps.objectUrls] -
+ *     object URL factory of the local previews (default: `URL.createObjectURL`)
+ * @param {() => Iterable<string>} [deps.previewUrlsInUse] - reactive: the
+ *     preview URLs other users still show (optimistic bubbles). A URL is
+ *     revoked once its record is gone and no such user holds it.
  */
 export function createComposerAttachments(deps) {
     const { records, runtime, storage, uploads, uuid, randomHex } = deps
     const aliases = deps.aliases || {}
     const fetchFn = deps.fetch
+    const objectUrls = deps.objectUrls || {
+        create: file => URL.createObjectURL(file),
+        revoke: url => URL.revokeObjectURL(url),
+    }
+    const previewUrlsInUse = deps.previewUrlsInUse || (() => [])
 
     /** The session that owns a composer id: its canonical id once bound. */
     function resolveOwner(sessionId) {
@@ -435,9 +647,42 @@ export function createComposerAttachments(deps) {
     const attempts = new Map()
     /** id → counter, bumped by every new attempt and every removal. */
     const generations = new Map()
+    /** id → local object URL of an image or text `File` (chip and bubble previews). */
+    const previews = new Map()
+    /** Object URLs whose record is gone, kept while an optimistic bubble shows them. */
+    const releasedPreviews = new Set()
 
     function bump(id) {
         generations.set(id, (generations.get(id) || 0) + 1)
+    }
+
+    function createPreview(id, file, kind) {
+        if (kind !== 'image' && kind !== 'text') return
+        try {
+            previews.set(id, objectUrls.create(file))
+        } catch (error) {
+            console.warn('Attachment preview unavailable', error)
+        }
+    }
+
+    /** Revoke every released preview URL no optimistic bubble holds. */
+    function sweepPreviewUrls() {
+        if (!releasedPreviews.size) return
+        const used = new Set(previewUrlsInUse())
+        for (const url of releasedPreviews) {
+            if (used.has(url)) continue
+            releasedPreviews.delete(url)
+            objectUrls.revoke(url)
+        }
+    }
+
+    /** The composer no longer holds this preview: revoke it unless a bubble shows it. */
+    function releasePreview(id) {
+        const url = previews.get(id)
+        if (!url) return
+        previews.delete(id)
+        releasedPreviews.add(url)
+        sweepPreviewUrls()
     }
 
     function findRecord(id) {
@@ -486,6 +731,7 @@ export function createComposerAttachments(deps) {
         delete runtime[id]
         files.delete(id)
         attempts.delete(id)
+        releasePreview(id)
         bump(id)
     }
 
@@ -606,6 +852,8 @@ export function createComposerAttachments(deps) {
             kind: getDisplayKind(file),
         }
         if (joinedFrom) record.joinedFrom = joinedFrom
+        // Before the record is published: its chip reads the preview at once.
+        createPreview(id, file, record.kind)
         if (!records[owner]) records[owner] = {}
         records[owner][id] = record
         createRuntime(id)
@@ -727,9 +975,11 @@ export function createComposerAttachments(deps) {
     }
 
     /**
-     * Chip Retry of a `failed` attachment whose `File` is in memory: cancel the
-     * previous local attempt, then a new attempt (new client id) into the same
-     * entry (the server settles any other attempt).
+     * Chip Retry. A transfer the controller paused on an error resumes the
+     * same upload (same client id, the controller's own Retry, §9.2). A
+     * `failed` attachment whose `File` is in memory: cancel the previous local
+     * attempt, then a new attempt (new client id) into the same entry (the
+     * server settles any other attempt).
      *
      * @param {string} id
      * @returns {Promise<boolean>} false when Retry is not possible
@@ -737,6 +987,10 @@ export function createComposerAttachments(deps) {
     async function retryAttachment(id) {
         const rt = runtime[id]
         const record = findRecord(id)
+        if (rt && record && rt.state === ATTACHMENT_STATE.UPLOADING && rt.pauseReason === 'error' && rt.uploadKey) {
+            uploads.retry(rt.uploadKey)
+            return true
+        }
         if (!rt || !record || rt.state !== ATTACHMENT_STATE.FAILED || !files.has(id)) return false
         const previousKey = rt.uploadKey
         if (previousKey && uploads.entries.has(previousKey)) {
@@ -751,11 +1005,18 @@ export function createComposerAttachments(deps) {
      * legacy media rows with the same ids. Never cancels an upload nor
      * releases a staging entry.
      *
+     * With `ids` (the post-send clear), only those records are forgotten,
+     * wherever they live (a bound draft shows records of two session ids): an
+     * attachment added after the send stays in the composer.
+     *
      * @param {string} sessionId
+     * @param {{ids?: string[]}} [options]
      * @returns {Promise<void>}
      */
-    async function forgetAttachments(sessionId) {
-        const forgotten = Object.values(records[sessionId] || {}).map(record => record.id)
+    async function forgetAttachments(sessionId, { ids } = {}) {
+        const forgotten = ids
+            ? [...ids]
+            : Object.values(records[sessionId] || {}).map(record => record.id)
         for (const id of forgotten) dropLocal(id)
         for (const id of forgotten) {
             await Promise.allSettled([storage.deleteDraftAttachment(id), storage.deleteLegacyMedia(id)])
@@ -879,7 +1140,17 @@ export function createComposerAttachments(deps) {
         return files.get(id) || null
     }
 
+    /** The local preview object URL of an attachment (image or text File in memory), or null. */
+    function getPreviewUrl(id) {
+        return previews.get(id) || null
+    }
+
     const stopCompleted = uploads.onCompleted(onCompleted)
+    // An optimistic bubble that stops showing a released preview frees it.
+    const stopPreviewWatch = watch(
+        () => [...previewUrlsInUse()].join('\n'),
+        () => sweepPreviewUrls(),
+    )
     // The signature reads every field a chip state depends on. Not a
     // synchronous watcher: the controller updates an entry in several steps
     // (e.g. its record, then its `lastSeenAt`), and a state read in between
@@ -903,6 +1174,7 @@ export function createComposerAttachments(deps) {
     function dispose() {
         stopWatch()
         stopCompleted()
+        stopPreviewWatch()
     }
 
     return {
@@ -917,6 +1189,7 @@ export function createComposerAttachments(deps) {
         hydrate,
         getRecords,
         getFile,
+        getPreviewUrl,
         syncUploadStates,
         dispose,
     }

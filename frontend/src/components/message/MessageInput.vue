@@ -22,6 +22,12 @@ import {
     mediasToSdkFormat,
     resizeMediasForSend,
 } from '../../utils/fileUtils'
+import {
+    ATTACHMENT_STATE,
+    attachmentChipItem,
+    canSendAttachments,
+    sendComposerMessage,
+} from '../../utils/composerAttachments'
 import { toast } from '../../composables/useToast'
 import { useCodeCommentsStore, formatAllComments } from '../../stores/codeComments'
 import { getParsedContent } from '../../utils/parsedContent'
@@ -326,24 +332,6 @@ function onHybridDialogAfterShow(event) {
     hybridConfirmBtnRef.value?.focus()
 }
 
-// Provider's attachment capabilities (file types, max bytes, resize policy).
-// Drives the file picker's accept attribute, the paste handler's MIME
-// filter, the tooltip wording, and whether the paperclip button is even
-// rendered. Defaults to "nothing accepted" when the provider is unknown
-// so the surface fails closed.
-const attachmentSupport = computed(() => {
-    const helpers = getProviderHelpers(session.value?.provider)
-    return helpers?.getAttachmentSupport() ?? {
-        images: false,
-        documents: false,
-        maxBytes: 0,
-        acceptedMimeTypes: [],
-        resizeImages: false,
-    }
-})
-const acceptedMimeTypesString = computed(() => attachmentSupport.value.acceptedMimeTypes.join(','))
-const canAttachAnything = computed(() => attachmentSupport.value.images || attachmentSupport.value.documents)
-
 // Activation chars the current provider exposes for its command picker
 // (e.g. ``['/']`` for Claude Code; ``['/', '$']`` for Codex when both
 // land). Drives both the typed-trigger detection in ``onInput`` and the
@@ -351,13 +339,6 @@ const canAttachAnything = computed(() => attachmentSupport.value.images || attac
 const commandActivationChars = computed(() => {
     const helpers = getProviderHelpers(session.value?.provider)
     return helpers?.getCommandActivationChars() ?? []
-})
-const attachTooltipLabel = computed(() => {
-    const { images, documents } = attachmentSupport.value
-    if (images && documents) return 'Attach files (images, PDF, text)'
-    if (images) return 'Attach images'
-    if (documents) return 'Attach files (PDF, text)'
-    return 'Attachments not supported'
 })
 
 // Local state for the textarea
@@ -428,9 +409,40 @@ const optimisticMessageText = computed(() => {
     return helpers.extractUserMessageText(parsed)
 })
 
-// Attachments for this session
-const attachments = computed(() => store.getAttachments(props.sessionId))
-const attachmentCount = computed(() => store.getAttachmentCount(props.sessionId))
+// Attachments for this session (spec 2026-10-03 §9.3). Any file is accepted;
+// each one is uploaded to the server staging store and shown as a chip, in
+// add order. Legacy medias (drafts saved before staged uploads) are shown
+// first and keep their legacy send path until their migration.
+const legacyAttachments = computed(() => store.getAttachments(props.sessionId))
+const legacyAttachmentCount = computed(() => store.getAttachmentCount(props.sessionId))
+const composerRecords = computed(() => store.getComposerAttachments(props.sessionId))
+const attachmentCount = computed(() => legacyAttachmentCount.value + composerRecords.value.length)
+const chipItems = computed(() => composerRecords.value.map(record => attachmentChipItem(
+    record,
+    store.getAttachmentRuntime(record.id),
+    { previewUrl: store.getAttachmentPreviewUrl(record.id) },
+)))
+// Send waits for every upload (D6): never queued behind them. Legacy medias
+// and staged refs cannot share one frame (§8), so a composer holding both
+// waits for the legacy migration.
+const attachmentsReady = computed(() =>
+    canSendAttachments(composerRecords.value, store.localState.attachmentRuntime)
+    && !(legacyAttachmentCount.value > 0 && composerRecords.value.length > 0)
+)
+const attachmentsNeedAttention = computed(() =>
+    chipItems.value.filter(item => item.state === ATTACHMENT_STATE.FAILED || item.state === ATTACHMENT_STATE.MISSING).length
+)
+const attachmentsUploading = computed(() =>
+    chipItems.value.some(item => item.state === ATTACHMENT_STATE.UPLOADING)
+)
+const attachmentBadgeLabel = computed(() => {
+    const count = attachmentCount.value
+    const base = `${count} file${count > 1 ? 's' : ''} attached`
+    if (attachmentsNeedAttention.value) return `${base} · ${attachmentsNeedAttention.value} need${attachmentsNeedAttention.value > 1 ? '' : 's'} attention`
+    if (attachmentsUploading.value) return `${base} · uploading`
+    if (!attachmentsReady.value) return `${base} · preparing older attachments`
+    return base
+})
 
 // Temporary tooltip shown when new files are attached
 const attachTooltipText = ref('')
@@ -449,11 +461,13 @@ watch(attachmentCount, (newCount, oldCount) => {
     }
 })
 
-// Convert DraftMedia objects to normalized MediaItem format for the thumbnail group
-const mediaItems = computed(() => attachments.value.map(a => draftMediaToMediaItem(a)))
-
-// Whether files are currently being processed (encoded/resized) for this session
-const isProcessingFiles = computed(() => store.isProcessingAttachments(props.sessionId))
+// Items of the thumbnail group: legacy medias first (normalized MediaItem),
+// then one chip per staged attachment. A chip's index in this list is the
+// `remove` event index (see removeAttachmentByIndex).
+const mediaItems = computed(() => [
+    ...legacyAttachments.value.map(a => draftMediaToMediaItem(a)),
+    ...chipItems.value,
+])
 
 // Determine if input/button should be disabled
 const isDisabled = computed(() => {
@@ -461,7 +475,6 @@ const isDisabled = computed(() => {
     const providerHelpers = getProviderHelpers(session.value?.provider)
     if (providerHelpers && !providerHelpers.canSendMessage()) return true
     if (store.isInitialSyncInProgress) return true
-    if (isProcessingFiles.value) return true
     return isStarting.value
 })
 
@@ -483,6 +496,11 @@ const hasUnappliedChanges = computed(() =>
 // settings are staged (the send applies them on the way, like a text message).
 const isSettingsOnlyButton = computed(() =>
     hasUnappliedChanges.value && !messageText.value.trim() && !canSendAttachmentsOnly.value
+)
+// A message that carries attachments waits until every chip is ready. A
+// settings-only update carries none, so it is never blocked.
+const attachmentsBlockSend = computed(() =>
+    !isSettingsOnlyButton.value && attachmentCount.value > 0 && !attachmentsReady.value
 )
 const buttonLabel = computed(() => {
     const state = processState.value?.state
@@ -1414,23 +1432,19 @@ async function openAtFromButton() {
 }
 
 /**
- * Handle paste event to capture images from clipboard.
- * Attaches every accepted file from the clipboard, one after the other.
- * Only processes image files from clipboard, and only when the active
- * provider actually accepts images.
+ * Handle paste event: attach every file of the clipboard, one after the
+ * other, in clipboard order (spec 2026-10-03 §9.1). Any file is accepted.
+ * A paste with no file is left to the textarea.
  */
 async function onPaste(event) {
-    if (!attachmentSupport.value.images) return
-
     const items = event.clipboardData?.items
     if (!items) return
 
     // Collect every file synchronously: the clipboard items are only readable
     // during the event dispatch, not after the first await.
-    const accepted = attachmentSupport.value.acceptedMimeTypes
     const files = []
     for (const item of items) {
-        if (item.kind === 'file' && accepted.includes(item.type)) {
+        if (item.kind === 'file') {
             const file = item.getAsFile()
             if (file) files.push(file)
         }
@@ -1439,24 +1453,22 @@ async function onPaste(event) {
 
     event.preventDefault()
     for (const file of files) {
-        await processFile(file)
+        await addFile(file)
     }
 }
 
 /**
- * Process and add a file as an attachment. Validation (MIME, size) is
- * performed inside ``store.addAttachment`` against the provider's
- * capabilities, so a stray drag-drop or paste on a Codex session is
- * rejected with a meaningful toast even if the picker ``accept``
- * attribute was bypassed.
+ * Add a file as an attachment: no type nor size check; the file uploads to
+ * the staging store and its chip shows the upload. Only a local failure (the
+ * draft storage write) is reported here.
  */
-async function processFile(file) {
+async function addFile(file) {
     try {
         await store.addAttachment(props.sessionId, file)
         // Notify server that user is actively preparing a message
         notifyUserDraftUpdated(props.sessionId)
     } catch (error) {
-        toast.error(error.message || 'Failed to process file', {
+        toast.error(error.message || 'Failed to add the file', {
             title: 'Cannot attach file'
         })
     }
@@ -1473,26 +1485,37 @@ function openFilePicker() {
  * Handle file selection from the file picker.
  */
 async function onFileSelected(event) {
-    const files = event.target.files
-    if (!files) return
-
-    for (const file of files) {
-        await processFile(file)
-    }
-
+    const files = [...(event.target.files || [])]
     // Reset input so the same file can be selected again
     event.target.value = ''
+
+    for (const file of files) {
+        await addFile(file)
+    }
 }
 
 /**
- * Remove an attachment by index (from MediaThumbnailGroup).
- * Translates the index back to the DraftMedia id for the store.
+ * Remove an attachment by index (from MediaThumbnailGroup): a legacy media
+ * (listed first) is deleted; a staged attachment is released (chip Remove,
+ * spec 2026-10-03 §6.1.4).
  */
 function removeAttachmentByIndex(index) {
-    const attachment = attachments.value[index]
-    if (attachment) {
-        store.removeAttachment(props.sessionId, attachment.id)
+    const legacy = legacyAttachments.value
+    if (index < legacy.length) {
+        store.removeAttachment(props.sessionId, legacy[index].id)
+        return
     }
+    const record = composerRecords.value[index - legacy.length]
+    if (record) {
+        store.releaseAttachments([{ bucket: record.bucket, id: record.id }])
+    }
+}
+
+/** Chip Retry of a staged attachment (by attachment id). */
+function retryAttachment(attachmentId) {
+    store.retryAttachment(attachmentId).catch(error => {
+        console.warn('Attachment retry failed', error)
+    })
 }
 
 /**
@@ -1514,7 +1537,7 @@ function removeAllAttachments() {
  * the backend applies the settings via SDK methods without sending a query.
  *
  * On an existing session, attachments alone are a message: the payload then
- * carries empty text plus the image/document blocks (see canSendAttachmentsOnly).
+ * carries empty text plus the attachment refs (see canSendAttachmentsOnly).
  */
 async function handleSend() {
     // Sending is locked while a pending request shares the footer: the composer
@@ -1531,6 +1554,8 @@ async function handleSend() {
 
     // Need text, attachments, a settings change, or a staged hybrid switch
     if ((!text && !attachmentsOnly && !isSettingsOnlyUpdate) || isDisabled.value) return
+    // A message with attachments waits for every upload (D6): never queued.
+    if (!isSettingsOnlyUpdate && !attachmentsReady.value) return
 
     // Trust gate for drafts whose project is still unresolved — e.g. a draft
     // hydrated from before the trust system existed, or one created while the
@@ -1549,6 +1574,13 @@ async function handleSend() {
             selectedPermissionMode.value = settings.resolvedDefaults.value.permission_mode
         }
     }
+
+    // Staged attachments (spec 2026-10-03 §9.4): the frame carries their
+    // ordered refs; the server plans and prepares each file. No client
+    // resize. Read after the trust dialog, so a chip added meanwhile is
+    // either sent ready or blocks the send (before any frame goes out).
+    const records = isSettingsOnlyUpdate ? [] : [...composerRecords.value]
+    if (!canSendAttachments(records, store.localState.attachmentRuntime)) return
 
     // Commit a staged hybrid switch FIRST. The WS consumer processes frames in
     // order, so the backend flips ``session.hybrid`` (killing the SDK agent)
@@ -1598,17 +1630,16 @@ async function handleSend() {
         emit('needs-title')
     }
 
-    // Include attachments in SDK format if any. Stored images are at
-    // ``MAX_IMAGE_DIMENSION`` (2576 px, Opus 4.7's native resolution);
-    // each provider's helper decides whether to ship that as-is or to
-    // re-resize down for the active model — Sonnet/Haiku want 1568 px,
-    // Anthropic enforces a 2000 px cap on requests with >20 images, and
-    // Codex re-resizes server-side so we hand it the stored blob.
-    if (attachmentCount.value > 0) {
-        const medias = store.getAttachments(props.sessionId)
+    // Legacy medias (a draft saved before staged uploads, never mixed with
+    // staged refs in one frame): the legacy path, in SDK format, resized
+    // down for the active model by the provider's helper.
+    const legacyMedias = !isSettingsOnlyUpdate && !records.length && legacyAttachmentCount.value > 0
+        ? store.getAttachments(props.sessionId)
+        : []
+    if (legacyMedias.length) {
         const effectiveModel = selectedModel.value ?? settings.providerStore.value?.defaultModel
         const processedMedias = await resizeMediasForSend(
-            medias, getProviderHelpers(session.value?.provider), effectiveModel,
+            legacyMedias, getProviderHelpers(session.value?.provider), effectiveModel,
         )
         const { images, documents } = mediasToSdkFormat(processedMedias)
         if (images.length > 0) {
@@ -1624,7 +1655,28 @@ async function handleSend() {
     const requestId = generateUUID()
     payload.request_id = requestId
 
-    const success = sendWsMessage(payload)
+    // Only after a successful socket send: snapshot the send (refs and
+    // metadata, or the original draft-format legacy medias) + optimistic
+    // bubble + optimistic starting state, THEN forget exactly the sent
+    // records locally (the server owns their entries now; an attachment
+    // added after this send stays). A failed socket send keeps the draft.
+    const success = sendComposerMessage({
+        payload,
+        records,
+        send: sendWsMessage,
+        previewUrlFor: id => store.getAttachmentPreviewUrl(id),
+        register: isSettingsOnlyUpdate ? null : attachments => {
+            store.registerOutgoingSend(props.sessionId, props.projectId, requestId, {
+                text,
+                attachments,
+                medias: legacyMedias,
+                images: payload.images,
+                documents: payload.documents,
+            })
+        },
+        forget: ids => store.forgetAttachments(props.sessionId, { ids }).catch(err =>
+            console.warn('Failed to forget sent attachments:', err)),
+    })
 
     if (success) {
         // Sync active values to match what was just sent to the backend.
@@ -1640,20 +1692,11 @@ async function handleSend() {
         // For settings-only updates, nothing else to clean up
         if (isSettingsOnlyUpdate) return
 
-        // Snapshot the send (original draft-format medias, BEFORE the draft
-        // is cleared below) + optimistic bubble + optimistic starting state.
-        store.registerOutgoingSend(props.sessionId, props.projectId, requestId, {
-            text,
-            medias: attachmentCount.value > 0 ? store.getAttachments(props.sessionId) : [],
-            images: payload.images,
-            documents: payload.documents,
-        })
-
         // Clear draft message from store (and IndexedDB)
         store.clearDraftMessage(props.sessionId)
 
-        // Clear attachments from store and IndexedDB
-        if (attachmentCount.value > 0) {
+        // Clear the sent legacy medias from store and IndexedDB
+        if (legacyMedias.length) {
             await store.clearAttachmentsForSession(props.sessionId)
         }
 
@@ -1705,8 +1748,7 @@ function handleCancel() {
  * and restore dropdowns to their active (server-side) values.
  */
 async function handleReset() {
-    const composerAttachmentCount = store.getComposerAttachments(props.sessionId).length
-    const hadComposerContent = Boolean(messageText.value) || attachmentCount.value > 0 || composerAttachmentCount > 0
+    const hadComposerContent = Boolean(messageText.value) || attachmentCount.value > 0
     // Clear text if any
     if (messageText.value) {
         messageText.value = ''
@@ -1720,7 +1762,7 @@ async function handleReset() {
         }
     }
     // Clear attachments if any: the composer's staged refs are released.
-    if (attachmentCount.value > 0 || composerAttachmentCount > 0) {
+    if (attachmentCount.value > 0) {
         store.releaseComposerAttachments(props.sessionId)
     }
     // Reset dropdowns to their reference values (active process or DB, including null)
@@ -1865,7 +1907,7 @@ function handleSnippetLongPress(snippet) {
     const resolved = resolveSnippetText(snippet.text, placeholders, placeholderContext.value)
     // Mirrors the Send button's own disabled condition; the empty-text part of
     // it is satisfied by the insertion below, hence the `resolved` check here.
-    if (props.sendingLocked || isDisabled.value || !resolved.trim()) {
+    if (props.sendingLocked || isDisabled.value || !attachmentsReady.value || !resolved.trim()) {
         insertTextAtCursor(resolved)
         return
     }
@@ -2056,30 +2098,26 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
         <div class="message-input-toolbar">
             <!-- Attachments row: button on left, thumbnails on right -->
             <div class="message-input-attachments">
-                <!-- Hidden file input -->
+                <!-- Hidden file input: any file, any size (no type filter) -->
                 <input
-                    v-if="canAttachAnything"
                     ref="fileInputRef"
                     type="file"
                     multiple
-                    :accept="acceptedMimeTypesString"
                     style="display: none;"
                     @change="onFileSelected"
                 />
 
-                <!-- Attach button — hidden entirely when the provider takes no attachments -->
-                <template v-if="canAttachAnything">
-                    <wa-button
-                        variant="neutral"
-                        appearance="plain"
-                        size="small"
-                        @click="openFilePicker"
-                        :id="attachButtonId"
-                    >
-                        <wa-icon name="paperclip"></wa-icon>
-                    </wa-button>
-                    <AppTooltip :for="attachButtonId">{{ attachTooltipLabel }}</AppTooltip>
-                </template>
+                <!-- Attach button: always shown -->
+                <wa-button
+                    variant="neutral"
+                    appearance="plain"
+                    size="small"
+                    @click="openFilePicker"
+                    :id="attachButtonId"
+                >
+                    <wa-icon name="paperclip"></wa-icon>
+                </wa-button>
+                <AppTooltip :for="attachButtonId">Attach files</AppTooltip>
 
                 <!-- Attachment badge + popover -->
                 <template v-if="attachmentCount > 0">
@@ -2087,9 +2125,9 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
                         :id="`attachments-popover-trigger-${sessionId}`"
                         class="attachments-badge-trigger"
                     >
-                        <wa-badge variant="primary" pill>{{ attachmentCount }}</wa-badge>
+                        <wa-badge :variant="attachmentsNeedAttention ? 'danger' : 'primary'" pill>{{ attachmentCount }}</wa-badge>
                     </button>
-                    <AppTooltip :for="`attachments-popover-trigger-${sessionId}`">{{ attachmentCount }} file{{ attachmentCount > 1 ? 's' : '' }} attached</AppTooltip>
+                    <AppTooltip :for="`attachments-popover-trigger-${sessionId}`">{{ attachmentBadgeLabel }}</AppTooltip>
                     <!-- Temporary tooltip shown when new files are attached -->
                     <!-- `force`: driven manually after an attachment, so it must
                          also show on touch devices, where AppTooltip otherwise
@@ -2111,6 +2149,7 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
                             :items="mediaItems"
                             removable
                             @remove="removeAttachmentByIndex"
+                            @retry="retryAttachment"
                         />
                         <div class="popover-actions">
                             <wa-button
@@ -2221,7 +2260,7 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
                     v-if="!sendingLocked || sendingLockedPresentation === 'disabled'"
                     :id="sendingLocked ? sendingLockedId : undefined"
                     variant="brand"
-                    :disabled="sendingLocked || isDisabled || (!messageText.trim() && !canSendAttachmentsOnly && !hasUnappliedChanges)"
+                    :disabled="sendingLocked || isDisabled || attachmentsBlockSend || (!messageText.trim() && !canSendAttachmentsOnly && !hasUnappliedChanges)"
                     @click="handleSend"
                     size="small"
                     class="send-button"

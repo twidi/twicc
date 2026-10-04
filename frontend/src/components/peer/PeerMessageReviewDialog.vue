@@ -21,7 +21,7 @@ import { usePeersStore } from '../../stores/peers'
 import { useDataStore, ALL_PROJECTS_ID, sessionSortComparator } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
 import { useWorkspacesStore } from '../../stores/workspaces'
-import { getProviderHelpers, getProviderLabel, getProviderOptions } from '../../providers'
+import { getProviderOptions } from '../../providers'
 import { SESSION_TIME_FORMAT } from '../../constants'
 import { formatDate } from '../../utils/date'
 import { apiFetch } from '../../utils/api'
@@ -29,12 +29,10 @@ import { renderMarkdown } from '../../utils/markdown'
 import { sdkBlockToMediaItem } from '../../utils/fileUtils'
 import {
     addPeerAttachmentsToDraft,
-    firstCompatiblePeerProvider,
-    firstCompatiblePeerProviderForMetadata,
     formatPeerContentBytes,
     mergePeerAttachments,
     peerAttachmentBytes,
-    peerAttachmentCompatibilityError,
+    peerBlockToFile,
     peerContentAllowsDelivery,
     peerDeliveryTargetState,
     shouldConfirmPeerAttachments,
@@ -130,8 +128,9 @@ const actionSelectKey = ref(0)
 const activeResolutionAction = computed(() =>
     activePeerResolutionAction(busy.value, confirmingRefuse.value, mode.value, markingDone.value),
 )
-const NO_COMPATIBLE_PROVIDER_ERROR = 'No active provider can receive all attachments in this message. '
-    + 'Activate a compatible provider to continue.'
+// Every provider accepts every attachment (the server decides how each file
+// is sent): delivery only needs an active provider.
+const NO_ACTIVE_PROVIDER_ERROR = 'No active provider is available. Activate a provider to continue.'
 
 // Ordinary request-lifetime state. The boolean carries no target identity or
 // reason. The generation invalidates every result from a closed or reused
@@ -587,15 +586,8 @@ const selectedSession = computed(() =>
     sessionRows.value.find(r => r.session.id === selectedSessionId.value)?.session || null
 )
 function deliveryTargetState(provider, missingTargetError = '') {
-    const target = provider
-        ? {
-            capabilities: getProviderHelpers(provider)?.getAttachmentSupport(),
-            providerLabel: getProviderLabel(provider),
-        }
-        : null
     return peerDeliveryTargetState(
-        detail.value?.payload,
-        target,
+        provider ? { provider } : null,
         contentAllowsDelivery.value,
         missingTargetError,
     )
@@ -609,36 +601,30 @@ function activeProviderTargets(preferred = null) {
         ...getProviderOptions().map(option => option.value).filter(provider => provider !== preferred),
     ]
         .filter(provider => provider && dataStore.isProviderAvailable(provider))
-        .map(provider => ({
-            provider,
-            capabilities: getProviderHelpers(provider)?.getAttachmentSupport(),
-        }))
 }
-const compatibleActiveProvider = computed(() => firstCompatiblePeerProviderForMetadata(
-    attachmentsLost.value ? [] : detail.value?.attachments_meta,
-    activeProviderTargets(),
-))
 const deliveryGloballyBlocked = computed(() =>
-    detailReady.value && !compatibleActiveProvider.value,
+    detailReady.value && !activeProviderTargets().length,
 )
 const deliveryActionVisibility = computed(() => peerDeliveryActionVisibility(
     deliveryGloballyBlocked.value,
     detail.value?.status,
 ))
-function compatibleProviderForProject(projectId) {
+/** The provider of a new draft in this project: its default when active,
+ *  else the first active one. */
+function activeProviderForProject(projectId) {
     if (!projectId) return null
     const preferred = resolveDraftProvider(
         projectId,
         dataStore.projects,
         settingsStore.defaultProvider,
     )
-    return firstCompatiblePeerProvider(detail.value?.payload, activeProviderTargets(preferred))
+    return activeProviderTargets(preferred)[0] ?? null
 }
-const pickedProjectProvider = computed(() => compatibleProviderForProject(pickedProjectId.value))
+const pickedProjectProvider = computed(() => activeProviderForProject(pickedProjectId.value))
 const newSessionDeliveryState = computed(() =>
     deliveryTargetState(
         pickedProjectProvider.value,
-        pickedProjectId.value ? NO_COMPATIBLE_PROVIDER_ERROR : '',
+        pickedProjectId.value ? NO_ACTIVE_PROVIDER_ERROR : '',
     ),
 )
 function isCurrentOpen(generation, messageId) {
@@ -1021,22 +1007,6 @@ function setActionFailure(error) {
         : 'Network error — could not reach the server.'
 }
 
-/** Rebuild a File from an SDK attachment block so the normal draft-attachment
- *  pipeline (validation, resize, IndexedDB) processes it like a user upload. */
-function blockToFile(block, index) {
-    const source = block?.source || {}
-    if (source.type === 'text' && typeof source.data === 'string') {
-        return new File([source.data], `peer-attachment-${index + 1}.txt`, { type: 'text/plain' })
-    }
-    if (source.type === 'base64' && typeof source.data === 'string') {
-        const mime = source.media_type || 'application/octet-stream'
-        const bytes = Uint8Array.from(atob(source.data), c => c.charCodeAt(0))
-        const ext = mime === 'application/pdf' ? 'pdf' : (mime.split('/')[1] || 'bin')
-        return new File([bytes], block.title || `peer-attachment-${index + 1}.${ext}`, { type: mime })
-    }
-    return null
-}
-
 /** Ask the backend to resolve the message as delivered; returns the envelope
  *  text to prefill a composer with, or null on failure (actionError set). */
 async function markDelivered(sessionId) {
@@ -1062,24 +1032,17 @@ async function markDelivered(sessionId) {
     return payload.envelope
 }
 
-function targetAttachmentError(provider) {
-    const capabilities = getProviderHelpers(provider)?.getAttachmentSupport()
-    return peerAttachmentCompatibilityError(
-        detail.value?.payload,
-        capabilities,
-        getProviderLabel(provider),
-    )
-}
-
-/** Add the peer attachments to a composer's draft, one by one through the
- *  normal attachment pipeline. Returns the records actually added so a failed
+/** Add the peer attachments to a composer's draft, one by one, in message
+ *  order, through the composer attachment pipeline: every block becomes a
+ *  File, whatever the target provider (the server decides at send how each
+ *  file is sent, spec 2026-10-03 §9.7). Returns the records actually added so a failed
  *  delivery can release exactly those — an existing composer may already hold
  *  user attachments that must survive a rollback. */
 async function addPeerAttachments(sessionId) {
     const added = []
     const error = await addPeerAttachmentsToDraft(
         detail.value?.payload,
-        blockToFile,
+        peerBlockToFile,
         async (file) => { added.push(await dataStore.addAttachment(sessionId, file)) },
     )
     return { added, error }
@@ -1117,11 +1080,6 @@ function navigateToComposer(sessionId, projectId) {
 async function deliverToSession(session) {
     actionError.value = ''
     confirmingRefuse.value = false
-    const compatibilityError = targetAttachmentError(session.provider)
-    if (compatibilityError) {
-        actionError.value = compatibilityError
-        return
-    }
     busy.value = true
     let envelope = null
     let added = []
@@ -1156,9 +1114,9 @@ async function deliverToSession(session) {
 
 async function deliverToNewSession(projectId) {
     actionError.value = ''
-    const provider = compatibleProviderForProject(projectId)
+    const provider = activeProviderForProject(projectId)
     if (!provider) {
-        actionError.value = NO_COMPATIBLE_PROVIDER_ERROR
+        actionError.value = NO_ACTIVE_PROVIDER_ERROR
         return
     }
     // Trust gate before mutation: if the user backs out, the message stays pending.
@@ -1451,7 +1409,7 @@ function onHide(event) {
                     v-if="deliveryGloballyBlocked"
                     variant="warning" size="small"
                 >
-                    {{ NO_COMPATIBLE_PROVIDER_ERROR }}
+                    {{ NO_ACTIVE_PROVIDER_ERROR }}
                 </wa-callout>
                 <template v-else>
                     <!-- The current status concerns every action; what a

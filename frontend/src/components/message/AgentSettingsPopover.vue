@@ -59,7 +59,6 @@ const {
     presetGroups,
     presetsDialogOpen,
     handlePresetSelect,
-    providerSwitcherOptions,
     matrixBlocks,
     matrixEffortColumns,
     matrixDefaultCell,
@@ -72,45 +71,13 @@ const {
 const dataStore = useDataStore()
 const taskStore = useBenchmarkTaskStore()
 
-// Non-image attachments currently held by the draft. Computed off the
-// store's reactive Map so the labelled wa-callout below reacts to add /
-// remove without ad-hoc wiring.
-const nonImageAttachments = computed(() => {
-    const sid = props.settings.sessionId.value
-    if (!sid) return []
-    return dataStore.getAttachments(sid).filter(m => m.type !== 'image')
-})
-
-// Provider id of the most recent rejected switch attempt — used to
-// surface a transient warning callout asking the user to drop the
-// blocking attachments before retrying. Cleared automatically when the
-// blocking attachments are gone (so removing them via any other path,
-// e.g. the attachments popover, also dismisses the callout).
-const blockedSwitchTargetProvider = ref(null)
-const blockedSwitchTargetLabel = computed(() => {
-    const target = blockedSwitchTargetProvider.value
-    if (!target) return null
-    if (nonImageAttachments.value.length === 0) return null
-    const opt = providerSwitcherOptions.value.find(o => o.value === target)
-    return opt?.label ?? null
-})
-
-// Switch the draft to another provider. Intercepts the switch when the target
-// can't accept the current non-image attachments: surfaces the callout and
-// leaves the session on its current provider (the user drops the attachments via
-// the callout's inline action, which retries, or backs out). Resets every per-
-// session override so the bundle follows the new provider's defaults. Returns
-// true when the switch actually happened, false when it was blocked or a no-op.
+// Switch the draft to another provider. The draft keeps every attachment
+// (images, PDF, text, any other file): the server decides how each one is
+// sent to the new provider (spec 2026-10-03 §9.1). Resets every per-session
+// override so the bundle follows the new provider's defaults. Returns true
+// when the switch actually happened, false on a no-op.
 function switchToProvider(provider) {
     if (!provider || provider === props.session?.provider) return false
-    const optHelpers = getProviderHelpers(provider)
-    const support = optHelpers?.getAttachmentSupport() ?? null
-    const docsBlocked = nonImageAttachments.value.length > 0 && support?.documents === false
-    if (docsBlocked) {
-        blockedSwitchTargetProvider.value = provider
-        return false
-    }
-    blockedSwitchTargetProvider.value = null
     dataStore.setDraftProvider(props.settings.sessionId.value, provider)
     resetAllToDefaults()
     return true
@@ -181,17 +148,6 @@ watch(
     },
     { flush: 'post' },
 )
-
-async function removeBlockingDocuments() {
-    const sid = props.settings.sessionId.value
-    if (!sid) return
-    const target = blockedSwitchTargetProvider.value
-    await dataStore.removeNonImageAttachments(sid)
-    // Auto-retry the switch the user originally asked for so the click
-    // sequence "select Codex → Remove them" doesn't require a third click.
-    blockedSwitchTargetProvider.value = null
-    if (target) switchToProvider(target)
-}
 
 // Fields below the matrix rendered as Default/Force-to wa-selects. Model +
 // effort are owned by the matrix; the context/thinking/Chrome MCP/fast switches
@@ -493,24 +449,6 @@ onBeforeUnmount(() => {
     >
         <!-- One scrolling zone for the whole popover: its scrollbar and its scroll shadows reach the edges. -->
         <div v-scroll-shadow class="settings-scroll">
-            <!-- Provider switch blocked by non-image attachments — appears
-                 only after the user actually attempts a switch to a
-                 provider that doesn't accept the current attachments, so an
-                 otherwise-uninterested user never sees the callout. -->
-            <wa-callout
-                v-if="isDraft && blockedSwitchTargetLabel"
-                variant="warning"
-                class="provider-blocked-callout"
-            >
-                <wa-icon name="triangle-exclamation" slot="icon"></wa-icon>
-                {{ blockedSwitchTargetLabel }}
-                cannot accept the {{ nonImageAttachments.length }} non-image
-                attachment{{ nonImageAttachments.length > 1 ? 's' : '' }} on this draft.
-                <a class="settings-action-link" @click.prevent="removeBlockingDocuments">
-                    Remove {{ nonImageAttachments.length > 1 ? 'them' : 'it' }} and switch
-                </a>
-            </wa-callout>
-
             <!-- Reset / Presets (non-scrollable). The provider selector lives in the
                  matrix below now — provider, model and effort are picked there. -->
             <div class="settings-panel-presets">
@@ -761,7 +699,6 @@ onBeforeUnmount(() => {
 .startup-warning-callout,
 .idle-warning-callout,
 .model-fallback-callout,
-.provider-blocked-callout,
 .hybrid-settings-note {
     font-size: var(--wa-font-size-s);
     width: 100%;
@@ -769,20 +706,6 @@ onBeforeUnmount(() => {
 
 .model-fallback-callout {
     margin-bottom: 0.4rem;
-}
-
-.provider-blocked-callout {
-    flex-shrink: 0;
-    margin-bottom: var(--wa-space-l);
-
-    /* The "Remove …" affordance rides inline with the explanatory
-       sentence rather than dropping onto its own line — overrides the
-       default block-flex layout the shared link class carries elsewhere. */
-    .settings-action-link {
-        display: inline;
-        color: inherit;
-        text-decoration: underline;
-    }
 }
 
 .settings-panel-presets {

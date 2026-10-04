@@ -538,9 +538,10 @@ function captureElementScreenshot() {
     return picker.capture()
 }
 
-// dataUrl → File → draft attachment (the same path a manual image upload
-// takes, so provider validation / resize / caps all apply). Uses the resolved
-// composer session id (NOT props.sessionId — null in the Artifacts tab).
+// dataUrl → File → composer attachment, through the same `addAttachment`
+// entry point as a file the user picks (staged upload, chip in the composer).
+// Uses the resolved composer session id (NOT props.sessionId — null in the
+// Artifacts tab).
 async function attachElementScreenshot(dataUrl) {
     const sessionId = composerSessionId.value
     if (!sessionId) throw new Error('no session to attach to')

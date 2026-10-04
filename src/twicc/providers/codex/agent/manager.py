@@ -216,12 +216,12 @@ class CodexAgentManager(BaseAgentManager):
     def _warn_about_documents(session_id: str, documents: list[dict] | None) -> None:
         """Defensive log when the frontend ships ``documents`` to a Codex session.
 
-        The frontend's :class:`CodexHelpers.getAttachmentSupport` declares
-        ``documents: false`` and refuses them at the file picker / paste /
-        drop layer, so reaching this point means either a UI bug or a
-        custom WebSocket client. Either way, Codex has no protocol for
-        PDF / TXT input, so we drop them and surface the discrepancy to
-        the logs rather than failing the whole turn.
+        The web composer sends staged attachment refs, never legacy
+        ``documents`` (spec 2026-10-03 §8), so reaching this point means a
+        legacy snapshot retried on Codex or a custom WebSocket client.
+        Either way, Codex has no protocol for legacy PDF / TXT blocks, so we
+        drop them and surface the discrepancy to the logs rather than
+        failing the whole turn.
         """
         if documents:
             logger.warning(
