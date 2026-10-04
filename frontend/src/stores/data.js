@@ -43,13 +43,25 @@ import {
     deleteAllDraftMediasForSession,
     getAllDraftMedias,
     saveDraftAttachment,
+    saveDraftAttachments,
     deleteDraftAttachment,
+    deleteDraftAttachmentsBySession,
     getAllDraftAttachments,
+    getDraftAttachmentsBySession,
 } from '../utils/draftStorage'
 import { saveInflightSend, deleteInflightSend, getAllInflightSends } from '../utils/inflightStorage'
 import { liveDraftKey, sweepPendingRequestDrafts } from '../utils/pendingRequestDraftStorage'
 import { mediasToSdkFormat } from '../utils/fileUtils'
-import { createComposerAttachments } from '../utils/composerAttachments'
+import {
+    composerRecordsFor,
+    createAttachmentRefCollector,
+    createComposerAttachments,
+    optimisticAttachmentFields,
+    snapshotAttachmentRefs,
+    toAttachmentRefs,
+    uniqueRefs,
+} from '../utils/composerAttachments'
+import { attachmentCountForMessage, attachmentMatchKey, inflightAttachmentCount } from '../utils/attachmentStrip'
 import { randomHexFromUUID } from '../utils/uploads/ids'
 import { generateUUID } from '../utils/crypto'
 import { debounce } from '../utils/debounce'
@@ -79,8 +91,10 @@ function composerAttachmentsFor(store) {
             composerAttachmentsInstance = createComposerAttachments({
                 records: store.localState.attachmentRecords,
                 runtime: store.localState.attachmentRuntime,
+                aliases: store.localState.draftAliases,
                 storage: {
                     saveDraftAttachment,
+                    saveDraftAttachments,
                     deleteDraftAttachment,
                     deleteLegacyMedia: id => store._deleteLegacyMediaRow(id),
                 },
@@ -242,27 +256,23 @@ const INFLIGHT_AUDIT_FETCH_CAP = 300
 // visual-item cache. Display order is by sentAt, not by lineNum.
 let failedSendSeq = 0
 
-// Identity of a user message for "is this the same send?" comparisons. Text is
-// the discriminant when there is any; a message made only of attachments has
-// none, so its attachment count stands in (two attachment-only sends of the
-// same size are then indistinguishable — acceptable, exactly like two identical
-// texts). Returns null when the message carries neither.
+// Identity of a user message for "is this the same send?" comparisons
+// (utils/attachmentStrip.js): its text when there is any, else its TOTAL
+// attachment count — the extracted `twicc_attachments` entries, the bubble's
+// `attachmentCount`, else the provider's own block count (legacy, CLI, MCP and
+// peer sends). Returns null when the message carries neither.
 function userMessageMatchKey(providerHelpers, parsed) {
-    const text = providerHelpers.extractUserMessageText(parsed)
-    if (text) return `t:${text}`
-    const count = providerHelpers.extractUserMessageAttachmentCount(parsed)
-    return count > 0 ? `a:${count}` : null
+    return attachmentMatchKey(
+        providerHelpers.extractUserMessageText(parsed),
+        attachmentCountForMessage(parsed, providerHelpers.extractUserMessageAttachmentCount(parsed)),
+    )
 }
 
 // Same key, computed from an in-flight send snapshot (composer side) rather
-// than from a parsed JSONL item.
+// than from a parsed JSONL item: its staged refs, else its legacy medias
+// (``mediaCount`` survives medias too big to persist).
 function inflightSendMatchKey(entry) {
-    const text = (entry?.text || '').trim()
-    if (text) return `t:${text}`
-    // ``mediaCount`` is the fallback for a snapshot rehydrated from IndexedDB
-    // whose medias were too big to persist (mediasDropped).
-    const count = entry?.medias?.length || entry?.mediaCount || 0
-    return count > 0 ? `a:${count}` : null
+    return attachmentMatchKey(entry?.text, inflightAttachmentCount(entry))
 }
 
 function userMessageMatchesOptimistic(providerHelpers, optimistic, item) {
@@ -1419,9 +1429,11 @@ export const useDataStore = defineStore('data', {
             return map ? map.size : 0
         },
 
-        // Composer attachment records of a session, in position order
+        // Composer attachment records of a session, in display order. A bound
+        // draft id and its canonical id show the same list (draft aliases),
+        // before and after its unsent records move (`rebindDraftAttachments`).
         getComposerAttachments: (state) => (sessionId) =>
-            Object.values(state.localState.attachmentRecords[sessionId] || {}).sort((a, b) => a.position - b.position),
+            composerRecordsFor(state.localState.attachmentRecords, state.localState.draftAliases, sessionId),
 
         // Memory-only state of one composer attachment (or null)
         getAttachmentRuntime: (state) => (attachmentId) =>
@@ -1488,8 +1500,15 @@ export const useDataStore = defineStore('data', {
                 layoutPersistDebouncers.delete(id)
                 layoutPersistPending.delete(id)
                 destroySessionBuffers(id)
-                return Promise.all([deleteDraftMessage(id), deleteAllDraftMediasForSession(id), sweepPendingRequestDrafts(new Set(), Infinity, id)])
+                // Forget only (the explicit discard releases before this):
+                // the loaded records, then any stored row not hydrated yet.
+                return Promise.all([
+                    deleteDraftMessage(id), deleteAllDraftMediasForSession(id), sweepPendingRequestDrafts(new Set(), Infinity, id),
+                    useDataStore().forgetAttachments(id).then(() => deleteDraftAttachmentsBySession(id)),
+                ])
             },
+            collectAttachmentRefs: ids => useDataStore()._collectAttachmentRefs(ids),
+            releaseAttachmentRefs: refs => useDataStore().releaseAttachments(refs),
             stop: async id => {
                 const { killProcess } = await import('../composables/useWebSocket')
                 return killProcess(id)
@@ -1955,9 +1974,15 @@ export const useDataStore = defineStore('data', {
          * @param {boolean} options.keepInStore - If true (the draft is being
          *   promoted to a real session on send), only drop the IndexedDB record:
          *   keep the live session in the store AND its MRU slot — it stays a
-         *   valid navigation target.
+         *   valid navigation target. Its composer attachments are untouched
+         *   (the sender forgets the sent ones itself).
+         * @param {boolean} options.releaseAttachments - Only for a draft the USER
+         *   abandons (Discard, Cancel, list and bulk delete, a web peer delivery
+         *   rollback of the draft it created): release its attachments' staged
+         *   entries on the server. Default: forget them locally only (spec
+         *   2026-10-03 §6.1.4), the server reaper drops the entries.
          */
-        deleteDraftSession(sessionId, { keepInStore = false } = {}) {
+        deleteDraftSession(sessionId, { keepInStore = false, releaseAttachments = false } = {}) {
             if (this.sessions[sessionId]?.draft) {
                 // A discarded draft never becomes a session, so a peer delivery
                 // waiting on it waits forever: drop it. `keepInStore` is the
@@ -1975,10 +2000,13 @@ export const useDataStore = defineStore('data', {
                     this.removeMruSession(sessionId)
                     // A discarded draft keeps no attachments. `keepInStore` is
                     // excluded: a sent draft's medias are already cleared by the
-                    // sender, and the failed-send recovery re-saves its own copy.
+                    // sender, and the failed-send recovery keeps its own copy.
                     this.clearAttachmentsForSession(sessionId).catch(err =>
                         console.warn('Failed to delete draft medias from IndexedDB:', err)
                     )
+                    // The draft's own records only (never an alias view).
+                    const done = releaseAttachments ? this.releaseAttachments(this._ownAttachmentRefs(sessionId)) : this.forgetAttachments(sessionId)
+                    done.catch(err => console.warn('Failed to drop draft attachments:', err))
                 }
                 // Delete from IndexedDB
                 deleteDraftSessionFromDb(sessionId).catch(err =>
@@ -2076,6 +2104,15 @@ export const useDataStore = defineStore('data', {
             // forwarding alias that ``handleTitleSuggested`` will resolve.
             this.localState.draftAliases[draftId] = sessionId
 
+            // Rehome the composer attachments added since the send (unsent)
+            // onto the canonical id BEFORE the old draft is deleted below,
+            // which only forgets what is left. The move is published in memory
+            // at once; both ids already show the same list through the alias,
+            // so the composer is never empty in between. An attachment added
+            // while this bind awaits joins the canonical composer through the
+            // alias, with the draft id as bucket.
+            const rebinding = this.rebindDraftAttachments(draftId, sessionId)
+
             // Carry the draft's MRU slot over to the canonical id (the id segment
             // is rewritten inside the stored path) so the freshly-created session
             // stays reachable in the Ctrl+` switcher no matter where the user is.
@@ -2097,6 +2134,7 @@ export const useDataStore = defineStore('data', {
                 })
             }
 
+            await rebinding
             this.deleteDraftSession(draftId)
         },
 
@@ -3489,8 +3527,12 @@ export const useDataStore = defineStore('data', {
          * @param {Object} [attachments] - Optional attachments in SDK format
          * @param {Array} [attachments.images] - Image blocks ({ type: 'image', source: {...} })
          * @param {Array} [attachments.documents] - Document blocks ({ type: 'document', source: {...} })
+         * @param {Array} [composerAttachments] - Composer attachment metadata
+         *   ({id, name, kind, previewUrl?}): the bubble carries their total
+         *   `attachmentCount` (matching) and `attachmentItems` (names, kinds,
+         *   local object URLs only — never the staging content endpoint).
          */
-        setOptimisticMessage(sessionId, text, attachments) {
+        setOptimisticMessage(sessionId, text, attachments, composerAttachments) {
             const { lineNum, kind: syntheticKind } = SYNTHETIC_ITEM.OPTIMISTIC_USER_MESSAGE
             // Store as sessionItem format (snake_case) since it's injected into
             // the items array before computeVisualItems processes it.
@@ -3510,10 +3552,9 @@ export const useDataStore = defineStore('data', {
             // ``payload.item.content[]``). The provider's helpers own that mapping.
             const provider = this.getSession(sessionId)?.provider
             const helpers = getProviderHelpers(provider)
-            setParsedContent(
-                optimisticItem,
-                helpers.buildOptimisticUserMessageContent(text, attachments),
-            )
+            const parsed = helpers.buildOptimisticUserMessageContent(text, attachments)
+            if (composerAttachments?.length) Object.assign(parsed, optimisticAttachmentFields(composerAttachments))
+            setParsedContent(optimisticItem, parsed)
             this.localState.optimisticMessages[sessionId] = optimisticItem
             this.recomputeVisualItems(sessionId)
         },
@@ -3565,7 +3606,7 @@ export const useDataStore = defineStore('data', {
          * arrival of the matching real user_message resolves it silently; a
          * TTL sweep drops forgotten entries.
          * @param {string} requestId
-         * @param {Object} snapshot - { sessionId, text, medias, optimisticShown, startingSet, noLineExpected }
+         * @param {Object} snapshot - { sessionId, text, attachments, medias, optimisticShown, startingSet, noLineExpected }
          */
         registerInflightSend(requestId, snapshot) {
             const now = Date.now()
@@ -3598,11 +3639,15 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          * @param {string} projectId
          * @param {string} requestId
-         * @param {Object} send - { text, medias, images, documents }:
-         *   medias in original draft format (for restore), images/documents
-         *   in SDK format (for the optimistic bubble)
+         * @param {Object} send - { text, attachments, medias, images, documents }:
+         *   attachments = composer attachment metadata ({bucket, id, name,
+         *   size, mimeType, kind}, optional local `previewUrl`) in send order:
+         *   the snapshot keeps their staged refs for Retry/Edit/Dismiss (no
+         *   bytes, spec 2026-10-03 §9.5); legacy medias in original draft
+         *   format (legacy Retry), images/documents in SDK format (for the
+         *   optimistic bubble)
          */
-        registerOutgoingSend(sessionId, projectId, requestId, { text, medias, images, documents }) {
+        registerOutgoingSend(sessionId, projectId, requestId, { text, attachments, medias, images, documents }) {
             const ephemeralSend = this.promoteEphemeralSession(sessionId, { text, medias })
             const state = this.processStates[sessionId]?.state
             const optimisticShown = state !== PROCESS_STATE.ASSISTANT_TURN
@@ -3616,9 +3661,12 @@ export const useDataStore = defineStore('data', {
             const noLineExpected = ephemeralSend || session?.provider === 'claude_code'
                 && !session?.hybrid
                 && state === PROCESS_STATE.ASSISTANT_TURN
+            const snapshotAttachments = (attachments || []).map(({ bucket, id, name, size, mimeType, kind }) =>
+                ({ bucket, id, name, size, mimeType: mimeType || '', kind }))
             this.registerInflightSend(requestId, {
                 sessionId,
                 text,
+                ...(snapshotAttachments.length ? { attachments: snapshotAttachments } : {}),
                 medias: medias || [],
                 optimisticShown,
                 startingSet,
@@ -3626,10 +3674,10 @@ export const useDataStore = defineStore('data', {
                 ephemeral: ephemeralSend,
             })
             if (optimisticShown) {
-                const attachments = (images?.length || documents?.length)
+                const sdkAttachments = (images?.length || documents?.length)
                     ? { images, documents }
                     : undefined
-                if (!ephemeralSend) this.setOptimisticMessage(sessionId, text, attachments)
+                if (!ephemeralSend) this.setOptimisticMessage(sessionId, text, sdkAttachments, attachments)
                 // The backend broadcasts STARTING before spawning the
                 // subprocess, but the SDK connect() blocks the event loop so
                 // the frame only lands seconds later — this gives immediate
@@ -3745,6 +3793,7 @@ export const useDataStore = defineStore('data', {
                 requestId,
                 sessionId,
                 text: entry.text,
+                attachments: entry.attachments || [],
                 medias: entry.medias || [],
                 mediasDropped: !!entry.mediasDropped,
                 code,
@@ -3789,6 +3838,9 @@ export const useDataStore = defineStore('data', {
                 ? { images, documents }
                 : undefined
             const parsed = helpers.buildOptimisticUserMessageContent(failedSend.text, attachments)
+            // Composer attachments: names and kinds only (no File survives the
+            // send, and the staging endpoint is not a bubble source).
+            if (failedSend.attachments?.length) Object.assign(parsed, optimisticAttachmentFields(failedSend.attachments))
             parsed.syntheticKind = syntheticKind
             parsed.failedSend = {
                 requestId: failedSend.requestId,
@@ -3857,7 +3909,9 @@ export const useDataStore = defineStore('data', {
                     deleteInflightSend(requestId).catch(() => {})
                     continue
                 }
-                if (!entry?.sessionId || (!entry.text && !entry.medias?.length) || now - (entry.sentAt || 0) > INFLIGHT_SEND_TTL_MS) {
+                // An attachments-only send (staged refs, no text) is kept.
+                const empty = !entry?.text && !entry?.medias?.length && !entry?.attachments?.length
+                if (!entry?.sessionId || empty || now - (entry.sentAt || 0) > INFLIGHT_SEND_TTL_MS) {
                     deleteInflightSend(requestId).catch(() => {})
                     continue
                 }
@@ -6066,7 +6120,9 @@ export const useDataStore = defineStore('data', {
             try {
                 this.localState.ephemeralControls = await loadEphemeralControls()
                 for (const [draftId, control] of Object.entries(this.localState.ephemeralControls)) {
-                    if (control.discard) await this.purgeEphemeralContent([draftId, control.canonicalId])
+                    // A persisted user discard repeats its explicit release
+                    // (idempotent); automatic cleanups never release.
+                    if (control.discard) await this.purgeEphemeralContent([draftId, control.canonicalId], { releaseAttachments: true })
                 }
                 const draftSessions = await getAllDraftSessions()
                 const now = Date.now() / 1000
@@ -6074,7 +6130,7 @@ export const useDataStore = defineStore('data', {
                 for (const [sessionId, draft] of Object.entries(draftSessions)) {
                     const control = this.localState.ephemeralControls[draft.ephemeralDraftId || sessionId]
                     if (control?.discard) {
-                        await this.purgeEphemeralContent([sessionId, draft.ephemeralDraftId, control.canonicalId])
+                        await this.purgeEphemeralContent([sessionId, draft.ephemeralDraftId, control.canonicalId], { releaseAttachments: true })
                         continue
                     }
                     const { projectId, title } = draft
@@ -6158,7 +6214,9 @@ export const useDataStore = defineStore('data', {
                 if (!projectId) {
                     // Corrupted entry — no project ID means we can't check the API, just remove it
                     deleteDraftSessionFromDb(sessionId).catch(() => {})
+                    // Forget only (spec 2026-10-03 §6.1.4): the reaper drops the staged entries.
                     this.clearAttachmentsForSession(sessionId).catch(() => {})
+                    this.forgetAttachments(sessionId).catch(() => {})
                     if (this.sessions[sessionId]?.draft) {
                         delete this.sessions[sessionId]
                     }
@@ -6281,8 +6339,75 @@ export const useDataStore = defineStore('data', {
          */
         async releaseAttachments(refs) {
             if (!refs?.length) return
-            const composer = await composerAttachmentsFor(this)
+            // Once built, called synchronously: the local part (records
+            // dropped, uploads cancelled) runs before this returns.
+            const composer = composerAttachmentsInstance || await composerAttachmentsFor(this)
             await composer.releaseAttachments(refs)
+        },
+
+        /**
+         * Release every attachment a composer shows (Remove all, composer
+         * Reset / Clear): its legacy medias and its staged refs.
+         * @param {string} sessionId
+         */
+        async releaseComposerAttachments(sessionId) {
+            await this.clearAttachmentsForSession(sessionId)
+            await this.releaseAttachments(toAttachmentRefs(this.getComposerAttachments(sessionId)))
+        },
+
+        /** Staged refs of the records a session owns itself (no alias view). */
+        _ownAttachmentRefs(sessionId) {
+            return toAttachmentRefs(Object.values(this.localState.attachmentRecords[sessionId] || {}))
+        },
+
+        /**
+         * Every staged ref held for some ids (ephemeral Discard): their draft
+         * records, in-flight and failed snapshots, then the stored ones. The
+         * memory part is read synchronously, before the caller purges it.
+         * @param {string[]} ids
+         * @returns {Promise<Array<{bucket: string, id: string}>>}
+         */
+        _collectAttachmentRefs(ids) {
+            return createAttachmentRefCollector({
+                records: this.localState.attachmentRecords,
+                inflightEntries: () => inflightSends.values(),
+                failedEntries: () => Object.values(this.localState.failedSends).flatMap(byRequest => Object.values(byRequest)),
+                storage: { getDraftAttachmentsBySession, getAllInflightSends },
+            })(ids)
+        },
+
+        /**
+         * Rehome a draft's unsent composer records onto its new id (binding,
+         * ephemeral recovery) before the old draft is deleted: same id,
+         * bucket, order, File, upload attempt and chip state.
+         * @param {string} oldSessionId
+         * @param {string} newSessionId
+         * @returns {Promise<void>}
+         */
+        async rebindDraftAttachments(oldSessionId, newSessionId) {
+            // Records added through the alias (`joinedFrom`) exist only once
+            // the actions do. Once built, called synchronously: the in-memory
+            // move happens before this returns its promise.
+            if (!this.localState.attachmentRecords[oldSessionId] && !composerAttachmentsInstance) return
+            const composer = composerAttachmentsInstance || await composerAttachmentsFor(this)
+            try {
+                await composer.rebindDraftAttachments(oldSessionId, newSessionId)
+            } catch (err) {
+                console.warn('Failed to rebind draft attachments:', err)
+            }
+        },
+
+        /**
+         * Edit of a failed send: put its staged refs back in the composer
+         * (same id and bucket, appended), touched at once as draft refs.
+         * @param {string} sessionId
+         * @param {Array<Object>} attachments - snapshot metadata
+         * @returns {Promise<Object[]>} the restored records
+         */
+        async restoreDraftAttachmentRefs(sessionId, attachments) {
+            if (!attachments?.length) return []
+            const composer = await composerAttachmentsFor(this)
+            return composer.restoreDraftAttachmentRefs(sessionId, attachments)
         },
 
         /**
@@ -6307,13 +6432,20 @@ export const useDataStore = defineStore('data', {
         },
 
         /**
-         * Heartbeat of the staging entries held by draft records (§6.1.4).
-         * @param {{snapshotRefs?: Array<{bucket: string, id: string}>}} [options]
+         * Heartbeat of the staging entries (§6.1.4), at hydrate and every 2 h:
+         * the refs of draft records (`holder: draft`) and, in a separate
+         * request, the refs of in-flight and failed send snapshots
+         * (`holder: snapshot`). Independent of the orphan cleanups.
          */
-        async touchHeldAttachments(options) {
-            if (!Object.keys(this.localState.attachmentRecords).length && !options?.snapshotRefs?.length) return
+        async touchHeldAttachments() {
+            const snapshots = [
+                ...inflightSends.values(),
+                ...Object.values(this.localState.failedSends).flatMap(byRequest => Object.values(byRequest)),
+            ]
+            const snapshotRefs = uniqueRefs(snapshots.flatMap(snapshotAttachmentRefs))
+            if (!Object.keys(this.localState.attachmentRecords).length && !snapshotRefs.length) return
             const composer = await composerAttachmentsFor(this)
-            await composer.touchHeldAttachments(options)
+            await composer.touchHeldAttachments({ snapshotRefs })
         },
 
         /**
@@ -6455,10 +6587,10 @@ export const useDataStore = defineStore('data', {
                 if (records.length) {
                     const composer = await composerAttachmentsFor(this)
                     composer.hydrate(records)
-                    // Not awaited: the status request and the heartbeat must
-                    // not delay the app mount.
+                    // Not awaited: the status request must not delay the app
+                    // mount. The first heartbeat runs once the snapshots are
+                    // hydrated too (main.js).
                     composer.reconcileAttachmentStatuses({ hydrate: true })
-                    composer.touchHeldAttachments()
                 }
             } catch (err) {
                 console.warn('Failed to load attachment records from IndexedDB:', err)

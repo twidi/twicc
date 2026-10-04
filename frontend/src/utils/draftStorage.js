@@ -445,6 +445,48 @@ export async function saveDraftAttachment(record) {
 }
 
 /**
+ * Save (insert or replace) several draft attachment records in one readwrite
+ * transaction (an ownership change is all-or-nothing). Resolves once the
+ * transaction completes.
+ * @param {DraftAttachment[]} records
+ * @returns {Promise<void>}
+ */
+export async function saveDraftAttachments(records) {
+    if (!records.length) return
+    const db = await getDb()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(DRAFT_ATTACHMENTS_STORE, 'readwrite')
+        const store = tx.objectStore(DRAFT_ATTACHMENTS_STORE)
+        for (const record of records) store.put(record)
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error)
+    })
+}
+
+/**
+ * Delete every draft attachment record of one session (local forget of a
+ * purged session, including records not hydrated yet).
+ * @param {string} sessionId
+ * @returns {Promise<void>}
+ */
+export async function deleteDraftAttachmentsBySession(sessionId) {
+    const db = await getDb()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(DRAFT_ATTACHMENTS_STORE, 'readwrite')
+        const store = tx.objectStore(DRAFT_ATTACHMENTS_STORE)
+        const request = store.index('sessionId').getAllKeys(sessionId)
+        request.onsuccess = () => {
+            for (const id of request.result || []) store.delete(id)
+        }
+        request.onerror = () => reject(request.error)
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error)
+    })
+}
+
+/**
  * Get every draft attachment record (used at app startup to hydrate the store).
  * @returns {Promise<DraftAttachment[]>}
  */

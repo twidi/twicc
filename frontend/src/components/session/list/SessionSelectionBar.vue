@@ -159,7 +159,7 @@ function runConfirmed() {
         }
         for (const id of sessionIds) {
             if (store.getSession(id)?.ephemeral && !store.getSession(id)?.draft) store.discardEphemeralSession(id)
-            else store.deleteDraftSession(id)
+            else store.deleteDraftSession(id, { releaseAttachments: true })
         }
     }
 }

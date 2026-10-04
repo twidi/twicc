@@ -12,11 +12,12 @@
 // so node:test drives them on top of the real upload controller.
 
 import { watch } from 'vue'
+import { COMPOSER_PANEL } from './uploads/controller.js'
 import { entryPercent } from './uploads/display.js'
 import { makeClientId } from './uploads/ids.js'
 
-/** The upload origin panel of composer attachments. */
-export const COMPOSER_PANEL = 'composer'
+/** The upload origin panel of composer attachments (defined by the upload controller). */
+export { COMPOSER_PANEL }
 
 /** Display states of a composer attachment chip (§9.2). */
 export const ATTACHMENT_STATE = Object.freeze({
@@ -169,6 +170,156 @@ export function attachmentContentUrl(ref) {
     return `${API_ROOT}/${encodeURIComponent(ref.bucket)}/${encodeURIComponent(ref.id)}/content`
 }
 
+function byPosition(a, b) {
+    return a.position - b.position
+}
+
+/**
+ * The records a composer shows, in order (spec 2026-10-03 §9.5): the records
+ * of the session the id resolves to through `aliases` (draft id → canonical
+ * id), then, per draft aliased to it, that draft's records not yet moved plus
+ * the records added through its alias (`joinedFrom`, memory only). A draft id
+ * and its canonical id therefore show the same list before, during and after
+ * `rebindDraftAttachments`, which keeps this exact order.
+ *
+ * @param {object} records - `sessionId → {id → record}`
+ * @param {object} aliases - `draftId → canonicalId`
+ * @param {string} sessionId
+ * @returns {object[]}
+ */
+export function composerRecordsFor(records, aliases, sessionId) {
+    const owner = aliases?.[sessionId] || sessionId
+    const own = Object.values(records[owner] || {}).sort(byPosition)
+    const sources = Object.keys(aliases || {}).filter(id => id !== owner && aliases[id] === owner)
+    const joined = new Set(sources)
+    const result = own.filter(record => !joined.has(record.joinedFrom))
+    for (const source of sources) {
+        const group = [...Object.values(records[source] || {}), ...own.filter(record => record.joinedFrom === source)]
+        result.push(...group.sort(byPosition))
+    }
+    return result
+}
+
+/**
+ * Staged refs deduplicated by bucket and id, first occurrence order.
+ *
+ * @param {Array<{bucket: string, id: string}>} refs
+ * @returns {Array<{bucket: string, id: string}>}
+ */
+export function uniqueRefs(refs) {
+    const seen = new Set()
+    const result = []
+    for (const ref of refs) {
+        if (!ref?.bucket || !ref.id) continue
+        const key = `${ref.bucket}/${ref.id}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        result.push({ bucket: ref.bucket, id: ref.id })
+    }
+    return result
+}
+
+/**
+ * Snapshot metadata of composer records (in-flight send, §9.5): plain
+ * `{bucket, id, name, size, mimeType, kind}` objects in position order. No
+ * bytes: the staged entry holds the file.
+ *
+ * @param {object[]} records
+ * @returns {Array<{bucket: string, id: string, name: string, size: number, mimeType: string, kind: string}>}
+ */
+export function snapshotAttachments(records) {
+    return [...records].sort(byPosition).map(record => ({
+        bucket: record.bucket,
+        id: record.id,
+        name: record.name,
+        size: record.size,
+        mimeType: record.mimeType || '',
+        kind: record.kind,
+    }))
+}
+
+/**
+ * The staged refs of an in-flight or failed send snapshot, in send order
+ * (empty for a legacy snapshot).
+ *
+ * @param {{attachments?: object[]}|null} snapshot
+ * @returns {Array<{bucket: string, id: string}>}
+ */
+export function snapshotAttachmentRefs(snapshot) {
+    return (snapshot?.attachments || [])
+        .filter(attachment => attachment?.bucket && attachment.id)
+        .map(attachment => ({ bucket: attachment.bucket, id: attachment.id }))
+}
+
+/**
+ * Attachment fields of an optimistic or failed-send bubble (§9.4): the total
+ * count (matching) and one item per attachment (name, display kind). An image
+ * thumbnail comes from a local object URL only (`previewUrl` starting with
+ * `blob:`), never from the staging content endpoint: the server releases
+ * those entries at delivery.
+ *
+ * @param {Array<{id: string, name: string, kind: string, previewUrl?: string}>} attachments
+ * @returns {{attachmentCount: number, attachmentItems: Array<{id: string, name: string, kind: string, src: string|null}>}}
+ */
+export function optimisticAttachmentFields(attachments) {
+    const list = attachments || []
+    return {
+        attachmentCount: list.length,
+        attachmentItems: list.map(attachment => ({
+            id: attachment.id,
+            name: attachment.name,
+            kind: attachment.kind,
+            src: typeof attachment.previewUrl === 'string' && attachment.previewUrl.startsWith('blob:')
+                ? attachment.previewUrl
+                : null,
+        })),
+    }
+}
+
+/**
+ * Collector of every staged ref held for some session ids (ephemeral Discard,
+ * §6.1.4): their draft records, in-flight and failed-send snapshots in
+ * memory, then the stored draft records and snapshots (a discard hydrated
+ * before them). The memory part is read synchronously when the collector is
+ * called, so the caller may remove its local state right after the call.
+ *
+ * @param {object} deps
+ * @param {object} deps.records - `sessionId → {id → record}`
+ * @param {() => Iterable<object>} deps.inflightEntries
+ * @param {() => Iterable<object>} deps.failedEntries
+ * @param {{getDraftAttachmentsBySession: Function, getAllInflightSends: Function}} deps.storage
+ * @returns {(ids: string[]) => Promise<Array<{bucket: string, id: string}>>}
+ */
+export function createAttachmentRefCollector({ records, inflightEntries, failedEntries, storage }) {
+    return function collectAttachmentRefs(ids) {
+        const wanted = new Set(ids.filter(Boolean))
+        const refs = []
+        for (const id of wanted) {
+            for (const record of Object.values(records[id] || {})) refs.push({ bucket: record.bucket, id: record.id })
+        }
+        for (const entry of [...inflightEntries(), ...failedEntries()]) {
+            if (wanted.has(entry?.sessionId)) refs.push(...snapshotAttachmentRefs(entry))
+        }
+        return (async () => {
+            for (const id of wanted) {
+                try {
+                    for (const row of await storage.getDraftAttachmentsBySession(id)) refs.push({ bucket: row.bucket, id: row.id })
+                } catch (error) {
+                    console.warn('Failed to read draft attachment records:', error)
+                }
+            }
+            try {
+                for (const entry of Object.values(await storage.getAllInflightSends())) {
+                    if (wanted.has(entry?.sessionId)) refs.push(...snapshotAttachmentRefs(entry))
+                }
+            } catch (error) {
+                console.warn('Failed to read in-flight send snapshots:', error)
+            }
+            return uniqueRefs(refs)
+        })()
+    }
+}
+
 // ── HTTP helpers (spec §6.1.2) ───────────────────────────────────────────────
 
 function jsonPost(fetchFn, url, body) {
@@ -249,8 +400,11 @@ function plainRecord(record) {
  * @param {object} deps.records - reactive `sessionId → {id → record}`
  * @param {object} deps.runtime - reactive `id → {state, progress, retryable,
  *     pauseReason, clientId, uploadKey}` (memory only)
- * @param {{saveDraftAttachment: Function, deleteDraftAttachment: Function,
- *     deleteLegacyMedia: (id: string) => Promise<void>}} deps.storage
+ * @param {object} [deps.aliases] - reactive `draftId → canonicalId` (bound drafts)
+ * @param {{saveDraftAttachment: Function, saveDraftAttachments: Function,
+ *     deleteDraftAttachment: Function,
+ *     deleteLegacyMedia: (id: string) => Promise<void>}} deps.storage -
+ *     `saveDraftAttachments` writes several records in one readwrite transaction
  * @param {{tabId: string, entries: Map, startUploads: Function, cancel: Function,
  *     onCompleted: Function, isStalled: Function}} deps.uploads - the uploads store
  * @param {Function} deps.fetch - `apiFetch`
@@ -259,7 +413,21 @@ function plainRecord(record) {
  */
 export function createComposerAttachments(deps) {
     const { records, runtime, storage, uploads, uuid, randomHex } = deps
+    const aliases = deps.aliases || {}
     const fetchFn = deps.fetch
+
+    /** The session that owns a composer id: its canonical id once bound. */
+    function resolveOwner(sessionId) {
+        return aliases[sessionId] || sessionId
+    }
+
+    function maxPosition(list) {
+        return list.reduce((max, record) => Math.max(max, record.position), -1)
+    }
+
+    function samePersisted(a, b) {
+        return a.sessionId === b.sessionId && a.position === b.position && a.bucket === b.bucket
+    }
 
     /** id → File, for previews and chip Retry (memory only). */
     const files = new Map()
@@ -409,30 +577,42 @@ export function createComposerAttachments(deps) {
      * Add a file: persist its record (bucket = the session id, next position),
      * then upload it into its staging entry. No type or size check.
      *
+     * A draft id already bound to a canonical id (alias) adds to the canonical
+     * composer, with the draft id as bucket. While the draft's own records
+     * have not moved yet (`rebindDraftAttachments` pending), the new record
+     * joins their group (`joinedFrom`, memory only) so it keeps its place
+     * after them.
+     *
      * @param {string} sessionId
      * @param {File} file
      * @returns {Promise<object>} the record
      */
     async function addAttachment(sessionId, file) {
         const id = uuid()
-        const existing = Object.values(records[sessionId] || {})
-        const position = existing.reduce((max, r) => Math.max(max, r.position), -1) + 1
+        const owner = resolveOwner(sessionId)
+        const draftRecords = owner !== sessionId ? Object.values(records[sessionId] || {}) : []
+        const joinedFrom = draftRecords.length ? sessionId : null
+        const group = joinedFrom
+            ? [...draftRecords, ...Object.values(records[owner] || {}).filter(r => r.joinedFrom === sessionId)]
+            : Object.values(records[owner] || {})
         const record = {
             id,
-            sessionId,
+            sessionId: owner,
             bucket: sessionId,
-            position,
+            position: maxPosition(group) + 1,
             name: file.name,
             size: file.size,
             mimeType: file.type || '',
             kind: getDisplayKind(file),
         }
-        if (!records[sessionId]) records[sessionId] = {}
-        records[sessionId][id] = record
+        if (joinedFrom) record.joinedFrom = joinedFrom
+        if (!records[owner]) records[owner] = {}
+        records[owner][id] = record
         createRuntime(id)
         files.set(id, file)
+        const saved = plainRecord(record)
         try {
-            await storage.saveDraftAttachment(plainRecord(record))
+            await storage.saveDraftAttachment(saved)
         } catch (error) {
             dropLocal(id)
             throw error
@@ -442,8 +622,108 @@ export function createComposerAttachments(deps) {
             storage.deleteDraftAttachment(id).catch(() => {})
             return record
         }
+        // Rehomed by a binding during the write, whose own transaction may
+        // have run first: write the current owner and position again.
+        const current = plainRecord(findRecord(id))
+        if (!samePersisted(saved, current)) {
+            await storage.saveDraftAttachment(current).catch(error =>
+                console.warn('Failed to save rehomed attachment record:', error))
+        }
         await startAttempt(findRecord(id))
         return record
+    }
+
+    /**
+     * Rehome the unsent records of a draft onto its canonical id (Codex
+     * `bindDraftSession`, ephemeral binding and recovery), before the old
+     * draft is deleted. The records keep their id, bucket, relative order,
+     * `File`, upload attempt and chip state (all keyed by attachment id); they
+     * are appended after the records the target already holds. The move is
+     * published in memory at once (the order `composerRecordsFor` already
+     * showed through the alias), then written in one readwrite transaction.
+     *
+     * @param {string} oldSessionId
+     * @param {string} newSessionId
+     * @returns {Promise<object[]>} the moved records
+     */
+    async function rebindDraftAttachments(oldSessionId, newSessionId) {
+        if (!oldSessionId || !newSessionId || oldSessionId === newSessionId) return []
+        const target = Object.values(records[newSessionId] || {})
+        const group = [
+            ...Object.values(records[oldSessionId] || {}),
+            ...target.filter(record => record.joinedFrom === oldSessionId),
+        ].sort(byPosition)
+        if (!group.length) return []
+        let position = maxPosition(target.filter(record => record.joinedFrom !== oldSessionId)) + 1
+        if (!records[newSessionId]) records[newSessionId] = {}
+        for (const record of group) {
+            record.sessionId = newSessionId
+            record.position = position++
+            delete record.joinedFrom
+            records[newSessionId][record.id] = record
+        }
+        delete records[oldSessionId]
+        try {
+            await storage.saveDraftAttachments(group.map(plainRecord))
+        } catch (error) {
+            console.warn('Failed to persist rebound attachment records:', error)
+        }
+        return group
+    }
+
+    /**
+     * Edit of a failed send (§9.5): re-create its records with the same `id`
+     * and `bucket` in the composer of `sessionId` (through its alias), after
+     * the attachments already there. Touched at once as draft refs, then their
+     * chip state comes from `status/` (an entry released at delivery shows
+     * `missing`). An attachment already held by a composer is skipped.
+     *
+     * @param {string} sessionId
+     * @param {Array<{bucket: string, id: string, name: string, size: number, mimeType: string, kind: string}>} attachments
+     * @returns {Promise<object[]>} the restored records
+     */
+    async function restoreDraftAttachmentRefs(sessionId, attachments) {
+        const owner = resolveOwner(sessionId)
+        const fresh = []
+        const seen = new Set()
+        for (const attachment of attachments || []) {
+            if (!attachment?.id || !attachment.bucket || seen.has(attachment.id) || findRecord(attachment.id)) continue
+            seen.add(attachment.id)
+            fresh.push(attachment)
+        }
+        if (!fresh.length) return []
+        let position = maxPosition(Object.values(records[owner] || {})) + 1
+        const restored = fresh.map(attachment => ({
+            id: attachment.id,
+            sessionId: owner,
+            bucket: attachment.bucket,
+            position: position++,
+            name: attachment.name,
+            size: attachment.size,
+            mimeType: attachment.mimeType || '',
+            kind: attachment.kind,
+        }))
+        if (!records[owner]) records[owner] = {}
+        for (const record of restored) {
+            bump(record.id)
+            attempts.delete(record.id)
+            records[owner][record.id] = record
+            createRuntime(record.id)
+        }
+        try {
+            await storage.saveDraftAttachments(restored.map(plainRecord))
+        } catch (error) {
+            for (const record of restored) dropLocal(record.id)
+            throw error
+        }
+        try {
+            await touchRefs(toAttachmentRefs(restored), 'draft', fetchFn)
+        } catch (error) {
+            console.warn('Attachment touch failed', error)
+        }
+        const live = restored.map(record => findRecord(record.id)).filter(Boolean)
+        await reconcileRecords(live, { hydrate: true })
+        return live
     }
 
     /**
@@ -521,8 +801,12 @@ export function createComposerAttachments(deps) {
      * @returns {Promise<void>}
      */
     async function reconcileAttachmentStatuses({ hydrate = false } = {}) {
+        return reconcileRecords(allRecords(), { hydrate })
+    }
+
+    async function reconcileRecords(list, { hydrate }) {
         const targets = []
-        for (const record of allRecords()) {
+        for (const record of list) {
             if (hasLiveLocalUpload(record.id)) continue
             targets.push({
                 record,
@@ -625,6 +909,8 @@ export function createComposerAttachments(deps) {
         addAttachment,
         forgetAttachments,
         releaseAttachments,
+        rebindDraftAttachments,
+        restoreDraftAttachmentRefs,
         retryAttachment,
         reconcileAttachmentStatuses,
         touchHeldAttachments,

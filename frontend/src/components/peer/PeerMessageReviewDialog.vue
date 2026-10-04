@@ -1072,8 +1072,8 @@ function targetAttachmentError(provider) {
 }
 
 /** Add the peer attachments to a composer's draft, one by one through the
- *  normal attachment pipeline. Returns the medias actually added so a failed
- *  delivery can remove exactly those — an existing composer may already hold
+ *  normal attachment pipeline. Returns the records actually added so a failed
+ *  delivery can release exactly those — an existing composer may already hold
  *  user attachments that must survive a rollback. */
 async function addPeerAttachments(sessionId) {
     const added = []
@@ -1086,17 +1086,16 @@ async function addPeerAttachments(sessionId) {
 }
 
 /** Put the target composer back exactly as it was before a failed delivery.
- *  A fresh draft session is entirely ours: drop it whole. An existing
- *  session only loses the attachments this delivery added. */
-async function rollbackDelivery(sessionId, addedMedias, { dropDraft }) {
+ *  A fresh draft session is entirely ours: drop it whole, releasing all its
+ *  staged attachments. An existing session only loses the attachments this
+ *  delivery added: exactly their staged refs are released. */
+async function rollbackDelivery(sessionId, addedRecords, { dropDraft }) {
     if (dropDraft) {
-        await dataStore.clearAttachmentsForSession(sessionId).catch(() => {})
-        dataStore.deleteDraftSession(sessionId)
+        dataStore.deleteDraftSession(sessionId, { releaseAttachments: true })
         return
     }
-    for (const media of addedMedias) {
-        await dataStore.removeAttachment(sessionId, media.id).catch(() => {})
-    }
+    await dataStore.releaseAttachments(addedRecords.map(record => ({ bucket: record.bucket, id: record.id })))
+        .catch(() => {})
 }
 
 /** One message for every delivery failure (attachments, server, network):

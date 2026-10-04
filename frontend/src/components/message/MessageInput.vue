@@ -1496,10 +1496,11 @@ function removeAttachmentByIndex(index) {
 }
 
 /**
- * Remove all attachments.
+ * Remove all attachments: legacy medias, and the composer's staged refs are
+ * released (spec 2026-10-03 §6.1.4).
  */
 function removeAllAttachments() {
-    store.clearAttachmentsForSession(props.sessionId)
+    store.releaseComposerAttachments(props.sessionId)
 }
 
 /**
@@ -1687,9 +1688,10 @@ async function handleSend() {
  * Navigates to 'projects-all' if in All Projects mode, otherwise to 'project'.
  */
 function handleCancel() {
-    // Clear draft message from store and IndexedDB
+    // Clear draft message from store and IndexedDB. The user abandons the
+    // draft: its staged attachments are released.
     store.clearDraftMessage(props.sessionId)
-    store.deleteDraftSession(props.sessionId)
+    store.deleteDraftSession(props.sessionId, { releaseAttachments: true })
 
     if (isAllProjectsMode.value) {
         router.push({ name: 'projects-all', query: route.query.workspace ? { workspace: route.query.workspace } : {} })
@@ -1703,7 +1705,8 @@ function handleCancel() {
  * and restore dropdowns to their active (server-side) values.
  */
 async function handleReset() {
-    const hadComposerContent = Boolean(messageText.value) || attachmentCount.value > 0
+    const composerAttachmentCount = store.getComposerAttachments(props.sessionId).length
+    const hadComposerContent = Boolean(messageText.value) || attachmentCount.value > 0 || composerAttachmentCount > 0
     // Clear text if any
     if (messageText.value) {
         messageText.value = ''
@@ -1716,9 +1719,9 @@ async function handleReset() {
             adjustTextareaHeight()
         }
     }
-    // Clear attachments if any
-    if (attachmentCount.value > 0) {
-        store.clearAttachmentsForSession(props.sessionId)
+    // Clear attachments if any: the composer's staged refs are released.
+    if (attachmentCount.value > 0 || composerAttachmentCount > 0) {
+        store.releaseComposerAttachments(props.sessionId)
     }
     // Reset dropdowns to their reference values (active process or DB, including null)
     if (hasDropdownsChanged.value) {

@@ -10,6 +10,7 @@ import { useDataStore } from '../../../../stores/data'
 import { sendWsMessage } from '../../../../composables/useWebSocket'
 import { generateUUID } from '../../../../utils/crypto'
 import { mediasToSdkFormat, resizeMediasForSend } from '../../../../utils/fileUtils'
+import { snapshotAttachmentRefs } from '../../../../utils/composerAttachments'
 import { getProviderHelpers, getProviderStore } from '../../../../providers'
 
 const props = defineProps({
@@ -57,6 +58,7 @@ const displayMessage = computed(() =>
 // nothing left to send: Retry and Edit would both be no-ops. Only Delete stays.
 const nothingLeftToSend = computed(() =>
     !!failedSend.value?.mediasDropped && !(failedSend.value?.text || '').trim()
+        && !getEntry()?.attachments?.length
 )
 
 function getEntry() {
@@ -69,15 +71,20 @@ function getEntry() {
  * settings untouched: the backend overwrites the stored settings bundle with
  * whatever the payload carries, so omitting them would reset the session's
  * forced settings to "use global default".
+ *
+ * A composer send resends the same staged refs (the server reuses its
+ * promotion tombstones); a legacy snapshot (medias) keeps the legacy path.
  */
 async function retry() {
     const entry = getEntry()
     if (!entry) return
     const session = store.getSession(props.sessionId)
     const requestId = generateUUID()
-    // Same send-time resize as the composer. The model is the one the payload
-    // below re-sends: the session's stored model, else the provider's default.
-    const medias = await resizeMediasForSend(
+    const refs = snapshotAttachmentRefs(entry)
+    // Same send-time resize as the composer for legacy medias. The model is
+    // the one the payload below re-sends: the session's stored model, else
+    // the provider's default.
+    const medias = refs.length ? [] : await resizeMediasForSend(
         entry.medias || [],
         getProviderHelpers(session?.provider),
         session?.selected_model ?? getProviderStore(session?.provider)?.defaultModel,
@@ -100,6 +107,7 @@ async function retry() {
         context_max: session?.context_max ?? null,
         request_id: requestId,
     }
+    if (refs.length) payload.attachments = refs
     if (images.length) payload.images = images
     if (documents.length) payload.documents = documents
     store.applyCreationSendMode(payload)
@@ -107,7 +115,8 @@ async function retry() {
     if (!sendWsMessage(payload)) return
     store.registerOutgoingSend(props.sessionId, props.projectId, requestId, {
         text: entry.text,
-        medias: entry.medias || [],
+        attachments: entry.attachments || [],
+        medias: refs.length ? [] : (entry.medias || []),
         images,
         documents,
     })
@@ -130,16 +139,24 @@ async function edit() {
     document
         .querySelector('.message-input.collapsed')
         ?.dispatchEvent(new CustomEvent('twicc:expand-composer'))
-    if (entry.medias?.length) {
+    // Staged refs come back as draft records (same id and bucket, appended
+    // after the composer's attachments); legacy medias keep the legacy path.
+    // Only forgets the snapshot: the refs now belong to the draft.
+    if (entry.attachments?.length) {
+        await store.restoreDraftAttachmentRefs(props.sessionId, entry.attachments)
+    } else if (entry.medias?.length) {
         await store.restoreDraftAttachments(props.sessionId, entry.medias)
     }
     store.removeFailedSend(props.sessionId, entry.requestId)
 }
 
+/** Delete the failed message: its staged refs are released (spec §6.1.4). */
 function discard() {
     const entry = getEntry()
     if (!entry) return
+    const refs = snapshotAttachmentRefs(entry)
     store.removeFailedSend(props.sessionId, entry.requestId)
+    if (refs.length) store.releaseAttachments(refs)
 }
 </script>
 

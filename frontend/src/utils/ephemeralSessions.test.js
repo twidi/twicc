@@ -20,6 +20,8 @@ function fixture(overrides = {}) {
             stop: async id => stopped.push(id),
             navigate: async () => {},
             buildPrompt: (session, prompt) => ({ prompt }),
+            collectAttachmentRefs: async () => [],
+            releaseAttachmentRefs: async () => {},
             ...overrides,
         }),
     }
@@ -212,4 +214,69 @@ test('a pre-binding Discard does not consume an unrelated normal send failure', 
     assert.equal(store.isEphemeralDiscarded('unrelated-ephemeral'), false)
     assert.equal(store.failInflightSend('normal-request', { message: 'rejected' }), true)
     assert.equal(applied, true)
+})
+
+
+test('Discard collects attachment refs before any snapshot or map removal, then releases them', async () => {
+    const order = []
+    const { store } = fixture({
+        collectAttachmentRefs: ids => {
+            order.push(['collect', ids, !!store.sessions.canonical, store.cleared.length])
+            return Promise.resolve([{ bucket: 'draft', id: 'a' }])
+        },
+        releaseAttachmentRefs: async refs => order.push(['release', refs]),
+        clearContent: async id => order.push(['clear', id]),
+    })
+    store.cleared = []
+    store._clearEphemeralInflight = id => store.cleared.push(id)
+    store.promoteEphemeralSession('draft', { text: 'hello' })
+    await store.bindEphemeralSession('draft', 'canonical')
+    await store.discardEphemeralSession('canonical')
+    assert.deepEqual(order[0], ['collect', ['canonical', 'draft'], true, 0])
+    assert.deepEqual(order[1], ['release', [{ bucket: 'draft', id: 'a' }]])
+    assert.deepEqual(order.slice(2).map(entry => entry[0]), ['clear', 'clear'])
+})
+
+test('a default purge neither collects nor releases attachment refs', async () => {
+    const calls = []
+    const { store } = fixture({
+        collectAttachmentRefs: () => { calls.push('collect'); return Promise.resolve([]) },
+        releaseAttachmentRefs: async () => calls.push('release'),
+    })
+    await store.purgeEphemeralContent(['draft'])
+    assert.deepEqual(calls, [])
+    assert.equal(store.sessions.draft, undefined)
+})
+
+test('binding and recovery leave attachment records to their own rebind, then rekey the old draft', async () => {
+    const order = []
+    let finishRebind
+    const { store } = fixture({
+        rekeySession: async (oldId, newId) => order.push(['rekey', oldId, newId]),
+    })
+    const record = { id: 'a', sessionId: 'draft', bucket: 'draft', position: 0 }
+    store.localState.attachmentRecords = { draft: { a: record } }
+    store.localState.attachmentRuntime = { draft: 'not a session map' }
+    store.rebindDraftAttachments = (oldId, newId) => {
+        order.push(['rebind', oldId, newId])
+        return new Promise(resolve => { finishRebind = resolve })
+    }
+    store.promoteEphemeralSession('draft', { text: 'hello' })
+    await store.bindEphemeralSession('draft', 'canonical')
+    // The generic per-session map move never touches attachment state.
+    assert.deepEqual(store.localState.attachmentRecords, { draft: { a: record } })
+    assert.equal(store.localState.attachmentRuntime.draft, 'not a session map')
+    assert.deepEqual(order, [['rebind', 'draft', 'canonical']])
+    finishRebind()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(order, [['rebind', 'draft', 'canonical'], ['rekey', 'draft', 'canonical']])
+
+    order.length = 0
+    store.localState.attachmentRecords = { canonical: { a: record } }
+    const recovered = store.recoverEphemeralDraft('canonical')
+    assert.deepEqual(store.localState.attachmentRecords, { canonical: { a: record } })
+    assert.deepEqual(order, [['rebind', 'canonical', recovered]])
+    finishRebind()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(order.at(-1), ['rekey', 'canonical', recovered])
 })

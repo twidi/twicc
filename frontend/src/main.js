@@ -334,6 +334,9 @@ if (!authStore.needsLogin) {
         dataStore.hydrateInflightSends(),
     ])
     removeDraftStorageBlockedNotice()
+    // First heartbeat of the staged composer attachments, once the draft
+    // records AND the send snapshots are loaded (not awaited).
+    dataStore.touchHeldAttachments().catch(err => console.warn('Attachment heartbeat failed:', err))
 
     // Wire the global auto-apply title watcher. Module-level watchEffect that
     // survives router.replace (which would otherwise tear down a watcher held
@@ -346,8 +349,8 @@ if (!authStore.needsLogin) {
     // IndexedDB entry was never removed (e.g. tab closed mid-send, crash).
     const DRAFT_CLEANUP_INTERVAL_MS = 2 * 60 * 60 * 1000
     setInterval(() => dataStore.cleanupOrphanDraftSessions(), DRAFT_CLEANUP_INTERVAL_MS)
-    // Same interval: the heartbeat of the staged composer attachments the
-    // drafts still hold (the hydration sent the first one).
+    // Same interval, independent of that cleanup: the heartbeat of the staged
+    // composer attachments that drafts and send snapshots still hold.
     setInterval(() => dataStore.touchHeldAttachments(), DRAFT_CLEANUP_INTERVAL_MS)
 
     // Hydrate code comments from IndexedDB (async, non-blocking)

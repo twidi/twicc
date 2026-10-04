@@ -61,6 +61,7 @@ function createObjectStoreFake(name, options = {}) {
             const { keyPath } = indexes.get(indexName)
             return {
                 getAll: value => request(() => [...rows.values()].filter(v => v[keyPath] === value).map(v => structuredClone(v))),
+                getAllKeys: value => request(() => [...rows.entries()].filter(([, v]) => v[keyPath] === value).map(([k]) => k)),
             }
         },
     }
@@ -81,7 +82,10 @@ function createDatabaseFake(name, version, stores = new Map()) {
         },
         deleteObjectStore(storeName) { stores.delete(storeName) },
         transaction(storeName) {
-            return { objectStore: requested => stores.get(requested ?? storeName) }
+            // Requests settle in microtasks; the transaction completes after them.
+            const tx = { oncomplete: null, onerror: null, onabort: null, objectStore: requested => stores.get(requested ?? storeName) }
+            setImmediate(() => tx.oncomplete?.())
+            return tx
         },
         close() { db.closed += 1 },
     }
@@ -179,6 +183,22 @@ test('draft attachment records: save, read all, read by session, delete', async 
     assert.deepEqual(await storage.getDraftAttachmentsBySession('s1').then(rows => rows.find(r => r.id === 'b')), b)
     await storage.deleteDraftAttachment('a')
     assert.deepEqual((await storage.getAllDraftAttachments()).map(r => r.id).sort(), ['b', 'c'])
+})
+
+test('several draft attachment records saved in one transaction; one session deleted by index', async () => {
+    const fake = installFake()
+    const storage = await freshStorage()
+    await openReady(storage, fake)
+    const rows = [
+        { id: 'a', sessionId: 'canonical', bucket: 'draft', position: 3, name: 'a', size: 1, mimeType: '', kind: 'other' },
+        { id: 'b', sessionId: 'canonical', bucket: 'draft', position: 4, name: 'b', size: 1, mimeType: '', kind: 'other' },
+        { id: 'c', sessionId: 'other', bucket: 'other', position: 0, name: 'c', size: 1, mimeType: '', kind: 'other' },
+    ]
+    await storage.saveDraftAttachments(rows)
+    await storage.saveDraftAttachments([])
+    assert.deepEqual((await storage.getDraftAttachmentsBySession('canonical')).map(r => [r.id, r.position]).sort(), [['a', 3], ['b', 4]])
+    await storage.deleteDraftAttachmentsBySession('canonical')
+    assert.deepEqual((await storage.getAllDraftAttachments()).map(r => r.id), ['c'])
 })
 
 // ── Blocked upgrade and versionchange ────────────────────────────────────────
