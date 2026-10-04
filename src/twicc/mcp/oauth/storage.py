@@ -1,5 +1,6 @@
 """Atomic, durable credentials and consent. Secrets never enter owner snapshots."""
 
+import asyncio
 import hashlib
 import hmac
 import secrets
@@ -9,10 +10,11 @@ from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from mcp.server.auth.provider import TokenError
 
-from twicc.core.models import McpConnection, McpOAuthCredential, McpOAuthRequest
+from twicc.core.models import McpConnection, McpEventSubscription, McpOAuthCredential, McpOAuthRequest
 from twicc.providers.db_writer import run_under_db_write_lock
 
 
@@ -189,5 +191,31 @@ async def cleanup():
                 created_at__lt=now - timedelta(days=1), mcpconnection__isnull=True, mcpoauthrequest__isnull=True
             ).delete()
             return expired
+
+    return await write(sweep)
+
+
+async def cleanup_event_subscriptions():
+    """Delete this instance's stale rows and remove their committed generations."""
+    from twicc.mcp.events import get_runtime
+
+    runtime = get_runtime()
+    if runtime is None:
+        return 0
+    loop = asyncio.get_running_loop()
+
+    def sweep():
+        with transaction.atomic():
+            rows = McpEventSubscription.objects.filter(data_dir=runtime.data_dir).filter(
+                Q(refresh_before__lt=runtime.clock.utcnow() - timedelta(seconds=60))
+                | Q(connection__revoked_at__isnull=False)
+            )
+            generations = list(rows.values_list("id", "created_at"))
+            rows.delete()
+            for identity, created_at in generations:
+                transaction.on_commit(lambda identity=identity, created_at=created_at: loop.call_soon_threadsafe(
+                    runtime.remove, identity, created_at,
+                ))
+            return len(generations)
 
     return await write(sweep)

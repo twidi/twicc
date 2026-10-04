@@ -147,20 +147,40 @@ async def mcp_lifespan():
     from twicc.mcp.server import get_external_session_manager
 
     from twicc.mcp import server
+    from twicc.mcp.events import set_runtime
+    from twicc.mcp.events.delivery import VerificationService
+    from twicc.mcp.events.methods import EventMethods
+    from twicc.mcp.events.runtime import EventsRuntime
 
     async with manager.run(), get_external_session_manager().run():
-        runtime = server.start_batch_runtime()
-        _started = True
-        logger.info("MCP server ready at /mcp")
+        batch = events = verification = None
         try:
+            batch = server.start_batch_runtime()
+            events = EventsRuntime()
+            verification = VerificationService()
+            server._event_methods = EventMethods(events, verification)
+            set_runtime(events)
+            await events.start()
+            _started = True
+            logger.info("MCP server ready at /mcp")
             yield
         finally:
             _started = False
             with anyio.CancelScope(shield=True):
                 try:
-                    await runtime.close()
+                    # Every callback runs even when another close fails. Retained
+                    # resources also close when startup stops before readiness.
+                    async with contextlib.AsyncExitStack() as closing:
+                        if batch is not None:
+                            closing.push_async_callback(batch.close)
+                        if verification is not None:
+                            closing.push_async_callback(verification.aclose)
+                        if events is not None:
+                            closing.push_async_callback(events.close)
                 finally:
                     server._batch_runtime = None
+                    server._event_methods = None
+                    set_runtime(None)
 
 
 async def start_mcp_task(shutdown_event) -> None:
@@ -173,10 +193,14 @@ async def start_mcp_task(shutdown_event) -> None:
             try:
                 await asyncio.wait_for(shutdown_event.wait(), timeout=60)
             except TimeoutError:
-                from twicc.mcp.oauth.storage import cleanup, changed
+                from twicc.mcp.oauth.storage import cleanup, cleanup_event_subscriptions, changed
 
                 try:
                     if await cleanup():
                         await changed()
                 except Exception:
                     logger.exception("MCP OAuth cleanup failed")
+                try:
+                    await cleanup_event_subscriptions()
+                except Exception:
+                    logger.exception("MCP event subscription cleanup failed")

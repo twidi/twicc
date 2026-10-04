@@ -37,6 +37,7 @@ from twicc.mcp.identity import resolve_session_token, external_caller, batch_cor
 from twicc.mcp.batch import BatchRuntime
 from twicc.mcp.batch_contract import BATCH_NAMES, validate_batch, fit_result, rejected_batch
 from twicc.mcp.dispatch import PreparedTool, UnknownToolError, check_caller_arguments, prepare_tool
+from twicc.mcp.events.methods import register_event_methods
 from twicc.mcp.descriptions import EXTERNAL_DESCRIPTION_SUFFIX
 from twicc.mcp.tools import iter_mcp_tools, tools_by_name, MCP_READ_ONLY_PATHS
 from twicc.rpc.generator import render_argv
@@ -313,6 +314,23 @@ async def _external_list(ctx, params):
 _external_server = Server(
     "twicc", instructions=EXTERNAL_INSTRUCTIONS + BATCH_INSTRUCTIONS, on_list_tools=_external_list, on_call_tool=_call_tool
 )
+_event_methods = None
+
+
+class _EventHandlers:
+    """Resolve lifespan-owned methods at call time, across backend restarts."""
+
+    async def list_events(self, ctx, params):
+        return await _event_methods.list_events(ctx, params)
+
+    async def subscribe(self, ctx, params):
+        return await _event_methods.subscribe(ctx, params)
+
+    async def unsubscribe(self, ctx, params):
+        return await _event_methods.unsubscribe(ctx, params)
+
+
+register_event_methods(_external_server, _EventHandlers())
 _external_manager = None
 
 

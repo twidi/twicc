@@ -12,6 +12,9 @@ from twicc.mcp import identity
 from twicc.mcp.endpoint import handle_mcp, mcp_lifespan
 
 
+pytestmark = pytest.mark.django_db(transaction=True)
+
+
 @pytest.fixture(autouse=True)
 def _fresh_session_manager(monkeypatch):
     """The streamable-HTTP session manager's ``.run()`` is single-shot per
