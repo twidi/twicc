@@ -105,6 +105,7 @@ from twicc.search_indexing_task import (  # noqa: E402
 from twicc.version_check_task import start_version_check_task, stop_version_check_task  # noqa: E402
 from twicc.tips_manifest import init_manifest, start_tips_watcher_task  # noqa: E402
 from twicc.help_manifest import init_manifest as init_help_manifest, start_help_watcher_task  # noqa: E402
+from twicc.title_auto_task import start_title_auto_task  # noqa: E402
 
 
 async def _cancel_task(task: asyncio.Task | None, name: str) -> None:
@@ -266,7 +267,14 @@ async def run_server(port: int):
     # responsible for its own task graph and dependency ordering).
     orchestrators = get_orchestrator_registry()
 
-    await orchestrators.start_all(shutdown_event, search_index_ready)
+    # Start before provider watchers can submit live requests. The runner owns
+    # no boot scan; initial sync does not request automatic title checks.
+    title_auto_task = asyncio.create_task(start_title_auto_task(shutdown_event))
+    try:
+        await orchestrators.start_all(shutdown_event, search_index_ready)
+    except BaseException:
+        await _cancel_task(title_auto_task, "Automatic title task")
+        raise
 
     # Configure uvicorn
     # log_config=None prevents Uvicorn from installing its own StreamHandlers;
@@ -388,6 +396,10 @@ async def run_server(port: int):
         await server.serve()
     finally:
         logger.info("Server shutdown initiated...")
+
+        # Finish cancellation of checks and provider pushes before provider or
+        # database infrastructure is torn down.
+        await _cancel_task(title_auto_task, "Automatic title task")
 
         # Stop cross-provider tasks first. The price sync loop watches
         # ``shutdown_event`` directly (set above by the signal handler),
