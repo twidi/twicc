@@ -693,6 +693,18 @@ def test_forced_rebuild_is_discovered_after_older_compute_restores_current_versi
     monkeypatch.setattr(background_compute, 'broadcast_startup_progress', AsyncMock())
     monkeypatch.setattr(sessions_watcher, 'broadcast_message', AsyncMock())
     monkeypatch.setattr('twicc.search_indexing_task.request_session_reindex', lambda _sid: None)
+    # The test DB is a shared-cache in-memory SQLite: a write meeting an active
+    # read of the same table fails at once with "database table is locked" (no
+    # busy timeout, unlike the WAL file DB in production). The coordinator loop
+    # reads core_session right after it absorbs a rebuild request, while this
+    # test applies results on the compute thread. Serialize that read behind
+    # the DB write lock the applies hold.
+    real_load_stale_candidates = background_compute._load_stale_candidates
+
+    async def serialized_load_stale_candidates(*args, **kwargs):
+        return await db_writer.run_under_db_write_lock(lambda: real_load_stale_candidates(*args, **kwargs))
+
+    monkeypatch.setattr(background_compute, '_load_stale_candidates', serialized_load_stale_candidates)
 
     async def run():
         watcher = CodexSessionsWatcher()

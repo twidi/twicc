@@ -54,13 +54,24 @@ def test_real_slices_release_locks_and_small_file_commits_first(provider_home, m
     async def run():
         from twicc.providers import db_writer
         db_writer.start_db_writer()
-        first = asyncio.create_task(watcher.process_path(paths[0]))
-        second = asyncio.create_task(watcher.process_path(paths[1]))
-        await asyncio.wait_for(asyncio.gather(first, second), 5)
-        watcher.stop_watcher()
-        await watcher._consumer_task
+        try:
+            first = asyncio.create_task(watcher.process_path(paths[0]))
+            second = asyncio.create_task(watcher.process_path(paths[1]))
+            # Real slices of a 1001-line file take ~3.5 s on an idle machine:
+            # the timeout only guards against a hang, it must not race the work.
+            await asyncio.wait_for(asyncio.gather(first, second), 60)
+            watcher.stop_watcher()
+            await watcher._consumer_task
+        finally:
+            # Always stop what the test started: a leaked DB writer and compute
+            # executor keep writing into the shared test DB (the teardown flush
+            # then fails) and make every later start_db_writer() raise.
+            try:
+                watcher.stop_watcher()
+                await watcher._drain_changes()
+            finally:
+                await db_writer.stop_db_writer()
         assert not watcher._change_lock.locked()
-        await db_writer.stop_db_writer()
     asyncio.run(run())
     assert [path for path, _ in turns[:2]] == [str(paths[0]), str(paths[1])]
     assert turns[0][1] == 'ready'
