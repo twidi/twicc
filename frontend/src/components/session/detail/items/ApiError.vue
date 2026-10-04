@@ -6,6 +6,7 @@ import { sendWsMessage } from '../../../../composables/useWebSocket'
 import { generateUUID } from '../../../../utils/crypto'
 import { getProviderHelpers, getProviderLabel } from '../../../../providers'
 import { getParsedContent } from '../../../../utils/parsedContent'
+import { userMessageResendText } from '../../../../utils/attachmentStrip'
 import { PROCESS_STATE } from '../../../../constants'
 
 const props = defineProps({
@@ -121,7 +122,8 @@ const recoveryMode = computed(() =>
 )
 
 /** Text of the user message that drove the failed turn (closest one before
- *  this api_error). Empty when it is an image-only message or not loaded. */
+ *  this api_error). Empty when it is an attachment-only message or not loaded.
+ *  The placeholder of a failed image the manifest binds is not user text. */
 function resolveResendText() {
     const items = store.getSessionItems(props.sessionId)
     const helpers = getProviderHelpers(store.getSession(props.sessionId)?.provider)
@@ -130,7 +132,7 @@ function resolveResendText() {
         if (!it) continue  // read-only shares back a sparse (line_num-keyed) array
         if (it.line_num >= props.lineNum) continue
         if (it.kind === 'user_message') {
-            return (helpers?.extractUserMessageText(getParsedContent(it)) || '').trim()
+            return userMessageResendText(helpers && (parsed => helpers.extractUserMessageText(parsed)), getParsedContent(it))
         }
     }
     return ''

@@ -19,7 +19,13 @@ import {
     optimisticAttachmentStrip,
     queuedAttachmentDisplay,
     stripItemArtifactRequest,
+    userMessageResendText,
 } from './attachmentStrip.js'
+import {
+    userMessageAttachmentCount as codexUserMessageAttachmentCount,
+    userMessageContent as codexUserMessageContent,
+    userMessageText as codexUserMessageText,
+} from '../providers/codex/canonical.js'
 
 const source = (path) => readFileSync(new URL(path, import.meta.url), 'utf8')
 
@@ -383,4 +389,161 @@ test('wiring: renderers use the shared layout, share mode is explicit, item cont
         assert.doesNotMatch(file, /JSON\.parse|_parsedContent|item\.content\b/)
     }
     assert.equal(ATTACHMENT_SHARE_MODE.length > 0, true)
+})
+
+// ---------------------------------------------------------------------------
+// Edge cases: manifest entries vs native slots, unknown kinds
+// ---------------------------------------------------------------------------
+
+test('more inline entries than native slots: the extra entries are chips without thumbnail', () => {
+    const metadata = {
+        owner: 's',
+        entries: [entry(1, 'a.png', 'image', 'inline'), entry(2, 'b.png', 'image', 'inline'), entry(3, 'c.png', 'image', 'inline')],
+    }
+    const strip = buildAttachmentStrip(metadata, [claudeImage('QUFB')])
+    assert.deepEqual(strip.map(item => item.name), ['a.png', 'b.png', 'c.png'])
+    assert.equal(strip[0].src, firstNativeImage)
+    assert.equal(Object.hasOwn(strip[1], 'src'), false)
+    assert.equal(Object.hasOwn(strip[2], 'src'), false)
+    const layout = messageAttachmentLayout({ twicc_attachments: metadata }, [claudeImage('QUFB'), { type: 'text', text: 'hi' }])
+    assert.deepEqual(layout.hiddenIndices, [0], 'the user text is never consumed as a media slot')
+})
+
+test('fewer inline entries than native slots: the extra blocks keep the legacy rendering', () => {
+    const metadata = { owner: 's', entries: [entry(1, 'a.png', 'image', 'inline'), entry(2, 'movie.mp4', 'video', 'file')] }
+    const blocks = [claudeImage('QUFB'), claudeImage('QkJC'), pdfBlock, { type: 'text', text: 'hi' }]
+    const layout = messageAttachmentLayout({ twicc_attachments: metadata }, blocks)
+    assert.deepEqual(layout.strip.map(item => item.name), ['a.png', 'movie.mp4'])
+    assert.equal(layout.strip[0].src, firstNativeImage)
+    assert.deepEqual(layout.hiddenIndices, [0], 'only the bound slot is hidden; blocks 1 and 2 render as before')
+})
+
+test('an unknown manifest kind keeps its order, takes its inline slot, and renders as a generic chip', () => {
+    const metadata = {
+        owner: 's',
+        entries: [entry(1, 'mystery.bin', 'weird', 'inline'), entry(2, 'b.png', 'image', 'inline'), entry(3, 'x.dat', 'strange', 'file')],
+    }
+    const strip = buildAttachmentStrip(metadata, [claudeImage('QUFB'), claudeImage('QkJC')])
+    assert.deepEqual(strip.map(item => item.name), ['mystery.bin', 'b.png', 'x.dat'])
+    assert.equal(Object.hasOwn(strip[0], 'src'), false, 'a non-image kind never gets a thumbnail')
+    assert.equal(strip[1].src, secondNativeImage, 'the unknown inline entry consumed the first slot')
+    assert.equal(attachmentKindIcon(strip[0].kind), 'file')
+    assert.equal(strip[2].canOpenArtifact, true)
+    const missingKind = buildAttachmentStrip({ owner: 's', entries: [{ n: 1, name: 'n', mode: 'file', artifact_name: 'n' }] }, [])
+    assert.equal(missingKind[0].kind, 'other')
+})
+
+// ---------------------------------------------------------------------------
+// Resend after an API error: the text of the failed turn's user message
+// ---------------------------------------------------------------------------
+
+// Mirrors ClaudeCodeHelpers.extractUserMessageText (not importable under node).
+function claudeText(parsed) {
+    const content = parsed?.message?.content
+    if (typeof content === 'string') return content.trim() || null
+    if (!Array.isArray(content)) return null
+    const text = content.filter(block => block?.type === 'text' && typeof block.text === 'string').map(block => block.text).join('\n').trim()
+    return text || null
+}
+
+test('resend text leaves out the placeholder of a failed image the manifest binds', () => {
+    const parsed = {
+        twicc_attachments: { owner: 's', entries: [entry(1, 'a.png', 'image', 'inline'), entry(2, 'movie.mp4', 'video', 'file')] },
+        message: { content: [placeholderBlock, { type: 'text', text: '  check this  ' }] },
+    }
+    assert.equal(userMessageResendText(claudeText, parsed), 'check this')
+    // Attachments only: nothing to resend as text (the caller falls back).
+    const onlyPlaceholder = { ...parsed, message: { content: [placeholderBlock] } }
+    assert.equal(userMessageResendText(claudeText, onlyPlaceholder), '')
+    // Legacy message: unchanged semantics, the text block stays text.
+    const legacy = { message: { content: [placeholderBlock, { type: 'text', text: 'hi' }] } }
+    assert.equal(userMessageResendText(claudeText, legacy), `${placeholderBlock.text}\nhi`)
+    assert.equal(userMessageResendText(null, parsed), '')
+})
+
+test('wiring: the API-error Resend reads its text through userMessageResendText', () => {
+    const apiError = source('../components/session/detail/items/ApiError.vue')
+    assert.match(apiError, /userMessageResendText\(/)
+    assert.doesNotMatch(apiError, /extractUserMessageText\(getParsedContent/)
+})
+
+// ---------------------------------------------------------------------------
+// Cross-layer round trip: records produced by the real backend pipeline
+// (tests/test_attachment_pipeline_roundtrip.py → shared JSON fixture)
+// ---------------------------------------------------------------------------
+
+const roundtrip = JSON.parse(readFileSync(new URL('../../../tests/fixtures/attachment_roundtrip_records.json', import.meta.url), 'utf8'))
+
+function visibleText(blocks, hiddenIndices) {
+    const hidden = new Set(hiddenIndices)
+    return blocks.filter((block, index) => !hidden.has(index) && TEXT_TYPES.has(block?.type)).map(block => block.text).join('')
+}
+const TEXT_TYPES = new Set(['text', 'input_text'])
+
+test('round trip (Claude SDK): the backend record renders the sent files in order, natives as thumbnails', () => {
+    const { sent, record } = roundtrip.claude_mixed
+    const blocks = record.message.content
+    const layout = messageAttachmentLayout(record, blocks)
+    assert.deepEqual(layout.strip.map(item => item.name), sent.names)
+    assert.deepEqual(layout.strip.map(item => item.mode), ['inline', 'file', 'inline', 'inline'])
+    assert.equal(layout.strip[0].src, nativeImageSrc(blocks[0]))
+    assert.equal(layout.strip[2].src, undefined, 'an inline PDF is a chip')
+    assert.equal(layout.strip[3].src, nativeImageSrc(blocks[2]))
+    assert.deepEqual(stripItemArtifactRequest(layout.strip[1]), { owner: record.twicc_attachments.owner, relativePath: 'attachments/capture.mp4' })
+    assert.deepEqual(layout.hiddenIndices, [0, 1, 2])
+    assert.equal(visibleText(blocks, layout.hiddenIndices), sent.text)
+    // Share mode: same order, no artifact link.
+    const shared = messageAttachmentLayout(record, blocks, { share: true })
+    assert.deepEqual(shared.strip.map(item => item.name), sent.names)
+    assert.ok(shared.strip.every(item => !item.canOpenArtifact))
+})
+
+test('round trip (Claude SDK): the stored line matches the optimistic bubble of the same send', () => {
+    for (const name of ['claude_mixed', 'claude_file_only']) {
+        const { sent, record } = roundtrip[name]
+        const optimisticKey = attachmentMatchKey(sent.text, inflightAttachmentCount({ attachments: sent.names.map(() => ({})) }))
+        const storedKey = attachmentMatchKey(
+            claudeText(matchableUserMessage(record)),
+            attachmentCountForMessage(record, record.message.content.filter(b => b.type === 'image' || b.type === 'document').length),
+        )
+        assert.equal(storedKey, optimisticKey, name)
+        assert.notEqual(storedKey, null)
+    }
+})
+
+test('round trip (Claude SDK): an all-file follow-up without text shows the strip alone', () => {
+    const { sent, record } = roundtrip.claude_file_only
+    const layout = messageAttachmentLayout(record, record.message.content)
+    // The fixture sends `capture.mp4` a second time into the same session: a
+    // file entry shows its final (deduplicated) name on disk, never an overwrite.
+    assert.deepEqual(sent.names, ['capture.mp4', 'archive.zip'])
+    assert.deepEqual(layout.strip.map(item => item.name), ['capture (1).mp4', 'archive.zip'])
+    assert.ok(layout.strip.every(item => item.mode === 'file' && item.canOpenArtifact))
+    assert.deepEqual(layout.strip.map(item => item.artifactName), ['capture (1).mp4', 'archive.zip'])
+    assert.equal(claudeText(record), null)
+    assert.equal(attachmentMatchKey(claudeText(record), attachmentCountForMessage(record, 0)), `a:${sent.attachmentCount}`)
+})
+
+test('round trip (Codex): images inline in order, PDF and video as files, text and key preserved', () => {
+    const { sent, record } = roundtrip.codex_mixed
+    const content = codexUserMessageContent(record)
+    const layout = messageAttachmentLayout(record, content)
+    assert.deepEqual(layout.strip.map(item => item.name), sent.names)
+    assert.deepEqual(layout.strip.map(item => item.mode), ['inline', 'file', 'file', 'inline'])
+    assert.equal(layout.strip[0].src, content[0].image_url)
+    assert.equal(layout.strip[3].src, content[1].image_url)
+    assert.deepEqual(layout.hiddenIndices, [0, 1])
+    assert.equal(codexUserMessageText(record), sent.text)
+    assert.equal(
+        attachmentMatchKey(codexUserMessageText(matchableUserMessage(record)), attachmentCountForMessage(record, codexUserMessageAttachmentCount(record))),
+        attachmentMatchKey(sent.text, sent.attachmentCount),
+    )
+})
+
+test('round trip: no stored record carries the manifest block or an absolute path', () => {
+    for (const { record } of [roundtrip.claude_mixed, roundtrip.claude_file_only, roundtrip.codex_mixed]) {
+        const serialized = JSON.stringify(record)
+        assert.doesNotMatch(serialized, /<twicc:attachments>/)
+        assert.doesNotMatch(serialized, /\/artifacts\//)
+    }
 })

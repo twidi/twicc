@@ -476,6 +476,25 @@ def _remove_source(path: Path, what: str) -> None:
         logger.warning("Composer attachments: cannot remove the %s %s", what, path, exc_info=True)
 
 
+def _release_unrecorded_claim(staged: Path, final: Path) -> None:
+    """Give back a claimed final name the tombstone does not record (a failure, not a crash).
+
+    The claim is a hard link of the still-ready staged file: left behind, it would be an orphan
+    artifact sharing that file's inode with the next promotion, possibly into another session
+    (spec §7.1). A tombstone that already names *final* (its rename landed, a later sync failed)
+    keeps it.
+    """
+    recorded = _read_json(staged / PROMOTED_MARKER)
+    if recorded and recorded.get("final_path") == str(final):
+        return
+    try:
+        os.unlink(final)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        logger.warning("Composer attachments: cannot remove the unrecorded claim %s", final, exc_info=True)
+
+
 def promote_entry(entry: PreparedEntry, session_id: str) -> PromotedEntry:
     """Promote one prepared file entry into ``artifacts/<session_id>/attachments/`` (spec §7.2).
 
@@ -483,7 +502,8 @@ def promote_entry(entry: PreparedEntry, session_id: str) -> PromotedEntry:
       attachments directory (the marker is never trusted blindly), and is reused as is;
     - a staged file, or a tombstone of another session: the final name is claimed from the prepared
       pre-copy (:func:`_claim`), then ``promoted.json`` is written durably, and only then are the
-      staged file and the pre-copy removed. A crash before the tombstone leaves the entry ready.
+      staged file and the pre-copy removed. A failure before the tombstone gives the claimed name
+      back; a crash there leaves it as an orphan artifact. Either way the entry stays ready.
 
     Same-filesystem operations and small marker writes only. Raises :class:`AttachmentError`:
     ``attachment_missing`` for a vanished entry or promoted file, ``attachment_commit_failed`` for
@@ -506,23 +526,26 @@ def promote_entry(entry: PreparedEntry, session_id: str) -> PromotedEntry:
     real_target = Path(os.path.realpath(target))
     original_name = previous.original_name if previous is not None else source.filename
     final = _claim(entry.precopy, real_target, original_name)
-    fsync_dir(real_target)
-
-    # The size of the bytes really promoted (another session may have edited its copy in place).
-    size = os.stat(final).st_size
-    promoted = PromotedEntry(session_id, final, final.name, planned.kind, original_name, size)
-    write_marker(
-        staged,
-        PROMOTED_MARKER,
-        {
-            "session_id": promoted.session_id,
-            "final_path": str(promoted.final_path),
-            "final_name": promoted.final_name,
-            "kind": promoted.kind,
-            "original_name": promoted.original_name,
-            "size": promoted.size,
-        },
-    )
+    try:
+        fsync_dir(real_target)
+        # The size of the bytes really promoted (another session may have edited its copy in place).
+        size = os.stat(final).st_size
+        promoted = PromotedEntry(session_id, final, final.name, planned.kind, original_name, size)
+        write_marker(
+            staged,
+            PROMOTED_MARKER,
+            {
+                "session_id": promoted.session_id,
+                "final_path": str(promoted.final_path),
+                "final_name": promoted.final_name,
+                "kind": promoted.kind,
+                "original_name": promoted.original_name,
+                "size": promoted.size,
+            },
+        )
+    except Exception:
+        _release_unrecorded_claim(staged, final)
+        raise
     # The tombstone is durable: the sources can go. A crash from here on leaves a promoted entry.
     if previous is None and source.path is not None:
         _remove_source(source.path, "staged file")

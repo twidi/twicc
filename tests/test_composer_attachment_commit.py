@@ -427,7 +427,7 @@ def test_crash_after_tombstone_leaves_a_promoted_entry(root, monkeypatch):  # no
     assert reloaded.promoted.final_path.read_bytes() == b"notes"
 
 
-def test_tombstone_failure_keeps_ready_source_and_retry_duplicates(root, monkeypatch):  # noqa: F811
+def test_tombstone_failure_keeps_ready_source_and_leaves_no_orphan(root, monkeypatch):  # noqa: F811
     ref, entry, source = stage(root)
     real_write_marker = staging.write_marker
 
@@ -445,11 +445,61 @@ def test_tombstone_failure_keeps_ready_source_and_retry_duplicates(root, monkeyp
     assert precopies() == []
     assert load_entry(ref).path == source
     assert source.read_bytes() == b"notes"
+    # The claimed name is given back: no orphan artifact shares the staged file's inode (§7.1).
+    assert list(attachments_dir("s1").iterdir()) == []
+    assert os.stat(source).st_nlink == 1
 
-    # Retry: the entry is still ready; the first claim survived, so the retry takes the next name.
+    # Retry: the entry is still ready and takes the original name again.
     content = commit(plan_of((ref, "text", None)), "s1")
-    assert content.manifest.entries[0].artifact_name == "notes (1).txt"
-    assert promoted_marker(entry)["final_name"] == "notes (1).txt"
+    assert content.manifest.entries[0].artifact_name == "notes.txt"
+    assert promoted_marker(entry)["final_name"] == "notes.txt"
+
+
+def test_failure_after_a_durable_tombstone_keeps_the_promoted_file(root, monkeypatch):  # noqa: F811
+    """The marker rename landed, only its directory fsync failed: the tombstone names the file, keep it."""
+    ref, entry, source = stage(root)
+    real_fsync_dir = staging.fsync_dir
+
+    def failing_entry_fsync(directory):
+        if Path(directory) == entry and (entry / "promoted.json").exists():
+            raise oserror(errno.EIO)
+        return real_fsync_dir(directory)
+
+    monkeypatch.setattr(staging, "fsync_dir", failing_entry_fsync)
+    with pytest.raises(SendDeliveryError):
+        commit(plan_of((ref, "text", None)), "s1")
+    monkeypatch.setattr(staging, "fsync_dir", real_fsync_dir)
+
+    final = attachments_dir("s1") / "notes.txt"
+    assert final.read_bytes() == b"notes"
+    assert promoted_marker(entry)["final_name"] == "notes.txt"
+    assert load_entry(ref).promoted.final_name == "notes.txt"
+
+
+def test_other_session_retry_after_a_tombstone_failure_shares_no_inode(root, monkeypatch):  # noqa: F811
+    ref, entry, source = stage(root)
+    real_write_marker = staging.write_marker
+
+    def failing_tombstone(directory, name, payload):
+        if name == "promoted.json":
+            raise oserror(errno.EIO)
+        return real_write_marker(directory, name, payload)
+
+    monkeypatch.setattr(staging, "write_marker", failing_tombstone)
+    with pytest.raises(SendDeliveryError):
+        commit(plan_of((ref, "text", None)), "s1")
+    monkeypatch.setattr(staging, "write_marker", real_write_marker)
+
+    commit(plan_of((ref, "text", None)), "s2")
+    inodes = {
+        os.stat(path).st_ino
+        for session in ("s1", "s2")
+        if attachments_dir(session).is_dir()
+        for path in attachments_dir(session).iterdir()
+    }
+    assert sorted(p.name for p in attachments_dir("s2").iterdir()) == ["notes.txt"]
+    assert not attachments_dir("s1").is_dir() or list(attachments_dir("s1").iterdir()) == []
+    assert len(inodes) == 1
 
 
 def test_failure_on_a_later_entry_keeps_earlier_promotions_retryable(root, monkeypatch):  # noqa: F811
@@ -471,8 +521,8 @@ def test_failure_on_a_later_entry_keeps_earlier_promotions_retryable(root, monke
     assert load_entry(second_ref).path == second_source
 
     content = commit(plan_of((first_ref, "text", None), (second_ref, "text", None)), "s1")
-    assert [e.artifact_name for e in content.manifest.entries] == ["a.txt", "b (1).txt"]
-    assert sorted(p.name for p in attachments_dir("s1").iterdir()) == ["a.txt", "b (1).txt", "b.txt"]
+    assert [e.artifact_name for e in content.manifest.entries] == ["a.txt", "b.txt"]
+    assert sorted(p.name for p in attachments_dir("s1").iterdir()) == ["a.txt", "b.txt"]
 
 
 def test_released_entry_at_finish_is_missing(root):  # noqa: F811

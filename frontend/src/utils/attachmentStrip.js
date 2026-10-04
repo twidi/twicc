@@ -309,6 +309,22 @@ export function matchableUserMessage(parsed) {
 }
 
 /**
+ * The text an API-error Resend sends again: the user's own text of the
+ * message that drove the failed turn, trimmed. The placeholder blocks of
+ * failed images the manifest binds are media, not user text
+ * (`matchableUserMessage`), so they are never resent as typed text.
+ *
+ * @param {((parsed: object) => string|null)|null} extractText - the
+ *   provider's `extractUserMessageText`
+ * @param {object|null} parsed
+ * @returns {string} empty when the message has no user text
+ */
+export function userMessageResendText(extractText, parsed) {
+    if (typeof extractText !== 'function') return ''
+    return (extractText(matchableUserMessage(parsed)) || '').trim()
+}
+
+/**
  * Total attachment count of a parsed user message.
  *
  * - `twicc_attachments` (extracted at ingestion): every entry, inline or file;

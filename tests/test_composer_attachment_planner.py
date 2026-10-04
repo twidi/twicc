@@ -4,6 +4,7 @@ Every entry is staged through the Task 1 helpers. Exact limits are tested at the
 one byte (or one item) above it, for every target.
 """
 
+import asyncio
 import builtins
 import os
 import struct
@@ -479,3 +480,18 @@ def test_codex_hardcoded_command_with_attachments_is_refused(root, message):  # 
 def test_codex_other_slash_text_is_allowed(root):  # noqa: F811
     ref = stage(root, "a.png", png())
     assert plan_attachments((ref,), CODEX, text="/some/path").entries[0].mode == "inline"
+
+
+def test_off_loop_staging_race_is_attachment_missing(root, monkeypatch):  # noqa: F811
+    """A staged file that vanishes between its entry load and its head read: ``attachment_missing``."""
+    ref = stage(root, "a.bin", b"\x00" * 16)
+
+    def vanished(path, name, size):
+        raise FileNotFoundError(path)
+
+    monkeypatch.setattr(planner, "detect_kind", vanished)
+    with pytest.raises(FileNotFoundError):
+        plan_attachments((ref,), CLAUDE, text="")
+    with pytest.raises(AttachmentError) as exc:
+        asyncio.run(planner.plan_attachments_off_loop((ref,), CLAUDE, text=""))
+    assert exc.value.code == "attachment_missing"

@@ -1095,3 +1095,33 @@ test('entry points: every file is accepted, the paperclip always shows, screensh
     assert.doesNotMatch(data, /removeNonImageAttachments/)
     assert.match(data, /snapshotAttachments\(attachments/)
 })
+
+test('a large file send never embeds its bytes in the frame, the in-flight snapshot or the draft row', async () => {
+    const h = createHarness()
+    const big = new Uint8Array(8 * 1024 * 1024).fill(0x41) // 8 MiB of "A"
+    const record = await h.add('s1', 'movie.mp4', big, 'video/mp4')
+    assert.equal(record.size, big.length)
+    let frame = null
+    let registered = null
+    const ok = sendComposerMessage({
+        payload: { type: 'send_message', session_id: 's1', text: '' },
+        records: h.actions.getRecords('s1'),
+        previewUrlFor: () => 'blob:http://x/1',
+        send: payload => { frame = JSON.stringify(payload); return true },
+        register: attachments => { registered = JSON.stringify(attachments) },
+        forget: () => {},
+    })
+    assert.equal(ok, true)
+    const marker = 'A'.repeat(64)
+    const base64Marker = btoa(marker)
+    for (const [what, serialized] of [
+        ['WebSocket frame', frame],
+        ['in-flight snapshot', registered],
+        ['draft row', JSON.stringify([...h.rows.values()])],
+    ]) {
+        assert.ok(serialized.length < 2048, `${what} stays small (${serialized.length} bytes)`)
+        assert.ok(!serialized.includes(marker) && !serialized.includes(base64Marker), `${what} carries no file bytes`)
+        assert.doesNotMatch(serialized, /data:|base64/, `${what} carries no data URL`)
+    }
+    assert.deepEqual(JSON.parse(frame).attachments, [{ bucket: 's1', id: record.id }])
+})
