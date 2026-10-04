@@ -284,3 +284,66 @@ def test_d4_wiring_with_fakes_removes_the_file(monkeypatch, tmp_path):
     asyncio.run(diag.check_d4(r, ()))
     assert [(c.id, c.status) for c in r.checks] == [("D4", diag.PASS)]
     assert list(tmp_path.iterdir()) == []
+
+
+# A non-retrying ErrorNotification: the model never processed the prompt, so nothing may PASS.
+
+MODEL_ERROR = "usage limit reached"
+
+
+def test_describe_terminal_error():
+    from types import SimpleNamespace
+    assert diag.describe_terminal_error(None) is None
+    assert diag.describe_terminal_error(SimpleNamespace(error=SimpleNamespace(message=MODEL_ERROR))) == MODEL_ERROR
+    assert "boom" in diag.describe_terminal_error(SimpleNamespace(error=None, detail="boom"))
+
+
+def test_canary_terminal_error_is_inconclusive_not_pass():
+    status, reason = _verdict(hermetic=diag.HermeticRun(returned=True, terminal_error=MODEL_ERROR))
+    assert status == diag.INCONCLUSIVE and MODEL_ERROR in reason
+
+
+def test_canary_terminal_error_does_not_hide_a_hermetic_failure():
+    run = diag.HermeticRun(returned=True, terminal_error=MODEL_ERROR)
+    assert _verdict(hermetic=run, hermetic_effect="the hermetic run created /tmp/x")[0] == diag.FAIL
+    assert _verdict(hermetic=run._replace(returned=False, violation="refused request: x"))[0] == diag.FAIL
+
+
+def test_d2_verdict_terminal_error_is_inconclusive():
+    status, reason = diag.d2_verdict("", None, MODEL_ERROR)
+    assert status == diag.INCONCLUSIVE and MODEL_ERROR in reason and "input_tokens=None" in reason
+
+
+def test_d3_verdict_terminal_error():
+    status, reason = diag.d3_verdict("", MODEL_ERROR)
+    assert status == diag.INCONCLUSIVE and MODEL_ERROR in reason
+    assert diag.d3_verdict("shell", MODEL_ERROR)[0] == diag.FAIL   # a named tool still fails
+
+
+def test_d8_verdict_terminal_error():
+    status, reason = diag.d8_verdict("repo line", "global line", "", MODEL_ERROR)
+    assert status == diag.INCONCLUSIVE and MODEL_ERROR in reason
+    assert diag.d8_verdict("repo line", None, "repo line", MODEL_ERROR)[0] == diag.FAIL
+
+
+def test_hermetic_terminal_error_wiring_yields_inconclusive(monkeypatch):
+    errored = diag.HermeticRun(returned=True, text="", terminal_error=MODEL_ERROR)
+
+    async def fake_control(prompt, *, user_servers, **kwargs):
+        token = None
+        return _control(text="anything", types=["webSearch"]), token
+
+    async def fake_plan(extra=()):
+        return None
+
+    async def fake_hermetic(plan, prompt):
+        return errored
+
+    monkeypatch.setattr(diag, "_control", fake_control)
+    monkeypatch.setattr(diag, "_neutral_plan", fake_plan)
+    monkeypatch.setattr(diag, "_hermetic", fake_hermetic)
+    r = diag.Report()
+    asyncio.run(diag.check_d6a(r, ()))
+    asyncio.run(diag.check_d3(r))
+    assert [(c.id, c.status) for c in r.checks] == [("D6a", diag.INCONCLUSIVE), ("D3", diag.INCONCLUSIVE)]
+    assert all(MODEL_ERROR in c.reason for c in r.checks)

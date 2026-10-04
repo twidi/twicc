@@ -584,6 +584,19 @@ class HermeticRun(NamedTuple):
     violation: str | None = None   # HermeticGuardViolation reason
     timed_out: bool = False
     error: str | None = None       # any other exception (repr)
+    terminal_error: str | None = None   # a non-retrying ErrorNotification: the model never processed the prompt
+
+
+def describe_terminal_error(error) -> str | None:
+    """A one-line text for ``HermeticCodexResult.terminal_error`` (an ``ErrorNotification``), ``None`` when absent."""
+    if error is None:
+        return None
+    message = getattr(getattr(error, "error", None), "message", None)
+    return message or repr(error)
+
+
+def _model_error(terminal_error: str) -> str:
+    return f"the model returned an error, nothing was verified: {terminal_error}"
 
 
 TIMED_OUT = f"timed out after {LIVE_CALL_TIMEOUT_SECONDS} s"
@@ -632,6 +645,8 @@ def canary_verdict(
         return FAIL, f"the hermetic run failed: {hermetic.error}"
     if hermetic_effect is not None:
         return FAIL, hermetic_effect
+    if hermetic.terminal_error is not None:
+        return INCONCLUSIVE, _model_error(hermetic.terminal_error)
     if control_error is not None:
         return INCONCLUSIVE, f"the control failed: {control_error}"
     if control is None or not control_effect:
@@ -643,26 +658,34 @@ def canary_verdict(
     return PASS, "the control showed the effect; the hermetic run answered text only"
 
 
-def d2_verdict(text: str, input_tokens: int | None) -> tuple[str, str]:
+def d2_verdict(text: str, input_tokens: int | None, terminal_error: str | None = None) -> tuple[str, str]:
     detail = f"input_tokens={input_tokens} (budget {D2_INPUT_TOKEN_BUDGET}); answer {text[:60]!r}"
+    if terminal_error is not None:
+        return INCONCLUSIVE, f"{_model_error(terminal_error)}; {detail}"
     ok = "OK" in text and input_tokens is not None and input_tokens < D2_INPUT_TOKEN_BUDGET
     return (PASS if ok else FAIL), detail
 
 
-def d3_verdict(text: str) -> tuple[str, str]:
+def d3_verdict(text: str, terminal_error: str | None = None) -> tuple[str, str]:
     normalized = re.sub(r"[\W_]+", "", text).upper()
     if normalized in ("NONE", ""):
+        if terminal_error is not None:   # an empty answer after an error proves nothing
+            return INCONCLUSIVE, _model_error(terminal_error)
         return PASS, "the model names no tool"
     return FAIL, f"the model answered {text[:120]!r}"
 
 
-def d8_verdict(repo_line: str | None, global_line: str | None, text: str) -> tuple[str, str]:
+def d8_verdict(
+    repo_line: str | None, global_line: str | None, text: str, terminal_error: str | None = None,
+) -> tuple[str, str]:
     if repo_line is None and global_line is None:
         return SKIP, "no suitable line in the repository or global AGENTS.md"
     if repo_line is not None and repo_line in text:
         return FAIL, "the repository AGENTS.md line is reproduced"
     if global_line is not None and global_line in text:
         return WARN, "the global AGENTS.md line is reproduced (known residue R1)"
+    if terminal_error is not None:
+        return INCONCLUSIVE, _model_error(terminal_error)
     return PASS, "no instruction line is reproduced"
 
 
@@ -799,6 +822,7 @@ async def _hermetic(plan, prompt: str) -> HermeticRun:
         return partial(error=repr(exc))
     return HermeticRun(
         returned=True, text=result.text, input_tokens=result.input_tokens, start=result.start,
+        terminal_error=describe_terminal_error(result.terminal_error),
         disabled_mcp_servers=seen["disabled"], refused_method=refused,
     )
 
@@ -847,13 +871,13 @@ async def check_d1_d2(report: Report) -> None:
     elif run.error is not None:
         report.add("D2", FAIL, f"the trivial turn failed: {run.error}", depends_on="D1")
     else:
-        _add(report, "D2", d2_verdict(run.text, run.input_tokens))
+        _add(report, "D2", d2_verdict(run.text, run.input_tokens, run.terminal_error))
 
 
 async def check_d3(report: Report) -> None:
     run = await _hermetic(await _neutral_plan(), PROMPTS["TOOLS"])
     if run.returned:
-        _add(report, "D3", d3_verdict(run.text), advisory=True)
+        _add(report, "D3", d3_verdict(run.text, run.terminal_error), advisory=True)
     elif run.timed_out:
         _add(report, "D3", (INCONCLUSIVE, TIMED_OUT), advisory=True)
     else:
@@ -969,7 +993,7 @@ async def check_d8(report: Report) -> None:
         return
     run = await _hermetic(await _neutral_plan(), PROMPTS["LEAK"])
     if run.returned:
-        _add(report, "D8", d8_verdict(repo_line, global_line, run.text), advisory=True)
+        _add(report, "D8", d8_verdict(repo_line, global_line, run.text, run.terminal_error), advisory=True)
     elif run.timed_out:
         _add(report, "D8", (INCONCLUSIVE, TIMED_OUT), advisory=True)
     else:
