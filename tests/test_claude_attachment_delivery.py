@@ -431,10 +431,12 @@ def test_prepare_cancellation_discards_the_late_precopies(monkeypatch):
     import threading
 
     release = threading.Event()
+    entered = threading.Event()
     prepared = PreparedAttachments(_plan(), ())
     discarded: list = []
 
     def prepare(plan, *, session_id):
+        entered.set()
         release.wait(5)
         return prepared
 
@@ -444,15 +446,17 @@ def test_prepare_cancellation_discards_the_late_precopies(monkeypatch):
 
     async def run() -> None:
         task = asyncio.create_task(manager._commit_attachment_plan(_plan(), session_id="s", text=""))
-        await asyncio.sleep(0.05)
+        assert await asyncio.to_thread(entered.wait, 10)  # the thread is inside prepare
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
         release.set()
-        for _ in range(100):
-            if discarded:
-                break
-            await asyncio.sleep(0.01)
+        # The late-discard callback runs on the loop once the thread ends; poll the outcome, bounded.
+        async def discarded_once() -> None:
+            while not discarded:
+                await asyncio.sleep(0.005)
+
+        await asyncio.wait_for(discarded_once(), timeout=10)
 
     asyncio.run(run())
     assert discarded == [prepared]

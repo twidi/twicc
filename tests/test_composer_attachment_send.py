@@ -216,6 +216,7 @@ class FakeManager:
         self.process = process
         self.live_agent = live_agent
         self.gate = gate
+        self.sent = asyncio.Event()  # set once send_to_session is entered (planning runs in a real thread)
         self.calls: list = []
 
     def get_agent_info(self, session_id):
@@ -229,6 +230,7 @@ class FakeManager:
         self.events.append("send")
         self.calls.append(SimpleNamespace(text=text, settings=settings, images=images, documents=documents,
                                           kwargs=kwargs))
+        self.sent.set()
         if self.gate is not None:
             await self.gate.wait()
         if self.error is not None:
@@ -527,8 +529,8 @@ def test_disconnect_never_cancels_an_admitted_send_and_cleanup_still_runs(ws):
         gate = asyncio.Event()
         ws.manager.gate = gate
         await ws.consumer._handle_send_message(ws.frame())
-        for _ in range(30):
-            await asyncio.sleep(0)
+        # Planning runs in a real worker thread: wait on the event, never on a bounded count of loop yields.
+        await asyncio.wait_for(ws.manager.sent.wait(), timeout=10)
         assert ws.events.count("send") == 1
         await ws.consumer._cleanup_connection()
         tasks = list(asgi._DETACHED_TASKS)
