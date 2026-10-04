@@ -1,12 +1,17 @@
 """CLI implementation for the ``twicc session`` subcommand."""
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, NamedTuple
 
 import orjson
 
 import typer
 
 from twicc.cli._output import emit_error, emit_json, emit_list, resolve_limit
+
+
+if TYPE_CHECKING:
+    from twicc.core.models import Session
 
 
 def _get_session(session_id: str):
@@ -609,17 +614,10 @@ def wait_reply(session_id: str, *, from_line: int | None = None, since: str | No
     # that does not exist.
     instant = None if since is None else _parse_instant(since)
 
-    from twicc.core.models import Session
-
-    # The row `_get_session` requires is written by the watcher, after the
-    # agent starts: a session just spawned has a live process and no indexed
-    # transcript yet. It is waited on from line 0, as `create-session
-    # --wait-reply` does — nothing in a new transcript predates this wait.
-    session = Session.objects.filter(
-        id=session_id, created_at__isnull=False, user_message_count__gt=0,
-    ).first()
-    if session is None:
-        if session_id not in _live_session_ids([session_id]):
+    lookup = lookup_wait_session(session_id)
+    session = lookup.session
+    if not lookup.indexed:
+        if not lookup.live:
             emit_error(f"Error: session '{session_id}' not found.", code=1)
         cursor = from_line if from_line is not None else 0
     elif instant is not None:
@@ -646,6 +644,30 @@ def wait_reply(session_id: str, *, from_line: int | None = None, since: str | No
     if outcome == WAIT_FAILED:
         raise typer.Exit(1)
     raise typer.Exit(5)  # timeout, ended, provider_error: no answer came
+
+
+class WaitSessionLookup(NamedTuple):
+    """Keep row presence, indexed acceptance, and live acceptance separate."""
+
+    session: "Session | None"
+    indexed: bool
+    live: bool
+
+    @property
+    def accepted(self) -> bool:
+        return self.indexed or self.live
+
+
+def lookup_wait_session(session_id: str, *, accept_history_epoch: bool = False) -> WaitSessionLookup:
+    """Read the arrival row once, including rows outside the acceptance filter."""
+    from twicc.core.models import Session
+
+    session = Session.objects.filter(id=session_id).first()
+    indexed = bool(session is not None and session.created_at is not None and (
+        session.user_message_count > 0 or (accept_history_epoch and session.history_epoch > 0)
+    ))
+    live = not indexed and session_id in _live_session_ids([session_id])
+    return WaitSessionLookup(session, indexed, live)
 
 
 def _live_session_ids(session_ids: list[str]) -> set:

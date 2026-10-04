@@ -642,9 +642,7 @@ class ClaudeCodeSessionsWatcher(BaseSessionsWatcher):
 
             from twicc.providers.claude_code.compute import (
                 INTERRUPTION_MARKER_PREFIX,
-                extract_command,
-                extract_text_from_content,
-                get_message_content,
+                is_command_message,
                 is_interruption_marker,
             )
 
@@ -660,22 +658,9 @@ class ClaudeCodeSessionsWatcher(BaseSessionsWatcher):
                 )
                 for kind, content in rows:
                     if kind == ItemKind.USER_MESSAGE:
-                        # Slash-command echoes (<command-name> lines) start a
-                        # local command, not an assistant turn — keep them
-                        # apart so their ack can close exactly what they
-                        # opened. Sniff then parse: a real prompt could quote
-                        # the tag.
-                        if "<command-name>" in content:
-                            try:
-                                parsed = orjson.loads(content)
-                                text = extract_text_from_content(
-                                    get_message_content(parsed),
-                                )
-                            except Exception:
-                                text = None
-                            if text and extract_command(text):
-                                command_message = True
-                                continue
+                        if is_command_message(content):
+                            command_message = True
+                            continue
                         user_message = True
                     elif kind == ItemKind.API_ERROR and content:
                         # Two shapes both classify as API_ERROR: intermediate

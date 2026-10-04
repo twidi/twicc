@@ -262,6 +262,18 @@ def extract_command(text: str) -> ParsedCommand | None:
     )
 
 
+def is_command_message(content: str) -> bool:
+    """Identify a stored command echo, preserving malformed-content fallback."""
+    if "<command-name>" not in content:
+        return False
+    try:
+        parsed = orjson.loads(content)
+        text = extract_text_from_content(get_message_content(parsed))
+        return bool(text and extract_command(text))
+    except Exception:
+        return False
+
+
 def _agent_launch_tool_use_id_from_sidecar(session_id: str, task_id: str) -> str | None:
     """Resolve a subagent's launching tool_use_id from its ``.meta.json`` sidecar.
 

@@ -135,6 +135,12 @@ async def _broadcast_flagged_session(job) -> None:
 class CodexHelpers(BaseProviderHelpers):
     """Helpers for sessions produced by the Codex CLI."""
 
+    def is_command_message(self, content: str) -> bool:
+        from .compute import is_command_message
+
+        return is_command_message(content)
+
+
     def normalize_pending_request(self, pending, *, raw: bool = False) -> dict:
         from .pending_question import normalize_pending_request
 

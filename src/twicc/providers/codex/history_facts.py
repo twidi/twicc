@@ -89,8 +89,7 @@ def extract_history_facts(parsed: dict, *, line_num: int, history: HistoryFactCo
         _parse_sub_agent_activity_started,
         _turn_context_collaboration_mode,
         _goal_context_objective,
-        _injected_command_text,
-        _restore_private_source,
+        injected_command_text,
         user_message_text,
         task_started_turn_id,
     )
@@ -141,7 +140,7 @@ def extract_history_facts(parsed: dict, *, line_num: int, history: HistoryFactCo
     mode = _turn_context_collaboration_mode(parsed)
     if mode is not None:
         add(HistoryFactKind.TURN_CONTEXT, "context", {"source_line": line_num, "mode": mode})
-    if user_message_text(parsed) == "/plan" or _injected_command_text(_restore_private_source(parsed)) == "/plan":
+    if user_message_text(parsed) == "/plan" or injected_command_text(parsed) == "/plan":
         add(HistoryFactKind.PLAN_MARKER, "context", {"source_line": line_num})
     if _goal_context_objective(parsed) is not None:
         add(HistoryFactKind.GOAL_CONTEXT, "context", {"source_line": line_num})

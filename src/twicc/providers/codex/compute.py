@@ -1599,6 +1599,19 @@ def _injected_command_text(parsed_json: dict) -> str | None:
     return stripped if stripped in _INJECTED_COMMANDS else None
 
 
+def injected_command_text(parsed_json: dict) -> str | None:
+    """Return the injected command from raw or privately rewritten content."""
+    return _injected_command_text(_restore_private_source(parsed_json))
+
+
+def is_command_message(content: str) -> bool:
+    """Identify stored injected commands, excluding typed slash prompts."""
+    try:
+        return injected_command_text(orjson.loads(content)) is not None
+    except (orjson.JSONDecodeError, AttributeError, TypeError):
+        return False
+
+
 # Opening tag of a Plan-mode final answer, on its own line — the shape is a
 # stable contract from Codex's built-in Plan-mode instructions (exact tag,
 # never translated, own line). Mirrors the frontend detection in

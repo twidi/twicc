@@ -281,6 +281,10 @@ class BaseProviderHelpers:
     # there is refused as ``missing_answers`` instead.
     question_partial_supported: ClassVar[bool] = False
 
+    def is_command_message(self, content: str) -> bool:
+        """Identify a stored USER_MESSAGE that represents a local command."""
+        raise NotImplementedError
+
     def normalize_pending_request(self, pending, *, raw: bool = False) -> dict:
         """Describe one :class:`~twicc.agent.states.PendingRequest` for the CLI.
 
