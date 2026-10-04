@@ -19,6 +19,49 @@ import orjson
 from twicc.providers.hermetic import HermeticConfigError
 
 TRANSFORM_VERSION = 1
+# Keys of the bundled entry when TRANSFORM_VERSION was last reviewed; the diagnostic (O2) warns on new ones.
+KNOWN_ENTRY_KEYS = frozenset({
+    "additional_speed_tiers",
+    "apply_patch_tool_type",
+    "availability_nux",
+    "base_instructions",
+    "comp_hash",
+    "context_window",
+    "default_reasoning_level",
+    "default_reasoning_summary",
+    "default_service_tier",
+    "default_verbosity",
+    "description",
+    "display_name",
+    "effective_context_window_percent",
+    "experimental_supported_tools",
+    "include_apps_usage_instructions",
+    "include_plugin_usage_instructions",
+    "include_skills_usage_instructions",
+    "input_modalities",
+    "max_context_window",
+    "model_messages",
+    "multi_agent_version",
+    "node_repl_auto_review_required",
+    "node_repl_disabled",
+    "priority",
+    "service_tiers",
+    "shell_type",
+    "slug",
+    "support_verbosity",
+    "supported_in_api",
+    "supported_reasoning_levels",
+    "supports_experimental_context",
+    "supports_image_detail_original",
+    "supports_reasoning_effort_updates",
+    "supports_search_tool",
+    "tool_mode",
+    "truncation_policy",
+    "upgrade",
+    "use_responses_lite",
+    "visibility",
+    "web_search_tool_type",
+})
 SUBPROCESS_TIMEOUT_SECONDS = 20
 
 PRODUCTION_BASE_INSTRUCTIONS = (
