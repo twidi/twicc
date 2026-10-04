@@ -377,7 +377,8 @@ def test_unrestricted_drops_every_restriction_and_keeps_the_rest(tmp_path):
     control = diag.unrestricted(original)
     assert control.permission_mode == "bypassPermissions"
     assert control.tools is None and control.setting_sources is None and control.strict_mcp_config is False
-    assert control.can_use_tool is None and control.max_turns is None and control.system_prompt is None
+    assert control.can_use_tool is None and control.system_prompt is None
+    assert control.max_turns == diag.CONTROL_MAX_TURNS == 8   # bounded: a looping control must not burn tokens
     assert control.extra_args == {"no-session-persistence": None}   # no disable-slash-commands
     assert control.cwd == str(tmp_path) and control.model == "haiku" and control.env == original.env
     assert original.permission_mode == "dontAsk" and original.tools == []   # the original is not mutated
@@ -387,6 +388,7 @@ def test_unrestricted_drops_every_restriction_and_keeps_the_rest(tmp_path):
     assert "--disable-slash-commands" not in cmd and "--strict-mcp-config" not in cmd and "--tools" not in cmd
     assert not any(part.startswith("--setting-sources") for part in cmd)
     assert cmd[cmd.index("--permission-mode") + 1] == "bypassPermissions"
+    assert cmd[cmd.index("--max-turns") + 1] == "8"
 
 
 def test_unrestricted_options_fall_back_to_a_copy_for_a_non_dataclass():
@@ -471,10 +473,32 @@ def test_claude_control_effect():
     assert diag.claude_control_effect("INTERACT", tool) and not diag.claude_control_effect("INTERACT", none)
     assert diag.claude_control_effect("MCP", _claude_result(text="DIAG-PONG"))
     assert diag.claude_control_effect("SKILL", _claude_result(text="DIAG-SKILL-OK"))
-    assert diag.claude_control_effect("MCP", tool) and not diag.claude_control_effect("SKILL", none)
+    assert not diag.claude_control_effect("SKILL", none)
     assert diag.claude_control_effect("WEB", tool, listener_hits=1)
     assert not diag.claude_control_effect("WEB", tool, listener_hits=0)
     assert not diag.claude_control_effect("WEB", none, listener_hits=1)
+
+
+def test_claude_mcp_and_skill_controls_need_the_fixture_reached():
+    # A tool block alone (ToolSearch, Glob, Bash ls while looking for the fixture) proves nothing.
+    searched = _claude_result(tool_blocks_seen=1, init={"mcp_servers": [{"name": "other"}], "skills": ["other"]})
+    assert not diag.claude_control_effect("MCP", searched)
+    assert not diag.claude_control_effect("SKILL", searched)
+    assert not diag.claude_control_effect("MCP", _claude_result(init={"mcp_servers": [{"name": "diag_stub"}]}))
+    assert not diag.claude_control_effect("SKILL", _claude_result(init={"skills": ["diag-skill"]}))
+    for servers in ([{"name": "diag_stub", "status": "connected"}], ["diag_stub"]):
+        assert diag.claude_control_effect("MCP", _claude_result(tool_blocks_seen=1, init={"mcp_servers": servers}))
+    for init in ({"skills": ["diag-skill"]}, {"slash_commands": ["diag-skill"]}, {"skills": [{"name": "diag-skill"}]},
+                 {"slash_commands": ["project:diag-skill"]}):
+        assert diag.claude_control_effect("SKILL", _claude_result(tool_blocks_seen=1, init=init))
+    status, reason = _claude_verdict(control=searched, control_effect=diag.claude_control_effect("MCP", searched))
+    assert status == diag.INCONCLUSIVE and "no effect" in reason
+
+
+def test_init_names():
+    init = {"mcp_servers": [{"name": "a", "status": "connected"}, "b", {"status": "x"}, None]}
+    assert diag.init_names(init, "mcp_servers") == ["a", "b"]
+    assert diag.init_names({}, "skills") == [] and diag.init_names({"skills": None}, "skills") == []
 
 
 def test_claude_hermetic_effect():
@@ -611,7 +635,8 @@ def _fake_claude(monkeypatch, tmp_path, hermetic_results=None):
             return _claude_result(text=body, tool_blocks_seen=1), None
         if "diag_ping" in prompt:
             assert override is not diag.unrestricted   # the MCP control carries the stub explicitly
-        return _claude_result(tool_blocks_seen=1, init={"mcp_servers": [{"name": "diag_stub"}]}), None
+        return _claude_result(tool_blocks_seen=1, init={
+            "mcp_servers": [{"name": "diag_stub"}, {"status": "nameless"}], "skills": ["diag-skill"]}), None
 
     async def hermetic(prompt, cwd=None):
         calls.append(("hermetic", prompt, cwd, diag.os.getcwd()))
@@ -627,7 +652,7 @@ def _fake_claude(monkeypatch, tmp_path, hermetic_results=None):
     return calls
 
 
-def test_claude_live_wiring_with_fakes(monkeypatch, tmp_path):
+def test_claude_live_wiring_with_fakes(monkeypatch, tmp_path, capsys):
     calls = _fake_claude(monkeypatch, tmp_path)
     monkeypatch.chdir(diag.REPO_ROOT / "tests")   # not the repository root: D12 must move there itself
     before = diag.os.getcwd()
@@ -643,6 +668,7 @@ def test_claude_live_wiring_with_fakes(monkeypatch, tmp_path):
     cwd_call = next(call for call in calls if call[0] == "hermetic" and "working directory" in call[1])
     assert cwd_call[3] == str(diag.REPO_ROOT) and diag.os.getcwd() == before
     assert list(tmp_path.iterdir()) == []   # fixture, stub, token and target files are all removed
+    assert "['diag_stub', {'status': 'nameless'}]" in capsys.readouterr().err   # a nameless entry is shown whole
 
 
 def test_claude_live_hermetic_violation_or_error_result(monkeypatch, tmp_path):
@@ -658,3 +684,45 @@ def test_claude_live_hermetic_violation_or_error_result(monkeypatch, tmp_path):
     assert statuses["D11c-skill"] == diag.INCONCLUSIVE
     assert statuses["D11c-web"] == diag.FAIL
     assert statuses["D11b-write"] == diag.PASS
+
+
+# An error result ("API Error: ...", ``error`` set) is not an answer: never PASS, never FAIL.
+
+API_ERROR = {"assistant_error": "rate_limit", "text": "API Error: rate limited"}
+
+
+def test_d11a_error_result_is_inconclusive():
+    status, reason = diag.d11a_verdict(diag.claude_hermetic_run(_claude_result(**API_ERROR)))
+    assert status == diag.INCONCLUSIVE and "rate_limit" in reason
+    status, _ = diag.d11a_verdict(diag.claude_hermetic_run(_claude_result(is_error=True, text="API Error: overloaded")))
+    assert status == diag.INCONCLUSIVE
+    violated = _claude_result(violation="tool activity: 1 tool block(s), 0 permission request(s)", **API_ERROR)
+    assert diag.d11a_verdict(diag.claude_hermetic_run(violated))[0] == diag.FAIL
+    assert diag.d11a_verdict(diag.claude_hermetic_run(_claude_result(text="Bash\nRead")))[0] == diag.FAIL
+    assert diag.d11a_verdict(diag.claude_hermetic_run(_claude_result(text="NONE")))[0] == diag.PASS
+
+
+def test_d10_error_result_is_inconclusive():
+    result = _claude_result(**API_ERROR)
+    status, reason = diag.d10_verdict(result.text, 0, diag.claude_error(result))
+    assert status == diag.INCONCLUSIVE and "rate_limit" in reason
+
+
+def test_d12_error_text_never_counts():
+    errored = diag.claude_hermetic_run(_claude_result(assistant_error="rate_limit", text="API Error twicc repo line"))
+    cwd = diag.claude_hermetic_run(_claude_result(text="/tmp/hermetic-llm-1000"))
+    assert diag.d12_verdict("repo line", None, errored, cwd)[0] == diag.INCONCLUSIVE
+    assert diag.d12_verdict("repo line", None, diag.claude_hermetic_run(_claude_result(text="NONE")), errored)[0] \
+        == diag.INCONCLUSIVE
+    leaked = diag.claude_hermetic_run(_claude_result(text="repo line"))
+    assert diag.d12_verdict("repo line", None, leaked, errored)[0] == diag.FAIL   # real evidence still fails
+
+
+def test_claude_canary_error_text_with_a_marker_is_inconclusive(monkeypatch, tmp_path):
+    _fake_claude(monkeypatch, tmp_path, hermetic_results={
+        "diag_ping": _claude_result(assistant_error="rate_limit", text="API Error: DIAG-PONG"),
+    })
+    r = diag.Report()
+    asyncio.run(diag.run_claude_live(r))
+    statuses = {c.id: c.status for c in r.resolved()}
+    assert statuses["D11c-mcp"] == diag.INCONCLUSIVE

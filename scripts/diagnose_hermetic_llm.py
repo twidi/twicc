@@ -1036,6 +1036,9 @@ async def run_codex_live(report: Report) -> None:
 
 D10_PROMPT_TOKEN_BUDGET = 3000
 
+# Turn limit of an unrestricted Claude control (see ``unrestricted``).
+CONTROL_MAX_TURNS = 8
+
 # The answers only a reached fixture can produce (D11c).
 D11C_MARKERS = ("DIAG-PONG", "DIAG-SKILL-OK", "DIAG-WEB-OK")
 
@@ -1064,7 +1067,8 @@ def unrestricted(options):
     """Control only: every hermetic restriction removed, permissions bypassed."""
     return _replace_options(
         options, permission_mode="bypassPermissions", tools=None, setting_sources=None, strict_mcp_config=False,
-        can_use_tool=None, max_turns=None, system_prompt=None,
+        # Bounded: a looping unrestricted control must not burn tokens for the whole 120 s timeout.
+        can_use_tool=None, max_turns=CONTROL_MAX_TURNS, system_prompt=None,
         extra_args={"no-session-persistence": None},   # drops disable-slash-commands: the skill control must see skills
     )
 
@@ -1163,11 +1167,25 @@ def claude_control_effect(kind: str, control, *, file_created: bool = False, tok
         return token is not None and token in control.text
     if kind == "WEB":
         return tools and listener_hits > 0
+    # MCP and SKILL: a tool block alone may be a search for the fixture; it counts only when the fixture was loaded.
     if kind == "MCP":
-        return tools or "DIAG-PONG" in control.text
+        return "DIAG-PONG" in control.text or (tools and "diag_stub" in init_names(control.init, "mcp_servers"))
     if kind == "SKILL":
-        return tools or "DIAG-SKILL-OK" in control.text
+        loaded = init_names(control.init, "skills") + init_names(control.init, "slash_commands")
+        return "DIAG-SKILL-OK" in control.text or (
+            tools and any(name == "diag-skill" or name.endswith(":diag-skill") for name in loaded)
+        )
     return tools   # INTERACT
+
+
+def init_names(init: dict, key: str) -> list[str]:
+    """The names listed under ``key`` of an ``init`` message (entries are strings or dicts with a ``name``)."""
+    names = []
+    for entry in init.get(key) or []:
+        name = entry.get("name") if isinstance(entry, dict) else entry
+        if isinstance(name, str):
+            names.append(name)
+    return names
 
 
 def claude_hermetic_effect(result, *, markers: tuple[str, ...] = (), listener_hits: int = 0) -> str | None:
@@ -1212,11 +1230,13 @@ def d12_verdict(repo_line: str | None, global_line: str | None, leak: HermeticRu
             return FAIL, f"{name} prompt: guard violation: {run.violation}"
         if run.error is not None:
             return FAIL, f"{name} prompt: the hermetic run failed: {run.error}"
-    if leak is not None and repo_line is not None and repo_line in leak.text:
+    # The text of an error result ("API Error: ...") is not an answer: it never counts as PASS or FAIL.
+    leak_answered = leak is not None and leak.terminal_error is None
+    if leak_answered and repo_line is not None and repo_line in leak.text:
         return FAIL, "the repository CLAUDE.md line is reproduced"
-    if leak is not None and global_line is not None and global_line in leak.text:
+    if leak_answered and global_line is not None and global_line in leak.text:
         return FAIL, "the global CLAUDE.md line is reproduced"
-    if "twicc" in cwd.text.lower():
+    if cwd.terminal_error is None and "twicc" in cwd.text.lower():
         return FAIL, f"the working directory answer names the repository: {cwd.text[:120]!r}"
     for name, run in runs:
         if run.timed_out:
@@ -1290,23 +1310,30 @@ async def check_d9_d10(report: Report) -> None:
     _add_claude(report, "D10", d10_verdict(result.text, claude_prompt_tokens(result.usage), claude_error(result)))
 
 
+def d11a_verdict(run: HermeticRun) -> tuple[str, str]:
+    """D11a: a guard violation fails; an error result ("API Error: ...") is not an answer about the tools."""
+    if run.violation is not None:
+        return FAIL, f"guard violation: {run.violation}"
+    if run.terminal_error is not None:
+        return INCONCLUSIVE, _model_error(run.terminal_error)
+    if run.timed_out:
+        return INCONCLUSIVE, TIMED_OUT
+    if run.error is not None:
+        return FAIL, f"the hermetic run failed: {run.error}"
+    return d3_verdict(run.text)
+
+
 async def check_d11a(report: Report) -> None:
     run, _ = await _claude_hermetic(PROMPTS["TOOLS"])
-    if run.violation is not None:
-        verdict = FAIL, f"guard violation: {run.violation}"
-    elif run.timed_out:
-        verdict = INCONCLUSIVE, TIMED_OUT
-    elif run.error is not None:
-        verdict = FAIL, f"the hermetic run failed: {run.error}"
-    else:
-        verdict = d3_verdict(run.text, run.terminal_error)
-    _add_claude(report, "D11a", verdict, advisory=True)
+    _add_claude(report, "D11a", d11a_verdict(run), advisory=True)
 
 
 def _claude_canary(report, check_id, *, control, control_error, control_effect, run, result,
                    extra_effect=None, markers=(), listener_hits=0) -> None:
     hermetic_effect = extra_effect
     if hermetic_effect is None and result is not None:
+        if claude_error(result) is not None:   # an error text is not an answer: only tool activity counts
+            markers = ()
         hermetic_effect = claude_hermetic_effect(result, markers=markers, listener_hits=listener_hits)
     elif hermetic_effect is None and listener_hits:
         hermetic_effect = f"the loopback listener was hit {listener_hits} time(s)"
@@ -1368,7 +1395,9 @@ async def _d11c_canary(report: Report, check_id: str, kind: str, fixture: Path, 
     control, control_error = await _claude_control(prompt, fixture, override=override)
     control_hits = listener.hits - before
     if control is not None:
-        servers = [s.get("name") if isinstance(s, dict) else s for s in control.init.get("mcp_servers") or []]
+        servers = [
+            s["name"] if isinstance(s, dict) and "name" in s else s for s in control.init.get("mcp_servers") or []
+        ]
         print(f"notice: the {kind} control of {check_id} sees the MCP servers {servers!r} "
               "(the stub plus the user's real settings)", file=sys.stderr)
     effect = control is not None and claude_control_effect(kind, control, listener_hits=control_hits)
