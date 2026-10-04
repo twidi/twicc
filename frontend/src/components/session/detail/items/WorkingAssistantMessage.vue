@@ -1,9 +1,14 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, shallowRef, watch } from 'vue'
 import { useDataStore } from '../../../../stores/data'
 import { getProviderLabel, getToolHelpers } from '../../../../providers'
 import ProcessIndicator from '../../../ui/ProcessIndicator.vue'
 import AgentStatusLine from './AgentStatusLine.vue'
+import { settleTools } from '../../../../utils/toolStatusDelay'
+
+// A tool joins the status line only after running this long, so quick tools never flash a verb
+// over "thinking". Tune here.
+const TOOL_STATUS_DELAY_MS = 500
 
 const props = defineProps({
     label: { type: String, default: null },
@@ -15,6 +20,20 @@ const props = defineProps({
 })
 
 const dataStore = useDataStore()
+
+// Tools old enough to show (see TOOL_STATUS_DELAY_MS). A timer re-runs the filter when the youngest
+// hidden tool comes of age — without it a long tool would only show on the next event.
+const firstSeen = new Map()
+const settledTools = shallowRef([])
+let settleTimer = null
+function updateSettledTools() {
+    clearTimeout(settleTimer)
+    const { tools, nextCheckInMs } = settleTools(props.tools || [], firstSeen, Date.now(), TOOL_STATUS_DELAY_MS)
+    settledTools.value = tools
+    if (nextCheckInMs !== null) settleTimer = setTimeout(updateSettledTools, nextCheckInMs)
+}
+watch(() => props.tools, updateSettledTools, { immediate: true })
+onBeforeUnmount(() => clearTimeout(settleTimer))
 
 const sessionBaseDir = computed(() => {
     if (!props.sessionId) return null
@@ -57,8 +76,7 @@ const plainPhrase = computed(() => {
     // user, not thinking or running a tool.
     if (pendingVerb.value) return pendingVerb.value
     if (props.label) return props.label
-    const tools = props.tools || []
-    if (tools.length === 0) return 'thinking'
+    if (settledTools.value.length === 0) return 'thinking'
     return null
 })
 
@@ -67,7 +85,7 @@ const phraseGroups = computed(() => {
     if (!props.sessionId) return []
     const session = dataStore.getSession(props.sessionId)
     const helpers = getToolHelpers(session?.provider)
-    return buildPhraseGroups(props.tools, sessionBaseDir.value, props.lastStartedToolId, props.lastToolVisible, helpers)
+    return buildPhraseGroups(settledTools.value, sessionBaseDir.value, props.lastStartedToolId, props.lastToolVisible, helpers)
 })
 
 function buildPhraseGroups(tools, baseDir, lastStartedToolId, lastToolVisible, toolHelpers) {
