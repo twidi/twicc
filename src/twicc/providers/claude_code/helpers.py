@@ -46,7 +46,7 @@ from .constants import (
     ClaudeCodeModelExtra,
 )
 from .pricing import CLAUDE_FAMILIES, extract_model_info
-from .titles import protect_title, rename_session_in_jsonl
+from .titles import clear_protected_title, protect_title, rename_session_in_jsonl
 
 # Re-export for callers that historically imported these from
 # ``providers.claude_code.helpers``. The canonical home is now
@@ -902,9 +902,12 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
         """Append the title to the JSONL and mark it protected against CLI stale re-appends.
 
         ``protect_title`` runs in a ``finally`` so the protection is
-        registered even when the JSONL write fails — the DB row already
-        holds the new title and we still want to block any out-of-date
-        title the CLI might re-append. ``rename_session_in_jsonl`` does
+        registered for a live agent even when the JSONL write fails — the
+        DB row already holds the new title and we still want to block any
+        out-of-date title the CLI might re-append. The current manager entry
+        decides protection after the write; DEAD or missing entries clear
+        older protection before the DEAD handler can read it.
+        ``rename_session_in_jsonl`` does
         FS I/O (SDK kernel-level atomic append), so it hops to a worker
         thread; ``protect_title`` is a dict mutation, safe inline.
 
@@ -917,6 +920,7 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
         """
         import asyncio
 
+        from twicc.agent import AgentState
         from twicc.providers.claude_code.agent.manager import get_claude_code_agent_manager
 
         try:
@@ -924,7 +928,11 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
                 return
             await asyncio.to_thread(rename_session_in_jsonl, session_id, title)
         finally:
-            protect_title(session_id, title)
+            agent = get_claude_code_agent_manager()._agents.get(session_id)
+            if agent is not None and agent.state != AgentState.DEAD:
+                protect_title(session_id, title)
+            else:
+                clear_protected_title(session_id)
 
     # Env vars set by Claude Code (CLI / SDK) that, when inherited by
     # a subprocess, make a fresh ``claude`` invocation think it's
