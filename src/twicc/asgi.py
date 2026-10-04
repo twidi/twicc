@@ -433,7 +433,7 @@ def _resolve_changelog_versions() -> tuple[str, str, bool]:
 _DETACHED_TASKS: set[asyncio.Task] = set()
 
 
-def _spawn_detached(coro, *, label: str) -> None:
+def _spawn_detached(coro, *, label: str) -> asyncio.Task:
     """Run ``coro`` detached from the consumer's serial receive loop.
 
     Keeps a strong reference until completion and logs any exception (a bare
@@ -448,6 +448,70 @@ def _spawn_detached(coro, *, label: str) -> None:
             logger.error("Detached WS task %s failed", label, exc_info=exc)
 
     task.add_done_callback(_on_done)
+    return task
+
+
+# Session ids whose switch to hybrid CLI mode is in flight (spec §6.2): added
+# synchronously by ``_handle_set_session_hybrid`` before it spawns the detached
+# switch, removed once the switch ends (success, failure or cancellation),
+# always AFTER the switch wrote ``Session.hybrid``. The composer sends
+# ``set_session_hybrid`` and ``send_message`` back to back, so a send planned
+# while the switch runs must already target the hybrid CLI.
+_PENDING_HYBRID_SWITCHES: set[str] = set()
+
+
+def is_hybrid_switch_pending(session_id: str) -> bool:
+    """True while a switch of *session_id* to hybrid CLI mode is in flight."""
+    return session_id in _PENDING_HYBRID_SWITCHES
+
+
+async def _read_session_hybrid(session_id: str) -> bool:
+    """``Session.hybrid`` from the database (``False`` without a row)."""
+    from twicc.core.models import Session
+
+    hybrid = await sync_to_async(
+        lambda: Session.objects.filter(id=session_id).values_list("hybrid", flat=True).first()
+    )()
+    return bool(hybrid)
+
+
+async def resolve_session_hybrid(session_id: str) -> bool:
+    """Whether a message to the existing *session_id* targets the hybrid CLI.
+
+    The pending membership is read BEFORE the database: the switch writes the
+    flag before it leaves the set, so a switch that ends between the two reads
+    is still seen through the flag.
+    """
+    if is_hybrid_switch_pending(session_id):
+        return True
+    return await _read_session_hybrid(session_id)
+
+
+async def resolve_existing_session_plan_target(
+    *,
+    session_id: str,
+    provider: str,
+    effective_settings: AgentSettings,
+    directory: str,
+    ephemeral: bool,
+    live_agent,
+):
+    """The composer attachment ``PlanTarget`` of a message to the existing *session_id*.
+
+    ``hybrid`` comes from :func:`resolve_session_hybrid`, so a pending switch
+    to hybrid already shapes the plan (spec §6.2). See
+    ``attachments.target.resolve_plan_target`` for the other fields.
+    """
+    from twicc.core.services.attachments import target as plan_target
+
+    return await plan_target.resolve_plan_target(
+        provider=provider,
+        effective_settings=effective_settings,
+        directory=directory,
+        hybrid=await resolve_session_hybrid(session_id),
+        ephemeral=ephemeral,
+        live_agent=live_agent,
+    )
 
 
 class WSConsumer(AsyncJsonWebsocketConsumer):
@@ -1417,22 +1481,35 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         # holds the manager grace window for up to ~30s, and the whole tail must
         # stay ordered (kill → DB → broadcast), so run it off the receive loop to
         # avoid freezing this consumer (no heartbeat → the WS would drop).
-        _spawn_detached(
+        # The pending membership is registered first, synchronously: a
+        # ``send_message`` that follows is planned for the hybrid CLI (§6.2).
+        # The task's done callback clears it even when the task is cancelled
+        # before its first step (the coroutine's ``finally`` would never run).
+        _PENDING_HYBRID_SWITCHES.add(session_id)
+        task = _spawn_detached(
             self._run_switch_hybrid(session_id),
             label=f"switch_hybrid({session_id})",
         )
+        task.add_done_callback(lambda _task: _PENDING_HYBRID_SWITCHES.discard(session_id))
 
     async def _run_switch_hybrid(self, session_id: str) -> None:
-        """Kill the SDK agent, mark the session hybrid, broadcast. Off the receive loop."""
+        """Kill the SDK agent, mark the session hybrid, broadcast. Off the receive loop.
+
+        Clears the pending switch membership in a ``finally``, success or
+        failure, only after ``Session.hybrid`` is written on success.
+        """
         from twicc.core.models import Session
         from twicc.core.serializers import serialize_session
 
-        manager = get_agent_manager_registry().get(Provider.CLAUDE_CODE)
-        await manager.kill_agent(session_id, reason="switch-hybrid")
+        try:
+            manager = get_agent_manager_registry().get(Provider.CLAUDE_CODE)
+            await manager.kill_agent(session_id, reason="switch-hybrid")
 
-        await run_under_db_write_lock(
-            lambda: Session.objects.filter(id=session_id).aupdate(hybrid=True)
-        )
+            await run_under_db_write_lock(
+                lambda: Session.objects.filter(id=session_id).aupdate(hybrid=True)
+            )
+        finally:
+            _PENDING_HYBRID_SWITCHES.discard(session_id)
         logger.info("Session %s switched to hybrid CLI mode", session_id)
         session = await sync_to_async(Session.objects.filter(id=session_id).first)()
         if session is not None:

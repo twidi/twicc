@@ -14,11 +14,16 @@ State transitions are pushed from the outside:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
+import mimetypes
 import re
+import secrets
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime, UTC
+from pathlib import Path
 from typing import Any
 
 from asgiref.sync import sync_to_async
@@ -28,6 +33,10 @@ from twicc.agent.base_agent import BaseAgent, StateChangeCallback
 from twicc.agent.exceptions import SendDeliveryError
 from twicc.agent.states import AgentInfo, AgentState, PendingRequest
 from twicc.core.enums import Provider
+from twicc.core.services.attachments.manifest import build_manifest
+from twicc.core.services.attachments.planner import ERROR_WITH_COMMAND, is_hybrid_command
+from twicc.core.services.attachments.staging import ERROR_COMMIT_FAILED
+from twicc.core.services.attachments.types import AttachmentContent
 from twicc.paths import get_session_hybrid_dir
 from twicc.providers.claude_code.agent.permissions import (
     extract_claude_tool_paths,
@@ -90,6 +99,12 @@ class HybridClaudeAgent(BaseAgent):
         self.agent_pid: int | None = None
         self._untrusted = False
         self._first_paste_task: asyncio.Task[None] | None = None
+        # Called once the first paste landed (composer attachments: the
+        # release of the delivered staging entries), never otherwise.
+        self._on_delivered: Callable[[], Any] | None = None
+        # True from the moment ``start`` launches (or adopts) a CLI. A start
+        # refused before that has no CLI to ask for a graceful ``/exit``.
+        self._cli_launched = False
         self._liveness_task: asyncio.Task[None] | None = None
         # Background retry tasks for auto-pasted slash commands, keyed by
         # purpose ("rename", "settings") — a new task replaces (cancels) the
@@ -158,6 +173,8 @@ class HybridClaudeAgent(BaseAgent):
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
         adopt: bool = False,
+        content: AttachmentContent | None = None,
+        on_delivered: Callable[[], Any] | None = None,
     ) -> None:
         """Create the tmux session and schedule the first paste.
 
@@ -171,10 +188,20 @@ class HybridClaudeAgent(BaseAgent):
         the agent simply binds to the live pane, reports USER_TURN (the
         JSONL bridge corrects it on the next ingested lines) and starts the
         liveness monitor. ``text`` is ignored in that case.
+
+        ``content`` (committed composer attachments) replaces ``text`` /
+        ``images`` / ``documents`` in the first paste (see
+        :meth:`_materialize_content`). A content that cannot be pasted (a
+        command, or ``@`` references the CLI could not resolve) raises
+        ``SendDeliveryError`` here, before anything is launched or scheduled:
+        the first paste swallows its own errors. ``on_delivered`` is called
+        once the first paste landed, never on a timeout, a paste failure, a
+        cancellation or an adoption.
         """
         self._state_change_callback = on_state_change
 
         if adopt:
+            self._cli_launched = True
             self.agent_pid, _ = await asyncio.to_thread(
                 hybrid_tmux.pane_status, self.session_id,
             )
@@ -201,6 +228,11 @@ class HybridClaudeAgent(BaseAgent):
             await self._notify_state_change()
             self._start_liveness_monitor()
             return
+
+        if content is not None:
+            # Synchronous refusals, before any launch or scheduling.
+            self._refuse_command_with_content(content)
+            await self._check_reference_dir(content)
 
         # The JSONL appears only when the first message is submitted; make
         # sure the watcher picks it up quickly (same as the SDK agent).
@@ -255,13 +287,15 @@ class HybridClaudeAgent(BaseAgent):
             hybrid_tmux.create_session(self.session_id, self.cwd, argv)
             return hybrid_tmux.pane_status(self.session_id)
 
+        self._cli_launched = True
         self.agent_pid, _ = await asyncio.to_thread(_create)
         logger.info(
             "Hybrid CLI launched for session %s (pid=%s, resume=%s)",
             self.session_id, self.agent_pid, resume,
         )
+        self._on_delivered = on_delivered
         self._first_paste_task = asyncio.create_task(
-            self._first_paste(text, images, documents),
+            self._first_paste(text, images, documents, content),
             name=f"hybrid-first-paste-{self.session_id}",
         )
         self._start_liveness_monitor()
@@ -271,16 +305,24 @@ class HybridClaudeAgent(BaseAgent):
         text: str,
         images: list[dict] | None,
         documents: list[dict] | None,
+        content: AttachmentContent | None = None,
     ) -> None:
         """Background task: wait for the TUI (and any trust dialog), then paste."""
         try:
-            full_text = await self._materialize_attachments(text, images, documents)
-            await self._wait_until_composer_ready()
+            if content is not None:
+                full_text = await self._materialize_content(content)
+            else:
+                full_text = await self._materialize_attachments(text, images, documents)
+            ready = await self._wait_until_composer_ready()
             if self.state == AgentState.DEAD:
                 return
             await asyncio.to_thread(hybrid_tmux.paste_text, self.session_id, full_text)
             if self.state == AgentState.DEAD:
                 return
+            if ready:
+                # A paste made after the readiness timeout may have been
+                # swallowed: only a paste onto a ready composer is delivered.
+                await self._notify_delivered()
             # Optimistic transition; the JSONL bridge corrects it within ms
             # if the submit did not take.
             self._set_state(AgentState.ASSISTANT_TURN)
@@ -298,7 +340,21 @@ class HybridClaudeAgent(BaseAgent):
                 await asyncio.to_thread(hybrid_tmux.kill_session, self.session_id)
                 await self._transition_to_dead()
 
-    async def _wait_until_composer_ready(self) -> None:
+    async def _notify_delivered(self) -> None:
+        """Call the one-shot ``on_delivered`` callback; its failure is only logged."""
+        callback, self._on_delivered = self._on_delivered, None
+        if callback is None:
+            return
+        try:
+            result = callback()
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            logger.exception(
+                "Delivery callback failed for hybrid session %s", self.session_id,
+            )
+
+    async def _wait_until_composer_ready(self) -> bool:
         """Block until the TUI shows its empty composer (bounded wait).
 
         ``composer_ready`` is the single readiness signal: it stays False
@@ -307,14 +363,17 @@ class HybridClaudeAgent(BaseAgent):
         True exactly when a paste can land. On timeout we paste anyway
         (worst case the paste is lost and the user re-sends — better than
         text silently never arriving while the agent looks alive forever).
+
+        Returns ``True`` when the composer is ready, ``False`` on a timeout
+        or once the agent is DEAD.
         """
         deadline = time.monotonic() + self.READY_TIMEOUT
         trust_logged = False
         while time.monotonic() < deadline:
             if self.state == AgentState.DEAD:
-                return
+                return False
             if await asyncio.to_thread(hybrid_tmux.composer_ready, self.session_id):
-                return
+                return True
             if not trust_logged:
                 screen = await asyncio.to_thread(
                     hybrid_tmux.capture_pane, self.session_id,
@@ -332,6 +391,7 @@ class HybridClaudeAgent(BaseAgent):
             "pasting anyway",
             self.READY_TIMEOUT, self.session_id,
         )
+        return False
 
     async def send(
         self,
@@ -339,13 +399,24 @@ class HybridClaudeAgent(BaseAgent):
         *,
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
+        content: AttachmentContent | None = None,
     ) -> bool:
+        """Paste a follow-up message into the TUI composer.
+
+        ``content`` (committed composer attachments) replaces ``text`` /
+        ``images`` / ``documents`` (see :meth:`_materialize_content`). A
+        command with content is refused before anything is written or pasted.
+        """
+        if content is not None:
+            self._refuse_command_with_content(content)
+            full_text = await self._materialize_content(content)
+        else:
+            full_text = await self._materialize_attachments(text, images, documents)
         # Pre-paste guard: with a TUI dialog open the paste is swallowed and
         # its trailing Enter would VALIDATE the highlighted option (verified
         # empirically); with text already typed in the TUI composer it would
         # append to and submit the user's draft. Fail fast instead — the
         # frontend restores the message into the TwiCC composer.
-        full_text = await self._materialize_attachments(text, images, documents)
         if not await self._checked_paste(full_text):
             raise SendDeliveryError(
                 "The Claude CLI is showing a dialog or has text typed in its "
@@ -466,6 +537,79 @@ class HybridClaudeAgent(BaseAgent):
             return text
         mentions = "\n".join(f"@{p}" for p in paths)
         return f"{mentions}\n{text}"
+
+    # ------------------------------------------------------------------
+    # Composer attachments (spec §7.4, §7.5)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _refuse_command_with_content(content: AttachmentContent) -> None:
+        """Refuse composer attachments with a TUI command (spec §6.6).
+
+        A leading ``/`` makes the paste a slash command whose arguments would
+        swallow the manifest; a leading ``!`` switches the TUI to bash mode.
+        The planner refuses this already; repeated here, synchronously, for a
+        plan made for the SDK target before a switch to hybrid (spec §6.2).
+        """
+        if is_hybrid_command(content.user_text):
+            raise SendDeliveryError(
+                "Attachments cannot be sent with a command", code=ERROR_WITH_COMMAND,
+            )
+
+    async def _check_reference_dir(self, content: AttachmentContent) -> Path | None:
+        """The hybrid dir the inline files go to, or ``None`` without inline entry.
+
+        The manifest grammar ends an inline line with ``@<path>`` where the
+        path has no whitespace (spec §7.4), and the CLI's own mention pattern
+        stops at whitespace too: from a data dir whose path contains
+        whitespace, no reference could resolve. Refused before anything is
+        written or pasted rather than pasting a mention the CLI cannot read.
+        """
+        if not any(entry.mode == "inline" for entry in content.manifest.entries):
+            return None
+        hybrid_dir = await asyncio.to_thread(get_session_hybrid_dir, self.session_id)
+        if re.search(r"\s", str(hybrid_dir)):
+            raise SendDeliveryError(
+                f"Attachments cannot be referenced in hybrid mode from {hybrid_dir}: the "
+                "TwiCC data directory path contains whitespace, which the Claude CLI file "
+                "references do not support. Send the files from a non-hybrid session, or "
+                "use a data directory without whitespace.",
+                code=ERROR_COMMIT_FAILED,
+            )
+        return hybrid_dir
+
+    async def _materialize_content(self, content: AttachmentContent) -> str:
+        """Write the inline parts to the hybrid dir and render the pasted text.
+
+        Each native part becomes an ``att_<12 hex><ext>`` file (a random name,
+        like the legacy path: the model must read the file, not guess from
+        its name), whatever its kind — a text or PDF part only comes from a
+        plan made for the SDK target (spec §6.2) and is written the same way.
+        The manifest is then rendered in its hybrid variant, each inline line
+        ending with the ``@<path>`` of its file. The pasted text is the raw
+        user text, a blank line, then the block — or the block alone without
+        user text. No ``<twicc:context>`` fold: hybrid never folds.
+        """
+        entries = content.manifest.entries
+        inline_indexes = [index for index, entry in enumerate(entries) if entry.mode == "inline"]
+        if len(inline_indexes) != len(content.native_parts):
+            raise ValueError("The native parts do not match the inline manifest entries")
+        hybrid_dir = await self._check_reference_dir(content)
+
+        def _write_all() -> tuple[str | None, ...]:
+            paths: list[str | None] = [None] * len(entries)
+            for index, part in zip(inline_indexes, content.native_parts):
+                ext = mimetypes.guess_extension(part.media_type) or ".bin"
+                path = hybrid_dir / f"att_{secrets.token_hex(6)}{ext}"
+                data = part.data.encode("utf-8") if isinstance(part.data, str) else part.data
+                with open(path, "xb") as file:
+                    file.write(data)
+                paths[index] = str(path)
+            return tuple(paths)
+
+        hybrid_paths = await asyncio.to_thread(_write_all) if inline_indexes else (None,) * len(entries)
+        block = build_manifest(content.manifest, hybrid_paths=hybrid_paths)
+        return f"{content.user_text}\n\n{block}" if content.user_text else block
 
     # ------------------------------------------------------------------
     # Signal-driven transitions (hooks watcher + JSONL bridge, via manager)
@@ -908,8 +1052,10 @@ class HybridClaudeAgent(BaseAgent):
         # survivor is re-adopted at the next boot). If it doesn't land in time,
         # SIGTERM → (2s) → SIGKILL the claude process tree via the LIVE pane pid
         # (claude runs as its child, so a stale stored pid can't make us miss).
+        # A start refused before the launch has no CLI to ask for ``/exit``:
+        # the graceful attempt would only wait out its whole budget.
         exited = False
-        if reason != "shutdown" and not self._force_kill.is_set():
+        if reason != "shutdown" and self._cli_launched and not self._force_kill.is_set():
             exited = await self._graceful_cli_exit()
         if not exited:
             pane_pid, _ = await asyncio.to_thread(hybrid_tmux.pane_status, self.session_id)

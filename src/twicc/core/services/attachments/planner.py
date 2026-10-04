@@ -41,6 +41,7 @@ __all__ = [
     "AttachmentPlanError",
     "detect_kind",
     "detect_kind_from_head",
+    "is_hybrid_command",
     "is_utf8_text",
     "plan_attachments",
     "read_head",
@@ -145,8 +146,18 @@ def _is_refused_command(target: PlanTarget, text: str) -> bool:
         from twicc.providers.codex.agent.hardcoded_commands import parse_hardcoded_command
 
         return parse_hardcoded_command(text) is not None
-    # The hybrid TUI turns a leading slash into a command: the block would become its arguments.
-    return target.hybrid and text.lstrip().startswith("/")
+    return target.hybrid and is_hybrid_command(text)
+
+
+def is_hybrid_command(text: str) -> bool:
+    """True when the hybrid TUI would read *text* as a command (spec §6.6).
+
+    A leading ``/`` makes the pasted text a slash command, whose arguments would swallow the
+    manifest. A leading ``!`` switches the TUI input to bash mode: the bundled CLI (2.1.286) turns
+    a paste starting with ``!`` into an empty composer into a shell command. Leading whitespace is
+    ignored for both, as the planner and the hybrid agent share this one check.
+    """
+    return text.lstrip().startswith(("/", "!"))
 
 
 def _read_exact(path: Path, size: int) -> bytes | None:
