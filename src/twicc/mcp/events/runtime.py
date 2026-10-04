@@ -1,6 +1,7 @@
 """Thread-owned event monitors and their ordered, generation-bound state writer."""
 
 import asyncio
+from collections import deque
 from contextlib import suppress
 from datetime import datetime
 import logging
@@ -12,13 +13,16 @@ from django.db import close_old_connections
 from django.db.models import Case, F, Value, When
 from django.db.models.functions import Greatest
 
+from twicc.agent.states import AgentState
 from twicc.cli import _twicc_info
 from twicc.cli._drop_request import transport
 from twicc.cli._wait_reply import POLL_INTERVAL_SECONDS, _SessionWait
-from twicc.core.models import McpEventSubscription, Session
+from twicc.core.models import McpEventSubscription, Session, SessionItem
 from twicc.core.serializers import session_compute_ready
 from twicc.mcp.events import SYSTEM_CLOCK
+from twicc.mcp.events.delivery import build_occurrence, fit_body
 from twicc.mcp.events.methods import SubscriptionSnapshot
+from twicc.mcp.events.prompts import first_non_command_prompt
 from twicc.mcp.oauth import storage
 from twicc.paths import get_data_dir
 
@@ -69,6 +73,7 @@ class Monitor:
             setattr(self, field, getattr(snapshot, field))
         self.first = self.cursor_line < self.initial_last_line
         self.reported_request_ids = set()
+        self.reported_request_order = deque()
         self.dormant = False
         self.wait = None
         self.session_snapshot = None
@@ -96,6 +101,16 @@ class TurnWrite(NamedTuple):
     turn_start_line: int
 
 
+class Emission(NamedTuple):
+    """Frozen delivery input; its cursor is persisted only after delivery ends."""
+
+    id: str
+    created_at: datetime
+    event_id: str
+    body: bytes
+    cursor: CursorWrite | None
+
+
 class RebaseWrite(NamedTuple):
     id: str
     created_at: datetime
@@ -114,7 +129,7 @@ class WriteBarrier(NamedTuple):
 
 
 class EventsRuntime:
-    def __init__(self, *, clock=SYSTEM_CLOCK, data_dir=None):
+    def __init__(self, *, clock=SYSTEM_CLOCK, data_dir=None, post_emission=None):
         self.clock = clock
         self.data_dir = str(get_data_dir().resolve()) if data_dir is None else str(data_dir)
         # These queues survive consumer restarts. Only the loop consumes writes.
@@ -126,6 +141,7 @@ class EventsRuntime:
         self.stop_requested = threading.Event()
         # Only _worker and its synchronous helpers access this table.
         self.monitors = {}
+        self.emission_sink = post_emission
 
     def add(self, snapshot):
         self.commands.put(AddCommand(snapshot))
@@ -189,10 +205,11 @@ class EventsRuntime:
         for row in rows:
             self._add_monitor(SubscriptionSnapshot.from_row(row))
 
-    def _new_wait(self, monitor):
+    def _new_wait(self, monitor, *, cursor_line=None):
         info = _twicc_info.resolve_live_twicc()
         return _SessionWait(
-            monitor.session_id, monitor.cursor_line, started=self.clock.monotonic(),
+            monitor.session_id, monitor.cursor_line if cursor_line is None else cursor_line,
+            started=self.clock.monotonic(),
             twicc_pid=info.pid if info is not None else None, want_text=True,
             wait_background=monitor.arguments.get("wait_background", False),
         )
@@ -253,7 +270,150 @@ class EventsRuntime:
                 self._tick_monitor(monitor)
 
     def _tick_monitor(self, monitor):
-        """Detection extension point; implemented by the detection task."""
+        """Detect one conclusion with the CLI wait and Rules A/B."""
+        from twicc.agent.registry import get_agent_manager_registry
+
+        tick_started_at = self.clock.utcnow()
+        info = get_agent_manager_registry().get_agent_info(monitor.session_id)
+        self._detect_new_turn(monitor, info)
+        reply = monitor.wait.step()
+        if reply is None:
+            return
+        outcome = reply["outcome"]
+        request = None
+        guard_drop = False
+        if outcome == "ended":
+            if not monitor.turn_open:
+                return
+            if monitor.turn_opened_by == "transition" and reply["line_num"] is None and info is not None:
+                # The wait loads the provider before it can conclude a row's end.
+                provider = monitor.wait.session.provider if monitor.wait.session is not None else info.provider
+                guard_drop = first_non_command_prompt(
+                    monitor.session_id, provider, monitor.turn_start_line,
+                ) is None
+        elif outcome == "awaiting_user_input":
+            request = next((request for request in (info.pending_requests if info is not None else ())
+                            if request.request_id not in monitor.reported_request_ids), None)
+            if request is None:
+                return
+
+        item_timestamp = None
+        if outcome in ("replied", "provider_error"):
+            item_timestamp = SessionItem.objects.filter(
+                session_id=monitor.session_id, line_num=reply["line_num"],
+            ).values_list("timestamp", flat=True).first()
+        # The emission phase's final database read supplies a consistent epoch,
+        # title and transcript end, including when the guard drops the end.
+        snapshot = self._read_monitor_session(monitor)
+        if monitor.pending_rebase:
+            return
+        if guard_drop:
+            turn = TurnWrite(*monitor.generation, False, monitor.turn_started_at, monitor.turn_opened_by,
+                             snapshot.last_line if snapshot is not None else monitor.turn_start_line)
+            self.post_write(turn)
+            self._apply_turn(monitor, turn)
+            return
+
+        occurrence = build_occurrence(
+            monitor.id, monitor.session_id, snapshot.title if snapshot is not None else None, reply,
+            numbering=snapshot.history_epoch if snapshot is not None else 0,
+            last_line=snapshot.last_line if snapshot is not None else 0,
+            tick_started_at=tick_started_at, item_timestamp=item_timestamp, pending_request=request,
+        )
+        body = fit_body(occurrence)
+        conclusion_time = (item_timestamp or tick_started_at).timestamp()
+        turn_open, started, opened_by, start_line = (
+            monitor.turn_open, monitor.turn_started_at, monitor.turn_opened_by, monitor.turn_start_line,
+        )
+        cursor = None
+        wait = monitor.wait
+        request_ids, request_order = monitor.reported_request_ids, monitor.reported_request_order
+        if outcome == "awaiting_user_input":
+            if not turn_open:
+                turn_open, started, start_line = True, request.created_at, monitor.cursor_line
+            opened_by = "awaiting"
+            # Prepare bounded memory before posting, just like the fresh wait.
+            request_ids, request_order = set(request_ids), deque(request_order)
+            request_ids.add(request.request_id)
+            request_order.append(request.request_id)
+            while len(request_order) > 256:
+                request_ids.discard(request_order.popleft())
+        else:
+            if outcome == "ended":
+                turn_open = False
+                if snapshot is not None:
+                    start_line = snapshot.last_line
+                next_cursor = wait.scanned_up_to
+            else:
+                next_cursor = reply["line_num"]
+                if opened_by != "history" and turn_open and started is not None and conclusion_time < started:
+                    start_line = max(start_line, next_cursor)
+                    if opened_by != "awaiting":
+                        opened_by = "transition"
+                else:
+                    turn_open = False
+            if monitor.first:
+                next_cursor = max(next_cursor, monitor.initial_last_line)
+            cursor = CursorWrite(*monitor.generation, monitor.numbering, next_cursor,
+                                 max(monitor.cursor_at, conclusion_time))
+            wait = self._new_wait(monitor, cursor_line=next_cursor)
+        turn = TurnWrite(*monitor.generation, turn_open, started, opened_by, start_line)
+        emission = Emission(*monitor.generation, occurrence["eventId"], body, cursor) if body is not None else None
+
+        # All queries, formatting and state preparation finish before posting.
+        # A shutdown drop leaves the conclusion's state untouched for restart.
+        if self.stop_requested.is_set():
+            return
+        if body is not None and not self.post_emission(emission):
+            return
+        self.post_write(turn)
+        if body is None and cursor is not None:
+            self.post_write(cursor)
+        self._apply_turn(monitor, turn)
+        monitor.wait = wait
+        monitor.reported_request_ids, monitor.reported_request_order = request_ids, request_order
+        if cursor is not None:
+            monitor.cursor_line, monitor.cursor_at = cursor.cursor_line, cursor.cursor_at
+            monitor.first = False
+
+    def _detect_new_turn(self, monitor, info):
+        if (info is None or info.state not in (AgentState.STARTING, AgentState.ASSISTANT_TURN)
+                or info.previous_state == info.state or info.state_changed_at <= monitor.cursor_at
+                or (monitor.turn_started_at is not None and info.state_changed_at <= monitor.turn_started_at)):
+            return
+        old_cursor = monitor.cursor_line
+        next_cursor = max(old_cursor, monitor.wait.scanned_up_to)
+        ignored = monitor.wait.last_ignored
+        opened_by, start_line = monitor.turn_opened_by, monitor.turn_start_line
+        if not monitor.turn_open:
+            opened_by = "transition"
+            start_line = max(old_cursor, start_line, ignored.line_num if ignored is not None else 0)
+        elif ignored is not None:
+            opened_by, start_line = "transition", next_cursor
+        turn = TurnWrite(*monitor.generation, True, info.state_changed_at, opened_by, start_line)
+        wait = self._new_wait(monitor, cursor_line=next_cursor)
+        cursor = CursorWrite(*monitor.generation, monitor.numbering, next_cursor, None)
+        self.post_write(turn)
+        if next_cursor > old_cursor:
+            self.post_write(cursor)
+        self._apply_turn(monitor, turn)
+        monitor.cursor_line, monitor.wait = next_cursor, wait
+
+    @staticmethod
+    def _apply_turn(monitor, turn):
+        monitor.turn_open = turn.turn_open
+        monitor.turn_started_at = turn.turn_started_at
+        monitor.turn_opened_by = turn.turn_opened_by
+        monitor.turn_start_line = turn.turn_start_line
+
+    def post_emission(self, emission):
+        """Injected posting seam; delivery and lifecycle tasks attach the sink."""
+        if self.stop_requested.is_set():
+            return False
+        if self.emission_sink is None:
+            raise RuntimeError("Event delivery is not configured")
+        self.emission_sink(emission)
+        return True
 
     def post_write(self, item):
         """Keep worker posting order without touching asyncio.Queue from a thread."""
