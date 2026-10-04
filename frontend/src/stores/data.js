@@ -53,9 +53,12 @@ import { saveInflightSend, deleteInflightSend, getAllInflightSends } from '../ut
 import { liveDraftKey, sweepPendingRequestDrafts } from '../utils/pendingRequestDraftStorage'
 import { mediasToSdkFormat } from '../utils/fileUtils'
 import {
+    addLegacyFailures,
+    clearLegacyFailure,
     composerRecordsFor,
     createAttachmentRefCollector,
     createComposerAttachments,
+    legacyFailedCount,
     optimisticAttachmentFields,
     snapshotAttachmentRefs,
     snapshotAttachments,
@@ -706,6 +709,12 @@ export const useDataStore = defineStore('data', {
             // current upload attempt (`clientId`) and its upload key.
             // { attachmentId: {state, progress, retryable, pauseReason, clientId, uploadKey} }
             attachmentRuntime: {},
+
+            // Legacy medias (drafts saved before staged uploads) that cannot be
+            // decoded (§9.6): they stay legacy chips and block Send until the
+            // user removes them. Memory only (the next start decodes again).
+            // { sessionId: [mediaId, ...] }
+            legacyFailedIds: {},
 
             // MRU (Most Recently Used) navigation tracking
             // Ordered array of { path, sessionId } entries, most recent first
@@ -1447,6 +1456,10 @@ export const useDataStore = defineStore('data', {
             const map = state.localState.attachments[sessionId]
             return map ? map.size : 0
         },
+
+        // Legacy chips of a session whose media cannot be decoded (Remove only)
+        getLegacyFailedCount: (state) => (sessionId) =>
+            legacyFailedCount(state.localState.legacyFailedIds, sessionId, state.localState.attachments[sessionId]?.keys()),
 
         // Composer attachment records of a session, in display order. A bound
         // draft id and its canonical id show the same list (draft aliases),
@@ -6506,6 +6519,7 @@ export const useDataStore = defineStore('data', {
             const composer = composerAttachmentsInstance || await composerAttachmentsFor(this)
             const legacyChips = this.localState.attachments
             await composer.migrateLegacy(sessionId, medias, mediaIds, {
+                undecodable: ids => addLegacyFailures(this.localState.legacyFailedIds, sessionId, ids),
                 claim: media => {
                     const map = legacyChips[sessionId]
                     if (!map?.has(media.id)) return false
@@ -6570,6 +6584,7 @@ export const useDataStore = defineStore('data', {
 
             // Remove from in-memory state
             this.localState.attachments[sessionId]?.delete(mediaId)
+            clearLegacyFailure(this.localState.legacyFailedIds, mediaId)
 
             // Update draft message to remove media ID
             const draft = await getDraftMessage(sessionId)
@@ -6608,6 +6623,7 @@ export const useDataStore = defineStore('data', {
 
             // Clear in-memory state
             delete this.localState.attachments[sessionId]
+            delete this.localState.legacyFailedIds[sessionId]
         },
 
         /**

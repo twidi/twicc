@@ -502,6 +502,43 @@ test('creation refused (4xx and 507) → failed with Retry and Remove', async ()
     }
 })
 
+test('creation answered 410 (entry released by another tab) → missing: no Retry, Remove works', async () => {
+    const h = createHarness()
+    h.server.createUpload = () => respond(410, { error: 'The attachment was removed' })
+    const record = await h.add()
+    assert.equal(h.state(record.id), 'missing')
+    assert.equal(h.runtime[record.id].retryable, false)
+    const chip = attachmentChipItem(record, h.runtime[record.id])
+    assert.equal(chip.retryable, false)
+    assert.equal(chip.statusText, 'File no longer available')
+    assert.equal(await h.actions.retryAttachment(record.id), false)
+    assert.equal(h.posts().length, 1)
+    // A late reconcile keeps it missing.
+    await h.actions.reconcileAttachmentStatuses()
+    assert.equal(h.state(record.id), 'missing')
+    await h.actions.releaseAttachments([{ bucket: record.bucket, id: record.id }])
+    assert.equal(h.runtime[record.id], undefined)
+    assert.deepEqual(h.actions.getRecords('s1'), [])
+    assert.equal(h.rows.has(record.id), false)
+})
+
+test('a failed chip whose Retry meets a released entry (410) ends missing, never failed with Retry again', async () => {
+    const h = createHarness()
+    h.server.createUpload = () => respond(400, { error: 'no' })
+    const record = await h.add()
+    assert.equal(h.state(record.id), 'failed')
+    assert.equal(h.runtime[record.id].retryable, true)
+    // Another tab removed the chip: the server tombstoned the entry.
+    h.server.createUpload = () => respond(410, { error: 'The attachment was removed' })
+    assert.equal(await h.actions.retryAttachment(record.id), true)
+    await flush()
+    assert.equal(h.state(record.id), 'missing')
+    assert.equal(h.runtime[record.id].retryable, false)
+    assert.equal(attachmentChipItem(record, h.runtime[record.id]).retryable, false)
+    assert.equal(await h.actions.retryAttachment(record.id), false)
+    assert.equal(h.posts().length, 2)
+})
+
 test('exhausted unanswered creation retries ending on an upload 500 → failed; a network pause stays uploading', async () => {
     const h = createHarness()
     h.server.createUpload = () => respond(500, { error: 'Cannot cancel' })
@@ -698,6 +735,40 @@ test('the completion of an upload seen through status/ makes the chip ready', as
     h.controller.applyServerRecord(record, { fromWs: true })
     h.controller.applyServerRecord(next(record, { state: 'completed', offset: 5 }), { fromWs: true })
     assert.equal(h.state(R1.id), 'ready')
+})
+
+test('a foreign completion that lands while the status/ answer is in flight still readies the chip', async () => {
+    const h = hydrateHarness([R1])
+    const foreignClientId = `${OTHER_TAB}:0000000000000003`
+    h.server.statuses.set(`s1/${R1.id}`, { state: 'uploading', client_id: foreignClientId, offset: 0 })
+    let open
+    h.server.gate = new Promise(resolve => { open = resolve })
+    const reconciling = h.actions.reconcileAttachmentStatuses({ hydrate: true })
+    await flush()
+    // The broadcast completion arrives first; the stale answer says `uploading`.
+    const record = makeServerRecord({ client_id: foreignClientId, origin: { panel: 'composer', key: `s1/${R1.id}` } })
+    h.controller.applyServerRecord(next(record, { state: 'completed', offset: 5 }), { fromWs: true })
+    open()
+    await reconciling
+    await flush()
+    assert.equal(h.state(R1.id), 'ready')
+    assert.equal(h.runtime[R1.id].progress, 100)
+
+    // The completion of another attempt never readies a chip whose answer names a newer one.
+    const h2 = hydrateHarness([R1])
+    const newer = `${OTHER_TAB}:0000000000000005`
+    h2.server.statuses.set(`s1/${R1.id}`, { state: 'uploading', client_id: newer, offset: 0 })
+    let open2
+    h2.server.gate = new Promise(resolve => { open2 = resolve })
+    const reconciling2 = h2.actions.reconcileAttachmentStatuses({ hydrate: true })
+    await flush()
+    const older = makeServerRecord({ client_id: `${OTHER_TAB}:0000000000000004`, origin: { panel: 'composer', key: `s1/${R1.id}` } })
+    h2.controller.applyServerRecord(next(older, { state: 'completed', offset: 5 }), { fromWs: true })
+    open2()
+    await reconciling2
+    await flush()
+    assert.equal(h2.state(R1.id), 'uploading')
+    assert.equal(h2.runtime[R1.id].clientId, newer)
 })
 
 // ── Release, forget, heartbeat ───────────────────────────────────────────────
@@ -1065,6 +1136,34 @@ test('readTextPreview reads at most the limit and reports the truncation', async
     assert.deepEqual(await readTextPreview('/ok', { fetch: fetchFn, limit: 1000 }), { text: 'héllo world', truncated: false })
     assert.deepEqual(await readTextPreview('/ok', { fetch: fetchFn, limit: 6 }), { text: 'héllo', truncated: true })
     await assert.rejects(readTextPreview('/bad', { fetch: fetchFn, limit: 10 }))
+})
+
+test('readTextPreview: an answer without a body (204, empty) is an empty preview, never a throw', async () => {
+    const noBody = async () => new Response(null, { status: 204 })
+    assert.deepEqual(await readTextPreview('/empty', { fetch: noBody, limit: 10 }), { text: '', truncated: false })
+    const bodyless = async () => ({ ok: true, status: 200, body: null })
+    assert.deepEqual(await readTextPreview('/empty', { fetch: bodyless, limit: 10 }), { text: '', truncated: false })
+})
+
+test('dispose revokes every object URL the composer still holds, released ones kept for a bubble included', async () => {
+    const revoked = []
+    let seq = 0
+    const objectUrls = { create: () => `blob:${++seq}`, revoke: url => revoked.push(url) }
+    const inUse = reactive(new Set())
+    const h = createHarness({ objectUrls, previewUrlsInUse: () => inUse })
+    const image = await h.add('s1', 'a.png', 'png', 'image/png')
+    const text = await h.add('s1', 'a.txt', 'hello', 'text/plain')
+    // The text was sent: its optimistic bubble still holds the URL.
+    inUse.add(h.actions.getPreviewUrl(text.id))
+    await h.actions.forgetAttachments('s1', { ids: [text.id] })
+    await flush()
+    assert.deepEqual(revoked, [])
+    h.actions.dispose()
+    assert.deepEqual([...revoked].sort(), ['blob:1', 'blob:2'])
+    assert.equal(h.actions.getPreviewUrl(image.id), null)
+    // A second dispose revokes nothing twice.
+    h.actions.dispose()
+    assert.equal(revoked.length, 2)
 })
 
 // ── Entry points (source contract) ───────────────────────────────────────────

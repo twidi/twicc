@@ -306,6 +306,29 @@ test('creation 4xx with X-Twicc-Upload removes the entry with a toast; without i
     assert.equal(h2.errorToasts().length, 0)
 })
 
+test('a refused creation calls onRejected with its HTTP status; without onRejected nothing changes', async () => {
+    const h = createHarness()
+    h.server.POST = () => respond(410, { error: 'The attachment was removed' })
+    const rejected = []
+    const clientId = `${TAB}:00000000000000ab`
+    await h.controller.startUploads({
+        files: [new File(['hello'], 'c.txt')], origin: COMPOSER, clientId, onRejected: info => rejected.push(info),
+    })
+    await flush()
+    assert.deepEqual(rejected, [{ client_id: clientId, filename: 'c.txt', code: 'creation_refused', status: 410 }])
+    assert.equal(h.list().length, 0)
+    assert.equal(h.errorToasts().length, 1)
+    assert.equal(h.errorToasts()[0].message, 'The attachment was removed')
+
+    // A Files-panel pick has no listener: the entry goes with its toast, as before.
+    const h2 = createHarness()
+    h2.server.POST = () => respond(410, { error: 'Gone' })
+    await h2.pick(['a.txt'])
+    assert.equal(h2.list().length, 0)
+    assert.equal(h2.errorToasts().length, 1)
+    assert.equal(h2.errorToasts()[0].message, 'Gone')
+})
+
 test('creation 507 from the upload code: entry removed, toast', async () => {
     const h = createHarness()
     h.server.POST = () => respond(507, { error: 'Not enough disk space' })

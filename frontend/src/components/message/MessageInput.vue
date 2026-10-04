@@ -19,7 +19,7 @@ import { resolveProjectTrust } from '../../utils/trust'
 import { vPopoverFocusFix } from '../../directives/vPopoverFocusFix'
 import { draftMediaToMediaItem } from '../../utils/fileUtils'
 import {
-    ATTACHMENT_STATE,
+    attachmentBadge,
     attachmentChipItem,
     composerAttachmentsReady,
     sendComposerMessage,
@@ -425,20 +425,14 @@ const chipItems = computed(() => composerRecords.value.map(record => attachmentC
 const attachmentsReady = computed(() => composerAttachmentsReady(
     composerRecords.value, store.localState.attachmentRuntime, legacyAttachmentCount.value,
 ))
-const attachmentsNeedAttention = computed(() =>
-    chipItems.value.filter(item => item.state === ATTACHMENT_STATE.FAILED || item.state === ATTACHMENT_STATE.MISSING).length
-)
-const attachmentsUploading = computed(() =>
-    chipItems.value.some(item => item.state === ATTACHMENT_STATE.UPLOADING)
-)
-const attachmentBadgeLabel = computed(() => {
-    const count = attachmentCount.value
-    const base = `${count} file${count > 1 ? 's' : ''} attached`
-    if (attachmentsNeedAttention.value) return `${base} · ${attachmentsNeedAttention.value} need${attachmentsNeedAttention.value > 1 ? '' : 's'} attention`
-    if (attachmentsUploading.value) return `${base} · uploading`
-    if (!attachmentsReady.value) return `${base} · preparing older attachments`
-    return base
-})
+// A failed or missing chip, or a legacy media that cannot be decoded (only
+// Remove clears it), needs the user: the badge turns danger and says why.
+const attachmentBadgeState = computed(() => attachmentBadge({
+    count: attachmentCount.value,
+    chipStates: chipItems.value.map(item => item.state),
+    legacyFailed: store.getLegacyFailedCount(props.sessionId),
+    ready: attachmentsReady.value,
+}))
 
 // Temporary tooltip shown when new files are attached
 const attachTooltipText = ref('')
@@ -2094,9 +2088,9 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
                         :id="`attachments-popover-trigger-${sessionId}`"
                         class="attachments-badge-trigger"
                     >
-                        <wa-badge :variant="attachmentsNeedAttention ? 'danger' : 'primary'" pill>{{ attachmentCount }}</wa-badge>
+                        <wa-badge :variant="attachmentBadgeState.variant" pill>{{ attachmentCount }}</wa-badge>
                     </button>
-                    <AppTooltip :for="`attachments-popover-trigger-${sessionId}`">{{ attachmentBadgeLabel }}</AppTooltip>
+                    <AppTooltip :for="`attachments-popover-trigger-${sessionId}`">{{ attachmentBadgeState.label }}</AppTooltip>
                     <!-- Temporary tooltip shown when new files are attached -->
                     <!-- `force`: driven manually after an attachment, so it must
                          also show on touch devices, where AppTooltip otherwise

@@ -20,7 +20,14 @@ import {
     migrationDecision,
     orderLegacyMedias,
 } from './attachmentMigration.js'
-import { composerAttachmentsReady, createComposerAttachments } from './composerAttachments.js'
+import {
+    addLegacyFailures,
+    attachmentBadge,
+    clearLegacyFailure,
+    composerAttachmentsReady,
+    createComposerAttachments,
+    legacyFailedCount,
+} from './composerAttachments.js'
 import { createUploadsController } from './uploads/controller.js'
 
 const TAB = '11111111-1111-4111-8111-111111111111'
@@ -236,7 +243,10 @@ function createHarness(disk = createDisk(), options = {}) {
         randomHex: n => `c${(hex++).toString(16)}`.padStart(n, '0'),
         objectUrls: { create: () => `blob:${++uuidSeq}`, revoke: () => {} },
     })
+    // The store's memory-only `legacyFailedIds`: `sessionId → ids` of legacy medias that could not be decoded.
+    const legacyFailed = reactive({})
     const claims = sessionId => ({
+        undecodable: ids => addLegacyFailures(legacyFailed, sessionId, ids),
         claim: media => legacyMap.get(sessionId)?.delete(media.id) || false,
         unclaim: media => {
             if (!legacyMap.has(sessionId)) legacyMap.set(sessionId, new Map())
@@ -244,13 +254,22 @@ function createHarness(disk = createDisk(), options = {}) {
         },
     })
     const h = {
-        disk, clock, log, requests, server, tusUploads, controller, records, runtime, actions, legacyMap,
+        disk, clock, log, requests, server, tusUploads, controller, records, runtime, actions, legacyMap, legacyFailed,
         errors: [], // migration rejections of `start()`
         posts: () => requests.filter(r => r.method === 'POST' && r.url === '/api/uploads/'),
         statusCalls: () => requests.filter(r => r.url === '/api/composer-attachments/status/'),
         state: id => runtime[id]?.state,
         entryOf: id => controller.entries.get(runtime[id]?.clientId),
         legacyChips: sessionId => [...(legacyMap.get(sessionId)?.values() || [])].map(m => m.id),
+        legacyFailedCount: sessionId => legacyFailedCount(legacyFailed, sessionId, legacyMap.get(sessionId)?.keys()),
+        /** The store's `removeAttachment` of a legacy chip: row, chip, `mediaIds`, failed id. */
+        removeLegacy(sessionId, id) {
+            disk.legacy.delete(id)
+            legacyMap.get(sessionId)?.delete(id)
+            const ids = disk.mediaIds.get(sessionId)
+            if (ids) disk.mediaIds.set(sessionId, ids.filter(other => other !== id))
+            clearLegacyFailure(legacyFailed, id)
+        },
         /** The store's hydrate: records, legacy chips without record, then one migration per session. */
         async start() {
             const rows = [...disk.rows.values()].map(row => structuredClone(row))
@@ -388,6 +407,110 @@ test('migrateLegacyAttachments: readiness cleanup registered before any status, 
         /quota/,
     )
     assert.deepEqual(calls, [])
+})
+
+test('migrateLegacyAttachments: undecodable rows are reported, before any adopt; decodable ones still migrate', async () => {
+    const calls = []
+    const bad = { ...IMG, id: '00000000-0000-4000-8000-0000000000d1', data: '%%%not base64%%%' }
+    const unknown = { ...TXT, id: '00000000-0000-4000-8000-0000000000d2', type: 'video' }
+    const deps = {
+        tabId: TAB,
+        reportUndecodable: ids => calls.push(`undecodable ${ids.join(',')}`),
+        adoptRecords: async (sessionId, entries) => {
+            calls.push(`adopt ${entries.map(e => e.media.id).join(',')}`)
+            return []
+        },
+    }
+    await migrateLegacyAttachments({ sessionId: 's1', medias: [bad, TXT, unknown], mediaIds: [], dependencies: deps })
+    assert.deepEqual(calls, [`undecodable ${bad.id},${unknown.id}`, `adopt ${TXT.id}`])
+
+    // Only undecodable rows: reported, nothing adopted.
+    calls.length = 0
+    await migrateLegacyAttachments({ sessionId: 's1', medias: [bad], mediaIds: [], dependencies: deps })
+    assert.deepEqual(calls, [`undecodable ${bad.id}`])
+
+    // Everything decodes: nothing reported.
+    calls.length = 0
+    await migrateLegacyAttachments({ sessionId: 's1', medias: [TXT], mediaIds: [], dependencies: deps })
+    assert.deepEqual(calls, [`adopt ${TXT.id}`])
+})
+
+test('legacy failure helpers: per session, deduplicated, counted only while the legacy chip shows', () => {
+    const failed = {}
+    addLegacyFailures(failed, 's1', ['a', 'b'])
+    addLegacyFailures(failed, 's1', ['a'])
+    addLegacyFailures(failed, 's2', ['c'])
+    addLegacyFailures(failed, 's3', [])
+    assert.deepEqual(failed, { s1: ['a', 'b'], s2: ['c'] })
+    assert.equal(legacyFailedCount(failed, 's1', ['a', 'b', 'z']), 2)
+    // A failed id whose chip is gone (removed elsewhere) no longer counts.
+    assert.equal(legacyFailedCount(failed, 's1', ['b']), 1)
+    assert.equal(legacyFailedCount(failed, 's1', undefined), 0)
+    assert.equal(legacyFailedCount(failed, 'none', ['a']), 0)
+    clearLegacyFailure(failed, 'a')
+    clearLegacyFailure(failed, 'c')
+    clearLegacyFailure(failed, 'unknown')
+    assert.deepEqual(failed, { s1: ['b'] })
+})
+
+test('attachmentBadge: failed chips and undecodable legacy medias need attention (danger), with their own label', () => {
+    assert.deepEqual(attachmentBadge({ count: 1, chipStates: ['ready'] }), { label: '1 file attached', attention: 0, variant: 'primary' })
+    assert.deepEqual(attachmentBadge({ count: 2, chipStates: ['ready', 'uploading'] }).label, '2 files attached · uploading')
+    assert.deepEqual(attachmentBadge({ count: 1, chipStates: [], ready: false }).label, '1 file attached · preparing older attachments')
+    assert.deepEqual(attachmentBadge({ count: 2, chipStates: ['failed', 'missing'] }), {
+        label: '2 files attached · 2 need attention', attention: 2, variant: 'danger',
+    })
+    assert.deepEqual(attachmentBadge({ count: 2, chipStates: ['ready'], legacyFailed: 1, ready: false }), {
+        label: '2 files attached · 1 older attachment could not be converted — remove it', attention: 1, variant: 'danger',
+    })
+    assert.deepEqual(attachmentBadge({ count: 3, chipStates: ['failed', 'uploading'], legacyFailed: 2, ready: false }), {
+        label: '3 files attached · 1 needs attention · 2 older attachments could not be converted — remove them',
+        attention: 3,
+        variant: 'danger',
+    })
+})
+
+test('an undecodable legacy media: reported, Send blocked with a danger badge, Remove clears it and unblocks Send', async () => {
+    const BAD = legacyMedia({ id: '00000000-0000-4000-8000-0000000000d3', name: 'broken.png', type: 'image', mimeType: 'image/png', data: '%%%', createdAt: START })
+    const disk = createDisk([BAD, TXT])
+    const h = createHarness(disk)
+    await h.start()
+    assert.deepEqual(h.errors, [])
+    // The undecodable row stays a legacy chip and is reported once.
+    assert.deepEqual(h.legacyChips('s1'), [BAD.id])
+    assert.deepEqual(h.legacyFailed, { s1: [BAD.id] })
+    assert.equal(h.legacyFailedCount('s1'), 1)
+    // The decodable one migrates and becomes ready.
+    h.complete(TXT.id)
+    await flush()
+    assert.equal(h.state(TXT.id), 'ready')
+    const records = h.actions.getRecords('s1')
+    const legacyCount = h.legacyChips('s1').length
+    assert.equal(composerAttachmentsReady(records, h.runtime, legacyCount), false)
+    const badge = attachmentBadge({
+        count: legacyCount + records.length,
+        chipStates: records.map(r => h.state(r.id)),
+        legacyFailed: h.legacyFailedCount('s1'),
+        ready: composerAttachmentsReady(records, h.runtime, legacyCount),
+    })
+    assert.deepEqual(badge, {
+        label: '2 files attached · 1 older attachment could not be converted — remove it', attention: 1, variant: 'danger',
+    })
+    // A second start (same page) reports it again without duplicating it.
+    await h.actions.migrateLegacy('s1', [BAD], [], {
+        undecodable: ids => addLegacyFailures(h.legacyFailed, 's1', ids), claim: () => false, unclaim: () => {},
+    })
+    assert.deepEqual(h.legacyFailed, { s1: [BAD.id] })
+
+    // Remove on the legacy chip: row and chip gone, failure cleared, Send possible.
+    h.removeLegacy('s1', BAD.id)
+    assert.equal(disk.legacy.has(BAD.id), false)
+    assert.deepEqual(h.legacyFailed, {})
+    assert.equal(h.legacyFailedCount('s1'), 0)
+    assert.equal(composerAttachmentsReady(records, h.runtime, h.legacyChips('s1').length), true)
+    assert.deepEqual(attachmentBadge({
+        count: records.length, chipStates: records.map(r => h.state(r.id)), legacyFailed: 0, ready: true,
+    }), { label: '1 file attached', attention: 0, variant: 'primary' })
 })
 
 // ── Migration through the composer actions ───────────────────────────────────

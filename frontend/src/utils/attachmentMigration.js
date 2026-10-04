@@ -5,7 +5,8 @@
 // §9.5), each row becomes a `File` and a composer record with the same id,
 // whose staging entry is uploaded only when the server does not already hold
 // it. The row is deleted once the entry is ready; after a failure it stays,
-// and the next start migrates it again.
+// and the next start migrates it again. A row that cannot be decoded never
+// migrates: it is reported, and stays a legacy chip the user must remove.
 //
 // This module holds the decoding and the decisions. Every effect (records,
 // storage, `status/`, uploads) comes from injected dependencies: the composer
@@ -127,6 +128,8 @@ export function migrationDecision(status, { tabId }) {
  * @param {string[]} [options.mediaIds] - the draft's media order
  * @param {object} options.dependencies
  * @param {string} options.dependencies.tabId - this tab's id
+ * @param {(ids: string[]) => void} [options.dependencies.reportUndecodable] - the ids of the
+ *     rows that cannot become a `File` (they stay legacy chips: the user must remove them)
  * @param {(sessionId: string, entries: Array<{media: object, file: File}>) => Promise<object[]>} options.dependencies.adoptRecords -
  *     reuse or create (and persist) the records, File in memory; rejects on a storage failure
  * @param {(id: string) => boolean} options.dependencies.hasLiveLocalUpload
@@ -143,14 +146,18 @@ export function migrationDecision(status, { tabId }) {
  */
 export async function migrateLegacyAttachments({ sessionId, medias, mediaIds, dependencies: deps }) {
     const entries = []
+    const undecodable = []
     for (const media of orderLegacyMedias(medias, mediaIds)) {
         try {
             entries.push({ media, file: legacyMediaToFile(media) })
         } catch (error) {
             // Kept as a legacy row (and chip): the user can still remove it.
             console.warn('Legacy draft media not migrated', media?.id, error)
+            if (media?.id) undecodable.push(media.id)
         }
     }
+    // Reported first: a permanent failure, whatever happens to the other rows.
+    if (undecodable.length) deps.reportUndecodable?.(undecodable)
     if (!entries.length) return
     const records = await deps.adoptRecords(sessionId, entries)
     if (!records.length) return

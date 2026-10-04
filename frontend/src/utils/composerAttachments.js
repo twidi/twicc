@@ -313,6 +313,76 @@ export function composerAttachmentsReady(records, runtimeStates, legacyCount) {
 }
 
 /**
+ * Record legacy medias that cannot be decoded (§9.6), per session, without
+ * duplicates. Memory only: the next start decodes the rows again.
+ *
+ * @param {object} failed - reactive `sessionId → string[]` (the store's `legacyFailedIds`)
+ * @param {string} sessionId
+ * @param {string[]} ids
+ */
+export function addLegacyFailures(failed, sessionId, ids) {
+    if (!sessionId || !ids?.length) return
+    const current = failed[sessionId] || []
+    const fresh = ids.filter(id => id && !current.includes(id))
+    if (fresh.length) failed[sessionId] = [...current, ...fresh]
+}
+
+/**
+ * Forget the decode failure of one legacy media (its chip was removed).
+ *
+ * @param {object} failed - `sessionId → string[]`
+ * @param {string} mediaId
+ */
+export function clearLegacyFailure(failed, mediaId) {
+    for (const [sessionId, ids] of Object.entries(failed)) {
+        if (!ids.includes(mediaId)) continue
+        const rest = ids.filter(id => id !== mediaId)
+        if (rest.length) failed[sessionId] = rest
+        else delete failed[sessionId]
+    }
+}
+
+/**
+ * The undecodable legacy medias a composer still shows as legacy chips.
+ *
+ * @param {object} failed - `sessionId → string[]`
+ * @param {string} sessionId
+ * @param {Iterable<string>|null|undefined} legacyIds - ids of the session's legacy chips
+ * @returns {number}
+ */
+export function legacyFailedCount(failed, sessionId, legacyIds) {
+    const ids = failed[sessionId]
+    if (!ids?.length || !legacyIds) return 0
+    const shown = new Set(legacyIds)
+    return ids.filter(id => shown.has(id)).length
+}
+
+/**
+ * The composer attachment badge: its label, how many attachments need the
+ * user (a failed or missing chip, an undecodable legacy media that only Remove
+ * clears), and its variant (`danger` when any does).
+ *
+ * @param {{count: number, chipStates?: string[], legacyFailed?: number, ready?: boolean}} options
+ * @returns {{label: string, attention: number, variant: 'danger'|'primary'}}
+ */
+export function attachmentBadge({ count, chipStates = [], legacyFailed = 0, ready = true }) {
+    const failedChips = chipStates.filter(state => state === ATTACHMENT_STATE.FAILED || state === ATTACHMENT_STATE.MISSING).length
+    const attention = failedChips + legacyFailed
+    const parts = [`${count} file${count > 1 ? 's' : ''} attached`]
+    if (failedChips) parts.push(`${failedChips} need${failedChips > 1 ? '' : 's'} attention`)
+    if (legacyFailed) {
+        parts.push(legacyFailed > 1
+            ? `${legacyFailed} older attachments could not be converted — remove them`
+            : '1 older attachment could not be converted — remove it')
+    }
+    if (!attention) {
+        if (chipStates.includes(ATTACHMENT_STATE.UPLOADING)) parts.push('uploading')
+        else if (!ready) parts.push('preparing older attachments')
+    }
+    return { label: parts.join(' · '), attention, variant: attention ? 'danger' : 'primary' }
+}
+
+/**
  * The attachment fields of a `send_message` frame (spec §8): `attachments`,
  * the `{bucket, id}` refs in the given (composer display) order, or nothing.
  *
@@ -452,11 +522,14 @@ export function attachmentChipItem(record, runtime, { previewUrl = null } = {}) 
  *
  * @param {string} url
  * @param {{fetch: Function, limit: number}} options
- * @returns {Promise<{text: string, truncated: boolean}>} rejects on a failed answer
+ * @returns {Promise<{text: string, truncated: boolean}>} rejects on a failed answer; an answer
+ *     without a body is an empty, untruncated preview
  */
 export async function readTextPreview(url, { fetch: fetchFn, limit }) {
     const res = await fetchFn(url)
     if (!res.ok) throw new Error(`Preview failed (${res.status})`)
+    // A 204 or an empty answer has no body stream: an empty preview.
+    if (!res.body) return { text: '', truncated: false }
     const decoder = new TextDecoder()
     let text = ''
     let read = 0
@@ -660,6 +733,12 @@ export function createComposerAttachments(deps) {
     const readyCleanups = new Map()
     /** Ids a legacy migration is deciding about: no other status answer applies meanwhile. */
     const migrating = new Set()
+    /**
+     * id → client ids of completions that matched no attempt of the chip yet:
+     * a broadcast completion can land before the `status/` answer that names
+     * its attempt (the controller keeps no terminal entry to look up later).
+     */
+    const unmatchedCompletions = new Map()
 
     function bump(id) {
         generations.set(id, (generations.get(id) || 0) + 1)
@@ -763,6 +842,7 @@ export function createComposerAttachments(deps) {
         files.delete(id)
         attempts.delete(id)
         readyCleanups.delete(id)
+        unmatchedCompletions.delete(id)
         releasePreview(id)
         bump(id)
     }
@@ -796,10 +876,15 @@ export function createComposerAttachments(deps) {
         }
     }
 
+    /**
+     * A rejected attempt fails its chip. A creation answered `410` means the
+     * entry was released (removed in another tab, §6.1.4): no attempt can
+     * ever succeed, so the chip is `missing` (Remove only), never Retry.
+     */
     function onRejected(id, info) {
         if (!isCurrentAttempt(id, info.client_id)) return
         attempts.get(id).pending = false
-        setState(id, ATTACHMENT_STATE.FAILED)
+        setState(id, info.status === 410 ? ATTACHMENT_STATE.MISSING : ATTACHMENT_STATE.FAILED)
     }
 
     function onCompleted(record) {
@@ -807,7 +892,14 @@ export function createComposerAttachments(deps) {
         const id = record.origin.key.slice(record.origin.key.lastIndexOf('/') + 1)
         const rt = runtime[id]
         if (!rt || rt.state === ATTACHMENT_STATE.MISSING) return
-        if (!shouldAcceptCompletion(attempts.get(id)?.clientId ?? null, record.client_id)) return
+        if (!shouldAcceptCompletion(attempts.get(id)?.clientId ?? null, record.client_id)) {
+            if (typeof record.client_id === 'string') {
+                if (!unmatchedCompletions.has(id)) unmatchedCompletions.set(id, new Set())
+                unmatchedCompletions.get(id).add(record.client_id)
+            }
+            return
+        }
+        unmatchedCompletions.delete(id)
         setState(id, ATTACHMENT_STATE.READY)
     }
 
@@ -1139,7 +1231,10 @@ export function createComposerAttachments(deps) {
         rt.progress = state === ATTACHMENT_STATE.UPLOADING && record.size > 0
             ? Math.min(100, Math.floor((100 * (status.offset || 0)) / record.size))
             : 0
-        setState(id, state)
+        // The attempt the answer names already completed while it was in flight.
+        const completedMeanwhile = !!clientId && !!unmatchedCompletions.get(id)?.has(clientId)
+        unmatchedCompletions.delete(id)
+        setState(id, completedMeanwhile ? ATTACHMENT_STATE.READY : state)
     }
 
     /**
@@ -1225,8 +1320,10 @@ export function createComposerAttachments(deps) {
      * @param {string} sessionId - the migration session id (the new records' bucket)
      * @param {object[]} medias - legacy `draftMedias` rows
      * @param {string[]} mediaIds - the draft's media order
-     * @param {{claim: (media: object) => boolean, unclaim: (media: object) => void}} legacy -
-     *     take a media out of the legacy chips (false when it is gone), or put it back
+     * @param {{claim: (media: object) => boolean, unclaim: (media: object) => void,
+     *     undecodable?: (ids: string[]) => void}} legacy -
+     *     take a media out of the legacy chips (false when it is gone), or put it back;
+     *     `undecodable` receives the ids of the medias that cannot be decoded (they stay legacy chips)
      * @returns {Promise<void>} rejects when the records cannot be stored
      */
     function migrateLegacy(sessionId, medias, mediaIds, legacy) {
@@ -1236,6 +1333,7 @@ export function createComposerAttachments(deps) {
             mediaIds,
             dependencies: {
                 tabId: uploads.tabId,
+                reportUndecodable: ids => legacy.undecodable?.(ids),
                 adoptRecords: (id, entries) => adoptMigratedRecords(id, entries, legacy),
                 hasLiveLocalUpload,
                 isCurrent: record => findRecord(record.id) === record,
@@ -1323,10 +1421,14 @@ export function createComposerAttachments(deps) {
         () => syncUploadStates(),
     )
 
+    /** Stop every watcher and revoke every object URL still held (HMR, teardown). */
     function dispose() {
         stopWatch()
         stopCompleted()
         stopPreviewWatch()
+        for (const url of [...previews.values(), ...releasedPreviews]) objectUrls.revoke(url)
+        previews.clear()
+        releasedPreviews.clear()
     }
 
     return {

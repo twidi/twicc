@@ -64,6 +64,8 @@ export const COMPOSER_PANEL = 'composer'
 
 /** Code given to `onRejected` when a picked file cannot be read. */
 export const REJECTED_FILE_UNREADABLE = 'file_unreadable'
+/** Code given to `onRejected` when the server refuses the creation (its HTTP `status` is given too). */
+export const REJECTED_CREATION_REFUSED = 'creation_refused'
 
 /** Local states for which leaving the page loses work. */
 const UNLOAD_STATES = ['queued', 'creating', 'sending', 'paused']
@@ -163,6 +165,7 @@ export function createUploadsController(deps) {
             raw = {
                 file: null,
                 upload: null,
+                onRejected: null,
                 creationAbort: null,
                 retryTimer: null,
                 retryWake: null,
@@ -679,8 +682,17 @@ export function createUploadsController(deps) {
             } else if (kind === 'refused') {
                 const message = await readErrorMessage(res)
                 if (!exists(entry)) return
+                const listener = entry.cancelRequested ? null : raw.onRejected
                 if (!entry.cancelRequested) failureToast(entry.filename, message || statusMessage(res.status))
                 removeEntry(entry)
+                if (listener) {
+                    notifyRejected(listener, {
+                        client_id: entry.clientId,
+                        filename: entry.filename,
+                        code: REJECTED_CREATION_REFUSED,
+                        status: res.status,
+                    })
+                }
                 return
             }
             // No answer: the upload may exist on the server.
@@ -799,11 +811,13 @@ export function createUploadsController(deps) {
      * with `makeClientId(tabId, …)`) is only accepted with exactly one file.
      * The client id of each file is allocated before its fingerprint read, so
      * `onRejected` names the exact attempt it rejects; without `onRejected`, an
-     * unreadable file shows an error toast.
+     * unreadable file shows an error toast. A creation the server refuses also
+     * calls `onRejected` (code `creation_refused`, with the HTTP `status`),
+     * after its usual toast and the removal of its entry.
      *
      * @param {{files: File[], targetDir?: string|null, apiPrefix?: string, root?: string|null,
      *          origin: {panel: string, key: string}, clientId?: string|null,
-     *          onRejected?: (info: {client_id: string, filename: string, code: string}) => void}} options
+     *          onRejected?: (info: {client_id: string, filename: string, code: string, status?: number}) => void}} options
      * @returns {Promise<void>}
      */
     async function startUploads({
@@ -828,11 +842,7 @@ export function createUploadsController(deps) {
             } catch {
                 if (disposed) return
                 if (onRejected) {
-                    try {
-                        onRejected({ client_id: clientId, filename: file.name, code: REJECTED_FILE_UNREADABLE })
-                    } catch (error) {
-                        console.error('Upload rejection listener failed', error)
-                    }
+                    notifyRejected(onRejected, { client_id: clientId, filename: file.name, code: REJECTED_FILE_UNREADABLE })
                 } else {
                     failureToast(file.name, 'The file could not be read.')
                 }
@@ -852,8 +862,17 @@ export function createUploadsController(deps) {
                 localState: 'queued',
             })
             storeFile(entry, file)
+            if (onRejected) rawOf(entry.key).onRejected = onRejected
         }
         autoRestart()
+    }
+
+    function notifyRejected(listener, info) {
+        try {
+            listener(info)
+        } catch (error) {
+            console.error('Upload rejection listener failed', error)
+        }
     }
 
     /** The "otherwise" branch of *Cancel* (§6.4): `DELETE` on the server. */

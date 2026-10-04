@@ -83,21 +83,21 @@ These are real but minor end-state findings. None is a demonstrated integration 
 
 | Origin | Finding | Reason for deferral |
 |---|---|---|
-| Task 17 | Send stays disabled when a legacy draft media cannot be decoded. The badge says "preparing older attachments", which is wrong for a permanent decode failure. | Only corrupted legacy rows. The chip stays visible with Remove. A correct label needs a new per-media failure state. |
-| Task 14 | A foreign upload completion that arrives before the `status/` answer can leave a chip `uploading` until the next reconnect. | Narrow race between two tabs. The next reconnect corrects the state. |
+| Task 17 | Send stays disabled when a legacy draft media cannot be decoded. The badge says "preparing older attachments", which is wrong for a permanent decode failure. | **Fixed in the final review.** The migration reports undecodable rows; the store keeps them in `legacyFailedIds`; the badge turns `danger` and asks the user to remove them. Remove clears the failure. |
+| Task 14 | A foreign upload completion that arrives before the `status/` answer can leave a chip `uploading` until the next reconnect. | **Fixed in the final review.** The composer keeps the completions that match no attempt yet; a later `uploading` answer naming one of them makes the chip `ready`. |
 | Task 14 | Concurrent hydrate and first-connect reconcile calls are not serialized. | No wrong end state observed. Both paths are idempotent. |
-| Task 17 | Two tabs that see `missing` at the same time can show a transient `failed` chip with Retry. | Transient. The next status answer corrects it. |
+| Task 17 | Two tabs that see `missing` at the same time can show a transient `failed` chip with Retry. | Transient. The next status answer corrects it. Since the final review, a Retry that meets the released entry (creation `410`) ends `missing` (Remove only), never `failed` with Retry again. |
 | Task 17 | Parallel readiness cleanups each rewrite the draft message. | Lost `mediaIds` updates are harmless. A draft-text overwrite is theoretical. |
 | Task 16 | A legacy-only draft: a chip that turns ready during the trust dialog can give a partial send. | Legacy-only drafts, an edge sequence. Needs a UI check. |
-| Task 16 | `readTextPreview` does not guard a `null` body; `dispose()` revokes no object URL. | Cosmetic, or a small leak at teardown only. |
+| Task 16 | `readTextPreview` does not guard a `null` body; `dispose()` revokes no object URL. | **Fixed in the final review.** A body-less answer is an empty preview; `dispose()` revokes every held object URL. |
 | Task 18 | The fork-parent file chip falls back to the current session's project id when the parent row is not loaded. | A Codex fork shares its parent's project in practice. |
 | Task 13 | Every `OSError` from the planner becomes `attachment_missing` (also `EACCES`). | Retry and Remove stay possible. The code is accurate for the common case (a vanished file). |
 | Task 12 | The planner can plan inline entries for a hybrid session whose data dir has whitespace; the send is then refused with `attachment_commit_failed` (Retry cannot succeed). | Rare install layout. Ruling recorded in Task 12. |
 | Task 12 | Leftover `att_*` files after a `hybrid_composer_busy` refusal. | Same behavior as the legacy hybrid path. |
 | Task 10 / 11 | A send cancelled while it waits for the manager lock leaves its promoted files in `attachments/` and its staging entries to retention. | Covered by spec §16 (promoted files of a failed send stay as artifacts) and by the 7-day committed retention. |
-| Task 6 | The manifest parser accepts Unicode digits and leading zeros; the builder does not enforce every parser invariant. | The builder never emits such blocks. A pasted block with them only becomes metadata when every other §10.1 check passes. |
-| Task 4 | `DecompressionBombWarning` reaches stderr for 89.5–100 MP images; the PNG walk can read about 8 MiB; `exif_transpose` is not in place. | Log noise and memory cost in rare large images. Behavior is correct. |
-| Task 3 | The reaper holds the global creation lock while it waits for an upload lock; `content_media_type` opens the file twice. | Latency only. No wrong state. |
+| Task 6 | The manifest parser accepts Unicode digits and leading zeros; the builder does not enforce every parser invariant. | **Parser part fixed in the final review** (ASCII digits only, no leading zeros). The builder still does not enforce every parser invariant: it never emits such blocks. |
+| Task 4 | `DecompressionBombWarning` reaches stderr for 89.5–100 MP images; the PNG walk can read about 8 MiB; `exif_transpose` is not in place. | **Warning fixed in the final review** (no global Pillow change; the 100 MP limit is checked on the opened size before decode). The PNG walk and `exif_transpose` notes remain: memory cost in rare large images, behavior is correct. |
+| Task 3 | The reaper holds the global creation lock while it waits for an upload lock; `content_media_type` opens the file twice. | Latency only. No wrong state. Since the final review, the content endpoint sniffs the type from the descriptor it streams (one open, identity-checked against the validated path). |
 | Tasks 1–18 | Test-quality notes (weak assertions, source-regex wiring tests, untested log branches). | No behavior defect. |
 
 ## 3. Manual matrix — NOT RUN
