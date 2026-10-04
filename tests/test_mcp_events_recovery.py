@@ -1,6 +1,7 @@
 """Real detector failures, consumer recovery, and shutdown admission boundaries."""
 
 import asyncio
+from itertools import pairwise
 import threading
 from types import SimpleNamespace
 
@@ -190,26 +191,65 @@ def test_wait_constructor_failure_is_contained_until_recovery(env, monkeypatch):
     assert env.emissions[0].event_id == event_id(env.row.id, "replied", "0:3")
 
 
-def test_failing_ended_keeps_retrying_and_new_turn_replaces_wait(env, monkeypatch):
+def test_unseeded_ended_failures_preserve_series_through_reconstruction(env, monkeypatch, caplog):
     opened(env)
     agent(env, state=AgentState.USER_TURN)
     ready_end(env)
-    # Previous failures at this empty position make this the persistent branch.
-    env.monitor.failure_count = env.monitor.position_failures = 2
-    env.monitor.failure_position = (0, 0)
-    env.monitor.failure_log_at = env.clock.monotonic()
-    kept = env.monitor.wait
+    attempts, retained = [], None
+    original = runtime_module.fit_body
+    def fit(occurrence):
+        attempts.append(env.clock.monotonic())
+        fail()
+    with monkeypatch.context() as patch:
+        patch.setattr(runtime_module, "fit_body", fit)
+        for count in range(1, 13):
+            env.runtime._tick()
+            assert len(attempts) == count
+            assert env.monitor.failure_count == env.monitor.position_failures == count
+            delay = min(.25 * 2 ** (count - 1), 60)
+            assert env.monitor.retry_at == env.clock.monotonic() + delay
+            if count >= 3:
+                retained = retained or env.monitor.wait
+                assert env.monitor.wait is retained and env.monitor.turn_open
+            env.runtime._tick()  # No retry before the deadline.
+            assert len(attempts) == count
+            env.clock.advance(delay)
+            if count < 3:
+                # The new wait must flush and confirm. These are recovery ticks.
+                env.runtime._tick()
+                assert env.monitor.failure_count == count
+                env.clock.advance(_wait_reply.AGENT_FLUSH_SECONDS)
+                env.runtime._tick()
+                assert env.monitor.failure_count == count
+    records = [record for record in caplog.records if "subscription" in record.getMessage()]
+    assert sum(bool(record.exc_info) for record in records) == 1
+    assert len(records) == 5
+    assert all(later - earlier >= 60 for earlier, later in pairwise(attempts[8:]))
+    monkeypatch.setattr(runtime_module, "fit_body", original)
+    env.runtime._tick()
+    assert env.emissions[0].event_id == event_id(env.row.id, "ended", "last_line:0:0")
+    assert not env.monitor.turn_open and env.monitor.failure_count == 0
+
+
+@pytest.mark.parametrize("progress", ["new-turn", "cursor", "scan", "rebase"])
+def test_ended_recovery_resets_on_meaningful_progress(env, monkeypatch, progress):
+    opened(env)
+    agent(env, state=AgentState.USER_TURN)
+    ready_end(env)
     with monkeypatch.context() as patch:
         patch.setattr(runtime_module, "fit_body", fail)
-        for delay in (1, 2, 4):
-            env.runtime._tick()
-            assert env.monitor.wait is kept and env.monitor.turn_open
-            assert env.monitor.retry_at == env.clock.monotonic() + delay
-            env.clock.advance(delay)
-    agent(env)
+        env.runtime._tick()
+    assert env.monitor.failure_count == 1
+    env.clock.advance(.25)
+    if progress == "new-turn":
+        agent(env)
+    elif progress in ("cursor", "scan"):
+        append_assistant(env.session, 3, final=progress == "cursor")
+    else:
+        Session.objects.filter(pk=env.session.pk).update(history_epoch=1)
+        env.monitor.pending_rebase = True
     env.runtime._tick()
-    assert env.monitor.wait is not kept and env.monitor.turn_open
-    assert not env.emissions and env.monitor.failure_count == 0
+    assert env.monitor.failure_count == env.monitor.position_failures == 0
 
 
 def production_runtime(env):
@@ -535,3 +575,49 @@ def test_posted_emission_has_no_later_database_or_payload_work(env, monkeypatch)
     env.runtime._tick()
     assert len(env.emissions) == 1 and env.monitor.cursor_line == 3
     assert env.monitor.failure_count == 0
+
+
+def test_shutdown_waits_for_protected_write_settlement_after_drain_deadline(env, monkeypatch):
+    from twicc.providers import db_writer
+
+    runtime = production_runtime(env)
+    entered, released = threading.Event(), threading.Event()
+    original_apply = runtime._apply_write
+    deadlines = []
+    original_wait_for = asyncio.wait_for
+    async def deadline(awaitable, timeout):
+        deadlines.append(timeout)
+        return await original_wait_for(awaitable, .01)
+    def apply(item):
+        entered.set()
+        assert released.wait(2)
+        return original_apply(item)
+    monkeypatch.setattr(runtime, "_apply_write", apply)
+    monkeypatch.setattr(runtime_module.asyncio, "wait_for", deadline)
+
+    async def run():
+        runtime.loop = asyncio.get_running_loop()
+        cancelled = asyncio.Event()
+        class ObservedTask(asyncio.Task):
+            def cancel(self, msg=None):
+                cancelled.set()
+                return super().cancel(msg)
+        runtime.writer_task = ObservedTask(runtime.run_writer(), loop=runtime.loop)
+        runtime.writes.put_nowait(TurnWrite(env.row.id, env.row.created_at, True, 999, "initial", 4))
+        runtime.writes.put_nowait(TurnWrite(env.row.id, env.row.created_at, False, 999, "initial", 9))
+        assert await asyncio.to_thread(entered.wait, 2)
+        closing = asyncio.create_task(runtime.close())
+        try:
+            await original_wait_for(cancelled.wait(), 1)
+            await asyncio.sleep(0)  # Let storage.write observe and shield cancellation.
+            assert runtime.writer_task.cancelling() and not runtime.writer_task.done()
+            assert not closing.done() and db_writer._db_write_lock.locked()
+        finally:
+            released.set()
+            await original_wait_for(closing, 2)
+        assert runtime.writer_task.cancelled()
+        assert not db_writer._db_write_lock.locked()
+    asyncio.run(run())
+    env.row.refresh_from_db()
+    assert env.row.turn_start_line == 4 and env.row.turn_open
+    assert deadlines == [2]

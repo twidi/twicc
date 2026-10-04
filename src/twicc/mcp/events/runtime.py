@@ -94,6 +94,9 @@ class Monitor:
         self.retry_wait = False
         self.failure_log_at = None
         self.failed_request_id = None
+        self.tick_outcome = None
+        self.recovering_ended = False
+        self.failure_state = None
 
     @property
     def generation(self):
@@ -239,7 +242,7 @@ class EventsRuntime:
                 self.commands.put(StopCommand())
 
     async def close(self):
-        """Stop detection and delivery, then give state writes a bounded drain."""
+        """Stop producers; bound drain admission, then settle protected writes."""
         if self.supervisor_task is not None:
             self.supervisor_task.cancel()
         self.request_stop()
@@ -261,6 +264,8 @@ class EventsRuntime:
             logger.warning("Timed out draining event state writes")
         finally:
             self.writer_task.cancel()
+            # storage.write shields an active database operation. Cancellation
+            # stops further draining, but settlement can outlast the deadline.
             await asyncio.gather(self.writer_task, return_exceptions=True)
 
     def _worker(self):
@@ -357,6 +362,8 @@ class EventsRuntime:
             if self.clock.monotonic() < monitor.retry_at:
                 continue
             monitor.failed_request_id = None
+            monitor.tick_outcome = None
+            resolved = False
             try:
                 if monitor.retry_wait:
                     monitor.wait = self._new_wait(monitor)
@@ -368,16 +375,33 @@ class EventsRuntime:
                 if monitor.pending_rebase:
                     self._apply_rebase(monitor, snapshot)
                 else:
-                    self._tick_monitor(monitor)
+                    resolved = self._tick_monitor(monitor)
             except Exception:
                 self._monitor_failed(monitor)
             else:
+                # Rebuilt ended waits must flush and confirm again. Those scans
+                # do not resolve the failed conclusion or start a new series.
+                if (monitor.recovering_ended and not resolved
+                        and self._recovery_state(monitor) == monitor.failure_state
+                        and monitor.wait.scanned_up_to <= monitor.failure_position[1]):
+                    continue
                 monitor.failure_count = monitor.position_failures = 0
-                monitor.failure_position = None
+                monitor.failure_position = monitor.failure_state = None
+                monitor.recovering_ended = False
+
+    @staticmethod
+    def _recovery_state(monitor):
+        return (monitor.cursor_line, monitor.numbering, monitor.turn_open, monitor.turn_started_at,
+                monitor.turn_opened_by, monitor.turn_start_line)
 
     def _monitor_failed(self, monitor):
         close_old_connections()
         now = self.clock.monotonic()
+        state = self._recovery_state(monitor)
+        monitor.recovering_ended = (monitor.tick_outcome == "ended" or (
+            monitor.recovering_ended and state == monitor.failure_state
+        ))
+        monitor.failure_state = state
         monitor.failure_count += 1
         position = (monitor.cursor_line, monitor.wait.scanned_up_to)
         monitor.position_failures = monitor.position_failures + 1 if position == monitor.failure_position else 1
@@ -442,7 +466,7 @@ class EventsRuntime:
         return had_previous and before[0] and before == after
 
     def _tick_monitor(self, monitor):
-        """Detect one conclusion with the CLI wait and Rules A/B."""
+        """Detect one conclusion; return true once that conclusion is handled."""
         from twicc.agent.registry import get_agent_manager_registry
 
         tick_started_at = self.clock.utcnow()
@@ -452,12 +476,12 @@ class EventsRuntime:
         reply = monitor.wait.step()
         if reply is None:
             return
-        outcome = reply["outcome"]
+        outcome = monitor.tick_outcome = reply["outcome"]
         request = None
         guard_drop = False
         if outcome == "ended":
             if not monitor.turn_open:
-                return
+                return True
             if monitor.turn_opened_by == "transition" and reply["line_num"] is None and info is not None:
                 # The wait loads the provider before it can conclude a row's end.
                 provider = monitor.wait.session.provider if monitor.wait.session is not None else info.provider
@@ -468,7 +492,7 @@ class EventsRuntime:
             request = next((request for request in (info.pending_requests if info is not None else ())
                             if request.request_id not in monitor.reported_request_ids), None)
             if request is None:
-                return
+                return True
             monitor.failed_request_id = request.request_id
 
         item_timestamp = None
@@ -488,7 +512,7 @@ class EventsRuntime:
                              snapshot.last_line if snapshot is not None else monitor.turn_start_line)
             self.post_write(turn)
             self._apply_turn(monitor, turn)
-            return
+            return True
 
         occurrence = build_occurrence(
             monitor.id, monitor.session_id, snapshot.title if snapshot is not None else None, reply,
@@ -555,6 +579,7 @@ class EventsRuntime:
             if cursor is not None:
                 monitor.cursor_line, monitor.cursor_at = cursor.cursor_line, cursor.cursor_at
                 monitor.first = False
+        return True
 
     def _detect_new_turn(self, monitor, info):
         if (info is None or info.state not in (AgentState.STARTING, AgentState.ASSISTANT_TURN)
