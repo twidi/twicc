@@ -172,7 +172,8 @@ def test_live_updates_include_interactions_states_and_resumes(tree):
     live(owner, home, spawn())
     child.delete()
     result = live(root, home, queue_entry())
-    assert len(result) == 10
+    assert isinstance(result, LiveSyncUpdates)
+    assert result.title_updated_session_ids == ()
     assert result.agent_link_updates[0].parent_session_id == owner.id
     assert result.agent_stopped_updates[0].agent_session_id == "ad123"
     assert result.found_compact_summary is False

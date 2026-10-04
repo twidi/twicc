@@ -282,7 +282,7 @@ NEW_SLIM_FIELDS = {
 DROPPED_FIELDS = {
     "tasks", "plan_paths", "goals", "layout", "last_started_at", "last_updated_at",
     "last_stopped_at", "last_viewed_at", "mtime", "self_cost", "subagents_cost",
-    "slug", "browser_url", "compute_version_up_to_date",
+    "slug", "browser_url", "compute_version_up_to_date", "has_pending_title",
 }
 
 

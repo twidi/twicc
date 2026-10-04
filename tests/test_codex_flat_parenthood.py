@@ -13,7 +13,7 @@ from django.db import connection
 from django.db.migrations.loader import MigrationLoader
 from watchfiles import Change
 
-from twicc.core.models import Project, Session
+from twicc.core.models import Project, Session, SessionItem
 from twicc.providers.codex.initial_sync import sync_all
 from twicc.providers.codex.sessions_watcher import CodexSessionsWatcher
 from twicc.providers.db_writer import CreateSessionPayload
@@ -136,19 +136,19 @@ def test_actual_migration_deep_chain_repairs_former_parents_and_projects():
     migration = importlib.import_module("twicc.core.migrations.0142_flatten_codex_subagent_parents")
     apps = MigrationLoader(connection).project_state([("core", "0141_mcp_oauth_source_hash")]).apps
     HistoricalSession = apps.get_model("core", "Session")
-    HistoricalProject = apps.get_model("core", "Project")
-    HistoricalItem = apps.get_model("core", "SessionItem")
-    project = HistoricalProject.objects.create(id="migration-project", total_cost=Decimal(1))
-    root = HistoricalSession.objects.create(id="migration-root", file_path="migration-root.jsonl", project=project, provider="codex", total_cost=Decimal(1))
-    HistoricalItem.objects.create(session=root, line_num=1, content="{}", cost=Decimal(1))
+    # The test DB has the current schema. Seed its required fields with current
+    # models; the migration still reads and updates through its historical apps.
+    project = Project.objects.create(id="migration-project", total_cost=Decimal(1))
+    root = Session.objects.create(id="migration-root", file_path="migration-root.jsonl", project=project, provider="codex", total_cost=Decimal(1))
+    SessionItem.objects.create(session=root, line_num=1, content="{}", cost=Decimal(1))
     parent = root
     descendants = []
     for depth in range(40):
-        child = HistoricalSession.objects.create(
+        child = Session.objects.create(
             id=f"migration-child-{depth}", file_path=f"child-{depth}.jsonl", project=project, provider="codex", type="subagent",
             parent_session=parent, self_cost=Decimal("0.5"), subagents_cost=Decimal("0.5"), total_cost=Decimal(1),
         )
-        HistoricalItem.objects.create(session=child, line_num=1, content="{}", cost=Decimal("0.5"))
+        SessionItem.objects.create(session=child, line_num=1, content="{}", cost=Decimal("0.5"))
         descendants.append(child)
         parent = child
     # Last leaf already has correct pre-migration aggregates.

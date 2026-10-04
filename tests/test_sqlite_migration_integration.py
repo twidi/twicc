@@ -230,6 +230,9 @@ def test_complete_fresh_install_rollback_146_and_populated_replay(disposable_db)
         executor = MigrationExecutor(db)
         executor.migrate(executor.loader.graph.leaf_nodes())
         assert_latest(db)
+        # Later migrations can rebuild tables and require a global FK check.
+        # The no-check contract here covers only the 147..149 upgrade window.
+        MigrationExecutor(db).migrate([SQUASH])
         with trace(db) as statements:
             MigrationExecutor(db).migrate([M146])
         assert check_sql(statements) == []
@@ -240,10 +243,13 @@ def test_complete_fresh_install_rollback_146_and_populated_replay(disposable_db)
         executor = MigrationExecutor(db)
         populate_items(db, executor.loader.project_state([M146]))
         with trace(db) as statements:
-            executor.migrate(executor.loader.graph.leaf_nodes("core"))
+            executor.migrate([SQUASH])
         assert check_sql(statements) == []
         assert_latest(db)
         assert db.connection.execute("SELECT count(*) FROM core_sessionitem").fetchone() == (10,)
+        executor = MigrationExecutor(db)
+        executor.migrate(executor.loader.graph.leaf_nodes())
+        assert_latest(db)
 
 
 def test_mixed_148_state_applies_original_149_and_replacement_bookkeeping(disposable_db, monkeypatch):
@@ -255,6 +261,19 @@ def test_mixed_148_state_applies_original_149_and_replacement_bookkeeping(dispos
         def before_new_squash(loader):
             load_disk(loader)
             loader.disk_migrations.pop(SQUASH)
+            # The simulated release also excludes migrations that depend on
+            # the absent replacement, including their transitive descendants.
+            removed = {SQUASH}
+            while True:
+                descendants = {
+                    key for key, migration in loader.disk_migrations.items()
+                    if any(dependency in removed for dependency in migration.dependencies)
+                }
+                if not descendants:
+                    break
+                for key in descendants:
+                    loader.disk_migrations.pop(key)
+                removed.update(descendants)
 
         with monkeypatch.context() as patch:
             patch.setattr(MigrationLoader, "load_disk", before_new_squash)

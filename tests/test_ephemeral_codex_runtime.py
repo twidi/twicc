@@ -25,6 +25,7 @@ pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.skipif(
 def test_runtime_ephemeral_transcript_and_final_answer(tmp_path, spawn_child):
     requests = []
     release_child = threading.Event()
+    child_requested = threading.Event()
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -33,10 +34,12 @@ def test_runtime_ephemeral_transcript_and_final_answer(tmp_path, spawn_child):
         def do_POST(self):
             body = orjson.loads(self.rfile.read(int(self.headers["Content-Length"])))
             requests.append(body)
-            if requests[0].get("client_metadata", {}).get("session_id") != body.get("client_metadata", {}).get(
-                "session_id"
+            if requests[0].get("client_metadata", {}).get("thread_id") != body.get("client_metadata", {}).get(
+                "thread_id"
             ):
-                release_child.wait(5)
+                child_requested.set()
+                if not release_child.wait(30):
+                    return
             if spawn_child and len(requests) == 1:
                 items = [
                     {
@@ -121,6 +124,9 @@ supports_websockets=false
             assert agent.ephemeral_usage.get("cost_usd", 0) > 0, [(e.method, type(e.payload).__name__) for e in events]
             if spawn_child:
                 assert agent._live_subagents, "No actual provider-created subagent"
+                # A spawned thread can still be idle before its first request.
+                # Hold its response until the test observes an active child.
+                assert await asyncio.to_thread(child_requested.wait, 10), "Child never requested the local model"
                 assert await agent._try_arm_subagent_hold() is True
                 child_ids = list(agent._live_subagents)
                 release_child.set()
@@ -136,6 +142,7 @@ supports_websockets=false
             assert not list(codex_home.rglob("rollout-*.jsonl"))
             assert not list((codex_home / "sessions").rglob("*.jsonl"))
         finally:
+            release_child.set()
             await codex.close()
 
     try:

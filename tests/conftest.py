@@ -1,6 +1,7 @@
 """Pytest configuration for Django tests."""
 
 import asyncio
+from collections import deque
 from pathlib import Path
 from typing import NamedTuple
 
@@ -54,6 +55,17 @@ def no_real_notification_delivery(monkeypatch):
         return True
 
     monkeypatch.setattr(apprise.Apprise, "async_notify", _swallow)
+
+
+@pytest.fixture(autouse=True)
+def fresh_title_auto_task_state(monkeypatch):
+    """Keep live-sync title requests from entering another test's workers."""
+    from twicc import title_auto_task
+
+    monkeypatch.setattr(title_auto_task, "_queued", deque())
+    monkeypatch.setattr(title_auto_task, "_pending", {})
+    monkeypatch.setattr(title_auto_task, "_running", set())
+    monkeypatch.setattr(title_auto_task, "_wake", None)
 
 
 @pytest.fixture(autouse=True)

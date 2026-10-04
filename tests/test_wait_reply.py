@@ -1518,6 +1518,7 @@ def test_create_session_hands_its_wait_arguments_over(monkeypatch, tmp_path, arg
     a new session's transcript is empty, so the wait must start at 0."""
     from twicc.cli import _wait_reply as wait_reply_module
     from twicc.cli._drop_request import transport
+    from twicc.cli._drop_request import bootstrap_local
     from twicc.cli._drop_request.polling import PollOutcome
 
     seen: dict = {}
@@ -1534,6 +1535,9 @@ def test_create_session_hands_its_wait_arguments_over(monkeypatch, tmp_path, arg
             pass
 
     monkeypatch.setattr(transport, "ensure_server_available", lambda: None)
+    monkeypatch.setattr(bootstrap_local, "read_synced_settings", lambda: {
+        "disabledProviders": [], "defaultProvider": "claude_code",
+    })
     monkeypatch.setattr(transport, "submit", lambda payload, *, kind: _Sub())
     monkeypatch.setattr(transport, "wait", lambda sub, timeout_seconds: PollOutcome(
         "created", {"session_id": "s", "provider": "claude_code", "project_id": "p"}, True,
