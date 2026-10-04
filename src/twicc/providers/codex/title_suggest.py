@@ -2,15 +2,12 @@
 Title suggestion service for Codex sessions using gpt-6-luna via the
 Codex SDK.
 
-Single-shot prompt: open an *ephemeral* thread (the SDK passes
-``ephemeral=True`` to ``thread/start`` so the rollout JSONL is never
-materialized on disk and the watcher doesn't pick up a stray file),
-issue one ``thread.turn(TextInput(prompt))``, collect the assistant
-text, close the transport. Approvals are bypassed at the server level
-via ``danger_full_access`` + ``approval_policy="never"`` because the
-title prompt is instructional only — Codex has no reason to call a
-tool, but the residual safety net keeps the run from freezing on an
-exotic approval request.
+Single-shot prompt through the hermetic Codex runner
+(``providers/codex/hermetic.py``): one *ephemeral* thread (so the rollout
+JSONL is never materialized on disk and the watcher doesn't pick up a stray
+file), read-only sandbox, no tool, one turn, then the transport is closed.
+The title prompt is instructional only, so the hermetic configuration leaves
+the model nothing to run.
 
 The retry / timeout / validation contract mirrors
 ``providers/claude_code/title_suggest.py`` so the WS-level surface
@@ -21,13 +18,11 @@ which provider it talked to.
 import asyncio
 import logging
 
-from openai_codex import TextInput
-from openai_codex.generated.v2_all import AskForApproval, ReasoningEffort, SandboxMode
+from openai_codex.generated.v2_all import ReasoningEffort
 
 from twicc.title_transcript import title_rejection_reasons
 
-from .bin import make_codex_config
-from .sdk_wrappers import TwiccAsyncCodex
+from .hermetic import prepare_hermetic_codex, run_hermetic_codex
 
 logger = logging.getLogger(__name__)
 
@@ -71,46 +66,6 @@ async def generate_title(user_message: str, system_prompt: str) -> str | None:
     return None
 
 
-def _extract_assistant_text(items: object) -> str:
-    """Concatenate the assistant text from an iterable of ``ThreadItem``.
-
-    Mirrors the ``assistant_text_from_turn`` helper used by the Codex SDK
-    examples (``sdk/python/examples/_bootstrap.py``); inlined and adapted
-    here because the SDK package doesn't export it and because we feed
-    it items collected from the live event stream rather than from a
-    persisted turn (ephemeral threads forbid ``includeTurns``). Keeps:
-
-    - ``agentMessage.text`` (the assembled agent message item), and
-    - ``message.content[*].text`` where ``role=='assistant'`` and the
-      content block is ``type=='output_text'`` (the OpenAI Responses-API
-      shape Codex re-emits).
-    """
-    chunks: list[str] = []
-    for item in items or []:
-        raw = item.model_dump(mode="json") if hasattr(item, "model_dump") else item
-        if not isinstance(raw, dict):
-            continue
-
-        item_type = raw.get("type")
-        if item_type == "agentMessage":
-            text = raw.get("text")
-            if isinstance(text, str) and text:
-                chunks.append(text)
-            continue
-
-        if item_type != "message" or raw.get("role") != "assistant":
-            continue
-
-        for content in raw.get("content") or []:
-            if not isinstance(content, dict) or content.get("type") != "output_text":
-                continue
-            text = content.get("text")
-            if isinstance(text, str) and text:
-                chunks.append(text)
-
-    return "".join(chunks)
-
-
 async def _call_codex(
     user_message: str, system_prompt: str, source: str = "unknown", attempt: int = 1,
 ) -> str | None:
@@ -129,54 +84,22 @@ async def _call_codex(
     """
     full_prompt = system_prompt.replace("{text}", user_message)
 
-    # Guarded, and outside the timeout below: resolving the config downloads the
-    # runtime when the cache was pruned. Unguarded, a failure would escape
-    # ``_call_codex`` as an exception instead of the documented ``None``,
-    # skipping both the retry and the WS handler's fallback to the other
-    # provider. Inside the timeout, a cold cache would burn the whole 15s
-    # budget meant for the model call.
+    # Guarded, and outside the timeout below: preparing the hermetic plan builds the catalogue and
+    # may download the runtime when the cache was pruned. Unguarded, a failure would escape
+    # ``_call_codex`` instead of the documented ``None``, skipping both the retry and the WS
+    # handler's fallback to the other provider.
     try:
-        codex = TwiccAsyncCodex(config=await make_codex_config())
+        plan = await prepare_hermetic_codex(TITLE_MODEL)
     except Exception as e:
-        logger.exception(
-            "Codex title suggestion: client unavailable (source=%s, attempt=%d/%d): %s",
-            source, attempt, MAX_RETRIES, e,
-        )
+        logger.exception("Codex title suggestion: client unavailable (source=%s, attempt=%d/%d): %s",
+                         source, attempt, MAX_RETRIES, e)
         return None
 
     async def _execute() -> str:
-        """Open an ephemeral thread, stream a single turn, collect the assistant text.
-
-        Ephemeral threads (``ephemeral=True``) skip the on-disk JSONL
-        rollout, which is what we want for a fire-and-forget title
-        prompt. The flip side is that the server refuses
-        ``thread.read(include_turns=True)`` for them, so the items
-        delivered as the turn ran are the only handle we get. We
-        therefore consume the live event stream (``turn.stream()``):
-        each ``item/completed`` event carries one assembled
-        ``ThreadItem`` we can hand to :func:`_extract_assistant_text`,
-        and ``turn/completed`` signals the end of the stream (the SDK
-        breaks the iterator there).
-        """
-        thread = await codex.thread_start_with_policy(
-            model=TITLE_MODEL,
-            ephemeral=True,
-            sandbox=SandboxMode.danger_full_access,
-            approval_policy=AskForApproval.model_validate("never"),
-        )
-        turn_handle = await thread.turn_with_policy(
-            TextInput(full_prompt),
-            effort=ReasoningEffort.low,
-        )
-
-        items: list[object] = []
-        async for event in turn_handle.stream():
-            if event.method == "item/completed":
-                item = getattr(event.payload, "item", None)
-                if item is not None:
-                    items.append(item)
-
-        return _extract_assistant_text(items).strip()
+        result = await run_hermetic_codex(plan, full_prompt, effort=ReasoningEffort.low)
+        if result.terminal_error is not None:
+            raise RuntimeError(f"Codex terminal error: {result.terminal_error!r}")
+        return result.text
 
     try:
         suggestion = await asyncio.wait_for(_execute(), timeout=SUGGESTION_TIMEOUT_SECONDS)
@@ -206,11 +129,3 @@ async def _call_codex(
             source, attempt, MAX_RETRIES, e,
         )
         return None
-    finally:
-        try:
-            await codex.close()
-        except Exception:
-            logger.debug(
-                "codex.close() failed while unwinding title suggestion",
-                exc_info=True,
-            )

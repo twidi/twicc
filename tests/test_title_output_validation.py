@@ -6,7 +6,6 @@ failed attempt: ``None``, one attempt consumed, the next one still made.
 """
 
 import logging
-from types import SimpleNamespace
 
 import pytest
 from asgiref.sync import async_to_sync
@@ -14,6 +13,7 @@ from asgiref.sync import async_to_sync
 from twicc.providers.claude_code import title_suggest as claude_title_suggest
 from twicc.providers.claude_code.hermetic import HermeticClaudeResult
 from twicc.providers.codex import title_suggest as codex_title_suggest
+from twicc.providers.codex.hermetic import HermeticCodexResult
 
 REPLY = "I will review the final task 7 changes. Plan and report paths are not available in this workspace"
 
@@ -33,23 +33,6 @@ async def _fake_run_hermetic_claude(prompt, *, model):
 class _FakeCodex:
     answers: list[str] = []
     calls = 0
-
-    async def thread_start_with_policy(self, **_kwargs):
-        return self
-
-    async def turn_with_policy(self, *_args, **_kwargs):
-        type(self).calls += 1
-        return self
-
-    async def stream(self):
-        text = type(self).answers[min(type(self).calls, len(type(self).answers)) - 1]
-        yield SimpleNamespace(
-            method="item/completed",
-            payload=SimpleNamespace(item={"type": "agentMessage", "text": text}),
-        )
-
-    async def close(self):
-        pass
 
 
 @pytest.fixture
@@ -85,12 +68,17 @@ def claude_client(monkeypatch):
 
 @pytest.fixture
 def codex_client(monkeypatch):
-    async def _config():
-        return None
+    async def _prepare(model):
+        return object()
+
+    async def _run(plan, prompt, *, effort):
+        _FakeCodex.calls += 1
+        text = _FakeCodex.answers[min(_FakeCodex.calls, len(_FakeCodex.answers)) - 1]
+        return HermeticCodexResult(text, None, 670, {})
 
     _FakeCodex.calls = 0
-    monkeypatch.setattr(codex_title_suggest, "make_codex_config", _config)
-    monkeypatch.setattr(codex_title_suggest, "TwiccAsyncCodex", lambda config: _FakeCodex())
+    monkeypatch.setattr(codex_title_suggest, "prepare_hermetic_codex", _prepare)
+    monkeypatch.setattr(codex_title_suggest, "run_hermetic_codex", _run)
     return _FakeCodex
 
 

@@ -30,17 +30,16 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 from pathlib import Path
 from typing import NamedTuple
 
 import orjson
-from openai_codex import TextInput
-from openai_codex.generated.v2_all import AskForApproval, ReasoningEffort, SandboxMode
+from openai_codex.generated.v2_all import ReasoningEffort
 
 from twicc.provider_homes import codex_home
 
-from .bin import make_codex_config
-from .sdk_wrappers import TwiccAsyncCodex
+from .hermetic import prepare_hermetic_codex, run_hermetic_codex
 
 logger = logging.getLogger(__name__)
 
@@ -297,30 +296,29 @@ def refresh_token_via_codex_sdk(last_refresh: str) -> bool:
 
 
 async def _codex_sdk_throwaway_call() -> None:
-    """Run one ephemeral AsyncCodex turn against the bundled binary.
+    """Run one hermetic Codex turn against the bundled binary.
 
-    The point is the side effect: launching the codex-app-server
-    subprocess, walking its initialize handshake, and running a real
-    turn forces the binary to validate its OAuth tokens against the
-    upstream API. A stale ``access_token`` triggers the binary's
-    built-in refresh-and-retry path, which rewrites the credentials
-    store. We drain the stream so the turn completes cleanly and the
-    transport closes without leaking the subprocess.
+    The point is the side effect: launching the codex-app-server subprocess, walking its initialize handshake,
+    and running a real turn forces the binary to validate its OAuth tokens against the upstream API. A stale
+    ``access_token`` triggers the binary's built-in refresh-and-retry path, which rewrites the credentials
+    store. The call is hermetic (read-only, no tool, one turn): only the authenticated round trip matters.
     """
-    config = await make_codex_config()
-    async with TwiccAsyncCodex(config=config) as codex:
-        thread = await codex.thread_start_with_policy(
-            model=_REFRESH_MODEL,
-            ephemeral=True,
-            sandbox=SandboxMode.danger_full_access,
-            approval_policy=AskForApproval.model_validate("never"),
-        )
-        turn_handle = await thread.turn_with_policy(
-            TextInput(_REFRESH_PROMPT),
-            effort=ReasoningEffort.low,
-        )
-        async for _event in turn_handle.stream():
-            pass  # drain — we don't care about the reply, just the side effect
+    plan = await prepare_hermetic_codex(_REFRESH_MODEL)
+    await run_hermetic_codex(plan, _REFRESH_PROMPT, effort=ReasoningEffort.low)
+
+
+_UNAUTHORIZED_RE = re.compile(r"status 40[13]|unauthorized", re.IGNORECASE)
+
+
+def is_unauthorized_exception(exc: BaseException) -> bool:
+    """Best effort: does this exception (or its cause chain) look like an HTTP 401/403 from the API?"""
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if _UNAUTHORIZED_RE.search(str(exc)):
+            return True
+        exc = exc.__cause__
+    return False
 
 
 async def probe_auth_via_codex_sdk() -> bool | None:
@@ -341,44 +339,28 @@ async def probe_auth_via_codex_sdk() -> bool | None:
     """
     # Lazy imports: ``agent.agent`` pulls this module at import time, so reusing
     # its classifier here can only be done at call time to avoid an import cycle.
-    from openai_codex.generated.v2_all import ErrorNotification
-
     from .agent.agent import CodexAgent
 
     result: bool | None = None
 
     async def _execute() -> None:
         nonlocal result
-        config = await make_codex_config()
-        async with TwiccAsyncCodex(config=config) as codex:
-            thread = await codex.thread_start_with_policy(
-                model=_REFRESH_MODEL,
-                ephemeral=True,
-                sandbox=SandboxMode.danger_full_access,
-                approval_policy=AskForApproval.model_validate("never"),
-            )
-            turn_handle = await thread.turn_with_policy(
-                TextInput(_REFRESH_PROMPT),
-                effort=ReasoningEffort.low,
-            )
-            async for event in turn_handle.stream():
-                payload = getattr(event, "payload", None)
-                # A non-retryable ``error`` notification is terminal. Auth ones
-                # mean "not logged in"; any other terminal error is ambiguous
-                # for an auth probe, so leave the state untouched (None).
-                if (
-                    getattr(event, "method", None) == "error"
-                    and isinstance(payload, ErrorNotification)
-                    and not payload.will_retry
-                ):
-                    result = False if CodexAgent._is_unauthorized_error(payload) else None
-                    return
-            # Stream drained with no terminal error → credentials accepted.
-            result = True
+        plan = await prepare_hermetic_codex(_REFRESH_MODEL)
+        reply = await run_hermetic_codex(plan, _REFRESH_PROMPT, effort=ReasoningEffort.low)
+        error = reply.terminal_error
+        if error is not None:
+            # A non-retryable ``error`` notification is terminal. Auth ones mean "not logged in";
+            # any other terminal error is ambiguous for an auth probe (None).
+            result = False if CodexAgent._is_unauthorized_error(error) else None
+            return
+        result = True
 
     try:
         await asyncio.wait_for(_execute(), timeout=_TOKEN_REFRESH_TIMEOUT)
     except Exception as e:
-        logger.warning("Codex auth probe via SDK turn was inconclusive: %s", e)
-
+        if is_unauthorized_exception(e):
+            result = False
+            logger.warning("Codex auth probe was refused as unauthorized before the turn: %s", e)
+        else:
+            logger.warning("Codex auth probe via SDK turn was inconclusive: %s", e)
     return result
