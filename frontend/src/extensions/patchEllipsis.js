@@ -1,9 +1,10 @@
 // frontend/src/extensions/patchEllipsis.js
 // Ellipsis separator widget for patch-only diffs (no originalFile).
-// Replaces sentinel lines (null entries in lineMap) with a simple "···" block,
-// reusing the .cm-collapsedLines style from smartCollapseUnchanged.
+// Replaces sentinel lines (null entries in lineMap) with a static "···" bar,
+// the non-interactive twin of the bar of smartCollapseUnchanged (shared in collapsedBar.js).
 
 import { EditorView, Decoration, WidgetType } from '@codemirror/view'
+import { BAR_HEIGHT_SOLO, collapsedBarTheme, createEllipsisBar } from './collapsedBar'
 
 // ─── Widget ────────────────────────────────────────────────────────────────
 
@@ -11,23 +12,13 @@ class EllipsisSeparatorWidget extends WidgetType {
     eq() { return true }
 
     toDOM() {
-        const div = document.createElement('div')
-        div.className = 'cm-collapsedLines cm-patchEllipsis'
-        div.textContent = '···'
-        return div
+        return createEllipsisBar()
     }
 
-    get estimatedHeight() { return 27 }
+    get estimatedHeight() { return BAR_HEIGHT_SOLO }
 }
 
 const ellipsisWidget = new EllipsisSeparatorWidget()
-
-const baseStyles = EditorView.baseTheme({
-    '.cm-patchEllipsis': {
-        cursor: 'default',
-        justifyContent: 'center',
-    },
-})
 
 // ─── Entry point ───────────────────────────────────────────────────────────
 
@@ -60,6 +51,6 @@ export function patchEllipsis(lineMap) {
             }
             return Decoration.set(decorations)
         }),
-        baseStyles,
+        collapsedBarTheme,
     ]
 }

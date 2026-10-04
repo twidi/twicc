@@ -739,14 +739,4 @@ html.wa-dark {
 .cm-editor .cm-activeLineGutter {
     background: var(--glass-item-highlight) !important;
 }
-
-  
-/* Collapsed unchanged lines separator (dark mode only, unscoped for .wa-dark ancestor) */
-html.wa-dark .diff-editor .cm-collapsedLines {
-    background: var(--wa-color-surface-lowered);
-    color: var(--wa-color-text-quiet)
-}
-html.wa-dark .diff-editor .cm-collapsedLines .cm-collapsedLines-action:hover {
-    color: var(--wa-color-text-default);
-}
 </style>

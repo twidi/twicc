@@ -5,6 +5,7 @@
 import { StateField, StateEffect } from '@codemirror/state'
 import { EditorView, Decoration, WidgetType } from '@codemirror/view'
 import { getChunks, mergeViewSiblings } from '@codemirror/merge'
+import { BAR_HEIGHT, BAR_HEIGHT_SOLO, collapsedBarTheme, createCollapsedBar, destroyBar } from './collapsedBar'
 
 // ─── State Effects ─────────────────────────────────────────────────────────
 
@@ -50,73 +51,42 @@ function mapPos(pos, chunks, isA) {
 class SmartCollapseWidget extends WidgetType {
     /**
      * @param {number} lines - Total hidden lines
-     * @param {boolean} canExpandTop - Show "Show N lines" button at top
-     * @param {boolean} canExpandBottom - Show "Show N lines" button at bottom
+     * @param {boolean} canShowAbove - Offer the button revealing lines above the bar
+     * @param {boolean} canShowBelow - Offer the button revealing lines below the bar
      * @param {number} step - Lines to reveal per click
      */
-    constructor(lines, canExpandTop, canExpandBottom, step) {
+    constructor(lines, canShowAbove, canShowBelow, step) {
         super()
         this.lines = lines
-        this.canExpandTop = canExpandTop
-        this.canExpandBottom = canExpandBottom
+        this.canShowAbove = canShowAbove
+        this.canShowBelow = canShowBelow
         this.step = step
     }
 
     eq(other) {
         return this.lines === other.lines
-            && this.canExpandTop === other.canExpandTop
-            && this.canExpandBottom === other.canExpandBottom
+            && this.canShowAbove === other.canShowAbove
+            && this.canShowBelow === other.canShowBelow
             && this.step === other.step
     }
 
     toDOM(view) {
-        const outer = document.createElement('div')
-        outer.className = 'cm-collapsedLines'
-
-        const parts = []
-
-        // "▼ Show N lines" — reveal lines below the separator (from bottom of collapsed zone)
-        if (this.canExpandTop) {
-            const span = document.createElement('span')
-            span.className = 'cm-collapsedLines-action'
-            span.textContent = `▼ Show ${this.step} lines`
-            span.addEventListener('click', e => {
-                e.stopPropagation()
-                this._dispatch(view, e.target, expandBottom.of({ pos: 0, count: this.step }))
-            })
-            parts.push(span)
+        // "Above" reveals the top of the collapsed zone, "below" its bottom; the bar sits between.
+        const effects = {
+            above: () => expandTop.of({ pos: 0, count: this.step }),
+            below: () => expandBottom.of({ pos: 0, count: this.step }),
+            all: () => expandAll.of(0),
         }
-
-        // "Show all N unchanged lines" — always present
-        const showAll = document.createElement('span')
-        showAll.className = 'cm-collapsedLines-action'
-        showAll.textContent = view.state.phrase('Show all $ unchanged lines', this.lines)
-        showAll.addEventListener('click', e => {
-            e.stopPropagation()
-            this._dispatch(view, e.target, expandAll.of(0))
+        return createCollapsedBar({
+            lines: this.lines,
+            canShowAbove: this.canShowAbove,
+            canShowBelow: this.canShowBelow,
+            step: this.step,
+            onAction: (action, target) => this._dispatch(view, target, effects[action]()),
         })
-        parts.push(showAll)
-
-        // "Show N lines ▲" — reveal lines above the separator (from top of collapsed zone)
-        if (this.canExpandBottom) {
-            const span = document.createElement('span')
-            span.className = 'cm-collapsedLines-action'
-            span.textContent = `Show ${this.step} lines ▲`
-            span.addEventListener('click', e => {
-                e.stopPropagation()
-                this._dispatch(view, e.target, expandTop.of({ pos: 0, count: this.step }))
-            })
-            parts.push(span)
-        }
-
-        // Assemble with " · " separators
-        parts.forEach((part, i) => {
-            if (i > 0) outer.appendChild(document.createTextNode(' · '))
-            outer.appendChild(part)
-        })
-
-        return outer
     }
+
+    destroy(dom) { destroyBar(dom) }
 
     /**
      * Dispatch an effect on the current view, and synchronize with sibling
@@ -159,7 +129,7 @@ class SmartCollapseWidget extends WidgetType {
 
     ignoreEvent(e) { return e instanceof MouseEvent }
 
-    get estimatedHeight() { return 27 }
+    get estimatedHeight() { return this.canShowAbove || this.canShowBelow ? BAR_HEIGHT : BAR_HEIGHT_SOLO }
 }
 
 // ─── StateField ────────────────────────────────────────────────────────────
@@ -277,24 +247,6 @@ function buildSmartCollapsedRanges(state, margin, minSize, step) {
     return Decoration.set(ranges)
 }
 
-// ─── Base styles ───────────────────────────────────────────────────────────
-
-const baseStyles = EditorView.baseTheme({
-    // Override native cursor: pointer on the whole container; only action spans are clickable
-    '.cm-collapsedLines': {
-        cursor: 'default',
-        display: 'flex',
-        flexWrap: 'wrap',
-        justifyContent: 'space-between',
-    },
-    '.cm-collapsedLines .cm-collapsedLines-action': {
-        cursor: 'pointer',
-    },
-    '.cm-collapsedLines .cm-collapsedLines-action:hover': {
-        textDecoration: 'underline',
-    },
-})
-
 // ─── Entry point ───────────────────────────────────────────────────────────
 
 /**
@@ -312,6 +264,6 @@ export function smartCollapseUnchanged({ margin = 3, minSize = 4, step = 20 } = 
     const field = createSmartCollapsedRanges(margin, minSize, step)
     return [
         field.init(state => buildSmartCollapsedRanges(state, margin, minSize, step)),
-        baseStyles,
+        collapsedBarTheme,
     ]
 }
