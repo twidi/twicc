@@ -11,11 +11,12 @@ import builtins
 import io
 import math
 import struct
+import warnings
 import zlib
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageFile
 
 from twicc.core.services.attachments import images
 from twicc.core.services.attachments.images import normalize_image, probe_image_header
@@ -394,7 +395,6 @@ def patch_jpeg_size(data: bytes, width: int, height: int) -> bytes:
     return data[: sof + 5] + struct.pack(">HH", height, width) + data[sof + 9 :]
 
 
-@pytest.mark.filterwarnings("ignore::PIL.Image.DecompressionBombWarning")
 def test_jpeg_over_100_megapixels_is_a_file_before_decode(tmp_path, monkeypatch):
     path = write(tmp_path, "huge.jpg", patch_jpeg_size(encode(gradient((16, 16)), "JPEG"), 12000, 9000))
     assert probe_image_header(path)[1:3] == (12000, 9000)
@@ -430,6 +430,38 @@ def test_gif_over_100_megapixels_is_a_file_without_pillow(tmp_path, monkeypatch)
     spy = OpenSpy(monkeypatch, fail=True)
     assert normalize_image(path, target=codex, remaining_budget=BUDGET) is None
     assert spy.calls == []
+
+
+def test_95_megapixel_image_decodes_without_a_decompression_bomb_warning(tmp_path):
+    """Pillow warns from 89.5 MP; our own limit is 100 MP, so an accepted image must not warn."""
+    width, height = 10000, 9500
+    path = write(tmp_path, "big.png", encode(Image.new("L", (width, height), 128), "PNG", compress_level=1))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", Image.DecompressionBombWarning)
+        part = normalize_image(path, target=codex, remaining_budget=BUDGET)
+    assert part is not None
+    assert part.media_type == "image/png"
+    assert max(decoded(part).size) == images.long_edge(codex)
+
+
+def test_jpeg_header_probe_at_95_megapixels_emits_no_warning(tmp_path):
+    path = write(tmp_path, "big.jpg", patch_jpeg_size(encode(gradient((16, 16)), "JPEG"), 10000, 9500))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", Image.DecompressionBombWarning)
+        assert probe_image_header(path)[1:3] == (10000, 9500)
+
+
+def test_pillow_size_over_100_megapixels_is_refused_before_decode(tmp_path, monkeypatch):
+    """Even when the header probe saw a smaller size, the size Pillow opens is checked before decoding."""
+    path = write(tmp_path, "huge.jpg", patch_jpeg_size(encode(gradient((16, 16)), "JPEG"), 12000, 9000))
+    loads = []
+    monkeypatch.setattr(Image.Image, "load", lambda image: loads.append(image.size))
+    monkeypatch.setattr(ImageFile.ImageFile, "load", lambda image: loads.append(image.size))
+    header = images.ImageHeader("JPEG", 100, 100, False, "RGB")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", Image.DecompressionBombWarning)
+        assert images._decode_native(path, header, 2000) is None
+    assert loads == []
 
 
 # ── Budget and per-image limit before any decode ─────────────────────────────

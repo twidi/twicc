@@ -655,6 +655,79 @@ def test_content_refuses_a_promoted_file_outside_its_attachments_dir(client, tmp
     assert run(scenario()) == [404, 404, 404]
 
 
+def _swap_before_open(monkeypatch, swap):
+    """Run *swap(path)* between the path validation and the open of the streamed file."""
+    real_open = attachment_views._open_content
+
+    def swapping_open(path):
+        swap(Path(path))
+        return real_open(path)
+
+    monkeypatch.setattr(attachment_views, "_open_content", swapping_open)
+
+
+def test_content_refuses_a_file_replaced_between_validation_and_open(client, ref, tmp_path, monkeypatch):
+    make_ready(ref, name="x.txt", content=b"validated")
+    other = tmp_path / "other.txt"
+    other.write_bytes(b"swapped in")
+    _swap_before_open(monkeypatch, lambda path: os.replace(other, path))
+    assert run(get_content(client, ref)).status_code == 404
+
+
+def test_content_refuses_a_symlink_swapped_in_before_open(client, ref, tmp_path, monkeypatch):
+    make_ready(ref, name="x.txt", content=b"validated")
+    secret = tmp_path / "secret.txt"
+    secret.write_bytes(b"secret")
+
+    def to_symlink(path):
+        path.unlink()
+        path.symlink_to(secret)
+
+    _swap_before_open(monkeypatch, to_symlink)
+    assert run(get_content(client, ref)).status_code == 404
+
+
+def test_content_refuses_a_fifo_swapped_in_before_open_without_blocking(client, ref, monkeypatch):
+    make_ready(ref, name="x.txt", content=b"validated")
+
+    def to_fifo(path):
+        path.unlink()
+        os.mkfifo(path)
+
+    _swap_before_open(monkeypatch, to_fifo)
+    assert run(get_content(client, ref)).status_code == 404
+
+
+def test_content_refuses_a_promoted_file_swapped_before_open(client, ref, tmp_path, monkeypatch):
+    make_promoted(ref, content=b"%PDF-1.4 promoted")
+    other = tmp_path / "other.pdf"
+    other.write_bytes(b"%PDF-1.4 other")
+    _swap_before_open(monkeypatch, lambda path: os.replace(other, path))
+    assert run(get_content(client, ref)).status_code == 404
+
+
+def test_content_media_type_comes_from_the_streamed_file(client, ref, monkeypatch):
+    """The type is sniffed from the descriptor that is streamed, never from a second open by name."""
+    make_ready(ref, name="x.txt", content=b"plain text")
+    real_open = open
+
+    def no_reopen(path, *args, **kwargs):
+        if str(path).endswith("x.txt"):
+            raise AssertionError("the content was reopened by name")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", no_reopen)
+
+    async def scenario():
+        response = await get_content(client, ref)
+        return response, await read_all(response)
+
+    response, body = run(scenario())
+    assert response.status_code == 200
+    assert body == b"plain text"
+    assert response["Content-Type"] == "text/plain; charset=utf-8"
+
+
 # ── Content: streaming ────────────────────────────────────────────────────────
 
 

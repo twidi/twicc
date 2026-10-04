@@ -789,7 +789,13 @@ class CodexAgentManager(BaseAgentManager):
         can apply the latest model, effort, permission mode, and service tier.
         Fast mode is also persisted through ``thread/settings/update`` for
         Codex-owned continuations that do not pass through TwiCC's turn path.
+
+        A resume never receives ``prepared_attachments``: its canonical id is
+        known before the lock, so its attachments are finished there and travel
+        as the start ``content``. Passing them here is a programming error.
         """
+        if resume and prepared_attachments is not None:
+            raise ValueError("prepared_attachments are only finished by a new session, never by a resume")
         config = await make_codex_config(cwd=cwd)
         if ephemeral:
             config.config_overrides = (*config.config_overrides, "features.plugins=false")
@@ -916,7 +922,6 @@ class CodexAgentManager(BaseAgentManager):
                     config=thread_config,
                     service_tier=service_tier,
                 )
-                initial_content = _finish_initial_attachments(prepared_attachments, thread.id, initial_text)
             else:
                 # Resolve the user's selected_model alias (e.g. "gpt",
                 # "gpt-5.4", "gpt-mini") to the SDK full name the Codex CLI

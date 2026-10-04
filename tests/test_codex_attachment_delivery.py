@@ -704,6 +704,25 @@ def test_new_session_without_a_plan_keeps_the_legacy_factory_call(monkeypatch, l
     assert started[0][4] is None
 
 
+def test_resume_factory_refuses_prepared_attachments_before_spawning(monkeypatch):
+    """A resume finishes its attachments before the lock (``content``): never inside the factory."""
+    events: list = []
+    codex = _install_creation_fakes(monkeypatch, events, "canonical-5")
+    manager = _manager(events)
+    spawned: list = []
+    monkeypatch.setattr(manager_module, "TwiccAsyncCodex", lambda *, config: spawned.append(config) or codex)
+
+    with pytest.raises(ValueError, match="resume"):
+        asyncio.run(
+            manager._create_agent(
+                "canonical-5", "project-id", "/project", resume=True,
+                settings=AgentSettings(permission_mode="yolo"), prepared_attachments=object(), initial_text="hi",
+            )
+        )
+    assert spawned == []
+    assert events == []
+
+
 @pytest.mark.usefixtures("lanes")
 def test_retry_onto_another_canonical_id_copies_an_independent_artifact(root, monkeypatch):  # noqa: F811
     from tests.test_composer_attachment_commit import plan_of

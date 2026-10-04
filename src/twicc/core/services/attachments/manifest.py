@@ -18,8 +18,12 @@ FILE_LINE_PREFIX = "file = "
 
 KINDS = ("image", "PDF", "text", "video", "audio", "other")
 
+# ASCII digits only, without leading zeros (the builder never emits anything else). The hybrid
+# path keeps Unicode-aware ``\S``, matching the builder's Unicode whitespace check.
 _ENTRY_RE = re.compile(
-    r"(\d+)\. (.+) \((image|PDF|text|video|audio|other) (\d+) of (\d+), (inline|file)\)(?:: @(\S+))?"
+    r"([1-9]\d*)\. (.+) \((image|PDF|text|video|audio|other) ([1-9]\d*) of ([1-9]\d*), (inline|file)\)"
+    r"(?:: @((?u:\S+)))?",
+    re.ASCII,
 )
 _ENTITY_RE = re.compile(r"&(amp|lt|gt|#64);")
 _ENTITY_CHARS = {"amp": "&", "lt": "<", "gt": ">", "#64": "@"}

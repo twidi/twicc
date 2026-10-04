@@ -476,6 +476,41 @@ def test_failure_after_a_durable_tombstone_keeps_the_promoted_file(root, monkeyp
     assert load_entry(ref).promoted.final_name == "notes.txt"
 
 
+def test_unreadable_landed_tombstone_keeps_the_promoted_file(root, monkeypatch):  # noqa: F811
+    """The marker rename landed, its fsync failed and the read-back fails too: never drop the file."""
+    ref, entry, source = stage(root)
+    real_fsync_dir = staging.fsync_dir
+    real_read_bytes = Path.read_bytes
+    marker = entry / "promoted.json"
+
+    def failing_entry_fsync(directory):
+        if Path(directory) == entry and marker.exists():
+            raise oserror(errno.EIO)
+        return real_fsync_dir(directory)
+
+    def failing_marker_read(path):
+        if path == marker and marker.exists():
+            raise oserror(errno.EIO)
+        return real_read_bytes(path)
+
+    monkeypatch.setattr(staging, "fsync_dir", failing_entry_fsync)
+    monkeypatch.setattr(Path, "read_bytes", failing_marker_read)
+    with pytest.raises(SendDeliveryError) as exc:
+        commit(plan_of((ref, "text", None)), "s1")
+    monkeypatch.setattr(Path, "read_bytes", real_read_bytes)
+    monkeypatch.setattr(staging, "fsync_dir", real_fsync_dir)
+
+    # The original fsync error surfaces, not a masking one.
+    assert exc.value.code == "attachment_commit_failed"
+    final = attachments_dir("s1") / "notes.txt"
+    assert final.read_bytes() == b"notes"
+    assert (entry / "ready.json").exists()
+    assert promoted_marker(entry)["final_name"] == "notes.txt"
+    reloaded = load_entry(ref)
+    assert reloaded.promoted is not None
+    assert reloaded.promoted.final_name == "notes.txt"
+
+
 def test_other_session_retry_after_a_tombstone_failure_shares_no_inode(root, monkeypatch):  # noqa: F811
     ref, entry, source = stage(root)
     real_write_marker = staging.write_marker

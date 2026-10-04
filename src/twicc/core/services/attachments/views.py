@@ -17,6 +17,7 @@ import functools
 import io
 import logging
 import os
+import stat
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -88,8 +89,18 @@ def _path_ref(bucket: str, attachment_id: str) -> AttachmentRef | None:
 
 
 def _open_content(path: Path) -> io.RawIOBase:
-    """Open the bytes to stream (unbuffered: each read is one bounded ``read`` call)."""
-    return open(path, "rb", buffering=0)
+    """Open the bytes to stream (unbuffered: each read is one bounded ``read`` call).
+
+    ``O_NOFOLLOW``: a final component swapped for a symlink after the path validation fails to open.
+    ``O_NONBLOCK``: a FIFO swapped in never blocks the open (the caller then refuses any non-regular
+    file); it changes nothing for the reads of a regular file.
+    """
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+    try:
+        return io.FileIO(fd, "rb", closefd=True)
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 class FileStream:
@@ -124,20 +135,36 @@ class FileStream:
 
 
 def _prepare_content(ref: AttachmentRef) -> tuple[io.RawIOBase, int, str, bool, str] | None:
-    """Open the entry's bytes (blocking): ``(file, size, media type, inline, name)``, ``None`` → 404."""
+    """Open the entry's bytes (blocking): ``(file, size, media type, inline, name)``, ``None`` → 404.
+
+    The confined path is validated, then reopened by name: the opened descriptor must be the very
+    file validated (same device and inode, a regular file), so a swap in between is refused. The
+    media type is sniffed from that descriptor.
+    """
     try:
         entry = staging.load_entry(ref)
         path = staging.content_location(entry)
-        media_type, inline = staging.content_media_type(entry)
+        validated = os.lstat(path)
+        file = _open_content(path)
     except (staging.AttachmentError, OSError):
         return None
-    file = _open_content(path)
     try:
-        size = os.fstat(file.fileno()).st_size
+        opened = os.fstat(file.fileno())
+        if (
+            not stat.S_ISREG(validated.st_mode)
+            or not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (validated.st_dev, validated.st_ino)
+        ):
+            file.close()
+            return None
+        media_type, inline = staging.content_media_type(entry, file.fileno())
+    except OSError:
+        file.close()
+        return None
     except BaseException:
         file.close()
         raise
-    return file, size, media_type, inline, entry.filename
+    return file, opened.st_size, media_type, inline, entry.filename
 
 
 async def _content(ref: AttachmentRef) -> HttpResponse:

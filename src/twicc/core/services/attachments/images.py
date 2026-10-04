@@ -244,8 +244,19 @@ def probe_image_header(path: Path) -> ImageHeader | None:
 
 
 def _open_image(path: Path, image_format: str) -> Image.Image:
-    """Open *path* lazily with the single Pillow plugin of *image_format* (a JPEG may come back as MPO)."""
-    return Image.open(path, formats=(image_format,))
+    """Open *path* lazily with the single Pillow plugin of *image_format* (a JPEG may come back as MPO).
+
+    The plugin factory is called directly instead of ``Image.open``: its decompression-bomb check
+    warns from 89.5 MP (``Image.MAX_IMAGE_PIXELS``), below our own 100 MP limit, and that threshold
+    is process-global (other Pillow users rely on it), so it is never changed. Our limit is enforced
+    instead: on the header facts before any open, and on the opened size before any decode
+    (:func:`_decode_native`). Nothing is decoded here.
+    """
+    if image_format not in Image.OPEN:
+        Image.init()
+    factory, _accept = Image.OPEN[image_format]
+    # A path argument: the image owns its file, and closes it with the image.
+    return factory(os.fspath(path), None)
 
 
 def _resized_size(width: int, height: int, edge: int) -> tuple[int, int]:
@@ -299,8 +310,12 @@ def _decode_native(path: Path, header: ImageHeader, edge: int) -> tuple[bytes, s
     returned; above it the image is transposed, resized and re-encoded.
     """
     with _open_image(path, header.format) as image:
+        if image.width * image.height > MAX_PIXELS:
+            return None  # the size Pillow opened, not only the probed header: never decode past the limit
         image.verify()
     with _open_image(path, header.format) as image:
+        if image.width * image.height > MAX_PIXELS:
+            return None
         # The GIF animation probe skips through the first frame's data: only now.
         if header.format == "GIF" and getattr(image, "is_animated", False):
             return None

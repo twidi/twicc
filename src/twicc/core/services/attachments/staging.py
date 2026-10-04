@@ -327,7 +327,7 @@ def _looks_like_markup(head: bytes) -> bool:
     return head.removeprefix(b"\xef\xbb\xbf").lstrip()[:1] == b"<"
 
 
-def content_media_type(entry: StagedEntry) -> tuple[str, bool]:
+def content_media_type(entry: StagedEntry, fd: int | None = None) -> tuple[str, bool]:
     """``(media type, inline)`` for the content endpoint, from at most the first 64 KiB of the bytes.
 
     The kind comes from the bounded detector of spec §6.4. Inline only for raster images (PNG, JPEG,
@@ -335,15 +335,22 @@ def content_media_type(entry: StagedEntry) -> tuple[str, bool]:
     and text that is markup or script (HTML, SVG, XML, JavaScript), is ``application/octet-stream``
     served as an attachment. The type always comes from the bytes: a file name can only refuse
     inline, never grant it.
+
+    With *fd*, the bytes come from that already open descriptor (positional reads: its offset is
+    left untouched), so the type describes exactly the file that is streamed.
     """
     # Imported here so the planner can import this module without an import cycle.
     from twicc.core.services.attachments import images, planner
 
-    path = content_location(entry)
-    # One open for the head and the size, so both describe the same file.
-    with open(path, "rb") as file:
-        head = file.read(planner.HEAD_BYTES)
-        size = os.fstat(file.fileno()).st_size
+    if fd is not None:
+        head = os.pread(fd, planner.HEAD_BYTES, 0)
+        size = os.fstat(fd).st_size
+    else:
+        path = content_location(entry)
+        # One open for the head and the size, so both describe the same file.
+        with open(path, "rb") as file:
+            head = file.read(planner.HEAD_BYTES)
+            size = os.fstat(file.fileno()).st_size
     kind = planner.detect_kind_from_head(head, entry.filename, size)
     if kind == planner.KIND_IMAGE:
         image_format = images.sniff_image_format(head)
@@ -482,10 +489,16 @@ def _release_unrecorded_claim(staged: Path, final: Path) -> None:
     The claim is a hard link of the still-ready staged file: left behind, it would be an orphan
     artifact sharing that file's inode with the next promotion, possibly into another session
     (spec §7.1). A tombstone that already names *final* (its rename landed, a later sync failed)
-    keeps it.
+    keeps it. A tombstone that exists but cannot be read back may name *final*: keep it too
+    (an orphan artifact is recoverable, a tombstone naming a removed file is not).
     """
     recorded = _read_json(staged / PROMOTED_MARKER)
-    if recorded and recorded.get("final_path") == str(final):
+    if recorded is not None and not recorded:
+        logger.warning(
+            "Composer attachments: cannot read back %s, keeping the claim %s", staged / PROMOTED_MARKER, final
+        )
+        return
+    if recorded is not None and recorded.get("final_path") == str(final):
         return
     try:
         os.unlink(final)

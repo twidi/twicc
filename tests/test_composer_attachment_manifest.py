@@ -214,6 +214,38 @@ def test_parse_rejects_bad_entries():
     assert parse_manifest(good.replace("1. a.png (", "1.  (")) is None
 
 
+@pytest.mark.parametrize(
+    "old, new",
+    [
+        ("1. a.png (image 1 of 1, inline)", "١. a.png (image ١ of 01, inline)"),
+        ("1. a.png", "١. a.png"),
+        ("image 1 of 1", "image ١ of 1"),
+        ("image 1 of 1", "image 1 of ١"),
+        ("1. a.png", "01. a.png"),
+        ("image 1 of 1", "image 01 of 1"),
+        ("image 1 of 1", "image 1 of 01"),
+        ("image 1 of 1", "image 0 of 1"),
+    ],
+)
+def test_parse_rejects_unicode_digits_and_leading_zeros(old, new):
+    good = _good()
+    assert parse_manifest(good) is not None
+    assert parse_manifest(good.replace(old, new)) is None
+
+
+def test_parse_keeps_unicode_whitespace_out_of_hybrid_paths():
+    m = manifest(entry(1, "a.png", "image", 1, 1, "inline"), directory=None)
+    hybrid = build_manifest(m, hybrid_paths=("/d/hybrid/s/att_0123456789ab.png",))
+    assert parse_manifest(hybrid.replace("att_", "att ")) is None
+
+
+def test_round_trip_multi_digit_numbers():
+    entries = [entry(n, f"f{n}.txt", "text", n, 12, "file", f"f{n}.txt") for n in range(1, 13)]
+    parsed = parse_manifest(build_manifest(manifest(*entries)))
+    assert parsed is not None
+    assert parsed.entries == tuple(entries)
+
+
 def test_parse_rejects_hybrid_inconsistencies():
     m = manifest(entry(1, "a.png", "image", 1, 1, "inline"), directory=None)
     hybrid = build_manifest(m, hybrid_paths=("/d/hybrid/s/att_0123456789ab.png",))
