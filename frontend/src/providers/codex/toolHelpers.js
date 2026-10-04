@@ -1095,12 +1095,11 @@ export class CodexToolHelpers extends BaseToolHelpers {
         // header word across providers.
         if (name === 'update_plan') return 'Todo'
         // ``clock.sleep`` (namespaced function call, name ``clock__sleep``):
-        // keep the usual "Clock : Sleep" title and append the requested
-        // duration so the card reads without being opened.
+        // the "Clock" namespace adds nothing, so the title is just "Sleep"
+        // plus the requested duration, so the card reads without being opened.
         if (name === 'clock__sleep') {
             const duration = formatDurationMsCompact(input?.duration_ms)
-            const base = formatToolNameForHeader(name)
-            return duration ? `${base} (${duration})` : base
+            return duration ? `Sleep for ${duration}` : 'Sleep'
         }
         // ``web_search_call`` splits into two user-facing surfaces
         // depending on the action variant: a web search for ``search``
