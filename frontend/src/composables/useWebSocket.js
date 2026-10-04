@@ -1949,9 +1949,12 @@ export function useWebSocket() {
             // Uploads: reconcile with the server list, then restart the
             // network-paused uploads (spec §6.3, §6.5). Every connection, the
             // first one included. Lazy import (no useWebSocket ↔ store cycle).
-            import('../stores/uploads').then(({ useUploadsStore }) => {
-                useUploadsStore().reconnected()
-            })
+            // Then the composer attachments this tab is not uploading itself
+            // ask the server their state (spec 2026-10-03 §9.2).
+            import('../stores/uploads')
+                .then(({ useUploadsStore }) => useUploadsStore().reconnected())
+                .then(() => useDataStore().reconcileAttachmentStatuses())
+                .catch(error => console.warn('Upload reconciliation failed', error))
             // After a real reconnection, the reconciliation re-syncs session
             // payloads (so presence flags like has_artifacts / has_plan are
             // fresh), but the transient tool-pane content events

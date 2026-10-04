@@ -112,6 +112,8 @@ import { useHelpStore } from './stores/help'
 import { useAgentSettingsPresetsStore } from './stores/agentSettingsPresets'
 import { getProviderStore } from './providers'
 import { computeUsageData } from './utils/usage'
+import { subscribeDraftStorageBlocked } from './utils/draftStorage'
+import { installDraftStorageBlockedNotice } from './utils/draftStorageBlockedNotice'
 
 // Notivue CSS
 import 'notivue/notification.css'
@@ -319,6 +321,11 @@ if (!authStore.needsLogin) {
         }
     }
 
+    // The draft hydration waits for the IndexedDB upgrade, which an older
+    // TwiCC tab can block: show a notice (plain DOM, Vue is not mounted yet)
+    // for as long as it is blocked. Subscribed before any awaited hydration.
+    const removeDraftStorageBlockedNotice = installDraftStorageBlockedNotice(subscribeDraftStorageBlocked)
+
     // Restore local runs and control intentions before the first WS snapshot.
     await dataStore.hydrateDraftSessions()
     await Promise.all([
@@ -326,6 +333,7 @@ if (!authStore.needsLogin) {
         dataStore.hydrateAttachments(),
         dataStore.hydrateInflightSends(),
     ])
+    removeDraftStorageBlockedNotice()
 
     // Wire the global auto-apply title watcher. Module-level watchEffect that
     // survives router.replace (which would otherwise tear down a watcher held
@@ -338,6 +346,9 @@ if (!authStore.needsLogin) {
     // IndexedDB entry was never removed (e.g. tab closed mid-send, crash).
     const DRAFT_CLEANUP_INTERVAL_MS = 2 * 60 * 60 * 1000
     setInterval(() => dataStore.cleanupOrphanDraftSessions(), DRAFT_CLEANUP_INTERVAL_MS)
+    // Same interval: the heartbeat of the staged composer attachments the
+    // drafts still hold (the hydration sent the first one).
+    setInterval(() => dataStore.touchHeldAttachments(), DRAFT_CLEANUP_INTERVAL_MS)
 
     // Hydrate code comments from IndexedDB (async, non-blocking)
     const codeCommentsStore = useCodeCommentsStore()

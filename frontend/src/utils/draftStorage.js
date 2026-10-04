@@ -1,28 +1,77 @@
 // frontend/src/utils/draftStorage.js
-// IndexedDB wrapper for draft messages, draft sessions, and draft medias persistence
+// IndexedDB wrapper for draft messages, draft sessions, draft medias and
+// draft attachment records persistence
 
 const DB_NAME = 'twicc'
-const DB_VERSION = 8
+const DB_VERSION = 9
 const DRAFT_MESSAGES_STORE = 'draftMessages'
 const DRAFT_SESSIONS_STORE = 'draftSessions'
 const DRAFT_MEDIAS_STORE = 'draftMedias'
 const CODE_COMMENTS_STORE = 'codeComments'
 const INFLIGHT_SENDS_STORE = 'inflightSends'
 const PENDING_REQUEST_DRAFTS_STORE = 'pendingRequestDrafts'
+const DRAFT_ATTACHMENTS_STORE = 'draftAttachments'
 
 let dbPromise = null
 
+// Blocked-upgrade report (the bootstrap shows a notice while it is true).
+let storageBlocked = false
+const blockedSubscribers = new Set()
+
+function setStorageBlocked(blocked) {
+    if (storageBlocked === blocked) return
+    storageBlocked = blocked
+    for (const callback of [...blockedSubscribers]) {
+        try {
+            callback(blocked)
+        } catch (error) {
+            console.error('Draft storage blocked subscriber failed', error)
+        }
+    }
+}
+
+/**
+ * Subscribe to the blocked state of the database upgrade: true while another
+ * tab keeps an older version open, false once the upgrade or open completes.
+ * The callback receives the current state at once.
+ *
+ * @param {(blocked: boolean) => void} callback
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeDraftStorageBlocked(callback) {
+    blockedSubscribers.add(callback)
+    callback(storageBlocked)
+    return () => blockedSubscribers.delete(callback)
+}
+
 /**
  * Opens/initializes the IndexedDB database (lazy singleton).
+ *
+ * A blocked upgrade (an older tab keeps its connection open) keeps the open
+ * request pending: it completes by itself once the user closes that tab. A
+ * newer version opened elsewhere closes this connection, so that tab's
+ * upgrade is never blocked by this one; the next call opens again.
  * @returns {Promise<IDBDatabase>}
  */
 export function getDb() {
     if (!dbPromise) {
-        dbPromise = new Promise((resolve, reject) => {
+        const opening = new Promise((resolve, reject) => {
             const request = indexedDB.open(DB_NAME, DB_VERSION)
 
-            request.onerror = () => reject(request.error)
-            request.onsuccess = () => resolve(request.result)
+            request.onerror = () => {
+                setStorageBlocked(false)
+                reject(request.error)
+            }
+            request.onblocked = () => setStorageBlocked(true)
+            request.onsuccess = () => {
+                const db = request.result
+                db.onversionchange = () => {
+                    db.close()
+                    if (dbPromise === opening) dbPromise = null
+                }
+                setStorageBlocked(false)
+                resolve(db)
+            }
 
             request.onupgradeneeded = (event) => {
                 const db = event.target.result
@@ -72,8 +121,16 @@ export function getDb() {
                         keyPath: ['sessionId', 'requestId']
                     })
                 }
+                // Create draftAttachments store if not exists (v9) — one
+                // record per composer attachment staged on the server, by
+                // reference only (no file content). See composerAttachments.js.
+                if (!db.objectStoreNames.contains(DRAFT_ATTACHMENTS_STORE)) {
+                    const store = db.createObjectStore(DRAFT_ATTACHMENTS_STORE, { keyPath: 'id' })
+                    store.createIndex('sessionId', 'sessionId', { unique: false })
+                }
             }
         })
+        dbPromise = opening
     }
     return dbPromise
 }
@@ -352,6 +409,81 @@ export async function getAllDraftMedias() {
         const store = tx.objectStore(DRAFT_MEDIAS_STORE)
         const request = store.getAll()
         request.onsuccess = () => resolve(request.result || [])
+        request.onerror = () => reject(request.error)
+    })
+}
+
+// =============================================================================
+// Draft Attachments (composer attachment records, spec 2026-10-03 §9.1)
+// =============================================================================
+
+/**
+ * @typedef {Object} DraftAttachment
+ * @property {string} id - Attachment UUID (the staging entry id)
+ * @property {string} sessionId - Draft/session the attachment is shown in
+ * @property {string} bucket - Staging bucket, set once and never re-derived
+ * @property {number} position - Order in the composer
+ * @property {string} name - Original filename
+ * @property {number} size - Size in bytes
+ * @property {string} mimeType - Browser MIME type ('' when unknown)
+ * @property {string} kind - Display kind (image, PDF, text, video, audio, other)
+ */
+
+/**
+ * Save (insert or replace) a draft attachment record.
+ * @param {DraftAttachment} record
+ * @returns {Promise<void>}
+ */
+export async function saveDraftAttachment(record) {
+    const db = await getDb()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(DRAFT_ATTACHMENTS_STORE, 'readwrite')
+        const request = tx.objectStore(DRAFT_ATTACHMENTS_STORE).put(record)
+        request.onsuccess = () => resolve()
+        request.onerror = () => reject(request.error)
+    })
+}
+
+/**
+ * Get every draft attachment record (used at app startup to hydrate the store).
+ * @returns {Promise<DraftAttachment[]>}
+ */
+export async function getAllDraftAttachments() {
+    const db = await getDb()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(DRAFT_ATTACHMENTS_STORE, 'readonly')
+        const request = tx.objectStore(DRAFT_ATTACHMENTS_STORE).getAll()
+        request.onsuccess = () => resolve(request.result || [])
+        request.onerror = () => reject(request.error)
+    })
+}
+
+/**
+ * Get the draft attachment records of one session.
+ * @param {string} sessionId
+ * @returns {Promise<DraftAttachment[]>}
+ */
+export async function getDraftAttachmentsBySession(sessionId) {
+    const db = await getDb()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(DRAFT_ATTACHMENTS_STORE, 'readonly')
+        const request = tx.objectStore(DRAFT_ATTACHMENTS_STORE).index('sessionId').getAll(sessionId)
+        request.onsuccess = () => resolve(request.result || [])
+        request.onerror = () => reject(request.error)
+    })
+}
+
+/**
+ * Delete one draft attachment record.
+ * @param {string} id
+ * @returns {Promise<void>}
+ */
+export async function deleteDraftAttachment(id) {
+    const db = await getDb()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(DRAFT_ATTACHMENTS_STORE, 'readwrite')
+        const request = tx.objectStore(DRAFT_ATTACHMENTS_STORE).delete(id)
+        request.onsuccess = () => resolve()
         request.onerror = () => reject(request.error)
     })
 }

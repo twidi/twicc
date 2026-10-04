@@ -124,6 +124,8 @@ function buildController() {
 export const useUploadsStore = defineStore('uploads', () => {
     const c = buildController()
     return {
+        // The tab id of every `clientId` this tab makes (`makeClientId`)
+        tabId: c.tabId,
         // State
         entries: c.entries,
         now: c.now,
@@ -133,7 +135,8 @@ export const useUploadsStore = defineStore('uploads', () => {
         applyServerRecord: c.applyServerRecord,
         reconcile: c.reconcile,
         reconnected: c.reconnected,
-        // User actions (§6.4–§6.8)
+        // User actions (§6.4–§6.8). `startUploads` also takes the composer
+        // origin, a caller `clientId` and `onRejected` (spec 2026-10-03 §6.1.1).
         startUploads: c.startUploads,
         cancel: c.cancel,
         retry: c.retry,

@@ -47,7 +47,23 @@ export const PROBE_AFTER_MS = 60_000
 /** Minimum interval between two `sentBytes` updates (4 per second). */
 export const PROGRESS_THROTTLE_MS = 250
 
-const PANEL_LABELS = { files: 'Files', artifacts: 'Artifacts' }
+/** Where the user finds an upload again, for the "retry it from …" toasts. */
+const PANEL_LOCATIONS = {
+    files: 'the Files tab',
+    artifacts: 'the Artifacts tab',
+    composer: 'the message composer',
+}
+
+/**
+ * The composer origin (spec 2026-10-03 §6.1.1): a TwiCC-owned target computed
+ * by the server, created through the standalone route without `target_dir` nor
+ * `root`, and no completion or "cancelled elsewhere" toast (the composer chip
+ * shows the state).
+ */
+export const COMPOSER_PANEL = 'composer'
+
+/** Code given to `onRejected` when a picked file cannot be read. */
+export const REJECTED_FILE_UNREADABLE = 'file_unreadable'
 
 /** Local states for which leaving the page loses work. */
 const UNLOAD_STATES = ['queued', 'creating', 'sending', 'paused']
@@ -224,8 +240,8 @@ export function createUploadsController(deps) {
 
     // ── Toasts (§6.9) ────────────────────────────────────────────────────────
 
-    function panelLabel(entry) {
-        return PANEL_LABELS[entry.origin?.panel] || 'Files'
+    function panelLocation(entry) {
+        return PANEL_LOCATIONS[entry.origin?.panel] || PANEL_LOCATIONS.files
     }
 
     function failureToast(filename, message) {
@@ -235,7 +251,7 @@ export function createUploadsController(deps) {
     function pausedToast(entry, message) {
         failureToast(
             entry.filename,
-            `${message || 'The upload stopped.'} You can retry it from the ${panelLabel(entry)} tab.`,
+            `${message || 'The upload stopped.'} You can retry it from ${panelLocation(entry)}.`,
         )
     }
 
@@ -249,7 +265,9 @@ export function createUploadsController(deps) {
     }
 
     function terminalToast(record) {
+        const composer = record.origin?.panel === COMPOSER_PANEL
         if (record.state === 'completed') {
+            if (composer) return
             toast.success(record.target_dir, {
                 title: `Uploaded ${baseName(record.final_path) || record.filename}`,
                 duration: TOAST_DURATION_MS,
@@ -257,7 +275,7 @@ export function createUploadsController(deps) {
             })
         } else if (record.state === 'failed') {
             failureToast(record.filename, record.error || 'The server stopped the upload.')
-        } else if (record.state === 'cancelled' && !cancelledHere.has(record.id)) {
+        } else if (record.state === 'cancelled' && !composer && !cancelledHere.has(record.id)) {
             toast.error('The upload was cancelled in another tab or on another device.', {
                 title: `Upload cancelled: ${record.filename}`,
                 duration: TOAST_DURATION_MS,
@@ -592,11 +610,14 @@ export function createUploadsController(deps) {
         const body = {
             filename: entry.filename,
             size: entry.size,
-            target_dir: entry.targetDir,
             origin: { panel: entry.origin.panel, key: entry.origin.key },
             fingerprint: entry.fingerprint,
             client_id: entry.clientId,
         }
+        // The server computes the target of a composer upload: `target_dir`
+        // and `root` must be absent (a 400 otherwise).
+        if (entry.origin.panel === COMPOSER_PANEL) return body
+        body.target_dir = entry.targetDir
         if (entry.apiPrefix === '/api' && entry.root) body.root = entry.root
         return body
     }
@@ -773,30 +794,60 @@ export function createUploadsController(deps) {
     /**
      * Start one upload per picked file (§6.4).
      *
-     * @param {{files: File[], targetDir: string, apiPrefix: string, root?: string|null,
-     *          origin: {panel: string, key: string}}} options
+     * The composer origin needs neither `targetDir` nor `apiPrefix` (standalone
+     * `/api` route, target computed by the server). A caller `clientId` (made
+     * with `makeClientId(tabId, …)`) is only accepted with exactly one file.
+     * The client id of each file is allocated before its fingerprint read, so
+     * `onRejected` names the exact attempt it rejects; without `onRejected`, an
+     * unreadable file shows an error toast.
+     *
+     * @param {{files: File[], targetDir?: string|null, apiPrefix?: string, root?: string|null,
+     *          origin: {panel: string, key: string}, clientId?: string|null,
+     *          onRejected?: (info: {client_id: string, filename: string, code: string}) => void}} options
      * @returns {Promise<void>}
      */
-    async function startUploads({ files, targetDir, apiPrefix, root = null, origin }) {
+    async function startUploads({
+        files,
+        targetDir = null,
+        apiPrefix = null,
+        root = null,
+        origin,
+        clientId: callerClientId = null,
+        onRejected = null,
+    }) {
+        if (callerClientId && files.length !== 1) {
+            throw new Error('A caller client id needs exactly one file')
+        }
+        const composer = origin.panel === COMPOSER_PANEL
+        const prefix = apiPrefix || (composer ? '/api' : null)
         for (const file of files) {
+            const clientId = callerClientId || makeClientId(tabId, randomHex)
             let fingerprint
             try {
                 fingerprint = await fingerprintFile(file)
             } catch {
-                failureToast(file.name, 'The file could not be read.')
+                if (disposed) return
+                if (onRejected) {
+                    try {
+                        onRejected({ client_id: clientId, filename: file.name, code: REJECTED_FILE_UNREADABLE })
+                    } catch (error) {
+                        console.error('Upload rejection listener failed', error)
+                    }
+                } else {
+                    failureToast(file.name, 'The file could not be read.')
+                }
                 continue
             }
             if (disposed) return
-            const clientId = makeClientId(tabId, randomHex)
             const entry = addEntry({
                 key: clientId,
                 clientId,
                 filename: file.name,
                 size: file.size,
-                targetDir,
+                targetDir: composer ? null : targetDir,
                 origin: { panel: origin.panel, key: origin.key },
-                apiPrefix,
-                root: root || null,
+                apiPrefix: prefix,
+                root: composer ? null : root || null,
                 fingerprint,
                 localState: 'queued',
             })
@@ -1007,6 +1058,7 @@ export function createUploadsController(deps) {
     }
 
     return {
+        tabId,
         entries,
         statusByOrigin,
         now: nowRef,

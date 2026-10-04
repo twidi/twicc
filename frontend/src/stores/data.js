@@ -37,20 +37,20 @@ import {
     deleteDraftSession as deleteDraftSessionFromDb,
     getAllDraftSessions,
     saveDraftMedia,
+    getDraftMedia,
     deleteDraftMedia,
     getDraftMediasBySession,
     deleteAllDraftMediasForSession,
-    getAllDraftMedias
+    getAllDraftMedias,
+    saveDraftAttachment,
+    deleteDraftAttachment,
+    getAllDraftAttachments,
 } from '../utils/draftStorage'
 import { saveInflightSend, deleteInflightSend, getAllInflightSends } from '../utils/inflightStorage'
 import { liveDraftKey, sweepPendingRequestDrafts } from '../utils/pendingRequestDraftStorage'
-import {
-    processFile,
-    mediasToSdkFormat,
-    getDraftMediaBytes,
-    MAX_FILES_PER_DRAFT,
-    MAX_TOTAL_BYTES_PER_DRAFT,
-} from '../utils/fileUtils'
+import { mediasToSdkFormat } from '../utils/fileUtils'
+import { createComposerAttachments } from '../utils/composerAttachments'
+import { randomHexFromUUID } from '../utils/uploads/ids'
 import { generateUUID } from '../utils/crypto'
 import { debounce } from '../utils/debounce'
 import { apiFetch } from '../utils/api'
@@ -60,6 +60,43 @@ import { syncBaseline } from '../utils/syncBaseline'
 import { getParsedContent, setParsedContent, clearParsedContent, hasContent } from '../utils/parsedContent'
 import { createStreamPublicationIdentity } from '../utils/streamPublicationRegistry'
 import { initBuffer, feedDelta, flushBuffer, destroySessionBuffers, destroyAllBuffers, isBufferActive } from '../utils/streamingBuffer'
+
+// Composer attachment actions (utils/composerAttachments.js), built once on
+// first use. The uploads store is imported lazily (no static store ↔ store
+// import); `composerAttachmentsInstance` is set once it is built.
+let composerAttachmentsPromise = null
+let composerAttachmentsInstance = null
+
+/**
+ * The composer attachment actions over this store's state.
+ *
+ * @param {object} store - the data store
+ * @returns {Promise<ReturnType<typeof createComposerAttachments>>}
+ */
+function composerAttachmentsFor(store) {
+    if (!composerAttachmentsPromise) {
+        composerAttachmentsPromise = import('./uploads').then(({ useUploadsStore }) => {
+            composerAttachmentsInstance = createComposerAttachments({
+                records: store.localState.attachmentRecords,
+                runtime: store.localState.attachmentRuntime,
+                storage: {
+                    saveDraftAttachment,
+                    deleteDraftAttachment,
+                    deleteLegacyMedia: id => store._deleteLegacyMediaRow(id),
+                },
+                uploads: useUploadsStore(),
+                fetch: apiFetch,
+                uuid: generateUUID,
+                randomHex: randomHexFromUUID,
+            })
+            return composerAttachmentsInstance
+        }).catch(error => {
+            composerAttachmentsPromise = null
+            throw error
+        })
+    }
+    return composerAttachmentsPromise
+}
 
 // Map of debounced save functions per session (to avoid mixing debounces)
 const debouncedSaves = new Map()
@@ -622,6 +659,19 @@ export const useDataStore = defineStore('data', {
             // { sessionId: Map<mediaId, DraftMedia> }
             // Stored separately from draftMessages to avoid rewriting large blobs on each keystroke
             attachments: {},
+
+            // Composer attachment records (spec 2026-10-03 §9.1), persisted in
+            // IndexedDB `draftAttachments`: references to staged uploads, no
+            // file content. { sessionId: { attachmentId: {id, sessionId,
+            // bucket, position, name, size, mimeType, kind} } }
+            attachmentRecords: {},
+
+            // Memory-only state of each composer attachment (§9.2): display
+            // state ('uploading' | 'ready' | 'failed' | 'missing'), progress,
+            // whether chip Retry is possible, the controller pause reason, the
+            // current upload attempt (`clientId`) and its upload key.
+            // { attachmentId: {state, progress, retryable, pauseReason, clientId, uploadKey} }
+            attachmentRuntime: {},
 
             // Number of files currently being processed (encoded/resized) per session.
             // { sessionId: number }
@@ -1368,6 +1418,14 @@ export const useDataStore = defineStore('data', {
             const map = state.localState.attachments[sessionId]
             return map ? map.size : 0
         },
+
+        // Composer attachment records of a session, in position order
+        getComposerAttachments: (state) => (sessionId) =>
+            Object.values(state.localState.attachmentRecords[sessionId] || {}).sort((a, b) => a.position - b.position),
+
+        // Memory-only state of one composer attachment (or null)
+        getAttachmentRuntime: (state) => (attachmentId) =>
+            state.localState.attachmentRuntime[attachmentId] || null,
 
         // A failed send entry (red bubble in the conversation flow)
         getFailedSend: (state) => (sessionId, requestId) =>
@@ -6189,86 +6247,100 @@ export const useDataStore = defineStore('data', {
         // =========================================================================
 
         /**
-         * Add a file attachment to a session.
-         *
-         * Processes the file (validation + encoding) using the provider's
-         * attachment capabilities and stores in IndexedDB. The provider is
-         * resolved from the session row so call sites don't have to thread
-         * the capabilities through themselves — a stray drop on a Codex
-         * session validates against Codex rules without the caller knowing.
+         * Add a file to a session's composer (spec 2026-10-03 §9.1): no type
+         * or size check, no encoding. Persists a reference record (bucket =
+         * this session id, next position), then uploads the file to its
+         * staging entry. Its state lives in `attachmentRuntime`.
          *
          * @param {string} sessionId - The session ID
          * @param {File} file - The file to add
-         * @returns {Promise<DraftMedia>} The processed media object
-         * @throws {Error} If validation fails or file cannot be processed
+         * @returns {Promise<Object>} The attachment record
          */
         async addAttachment(sessionId, file) {
-            const session = this.getSession(sessionId)
-            const helpers = getProviderHelpers(session?.provider)
-            const capabilities = helpers?.getAttachmentSupport() ?? {
-                images: false, documents: false, maxBytes: 0,
-                acceptedMimeTypes: [], resizeImages: false,
-            }
+            const composer = await composerAttachmentsFor(this)
+            return composer.addAttachment(sessionId, file)
+        },
 
-            // Per-draft hard caps (uniform across providers): refuse the
-            // upload up front rather than running the (potentially slow)
-            // resize pipeline only to discover the draft can't take more.
-            const existing = this.localState.attachments[sessionId]
-            const existingCount = existing?.size ?? 0
-            if (existingCount >= MAX_FILES_PER_DRAFT) {
-                throw new Error(
-                    `Maximum ${MAX_FILES_PER_DRAFT} files per draft reached`,
-                )
-            }
-            let storedBytes = 0
-            if (existing) {
-                for (const media of existing.values()) {
-                    storedBytes += getDraftMediaBytes(media)
-                }
-            }
-            // Conservative check: compare stored (post-resize) total to
-            // 32 MB minus the new file's raw source size. The new file
-            // will shrink after resize, but blocking on the raw size is
-            // safer and avoids running the encode pipeline for an upload
-            // we'd reject anyway.
-            if (storedBytes + file.size > MAX_TOTAL_BYTES_PER_DRAFT) {
-                const totalMB = (MAX_TOTAL_BYTES_PER_DRAFT / 1024 / 1024).toFixed(0)
-                const storedMB = (storedBytes / 1024 / 1024).toFixed(1)
-                throw new Error(
-                    `Draft total size limit reached (${totalMB} MB max; ${storedMB} MB already attached)`,
-                )
-            }
+        /**
+         * Drop a session's composer attachment records locally (and the
+         * legacy media rows with the same ids). Never cancels an upload nor
+         * releases a staging entry (§6.1.4).
+         * @param {string} sessionId
+         */
+        async forgetAttachments(sessionId) {
+            if (!this.localState.attachmentRecords[sessionId]) return
+            const composer = await composerAttachmentsFor(this)
+            await composer.forgetAttachments(sessionId)
+        },
 
-            // Track that a file is being processed (blocks the send button)
-            this.localState.processingAttachments[sessionId] =
-                (this.localState.processingAttachments[sessionId] || 0) + 1
+        /**
+         * Release explicit staging refs (user removals and discards only,
+         * §6.1.4): cancel this tab's upload, drop the local records and legacy
+         * rows, then release each entry on the server.
+         * @param {Array<{bucket: string, id: string}>} refs
+         */
+        async releaseAttachments(refs) {
+            if (!refs?.length) return
+            const composer = await composerAttachmentsFor(this)
+            await composer.releaseAttachments(refs)
+        },
 
-            try {
-                // Process file (validates and encodes)
-                const media = await processFile(file, sessionId, capabilities)
+        /**
+         * Chip Retry of a failed attachment whose `File` is in memory.
+         * @param {string} attachmentId
+         * @returns {Promise<boolean>} false when Retry is not possible
+         */
+        async retryAttachment(attachmentId) {
+            const composer = await composerAttachmentsFor(this)
+            return composer.retryAttachment(attachmentId)
+        },
 
-                // Save to IndexedDB
-                await saveDraftMedia(media)
+        /**
+         * Ask the server the state of every composer attachment this tab is
+         * not uploading itself (hydrate and WebSocket reconnect, §9.2).
+         * @param {{hydrate?: boolean}} [options]
+         */
+        async reconcileAttachmentStatuses(options) {
+            if (!Object.keys(this.localState.attachmentRecords).length) return
+            const composer = await composerAttachmentsFor(this)
+            await composer.reconcileAttachmentStatuses(options)
+        },
 
-                // Update in-memory state
-                if (!this.localState.attachments[sessionId]) {
-                    this.localState.attachments[sessionId] = new Map()
-                }
-                this.localState.attachments[sessionId].set(media.id, media)
+        /**
+         * Heartbeat of the staging entries held by draft records (§6.1.4).
+         * @param {{snapshotRefs?: Array<{bucket: string, id: string}>}} [options]
+         */
+        async touchHeldAttachments(options) {
+            if (!Object.keys(this.localState.attachmentRecords).length && !options?.snapshotRefs?.length) return
+            const composer = await composerAttachmentsFor(this)
+            await composer.touchHeldAttachments(options)
+        },
 
-                // Update draft message with media ID (for order preservation)
-                const draft = await getDraftMessage(sessionId) || {}
-                draft.mediaIds = draft.mediaIds || []
-                draft.mediaIds.push(media.id)
-                await saveDraftMessage(sessionId, draft)
+        /**
+         * The in-memory `File` of a composer attachment added in this page
+         * session (local previews), or null.
+         * @param {string} attachmentId
+         * @returns {File|null}
+         */
+        getAttachmentFile(attachmentId) {
+            return composerAttachmentsInstance?.getFile(attachmentId) ?? null
+        },
 
-                return media
-            } finally {
-                // Decrement counter (whether success or failure)
-                this.localState.processingAttachments[sessionId]--
-                if (this.localState.processingAttachments[sessionId] <= 0) {
-                    delete this.localState.processingAttachments[sessionId]
-                }
+        /**
+         * Delete the legacy `draftMedias` row with this id, and drop it from
+         * its draft's `mediaIds` (§9.6): a removed attachment never comes back
+         * through the migration.
+         * @param {string} mediaId
+         */
+        async _deleteLegacyMediaRow(mediaId) {
+            const media = await getDraftMedia(mediaId)
+            if (!media) return
+            await deleteDraftMedia(mediaId)
+            this.localState.attachments[media.sessionId]?.delete(mediaId)
+            const draft = await getDraftMessage(media.sessionId)
+            if (draft?.mediaIds?.includes(mediaId)) {
+                draft.mediaIds = draft.mediaIds.filter(id => id !== mediaId)
+                await saveDraftMessage(media.sessionId, draft)
             }
         },
 
@@ -6375,11 +6447,24 @@ export const useDataStore = defineStore('data', {
                     }
                     this.localState.attachments[media.sessionId].set(media.id, media)
                 }
-                // Not awaited: the existence checks must not delay the app mount.
-                this._dropOrphanAttachments()
             } catch (err) {
                 console.warn('Failed to load attachments from IndexedDB:', err)
             }
+            try {
+                const records = await getAllDraftAttachments()
+                if (records.length) {
+                    const composer = await composerAttachmentsFor(this)
+                    composer.hydrate(records)
+                    // Not awaited: the status request and the heartbeat must
+                    // not delay the app mount.
+                    composer.reconcileAttachmentStatuses({ hydrate: true })
+                    composer.touchHeldAttachments()
+                }
+            } catch (err) {
+                console.warn('Failed to load attachment records from IndexedDB:', err)
+            }
+            // Not awaited: the existence checks must not delay the app mount.
+            this._dropOrphanAttachments()
         },
 
         /**
@@ -6392,11 +6477,19 @@ export const useDataStore = defineStore('data', {
          * hidden session's composer attachments are dropped too.
          */
         async _dropOrphanAttachments() {
-            const candidates = Object.keys(this.localState.attachments).filter(id => !this.sessions[id])
+            const sessionIds = new Set([
+                ...Object.keys(this.localState.attachments),
+                ...Object.keys(this.localState.attachmentRecords),
+            ])
+            const candidates = [...sessionIds].filter(id => !this.sessions[id])
             for (const sessionId of candidates) {
                 try {
                     const response = await apiFetch(`/api/sessions/${sessionId}/`, { method: 'HEAD' })
-                    if (response.status === 404) await this.clearAttachmentsForSession(sessionId)
+                    if (response.status === 404) {
+                        // Forget only (§6.1.4): the server reaper drops the staging entries.
+                        await this.clearAttachmentsForSession(sessionId)
+                        await this.forgetAttachments(sessionId)
+                    }
                 } catch {
                     // Network error: keep the medias, the next startup retries.
                 }
@@ -6411,6 +6504,12 @@ export const useDataStore = defineStore('data', {
 // the fresh state() initializer (e.g. projects: {} starts empty, so all
 // runtime-added project IDs are dropped during the merge).
 if (import.meta.hot) {
+    // The composer attachment actions of this module instance stop listening
+    // to the uploads store; the new module builds its own on first use.
+    import.meta.hot.dispose(() => {
+        composerAttachmentsInstance?.dispose()
+    })
+
     // Create the HMR handler once at module eval time (standard Pinia pattern).
     // We wrap it to save/restore state around the call because Pinia's patchObject
     // loses dynamic keys (it skips old keys absent from the fresh state() initializer).
