@@ -168,12 +168,23 @@ def test_control_effects():
     assert not diag.read_control_effect(_control(text="cannot"), "abc123")
     assert diag.web_control_effect(_control(types=["WebSearch"]))
     assert not diag.web_control_effect(_control(types=["agentMessage", None]))
-    assert diag.mcp_control_effect(_control(texts=['{"result": "DIAG-PONG"}']))
-    assert diag.mcp_control_effect(_control(types=["mcpToolCall"]))
-    assert not diag.mcp_control_effect(_control(types=["agentMessage"]))
     assert diag.interact_control_effect(_control(calls=["item/tool/requestUserInput"]))
     assert diag.interact_control_effect(_control(types=["requestUserInput"]))
     assert not diag.interact_control_effect(_control())
+
+
+def test_mcp_list_control_effect():
+    servers = ("hey", "cloudflare-api", "node_repl")
+    # The live answer of 2026-10-04 (hermetic plan, disabling removed).
+    live = "mcp__cloudflare_api.docs\nmcp__hey.hey_boxes\nmcp__node_repl.js"
+    assert diag.mcp_servers_named(live, servers) == ["hey", "cloudflare-api", "node_repl"]
+    assert diag.mcp_list_control_effect(_control(text=live), servers)
+    assert diag.mcp_list_control_effect(_control(text="cloudflare-api: search, execute"), servers)
+    # A built-in MCP tool (present with every user server disabled) or built-in tools alone are no evidence.
+    assert not diag.mcp_list_control_effect(_control(text="functions.exec\nmcp__cua_repl.js"), servers)
+    assert not diag.mcp_list_control_effect(_control(text="They said cloudflare-apis"), servers)
+    assert not diag.mcp_list_control_effect(_control(text="NONE"), servers)
+    assert not diag.mcp_list_control_effect(_control(text=""), servers)
 
 
 def test_canary_pass_needs_a_control_effect_and_a_text_only_answer():
@@ -217,20 +228,130 @@ def test_d2_verdict():
     assert status == diag.FAIL and "input_tokens=500" in reason
 
 
-@pytest.mark.parametrize("text,status", [("NONE", "PASS"), ("none.", "PASS"), ("", "PASS"), ("**NONE**", "PASS"),
-                                         ("shell\napply_patch", "FAIL")])
+@pytest.mark.parametrize("text,status", [
+    ("NONE", "PASS"), ("none.", "PASS"), ("", "PASS"), ("**NONE**", "PASS"), ("  \n", "PASS"),
+    # The live D11a answer of 2026-10-04: a NONE line followed by prose.
+    ("NONE\n\nI don't see any tools or functions defined in the context provided to me.", "PASS"),
+    ("\nNone.\nI have no tools.", "PASS"),
+    ("shell\napply_patch", "FAIL"), ("shell\nNONE", "FAIL"), ("None of my tools: shell", "FAIL"),
+])
 def test_d3_verdict(text, status):
     assert diag.d3_verdict(text)[0] == status
 
 
 def test_d6b_hermetic_effect():
-    ok = diag.HermeticRun(returned=True, text="I cannot", start={}, disabled_mcp_servers=("a", "diag_stub"))
-    assert diag.d6b_hermetic_effect(ok, ("a",)) is None
-    no_stub = ok._replace(disabled_mcp_servers=("a",))
-    assert "stub" in diag.d6b_hermetic_effect(no_stub, ("a",))
-    missing_user = ok._replace(disabled_mcp_servers=("diag_stub",))
-    assert "a" in diag.d6b_hermetic_effect(missing_user, ("a",))
-    assert "DIAG-PONG" in diag.d6b_hermetic_effect(ok._replace(text="DIAG-PONG"), ("a",))
+    ok = diag.HermeticRun(returned=True, text="NONE", start={}, disabled_mcp_servers=("a", "b"))
+    assert diag.d6b_hermetic_effect(ok, ("a", "b")) is None
+    missing_user = ok._replace(disabled_mcp_servers=("a",))
+    assert "b" in diag.d6b_hermetic_effect(missing_user, ("a", "b"))
+    assert "hey__hey_boxes" in diag.d6b_hermetic_effect(ok._replace(text="hey__hey_boxes"), ("a", "b"))
+    # An error text is not an answer: canary_verdict turns the terminal error into INCONCLUSIVE.
+    assert diag.d6b_hermetic_effect(ok._replace(text="API error", terminal_error=MODEL_ERROR), ("a", "b")) is None
+
+
+def _fake_d6b(monkeypatch, *, control_text="mcp__hey.hey_boxes", hermetic=None):
+    """Fakes ``_hermetic``: the control is the call made while the thread-level disabling is removed."""
+    from twicc.providers.codex import hermetic as codex_hermetic
+
+    calls = []
+    real_read = codex_hermetic._read_mcp_server_names
+
+    async def fake_plan():
+        return "neutral"
+
+    async def fake_hermetic(plan, prompt):
+        is_control = codex_hermetic._read_mcp_server_names is not real_read
+        calls.append(("control" if is_control else "hermetic", prompt, plan))
+        if is_control:
+            assert await codex_hermetic._read_mcp_server_names(None, None) == ()
+            return diag.HermeticRun(returned=True, text=control_text, input_tokens=4171, start={})
+        return hermetic or diag.HermeticRun(returned=True, text="NONE", input_tokens=650, start={},
+                                            disabled_mcp_servers=("hey", "cf"))
+
+    monkeypatch.setattr(diag, "_neutral_plan", fake_plan)
+    monkeypatch.setattr(diag, "_hermetic", fake_hermetic)
+    return calls
+
+
+def _run_d6b(user_servers):
+    r = diag.Report()
+    asyncio.run(diag.check_d6b(r, user_servers))
+    [check] = r.checks
+    return check
+
+
+def test_d6b_pass(monkeypatch):
+    from twicc.providers.codex import hermetic as codex_hermetic
+
+    real_read = codex_hermetic._read_mcp_server_names
+    calls = _fake_d6b(monkeypatch)
+    check = _run_d6b(("hey", "cf"))
+    assert check.status == diag.PASS and "disabled: 2" in check.reason and "['hey']" in check.reason
+    assert "4171 enabled vs 650 disabled" in check.reason
+    control, hermetic = calls
+    assert control[0] == "control" and hermetic[0] == "hermetic"
+    assert "do not call any tool" in control[1].lower() and hermetic[1] == control[1]
+    assert control[2] == hermetic[2] == "neutral"   # the same neutral plan for both
+    assert codex_hermetic._read_mcp_server_names is real_read   # the patch is undone
+
+
+def test_mcp_disabling_removed_is_undone_on_error():
+    from twicc.providers.codex import hermetic as codex_hermetic
+
+    real_read = codex_hermetic._read_mcp_server_names
+    with pytest.raises(RuntimeError), diag.mcp_disabling_removed():
+        assert codex_hermetic._read_mcp_server_names is not real_read
+        raise RuntimeError
+    assert codex_hermetic._read_mcp_server_names is real_read
+
+
+@pytest.mark.parametrize("control_run,fragment", [
+    (diag.HermeticRun(violation="unexpected stream item type 'mcpToolCall'"), "guard violation"),
+    (diag.HermeticRun(timed_out=True), "timed out"),
+    (diag.HermeticRun(returned=True, terminal_error="usage limit reached"), "usage limit reached"),
+])
+def test_d6b_control_failure_is_inconclusive(monkeypatch, control_run, fragment):
+    from twicc.providers.codex import hermetic as codex_hermetic
+
+    _fake_d6b(monkeypatch)
+    fake_hermetic = diag._hermetic
+
+    async def hermetic(plan, prompt):
+        if codex_hermetic._read_mcp_server_names.__name__ == "no_names":   # the control
+            return control_run
+        return await fake_hermetic(plan, prompt)
+
+    monkeypatch.setattr(diag, "_hermetic", hermetic)
+    check = _run_d6b(("hey", "cf"))
+    assert check.status == diag.INCONCLUSIVE and fragment in check.reason
+
+
+def test_d6b_without_user_servers_is_a_skip_with_no_call(monkeypatch):
+    calls = _fake_d6b(monkeypatch)
+    check = _run_d6b(())
+    assert check.status == diag.SKIP and "no MCP server" in check.reason and calls == []
+
+
+def test_d6b_unreadable_server_list_is_inconclusive(monkeypatch):
+    calls = _fake_d6b(monkeypatch)
+    assert _run_d6b(None).status == diag.INCONCLUSIVE and calls == []
+
+
+@pytest.mark.parametrize("control_text", ["NONE", "functions.exec\nfunctions.wait"])
+def test_d6b_control_naming_no_mcp_tool_is_inconclusive(monkeypatch, control_text):
+    _fake_d6b(monkeypatch, control_text=control_text)
+    check = _run_d6b(("hey", "cf"))
+    assert check.status == diag.INCONCLUSIVE and "no effect" in check.reason
+
+
+@pytest.mark.parametrize("hermetic", [
+    diag.HermeticRun(returned=True, text="hey__hey_boxes", start={}, disabled_mcp_servers=("hey", "cf")),
+    diag.HermeticRun(returned=True, text="NONE", start={}, disabled_mcp_servers=("hey",)),
+    diag.HermeticRun(violation="unexpected stream item type 'mcpToolCall'"),
+])
+def test_d6b_hermetic_tool_or_enabled_server_is_a_fail(monkeypatch, hermetic):
+    _fake_d6b(monkeypatch, hermetic=hermetic)
+    assert _run_d6b(("hey", "cf")).status == diag.FAIL
 
 
 def test_d7_refused_request_is_a_fail():
@@ -409,6 +530,33 @@ def test_unrestricted_with_mcp_stub_adds_the_stub_explicitly(tmp_path):
     )
     assert control.mcp_servers == {"diag_stub": {"command": diag.sys.executable, "args": [str(stub)]}}
     assert control.permission_mode == "bypassPermissions" and control.strict_mcp_config is False
+
+
+def _unrestricted_base(cwd):
+    from twicc.providers.claude_code.hermetic import _build_options
+
+    return _build_options(model="haiku", effort="low", cwd=diag.Path(cwd), permission_calls=[])
+
+
+def test_unrestricted_with_recording_callback(tmp_path):
+    from claude_agent_sdk import PermissionResultDeny
+    from claude_agent_sdk.types import CanUseToolShadowedWarning, _configure_can_use_tool
+
+    original = _unrestricted_base(tmp_path)
+    recorded = []
+    control = diag.unrestricted_with_recording_callback(recorded)(original)
+    plain = diag.unrestricted(original)
+    # Every unrestricted setting is kept; only the callback differs.
+    for field in ("permission_mode", "tools", "setting_sources", "strict_mcp_config", "max_turns", "system_prompt",
+                  "extra_args", "cwd", "model", "env"):
+        assert getattr(control, field) == getattr(plain, field), field
+    assert control.permission_mode == "bypassPermissions"
+    assert control.can_use_tool is not None and control.can_use_tool is not original.can_use_tool
+    # The callback switches the stdio permission prompt on, as in production.
+    with pytest.warns(CanUseToolShadowedWarning):   # the SDK's advisory; measured wrong for the question tool
+        assert _configure_can_use_tool(control).permission_prompt_tool_name == "stdio"
+    decision = asyncio.run(control.can_use_tool("AskUserQuestion", {}, None))
+    assert isinstance(decision, PermissionResultDeny) and decision.interrupt and recorded == ["AskUserQuestion"]
 
 
 def test_write_claude_fixture(tmp_path):
@@ -635,6 +783,8 @@ def _fake_claude(monkeypatch, tmp_path, hermetic_results=None):
             return _claude_result(text=body, tool_blocks_seen=1), None
         if "diag_ping" in prompt:
             assert override is not diag.unrestricted   # the MCP control carries the stub explicitly
+        if "which color" in prompt:   # the interaction control carries a recording callback
+            assert override(_unrestricted_base(cwd)).can_use_tool is not None
         return _claude_result(tool_blocks_seen=1, init={
             "mcp_servers": [{"name": "diag_stub"}, {"status": "nameless"}], "skills": ["diag-skill"]}), None
 
@@ -700,6 +850,8 @@ def test_d11a_error_result_is_inconclusive():
     assert diag.d11a_verdict(diag.claude_hermetic_run(violated))[0] == diag.FAIL
     assert diag.d11a_verdict(diag.claude_hermetic_run(_claude_result(text="Bash\nRead")))[0] == diag.FAIL
     assert diag.d11a_verdict(diag.claude_hermetic_run(_claude_result(text="NONE")))[0] == diag.PASS
+    live = "NONE\n\nI don't see any tools or functions defined in the context provided to me for this conversation."
+    assert diag.d11a_verdict(diag.claude_hermetic_run(_claude_result(text=live)))[0] == diag.PASS
 
 
 def test_d10_error_result_is_inconclusive():

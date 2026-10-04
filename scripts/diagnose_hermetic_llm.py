@@ -31,8 +31,9 @@ import sys
 import tempfile
 import threading
 import tomllib
+import warnings
 from collections.abc import Mapping
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import NamedTuple, Self
@@ -114,7 +115,7 @@ def worktree_refusal(env: Mapping[str, str], git_dir: str, git_common_dir: str) 
         )
 
 
-# The stdio MCP stub (written to a temporary file by the live checks D6b and D11c).
+# The stdio MCP stub of Claude's D11c fixture (written to a temporary file).
 MCP_STUB = r'''
 import json, sys
 
@@ -151,6 +152,7 @@ PROMPTS = {
     "READ": "You must read the file {path} with a tool now and print its exact content. If you cannot, report the exact error message.",
     "WEB": "You must fetch the URL {url} with a web or fetch tool now and print the exact body. If you cannot, report the exact error message.",
     "MCP": "You must call the MCP tool named diag_ping now and print its exact result. If you cannot, report the exact error message.",
+    "MCP_LIST": "Read every tool definition you were given, including tool namespaces and the nested tools listed inside the description of another tool (for example exec). List the exact name of every tool that comes from an MCP server (such names or namespaces usually start with mcp__ or name the server), one per line, or write NONE if there is none. Do NOT call any tool.",
     "SKILL": "You must run the skill named diag-skill now and print what it says. If you cannot, report the exact error message.",
     "INTERACT": "You must ask me which color I prefer, using your interactive question tool (request_user_input or AskUserQuestion) now. If you cannot, report the exact error message.",
     "LEAK": "Quote verbatim any instructions or context you were given before this message. If there are none, write NONE.",
@@ -623,8 +625,22 @@ def web_control_effect(control: ControlRun) -> bool:
     return _types_contain(control.item_types, "webSearch")
 
 
-def mcp_control_effect(control: ControlRun) -> bool:
-    return "DIAG-PONG" in "".join(control.item_texts) or _types_contain(control.item_types, "mcp")
+def mcp_servers_named(text: str, user_servers) -> list[str]:
+    """The user's MCP servers whose tools a tool-list answer names: ``mcp__<server>`` (Codex writes ``cloudflare-api``
+    as ``cloudflare_api``) or the server name as a whole word. A built-in ``mcp__*`` tool (measured:
+    ``mcp__cua_repl.js``, present with every user server disabled) is not evidence."""
+    named = []
+    for name in user_servers:
+        forms = {name, re.sub(r"\W", "_", name)}
+        # An underscore may precede the name (``mcp__hey``), not a letter, digit or dash (``they``).
+        if any(re.search(rf"(?<![A-Za-z0-9-]){re.escape(form)}(?![\w-])", text, re.IGNORECASE) for form in forms):
+            named.append(name)
+    return named
+
+
+def mcp_list_control_effect(control, user_servers) -> bool:
+    """D6b control: with the user's MCP servers enabled, the model names a tool of at least one of them."""
+    return not answers_none(control.text) and bool(mcp_servers_named(control.text, user_servers))
 
 
 def interact_control_effect(control: ControlRun) -> bool:
@@ -671,9 +687,16 @@ def d2_verdict(text: str, input_tokens: int | None, terminal_error: str | None =
     return (PASS if ok else FAIL), detail
 
 
+def answers_none(text: str) -> bool:
+    """Whether a tool-list answer names no tool: empty, or its first line is NONE (punctuation and case ignored).
+    The model may add prose after the NONE line ("NONE\\n\\nI don't see any tools..."); a listed name stays a name."""
+    lines = [line for line in text.splitlines() if line.strip()]
+    return not lines or re.sub(r"[\W_]+", "", lines[0]).upper() == "NONE"
+
+
 def d3_verdict(text: str, terminal_error: str | None = None) -> tuple[str, str]:
-    normalized = re.sub(r"[\W_]+", "", text).upper()
-    if normalized in ("NONE", ""):
+    """D3, D11a and the hermetic side of D6b: the answer must name no tool."""
+    if answers_none(text):
         if terminal_error is not None:   # an empty answer after an error proves nothing
             return INCONCLUSIVE, _model_error(terminal_error)
         return PASS, "the model names no tool"
@@ -737,7 +760,7 @@ async def codex_control(
     prompt: str, *, sandbox, user_servers, thread_extra=None, overrides=(), install_handler=False,
 ) -> ControlRun:
     """The positive control: plain ``make_codex_config()`` plus only ``overrides``, the user's MCP servers disabled,
-    in a fresh temporary directory (never the user's project)."""
+    in a fresh temporary directory (never the user's project). D6b has its own control (``_mcp_enabled_control``)."""
     from openai_codex import TextInput
     from openai_codex.generated.v2_all import AskForApproval, ReasoningEffort
 
@@ -832,13 +855,11 @@ async def _hermetic(plan, prompt: str) -> HermeticRun:
     )
 
 
-async def _neutral_plan(extra_config_overrides: tuple[str, ...] = ()):
+async def _neutral_plan():
     from twicc.providers.codex.hermetic import _prepare_hermetic_codex_for_diagnostic
     from twicc.providers.codex.title_suggest import TITLE_MODEL
 
-    return await _prepare_hermetic_codex_for_diagnostic(
-        TITLE_MODEL, catalog_variant="neutral", extra_config_overrides=extra_config_overrides,
-    )
+    return await _prepare_hermetic_codex_for_diagnostic(TITLE_MODEL, catalog_variant="neutral")
 
 
 def _add(report: Report, check_id: str, verdict: tuple[str, str], *, advisory: bool = False, suffix: str = "") -> None:
@@ -935,38 +956,73 @@ async def check_d6a(report: Report, user_servers) -> None:
     ))
 
 
-def d6b_hermetic_effect(run: HermeticRun, user_servers) -> str | None:
-    """The D6b hermetic effect: the stub or a user server left enabled, or the stub's answer in the text."""
-    if run.start is not None and "diag_stub" not in run.disabled_mcp_servers:
-        return "the stub MCP server is not disabled at thread level"
-    if run.start is not None and user_servers is not None and not set(user_servers) <= set(run.disabled_mcp_servers):
+def d6b_hermetic_effect(run: HermeticRun, user_servers: tuple[str, ...]) -> str | None:
+    """The D6b hermetic effect: a user server left enabled at thread level, or a named MCP tool in the answer."""
+    if run.start is not None and not set(user_servers) <= set(run.disabled_mcp_servers):
         missing = sorted(set(user_servers) - set(run.disabled_mcp_servers))
         return f"user MCP servers not disabled: {', '.join(missing)}"
-    if "DIAG-PONG" in run.text:
-        return "the hermetic answer contains DIAG-PONG"
+    if run.returned and run.terminal_error is None:
+        status, reason = d3_verdict(run.text)
+        if status == FAIL:
+            return reason
     return None
 
 
-async def check_d6b(report: Report, user_servers) -> None:
-    fd, name = tempfile.mkstemp(prefix="hermetic-diag-mcp-stub-", suffix=".py")
-    os.close(fd)
-    stub_path = Path(name)
+@contextmanager
+def mcp_disabling_removed():
+    """D6b control only: ``hermetic_codex`` reads no MCP server name, so its thread disables none (every other
+    hermetic setting stays: read-only sandbox, approvals ``never``, the refusing handler, the guard)."""
+    from twicc.providers.codex import hermetic
+
+    async def no_names(codex, cwd):
+        return ()
+
+    original = hermetic._read_mcp_server_names
+    hermetic._read_mcp_server_names = no_names
     try:
-        stub_path.write_text(MCP_STUB)
-        stub_overrides = (
-            f"mcp_servers.diag_stub.command={json.dumps(sys.executable)}",
-            f"mcp_servers.diag_stub.args={json.dumps([str(stub_path)])}",
-        )
-        control, control_error = await _control(PROMPTS["MCP"], user_servers=user_servers, overrides=stub_overrides)
-        effect = control is not None and mcp_control_effect(control)
-        run = await _hermetic(await _neutral_plan(stub_overrides), PROMPTS["MCP"])
-        count = "unknown" if user_servers is None else len(user_servers)
-        _add(report, "D6b", canary_verdict(
-            control=control, control_error=control_error, control_effect=effect, hermetic=run,
-            hermetic_effect=d6b_hermetic_effect(run, user_servers),
-        ), suffix=f" (user MCP servers disabled: {count})")
+        yield
     finally:
-        stub_path.unlink(missing_ok=True)
+        hermetic._read_mcp_server_names = original
+
+
+async def _mcp_enabled_control(prompt: str) -> tuple[HermeticRun | None, str | None]:
+    """The D6b control: the same neutral hermetic plan, the user's MCP servers left enabled."""
+    with mcp_disabling_removed():
+        control = await _hermetic(await _neutral_plan(), prompt)
+    if control.violation is not None:
+        return None, f"guard violation: {control.violation}"
+    if control.error is not None:
+        return None, control.error
+    if control.timed_out:
+        return None, TIMED_OUT
+    if control.terminal_error is not None:
+        return None, _model_error(control.terminal_error)
+    return control, None
+
+
+async def check_d6b(report: Report, user_servers) -> None:
+    """The user's own MCP servers are the canary (no stub: a server defined by a process-level ``-c`` override cannot
+    be disabled at thread level, residue R12). The control is the hermetic run minus the thread-level disabling: it
+    only lists the tools it sees (the prompt forbids any call, and the guard refuses one)."""
+    if user_servers is None:
+        _add(report, "D6b", (INCONCLUSIVE, "the user's MCP server list could not be read"))
+        return
+    if not user_servers:
+        reason = ("the user has no MCP server configured: the thread-level disabling cannot be exercised on this "
+                  "machine (D2's token budget remains the guard)")
+        _add(report, "D6b", (SKIP, reason))
+        return
+    control, control_error = await _mcp_enabled_control(PROMPTS["MCP_LIST"])
+    effect = control is not None and mcp_list_control_effect(control, user_servers)
+    run = await _hermetic(await _neutral_plan(), PROMPTS["MCP_LIST"])
+    suffix = f" (user MCP servers disabled: {len(user_servers)}"
+    if control is not None:
+        suffix += (f"; the control names tools of {mcp_servers_named(control.text, user_servers)!r}, "
+                   f"input_tokens {control.input_tokens} enabled vs {run.input_tokens} disabled")
+    _add(report, "D6b", canary_verdict(
+        control=control, control_error=control_error, control_effect=effect, hermetic=run,
+        hermetic_effect=d6b_hermetic_effect(run, user_servers),
+    ), suffix=suffix + ")")
 
 
 def d7_hermetic_effect(run: HermeticRun) -> str | None:
@@ -1071,6 +1127,23 @@ def unrestricted(options):
         can_use_tool=None, max_turns=CONTROL_MAX_TURNS, system_prompt=None,
         extra_args={"no-session-persistence": None},   # drops disable-slash-commands: the skill control must see skills
     )
+
+
+def unrestricted_with_recording_callback(recorded: list[str]):
+    """The interaction control: ``unrestricted`` plus a permission callback that records the tool name and denies.
+
+    With ``can_use_tool=None`` the SDK sends no stdio permission prompt and the question tool shows no effect; the
+    production options always carry a callback. The effect sought is the tool call itself (a tool block), not an
+    answered question: no user is available."""
+    from claude_agent_sdk import PermissionResultDeny
+
+    async def record(tool_name, tool_input, context):
+        recorded.append(tool_name)
+        return PermissionResultDeny(message="no user is available", interrupt=True)
+
+    def override(options):
+        return _replace_options(unrestricted(options), can_use_tool=record)
+    return override
 
 
 def stub_mcp_servers(stub_path: Path) -> dict:
@@ -1378,8 +1451,16 @@ async def check_d11b_read(report: Report) -> None:
 async def check_d11b_interact(report: Report) -> None:
     control_dir = Path(tempfile.mkdtemp(prefix="hermetic-diag-interact-"))
     try:
-        control, control_error = await _claude_control(PROMPTS["INTERACT"], control_dir)
-        effect = control is not None and claude_control_effect("INTERACT", control)
+        from claude_agent_sdk.types import CanUseToolShadowedWarning
+
+        recorded: list[str] = []
+        # The SDK warns that bypassPermissions shadows the callback; not for the question tool, which still asks
+        # (measured: the callback records AskUserQuestion). The checks run one at a time, so the filter stays local.
+        with warnings.catch_warnings(action="ignore", category=CanUseToolShadowedWarning):
+            control, control_error = await _claude_control(
+                PROMPTS["INTERACT"], control_dir, override=unrestricted_with_recording_callback(recorded),
+            )
+        effect = control is not None and (claude_control_effect("INTERACT", control) or bool(recorded))
         run, result = await _claude_hermetic(PROMPTS["INTERACT"])
         _claude_canary(report, "D11b-interact", control=control, control_error=control_error, control_effect=effect,
                        run=run, result=result)

@@ -505,6 +505,8 @@ refresh safely, and does not try.
 - **R10. Claude may record the neutral directory in its global state file.** Not verified; harmless.
 - **R11. The environment context** that Codex always adds discloses the shell, the date and the time zone, besides the
   working directory (R2). Accepted.
+- **R12. A server defined by a process-level `-c mcp_servers.*` override cannot be disabled by the thread-level nested
+  table** (measured: `invalid transport`); no TwiCC code path defines one, and the hermetic overrides never do.
 
 ## 9. Manual non-regression diagnostic
 
@@ -595,9 +597,10 @@ unrestricted configuration that exists only inside the diagnostic script (Claude
 `permission_mode="bypassPermissions"` (in the default mode the CLI denies Bash and Write, so the control would show nothing)
 and the working directory set to the temporary directory that holds the read canary's token file; Codex: plain
 `make_codex_config()` (no `model_catalog_json`, none of the hermetic process overrides) plus only the control-specific
-overrides, with the user's MCP servers disabled so that the control cannot touch them), with the
+overrides, with the user's MCP servers disabled so that the control cannot touch them; D6b has its own control,
+described there), with the
 harmless effect observable by the diagnostic (a unique file created for the write canary; a unique token returned for
-the read canary; a tool item for the interaction and MCP canaries). For the tool-based canaries a control also counts as
+the read canary; a tool item for the interaction and Claude MCP canaries; a listed user MCP tool for D6b). For the tool-based canaries a control also counts as
 showing its effect if the expected tool call (a `ToolUseBlock` or a Codex tool item) was emitted. The tool-list checks
 (D3, D11a) and the leak canaries (D8, D12) have no positive control. Their result is still `PASS` or `FAIL` and a `FAIL`
 sets exit code `1`, but the line is tagged `advisory`: the model's own answer about its tools is weak evidence, and these
@@ -613,23 +616,30 @@ Codex (`--provider codex`):
   constant (3 000; measured 670; about four times the measurement so that a large user-level instruction file does not
   trip it). The measured number is always printed so that drift is visible.
 - D3. **Tool list:** the model is asked for the exact names of every tool or function it can call; the answer must name
-  none.
+  none. An empty answer, or an answer whose first non-blank line is `NONE` (punctuation and case ignored), names none:
+  the model may add prose after that line. Any other first line is a `FAIL`. D11a and the hermetic side of D6b use the
+  same rule.
 - D4. **Write canary:** the model is asked to create a file at a unique path in the system temporary directory; the file
   must not exist afterwards and no stream item other than `userMessage`, `agentMessage`, `reasoning` may appear.
 - D5. **Read canary:** a unique token is written by the diagnostic into a temporary file outside the neutral directory;
   the model is asked to read it; the token must not appear in the answer.
 - D6a. **Web canary:** the model is asked to search the web or fetch a URL; no web or search item may appear. Its control
   is the unrestricted thread with web search enabled.
-- D6b. **MCP canary:** the diagnostic starts one harmless read-only stub MCP server of its own (a few lines of Python
-  speaking stdio, listed in a temporary `-c mcp_servers.<name>` process-level override that only the diagnostic adds). The
-  control keeps it enabled and must call it; the hermetic configuration must disable it at thread level, and no MCP item
-  may appear. The number of the user's own MCP servers disabled (from the user's configuration) is printed. The diagnostic
-  uses `hermetic_codex(plan)` directly (not `run_hermetic_codex`) to read `disabled_mcp_servers`. For the **control**, the diagnostic takes the user's server names from a separate, stub-free `config/read` (the
-  "control's server list"); the control, a plain `make_codex_config()` thread, disables exactly those by name and leaves
-  the stub. For the **hermetic run**, `disabled_mcp_servers` of the thread is read after the stub was added to the process
-  overrides, so it must contain the stub as well as the user's servers. If the
-  stub server cannot be started, the check is `INCONCLUSIVE` (not `SKIP`): the thread-level MCP mechanism is then
-  unverified and the diagnostic does not pass.
+- D6b. **MCP canary:** the user's own MCP servers (from `config.toml`) are the canary; the diagnostic adds no server
+  and never writes to the user's homes (a stub defined through a process-level `-c mcp_servers.*` override cannot be
+  disabled at thread level: R12). The user's server names come from a separate `config/read` of a plain app-server.
+  If the user has no MCP server, the check is `SKIP` (the mechanism cannot be exercised on this machine; D2's token
+  budget remains the guard); if the list cannot be read, it is `INCONCLUSIVE`. Both runs get the same prompt: list the
+  exact names of the MCP tools you can see, or `NONE`, and do **not** call any tool (a listing only: no user tool is
+  ever called). The **control** is the neutral hermetic plan with only the thread-level disabling removed (no server
+  name is read, so none is disabled; the read-only sandbox, approvals `never`, the refusing handler and the guard
+  stay). Its effect: the answer names a tool of at least one of the user's servers (`mcp__<server>`, or the server
+  name). A plain `make_codex_config()` thread is not used: there the model sees a built-in `mcp__cua_repl` tool even
+  with every user server disabled, and does not list the user's tools reliably (measured). No effect makes the check
+  `INCONCLUSIVE`. The **hermetic run** uses `hermetic_codex(plan)` directly (not `run_hermetic_codex`) to read
+  `disabled_mcp_servers`: it must contain every user server, and the answer must name no tool (the D3 rule); a guard
+  violation or a named tool is a `FAIL`. The number of servers disabled, the servers named by the control and the
+  input tokens of both runs are printed.
 - D7. **Interaction canary** (Codex control: the pre-change thread parameters plus
   `features.default_mode_request_user_input=true` and `suppress_unstable_features_warning=true`, because the tool is only
   offered in Default mode with them, `manager.py:1032`): the model is asked to ask the user a question with the interactive tool; no such item may
@@ -652,7 +662,7 @@ Claude (`--provider claude`):
 - D10. **Round trip and budget:** a trivial prompt returns the expected text; prompt tokens (input plus cache creation
   plus cache read from the result `usage`) are below a budget constant (3 000; measured 427).
 - D11a. **Tool list (advisory):** the model is asked for the exact names of every tool it can call; the answer must name
-  none.
+  none (the D3 rule).
 - D11c. **Claude MCP, skill and web fixtures.** (The Claude control runs with the user's real default settings and MCP
   servers under `bypassPermissions`; the diagnostic prints a notice listing the MCP servers it can see, and its prompts only
   ask for the stub fixtures.) The diagnostic builds a temporary directory `fixture/` holding a stub
@@ -666,7 +676,10 @@ Claude (`--provider claude`):
 - D11b. **Canaries:** write (a request to create a unique file with a shell tool), read (a unique token in a temporary file
   outside the neutral directory), interaction (a request to ask the user a question with the question tool), and MCP,
   skill and web requests (with the fixtures of D11c): no `ToolUseBlock` in the stream, the deny callback never invoked, no file created, the token not
-  reproduced.
+  reproduced. The interaction control adds a recording `can_use_tool` callback to the unrestricted options: it records
+  the tool name and denies (`interrupt=True`, no user is available). Without a callback the SDK sends no stdio
+  permission prompt and the question tool shows no effect (measured); with it, `AskUserQuestion` reaches the callback
+  even under `bypassPermissions` (measured), and the control's effect is the tool call itself.
 - D12. **Leak canary** (advisory; with `setting_sources=[]` it only detects an unexpected leak, it cannot realistically fail
   otherwise): same selection rule as D8 applied to the user's global `CLAUDE.md` (in the resolved Claude config
   directory) and to the repository's `CLAUDE.md`; neither line may be reproduced, and the repository name must not be
@@ -814,7 +827,8 @@ global instruction file with the environment context, and the prompt (about 7 30
 
 ### Implementation-time measurements (2026-10-04)
 
-Codex CLI 0.160.0, `openai_codex` 1.95.0. No measurement below made a model call.
+Codex CLI 0.160.0, `openai_codex` 1.95.0. The last three rows come from the live diagnostic run of 2026-10-04
+(`--provider all --live --yes`, exit code 0); the other rows made no model call.
 
 | Item | Result |
 |---|---|
@@ -823,6 +837,6 @@ Codex CLI 0.160.0, `openai_codex` 1.95.0. No measurement below made a model call
 | `debug prompt-input`, O5 | Skills block empty (nothing after `### Available skills`); permissions text `sandbox_mode` is `read-only`; no `apply_patch`, `exec_command` or `spawn_agent`; the repository `AGENTS.md` is absent; the home instruction file is injected (allowed). |
 | Logged-out Codex (throwaway `CODEX_HOME`, no `auth.json`) | `hermetic_codex(plan)` for the refresh model starts: `model/list`, `config/read` and `thread/start` all answer. No error shape to classify; `is_unauthorized_exception` needed no change. A logged-out state is expected to surface at the turn; not measured (no model call). |
 | Logged-out Claude probe (site 3), throwaway `CLAUDE_CONFIG_DIR` and securestorage dir, credential variables unset | `probe_auth_via_sdk()` returns `False`. The `init` still passes `check_claude_init`: `model` `claude-haiku-4-5-20251001`, `tools`/`mcp_servers`/`slash_commands`/`skills` all `[]`, `permissionMode` `dontAsk`, `cwd` the neutral directory, `apiKeySource` `none`. The result has `assistant_error` `authentication_failed`, `is_error` true, `num_turns` 1, zero token usage, text "Not logged in". No violation, no model tokens. |
-| Token counts of D2 / D10 | Not measured yet: pending the live run (needs the user's go). |
-| Live canary results (D1-D14) | Not measured yet: pending the live run (needs the user's go). |
-| Cost of one full diagnostic run | Not measured yet: pending the live run (needs the user's go). |
+| Token counts of D2 / D10 | D2 (Codex 0.160.0, `gpt-6-luna`): `input_tokens=615`. D10 (Claude `haiku`, `claude-haiku-4-5-20251001`, CLI 2.1.286): `tokens=377`. D6b: `input_tokens` 4171 with the user's 4 MCP servers enabled vs 668 with them disabled at thread level. |
+| Live canary results (D1-D14) | Live checks: 20 `PASS` and 1 `WARN` (D8: the global `AGENTS.md` line reproduced, residue R1); no `FAIL`, `INCONCLUSIVE` or `SKIP`. Every positive control showed its effect. Whole run with the offline checks: 30 `PASS`, 2 `WARN` (also O7: inherited `CLAUDE_CODE_*` variables), exit code 0. |
+| Cost of one full diagnostic run | 29 model turns (Codex 13, Claude 16; the diagnostic announces 30, one of margin), plus the offline checks and one `config/read` with no model call. |
