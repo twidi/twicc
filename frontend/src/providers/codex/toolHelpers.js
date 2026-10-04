@@ -37,7 +37,7 @@ import { parseApplyPatchEnvelope } from './parsePatch'
 import { isExecChainRunning } from './execRunning'
 import { agentControlHeaderLabel, agentControlExpectedCount, maskEncryptedMessage } from './agentControlTools'
 import { getTodoDescription } from '../../utils/todoList'
-import { formatToolNameForHeader, humanizeToolSegment } from '../../utils/toolNames'
+import { formatDurationMsCompact, formatToolNameForHeader, humanizeToolSegment } from '../../utils/toolNames'
 
 import DescriptionSummary from '../../components/session/detail/items/summary/DescriptionSummary.vue'
 import GrepSummary from '../../components/session/detail/items/summary/GrepSummary.vue'
@@ -1094,6 +1094,14 @@ export class CodexToolHelpers extends BaseToolHelpers {
         // role of Claude Code's ``TodoWrite``, so users see the same
         // header word across providers.
         if (name === 'update_plan') return 'Todo'
+        // ``clock.sleep`` (namespaced function call, name ``clock__sleep``):
+        // keep the usual "Clock : Sleep" title and append the requested
+        // duration so the card reads without being opened.
+        if (name === 'clock__sleep') {
+            const duration = formatDurationMsCompact(input?.duration_ms)
+            const base = formatToolNameForHeader(name)
+            return duration ? `${base} (${duration})` : base
+        }
         // ``web_search_call`` splits into two user-facing surfaces
         // depending on the action variant: a web search for ``search``
         // (one or more queries) vs a web fetch for ``open_page`` /

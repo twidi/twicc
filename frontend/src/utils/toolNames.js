@@ -58,3 +58,22 @@ export function formatToolNameForHeader(rawName, forcedLabel = null) {
         .filter(Boolean)
         .join(' : ')
 }
+
+/**
+ * Compact duration for a tool-card title: the two most significant non-zero
+ * units, from milliseconds up to days (``500ms``, ``45s``, ``1s 500ms``,
+ * ``1mn 50s``, ``3h 40mn``, ``2d 3h``). Non-finite or negative input → ``''``.
+ */
+export function formatDurationMsCompact(ms) {
+    if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return ''
+    let rest = Math.round(ms)
+    const units = [['d', 86400000], ['h', 3600000], ['mn', 60000], ['s', 1000], ['ms', 1]]
+    const parts = []
+    for (const [label, size] of units) {
+        const n = Math.floor(rest / size)
+        rest -= n * size
+        if (n > 0) parts.push(`${n}${label}`)
+        if (parts.length === 2) break
+    }
+    return parts.length ? parts.join(' ') : '0ms'
+}
