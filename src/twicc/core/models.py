@@ -24,6 +24,13 @@ _AGENT_STATE_CHOICES = [
 logger = logging.getLogger(__name__)
 
 
+def mcp_event_data_dir():
+    """Bind new subscriptions to this instance's resolved data directory."""
+    from twicc.paths import get_data_dir
+
+    return str(get_data_dir().resolve())
+
+
 def cron_occurrences(cron_expr: str, from_dt: datetime):
     """Iterate cron occurrences from a given datetime.
 
@@ -406,6 +413,7 @@ class Session(models.Model):
     # one JSONL file maps to exactly one session — the unique constraint also covers
     # the path-based lookups done by initial sync and the file watcher.
     file_path = models.CharField(max_length=500, unique=True)
+    history_epoch = models.PositiveIntegerField(default=0)
     last_offset = models.PositiveBigIntegerField(default=0)
     last_line = models.PositiveIntegerField(default=0)
     mtime = models.FloatField(default=0)
@@ -2128,3 +2136,31 @@ class McpOperation(models.Model):
     # counts one UTC day of it.
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     targets = models.JSONField(default=dict)
+
+
+class McpEventSubscription(models.Model):
+    """Durable external callback state; secrets stay outside owner snapshots."""
+
+    id = models.CharField(primary_key=True, max_length=40)
+    connection = models.ForeignKey(McpConnection, on_delete=models.CASCADE)
+    name = models.CharField(max_length=64)
+    arguments = models.JSONField()
+    # A live session can be subscribed to before the watcher creates its row.
+    session_id = models.CharField(max_length=255, db_index=True)
+    callback_url = models.URLField(max_length=2048)
+    secret = models.CharField(max_length=128)
+    previous_secret = models.CharField(max_length=128, blank=True)
+    previous_secret_until = models.DateTimeField(null=True)
+    cursor_line = models.PositiveIntegerField()
+    cursor_at = models.FloatField()
+    initial_last_line = models.PositiveIntegerField()
+    turn_open = models.BooleanField()
+    turn_started_at = models.FloatField(null=True)
+    turn_opened_by = models.CharField(max_length=16, blank=True)
+    turn_start_line = models.PositiveIntegerField()
+    numbering = models.PositiveIntegerField(null=True)
+    data_dir = models.CharField(max_length=4096, default=mcp_event_data_dir)
+    refresh_before = models.DateTimeField(db_index=True)
+    # Generation stays fixed on refresh; replacement creates a new generation.
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
