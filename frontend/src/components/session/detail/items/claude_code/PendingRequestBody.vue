@@ -1300,7 +1300,8 @@ usePendingRequestDraft({
     padding: var(--wa-space-s);
     overflow-y: auto;
     flex: 1;
-    min-height: 0;
+    /* Never collapse to nothing: below this the card itself scrolls. */
+    min-height: 6rem;
 }
 
 .tool-name-badge {
@@ -1446,7 +1447,8 @@ wa-textarea.auto-focused:focus-within::part(base) {
     gap: var(--wa-space-m);
     overflow-y: auto;
     flex: 1;
-    min-height: 0;
+    /* Never collapse to nothing: below this the card itself scrolls. */
+    min-height: 6rem;
 }
 
 .question-block {

@@ -318,6 +318,10 @@ wa-divider {
     padding: var(--wa-space-s);
     background: var(--wa-color-surface-default);
     max-height: 50dvh;
+    /* Safety net: when the cap (e.g. with the soft keyboard open) is smaller than the
+       header plus the unshrinkable action row, the card scrolls instead of letting
+       its content spill out of the card. */
+    overflow-y: auto;
     &.maximized {
         max-height: unset;
         position: absolute;
