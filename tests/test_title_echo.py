@@ -1,6 +1,8 @@
 """Automatic title echoes expire and are consumed once."""
 
+from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
+from threading import Event, Lock, current_thread
 from types import SimpleNamespace
 
 import pytest
@@ -94,3 +96,55 @@ def test_pending_title_write_and_flush_leave_automatic_echo_record(echoes, monke
     pending_titles.set_pending_title("s", "U")
     assert pending_titles.pop_pending_title("s") == "U"
     assert module.should_skip_automatic_title_echo("s", "A", title="U", title_origin="user")
+
+
+def test_matching_consumer_cannot_remove_concurrent_newer_record(echoes, monkeypatch):
+    module, _ = echoes
+    consumer_read = Event()
+    replacement_attempted = Event()
+    writer_thread = []
+    consumer_thread = []
+    lock = Lock()
+
+    class CoordinatedLock:
+        def __enter__(self):
+            if writer_thread and current_thread() is writer_thread[0]:
+                replacement_attempted.set()
+            lock.acquire()
+
+        def __exit__(self, *args):
+            lock.release()
+
+    class CoordinatedRecords(dict):
+        def get(self, key, default=None):
+            record = super().get(key, default)
+            if consumer_thread and current_thread() is consumer_thread[0]:
+                consumer_read.set()
+                assert replacement_attempted.wait(timeout=5)
+            return record
+
+        def __setitem__(self, key, value):
+            super().__setitem__(key, value)
+            # Without locking, replacement completes while the old lookup pauses.
+            if writer_thread and current_thread() is writer_thread[0]:
+                replacement_attempted.set()
+
+    monkeypatch.setattr(module, "_automatic_title_echoes", CoordinatedRecords())
+    monkeypatch.setattr(module, "_echo_lock", CoordinatedLock(), raising=False)
+    module.record_automatic_title_push("s", "A")
+
+    def consume_old():
+        consumer_thread.append(current_thread())
+        return module.should_skip_automatic_title_echo("s", "A", title="U", title_origin="user")
+
+    def replace():
+        writer_thread.append(current_thread())
+        module.record_automatic_title_push("s", "B")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        consume = executor.submit(consume_old)
+        assert consumer_read.wait(timeout=5)
+        replacement = executor.submit(replace)
+        assert consume.result(timeout=5)
+        replacement.result(timeout=5)
+    assert module.should_skip_automatic_title_echo("s", "B", title="U", title_origin="user")

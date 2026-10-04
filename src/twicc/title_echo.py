@@ -1,6 +1,7 @@
 """Bounded, process-local records of automatic title provider pushes."""
 
 import time
+from threading import Lock
 from typing import NamedTuple
 
 
@@ -13,6 +14,8 @@ class _AutomaticTitleEcho(NamedTuple):
 
 
 _automatic_title_echoes: dict[str, _AutomaticTitleEcho] = {}
+# The live compute worker and automatic-title runner share this process-local map.
+_echo_lock = Lock()
 
 
 def _prune_expired_echoes(now: float) -> None:
@@ -27,9 +30,10 @@ def _prune_expired_echoes(now: float) -> None:
 
 def record_automatic_title_push(session_id: str, title: str) -> None:
     """Record the latest automatic push before its provider write starts."""
-    now = time.monotonic()
-    _prune_expired_echoes(now)
-    _automatic_title_echoes[session_id] = _AutomaticTitleEcho(title, now)
+    with _echo_lock:
+        now = time.monotonic()
+        _prune_expired_echoes(now)
+        _automatic_title_echoes[session_id] = _AutomaticTitleEcho(title, now)
 
 
 def should_skip_automatic_title_echo(
@@ -40,9 +44,10 @@ def should_skip_automatic_title_echo(
     title_origin: str,
 ) -> bool:
     """Consume a matching echo; skip it only when it would replace a user title."""
-    _prune_expired_echoes(time.monotonic())
-    record = _automatic_title_echoes.get(session_id)
-    if record is None or record.title != provider_title:
-        return False
-    _automatic_title_echoes.pop(session_id)
+    with _echo_lock:
+        _prune_expired_echoes(time.monotonic())
+        record = _automatic_title_echoes.get(session_id)
+        if record is None or record.title != provider_title:
+            return False
+        _automatic_title_echoes.pop(session_id)
     return title_origin == "user" and title != provider_title
