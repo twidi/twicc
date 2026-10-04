@@ -68,6 +68,17 @@ _OTHER_RASTER_FORMATS = (
     "JPEG2000", "MSP", "PCX", "PPM", "PSD", "QOI", "SGI", "SUN", "TIFF",
 )  # fmt: skip
 
+# Modes that Pillow resizes with Lanczos and encodes in the output family without losing values
+# (checked with Pillow 12: ``I;16`` / ``I;16B`` resize and save as 16-bit PNG).
+_RESAMPLE_MODES = {
+    "PNG": frozenset({"L", "LA", "RGB", "RGBA", "I;16", "I;16B"}),
+    "GIF": frozenset({"L", "LA", "RGB", "RGBA"}),  # encoded as PNG
+    "WEBP": frozenset({"L", "LA", "RGB", "RGBA"}),
+    "JPEG": frozenset({"L", "RGB", "CMYK"}),
+}
+
+_TIFF_BYTE_ORDERS = {b"II*\x00": "<I", b"MM\x00*": ">I"}
+
 _VP8_START_CODE = b"\x9d\x01\x2a"
 _VP8L_SIGNATURE = 0x2F
 _VP8X_ANIMATION_FLAG = 0x02
@@ -128,6 +139,12 @@ def head_opens_as_raster(head: bytes) -> bool:
     """True when Pillow opens another raster format (BMP, TIFF, …) from *head* alone."""
     if not head:
         return False
+    tiff_offset_format = _TIFF_BYTE_ORDERS.get(head[:4])
+    if tiff_offset_format is not None:
+        # A TIFF whose first IFD (its 2-byte entry count at least) lies past the head cannot be
+        # opened from the head: decided here, before Pillow parses (and warns about) a truncated IFD.
+        if len(head) < 8 or struct.unpack(tiff_offset_format, head[4:8])[0] + 2 > len(head):
+            return False
     try:
         with Image.open(io.BytesIO(head), formats=_OTHER_RASTER_FORMATS):
             return True
@@ -255,13 +272,24 @@ def _encode(image: Image.Image, image_format: str) -> tuple[bytes, str]:
 
 
 def _resample_ready(image: Image.Image, image_format: str) -> Image.Image:
-    """A mode Lanczos applies to (palette and bilevel images are resized with nearest otherwise)."""
-    if image_format == "JPEG":
-        return image if image.mode in ("L", "RGB", "CMYK") else image.convert("RGB")
-    if image.mode in ("L", "LA", "RGB", "RGBA"):
-        return image
-    has_alpha = "A" in image.getbands() or "transparency" in image.info
-    return image.convert("RGBA" if has_alpha else "RGB")
+    """The image in a mode that Lanczos resizes and its family encodes without losing values.
+
+    Palette and bilevel images are converted (Pillow resizes them with nearest otherwise); a 32-bit
+    ``I`` PNG becomes 16-bit ``I;16`` (the PNG maximum, clipped correctly). Any other mode would be
+    damaged by a conversion (e.g. 16-bit values clipped to 255), so it raises ``ValueError`` and the
+    entry becomes a file.
+    """
+    mode = image.mode
+    if mode == "1":
+        image = image.convert("L")
+    elif mode in ("P", "PA"):
+        has_alpha = mode == "PA" or "transparency" in image.info
+        image = image.convert("RGBA" if has_alpha else "RGB")
+    elif mode == "I" and image_format == "PNG":
+        image = image.convert("I;16")
+    if image.mode not in _RESAMPLE_MODES[image_format]:
+        raise ValueError(f"Unsupported {image_format} mode for resizing: {mode}")
+    return image
 
 
 def _decode_native(path: Path, header: ImageHeader, edge: int) -> tuple[bytes, str] | None:

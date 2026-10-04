@@ -169,11 +169,29 @@ def test_tiff_with_ifd_in_the_head_is_an_image(tmp_path):
     assert kind_of(tmp_path, "scan.tiff", data) == "image"
 
 
-def test_tiff_with_ifd_beyond_64_kib_falls_through(tmp_path, tracked_reads):
+@pytest.mark.filterwarnings("error")
+def test_tiff_with_ifd_beyond_64_kib_falls_through(tmp_path, tracked_reads, monkeypatch):
     data = tiff_with_ifd_at(HEAD + 4096)
     assert Image.open(io.BytesIO(data)).size == (1, 1)  # a valid TIFF
+    # Decided from the IFD offset: Pillow never parses the truncated head (no "Corrupt EXIF" warning).
+    monkeypatch.setattr(Image, "open", lambda *args, **kwargs: pytest.fail("Pillow must not open this head"))
     assert kind_of(tmp_path, "scan.tiff", data) == "other"
     assert tracked_reads.read_bytes <= HEAD
+
+
+@pytest.mark.filterwarnings("error")
+@pytest.mark.parametrize(
+    "data",
+    [
+        b"II*\x00" + struct.pack("<I", HEAD - 1) + b"\x00" * (HEAD + 100),
+        b"MM\x00*" + struct.pack(">I", HEAD - 1) + b"\x00" * (HEAD + 100),
+        b"MM\x00*" + struct.pack(">I", HEAD + 4096) + b"\x00" * (HEAD * 2),
+    ],
+    ids=["little-endian-ifd-count-cut", "big-endian-ifd-count-cut", "big-endian-ifd-beyond"],
+)
+def test_tiff_ifd_offset_check_uses_the_byte_order(tmp_path, monkeypatch, data):
+    monkeypatch.setattr(Image, "open", lambda *args, **kwargs: pytest.fail("Pillow must not open this head"))
+    assert kind_of(tmp_path, "scan.tiff", data) == "other"
 
 
 # ── Misleading extensions ─────────────────────────────────────────────────────

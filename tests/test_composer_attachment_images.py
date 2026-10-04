@@ -529,6 +529,48 @@ def test_still_gif_resizes_to_png(tmp_path):
     assert (part.media_type, image.format, image.size) == ("image/png", "PNG", (2000, 200))
 
 
+def test_16_bit_grayscale_png_keeps_its_depth_when_resized(tmp_path):
+    data = encode(Image.new("I;16", (3000, 100), 30000), "PNG")
+    path = write(tmp_path, "deep.png", data)
+    assert Image.open(path).mode == "I;16"
+    part = normalize_image(path, target=claude, remaining_budget=BUDGET)
+    image = decoded(part)
+    assert (part.media_type, image.mode, image.size) == ("image/png", "I;16", (2000, 67))
+    assert abs(image.getpixel((1000, 33)) - 30000) <= 1  # mid-gray, not clipped to white
+
+
+@pytest.mark.parametrize(
+    ("mode", "image_format", "value", "expected_mode", "expected"),
+    [
+        ("I;16", "PNG", 30000, "I;16", 30000),
+        ("I;16B", "PNG", 30000, "I;16B", 30000),
+        ("I", "PNG", 30000, "I;16", 30000),
+        ("1", "PNG", 1, "L", 255),
+        ("L", "JPEG", 100, "L", 100),
+        ("CMYK", "JPEG", (1, 2, 3, 4), "CMYK", (1, 2, 3, 4)),
+    ],
+)
+def test_resample_modes_preserve_values(mode, image_format, value, expected_mode, expected):
+    image = images._resample_ready(Image.new(mode, (4, 4), value), image_format)
+    assert (image.mode, image.getpixel((1, 1))) == (expected_mode, expected)
+
+
+@pytest.mark.parametrize(
+    ("mode", "image_format"),
+    [("F", "PNG"), ("I;16L", "PNG"), ("I", "WEBP"), ("I;16", "GIF"), ("I;16", "JPEG"), ("RGBA", "JPEG")],
+)
+def test_resample_refuses_modes_it_would_corrupt(mode, image_format):
+    with pytest.raises(ValueError):
+        images._resample_ready(Image.new(mode, (4, 4)), image_format)
+
+
+def test_unsupported_mode_above_target_is_a_file(tmp_path, monkeypatch):
+    path = write(tmp_path, "big.png", encode(gradient((3000, 1500)), "PNG"))
+    original = images._resample_ready
+    monkeypatch.setattr(images, "_resample_ready", lambda image, fmt: original(image.convert("F"), fmt))
+    assert normalize_image(path, target=claude, remaining_budget=BUDGET) is None
+
+
 def test_exif_transpose_happens_before_resize(tmp_path):
     # Orientation 6: rotate 90° clockwise to display.
     path = write(tmp_path, "rotated.jpg", encode(gradient((3000, 1000)), "JPEG", exif=orientation_exif(6)))
