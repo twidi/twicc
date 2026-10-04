@@ -29,6 +29,8 @@ from asgiref.sync import sync_to_async
 from django.core.exceptions import RequestDataTooBig
 from django.http import Http404, HttpResponse, JsonResponse
 
+from twicc.core.services.attachments import lifecycle, staging
+from twicc.core.services.attachments.types import AttachmentRef
 from twicc.file_tree import validate_path
 from twicc.uploads import locks, store
 from twicc.uploads.broadcast import broadcast_upload_state
@@ -172,6 +174,8 @@ async def _revalidate_target(meta: dict) -> str | None:
     if not os.path.isabs(target_dir):
         return "'target_dir' must be an absolute path"
     scope = meta["scope"]
+    if scope["kind"] == lifecycle.SCOPE_KIND_COMPOSER:
+        return await asyncio.to_thread(_check_composer_target, meta)
     if scope["kind"] == "project":
         _scope, error = await _check_scope(
             target_dir, project_id=scope["project_id"], session_id=scope.get("session_id"), root=None
@@ -180,6 +184,24 @@ async def _revalidate_target(meta: dict) -> str | None:
         _scope, error = await _check_scope(target_dir, project_id=None, session_id=None, root=scope.get("root"))
     if error is None:
         error = await asyncio.to_thread(_check_target_writable, target_dir)
+    return None if error is None else _error_message(error)
+
+
+def _check_composer_target(meta: dict) -> str | None:
+    """Re-validation of a composer upload: its target is still its entry's ``file/`` directory.
+
+    Refuses an invalid entry key, a target that is not ``<staging>/<bucket>/<id>/file``, a
+    released entry and a removed (or symlinked) ``file/``, then applies check 4.
+    """
+    ref = lifecycle.composer_ref(meta)
+    if ref is None:
+        return "Invalid attachment reference"
+    target_dir = meta["target_dir"]
+    if os.path.normpath(target_dir) != str(lifecycle.upload_target_dir(ref)):
+        return "The target directory is not the attachment's directory"
+    if lifecycle.is_released(ref) or os.path.realpath(target_dir) != target_dir or not os.path.isdir(target_dir):
+        return "The attachment was removed"
+    error = _check_target_writable(target_dir)
     return None if error is None else _error_message(error)
 
 
@@ -219,11 +241,12 @@ class CreationRequest(NamedTuple):
 
     filename: str  # not stripped yet (check 2)
     size: int
-    target_dir: str  # as sent (check 3 normalises it)
+    target_dir: str  # as sent (check 3 normalises it); empty for the composer origin
     root: str | None  # standalone prefix only
     origin: dict
     fingerprint: str
     client_id: str
+    attachment_ref: AttachmentRef | None = None  # composer origin only: the target entry
 
 
 def _is_int(value: object) -> bool:
@@ -253,8 +276,17 @@ def _parse_creation_body(request, *, standalone: bool) -> CreationRequest | Json
     filename = data.get("filename")
     if not isinstance(filename, str):
         return _error("'filename' must be a string", 400)
+    raw_origin = data.get("origin")
+    composer = isinstance(raw_origin, dict) and raw_origin.get("panel") == store.ORIGIN_PANEL_COMPOSER
     target_dir = data.get("target_dir")
-    if not isinstance(target_dir, str):
+    if composer:
+        # The server computes the target of a composer upload (spec 2026-10-03 §6.1.1).
+        if not standalone:
+            return _error("Composer uploads are created with POST /api/uploads/ only", 400)
+        if target_dir is not None or data.get("root") is not None:
+            return _error("'target_dir' and 'root' must be absent for the composer origin", 400)
+        target_dir = ""
+    elif not isinstance(target_dir, str):
         return _error("'target_dir' must be a string", 400)
     client_id = data.get("client_id")
     if not _is_non_empty_str(client_id) or len(client_id) > store.CLIENT_ID_MAX_LENGTH:
@@ -265,19 +297,25 @@ def _parse_creation_body(request, *, standalone: bool) -> CreationRequest | Json
             f"'fingerprint' must be a non-empty string of at most {store.FINGERPRINT_MAX_LENGTH} characters", 400
         )
     root = None
-    if standalone:
+    if standalone and not composer:
         root = data.get("root")
         if root is not None and not isinstance(root, str):
             return _error("'root' must be a string or null", 400)
-    origin = data.get("origin")
+    origin = raw_origin
     if not isinstance(origin, dict):
         return _error("'origin' must be an object", 400)
     panel = origin.get("panel")
     key = origin.get("key")
     if panel not in store.ORIGIN_PANELS:
-        return _error("'origin.panel' must be 'files' or 'artifacts'", 400)
+        return _error("'origin.panel' must be 'files', 'artifacts' or 'composer'", 400)
     if not isinstance(key, str) or len(key) > store.ORIGIN_KEY_MAX_LENGTH:
         return _error(f"'origin.key' must be a string of at most {store.ORIGIN_KEY_MAX_LENGTH} characters", 400)
+    attachment_ref = None
+    if composer:
+        try:
+            attachment_ref = lifecycle.ref_from_origin_key(key)
+        except staging.AttachmentError:
+            return _error("'origin.key' must be '<bucket>/<attachment id>' for the composer origin", 400)
 
     return CreationRequest(
         filename=filename,
@@ -287,6 +325,7 @@ def _parse_creation_body(request, *, standalone: bool) -> CreationRequest | Json
         origin={"panel": panel, "key": key},
         fingerprint=fingerprint,
         client_id=client_id,
+        attachment_ref=attachment_ref,
     )
 
 
@@ -383,30 +422,92 @@ async def _check_scope(
     return scope, error
 
 
+class ComposerTarget(NamedTuple):
+    """The target of a composer upload, prepared by :func:`_prepare_composer_target`."""
+
+    filename: str  # normalized
+    target_dir: str  # ``<staging>/<bucket>/<attachment_id>/file``
+    scope: dict
+
+
+def _composer_name_max_bytes() -> int:
+    """Longest file name the composer staging area accepts, keeping room for a `` (n)`` suffix.
+
+    ``PC_NAME_MAX`` is read on the deepest existing directory of the staging area, so a normalized
+    name always passes the later ``PC_NAME_MAX`` check of the target.
+    """
+    path = os.path.realpath(staging.get_composer_attachments_dir())
+    while not os.path.isdir(path) and os.path.dirname(path) != path:
+        path = os.path.dirname(path)
+    try:
+        name_max = os.pathconf(path, "PC_NAME_MAX")
+    except (OSError, ValueError):
+        name_max = None
+    if name_max is not None and 0 < name_max < 255:
+        return max(1, min(store.FILENAME_MAX_BYTES, name_max - _NAME_SUFFIX_ROOM))
+    return store.FILENAME_MAX_BYTES
+
+
+async def _prepare_composer_target(body: CreationRequest) -> ComposerTarget | JsonResponse:
+    """Steps 2-5 of a composer creation (spec 2026-10-03 §6.1.1), under the creation lock.
+
+    Release tombstone (``410``), file name normalization, settle of every other attempt of the
+    entry (``500`` when one cannot be settled: nothing is reset), then the reset of the entry. The
+    target checks that need the directory and the upload creation follow in :func:`_create`.
+    """
+    ref = body.attachment_ref
+    # 2. Release tombstone: a released entry is never re-created.
+    if await asyncio.to_thread(lifecycle.is_released, ref):
+        return _error("The attachment was removed", 410)
+    # 3. File name: any name is accepted, normalized.
+    filename = staging.normalize_filename(body.filename, await asyncio.to_thread(_composer_name_max_bytes))
+    # 4. Settle every other attempt for the entry.
+    try:
+        await lifecycle.settle_entry_uploads(ref)
+    except lifecycle.SettleError:
+        logger.warning("Composer upload creation: cannot settle the previous uploads of %s", ref, exc_info=True)
+        return _error("Cannot cancel the previous upload of this attachment", 500)
+    # 5. Reset the entry and create ``file/``.
+    try:
+        target_dir = await asyncio.to_thread(lifecycle.reset_entry, ref)
+    except OSError as exc:
+        logger.warning("Composer upload creation: cannot reset the entry %s", ref, exc_info=True)
+        code = store.failure_code(exc)
+        return _error("Not enough disk space" if code == 507 else "Cannot prepare the attachment", code)
+    return ComposerTarget(filename, str(target_dir), {"kind": lifecycle.SCOPE_KIND_COMPOSER})
+
+
 async def _create(body: CreationRequest, *, project_id: str | None, session_id: str | None) -> JsonResponse:
     """The whole creation (checks 1b-5, files, zero-byte finalization).
 
     Runs as one guarded task that holds the creation lock for its whole
-    duration (§5.3, §5.4).
+    duration (§5.3, §5.4). A composer upload replaces checks 2-3 with
+    :func:`_prepare_composer_target` (server-computed target, settle, reset).
     """
-    async with locks.get_creation_lock():
+    async with lifecycle.composer_creation_guard():
         # 1b. Idempotency lookup, before every other check.
         existing = await asyncio.to_thread(_find_by_client_id, body.client_id)
         if existing is not None:
             return _creation_answer(existing, 200)
 
-        # 2. File name.
-        filename = body.filename.strip()
-        if (error := _check_filename(filename)) is not None:
-            return error
+        if body.attachment_ref is not None:
+            prepared = await _prepare_composer_target(body)
+            if isinstance(prepared, JsonResponse):
+                return prepared
+            filename, target_dir, scope = prepared
+        else:
+            # 2. File name.
+            filename = body.filename.strip()
+            if (error := _check_filename(filename)) is not None:
+                return error
 
-        # 3. Absolute target, then the scope of the prefix.
-        target_dir = os.path.normpath(body.target_dir)
-        if not os.path.isabs(target_dir):
-            return _error("'target_dir' must be an absolute path", 400)
-        scope, error = await _check_scope(target_dir, project_id=project_id, session_id=session_id, root=body.root)
-        if error is not None:
-            return error
+            # 3. Absolute target, then the scope of the prefix.
+            target_dir = os.path.normpath(body.target_dir)
+            if not os.path.isabs(target_dir):
+                return _error("'target_dir' must be an absolute path", 400)
+            scope, error = await _check_scope(target_dir, project_id=project_id, session_id=session_id, root=body.root)
+            if error is not None:
+                return error
 
         # 2 (PC_NAME_MAX), 4 and 5.
         if (error := await asyncio.to_thread(_check_target_sync, target_dir, filename, body.size)) is not None:
@@ -430,6 +531,8 @@ async def _create(body: CreationRequest, *, project_id: str | None, session_id: 
             code = store.failure_code(exc)
             return _error("Not enough disk space" if code == 507 else "Cannot create the upload", code)
         await broadcast_upload_state(meta)
+        if body.attachment_ref is not None:
+            await asyncio.to_thread(lifecycle.touch_entry, body.attachment_ref)
 
         if body.size == 0:
             lock = locks.get_upload_lock(upload_id)
@@ -663,6 +766,9 @@ async def _patch(request, upload_id: str) -> HttpResponse:
         )
         if result.meta is not None:
             await broadcast_upload_state(result.meta)
+        if result.part_size is not None and result.part_size > part:
+            # Accepted progress keeps a composer staging entry fresh for the retention reaper.
+            await asyncio.to_thread(lifecycle.touch_upload_entry, meta)
         if result.part_size is not None and result.part_size >= size:
             return _patch_after_finalization(await finalize_upload(upload_id))
         if result.outcome != store.APPEND_OK:

@@ -65,7 +65,8 @@ CLIENT_ID_MAX_LENGTH = 64
 FINGERPRINT_MAX_LENGTH = 64
 ORIGIN_KEY_MAX_LENGTH = 1024
 FILENAME_MAX_BYTES = 240
-ORIGIN_PANELS = frozenset({"files", "artifacts"})
+ORIGIN_PANEL_COMPOSER = "composer"
+ORIGIN_PANELS = frozenset({"files", "artifacts", ORIGIN_PANEL_COMPOSER})
 
 # Prefix of the cross-filesystem temp file in the target dir (§5.6); reserved.
 TEMP_FILE_PREFIX = ".twicc-upload-"
@@ -655,10 +656,12 @@ def _end_active_upload(upload_id: str, **changes: object) -> WriteOutcome:
 
 
 def cancel_upload(upload_id: str) -> WriteOutcome:
-    """tus termination of a non-terminal, non-``finalizing`` upload (§5.3 ``DELETE``).
+    """Cancellation of any non-terminal upload: ``active`` or ``finalizing``.
 
-    Writes ``cancelled`` first, then removes ``<id>.part`` (best effort):
-    ``204``. On a disk-full write: removes ``<id>.part`` first, then writes
+    Used by the tus termination (§5.3 ``DELETE``, which refuses ``finalizing``
+    itself) and by the settle rule of the composer entries, which also cancels
+    a ``finalizing`` upload. Writes ``cancelled`` first, then removes
+    ``<id>.part`` (best effort): ``204``. On a disk-full write: removes ``<id>.part`` first, then writes
     ``cancelled`` again; if that write fails too, nothing to broadcast and
     ``507``, whatever the second error (§5.3). Any other failed first write:
     ``500``, nothing removed.
@@ -989,6 +992,22 @@ def finalize_precommit_failure(upload_id: str, current: dict, code: int, message
     return FinalizeResult(meta, code, True)
 
 
+def run_completion_hook(meta: dict, final_path: str) -> None:
+    """The composer completion hook, run before every ``completed`` write.
+
+    For a composer upload, writes the entry's ``ready.json`` (spec 2026-10-03 §6.1.1); nothing for
+    another origin. Raises when the hook fails: the caller then keeps the upload ``finalizing``
+    and recovery runs the hook again.
+    """
+    origin = meta.get("origin")
+    if not isinstance(origin, dict) or origin.get("panel") != ORIGIN_PANEL_COMPOSER:
+        return
+    # Local import: the attachments staging module imports this module.
+    from twicc.core.services.attachments import staging
+
+    staging.on_upload_completed(meta, final_path)
+
+
 def finalize_files(upload_id: str, current: dict) -> FinalizeResult:
     """Worker-thread part of the finalization (§5.6 step 4), with its failure rules.
 
@@ -1029,6 +1048,13 @@ def finalize_files(upload_id: str, current: dict) -> FinalizeResult:
         except OSError as exc:
             logger.warning("Upload %s: replace into %s failed", upload_id, placement.final_path, exc_info=True)
             return FinalizeResult(current, failure_code(exc), False)
+
+    # Composer completion hook, before ``completed``; a failure keeps ``finalizing`` for recovery.
+    try:
+        run_completion_hook(current, placement.final_path)
+    except Exception as exc:
+        logger.warning("Upload %s: completion hook failed", upload_id, exc_info=True)
+        return FinalizeResult(current, failure_code(exc), False)
 
     # 4.7 ``completed``, then the best-effort removals.
     try:
@@ -1090,6 +1116,25 @@ def _settle(upload_id: str, current: dict, cleanup: tuple[str, ...], **changes: 
     return RecoveryVerdict(RECOVERY_DONE, meta, 200, True)
 
 
+def _settle_completed(
+    upload_id: str, current: dict, cleanup: tuple[str, ...], completed_path: str, **changes: object
+) -> RecoveryVerdict:
+    """Run the completion hook for *completed_path*, then settle as ``completed`` with *changes*.
+
+    *completed_path* is passed explicitly: when ``final_path`` is not set yet, it is only known as
+    the file found by inode (and is then also part of *changes*).
+
+    A hook failure writes nothing: the state stays as it is (``finalizing``) and the answer is
+    ``507`` / ``500``, so a later recovery runs the hook again.
+    """
+    try:
+        run_completion_hook(current, completed_path)
+    except Exception as exc:
+        logger.warning("Upload %s: completion hook failed during recovery", upload_id, exc_info=True)
+        return RecoveryVerdict(RECOVERY_ANSWER, current, failure_code(exc), False)
+    return _settle(upload_id, current, cleanup, state=STATE_COMPLETED, **changes)
+
+
 def _scan_for_inode(target_dir: str, inodes: set[tuple[int, int]]) -> str | None:
     """The entry of *target_dir* with one of *inodes*, skipping ``.twicc-upload-*.tmp``.
 
@@ -1117,7 +1162,7 @@ def _recover_committed(upload_id: str, meta: dict, part: str, tmp: str) -> Recov
     size = meta["size"]
     cleanup = (part, tmp)
     if meta.get("final_method") == FINAL_METHOD_LINK:
-        return _settle(upload_id, meta, cleanup, state=STATE_COMPLETED)
+        return _settle_completed(upload_id, meta, cleanup, final_path)
 
     # ``replace``. ``lstat``: only a regular file at ``final_path`` counts
     # (a symlink placed at the reserved name is never taken for ours).
@@ -1127,7 +1172,7 @@ def _recover_committed(upload_id: str, meta: dict, part: str, tmp: str) -> Recov
         final_st = None
     final_is_file = final_st is not None and stat.S_ISREG(final_st.st_mode)
     if final_is_file and final_st.st_size == size:
-        return _settle(upload_id, meta, cleanup, state=STATE_COMPLETED)
+        return _settle_completed(upload_id, meta, cleanup, final_path)
     source = tmp if meta.get("final_source") == FINAL_SOURCE_TMP else part
     if _file_size(source) != size:
         _remove_if_empty(final_path)
@@ -1150,7 +1195,7 @@ def _recover_committed(upload_id: str, meta: dict, part: str, tmp: str) -> Recov
             if verdict.kind == RECOVERY_DONE:
                 _remove_if_empty(final_path)
             return verdict
-        return _settle(upload_id, meta, cleanup, state=STATE_COMPLETED)
+        return _settle_completed(upload_id, meta, cleanup, final_path)
 
     # ``final_path`` holds other content: never overwrite it; finalize again
     # from ``<id>.part``, which picks a new free name.
@@ -1177,11 +1222,11 @@ def _recover_uncommitted(upload_id: str, meta: dict, part: str, tmp: str) -> Rec
     if inodes:
         found = _scan_for_inode(target_dir, inodes)
         if found is not None:
-            return _settle(
+            return _settle_completed(
                 upload_id,
                 meta,
                 (part, tmp),
-                state=STATE_COMPLETED,
+                found,
                 final_path=found,
                 final_method=FINAL_METHOD_LINK,
             )

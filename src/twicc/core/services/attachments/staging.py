@@ -261,12 +261,19 @@ def on_upload_completed(meta: dict, final_path: str | Path) -> None:
     A no-op when the upload is not a composer one, when the entry no longer exists (never recreated),
     or when *final_path* is not a file of the entry's ``file/`` directory with ``meta['size']`` bytes.
     Idempotent. May raise on an I/O error: the caller keeps the upload ``finalizing`` for recovery.
+    A permanent condition (a malformed origin, an invalid entry key) is logged and never raises, so
+    it can never keep an upload ``finalizing`` forever.
     """
-    origin = meta.get("origin") or {}
-    if origin.get("panel") != "composer":
+    origin = meta.get("origin")
+    if not isinstance(origin, dict) or origin.get("panel") != "composer":
         return
-    bucket, _, att_id = str(origin.get("key", "")).partition("/")
-    ref = validate_ref({"bucket": bucket, "id": att_id})
+    key = origin.get("key")
+    bucket, _, att_id = (key if isinstance(key, str) else "").partition("/")
+    try:
+        ref = validate_ref({"bucket": bucket, "id": att_id})
+    except AttachmentError:
+        logger.warning("Composer upload completed with an invalid entry key: %r", key)
+        return
     entry = _real_entry_dir(ref)
     if entry is None:
         return

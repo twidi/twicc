@@ -240,6 +240,28 @@ def test_same_filesystem_links_and_broadcasts(app, target, layer):
     assert versions == sorted(set(versions))
 
 
+def test_composer_completion_hook_never_runs_for_another_origin(app, target, monkeypatch):
+    """Only a composer upload runs the composer hook: a Files upload completes even if it would fail."""
+    from twicc.core.services.attachments import staging
+
+    def failing_hook(meta, final_path):  # pragma: no cover - must not run
+        raise AssertionError("composer hook called for a files upload")
+
+    monkeypatch.setattr(staging, "on_upload_completed", failing_hook)
+    upload_id = _new_upload(target, size=len(DATA))
+    assert _patch(app, upload_id, 0, DATA).status == 204
+    assert _meta(upload_id)["state"] == "completed"
+
+
+def test_cancel_upload_accepts_a_finalizing_upload(target):
+    upload_id = _complete_upload(target)
+    store.update_metadata(upload_id, state="finalizing")
+    outcome = store.cancel_upload(upload_id)
+    assert outcome.code == 204
+    assert outcome.meta["state"] == "cancelled"
+    assert not store.part_path(upload_id).exists()
+
+
 def test_final_file_keeps_the_part_mode(app, target):
     upload_id = _new_upload(target, size=len(DATA))
     part_mode = stat.S_IMODE(os.stat(store.part_path(upload_id)).st_mode)
