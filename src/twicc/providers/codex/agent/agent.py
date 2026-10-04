@@ -2658,6 +2658,18 @@ class CodexAgent(BaseAgent):
         method = event.method
         payload = event.payload
 
+        # Plans are wire-only snapshots. Route by the originating thread before
+        # the parent streaming filter; never persist ephemeral helper plans.
+        if method == "turn/plan/updated":
+            if not getattr(self, "ephemeral", False):
+                from ..plan_snapshots import persist_plan_notification
+
+                try:
+                    await persist_plan_notification(payload)
+                except Exception:
+                    logger.exception("Codex plan persistence failed for %s", payload.thread_id)
+            return
+
         # Subagent traffic filter: Codex routes every notification from
         # a spawned subagent through the parent's SDK transport (single
         # Rust process, single notification stream). Each notification

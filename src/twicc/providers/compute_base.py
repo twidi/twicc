@@ -67,6 +67,7 @@ from twicc.providers.live_aggregates import (
     ItemContribution, apply_contribution_changes, item_contributions, needs_repair, persisted_cost, session_contribution,
 )
 from twicc.providers.goals import GoalEvent, apply_goal_event, preserve_dismissed_flags
+from twicc.providers.task_snapshots import select_tasks_snapshot
 from twicc.providers.history_facts import (
     HistoryFact, HistoryFactContext, HistoryFactKind,
     append_history_facts, history_facts_are_current, iter_resolver_items, replace_history_facts,
@@ -2862,7 +2863,7 @@ class BaseSessionCompute:
         last_resolved_git_directory: str | None = None
         last_resolved_git_branch: str | None = None
         # Latest task/todo/plan snapshot across the whole session (this full
-        # recompute is authoritative — it resets stale state to {}).
+        # recompute rebuilds JSONL state; apply preserves newer SDK evidence).
         last_tasks_snapshot: dict | None = None
         # Plan-doc write/delete events across the whole session, paired with
         # their line timestamps (authoritative full rebuild — starts empty).
@@ -3407,7 +3408,7 @@ class BaseSessionCompute:
                 # user-set value coming from the agent settings dialog.
                 **({'context_max': last_context_max} if last_context_max is not None else {}),
                 # Full recompute is authoritative for the whole file: reset to
-                # {} when the session carries no task/plan state at all.
+                # {} when no JSONL state exists; apply preserves SDK-only state.
                 'tasks': last_tasks_snapshot if last_tasks_snapshot is not None else {},
                 # Authoritative too — [] when no plan-doc was ever touched.
                 'plan_paths': plan_paths,
@@ -3784,6 +3785,11 @@ class BaseSessionCompute:
                 session_fields['plan_paths'] = fold_concurrent_entries(
                     session_fields['plan_paths'], db_plan_paths, sources=FOLDED_SOURCES,
                 )
+            if 'tasks' in session_fields:
+                # SDK plans do not advance last_offset. Re-read after acquiring
+                # the writer lock so a concurrent stream update survives.
+                db_tasks = Session.objects.filter(id=session_id).values_list('tasks', flat=True).first()
+                session_fields['tasks'] = select_tasks_snapshot(db_tasks or {}, session_fields['tasks'])
             if 'compute_version' in session_fields:
                 session_fields['search_version'] = None
             rows = Session.objects.filter(id=session_id).update(**session_fields)
@@ -4434,7 +4440,8 @@ class BaseSessionCompute:
         # Persist a refreshed task snapshot only when this batch carried one, so
         # a batch with no task line leaves the stored Session.tasks intact.
         if last_tasks_snapshot is not None:
-            session.tasks = last_tasks_snapshot
+            db_tasks = Session.objects.filter(id=session.id).values_list("tasks", flat=True).first()
+            session.tasks = select_tasks_snapshot(db_tasks or {}, last_tasks_snapshot)
             session_update_fields.append("tasks")
         # Merge this batch's plan-doc events into the stored list (additive —
         # unlike the batch recompute, a live batch never resets entries it

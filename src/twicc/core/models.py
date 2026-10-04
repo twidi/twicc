@@ -553,7 +553,8 @@ class Session(models.Model):
     # updated_at, explanation, items: [{status, content?, activeForm?}]}``.
     # Written by both compute paths (watcher live sync + background recompute)
     # and synced to the frontend in ``serialize_session`` like ``layout``.
-    # Not consumed by the UI yet — stored for future use.
+    # Codex SDK turn/plan/updated snapshots have line=None and turn_id.
+    # Both compute paths preserve these unless JSONL supplies newer state.
     tasks = models.JSONField(default=dict, blank=True)
     # Plan-like documents this session touched (plans, specs, handoffs, design
     # notes...), append-ordered — the frontend sorts by ``updated_at``. Each

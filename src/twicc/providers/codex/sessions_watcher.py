@@ -33,7 +33,8 @@ from asgiref.sync import sync_to_async
 from watchfiles import Change
 
 from twicc.core.enums import Provider
-from twicc.core.models import SessionItem, SessionType
+from twicc.core.models import Project, Session, SessionItem, SessionType
+from twicc.providers.helpers import AgentSettings
 from twicc.paths import path_to_project_id
 from twicc.provider_homes import codex_sessions_dir
 from twicc.providers.compute_base import BaseSessionCompute
@@ -87,6 +88,17 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         self._paginated_in_db: set[str] = set()
         self._gate_wakes: dict[str, asyncio.Task] = {}
         self._gate_wake_targets: dict[str, dict[Path, _GateWakeTarget]] = {}
+
+    def create_session_sync(
+        self, parsed: ParsedSessionFile, project: Project, parent_session: Session | None = None,
+        agent_settings: AgentSettings | None = None,
+    ) -> Session:
+        """Attach any SDK plan received before watcher discovery."""
+        from .plan_snapshots import apply_pending_plan
+
+        session = super().create_session_sync(parsed, project, parent_session, agent_settings)
+        apply_pending_plan(session)
+        return session
 
     async def defer_session_change(self, parsed: ParsedSessionFile) -> bool:
         # The coordinator is rewriting this session's history: skip the
