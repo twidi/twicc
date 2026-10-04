@@ -530,6 +530,8 @@ def test_touch_refs_rejects_an_invalid_holder(ref):
         ("a.jpg", image_bytes("JPEG"), "image/jpeg", True),
         ("a.gif", image_bytes("GIF"), "image/gif", True),
         ("a.webp", image_bytes("WEBP"), "image/webp", True),
+        # Another raster format is an image kind, but never served inline.
+        ("a.bmp", image_bytes("BMP"), "application/octet-stream", False),
         ("doc.pdf", b"%PDF-1.4\n%binary\n", "application/pdf", True),
         ("notes.txt", "héllo wörld\n".encode(), "text/plain; charset=utf-8", True),
         ("noext", b"plain text without extension", "text/plain; charset=utf-8", True),

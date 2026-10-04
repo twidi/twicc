@@ -264,16 +264,9 @@ def load_entry(ref: AttachmentRef) -> StagedEntry:
 
 # ── Content ──
 
-# Kind detection never reads more than this from the start of a file.
-HEAD_BYTES = 64 * 1024
 OCTET_STREAM = "application/octet-stream"
+PDF = "application/pdf"
 TEXT_PLAIN = "text/plain; charset=utf-8"
-_RASTER_MAGIC = (
-    (b"\x89PNG\r\n\x1a\n", "image/png"),
-    (b"\xff\xd8\xff", "image/jpeg"),
-    (b"GIF87a", "image/gif"),
-    (b"GIF89a", "image/gif"),
-)
 # Text a browser could run or render as a document: never served inline, even as text/plain.
 _ACTIVE_SUFFIXES = frozenset(
     {".htm", ".html", ".shtml", ".xht", ".xhtml", ".svg", ".svgz", ".xml", ".xsl", ".xslt", ".js", ".mjs", ".cjs"}
@@ -302,23 +295,6 @@ def content_location(entry: StagedEntry) -> Path:
     return real
 
 
-def _read_head(path: Path) -> bytes:
-    with open(path, "rb") as file:
-        return file.read(HEAD_BYTES)
-
-
-def _is_utf8_text(head: bytes, size: int) -> bool:
-    """The text rule of spec §6.4 on a bounded head (a sequence cut at the head's end is tolerated)."""
-    if size == 0 or b"\x00" in head:
-        return False
-    try:
-        head.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        # Only a multi-byte sequence cut by the head boundary is tolerated.
-        return size > len(head) and exc.reason == "unexpected end of data" and exc.start >= len(head) - 3
-    return True
-
-
 def _looks_like_markup(head: bytes) -> bool:
     return head.removeprefix(b"\xef\xbb\xbf").lstrip()[:1] == b"<"
 
@@ -326,23 +302,30 @@ def _looks_like_markup(head: bytes) -> bool:
 def content_media_type(entry: StagedEntry) -> tuple[str, bool]:
     """``(media type, inline)`` for the content endpoint, from at most the first 64 KiB of the bytes.
 
-    Inline only for raster images (PNG, JPEG, GIF, WebP), PDF and UTF-8 plain text; everything else,
-    including text that is markup or script, is ``application/octet-stream`` served as an
-    attachment. The type always comes from the bytes: a file name can only refuse inline, never
-    grant it.
+    The kind comes from the bounded detector of spec §6.4. Inline only for raster images (PNG, JPEG,
+    GIF, WebP), PDF and UTF-8 plain text; everything else, including another raster format (BMP, …)
+    and text that is markup or script (HTML, SVG, XML, JavaScript), is ``application/octet-stream``
+    served as an attachment. The type always comes from the bytes: a file name can only refuse
+    inline, never grant it.
     """
+    # Imported here so the planner can import this module without an import cycle.
+    from twicc.core.services.attachments import images, planner
+
     path = content_location(entry)
-    head = _read_head(path)
-    for magic, media_type in _RASTER_MAGIC:
-        if head.startswith(magic):
-            return media_type, True
-    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
-        return "image/webp", True
-    if head.startswith(b"%PDF-"):
-        return "application/pdf", True
-    size = path.stat().st_size
+    # One open for the head and the size, so both describe the same file.
+    with open(path, "rb") as file:
+        head = file.read(planner.HEAD_BYTES)
+        size = os.fstat(file.fileno()).st_size
+    kind = planner.detect_kind_from_head(head, entry.filename, size)
+    if kind == planner.KIND_IMAGE:
+        image_format = images.sniff_image_format(head)
+        if image_format is None:
+            return OCTET_STREAM, False
+        return images.IMAGE_MEDIA_TYPES[image_format], True
+    if kind == planner.KIND_PDF:
+        return PDF, True
     if (
-        _is_utf8_text(head, size)
+        kind == planner.KIND_TEXT
         and not _looks_like_markup(head)
         and Path(entry.filename).suffix.lower() not in _ACTIVE_SUFFIXES
     ):
