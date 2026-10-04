@@ -224,6 +224,7 @@ Thumbs.db
 # tmux reaper sentinel, written at the data dir root (the worktree root in worktree mode)
 .tmux-reaper-grandfathered
 search-index/
+cache/
 
 # Session artifacts, scratch space and artifact-share snapshots — data-dir
 # subdirectories that surface at the worktree root when the data dir is the
