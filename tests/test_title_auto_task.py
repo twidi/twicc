@@ -13,8 +13,13 @@ from twicc.core.models import Session
 
 @pytest.fixture
 def runner():
-    # A completed runner resets its own state. No test-only reset API is needed.
-    return import_module("twicc.title_auto_task")
+    module = import_module("twicc.title_auto_task")
+    yield module
+    # Failed state-reset assertions must not contaminate the next test.
+    module._wake = None
+    module._queued.clear()
+    module._pending.clear()
+    module._running.clear()
 
 
 async def wait(event):
@@ -197,6 +202,74 @@ def test_startup_checks_nothing_and_shutdown_leaves_no_workers(runner, monkeypat
     asyncio.run(scenario())
 
 
+def test_shutdown_overlap_resets_state_before_fresh_event_loop(runner, monkeypatch):
+    """Explicit cancellation during cooperative worker cleanup cannot retain requests."""
+    async def first():
+        entered, cleaning = asyncio.Event(), asyncio.Event()
+        calls, finished = [], []
+        cleanup_count = 0
+        before = asyncio.all_tasks()
+
+        async def check(session_id, *, closing):
+            nonlocal cleanup_count
+            calls.append(session_id)
+            if len(calls) == 2:
+                entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup_count += 1
+                if cleanup_count == 2:
+                    cleaning.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    finished.append(session_id)
+
+        monkeypatch.setattr(runner, "check_session_title", check)
+        shutdown = asyncio.Event()
+        task = asyncio.create_task(runner.start_title_auto_task(shutdown))
+        runner.request_title_check("again")
+        runner.request_title_check("blocker")
+        await wait(entered)
+        runner.request_title_check("again", closing=True)
+        runner.request_title_check("old-queued", closing=True)
+        shutdown.set()
+        await wait(cleaning)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=5)
+        assert sorted(finished) == ["again", "blocker"]
+        assert asyncio.all_tasks() == before
+        assert runner._wake is None
+        assert not runner._queued
+        assert not runner._pending
+        assert not runner._running
+
+    asyncio.run(first())
+    runner.request_title_check("again")
+
+    async def second():
+        complete = asyncio.Event()
+        calls = []
+
+        async def check(session_id, *, closing):
+            calls.append((session_id, closing))
+            complete.set()
+
+        monkeypatch.setattr(runner, "check_session_title", check)
+        shutdown = asyncio.Event()
+        task = asyncio.create_task(runner.start_title_auto_task(shutdown))
+        try:
+            await wait(complete)
+            await turn()
+            assert calls == [("again", False)]
+        finally:
+            await stop(task, shutdown)
+
+    asyncio.run(second())
+
+
 def test_fresh_event_loop_discards_old_running_and_queued_state(runner, monkeypatch):
     async def first():
         entered = asyncio.Event()
@@ -347,17 +420,18 @@ def test_same_session_waits_for_real_corrective_push(runner, env, session, monke
     assert env.pushes == [(session.id, env.output), (session.id, "User choice")]
 
 
-@pytest.mark.parametrize("startup_fails", [False, True])
+@pytest.mark.parametrize("startup_phase", ["normal", "provider-failure", "adoption-cancel"])
 def test_server_owns_title_runner_before_provider_start_and_until_teardown(
-    runner, monkeypatch, settings, startup_fails,
+    runner, monkeypatch, settings, startup_phase,
 ):
     """Execute run_server, while replacing socket, filesystem, and provider work."""
     run = import_module("twicc.cli.run")
-    settings.CLAUDE_HYBRID_ENABLED = False
+    settings.CLAUDE_HYBRID_ENABLED = startup_phase == "adoption-cancel"
     effects = []
 
     async def scenario():
         entered = asyncio.Event()
+        adopting = asyncio.Event()
         before = asyncio.all_tasks()
 
         async def noop(*args, **kwargs):
@@ -375,8 +449,13 @@ def test_server_owns_title_runner_before_provider_start_and_until_teardown(
             effects.append("providers-start")
             runner.request_title_check("live-trigger")
             await wait(entered)
-            if startup_fails:
+            if startup_phase == "provider-failure":
                 raise RuntimeError("provider startup failed")
+
+        async def adopt():
+            assert entered.is_set()
+            adopting.set()
+            await asyncio.Event().wait()
 
         async def providers_stop():
             assert effects[-1] == "check-cancel"
@@ -422,17 +501,25 @@ def test_server_owns_title_runner_before_provider_start_and_until_teardown(
         ):
             monkeypatch.setattr(name, noop)
         monkeypatch.setattr("twicc.providers.state.apply_auto_enable_providers_bootstrap", lambda: None)
+        monkeypatch.setattr("twicc.agent.registry.get_agent_manager_registry", lambda: SimpleNamespace(
+            get=lambda provider: SimpleNamespace(adopt_running_hybrid_sessions=adopt)))
         monkeypatch.setattr("twicc.drop_requests_watcher.get_drop_requests_watcher", lambda: SimpleNamespace(start=noop))
         monkeypatch.setattr("twicc.artifacts_watcher.get_artifacts_watcher", lambda: SimpleNamespace(start=noop))
-        if startup_fails:
+        if startup_phase == "provider-failure":
             with pytest.raises(RuntimeError, match="provider startup failed"):
                 await asyncio.wait_for(run.run_server(0), timeout=5)
+        elif startup_phase == "adoption-cancel":
+            server_task = asyncio.create_task(run.run_server(0))
+            await wait(adopting)
+            server_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(server_task, timeout=5)
         else:
             await asyncio.wait_for(run.run_server(0), timeout=5)
         assert asyncio.all_tasks() == before
 
     asyncio.run(scenario())
     expected = ["db-start", "providers-start", "check-cancel"]
-    if not startup_fails:
+    if startup_phase == "normal":
         expected += ["providers-stop", "db-stop"]
     assert effects == expected

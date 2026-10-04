@@ -62,8 +62,12 @@ async def start_title_auto_task(shutdown_event: asyncio.Event) -> None:
     finally:
         for worker in workers:
             worker.cancel()
-        await asyncio.gather(*workers, return_exceptions=True)
-        _wake = None
-        _queued.clear()
-        _pending.clear()
-        _running.clear()
+        try:
+            await asyncio.gather(*workers, return_exceptions=True)
+        finally:
+            # Server cancellation can overlap cooperative worker cleanup.
+            # Release loop state even when gathering propagates cancellation.
+            _wake = None
+            _queued.clear()
+            _pending.clear()
+            _running.clear()

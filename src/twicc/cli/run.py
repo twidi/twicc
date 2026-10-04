@@ -272,237 +272,239 @@ async def run_server(port: int):
     title_auto_task = asyncio.create_task(start_title_auto_task(shutdown_event))
     try:
         await orchestrators.start_all(shutdown_event, search_index_ready)
-    except BaseException:
-        await _cancel_task(title_auto_task, "Automatic title task")
-        raise
 
-    # Configure uvicorn
-    # log_config=None prevents Uvicorn from installing its own StreamHandlers;
-    # uvicorn loggers are handled by Django's LOGGING config instead.
-    # The server is created up front so the search-lifecycle coordinator can
-    # request a graceful shutdown via ``request_shutdown`` if it fails fatally
-    # (e.g. another process holds the Tantivy writer lock).
-    config = uvicorn.Config(
-        application,
-        host="0.0.0.0",
-        port=port,
-        log_level="info",
-        log_config=None,
-    )
-    server = uvicorn.Server(config)
+        # Configure uvicorn
+        # log_config=None prevents Uvicorn from installing its own StreamHandlers;
+        # uvicorn loggers are handled by Django's LOGGING config instead.
+        # The server is created up front so the search-lifecycle coordinator can
+        # request a graceful shutdown via ``request_shutdown`` if it fails fatally
+        # (e.g. another process holds the Tantivy writer lock).
+        config = uvicorn.Config(
+            application,
+            host="0.0.0.0",
+            port=port,
+            log_level="info",
+            log_config=None,
+        )
+        server = uvicorn.Server(config)
 
-    def request_shutdown() -> None:
-        """Trigger a graceful shutdown of every component.
+        def request_shutdown() -> None:
+            """Trigger a graceful shutdown of every component.
 
-        Used both by the OS signal handler and by background coroutines
-        that encounter a non-recoverable startup error.
-        """
-        # Cooperative stop for any provider's blocking sync threads
-        # (async tasks listen for ``shutdown_event`` directly).
-        orchestrators.request_thread_stop_all()
-        shutdown_event.set()
-        server.should_exit = True
+            Used both by the OS signal handler and by background coroutines
+            that encounter a non-recoverable startup error.
+            """
+            # Cooperative stop for any provider's blocking sync threads
+            # (async tasks listen for ``shutdown_event`` directly).
+            orchestrators.request_thread_stop_all()
+            shutdown_event.set()
+            server.should_exit = True
 
-    # Cross-provider search-lifecycle coordinator. Runs in parallel to
-    # the server so ``init_search_index`` doesn't gate uvicorn startup.
-    # The background search-indexing task it spawns (and any hot-toggle
-    # re-trigger) is tracked via ``get_active_indexing_tasks`` so we
-    # can stop every live run cleanly below.
-    search_orchestrator_task = asyncio.create_task(
-        _orchestrate_global_search(orchestrators, shutdown_event, search_index_ready, request_shutdown)
-    )
+        # Cross-provider search-lifecycle coordinator. Runs in parallel to
+        # the server so ``init_search_index`` doesn't gate uvicorn startup.
+        # The background search-indexing task it spawns (and any hot-toggle
+        # re-trigger) is tracked via ``get_active_indexing_tasks`` so we
+        # can stop every live run cleanly below.
+        search_orchestrator_task = asyncio.create_task(
+            _orchestrate_global_search(orchestrators, shutdown_event, search_index_ready, request_shutdown)
+        )
 
-    # Cross-provider periodic tasks
-    price_sync_task = asyncio.create_task(start_price_sync_task(shutdown_event))
-    quota_wakeup_task = asyncio.create_task(start_quota_wakeup_task(shutdown_event))
-    session_dirs_cleanup_task = asyncio.create_task(start_session_dirs_cleanup_task(shutdown_event))
-    peer_purge_task = asyncio.create_task(start_peer_purge_task(shutdown_event))
-    tmux_cleanup_task = asyncio.create_task(start_tmux_cleanup_task(shutdown_event))
-    upload_cleanup_task = asyncio.create_task(start_upload_cleanup_task(shutdown_event))
-    last_used_flush_task = asyncio.create_task(start_last_used_flush_task(shutdown_event))
-    share_view_flush_task = asyncio.create_task(start_share_view_flush_task(shutdown_event))
-    denial_flush_task = asyncio.create_task(start_denial_flush_task(shutdown_event))
-    telemetry_task = asyncio.create_task(start_telemetry_task(shutdown_event))
-    version_check_task = asyncio.create_task(start_version_check_task())
+        # Cross-provider periodic tasks
+        price_sync_task = asyncio.create_task(start_price_sync_task(shutdown_event))
+        quota_wakeup_task = asyncio.create_task(start_quota_wakeup_task(shutdown_event))
+        session_dirs_cleanup_task = asyncio.create_task(start_session_dirs_cleanup_task(shutdown_event))
+        peer_purge_task = asyncio.create_task(start_peer_purge_task(shutdown_event))
+        tmux_cleanup_task = asyncio.create_task(start_tmux_cleanup_task(shutdown_event))
+        upload_cleanup_task = asyncio.create_task(start_upload_cleanup_task(shutdown_event))
+        last_used_flush_task = asyncio.create_task(start_last_used_flush_task(shutdown_event))
+        share_view_flush_task = asyncio.create_task(start_share_view_flush_task(shutdown_event))
+        denial_flush_task = asyncio.create_task(start_denial_flush_task(shutdown_event))
+        telemetry_task = asyncio.create_task(start_telemetry_task(shutdown_event))
+        version_check_task = asyncio.create_task(start_version_check_task())
 
-    # One-shot trust backfill: settle every not-yet-imported project's trust
-    # from the provider configs (seed + projection + broadcast). Runs in the
-    # server loop (NOT blocking boot) because each settled project may spawn
-    # a short-lived Codex app-server for the config projection.
-    from twicc.core.services.trust import backfill_unimported_trust
-    trust_backfill_task = asyncio.create_task(backfill_unimported_trust())
-    # One-shot project-icon discovery sweep (the "initial sync" of icons): every
-    # project's anchor + repo favicon/logo, applied silently and broadcast live.
-    # Runs in the server loop (not blocking boot) — icons appearing a moment
-    # after startup is fine. Cheap after the first run (manifests short-circuit).
-    from twicc.project_icons import discover_all_project_icons
-    icon_discovery_task = asyncio.create_task(discover_all_project_icons())
-    # Dev-only: re-scan the tips dir every 10 s and broadcast on change.
-    # The task short-circuits to a no-op outside TWICC_DEBUG so this is a
-    # zero-cost coroutine in production.
-    tips_watcher_task = asyncio.create_task(start_tips_watcher_task(shutdown_event))
-    help_watcher_task = asyncio.create_task(start_help_watcher_task(shutdown_event))
+        # One-shot trust backfill: settle every not-yet-imported project's trust
+        # from the provider configs (seed + projection + broadcast). Runs in the
+        # server loop (NOT blocking boot) because each settled project may spawn
+        # a short-lived Codex app-server for the config projection.
+        from twicc.core.services.trust import backfill_unimported_trust
+        trust_backfill_task = asyncio.create_task(backfill_unimported_trust())
+        # One-shot project-icon discovery sweep (the "initial sync" of icons): every
+        # project's anchor + repo favicon/logo, applied silently and broadcast live.
+        # Runs in the server loop (not blocking boot) — icons appearing a moment
+        # after startup is fine. Cheap after the first run (manifests short-circuit).
+        from twicc.project_icons import discover_all_project_icons
+        icon_discovery_task = asyncio.create_task(discover_all_project_icons())
+        # Dev-only: re-scan the tips dir every 10 s and broadcast on change.
+        # The task short-circuits to a no-op outside TWICC_DEBUG so this is a
+        # zero-cost coroutine in production.
+        tips_watcher_task = asyncio.create_task(start_tips_watcher_task(shutdown_event))
+        help_watcher_task = asyncio.create_task(start_help_watcher_task(shutdown_event))
 
-    # CLI drop-request plumbing (cf. docs/superpowers/specs/2026-05-17-cli-session-create-design.md)
-    from twicc.heartbeat import heartbeat_loop
-    from twicc.drop_requests_watcher import get_drop_requests_watcher
+        # CLI drop-request plumbing (cf. docs/superpowers/specs/2026-05-17-cli-session-create-design.md)
+        from twicc.heartbeat import heartbeat_loop
+        from twicc.drop_requests_watcher import get_drop_requests_watcher
 
-    heartbeat_task = asyncio.create_task(heartbeat_loop())
-    drop_watcher_task = asyncio.create_task(get_drop_requests_watcher().start())
+        heartbeat_task = asyncio.create_task(heartbeat_loop())
+        drop_watcher_task = asyncio.create_task(get_drop_requests_watcher().start())
 
-    # TwiCC's own MCP server (/mcp): keeps the streamable-HTTP session manager
-    # alive until shutdown. Disabled by TWICC_NO_MCP (the task returns early).
-    from twicc.mcp.endpoint import start_mcp_task
-    mcp_task = asyncio.create_task(start_mcp_task(shutdown_event))
+        # TwiCC's own MCP server (/mcp): keeps the streamable-HTTP session manager
+        # alive until shutdown. Disabled by TWICC_NO_MCP (the task returns early).
+        from twicc.mcp.endpoint import start_mcp_task
+        mcp_task = asyncio.create_task(start_mcp_task(shutdown_event))
 
-    # Per-session artifacts presence tracking (powers the session's Artifacts
-    # tab). Filesystem-only, so it starts immediately like the drop watcher —
-    # no dependency on the initial JSONL sync.
-    from twicc.artifacts_watcher import get_artifacts_watcher
-    artifacts_watcher_task = asyncio.create_task(get_artifacts_watcher().start())
+        # Per-session artifacts presence tracking (powers the session's Artifacts
+        # tab). Filesystem-only, so it starts immediately like the drop watcher —
+        # no dependency on the initial JSONL sync.
+        from twicc.artifacts_watcher import get_artifacts_watcher
+        artifacts_watcher_task = asyncio.create_task(get_artifacts_watcher().start())
 
-    # Hybrid CLI sessions: adopt tmux survivors FIRST (their claude outlives
-    # TwiCC restarts), then start the hook-events watcher — its boot scan
-    # must find the adopted agents so a leftover PermissionRequest of a
-    # still-pending prompt reaches them (events for long-gone sessions are
-    # dropped harmlessly).
-    from django.conf import settings
-    from twicc.agent.registry import get_agent_manager_registry
-    from twicc.core.enums import Provider
-    from twicc.providers.claude_code.agent.hybrid.hooks_watcher import (
-        get_hybrid_hooks_watcher,
-    )
+        # Hybrid CLI sessions: adopt tmux survivors FIRST (their claude outlives
+        # TwiCC restarts), then start the hook-events watcher — its boot scan
+        # must find the adopted agents so a leftover PermissionRequest of a
+        # still-pending prompt reaches them (events for long-gone sessions are
+        # dropped harmlessly).
+        from django.conf import settings
+        from twicc.agent.registry import get_agent_manager_registry
+        from twicc.core.enums import Provider
+        from twicc.providers.claude_code.agent.hybrid.hooks_watcher import (
+            get_hybrid_hooks_watcher,
+        )
 
-    # Hybrid CLI mode is gated behind TWICC_CLAUDE_HYBRID_ENABLED (default OFF).
-    # While off, neither the boot adoption nor the hooks watcher run, and the
-    # backend refuses to create or resume any hybrid session (see the guards in
-    # the agent factory and the session-creation service).
-    hybrid_hooks_watcher_task = None
-    if settings.CLAUDE_HYBRID_ENABLED:
+        # Hybrid CLI mode is gated behind TWICC_CLAUDE_HYBRID_ENABLED (default OFF).
+        # While off, neither the boot adoption nor the hooks watcher run, and the
+        # backend refuses to create or resume any hybrid session (see the guards in
+        # the agent factory and the session-creation service).
+        hybrid_hooks_watcher_task = None
+        if settings.CLAUDE_HYBRID_ENABLED:
+            try:
+                await get_agent_manager_registry().get(Provider.CLAUDE_CODE).adopt_running_hybrid_sessions()
+            except Exception:
+                logger.exception("Hybrid boot adoption failed")
+            hybrid_hooks_watcher_task = asyncio.create_task(get_hybrid_hooks_watcher().start())
+
+        def handle_signal(signum, frame):
+            logger.info("Received signal %s, initiating shutdown...", signum)
+            request_shutdown()
+
+        signal.signal(signal.SIGTERM, handle_signal)
+        signal.signal(signal.SIGINT, handle_signal)
+
         try:
-            await get_agent_manager_registry().get(Provider.CLAUDE_CODE).adopt_running_hybrid_sessions()
-        except Exception:
-            logger.exception("Hybrid boot adoption failed")
-        hybrid_hooks_watcher_task = asyncio.create_task(get_hybrid_hooks_watcher().start())
+            await server.serve()
+        finally:
+            logger.info("Server shutdown initiated...")
 
-    def handle_signal(signum, frame):
-        logger.info("Received signal %s, initiating shutdown...", signum)
-        request_shutdown()
+            # Finish cancellation of checks and provider pushes before provider or
+            # database infrastructure is torn down.
+            await _cancel_task(title_auto_task, "Automatic title task")
 
-    signal.signal(signal.SIGTERM, handle_signal)
-    signal.signal(signal.SIGINT, handle_signal)
+            # Stop cross-provider tasks first. The price sync loop watches
+            # ``shutdown_event`` directly (set above by the signal handler),
+            # so we just wait for it to finish.
+            logger.info("Stopping price sync task...")
+            await _cancel_task(price_sync_task, "Price sync task")
 
-    try:
-        await server.serve()
+            logger.info("Stopping quota warm-up task...")
+            await _cancel_task(quota_wakeup_task, "Quota warm-up task")
+
+            # Watches ``shutdown_event`` directly too; cancel covers the disabled
+            # no-op path (coroutine already returned) and the mid-sleep case.
+            logger.info("Stopping session dirs cleanup task...")
+            await _cancel_task(session_dirs_cleanup_task, "Session dirs cleanup task")
+            await _cancel_task(peer_purge_task, "Peer attachment purge task")
+
+            logger.info("Stopping tmux reaper task...")
+            await _cancel_task(tmux_cleanup_task, "tmux reaper task")
+
+            logger.info("Stopping upload cleanup task...")
+            await _cancel_task(upload_cleanup_task, "Upload cleanup task")
+
+            logger.info("Stopping token last-used flush task...")
+            await _cancel_task(last_used_flush_task, "Token last-used flush task")
+
+            logger.info("Stopping share view flush task...")
+            await _cancel_task(share_view_flush_task, "Share view flush task")
+
+            logger.info("Stopping artifact denial flush task...")
+            await _cancel_task(denial_flush_task, "Artifact denial flush task")
+
+            logger.info("Stopping telemetry task...")
+            await _cancel_task(telemetry_task, "Telemetry task")
+
+            logger.info("Stopping version check task...")
+            stop_version_check_task()
+            await _cancel_task(version_check_task, "Version check task")
+
+            # One-shot; usually already finished — cancel covers an early shutdown.
+            await _cancel_task(trust_backfill_task, "Trust backfill task")
+            await _cancel_task(icon_discovery_task, "Project icon discovery task")
+
+            # Tips watcher exits cleanly when shutdown_event fires (set above),
+            # but we still cancel it explicitly to cover the no-op TWICC_DEBUG=
+            # off path (coroutine already returned) and any awaited wait_for.
+            logger.info("Stopping tips watcher task...")
+            await _cancel_task(tips_watcher_task, "Tips watcher task")
+
+            logger.info("Stopping help watcher task...")
+            await _cancel_task(help_watcher_task, "Help watcher task")
+
+            logger.info("Stopping heartbeat task...")
+            await _cancel_task(heartbeat_task, "Heartbeat task")
+
+            logger.info("Stopping drop-requests watcher task...")
+            await _cancel_task(drop_watcher_task, "Drop-requests watcher task")
+
+            logger.info("Stopping MCP server task...")
+            await _cancel_task(mcp_task, "MCP server task")
+
+            logger.info("Stopping artifacts watcher task...")
+            await _cancel_task(artifacts_watcher_task, "Artifacts watcher task")
+
+            # Only when the gated feature actually started it: a disabled feature
+            # must leave no trace in the logs.
+            if hybrid_hooks_watcher_task is not None:
+                logger.info("Stopping hybrid-hooks watcher task...")
+                await _cancel_task(hybrid_hooks_watcher_task, "Hybrid-hooks watcher task")
+
+            # Stop the global search-indexing task(s) (if any ever started)
+            # and the coordinator that gated them. Order matters: cancel the
+            # coordinator first so it doesn't spawn a new search task after
+            # we've already stopped the running ones. The active list covers
+            # both the boot pass and any hot-toggle re-trigger queued behind
+            # it on the run lock.
+            await _cancel_task(search_orchestrator_task, "Search lifecycle coordinator")
+            stop_search_index_task()
+            active_indexing_tasks = get_active_indexing_tasks()
+            if active_indexing_tasks:
+                logger.info(
+                    "Stopping search index task(s) (%d active)...",
+                    len(active_indexing_tasks),
+                )
+                for idx, task in enumerate(active_indexing_tasks, start=1):
+                    await _cancel_task(task, f"Search index task #{idx}")
+            else:
+                logger.info("Search index task was not started, skipping")
+
+            # Then let every provider tear down its own tasks (in parallel).
+            await orchestrators.shutdown_all()
+
+            # Stop the DB writer. Done after every orchestrator has shut
+            # down — their blocking shutdown() guarantees no producer thread or
+            # subprocess is still alive, so nothing is left pushing onto the
+            # shared queues.
+            await stop_db_writer()
+
+            # Finally tear down the search index itself. Done after the
+            # providers' watchers are stopped so no late write races us.
+            logger.info("Shutting down search index...")
+            await asyncio.to_thread(shutdown_search_index)
+
+            logger.info("Server shutdown complete")
     finally:
-        logger.info("Server shutdown initiated...")
-
-        # Finish cancellation of checks and provider pushes before provider or
-        # database infrastructure is torn down.
-        await _cancel_task(title_auto_task, "Automatic title task")
-
-        # Stop cross-provider tasks first. The price sync loop watches
-        # ``shutdown_event`` directly (set above by the signal handler),
-        # so we just wait for it to finish.
-        logger.info("Stopping price sync task...")
-        await _cancel_task(price_sync_task, "Price sync task")
-
-        logger.info("Stopping quota warm-up task...")
-        await _cancel_task(quota_wakeup_task, "Quota warm-up task")
-
-        # Watches ``shutdown_event`` directly too; cancel covers the disabled
-        # no-op path (coroutine already returned) and the mid-sleep case.
-        logger.info("Stopping session dirs cleanup task...")
-        await _cancel_task(session_dirs_cleanup_task, "Session dirs cleanup task")
-        await _cancel_task(peer_purge_task, "Peer attachment purge task")
-
-        logger.info("Stopping tmux reaper task...")
-        await _cancel_task(tmux_cleanup_task, "tmux reaper task")
-
-        logger.info("Stopping upload cleanup task...")
-        await _cancel_task(upload_cleanup_task, "Upload cleanup task")
-
-        logger.info("Stopping token last-used flush task...")
-        await _cancel_task(last_used_flush_task, "Token last-used flush task")
-
-        logger.info("Stopping share view flush task...")
-        await _cancel_task(share_view_flush_task, "Share view flush task")
-
-        logger.info("Stopping artifact denial flush task...")
-        await _cancel_task(denial_flush_task, "Artifact denial flush task")
-
-        logger.info("Stopping telemetry task...")
-        await _cancel_task(telemetry_task, "Telemetry task")
-
-        logger.info("Stopping version check task...")
-        stop_version_check_task()
-        await _cancel_task(version_check_task, "Version check task")
-
-        # One-shot; usually already finished — cancel covers an early shutdown.
-        await _cancel_task(trust_backfill_task, "Trust backfill task")
-        await _cancel_task(icon_discovery_task, "Project icon discovery task")
-
-        # Tips watcher exits cleanly when shutdown_event fires (set above),
-        # but we still cancel it explicitly to cover the no-op TWICC_DEBUG=
-        # off path (coroutine already returned) and any awaited wait_for.
-        logger.info("Stopping tips watcher task...")
-        await _cancel_task(tips_watcher_task, "Tips watcher task")
-
-        logger.info("Stopping help watcher task...")
-        await _cancel_task(help_watcher_task, "Help watcher task")
-
-        logger.info("Stopping heartbeat task...")
-        await _cancel_task(heartbeat_task, "Heartbeat task")
-
-        logger.info("Stopping drop-requests watcher task...")
-        await _cancel_task(drop_watcher_task, "Drop-requests watcher task")
-
-        logger.info("Stopping MCP server task...")
-        await _cancel_task(mcp_task, "MCP server task")
-
-        logger.info("Stopping artifacts watcher task...")
-        await _cancel_task(artifacts_watcher_task, "Artifacts watcher task")
-
-        # Only when the gated feature actually started it: a disabled feature
-        # must leave no trace in the logs.
-        if hybrid_hooks_watcher_task is not None:
-            logger.info("Stopping hybrid-hooks watcher task...")
-            await _cancel_task(hybrid_hooks_watcher_task, "Hybrid-hooks watcher task")
-
-        # Stop the global search-indexing task(s) (if any ever started)
-        # and the coordinator that gated them. Order matters: cancel the
-        # coordinator first so it doesn't spawn a new search task after
-        # we've already stopped the running ones. The active list covers
-        # both the boot pass and any hot-toggle re-trigger queued behind
-        # it on the run lock.
-        await _cancel_task(search_orchestrator_task, "Search lifecycle coordinator")
-        stop_search_index_task()
-        active_indexing_tasks = get_active_indexing_tasks()
-        if active_indexing_tasks:
-            logger.info(
-                "Stopping search index task(s) (%d active)...",
-                len(active_indexing_tasks),
-            )
-            for idx, task in enumerate(active_indexing_tasks, start=1):
-                await _cancel_task(task, f"Search index task #{idx}")
-        else:
-            logger.info("Search index task was not started, skipping")
-
-        # Then let every provider tear down its own tasks (in parallel).
-        await orchestrators.shutdown_all()
-
-        # Stop the DB writer. Done after every orchestrator has shut
-        # down — their blocking shutdown() guarantees no producer thread or
-        # subprocess is still alive, so nothing is left pushing onto the
-        # shared queues.
-        await stop_db_writer()
-
-        # Finally tear down the search index itself. Done after the
-        # providers' watchers are stopped so no late write races us.
-        logger.info("Shutting down search index...")
-        await asyncio.to_thread(shutdown_search_index)
-
-        logger.info("Server shutdown complete")
+        # Startup can fail after provider startup, including hybrid adoption.
+        # The title runner remains owned throughout configuration and serving.
+        if not title_auto_task.done():
+            await _cancel_task(title_auto_task, "Automatic title task")
 
 
 def _close_log_file_handlers() -> None:
