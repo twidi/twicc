@@ -2789,7 +2789,12 @@ class CodexAgent(BaseAgent):
                     self._items_by_id[item_id] = inner.model_dump(
                         mode="json", by_alias=True,
                     )
-                    if (active := active_tool_from_item(inner)) is not None:
+                    # An ephemeral run has no live status line (the frontend ignores
+                    # its ``process_tools``), so skip the bookkeeping and broadcast.
+                    if (
+                        not getattr(self, "ephemeral", False)
+                        and (active := active_tool_from_item(inner)) is not None
+                    ):
                         self._active_tools[item_id] = {"name": active[0], "input": active[1]}
                         self._last_started_tool_id = item_id
                         await self._broadcast_process_tools()

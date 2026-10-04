@@ -80,6 +80,7 @@ def test_codex_final_answer_ignores_commentary_children_and_sdk_logging(monkeypa
     agent.ephemeral_final_text = ""
     agent._ephemeral_has_final_answer = False
     agent._items_by_id = {}
+    agent._active_tools = {}
     agent._broadcast_stream_event = AsyncMock()
     monkeypatch.setattr(module, "log_stream_event", MagicMock(side_effect=AssertionError("SDK logging")))
 
@@ -325,6 +326,7 @@ def test_codex_ephemeral_file_change_does_not_capture_transcript_diff(monkeypatc
     agent.ephemeral = True
     agent.session_id = "parent"
     agent._items_by_id = {}
+    agent._active_tools = {}
     item = SimpleNamespace(type="fileChange", id="change", model_dump=lambda **kwargs: {"type": "fileChange"})
     capture = MagicMock(side_effect=AssertionError("persistent diff capture"))
     monkeypatch.setattr(module, "_capture_original_files_for_apply_patch", capture)
