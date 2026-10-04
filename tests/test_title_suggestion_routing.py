@@ -25,11 +25,13 @@ class _TitleHelpers:
         self.provider = provider
         self.first_message = first_message
         self.outcome = outcome
+        self.generated_current_titles = []
 
     def get_title_source(self, _session_id: str) -> str:
         return self.first_message
 
-    async def generate_title(self, prompt: str, _system_prompt: str) -> str | None:
+    async def generate_title(self, prompt: str, _system_prompt: str, *, current_title=None) -> str | None:
+        self.generated_current_titles.append(current_title)
         if self.outcome == "none":
             return None
         if self.outcome == "empty":
@@ -72,7 +74,10 @@ def _suggest_title_frames(
         frames.append(frame)
 
     monkeypatch.setattr("twicc.asgi.get_provider_helpers", helpers.__getitem__)
-    monkeypatch.setattr("twicc.asgi.is_provider_running", lambda provider: provider in running_set)
+    monkeypatch.setattr("twicc.core.services.title_suggestion.get_provider_helpers", helpers.__getitem__)
+    monkeypatch.setattr(
+        "twicc.core.services.title_suggestion.is_provider_running", lambda provider: provider in running_set,
+    )
 
     consumer = WSConsumer()
     consumer.send_json = send_json
@@ -87,6 +92,8 @@ def _suggest_title_frames(
         payload["noFallback"] = no_fallback
 
     async_to_sync(consumer._handle_suggest_title)(payload)
+    for helper in helpers.values():
+        assert all(title is None for title in helper.generated_current_titles)
     return frames
 
 
@@ -290,7 +297,8 @@ def test_still_replies_when_reading_the_first_message_raises(monkeypatch):
         frames.append(frame)
 
     monkeypatch.setattr("twicc.asgi.get_provider_helpers", helpers.__getitem__)
-    monkeypatch.setattr("twicc.asgi.is_provider_running", lambda _provider: True)
+    monkeypatch.setattr("twicc.core.services.title_suggestion.get_provider_helpers", helpers.__getitem__)
+    monkeypatch.setattr("twicc.core.services.title_suggestion.is_provider_running", lambda _provider: True)
 
     consumer = WSConsumer()
     consumer.send_json = send_json
@@ -371,7 +379,7 @@ def test_a_malformed_payload_answers_nothing(monkeypatch, payload, reason):
     async def send_json(frame):
         frames.append(frame)
 
-    monkeypatch.setattr("twicc.asgi.is_provider_running", lambda _provider: True)
+    monkeypatch.setattr("twicc.core.services.title_suggestion.is_provider_running", lambda _provider: True)
 
     consumer = WSConsumer()
     consumer.send_json = send_json
@@ -451,3 +459,17 @@ def test_only_an_explicit_true_disables_the_fallback(monkeypatch, flag):
     )
 
     assert frames[0]["titleProvider"] == "codex"
+
+
+def test_unknown_title_model_uses_the_session_provider(monkeypatch):
+    frames = _suggest_title_frames(monkeypatch, session_provider=Provider.CODEX, title_model="unknown")
+
+    assert frames == [{
+        "type": "title_suggested",
+        "sessionId": "session-1",
+        "suggestion": "codex: Codex prompt",
+        "sourcePrompt": "Codex prompt",
+        "requestedProvider": "codex",
+        "titleProvider": "codex",
+        "error": None,
+    }]

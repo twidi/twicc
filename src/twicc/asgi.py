@@ -37,6 +37,7 @@ from twicc.agent_settings_presets import (
 )
 from twicc.core.enums import Provider
 from twicc.core.services.session_creation import create_session_from_payload
+from twicc.core.services.title_suggestion import suggest_title
 from twicc.agent import ephemeral as ephemeral_runs
 from twicc.agent.exceptions import SendDeliveryError
 from twicc.share.consumer import ShareConsumer
@@ -48,7 +49,6 @@ from twicc.providers.state import (
     ProviderDisabledError,
     ensure_provider_running,
     is_provider_enabled,
-    is_provider_running,
 )
 from twicc.providers.helpers import (
     AGENT_SETTINGS_HIDDEN_FROM_FRONTEND,
@@ -73,17 +73,6 @@ from twicc.terminal import terminal_application
 from twicc.websocket_transport import HeartbeatTransport
 
 logger = logging.getLogger(__name__)
-
-TITLE_SUGGESTION_MODEL_PROVIDERS = {
-    "haiku": Provider.CLAUDE_CODE,
-    "luna": Provider.CODEX,
-}
-
-# Providers that can generate a title, in fallback order. Derived from the
-# routing table above, which already declares exactly that set — a provider
-# without a title route keeps the base ``generate_title`` returning ``None``.
-# ``dict.fromkeys`` deduplicates while preserving the declaration order.
-TITLE_CAPABLE_PROVIDERS = tuple(dict.fromkeys(TITLE_SUGGESTION_MODEL_PROVIDERS.values()))
 
 # WebSocket close code for authentication failure.
 # 4000-4999 range is reserved for application use by the WebSocket spec.
@@ -1744,8 +1733,6 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             logger.warning("suggest_title: unknown provider %r", provider_key)
             return
 
-        requested_provider = TITLE_SUGGESTION_MODEL_PROVIDERS.get(title_model, provider)
-
         # The source text belongs to the SESSION's provider (a DB read that
         # needs no running provider), never to the provider that generates the
         # title. Resolved before any availability check so "this session has no
@@ -1769,64 +1756,18 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 source = None
             prompt = source
 
-        suggestion = None
-        title_provider = None
-        error = None
-
-        if not source:
-            error = "no_prompt"
-        else:
-            candidates = [requested_provider]
-            if not no_fallback:
-                candidates += [p for p in TITLE_CAPABLE_PROVIDERS if p != requested_provider]
-            available = [p for p in candidates if is_provider_running(p)]
-            if not available:
-                logger.warning(
-                    "suggest_title: no title-capable provider is running (requested=%s)",
-                    requested_provider.value,
-                )
-                error = "no_provider_available"
-            else:
-                for candidate in available:
-                    try:
-                        suggestion = await get_provider_helpers(candidate).generate_title(
-                            source, system_prompt,
-                        )
-                    except Exception:
-                        # A provider that raises is a provider that failed: the
-                        # next one still gets its turn, and the reply still goes
-                        # out. ``generate_title`` promises ``str | None``, but a
-                        # crash while building its client escapes that promise.
-                        logger.exception(
-                            "suggest_title: %s raised while generating", candidate.value,
-                        )
-                        suggestion = None
-                    if suggestion:
-                        title_provider = candidate
-                        break
-                    # Normalize a falsy non-None answer, so the checks below and
-                    # the payload agree on a single "no suggestion" value.
-                    suggestion = None
-                if suggestion is None:
-                    logger.warning(
-                        "suggest_title: every provider failed (requested=%s, tried=%s)",
-                        requested_provider.value, [p.value for p in available],
-                    )
-                    error = "generation_failed"
-                elif title_provider != requested_provider:
-                    logger.info(
-                        "suggest_title: fell back from %s to %s",
-                        requested_provider.value, title_provider.value,
-                    )
+        result = await suggest_title(
+            source, system_prompt, provider, title_model=title_model, no_fallback=no_fallback,
+        )
 
         await self.send_json({
             "type": "title_suggested",
             "sessionId": session_id,
-            "suggestion": suggestion,  # Can be None
+            "suggestion": result.suggestion,  # Can be None
             "sourcePrompt": prompt,    # Always included for regeneration
-            "requestedProvider": requested_provider.value,
-            "titleProvider": title_provider.value if title_provider else None,
-            "error": error,            # None on success
+            "requestedProvider": result.requested_provider.value,
+            "titleProvider": result.title_provider.value if result.title_provider else None,
+            "error": result.error,     # None on success
         })
 
     async def _handle_update_synced_settings(self, content: dict) -> None:
