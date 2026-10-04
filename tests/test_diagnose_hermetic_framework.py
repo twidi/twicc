@@ -234,6 +234,10 @@ def test_d2_verdict():
     ("NONE\n\nI don't see any tools or functions defined in the context provided to me.", "PASS"),
     ("\nNone.\nI have no tools.", "PASS"),
     ("shell\napply_patch", "FAIL"), ("shell\nNONE", "FAIL"), ("None of my tools: shell", "FAIL"),
+    # A NONE first line does not hide a listed tool.
+    ("NONE\nshell", "FAIL"), ("NONE\n- apply_patch", "FAIL"), ("NONE\nmcp__hey.hey_boxes", "FAIL"),
+    ("NONE\n`exec_command`", "FAIL"), ("NONE\nshell\napply_patch", "FAIL"),
+    ("NONE\nI could call mcp__hey.hey_boxes if it were enabled.", "FAIL"),
 ])
 def test_d3_verdict(text, status):
     assert diag.d3_verdict(text)[0] == status
@@ -245,6 +249,13 @@ def test_d6b_hermetic_effect():
     missing_user = ok._replace(disabled_mcp_servers=("a",))
     assert "b" in diag.d6b_hermetic_effect(missing_user, ("a", "b"))
     assert "hey__hey_boxes" in diag.d6b_hermetic_effect(ok._replace(text="hey__hey_boxes"), ("a", "b"))
+    for listed in ("NONE\nshell", "NONE\n- apply_patch", "NONE\nmcp__hey.hey_boxes", "NONE\nb: list_items"):
+        assert diag.d6b_hermetic_effect(ok._replace(text=listed), ("a", "b")) is not None, listed
+    live = "NONE\n\nI don't see any tools or functions defined in the context provided to me."
+    assert diag.d6b_hermetic_effect(ok._replace(text=live), ("a", "b")) is None
+    # Prose naming a server is not a listed tool.
+    prose = "NONE\nThe b server is disabled for this conversation."
+    assert diag.d6b_hermetic_effect(ok._replace(text=prose), ("a", "b")) is None
     # An error text is not an answer: canary_verdict turns the terminal error into INCONCLUSIVE.
     assert diag.d6b_hermetic_effect(ok._replace(text="API error", terminal_error=MODEL_ERROR), ("a", "b")) is None
 
@@ -754,7 +765,7 @@ def test_claude_live_skips_everything_after_a_failed_d9(monkeypatch):
     assert set(resolved) == CLAUDE_IDS and {c.status for c in resolved.values()} == {diag.SKIP}
 
 
-def _fake_claude(monkeypatch, tmp_path, hermetic_results=None):
+def _fake_claude(monkeypatch, tmp_path, hermetic_results=None, interact_tool="AskUserQuestion"):
     """Fakes for every provider call of ``run_claude_live``; the controls really produce their effects."""
     import urllib.request
 
@@ -783,8 +794,8 @@ def _fake_claude(monkeypatch, tmp_path, hermetic_results=None):
             return _claude_result(text=body, tool_blocks_seen=1), None
         if "diag_ping" in prompt:
             assert override is not diag.unrestricted   # the MCP control carries the stub explicitly
-        if "which color" in prompt:   # the interaction control carries a recording callback
-            assert override(_unrestricted_base(cwd)).can_use_tool is not None
+        if "which color" in prompt:   # the interaction control carries a recording callback: the model calls a tool
+            await override(_unrestricted_base(cwd)).can_use_tool(interact_tool, {}, None)
         return _claude_result(tool_blocks_seen=1, init={
             "mcp_servers": [{"name": "diag_stub"}, {"status": "nameless"}], "skills": ["diag-skill"]}), None
 
@@ -852,6 +863,8 @@ def test_d11a_error_result_is_inconclusive():
     assert diag.d11a_verdict(diag.claude_hermetic_run(_claude_result(text="NONE")))[0] == diag.PASS
     live = "NONE\n\nI don't see any tools or functions defined in the context provided to me for this conversation."
     assert diag.d11a_verdict(diag.claude_hermetic_run(_claude_result(text=live)))[0] == diag.PASS
+    for listed in ("NONE\nshell", "NONE\n- apply_patch", "NONE\nmcp__hey.hey_boxes"):
+        assert diag.d11a_verdict(diag.claude_hermetic_run(_claude_result(text=listed)))[0] == diag.FAIL, listed
 
 
 def test_d10_error_result_is_inconclusive():
@@ -878,3 +891,12 @@ def test_claude_canary_error_text_with_a_marker_is_inconclusive(monkeypatch, tmp
     asyncio.run(diag.run_claude_live(r))
     statuses = {c.id: c.status for c in r.resolved()}
     assert statuses["D11c-mcp"] == diag.INCONCLUSIVE
+
+
+def test_claude_interaction_control_needs_the_question_tool(monkeypatch, tmp_path):
+    # Another tool reaching the callback (with a tool block) is not the interaction effect.
+    _fake_claude(monkeypatch, tmp_path, interact_tool="Bash")
+    r = diag.Report()
+    asyncio.run(diag.check_d11b_interact(r))
+    [check] = r.checks
+    assert check.status == diag.INCONCLUSIVE and "no effect" in check.reason

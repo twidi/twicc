@@ -687,11 +687,23 @@ def d2_verdict(text: str, input_tokens: int | None, terminal_error: str | None =
     return (PASS if ok else FAIL), detail
 
 
+# A line that looks like a listed tool name: one token, optionally bulleted or in backticks.
+_TOOL_NAME_LINE = re.compile(r"^[\s\-*`•]*[\w.:\-]+`?\s*$")
+
+
+def tool_like_lines(lines) -> list[str]:
+    """The lines that look like a tool name: a one-token line, or any line with an ``mcp__`` token."""
+    return [line for line in lines if _TOOL_NAME_LINE.match(line) or "mcp__" in line]
+
+
 def answers_none(text: str) -> bool:
-    """Whether a tool-list answer names no tool: empty, or its first line is NONE (punctuation and case ignored).
-    The model may add prose after the NONE line ("NONE\\n\\nI don't see any tools..."); a listed name stays a name."""
+    """Whether a tool-list answer names no tool: empty, or its first line is NONE (punctuation and case ignored) and no
+    later line looks like a tool name. The model may add prose after the NONE line ("NONE\\n\\nI don't see any
+    tools..."); "NONE\\nshell" still names a tool."""
     lines = [line for line in text.splitlines() if line.strip()]
-    return not lines or re.sub(r"[\W_]+", "", lines[0]).upper() == "NONE"
+    if not lines:
+        return True
+    return re.sub(r"[\W_]+", "", lines[0]).upper() == "NONE" and not tool_like_lines(lines[1:])
 
 
 def d3_verdict(text: str, terminal_error: str | None = None) -> tuple[str, str]:
@@ -956,6 +968,10 @@ async def check_d6a(report: Report, user_servers) -> None:
     ))
 
 
+# A line of fewer words is not prose (D6b: such a line naming a user server is a listed tool).
+PROSE_MIN_WORDS = 4
+
+
 def d6b_hermetic_effect(run: HermeticRun, user_servers: tuple[str, ...]) -> str | None:
     """The D6b hermetic effect: a user server left enabled at thread level, or a named MCP tool in the answer."""
     if run.start is not None and not set(user_servers) <= set(run.disabled_mcp_servers):
@@ -965,6 +981,11 @@ def d6b_hermetic_effect(run: HermeticRun, user_servers: tuple[str, ...]) -> str 
         status, reason = d3_verdict(run.text)
         if status == FAIL:
             return reason
+        # A short (non-prose) line naming a user server, e.g. "hey: hey_boxes", is a listed tool too.
+        lines = [line for line in run.text.splitlines() if line.strip()][1:]
+        for line in lines:
+            if len(line.split()) < PROSE_MIN_WORDS and mcp_servers_named(line, user_servers):
+                return f"the hermetic answer names a user MCP server: {line.strip()[:80]!r}"
     return None
 
 
@@ -1460,7 +1481,8 @@ async def check_d11b_interact(report: Report) -> None:
             control, control_error = await _claude_control(
                 PROMPTS["INTERACT"], control_dir, override=unrestricted_with_recording_callback(recorded),
             )
-        effect = control is not None and (claude_control_effect("INTERACT", control) or bool(recorded))
+        # Only the question tool counts: a tool block or a recorded call of another tool is not this effect.
+        effect = control is not None and "AskUserQuestion" in recorded
         run, result = await _claude_hermetic(PROMPTS["INTERACT"])
         _claude_canary(report, "D11b-interact", control=control, control_error=control_error, control_effect=effect,
                        run=run, result=result)

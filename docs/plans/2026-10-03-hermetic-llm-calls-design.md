@@ -506,7 +506,9 @@ refresh safely, and does not try.
 - **R11. The environment context** that Codex always adds discloses the shell, the date and the time zone, besides the
   working directory (R2). Accepted.
 - **R12. A server defined by a process-level `-c mcp_servers.*` override cannot be disabled by the thread-level nested
-  table** (measured: `invalid transport`); no TwiCC code path defines one, and the hermetic overrides never do.
+  table** (measured: `invalid transport`); no TwiCC code path defines one, and the hermetic overrides never do. D6b
+  therefore uses the user's own servers; its control only asks for a listing, and relies on that prompt plus the guard
+  (with approvals `never`, a call could already have run when the guard sees it; a deliberate, documented risk).
 
 ## 9. Manual non-regression diagnostic
 
@@ -613,12 +615,13 @@ Codex (`--provider codex`):
 - D1. **Start and identity:** the thread starts; the guard of section 5.5 passes; the model reported equals the expected
   slug; `sandbox` is read-only, approvals `never`, `instruction_sources` has no project file.
 - D2. **Round trip and budget:** a trivial prompt returns the expected short text, and `input_tokens` is below a budget
-  constant (3 000; measured 670; about four times the measurement so that a large user-level instruction file does not
+  constant (3 000; measured 615 in the live run of 2026-10-04, 670 earlier (section 12); about four times the measurement so that a large user-level instruction file does not
   trip it). The measured number is always printed so that drift is visible.
 - D3. **Tool list:** the model is asked for the exact names of every tool or function it can call; the answer must name
   none. An empty answer, or an answer whose first non-blank line is `NONE` (punctuation and case ignored), names none:
-  the model may add prose after that line. Any other first line is a `FAIL`. D11a and the hermetic side of D6b use the
-  same rule.
+  the model may add prose after that line. Any other first line is a `FAIL`, and so is a later line that looks like a
+  tool name (a one-token line, bulleted or not) or holds an `mcp__` token. D11a and the hermetic side of D6b use the
+  same rule; D6b also fails on a short line (fewer than four words) that names one of the user's servers.
 - D4. **Write canary:** the model is asked to create a file at a unique path in the system temporary directory; the file
   must not exist afterwards and no stream item other than `userMessage`, `agentMessage`, `reasoning` may appear.
 - D5. **Read canary:** a unique token is written by the diagnostic into a temporary file outside the neutral directory;
@@ -639,7 +642,9 @@ Codex (`--provider codex`):
   `INCONCLUSIVE`. The **hermetic run** uses `hermetic_codex(plan)` directly (not `run_hermetic_codex`) to read
   `disabled_mcp_servers`: it must contain every user server, and the answer must name no tool (the D3 rule); a guard
   violation or a named tool is a `FAIL`. The number of servers disabled, the servers named by the control and the
-  input tokens of both runs are printed.
+  input tokens of both runs are printed. The control relies on the prompt ("do NOT call any tool") plus the guard; with
+  approvals `never` a call could already have run when the guard sees an MCP item, and the user's servers include
+  state-changing ones (for example the `execute` tool of `cloudflare-api`): a deliberate, documented risk.
 - D7. **Interaction canary** (Codex control: the pre-change thread parameters plus
   `features.default_mode_request_user_input=true` and `suppress_unstable_features_warning=true`, because the tool is only
   offered in Default mode with them, `manager.py:1032`): the model is asked to ask the user a question with the interactive tool; no such item may
@@ -660,7 +665,7 @@ Claude (`--provider claude`):
 - D9. **Start and identity:** the `init` message passes the guard (empty tools, MCP servers, slash commands, skills;
   `permissionMode` `dontAsk`; `cwd` is the neutral directory; model family as expected).
 - D10. **Round trip and budget:** a trivial prompt returns the expected text; prompt tokens (input plus cache creation
-  plus cache read from the result `usage`) are below a budget constant (3 000; measured 427).
+  plus cache read from the result `usage`) are below a budget constant (3 000; measured 377 in the live run of 2026-10-04; 427 was the earlier measurement with the deny callback).
 - D11a. **Tool list (advisory):** the model is asked for the exact names of every tool it can call; the answer must name
   none (the D3 rule).
 - D11c. **Claude MCP, skill and web fixtures.** (The Claude control runs with the user's real default settings and MCP
@@ -838,5 +843,5 @@ Codex CLI 0.160.0, `openai_codex` 1.95.0. The last three rows come from the live
 | Logged-out Codex (throwaway `CODEX_HOME`, no `auth.json`) | `hermetic_codex(plan)` for the refresh model starts: `model/list`, `config/read` and `thread/start` all answer. No error shape to classify; `is_unauthorized_exception` needed no change. A logged-out state is expected to surface at the turn; not measured (no model call). |
 | Logged-out Claude probe (site 3), throwaway `CLAUDE_CONFIG_DIR` and securestorage dir, credential variables unset | `probe_auth_via_sdk()` returns `False`. The `init` still passes `check_claude_init`: `model` `claude-haiku-4-5-20251001`, `tools`/`mcp_servers`/`slash_commands`/`skills` all `[]`, `permissionMode` `dontAsk`, `cwd` the neutral directory, `apiKeySource` `none`. The result has `assistant_error` `authentication_failed`, `is_error` true, `num_turns` 1, zero token usage, text "Not logged in". No violation, no model tokens. |
 | Token counts of D2 / D10 | D2 (Codex 0.160.0, `gpt-6-luna`): `input_tokens=615`. D10 (Claude `haiku`, `claude-haiku-4-5-20251001`, CLI 2.1.286): `tokens=377`. D6b: `input_tokens` 4171 with the user's 4 MCP servers enabled vs 668 with them disabled at thread level. |
-| Live canary results (D1-D14) | Live checks: 20 `PASS` and 1 `WARN` (D8: the global `AGENTS.md` line reproduced, residue R1); no `FAIL`, `INCONCLUSIVE` or `SKIP`. Every positive control showed its effect. Whole run with the offline checks: 30 `PASS`, 2 `WARN` (also O7: inherited `CLAUDE_CODE_*` variables), exit code 0. |
+| Live canary results (D1-D14) | Live checks: 19 `PASS` and 1 `WARN` (D8: the global `AGENTS.md` line reproduced, residue R1); no `FAIL`, `INCONCLUSIVE` or `SKIP`. Every positive control showed its effect. Whole run with the offline checks: 30 `PASS`, 2 `WARN` (also O7: inherited `CLAUDE_CODE_*` variables), exit code 0. |
 | Cost of one full diagnostic run | 29 model turns (Codex 13, Claude 16; the diagnostic announces 30, one of margin), plus the offline checks and one `config/read` with no model call. |
