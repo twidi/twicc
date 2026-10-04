@@ -4,6 +4,7 @@ import { useDataStore } from '../../../stores/data'
 import { useSettingsStore } from '../../../stores/settings'
 import { requestTitleSuggestion } from '../../../composables/useWebSocket'
 import { getProviderLabel } from '../../../providers'
+import { buildSessionTitlePatch, showAutomaticTitleHint } from '../../../utils/sessionTitle.js'
 import {
     TITLE_SUGGESTION_MODEL_LABELS,
     resolveSessionTitleModel,
@@ -31,6 +32,7 @@ const localTitle = ref('')
 const isSaving = ref(false)
 const errorMessage = ref('')
 const showContextHint = ref(false)  // Show hint when opened during message send
+const automaticTitleHint = computed(() => showAutomaticTitleHint(props.session))
 const isLoadingSuggestion = ref(false)
 // Set when the request never left the browser (WS down, unknown provider): no
 // reply will ever come, so the spinner must stop on the spot.
@@ -311,7 +313,8 @@ async function handleSave() {
         return
     }
 
-    // For real sessions, call the API
+    // Saving confirms a real title, even when its text is unchanged.
+    const { title } = buildSessionTitlePatch(trimmedTitle)
     isSaving.value = true
     errorMessage.value = ''
 
@@ -319,7 +322,7 @@ async function handleSave() {
         await store.renameSession(
             props.session.project_id,
             props.session.id,
-            trimmedTitle
+            title
         )
         emit('saved')
         close()
@@ -348,6 +351,9 @@ defineExpose({
             <!-- Contextual hint when opened during message send -->
             <p v-if="showContextHint" class="context-hint">
                 While {{ providerLabel }} is working, you may want to give this session a more descriptive name.
+            </p>
+            <p v-if="automaticTitleHint" class="context-hint">
+                This title is automatic. Save to validate it and stop automatic updates.
             </p>
 
             <!-- Title suggestion (only if enabled in settings) -->

@@ -1872,7 +1872,7 @@ function onChangelogClose() {
                             :checked="titleAutoApply"
                             @change="onTitleAutoApplyChange"
                             size="small"
-                        >Auto-apply on new sessions</wa-switch>
+                        >Automatic titles</wa-switch>
                         <wa-radio-group
                             label="Model"
                             name="title-suggestion-model"

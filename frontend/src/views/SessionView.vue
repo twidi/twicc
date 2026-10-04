@@ -14,6 +14,7 @@ import { useSessionLayout } from '../composables/useSessionLayout'
 import { PROCESS_STATE } from '../constants'
 import SessionHeader from '../components/session/detail/SessionHeader.vue'
 import { isLaunchedEphemeral } from '../utils/ephemeralSessions.js'
+import { shouldRequestAutomaticTitle } from '../utils/sessionTitle.js'
 import SessionItemsList from '../components/session/detail/SessionItemsList.vue'
 import SessionContent from '../components/session/detail/SessionContent.vue'
 import FilesPanel from '../components/files/FilesPanel.vue'
@@ -1723,23 +1724,23 @@ watch(activeTabId, (newTabId) => {
 
 /**
  * Handle a session that needs a title after sending its first message.
- * If title auto-apply is enabled, requests a suggestion and applies it
- * automatically when it arrives (same flow as the rename dialog's Save).
- * Otherwise, opens the rename dialog.
+ * With automatic titles enabled, only ephemeral sessions request a local
+ * suggestion. The backend titles real sessions. Otherwise, open the dialog.
  */
 function handleNeedsTitle() {
     if (settingsStore.isTitleAutoApply && settingsStore.isTitleGenerationEnabled) {
+        if (!shouldRequestAutomaticTitle(session.value, {
+            titleAutoApply: settingsStore.isTitleAutoApply,
+            titleGenerationEnabled: settingsStore.isTitleGenerationEnabled,
+        })) return
+
         const sid = sessionId.value
         const pid = projectId.value
         const prompt = store.getDraftMessage(sid)?.message?.trim()
         if (!prompt) return
 
-        // Register the intent in the store BEFORE firing the WS request so
-        // the global auto-apply watcher (set up in main.js via
-        // ``startAutoApplyTitleWatcher``) is already observing this session
-        // even if the backend reply comes back in the same tick. The
-        // watcher lives at module scope and survives the router.replace
-        // that ``bindDraftSession`` performs for Codex drafts.
+        // Register before the WS request so the global watcher observes a
+        // reply that arrives in the same tick. The title remains local.
         store.registerPendingTitleAutoApply(sid, pid)
         // A request that never left the browser (WS down, unknown provider)
         // gets no reply, so the intent would wait forever: drop it right away.

@@ -648,14 +648,10 @@ export const useDataStore = defineStore('data', {
             // id is what every consumer now uses.
             draftAliases: {},
 
-            // Sessions waiting on an auto-applied title — populated when the
-            // user sends the first message of a draft and ``titleAutoApply`` is
-            // enabled. The App-level watcher (in ``App.vue``) reacts to entries
-            // here, waits for the matching ``titleSuggestions`` entry, applies
-            // it to the session and persists it via :meth:`renameSession` once
-            // the session has stopped being a draft. Each entry stores the
-            // ``projectId`` because that's what ``renameSession`` needs and
-            // the watcher otherwise has no way to recover it.
+            // Ephemeral sessions waiting on a local automatic title. The
+            // module-level watcher applies the matching suggestion through
+            // setDraftTitle. Real sessions use backend title automation.
+            // Keep projectId in the registration API's existing entry shape.
             // Format: { sessionId: { projectId: string } }
             pendingTitleAutoApply: {},
 
@@ -1981,6 +1977,9 @@ export const useDataStore = defineStore('data', {
                 return this.bindEphemeralSession(draftId, sessionId)
             }
             delete this.localState.pendingDraftBindings[draftId]
+            // Automatic intent never follows a draft into a real session.
+            // Manual draft titles keep the existing explicit-title bridge.
+            this.clearPendingTitleAutoApply(draftId)
 
             // A peer delivery waiting on this draft follows it to the canonical
             // id. When the canonical session is ALREADY in the store, no
@@ -2035,21 +2034,12 @@ export const useDataStore = defineStore('data', {
             // ``suggest_title`` request was sent under the draft id (only id
             // known at request time), so a fast response can have landed in
             // ``titleSuggestions[draftId]`` before this bind runs. Move it to
-            // the canonical key so the SessionView watcher — which queries by
-            // canonical id after the router.replace below — picks it up.
+            // the canonical key so the rename dialog can use it after the
+            // router.replace below.
             const titleSuggestion = this.localState.titleSuggestions[draftId]
             if (titleSuggestion) {
                 this.localState.titleSuggestions[sessionId] = titleSuggestion
                 delete this.localState.titleSuggestions[draftId]
-            }
-
-            // Same migration for an in-flight auto-apply intent — the
-            // App-level watcher is observing the draft id at the moment of
-            // bind, so the entry must follow the session to its canonical id.
-            const pendingAuto = this.localState.pendingTitleAutoApply[draftId]
-            if (pendingAuto) {
-                this.localState.pendingTitleAutoApply[sessionId] = pendingAuto
-                delete this.localState.pendingTitleAutoApply[draftId]
             }
 
             // Late ``title_suggested`` messages may still arrive with the
@@ -6283,8 +6273,8 @@ export const useDataStore = defineStore('data', {
         },
 
         /**
-         * Register a session as waiting on an auto-applied title.
-         * Consumed by the App-level watcher which reacts to the matching
+         * Register an ephemeral session as waiting on a local automatic title.
+         * Consumed by the module-level watcher which reacts to the matching
          * ``titleSuggestions`` entry.
          * @param {string} sessionId
          * @param {string} projectId
