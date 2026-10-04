@@ -16,9 +16,12 @@ import { COMPOSER_PANEL } from './uploads/controller.js'
 import { entryPercent } from './uploads/display.js'
 import { makeClientId } from './uploads/ids.js'
 import { migrateLegacyAttachments } from './attachmentMigration.js'
+import { attachmentKindIcon } from './attachmentStrip.js'
 
 /** The upload origin panel of composer attachments (defined by the upload controller). */
 export { COMPOSER_PANEL }
+// One kind → icon mapping for composer chips and history strips.
+export { attachmentKindIcon }
 
 /** Display states of a composer attachment chip (§9.2). */
 export const ATTACHMENT_STATE = Object.freeze({
@@ -355,20 +358,6 @@ export function sendComposerMessage({ payload, records, send, register = null, f
     }
     if (sent.length) forget(sent.map(record => record.id))
     return true
-}
-
-const KIND_ICONS = Object.freeze({
-    image: 'file-image',
-    PDF: 'file-pdf',
-    text: 'file-lines',
-    video: 'file-video',
-    audio: 'file-audio',
-    other: 'file',
-})
-
-/** The icon name of a display kind. */
-export function attachmentKindIcon(kind) {
-    return KIND_ICONS[kind] || KIND_ICONS.other
 }
 
 /**

@@ -74,6 +74,13 @@ const props = defineProps({
     suffixExpanded: {
         type: Boolean,
         default: false
+    },
+    // Indices of entries rendered elsewhere: the native media blocks an
+    // attachment strip already shows (no separate image group, no document
+    // placeholder), and blank text of an attachments-only message.
+    hiddenIndices: {
+        type: Array,
+        default: () => []
     }
 })
 
@@ -221,10 +228,12 @@ const visibleItems = computed(() => {
 // =============================================================================
 
 // Collect all image items from the content array (for grouping into thumbnails)
+const hiddenIndexSet = computed(() => new Set(props.hiddenIndices))
+
 const allImageItems = computed(() => {
     return props.items
         .map((item, index) => ({ item, index }))
-        .filter(({ item }) => item.type === 'image')
+        .filter(({ item, index }) => item.type === 'image' && !hiddenIndexSet.value.has(index))
 })
 
 // Convert image items to normalized MediaItem format for MediaThumbnailGroup
@@ -277,7 +286,7 @@ const parentRangeCommentsCount = computed(() => {
         />
 
         <!-- Content element -->
-        <template v-if="entry.show">
+        <template v-if="entry.show && !hiddenIndexSet.has(entry.index)">
             <TextContent
                 v-if="entry.item.type === 'text'"
                 :text="entry.item.text"

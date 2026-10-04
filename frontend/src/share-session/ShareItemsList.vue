@@ -13,6 +13,7 @@ import { useSettingsStore } from '../stores/settings'  // aliased → settingsSt
 import { getParsedContent, hasContent } from '../utils/parsedContent'
 import { collectMissingScrollerLines, sameScrollerLoadCandidates } from '../utils/scrollerLoadWindow.js'
 import { isSessionNotReadyError } from './shims/shareApi'
+import { ATTACHMENT_SHARE_MODE } from '../utils/attachmentStrip'
 
 const props = defineProps({
     projectId: { type: String, default: 'share' },
@@ -188,6 +189,11 @@ provide('rewriteContentMediaUrl', (url) => {
     if (m) return null       // a different session's artifact — not shared
     return url
 })
+
+// Explicit share mode for the reused attachment strips (message bubbles and the
+// unknown-entry fallback): same order and file names, but no file chip links
+// to the owner's artifacts.
+provide(ATTACHMENT_SHARE_MODE, true)
 
 // The reused settings store has a recompute watcher; the shim doesn't, so rebuild
 // the visual items when the viewer changes the display mode or timestamp toggle.

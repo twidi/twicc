@@ -6,9 +6,12 @@ import { emptyAssistantMessageMarkdown, showEmptyAssistantNotice } from '../../.
 import { interAgentTaskMarkdown } from '../../../../../providers/codex/interAgentTask'
 import {
     agentMessageText,
+    userMessageContent,
     userMessageImages,
     userMessageText,
 } from '../../../../../providers/codex/canonical'
+import { messageAttachmentLayout } from '../../../../../utils/attachmentStrip'
+import { useAttachmentStripContext } from '../../../../../composables/useAttachmentStripContext'
 import UserMessage from './UserMessage.vue'
 import AssistantMessage from './AssistantMessage.vue'
 import Reasoning from './Reasoning.vue'
@@ -131,8 +134,19 @@ const interAgentTask = computed(() =>
 // written by the native CLI) have no URL the browser could load, so they
 // only count as attachments (see ``userMessageAttachmentCount``) and are
 // not rendered here.
+//
+// With an attachment manifest (``twicc_attachments``, or the optimistic /
+// failed bubble's ``attachmentItems``), the ordered strip shows every
+// attachment instead (spec 2026-10-03 §10.2): its inline entries take the
+// leading image entries in order, so no separate thumbnail group is rendered.
+const { share: attachmentShareMode, openArtifact } = useAttachmentStripContext(() => props.sessionId)
+const attachmentStrip = computed(() => {
+    if (props.kind !== 'user_message') return null
+    return messageAttachmentLayout(props.data, userMessageContent(props.data), { share: attachmentShareMode }).strip
+})
+
 const images = computed(() => {
-    if (props.kind !== 'user_message') return []
+    if (props.kind !== 'user_message' || attachmentStrip.value) return []
     return userMessageImages(props.data)
         .filter(image => image.type === 'image')
         .map(image => image.value)
@@ -157,7 +171,13 @@ const images = computed(() => {
         :session-id="sessionId"
         :line-num="lineNum"
     />
-    <UserMessage v-else-if="kind === 'user_message'" :text="interAgentTask ?? text" :images="images" />
+    <UserMessage
+        v-else-if="kind === 'user_message'"
+        :text="interAgentTask ?? text"
+        :images="images"
+        :attachments="attachmentStrip"
+        @open-artifact="openArtifact"
+    />
     <AssistantMessage
         v-else-if="kind === 'assistant_message' && assistantText !== null"
         :text="assistantText"

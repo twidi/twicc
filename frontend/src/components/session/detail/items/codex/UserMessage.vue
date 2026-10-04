@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { FILE_TYPES } from '../../../../../utils/fileUtils'
 import MediaThumbnailGroup from '../../../../media/MediaThumbnailGroup.vue'
+import AttachmentStrip from '../../../../media/AttachmentStrip.vue'
 import TextContent from '../TextContent.vue'
 
 const props = defineProps({
@@ -18,8 +19,17 @@ const props = defineProps({
     images: {
         type: Array,
         default: () => []
+    },
+    // The ordered attachment strip (utils/attachmentStrip.js) when the
+    // message carries an attachment manifest; it replaces ``images``. Null
+    // keeps the legacy thumbnail rendering.
+    attachments: {
+        type: Array,
+        default: null
     }
 })
+
+const emit = defineEmits(['open-artifact'])
 
 const mediaItems = computed(() =>
     props.images.map(src => ({ type: FILE_TYPES.IMAGE, src }))
@@ -27,6 +37,11 @@ const mediaItems = computed(() =>
 </script>
 
 <template>
-    <MediaThumbnailGroup v-if="mediaItems.length > 0" :items="mediaItems" />
+    <AttachmentStrip
+        v-if="attachments?.length"
+        :items="attachments"
+        @open-artifact="request => emit('open-artifact', request)"
+    />
+    <MediaThumbnailGroup v-else-if="mediaItems.length > 0" :items="mediaItems" />
     <TextContent v-if="text" :text="text" role="user" />
 </template>

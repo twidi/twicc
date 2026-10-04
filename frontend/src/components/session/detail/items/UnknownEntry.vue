@@ -1,7 +1,10 @@
 <script setup>
-import { ref, nextTick, onMounted } from 'vue'
+import { computed, ref, nextTick, onMounted } from 'vue'
 import { useDataStore } from '../../../../stores/data'
 import { useDetailsClosing } from '../../../../composables/useDetailsClosing'
+import { useAttachmentStripContext } from '../../../../composables/useAttachmentStripContext'
+import { queuedAttachmentDisplay } from '../../../../utils/attachmentStrip'
+import AttachmentStrip from '../../../media/AttachmentStrip.vue'
 import JsonHumanView from '../../../json/JsonHumanView.vue'
 
 const dataStore = useDataStore()
@@ -32,6 +35,13 @@ const props = defineProps({
 })
 
 const detailsRef = ref(null)
+
+// A record carrying an extracted attachment manifest (a mid-turn prompt
+// recorded as an attachment record, spec 2026-10-03 §10.1) shows its ordered
+// strip and cleaned text instead of the raw JSON. `queuedAttachmentDisplay`
+// decides; every other record keeps the generic JSON view.
+const { share: attachmentShareMode, openArtifact } = useAttachmentStripContext(() => props.sessionId)
+const attachmentDisplay = computed(() => queuedAttachmentDisplay(props.data, { share: attachmentShareMode }))
 
 // Lazy rendering: content is only mounted when wa-details is open.
 // Initialized from the store to restore state across virtual scroller mount/unmount cycles.
@@ -75,7 +85,11 @@ function onAfterHide() {
             <span class="items-details-summary-description">{{ type }}<template v-if="subType"> ({{ subType }})</template></span>
         </span>
         <template v-if="isOpen || isClosing()">
-            <div v-if="data" class="unknown-data">
+            <div v-if="attachmentDisplay" class="unknown-data attachment-display">
+                <AttachmentStrip :items="attachmentDisplay.items" @open-artifact="openArtifact" />
+                <div v-if="attachmentDisplay.text" class="attachment-display-text">{{ attachmentDisplay.text }}</div>
+            </div>
+            <div v-else-if="data" class="unknown-data">
                 <JsonHumanView
                     :value="data"
                 />
@@ -92,6 +106,11 @@ function onAfterHide() {
     /* Side spacing: the open details' (moved from its content part, motion.css). */
     padding: var(--wa-space-xs) var(--spacing, 0);
     overflow-x: auto;
+}
+
+.attachment-display-text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 
 .unknown-no-data {

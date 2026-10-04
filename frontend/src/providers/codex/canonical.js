@@ -13,6 +13,15 @@ function contentOfType(data, itemType) {
     return Array.isArray(content) ? content : []
 }
 
+/**
+ * The content entries of a canonical ``UserMessage`` item, in order (text,
+ * ``image``, ``local_image``). The attachment strip binds its inline entries
+ * to the leading media entries (spec 2026-10-03 §10.2).
+ */
+export function userMessageContent(data) {
+    return contentOfType(data, 'UserMessage')
+}
+
 export function userMessageText(data) {
     const text = contentOfType(data, 'UserMessage')
         .filter(entry => entry?.type === 'text' && typeof entry.text === 'string')

@@ -62,7 +62,7 @@ import {
     toAttachmentRefs,
     uniqueRefs,
 } from '../utils/composerAttachments'
-import { attachmentCountForMessage, attachmentMatchKey, inflightAttachmentCount } from '../utils/attachmentStrip'
+import { attachmentCountForMessage, attachmentMatchKey, inflightAttachmentCount, matchableUserMessage } from '../utils/attachmentStrip'
 import { groupLegacyMedias } from '../utils/attachmentMigration'
 import { randomHexFromUUID } from '../utils/uploads/ids'
 import { generateUUID } from '../utils/crypto'
@@ -282,10 +282,12 @@ let failedSendSeq = 0
 // (utils/attachmentStrip.js): its text when there is any, else its TOTAL
 // attachment count — the extracted `twicc_attachments` entries, the bubble's
 // `attachmentCount`, else the provider's own block count (legacy, CLI, MCP and
-// peer sends). Returns null when the message carries neither.
+// peer sends). Returns null when the message carries neither. The text leaves
+// out the placeholder blocks of failed images the manifest binds (media, not
+// user text — matchableUserMessage).
 function userMessageMatchKey(providerHelpers, parsed) {
     return attachmentMatchKey(
-        providerHelpers.extractUserMessageText(parsed),
+        providerHelpers.extractUserMessageText(matchableUserMessage(parsed)),
         attachmentCountForMessage(parsed, providerHelpers.extractUserMessageAttachmentCount(parsed)),
     )
 }
