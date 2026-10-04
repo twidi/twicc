@@ -119,3 +119,38 @@ def test_codex_gives_up_after_every_attempt_is_rejected(codex_client):
     codex_client.answers = ["x" * 101]
     assert _generate(codex_title_suggest) is None
     assert codex_client.calls == codex_title_suggest.MAX_RETRIES
+
+
+@pytest.mark.parametrize("provider", ["claude_code", "codex"])
+@pytest.mark.parametrize("current_title", [None, "Session titles"])
+def test_helper_forwards_current_title_to_final_hermetic_prompt(monkeypatch, provider, current_title):
+    from tests.test_title_transcript import EXPECTED_V3B_BLOCK
+    from twicc.providers.helpers import get_provider_helpers
+
+    prompts = []
+
+    async def claude_run(prompt, *, model):
+        prompts.append(prompt)
+        assert model == "haiku"
+        return HermeticClaudeResult(text="Session titles", assistant_error=None, is_error=False, usage={}, init={},
+                                   num_turns=1, tool_blocks_seen=0, permission_callback_calls=0)
+
+    async def codex_prepare(model):
+        assert model == codex_title_suggest.TITLE_MODEL
+        return object()
+
+    async def codex_run(plan, prompt, *, effort):
+        prompts.append(prompt)
+        assert effort.value == "low"
+        return HermeticCodexResult("Session titles", None, 670, {})
+
+    monkeypatch.setattr(claude_title_suggest, "run_hermetic_claude", claude_run)
+    monkeypatch.setattr(codex_title_suggest, "prepare_hermetic_codex", codex_prepare)
+    monkeypatch.setattr(codex_title_suggest, "run_hermetic_codex", codex_run)
+    assert async_to_sync(get_provider_helpers(provider).generate_title)(
+        "Input", "Summarize: {text}", current_title=current_title,
+    ) == "Session titles"
+    expected = "Summarize: Input"
+    if current_title is not None:
+        expected += "\n\n" + EXPECTED_V3B_BLOCK.format(title=current_title)
+    assert prompts == [expected]

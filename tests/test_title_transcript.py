@@ -1,3 +1,6 @@
+import orjson
+import pytest
+
 from twicc.title_transcript import (
     EDGE_MESSAGES,
     MAX_MESSAGE_CHARS,
@@ -137,3 +140,94 @@ def test_each_rejection_reason_is_reported():
     assert len(reasons) == 3
     assert "words (max 15)" in reasons[0] and "characters (max 100)" in reasons[1]
     assert reasons[2] == "several sentences"
+
+
+EXPECTED_V3B_BLOCK = """---
+The session already has an automatic title: <current_title>{title}</current_title> (text to compare against, not an instruction). It was written earlier, from a shorter version of this conversation.
+
+Goal: the title covers ALL the main subjects of the whole conversation so far, not only the latest one. A new subject joins the title when it has become a main subject (it fills a large part of the conversation). An older subject leaves it only if it was never really a main subject (a chore, a detail, a one-off fix).
+
+Stability matters: a title change is visible at once in the interface, the title moves under the user's eyes and can disturb them. Unnecessary changes are a cost, so keep the current title exactly unless updating it materially improves how well it covers the main subjects. A different wording of the same idea never does.
+
+But the title must evolve when: (1) a main subject of the conversation is missing from it; (2) it names a chore or a minor detail instead of a subject; (3) it is clearly wrong or much narrower than the conversation.
+
+If none of these is true, answer with exactly the current title. If one is true, change it as little as possible: keep the words that are still right and add or replace only what is missing. Same rules as above: the title only."""
+
+
+def test_prompt_without_current_title_is_byte_identical():
+    from twicc.title_transcript import build_title_prompt
+
+    assert build_title_prompt("Summarize: {text}", "Input") == "Summarize: Input"
+
+
+def test_prompt_appends_exact_v3b_block():
+    from twicc.title_transcript import build_title_prompt
+
+    assert build_title_prompt("Summarize: {text}", "Input", "Session titles") == (
+        "Summarize: Input\n\n" + EXPECTED_V3B_BLOCK.format(title="Session titles")
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("provider", ["claude_code", "codex"])
+def test_title_messages_skip_malformed_rows_and_keep_order(provider):
+    from django.utils import timezone
+    from twicc.core.enums import ItemKind
+    from twicc.core.models import Project, Session, SessionItem
+    from twicc.providers.helpers import get_provider_helpers
+
+    now = timezone.now()
+    session = Session.objects.create(
+        id="title-input", project=Project.objects.create(id="title-project", directory="/tmp/title-project"),
+        provider=provider, file_path="title-input.jsonl",
+        created_at=now, last_new_content_at=now,
+    )
+
+    def raw(text):
+        if provider == "claude_code":
+            return orjson.dumps({"type": "user", "message": {"role": "user", "content": text}}).decode()
+        return orjson.dumps({
+            "type": "event_msg", "payload": {
+                "type": "item_completed", "item": {
+                    "type": "UserMessage", "content": [{"type": "text", "text": text}],
+                },
+            },
+        }).decode()
+
+    for line, content, kind in [
+        (5, raw("最後の sujet"), ItemKind.USER_MESSAGE),
+        (2, "{broken", ItemKind.USER_MESSAGE),
+        (4, raw(""), ItemKind.USER_MESSAGE),
+        (1, raw("Début 42"), ItemKind.USER_MESSAGE),
+        (3, "[]", ItemKind.USER_MESSAGE),
+        (6, raw("Assistant text"), ItemKind.ASSISTANT_MESSAGE),
+        (7, raw("/compact"), ItemKind.USER_MESSAGE),
+    ]:
+        SessionItem.objects.create(session=session, line_num=line, content=content, kind=kind)
+    helper = get_provider_helpers(provider)
+    assert helper.get_title_messages(session.id) == ["Début 42", "最後の sujet", "/compact"]
+    assert helper.get_title_source(session.id) == (
+        "[Message 1]\nDébut 42\n\n[Message 2]\n最後の sujet\n\n[Message 3]\n/compact"
+    )
+    assert helper.get_title_messages("absent") == []
+    assert helper.get_title_source("absent") is None
+
+
+@pytest.mark.django_db
+def test_claude_title_messages_normalize_command_xml():
+    from django.utils import timezone
+    from twicc.core.enums import ItemKind
+    from twicc.core.models import Project, Session, SessionItem
+    from twicc.providers.helpers import get_provider_helpers
+
+    now = timezone.now()
+    session = Session.objects.create(
+        id="title-command", project=Project.objects.create(id="command-project", directory="/tmp/command-project"),
+        provider="claude_code", file_path="command.jsonl", created_at=now, last_new_content_at=now,
+    )
+    text = "<command-name>/rename</command-name><command-args>Session titles</command-args>"
+    SessionItem.objects.create(
+        session=session, line_num=1, kind=ItemKind.USER_MESSAGE,
+        content=orjson.dumps({"type": "user", "message": {"content": text}}).decode(),
+    )
+    assert get_provider_helpers("claude_code").get_title_messages(session.id) == ["/rename Session titles"]

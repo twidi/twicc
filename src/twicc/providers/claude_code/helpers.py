@@ -877,11 +877,13 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
             return False, f"Missing required keys: {', '.join(sorted(missing))}"
         return True, "Valid usage file"
 
-    async def generate_title(self, prompt: str, system_prompt: str) -> str | None:
+    async def generate_title(
+        self, prompt: str, system_prompt: str, *, current_title: str | None = None,
+    ) -> str | None:
         """Run a short Haiku SDK query to suggest a title for ``prompt``."""
         from .title_suggest import generate_title as _generate_title
 
-        return await _generate_title(prompt, system_prompt)
+        return await _generate_title(prompt, system_prompt, current_title=current_title)
 
     async def warm_up_quota(self) -> bool | None:
         """Open the Claude 5-hour window via the existing auth-probe throwaway turn.

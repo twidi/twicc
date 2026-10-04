@@ -5,7 +5,7 @@ import asyncio
 import logging
 
 from twicc.providers.claude_code.hermetic import run_hermetic_claude
-from twicc.title_transcript import title_rejection_reasons
+from twicc.title_transcript import build_title_prompt, title_rejection_reasons
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,9 @@ SUGGESTION_TIMEOUT_SECONDS = 60
 MAX_RETRIES = 2
 
 
-async def generate_title(user_message: str, system_prompt: str) -> str | None:
+async def generate_title(
+    user_message: str, system_prompt: str, *, current_title: str | None = None,
+) -> str | None:
     """
     Generate a title suggestion from a user message and system prompt.
 
@@ -31,12 +33,15 @@ async def generate_title(user_message: str, system_prompt: str) -> str | None:
     Args:
         user_message: The text to summarize (the user's messages, already bounded)
         system_prompt: The system prompt with {text} placeholder
+        current_title: Automatic title to compare against, after a successful check
 
     Returns:
         The suggested title, or None if all attempts failed
     """
     for attempt in range(1, MAX_RETRIES + 1):
-        result = await _call_haiku(user_message, system_prompt, source="prompt", attempt=attempt)
+        result = await _call_haiku(
+            user_message, system_prompt, source="prompt", attempt=attempt, current_title=current_title,
+        )
         if result is not None:
             return result
     logger.warning("Title suggestion: all %d attempts exhausted", MAX_RETRIES)
@@ -45,7 +50,8 @@ async def generate_title(user_message: str, system_prompt: str) -> str | None:
 
 
 async def _call_haiku(
-    user_message: str, system_prompt: str, source: str = "unknown", attempt: int = 1
+    user_message: str, system_prompt: str, source: str = "unknown", attempt: int = 1,
+    *, current_title: str | None = None,
 ) -> str | None:
     """
     Single attempt to call Claude Haiku via the SDK and return the title suggestion.
@@ -56,10 +62,11 @@ async def _call_haiku(
     Args:
         user_message: The text to summarize (the user's messages, already bounded)
         system_prompt: The system prompt with {text} placeholder
+        current_title: Automatic title to compare against, after a successful check
         source: Source identifier for logging
         attempt: Current attempt number (for logging)
     """
-    full_prompt = system_prompt.replace("{text}", user_message)
+    full_prompt = build_title_prompt(system_prompt, user_message, current_title)
 
     # ``HermeticConfigError`` and ``HermeticGuardViolation`` from the helper land in
     # the ``except Exception`` below and return ``None``, so the retry and the WS

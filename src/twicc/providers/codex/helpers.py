@@ -652,11 +652,13 @@ class CodexHelpers(BaseProviderHelpers):
         if "codexDefaultContextMax" in changes and adjusted.context_max != candidate.context_max:
             synced["codexDefaultContextMax"] = adjusted.context_max
 
-    async def generate_title(self, prompt: str, system_prompt: str) -> str | None:
+    async def generate_title(
+        self, prompt: str, system_prompt: str, *, current_title: str | None = None,
+    ) -> str | None:
         """Run a short gpt-6-luna SDK query to suggest a title for ``prompt``."""
         from .title_suggest import generate_title as _generate_title
 
-        return await _generate_title(prompt, system_prompt)
+        return await _generate_title(prompt, system_prompt, current_title=current_title)
 
     async def warm_up_quota(self) -> bool | None:
         """Open the Codex 5-hour window via the existing auth-probe throwaway turn.

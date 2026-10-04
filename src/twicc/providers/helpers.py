@@ -804,9 +804,18 @@ class BaseProviderHelpers:
         ``None`` when the session has no user message with text. Sync method —
         wrap in :func:`sync_to_async` at the call site.
         """
+        from twicc.title_transcript import build_title_source
+
+        return build_title_source(self.get_title_messages(session_id))
+
+    def get_title_messages(self, session_id: str) -> list[str]:
+        """Return all parsed user texts in line order, including slash commands.
+
+        Sync method; callers wrap it in ``sync_to_async`` when needed. Empty
+        and malformed rows are skipped by the existing user-message parser.
+        """
         from twicc.core.enums import ItemKind
         from twicc.core.models import SessionItem
-        from twicc.title_transcript import build_title_source
 
         items = (
             SessionItem.objects
@@ -814,7 +823,7 @@ class BaseProviderHelpers:
             .order_by("line_num")
             .iterator()
         )
-        return build_title_source([message.text for message in self.get_user_messages(items)])
+        return [message.text for message in self.get_user_messages(items)]
 
     def get_indexable_messages(self, items: Iterable[SessionItem]) -> list[IndexableMessage]:
         """Extract indexable messages from ``items``.
@@ -943,11 +952,14 @@ class BaseProviderHelpers:
         """
         raise NotImplementedError
 
-    async def generate_title(self, prompt: str, system_prompt: str) -> str | None:
+    async def generate_title(
+        self, prompt: str, system_prompt: str, *, current_title: str | None = None,
+    ) -> str | None:
         """Generate a session title suggestion from ``prompt`` and ``system_prompt``.
 
         ``system_prompt`` contains a ``{text}`` placeholder that the
-        implementation replaces with ``prompt``. Default implementation
+        implementation replaces with ``prompt``. ``current_title`` adds a comparison
+        block for a previous automatic title. Default implementation
         returns ``None`` (provider has no title generation surface);
         providers override to call their own model — Claude Code runs
         a short Haiku query and Codex runs a short gpt-6-luna query,

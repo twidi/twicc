@@ -17,22 +17,28 @@ from twicc.providers.codex import title_suggest as codex_title_suggest
 from twicc.providers.hermetic import HermeticConfigError
 
 
-def test_claude_returns_none_when_the_hermetic_call_cannot_start(monkeypatch):
+@pytest.mark.parametrize("current_title", [None, "Existing title"])
+def test_claude_returns_none_when_the_hermetic_call_cannot_start(monkeypatch, current_title):
     async def _explode(*_a, **_k):
         raise HermeticConfigError("cwd", "neutral directory unusable")
 
     monkeypatch.setattr(claude_title_suggest, "run_hermetic_claude", _explode)
 
-    assert async_to_sync(claude_title_suggest.generate_title)("hello", "Summarize: {text}") is None
+    assert async_to_sync(claude_title_suggest.generate_title)(
+        "hello", "Summarize: {text}", current_title=current_title,
+    ) is None
 
 
-def test_codex_returns_none_when_the_hermetic_plan_cannot_be_prepared(monkeypatch):
+@pytest.mark.parametrize("current_title", [None, "Existing title"])
+def test_codex_returns_none_when_the_hermetic_plan_cannot_be_prepared(monkeypatch, current_title):
     async def _explode(model):
         raise HermeticConfigError("catalog", "x")
 
     monkeypatch.setattr(codex_title_suggest, "prepare_hermetic_codex", _explode)
 
-    assert async_to_sync(codex_title_suggest.generate_title)("hello", "Summarize: {text}") is None
+    assert async_to_sync(codex_title_suggest.generate_title)(
+        "hello", "Summarize: {text}", current_title=current_title,
+    ) is None
 
 
 @pytest.fixture
