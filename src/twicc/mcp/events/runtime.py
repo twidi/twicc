@@ -20,7 +20,7 @@ from twicc.cli._wait_reply import POLL_INTERVAL_SECONDS, _SessionWait
 from twicc.core.models import McpEventSubscription, Session, SessionItem
 from twicc.core.serializers import session_compute_ready
 from twicc.mcp.events import SYSTEM_CLOCK
-from twicc.mcp.events.delivery import build_occurrence, fit_body
+from twicc.mcp.events.delivery import DeliveryService, build_occurrence, fit_body
 from twicc.mcp.events.methods import SubscriptionSnapshot
 from twicc.mcp.events.prompts import first_non_command_prompt
 from twicc.mcp.oauth import storage
@@ -150,6 +150,8 @@ class EventsRuntime:
         # Only _worker and its synchronous helpers access this table.
         self.monitors = {}
         self.emission_sink = post_emission
+        self.delivery = DeliveryService(self)
+        self.delivery_tasks = set()
 
     def add(self, snapshot):
         self.commands.put(AddCommand(snapshot))
@@ -465,13 +467,26 @@ class EventsRuntime:
         monitor.turn_start_line = turn.turn_start_line
 
     def post_emission(self, emission):
-        """Injected posting seam; delivery and lifecycle tasks attach the sink."""
+        """Enqueue without waiting; only the backend loop creates delivery tasks."""
         if self.stop_requested.is_set():
             return False
         if self.emission_sink is None:
-            raise RuntimeError("Event delivery is not configured")
-        self.emission_sink(emission)
+            self.loop.call_soon_threadsafe(self._start_delivery, emission)
+        else:
+            self.emission_sink(emission)
         return True
+
+    def _start_delivery(self, emission):
+        if self.stop_requested.is_set():
+            return
+        task = asyncio.create_task(self.delivery.deliver(emission), name="mcp-event-delivery")
+        self.delivery_tasks.add(task)
+        task.add_done_callback(self._delivery_finished)
+
+    def _delivery_finished(self, task):
+        self.delivery_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("MCP event delivery task failed")
 
     def post_write(self, item):
         """Keep worker posting order without touching asyncio.Queue from a thread."""

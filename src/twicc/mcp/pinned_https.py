@@ -5,6 +5,7 @@ import ipaddress
 import logging
 import socket
 import ssl
+import traceback
 from typing import NamedTuple
 from urllib.parse import urlsplit
 
@@ -95,5 +96,11 @@ def classify_send_error(error):
     if any(isinstance(item, ssl.SSLError) and not isinstance(item, excluded) for item in chain):
         return "tls_error"
     if not isinstance(error, (httpx.TransportError, OSError)):
-        logger.error("Unexpected webhook send exception", exc_info=(type(error), error, error.__traceback__))
+        # Exception messages, source lines and locals can contain callback secrets.
+        frames = "".join(
+            f'  File "{frame.filename}", line {frame.lineno}, in {frame.name}\n'
+            for frame in traceback.extract_tb(error.__traceback__)
+        )
+        logger.error("Unexpected webhook send exception: %s\nTraceback (most recent call last):\n%s",
+                     type(error).__name__, frames)
     return "connection_refused"

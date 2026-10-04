@@ -1,4 +1,4 @@
-"""Occurrence payloads, bounded frozen bodies, and per-attempt signatures."""
+"""Frozen occurrences, fresh delivery authority, signatures, and bounded retries."""
 
 import asyncio
 from collections import deque
@@ -8,15 +8,93 @@ import logging
 import secrets
 from urllib.parse import urlsplit
 
+from django.db import transaction
 import orjson
 from standardwebhooks import Webhook
 
+from twicc.core.models import McpEventSubscription
 from twicc.mcp import pinned_https
 from twicc.mcp.events import SYSTEM_CLOCK, Clock
 from twicc.mcp.events.catalog import EVENT_NAME, MAX_BODY_BYTES, event_id
+from twicc.mcp.oauth import config, storage
 from twicc.providers.pending_question import created_at_iso
 
 logger = logging.getLogger(__name__)
+
+
+class DeliveryService:
+    """Send frozen occurrences with fresh authority before each bounded attempt."""
+
+    def __init__(self, runtime, *, send=None, sleep=None):
+        self.runtime = runtime
+        self.send = send or pinned_https.post_webhook
+        self.sleep = sleep or asyncio.sleep
+
+    def _authority(self, emission, loop):
+        """Read private delivery keys; deletes run under storage.write and commit."""
+        with transaction.atomic():
+            row = McpEventSubscription.objects.select_related("connection").filter(
+                id=emission.id, created_at=emission.created_at, data_dir=self.runtime.data_dir,
+            ).first()
+            if row is None:
+                return None, "gone"
+            if row.refresh_before <= self.runtime.clock.utcnow():
+                return None, "expired"
+            configured = config.base_url()
+            reason = ""
+            if row.connection.revoked_at is not None:
+                reason = "revoked"
+            elif configured and row.connection.resource != config.resource_url():
+                reason = "resource_changed"
+            if reason:
+                row.delete()
+                transaction.on_commit(lambda: loop.call_soon_threadsafe(
+                    self.runtime.remove, emission.id, emission.created_at,
+                ))
+                return None, reason
+            if not configured:
+                return None, "unconfigured"
+            return row, ""
+
+    async def deliver(self, emission):
+        """Cancellation preserves the persisted cursor for restart detection."""
+        loop = asyncio.get_running_loop()
+        try:
+            for attempt, delay in enumerate((0, 30, 120), start=1):
+                if delay:
+                    await self.sleep(delay)
+                row, reason = await storage.write(lambda: self._authority(emission, loop))
+                if row is None:
+                    logger.info("MCP event %s suppressed: category=%s", emission.event_id, reason)
+                    break
+                headers = signing_headers(
+                    emission.id, emission.event_id, emission.body, row.secret,
+                    previous_secret=row.previous_secret, previous_secret_until=row.previous_secret_until,
+                    clock=self.runtime.clock,
+                )
+                status, category = None, "http"
+                try:
+                    response = await self.send(row.callback_url, headers=headers, body=emission.body)
+                    status = response.status_code
+                    retry = status in (408, 425, 429) or 500 <= status < 600
+                    success = 200 <= status < 300
+                except Exception as error:
+                    category = pinned_https.classify_send_error(error)
+                    retry = category in ("connection_refused", "timeout")
+                    success = False
+                retry = retry and attempt < 3
+                outcome = "success" if success else "retry" if retry else "failed"
+                logger.info("MCP event %s attempt=%s outcome=%s status=%s category=%s",
+                            emission.event_id, attempt, outcome, status, category)
+                if not retry:
+                    break
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Never include exception text: a dependency can include keys or bodies.
+            logger.error("MCP event %s failed: category=internal_error", emission.event_id)
+        if emission.cursor is not None:
+            self.runtime.writes.put_nowait(emission.cursor)
 
 
 def build_data(session_id: str, session_title: str | None, reply: dict, *, pending_request=None) -> dict:

@@ -97,7 +97,9 @@ def test_unexpected_failure_logs_traceback_every_time(caplog, monkeypatch):
             assert pinned_https.classify_send_error(error) == "connection_refused"
             assert pinned_https.classify_send_error(error) == "connection_refused"
     assert len(caplog.records) == 2
-    assert all(record.exc_info[2] is not None for record in caplog.records)
+    assert all("Traceback (most recent call last):" in record.message for record in caplog.records)
+    assert all("test_unexpected_failure_logs_traceback_every_time" in record.message for record in caplog.records)
+    assert all(record.exc_info is None for record in caplog.records)
 
 
 @pytest.fixture(scope="module")
