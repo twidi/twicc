@@ -1,4 +1,4 @@
-"""Staging store of composer attachments: identity, names, durable markers, ready loading.
+"""Staging store of composer attachments: identity, names, durable markers, ready loading, promotion.
 
 Layout (``paths.get_composer_attachments_dir()``): ``<bucket>/<attachment_id>/`` holding
 ``file/<filename>``, ``ready.json``, ``committed.json`` and ``promoted.json``.
@@ -7,31 +7,38 @@ checked before any content access.
 Design: docs/plans/2026-10-03-composer-attachments-any-file-design.md §6.1.
 """
 
+import errno
 import logging
 import os
 import re
+import stat
 import uuid
 from pathlib import Path
 
 import orjson
 
-from twicc.core.services.attachments.types import AttachmentRef, PromotedEntry, StagedEntry
+from twicc.core.services.attachments.types import AttachmentRef, PreparedEntry, PromotedEntry, StagedEntry
 from twicc.paths import get_artifacts_dir, get_composer_attachments_dir
-from twicc.uploads.store import TEMP_FILE_PREFIX
+from twicc.uploads.store import TEMP_FILE_PREFIX, candidate_names
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "ERROR_COMMIT_FAILED",
     "ERROR_MISSING",
     "ERROR_NOT_READY",
+    "NO_HARD_LINK_ERRNOS",
     "AttachmentError",
+    "attachments_dir",
     "content_location",
     "content_media_type",
     "entry_dir",
     "get_composer_attachments_dir",
     "load_entry",
+    "mark_committed",
     "normalize_filename",
     "on_upload_completed",
+    "promote_entry",
     "validate_ref",
     "write_marker",
 ]
@@ -39,6 +46,11 @@ __all__ = [
 ERROR_INVALID_REF = "invalid_attachment_ref"
 ERROR_NOT_READY = "attachment_not_ready"
 ERROR_MISSING = "attachment_missing"
+ERROR_COMMIT_FAILED = "attachment_commit_failed"
+
+# ``os.link`` errors of a filesystem without hard-link support (same set as ``uploads.store``).
+NO_HARD_LINK_ERRNOS = frozenset({errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.ENOSYS})
+ATTACHMENTS_SUBDIR = "attachments"
 
 FALLBACK_NAME = "attachment"
 FILE_DIR = "file"
@@ -191,11 +203,27 @@ def write_marker(entry: Path, name: str, payload: dict) -> None:
         except FileNotFoundError:
             pass
         raise
-    dir_fd = os.open(entry, os.O_RDONLY)
+    fsync_dir(entry)
+
+
+def fsync_dir(directory: Path) -> None:
+    """``fsync`` a directory, so the names created or removed in it are durable."""
+    dir_fd = os.open(directory, os.O_RDONLY)
     try:
         os.fsync(dir_fd)
     finally:
         os.close(dir_fd)
+
+
+def mark_committed(ref: AttachmentRef, at: str) -> None:
+    """Write ``committed.json = {at}`` on an existing entry; never recreates a released entry.
+
+    Raises :class:`AttachmentError` (``attachment_missing``) when the entry directory is gone.
+    """
+    entry = _real_entry_dir(ref)
+    if entry is None:
+        raise AttachmentError(ERROR_MISSING, "Attachment not found")
+    write_marker(entry, COMMITTED_MARKER, {"at": at})
 
 
 # ── Loading ──
@@ -288,7 +316,7 @@ def content_location(entry: StagedEntry) -> Path:
     promoted = entry.promoted
     if not _is_plain_basename(promoted.session_id):
         raise AttachmentError(ERROR_MISSING, "Invalid promotion record")
-    allowed = Path(os.path.realpath(get_artifacts_dir() / promoted.session_id / "attachments"))
+    allowed = Path(os.path.realpath(attachments_dir(promoted.session_id)))
     real = Path(os.path.realpath(promoted.final_path))
     if real.parent != allowed or not real.is_file():
         raise AttachmentError(ERROR_MISSING, "The promoted file is outside its attachments directory")
@@ -371,3 +399,136 @@ def on_upload_completed(meta: dict, final_path: str | Path) -> None:
     if _read_json(entry / READY_MARKER) == payload:
         return
     write_marker(entry, READY_MARKER, payload)
+
+
+# ── Promotion ──
+
+
+def attachments_dir(session_id: str) -> Path:
+    """``artifacts/<session_id>/attachments/`` (not created, not resolved).
+
+    Raises :class:`AttachmentError` (``attachment_commit_failed``) for an unsafe session id.
+    """
+    if not _is_plain_basename(session_id):
+        raise AttachmentError(ERROR_COMMIT_FAILED, "Invalid session id")
+    return get_artifacts_dir() / session_id / ATTACHMENTS_SUBDIR
+
+
+def _remove_if_empty(path: Path) -> None:
+    """Remove *path* when it is still our empty reservation (best effort)."""
+    try:
+        st = os.lstat(path)
+        if st.st_size == 0 and stat.S_ISREG(st.st_mode):
+            os.unlink(path)
+    except OSError:
+        logger.warning("Composer attachments: cannot remove the reservation %s", path, exc_info=True)
+
+
+def _reserve_and_replace(source: Path, directory: Path, names: list[str]) -> Path:
+    """No hard links: create the first free candidate exclusively, then replace it with *source*."""
+    for name in names:
+        candidate = directory / name
+        try:
+            fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
+        except FileExistsError:
+            continue
+        except OSError as exc:
+            raise AttachmentError(ERROR_COMMIT_FAILED, f"Cannot claim {name!r}: {exc}") from exc
+        os.close(fd)
+        try:
+            # Only our own empty reservation is replaced: never another writer's file.
+            os.replace(source, candidate)
+        except OSError as exc:
+            _remove_if_empty(candidate)
+            raise AttachmentError(ERROR_COMMIT_FAILED, f"Cannot place {name!r}: {exc}") from exc
+        return candidate
+    raise AttachmentError(ERROR_COMMIT_FAILED, "No free file name in the attachments directory")
+
+
+def _claim(source: Path, directory: Path, filename: str) -> Path:
+    """Claim the first free candidate of *filename* in *directory* from the pre-copy *source*.
+
+    An exclusive hard link per candidate (a name taken by a concurrent writer: next candidate);
+    only a no-hard-link errno switches to an exclusive create followed by a replace. Never overwrites.
+    """
+    names = list(candidate_names(filename))
+    for index, name in enumerate(names):
+        candidate = directory / name
+        try:
+            os.link(source, candidate)
+        except FileExistsError:
+            continue
+        except OSError as exc:
+            if exc.errno in NO_HARD_LINK_ERRNOS:
+                return _reserve_and_replace(source, directory, names[index:])
+            raise AttachmentError(ERROR_COMMIT_FAILED, f"Cannot claim {name!r}: {exc}") from exc
+        return candidate
+    raise AttachmentError(ERROR_COMMIT_FAILED, "No free file name in the attachments directory")
+
+
+def _remove_source(path: Path, what: str) -> None:
+    """Remove a source after the tombstone; a failure only leaves a leftover (logged)."""
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        logger.warning("Composer attachments: cannot remove the %s %s", what, path, exc_info=True)
+
+
+def promote_entry(entry: PreparedEntry, session_id: str) -> PromotedEntry:
+    """Promote one prepared file entry into ``artifacts/<session_id>/attachments/`` (spec §7.2).
+
+    - a tombstone of the same session: its file must still exist, confined to that session's
+      attachments directory (the marker is never trusted blindly), and is reused as is;
+    - a staged file, or a tombstone of another session: the final name is claimed from the prepared
+      pre-copy (:func:`_claim`), then ``promoted.json`` is written durably, and only then are the
+      staged file and the pre-copy removed. A crash before the tombstone leaves the entry ready.
+
+    Same-filesystem operations and small marker writes only. Raises :class:`AttachmentError`:
+    ``attachment_missing`` for a vanished entry or promoted file, ``attachment_commit_failed`` for
+    any other failure; :class:`OSError` may escape from the marker or directory writes.
+    """
+    planned = entry.entry
+    source = planned.source
+    previous = source.promoted
+    if previous is not None and previous.session_id == session_id:
+        real = content_location(source)
+        return previous._replace(final_path=real)
+    if entry.precopy is None:
+        raise AttachmentError(ERROR_COMMIT_FAILED, "The entry has no prepared source")
+    staged = _real_entry_dir(planned.ref)
+    if staged is None:
+        raise AttachmentError(ERROR_MISSING, "Attachment not found")
+
+    target = attachments_dir(session_id)
+    target.mkdir(parents=True, exist_ok=True)
+    real_target = Path(os.path.realpath(target))
+    original_name = previous.original_name if previous is not None else source.filename
+    final = _claim(entry.precopy, real_target, original_name)
+    fsync_dir(real_target)
+
+    # The size of the bytes really promoted (another session may have edited its copy in place).
+    size = os.stat(final).st_size
+    promoted = PromotedEntry(session_id, final, final.name, planned.kind, original_name, size)
+    write_marker(
+        staged,
+        PROMOTED_MARKER,
+        {
+            "session_id": promoted.session_id,
+            "final_path": str(promoted.final_path),
+            "final_name": promoted.final_name,
+            "kind": promoted.kind,
+            "original_name": promoted.original_name,
+            "size": promoted.size,
+        },
+    )
+    # The tombstone is durable: the sources can go. A crash from here on leaves a promoted entry.
+    if previous is None and source.path is not None:
+        _remove_source(source.path, "staged file")
+        try:
+            fsync_dir(source.path.parent)
+        except OSError:
+            logger.warning("Composer attachments: cannot sync %s", source.path.parent, exc_info=True)
+    _remove_source(entry.precopy, "pre-copy")
+    return promoted
