@@ -20,7 +20,8 @@ from typing import ClassVar, NamedTuple
 
 from django.db.models import Q
 
-from twicc.context_injection import GOAL_CLEAR_ARGS, INSTRUCTION_BLOCK_MARKER
+from twicc.context_injection import ATTACHMENTS_KEY, GOAL_CLEAR_ARGS, INSTRUCTION_BLOCK_MARKER
+from twicc.core.services.attachments.types import UserTextSlot
 from twicc.core.enums import ItemKind, Provider
 from twicc.core.models import (
     AgentInteraction,
@@ -403,18 +404,26 @@ def _is_system_xml_content(content: str | list | None) -> bool:
     return any(stripped.startswith(prefix) for prefix in _SYSTEM_XML_PREFIXES)
 
 
-def _has_visible_content(content: str | list | None) -> bool:
+def _has_visible_content(content: str | list | None, attachments: object = None) -> bool:
     """
     Check if message content contains user-visible content.
 
-    User-visible content types are: text, document, image.
+    User-visible content types are: text, document, image. A user message
+    whose extracted ``twicc_attachments`` (passed as ``attachments``) holds at
+    least one entry is visible too, even with no content left (a file-only
+    message sent without text).
 
     Args:
         content: Message content (string or list of content items)
+        attachments: The item's ``twicc_attachments`` value, if any
 
     Returns:
-        True if content is a string or contains at least one visible content item
+        True if content is a string or contains at least one visible content
+        item, or if ``attachments`` has entries
     """
+    if isinstance(attachments, dict) and attachments.get('entries'):
+        return True
+
     if not content:
         return False
 
@@ -682,6 +691,44 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
         self._monitor_task_to_tool_use_id.pop(session_id, None)
         self._session_task_states.pop(session_id, None)
         self._context_baselines.pop(session_id, None)
+
+    def user_text_slots(self, parsed: dict) -> tuple[UserTextSlot, ...]:
+        # The user's own message (design §10.1): a ``user`` record that is
+        # neither sidechain, meta, nor a compact summary — its whole message
+        # content (a string in hybrid, an array in SDK; an array holding a
+        # tool_result is not a user message) — and the prompt of a
+        # ``queued_command`` attachment with ``commandMode: "prompt"`` (how an
+        # SDK send accepted mid-turn is recorded). Never ``last-prompt``,
+        # ``rendered`` copies, or any other record.
+        if parsed.get('isSidechain') or parsed.get('isMeta'):
+            return ()
+        entry_type = parsed.get('type')
+        if entry_type == 'user':
+            if parsed.get('isCompactSummary'):
+                return ()
+            message = parsed.get('message')
+            if not isinstance(message, dict):
+                return ()
+            container, key = message, 'content'
+        elif entry_type == 'attachment':
+            attachment = parsed.get('attachment')
+            if (
+                not isinstance(attachment, dict)
+                or attachment.get('type') != 'queued_command'
+                or attachment.get('commandMode') != 'prompt'
+            ):
+                return ()
+            container, key = attachment, 'prompt'
+        else:
+            return ()
+        value = container.get(key)
+        if isinstance(value, str):
+            return (UserTextSlot(container, key, 'hybrid'),)
+        if isinstance(value, list) and not any(
+            isinstance(item, dict) and item.get('type') == 'tool_result' for item in value
+        ):
+            return (UserTextSlot(container, key, 'claude'),)
+        return ()
 
     def extra_session_fields(self, session: Session) -> dict:
         # Detect whether this session has any workflow run (a ``wf_*.json`` at
@@ -1734,8 +1781,9 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
             if isinstance(origin, dict) and origin.get('kind') == 'task-notification':
                 return ItemKind.SYSTEM
 
-            # Only user messages with visible content count as USER_MESSAGE.
-            if text or _has_visible_content(content):
+            # Only user messages with visible content (or extracted
+            # attachments) count as USER_MESSAGE.
+            if text or _has_visible_content(content, parsed_json.get(ATTACHMENTS_KEY)):
                 return ItemKind.USER_MESSAGE
 
             # Content array without visible items -> CONTENT_ITEMS.

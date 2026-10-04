@@ -15,7 +15,8 @@ are migrated to the same shape). The readers live in :mod:`.canonical`.
 
 - ``item_completed`` / ``UserMessage`` → ``USER_MESSAGE`` (text joined
   from the ``text`` entries; ``image`` / ``local_image`` entries make an
-  attachment-only prompt visible too)
+  attachment-only prompt visible too, and so does an extracted
+  ``twicc_attachments`` manifest with entries — a file-only prompt)
 - ``item_completed`` / ``AgentMessage`` → ``ASSISTANT_MESSAGE``
 - The first ``response_item.message`` (role=user) carrying a
   ``<codex_internal_context source="goal">`` block after a goal set/update is
@@ -204,6 +205,7 @@ from twicc.core.models import (
     SessionType,
     ToolResultLink,
 )
+from twicc.core.services.attachments.types import UserTextSlot
 from twicc.paths import get_artifacts_dir
 from twicc.pricing import calculate_line_context_usage
 from twicc.providers.goals import GOAL_STATE_ACTIVE, GOAL_STATE_COMPLETED, GoalEvent
@@ -2526,6 +2528,87 @@ class CodexSessionCompute(BaseSessionCompute):
         self._prev_total_tokens.pop(session_id, None)
         self._plan_prefix_states.pop(session_id, None)
         self._goal_context_states.pop(session_id, None)
+
+    # ------------------------------------------------------------------
+    # Attachments manifest ingestion (design §10.1)
+    # ------------------------------------------------------------------
+
+    def transform_inline(
+        self,
+        parsed_json: dict,
+        *,
+        session_id: str,
+        line_num: int,
+        in_memory_items: list[tuple[int, datetime | None, dict]] | None = None,
+    ) -> str | None:
+        # Latch the fork fields before any user-text slot is checked, so a
+        # copied user record later in the same live batch (not yet in the DB)
+        # already sees its fork owner.
+        self._latch_fork_fields(parsed_json, session_id=session_id, line_num=line_num)
+        return super().transform_inline(
+            parsed_json, session_id=session_id, line_num=line_num, in_memory_items=in_memory_items,
+        )
+
+    def _latch_fork_fields(self, parsed_json: dict, *, session_id: str, line_num: int) -> None:
+        """Cache the session's own ``session_meta`` fork fields in ``_fork_fields``.
+
+        The session's own metadata is its line 1, or any ``session_meta``
+        carrying its id. A forked rollout also replays its parent's
+        ``session_meta`` (line 2, the parent's id, no ``forked_from_id``):
+        latching that copy would drop the fork owner, so it is skipped. A
+        latch replaces any earlier value, including a negative live seed.
+        """
+        if parsed_json.get("type") != _TYPE_SESSION_META:
+            return
+        payload = _payload(parsed_json)
+        if line_num == 1 or (payload is not None and payload.get("id") == session_id):
+            self._fork_fields[session_id] = fork_fields(parsed_json)
+
+    def _prepare_attachment_owners(
+        self, *, session_id: str, in_memory_items: list[tuple[int, datetime | None, dict]] | None,
+    ) -> None:
+        # Batch compute seeds the cache in ``begin_session_compute`` and
+        # latches line 1. A live session not cached yet reads its line-1
+        # metadata from the current batch first, then from the DB.
+        if session_id in self._fork_fields:
+            return
+        for item_line, _timestamp, item_parsed in in_memory_items or ():
+            if item_line == 1 and isinstance(item_parsed, dict):
+                self._fork_fields[session_id] = fork_fields(item_parsed)
+                return
+        self._fork_fields[session_id] = self._live_fork_fields(session_id)
+
+    def attachment_owners(self, parsed: dict, *, session_id: str) -> set[str]:
+        # A fork replays its parent's user records: their manifests name the
+        # parent (``forked_from_id``), never the spawn parent of a subagent.
+        owners = {session_id}
+        fields = self._fork_fields.get(session_id)
+        if fields is not None and fields.forked_from_id:
+            owners.add(fields.forked_from_id)
+        return owners
+
+    def user_text_slots(self, parsed: dict) -> tuple[UserTextSlot, ...]:
+        # The content array of a user ``response_item`` message and of a
+        # canonical ``UserMessage`` item. Not ``compacted`` records, not tool
+        # items, not assistant messages.
+        wrapper_type = parsed.get("type")
+        payload = _payload(parsed)
+        if payload is None:
+            return ()
+        if wrapper_type == _TYPE_RESPONSE_ITEM:
+            if payload.get("type") != "message" or payload.get("role") != "user":
+                return ()
+            container, slot_format = payload, "codex_response"
+        elif wrapper_type == _TYPE_EVENT_MSG:
+            item = completed_item(parsed)
+            if item is None or item.get("type") != "UserMessage":
+                return ()
+            container, slot_format = item, "codex_canonical"
+        else:
+            return ()
+        if not isinstance(container.get("content"), list):
+            return ()
+        return (UserTextSlot(container, "content", slot_format),)
 
     def _note_process_announcement(
         self, session_id: str, parsed_json: dict, owner_call_id: str,

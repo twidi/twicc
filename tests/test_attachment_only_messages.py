@@ -214,3 +214,64 @@ def test_sender_header_is_the_whole_body_when_there_is_no_text() -> None:
         "", caller, recipient_id="recipient-id", recipient_spawned_by_id=None,
     )
     assert header == ':: message from another session `caller-id` ("**Worker 1**")'
+
+
+# ----------------------------------------------------------------------
+# Ingestion: a file-only message keeps its user-message kind
+# ----------------------------------------------------------------------
+
+FILE_ONLY_ATTACHMENTS = {
+    "owner": "session-id",
+    "entries": [
+        {"n": 1, "name": "movie.mp4", "kind": "video", "rank": 1, "of": 1, "mode": "file", "artifact_name": "movie.mp4"},
+    ],
+}
+
+
+def _claude_user_record(content) -> dict:
+    return {
+        "parentUuid": None,
+        "isSidechain": False,
+        "type": "user",
+        "message": {"role": "user", "content": content},
+        "uuid": "41facacc-b8b1-45df-a3ea-62eaf3aae76f",
+        "timestamp": "2026-10-04T11:13:19.093Z",
+        "userType": "external",
+        "sessionId": "session-id",
+        "version": "2.1.286",
+    }
+
+
+@pytest.mark.parametrize("content", [[], ""], ids=["sdk", "hybrid"])
+def test_claude_file_only_record_without_text_is_a_user_message(content) -> None:
+    from twicc.core.enums import ItemKind
+    from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
+
+    compute = ClaudeCodeSessionCompute()
+    record = _claude_user_record(content)
+    assert compute.compute_item_kind(record) != ItemKind.USER_MESSAGE
+
+    record["twicc_attachments"] = FILE_ONLY_ATTACHMENTS
+    assert compute.compute_item_kind(record) == ItemKind.USER_MESSAGE
+
+
+def test_codex_file_only_record_without_text_is_a_user_message() -> None:
+    from twicc.core.enums import ItemKind
+    from twicc.providers.codex.compute import CodexSessionCompute
+
+    record = {
+        "timestamp": "2026-10-04T11:42:43.017Z",
+        "type": "event_msg",
+        "payload": {
+            "type": "item_completed",
+            "thread_id": "session-id",
+            "turn_id": "turn-1",
+            "item": {"type": "UserMessage", "id": "item-1", "content": []},
+            "completed_at_ms": 1791114163017,
+        },
+    }
+    compute = CodexSessionCompute()
+    assert compute.compute_item_kind(record) != ItemKind.USER_MESSAGE
+
+    record["twicc_attachments"] = FILE_ONLY_ATTACHMENTS
+    assert compute.compute_item_kind(record) == ItemKind.USER_MESSAGE

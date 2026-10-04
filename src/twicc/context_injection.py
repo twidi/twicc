@@ -70,6 +70,12 @@ command (Claude Code only today) telling the agent that a later goal
 complements/overrides the earlier one(s). It folds in at the same send-time
 chokepoint and is scrubbed by the same ingestion strip — but, being appended
 inside the command's args rather than prepended, it is matched unanchored.
+
+The ``<twicc:attachments>`` manifest is extracted at the same ingestion step,
+just before that strip, but scoped: :func:`extract_attachments_block` reads only
+the provider's user-message slots, at the exact position TwiCC writes the
+block, and stores it as ``twicc_attachments`` (design
+``docs/plans/2026-10-03-composer-attachments-any-file-design.md`` §10.1).
 """
 
 from __future__ import annotations
@@ -77,6 +83,10 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Mapping
+from typing import NamedTuple
+
+from twicc.core.services.attachments.manifest import CLOSE_TAG, OPEN_TAG, parse_manifest
+from twicc.core.services.attachments.types import UserTextSlot
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +179,183 @@ def strip_context_blocks_in_place(parsed: object) -> bool:
 
     transform(parsed)
     return changed
+
+
+# --------------------------------------------------------------------------
+# Attachments manifest extraction (design §10.1)
+# --------------------------------------------------------------------------
+
+# Top-level key of the parsed item that receives the extracted manifest.
+ATTACHMENTS_KEY = "twicc_attachments"
+ATTACHMENTS_BLOCK_MARKER = OPEN_TAG
+
+# A complete block, used to count blocks across a record's slots. Non-greedy
+# so back-to-back blocks count separately.
+_ATTACHMENTS_BLOCK_RE = re.compile(
+    rf"{re.escape(OPEN_TAG)}\n.*?\n{re.escape(CLOSE_TAG)}", re.DOTALL,
+)
+# Suffixes only: a worktree and the main instance ingest the same provider
+# JSONL with different data dirs.
+_HYBRID_REFERENCE_RE = re.compile(r"/hybrid/([^/]+)/att_[0-9a-f]{12}(?:\.[A-Za-z0-9]+)?$")
+_FILE_DIRECTORY_RE = re.compile(r"/artifacts/([^/]+)/attachments/$")
+# The bundled Claude CLI replaces, in place, an image it cannot process by a
+# text block starting with this.
+_IMAGE_PLACEHOLDER_PREFIX = "[Image could not be processed:"
+
+# Per array slot format: (text entry type, native media entry types).
+_ARRAY_SLOT_TYPES: dict[str, tuple[str, frozenset[str]]] = {
+    "claude": ("text", frozenset({"image", "document"})),
+    "codex_response": ("input_text", frozenset({"input_image"})),
+    "codex_canonical": ("text", frozenset({"image", "local_image"})),
+}
+_HYBRID_FORMAT = "hybrid"
+
+
+class _LocatedBlock(NamedTuple):
+    """Where a candidate block sits in a slot, and what removing it leaves."""
+
+    slot: UserTextSlot
+    block: str
+    # Array slots: index of the block entry, and media slots before it.
+    index: int | None
+    media_count: int
+    # Hybrid slots: the string once the block and its blank line are removed.
+    remaining: str | None
+
+
+def _slot_texts(slot: UserTextSlot) -> list[str]:
+    """The text a slot carries: the hybrid string, or its array's text entries."""
+    value = slot.parent.get(slot.key)
+    if slot.format == _HYBRID_FORMAT:
+        return [value] if isinstance(value, str) else []
+    text_type = _ARRAY_SLOT_TYPES[slot.format][0]
+    if not isinstance(value, list):
+        return []
+    return [
+        entry["text"] for entry in value
+        if isinstance(entry, dict) and entry.get("type") == text_type and isinstance(entry.get("text"), str)
+    ]
+
+
+def slots_carry_attachments_block(slots: tuple[UserTextSlot, ...]) -> bool:
+    """Cheap pre-check: does any slot text contain the opening tag at all?"""
+    return any(ATTACHMENTS_BLOCK_MARKER in text for slot in slots for text in _slot_texts(slot))
+
+
+def _is_whole_block(text: str) -> bool:
+    stripped = text.strip()
+    return stripped.startswith(OPEN_TAG) and stripped.endswith(CLOSE_TAG)
+
+
+def _locate_in_array(slot: UserTextSlot) -> _LocatedBlock | None:
+    """The entry right after the leading native media slots, when it is a whole block."""
+    entries = slot.parent.get(slot.key)
+    if not isinstance(entries, list):
+        return None
+    text_type, media_types = _ARRAY_SLOT_TYPES[slot.format]
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            return None
+        entry_type = entry.get("type")
+        entry_text = entry.get("text")
+        if entry_type in media_types:
+            continue
+        if entry_type == text_type and isinstance(entry_text, str):
+            if entry_text.startswith(_IMAGE_PLACEHOLDER_PREFIX):
+                continue
+            if _is_whole_block(entry_text):
+                return _LocatedBlock(slot, entry_text, index, index, None)
+        return None
+    return None
+
+
+def _locate_in_string(slot: UserTextSlot) -> _LocatedBlock | None:
+    """A block at the end of the string after a blank line, or the whole trimmed string."""
+    value = slot.parent.get(slot.key)
+    if not isinstance(value, str):
+        return None
+    if _is_whole_block(value):
+        return _LocatedBlock(slot, value, None, 0, "")
+    start = value.rfind(OPEN_TAG)
+    if start < 2 or value[start - 2:start] != "\n\n":
+        return None
+    block = value[start:]
+    if not block.rstrip().endswith(CLOSE_TAG):
+        return None
+    return _LocatedBlock(slot, block, None, 0, value[:start - 2])
+
+
+def _accepted_owner(match: re.Match | None, accepted_owners: set[str]) -> str | None:
+    if match is None or match.group(1) not in accepted_owners:
+        return None
+    return match.group(1)
+
+
+def extract_attachments_block(
+    slots: tuple[UserTextSlot, ...], accepted_owners: set[str], *, session_id: str,
+) -> dict | None:
+    """Extract the ``<twicc:attachments>`` block of one record, only when every check holds.
+
+    ``slots`` are the record's user-message containers (provider hook
+    ``user_text_slots``): a whole hybrid string, or a whole content array with
+    its media entries. The block must sit where TwiCC writes it — right after
+    the native media entries of an array, or at the end of a hybrid string —
+    parse with the shared parser, match the media count (arrays) or carry
+    accepted ``@`` references (hybrid), and name an accepted owner in its
+    ``file =`` line. A record holds at most one block: a second complete block
+    anywhere in its slots rejects both.
+
+    On success the block (and, for hybrid, its blank line; for an array, its
+    entry) is removed in place and ``{owner, entries}`` is returned. On any
+    failure nothing is modified and ``None`` is returned. The stored owner is
+    the ``file =`` owner, else the first ``@`` reference owner, else
+    ``session_id``.
+    """
+    block_count = sum(len(_ATTACHMENTS_BLOCK_RE.findall(text)) for slot in slots for text in _slot_texts(slot))
+    if block_count != 1:
+        return None
+    located = None
+    for slot in slots:
+        locate = _locate_in_string if slot.format == _HYBRID_FORMAT else _locate_in_array
+        located = locate(slot)
+        if located is not None:
+            break
+    if located is None:
+        return None
+    manifest = parse_manifest(located.block)
+    if manifest is None:
+        return None
+
+    inline_paths = [
+        path for entry, path in zip(manifest.entries, manifest.hybrid_paths) if entry.mode == "inline"
+    ]
+    hybrid_owner = None
+    if located.slot.format == _HYBRID_FORMAT:
+        # Every inline line needs an accepted ``@`` reference; an all-file
+        # block has none and parses without the hybrid header.
+        for path in inline_paths:
+            owner = _accepted_owner(_HYBRID_REFERENCE_RE.search(path) if path else None, accepted_owners)
+            if owner is None:
+                return None
+            hybrid_owner = hybrid_owner or owner
+    else:
+        if manifest.hybrid or len(inline_paths) != located.media_count:
+            return None
+
+    directory_owner = None
+    if manifest.directory is not None:
+        directory_owner = _accepted_owner(_FILE_DIRECTORY_RE.search(manifest.directory), accepted_owners)
+        if directory_owner is None:
+            return None
+
+    if located.index is not None:
+        del located.slot.parent[located.slot.key][located.index]
+    else:
+        located.slot.parent[located.slot.key] = located.remaining
+    return {
+        "owner": directory_owner or hybrid_owner or session_id,
+        "entries": [entry._asdict() for entry in manifest.entries],
+    }
 
 
 # --------------------------------------------------------------------------
