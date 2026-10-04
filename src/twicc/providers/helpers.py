@@ -96,6 +96,33 @@ class IndexableMessage(NamedTuple):
     is_final: bool | None = None
 
 
+class AttachmentPolicy(NamedTuple):
+    """Native delivery policy of web composer attachments, per provider.
+
+    Kinds use the planner's literal strings (``image``, ``PDF``, ``text``, …). Every
+    other kind, and a native kind over its limit, is delivered as a file. Quotas are
+    per message: native items (images, PDFs and texts together), and a volume budget
+    measured as base64 length for binary data and UTF-8 length for text. A ``None``
+    byte limit means no limit. The legacy ``ATTACHMENT_SUPPORT`` keeps governing the
+    CLI / MCP / peer attachment paths.
+    Design: docs/plans/2026-10-03-composer-attachments-any-file-design.md §6.3.
+    """
+    native_kinds: frozenset[str]
+    # Native kinds when the message goes to a hybrid (TUI) agent.
+    hybrid_native_kinds: frozenset[str]
+    pdf_native_max_bytes: int | None
+    text_native_max_bytes: int | None
+    max_native_items: int
+    # Native item quota when the target runs with a 1M context.
+    max_native_items_1m: int
+    volume_budget: int
+    volume_budget_third_party: int
+    # Images above this long edge are resized before being sent.
+    image_long_edge: int
+    per_image_base64_limit: int | None
+    per_image_base64_limit_third_party: int | None
+
+
 class AgentSettings(NamedTuple):
     """The compact bundle of per-session agent settings, shared across providers.
 
@@ -734,6 +761,10 @@ class BaseProviderHelpers:
                 "max_total_bytes": int,
             }
         """
+        raise NotImplementedError
+
+    def get_attachment_policy(self) -> AttachmentPolicy:
+        """Return the native-delivery policy of web composer attachments for this provider."""
         raise NotImplementedError
 
     def get_effective_image_dimension(

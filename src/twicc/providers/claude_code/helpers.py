@@ -24,6 +24,7 @@ from twicc.providers.helpers import (
     MAX_IMAGE_DIMENSION,
     AgentSettingCategory,
     AgentSettings,
+    AttachmentPolicy,
     BaseProviderHelpers,
     ModelVersion,
     StatuspageConfig,
@@ -129,6 +130,25 @@ ATTACHMENT_SUPPORT: dict = {
     "max_files_per_message": 100,
     "max_total_bytes": 32 * 1024 * 1024,
 }
+
+
+# Native delivery of web composer attachments (design 2026-10-03 §6.3). The SDK target
+# sends images, PDFs and texts natively; the hybrid TUI only images. The item quotas are
+# the CLI's own eviction targets (580 media with a 1M context, otherwise 80); the
+# third-party per-image limit is the CLI's ``maxBase64Size``.
+ATTACHMENT_POLICY = AttachmentPolicy(
+    native_kinds=frozenset({"image", "PDF", "text"}),
+    hybrid_native_kinds=frozenset({"image"}),
+    pdf_native_max_bytes=512 * 1024,
+    text_native_max_bytes=50 * 1024,
+    max_native_items=80,
+    max_native_items_1m=580,
+    volume_budget=16 * 1024 * 1024,
+    volume_budget_third_party=12 * 1024 * 1024,
+    image_long_edge=2000,
+    per_image_base64_limit=10_485_760,
+    per_image_base64_limit_third_party=5_242_880,
+)
 
 
 @lru_cache(maxsize=32)
@@ -716,6 +736,9 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
 
     def get_attachment_support(self) -> dict:
         return ATTACHMENT_SUPPORT
+
+    def get_attachment_policy(self) -> AttachmentPolicy:
+        return ATTACHMENT_POLICY
 
     def get_effective_image_dimension(
         self, model: str | None, num_images: int
