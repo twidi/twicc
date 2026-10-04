@@ -17,3 +17,24 @@ class Clock(NamedTuple):
 
 
 SYSTEM_CLOCK = Clock(lambda: datetime.now(UTC), time.time, time.monotonic)
+
+
+_runtime = None
+
+
+def get_runtime():
+    """Return the installed backend runtime, or None during offline compute."""
+    return _runtime
+
+
+def set_runtime(runtime):
+    """Install or clear the runtime at the external MCP lifespan boundary."""
+    global _runtime
+    _runtime = runtime
+
+
+def rebase(session_id):
+    """Wake event monitors after a committed history reset, when enabled."""
+    runtime = get_runtime()
+    if runtime is not None:
+        runtime.rebase(session_id)

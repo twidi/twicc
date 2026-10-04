@@ -28,6 +28,8 @@ from twicc.paths import get_data_dir
 
 logger = logging.getLogger(__name__)
 
+EPOCH_BACKSTOP_SECONDS = 5
+
 
 class AddCommand(NamedTuple):
     snapshot: SubscriptionSnapshot
@@ -40,6 +42,10 @@ class UpdateCommand(NamedTuple):
 class RemoveCommand(NamedTuple):
     id: str
     created_at: datetime
+
+
+class RebaseCommand(NamedTuple):
+    session_id: str
 
 
 class StopCommand(NamedTuple):
@@ -77,6 +83,8 @@ class Monitor:
         self.dormant = False
         self.wait = None
         self.session_snapshot = None
+        self.has_session_snapshot = False
+        self.session_read_at = None
         self.pending_rebase = self.numbering is None
 
     @property
@@ -152,6 +160,9 @@ class EventsRuntime:
     def remove(self, identity, created_at):
         self.commands.put(RemoveCommand(identity, created_at))
 
+    def rebase(self, session_id):
+        self.commands.put(RebaseCommand(session_id))
+
     async def start(self):
         """Start the consumers. Supervisor and delivery lifecycle extend this seam."""
         self.loop = asyncio.get_running_loop()
@@ -217,6 +228,8 @@ class EventsRuntime:
     def _read_monitor_session(self, monitor):
         snapshot = read_session_snapshot(monitor.session_id)
         monitor.session_snapshot = snapshot
+        monitor.has_session_snapshot = True
+        monitor.session_read_at = self.clock.monotonic()
         epoch = snapshot.history_epoch if snapshot is not None else 0
         # A missing row cannot clear a rebase already waiting for its session.
         monitor.pending_rebase = monitor.pending_rebase or monitor.numbering != epoch
@@ -249,6 +262,10 @@ class EventsRuntime:
                     monitor = self.monitors.get(command.id)
                     if monitor is not None and monitor.generation == (command.id, command.created_at):
                         del self.monitors[command.id]
+                elif isinstance(command, RebaseCommand):
+                    for monitor in self.monitors.values():
+                        if monitor.session_id == command.session_id:
+                            self._read_monitor_session(monitor)
                 elif isinstance(command, (AddCommand, UpdateCommand)):
                     snapshot = command.snapshot
                     monitor = self.monitors.get(snapshot.id)
@@ -266,8 +283,46 @@ class EventsRuntime:
         for monitor in self.monitors.values():
             if monitor.refresh_before <= now:
                 monitor.dormant = True
-            if not monitor.dormant and not monitor.pending_rebase:
-                self._tick_monitor(monitor)
+            if monitor.dormant:
+                continue
+            snapshot = monitor.session_snapshot
+            if (monitor.pending_rebase or monitor.session_read_at is None
+                    or self.clock.monotonic() - monitor.session_read_at >= EPOCH_BACKSTOP_SECONDS):
+                snapshot = self._read_monitor_session(monitor)
+            if monitor.pending_rebase:
+                self._apply_rebase(monitor, snapshot)
+                continue
+            self._tick_monitor(monitor)
+
+    def _apply_rebase(self, monitor, snapshot):
+        """Prepare a new numbering from one ready snapshot, then post its CAS."""
+        if snapshot is None or not snapshot.ready:
+            return
+        from twicc.agent.registry import get_agent_manager_registry
+
+        info = get_agent_manager_registry().get_agent_info(monitor.session_id)
+        working = info is not None and info.state in (AgentState.STARTING, AgentState.ASSISTANT_TURN)
+        write = RebaseWrite(
+            *monitor.generation, monitor.numbering, snapshot.history_epoch, snapshot.last_line, snapshot.last_line,
+            working, info.state_changed_at if working else None, "initial" if working else "", snapshot.last_line,
+        )
+        wait = self._new_wait(monitor, cursor_line=snapshot.last_line)
+        self.post_write(write)
+        self._apply_turn(monitor, write)
+        monitor.cursor_line = monitor.initial_last_line = snapshot.last_line
+        monitor.numbering = snapshot.history_epoch
+        monitor.first = False
+        monitor.wait = wait
+        monitor.pending_rebase = False
+
+    @staticmethod
+    def _ready_end(previous, snapshot, had_previous):
+        # A read with no row is ready in epoch zero. No previous read is not.
+        def readiness(value):
+            return (value.ready, value.history_epoch, value.last_line) if value is not None else (True, 0, 0)
+
+        before, after = readiness(previous), readiness(snapshot)
+        return had_previous and before[0] and before == after
 
     def _tick_monitor(self, monitor):
         """Detect one conclusion with the CLI wait and Rules A/B."""
@@ -276,6 +331,7 @@ class EventsRuntime:
         tick_started_at = self.clock.utcnow()
         info = get_agent_manager_registry().get_agent_info(monitor.session_id)
         self._detect_new_turn(monitor, info)
+        previous, had_previous = monitor.session_snapshot, monitor.has_session_snapshot
         reply = monitor.wait.step()
         if reply is None:
             return
@@ -306,6 +362,8 @@ class EventsRuntime:
         # title and transcript end, including when the guard drops the end.
         snapshot = self._read_monitor_session(monitor)
         if monitor.pending_rebase:
+            return
+        if outcome == "ended" and not self._ready_end(previous, snapshot, had_previous):
             return
         if guard_drop:
             turn = TurnWrite(*monitor.generation, False, monitor.turn_started_at, monitor.turn_opened_by,

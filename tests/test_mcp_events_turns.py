@@ -87,6 +87,7 @@ def stopped_ticks(env):
     env.clock.advance(_wait_reply.AGENT_FLUSH_SECONDS)
     env.tick()
     env.tick()
+    env.tick()  # A changed transcript end needs a second ready snapshot.
 
 
 def opened(env, *, by="initial", started=999):
@@ -329,6 +330,7 @@ def test_final_snapshot_is_last_database_read_and_before_all_posting(env, monkey
     opened(env, by="transition")
     agent(env, state=AgentState.USER_TURN)
     prompt(env, 3)
+    env.runtime._read_monitor_session(env.monitor)
     read = runtime_module.read_session_snapshot
     fit = runtime_module.fit_body
     phases = []
@@ -486,6 +488,8 @@ def test_stop_between_transition_and_step_gets_full_new_flush_window(env, monkey
     env.clock.advance(0.1)
     env.tick()
     env.tick()
+    assert not env.emissions  # The changed end requires another ready scan.
+    env.tick()
     assert len(env.emissions) == 1
 
 
@@ -522,6 +526,7 @@ def test_final_snapshot_captures_prompt_committed_during_guard_query(env, monkey
     def guard(*args):
         result = real_guard(*args)
         prompt(env, 5, "Late prompt from this crashed turn")
+        monkeypatch.setattr(runtime_module, "first_non_command_prompt", real_guard)
         return result
     monkeypatch.setattr(runtime_module, "first_non_command_prompt", guard)
     stopped_ticks(env)
