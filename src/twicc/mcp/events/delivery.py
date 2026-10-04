@@ -1,11 +1,17 @@
 """Occurrence payloads, bounded frozen bodies, and per-attempt signatures."""
 
+import asyncio
+from collections import deque
 from datetime import UTC, datetime
+import hmac
 import logging
+import secrets
+from urllib.parse import urlsplit
 
 import orjson
 from standardwebhooks import Webhook
 
+from twicc.mcp import pinned_https
 from twicc.mcp.events import SYSTEM_CLOCK, Clock
 from twicc.mcp.events.catalog import EVENT_NAME, MAX_BODY_BYTES, event_id
 from twicc.providers.pending_question import created_at_iso
@@ -110,3 +116,102 @@ def signing_headers(
         "webhook-signature": " ".join(signatures),
         "X-MCP-Subscription-Id": subscription_id,
     }
+
+
+class VerificationError(Exception):
+    """Closed protocol failure for callback verification."""
+
+    def __init__(self, code: int, data: dict):
+        self.code = code
+        self.data = data
+        self.message = "ResourceExhausted" if code == -32013 else "CallbackEndpointError"
+        super().__init__(self.message)
+
+
+class VerificationService:
+    """Share callback challenges and bound their concurrency and host rate.
+
+    One service belongs to one server event loop. Caller cancellation does not
+    cancel a challenge shared with other callers. Shutdown cancels all leaders.
+    """
+
+    def __init__(self, *, clock: Clock = SYSTEM_CLOCK, send=None, slot_timeout: float = 5):
+        self.clock = clock
+        self.send = send or pinned_https.post_webhook
+        self.slot_timeout = slot_timeout
+        self._slots = asyncio.Semaphore(8)
+        self._verified = {}
+        self._inflight = {}
+        self._host_requests = {}
+
+    async def verify(self, connection_id: str, url: str, subscription_id: str, secret: str) -> None:
+        key = (connection_id, url)
+        now = self.clock.monotonic()
+        for cached_key, verified_at in tuple(self._verified.items()):
+            if now - verified_at >= 86400:
+                del self._verified[cached_key]
+        if key in self._verified:
+            return
+        task = self._inflight.get(key)
+        if task is None:
+            task = asyncio.create_task(self._verify(key, url, subscription_id, secret))
+            self._inflight[key] = task
+            task.add_done_callback(lambda completed: self._finished(key, completed))
+        await asyncio.shield(task)
+
+    def _finished(self, key, task):
+        if self._inflight.get(key) is task:
+            del self._inflight[key]
+        # Retrieve failures even when every caller cancels its shielded wait.
+        if not task.cancelled():
+            task.exception()
+
+    async def aclose(self) -> None:
+        tasks = tuple(self._inflight.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _verify(self, key, url, subscription_id, secret):
+        try:
+            await asyncio.wait_for(self._slots.acquire(), timeout=self.slot_timeout)
+        except TimeoutError:
+            raise VerificationError(-32013, {"limit": "concurrent_verifications", "max": 8}) from None
+        try:
+            now = self.clock.monotonic()
+            for host, requests in tuple(self._host_requests.items()):
+                while requests and requests[0] <= now - 60:
+                    requests.popleft()
+                if not requests:
+                    del self._host_requests[host]
+            hostname = urlsplit(url).hostname
+            requests = self._host_requests.setdefault(hostname, deque())
+            if len(requests) >= 60:
+                raise VerificationError(-32013, {"limit": "verifications_per_minute", "max": 60})
+            requests.append(now)
+            challenge = secrets.token_urlsafe(32)
+            body = orjson.dumps({"type": "verification", "challenge": challenge})
+            identifier = "msg_verification_" + secrets.token_urlsafe(32)
+            headers = signing_headers(subscription_id, identifier, body, secret, clock=self.clock)
+            try:
+                response = await self.send(url, headers=headers, body=body)
+            except Exception as error:
+                raise VerificationError(-32015, {"reason": pinned_https.classify_send_error(error)}) from error
+            reason = "challenge_failed"
+            if 400 <= response.status_code < 500:
+                reason = "http_4xx"
+            elif 500 <= response.status_code < 600:
+                reason = "http_5xx"
+            elif 200 <= response.status_code < 300 and not response.overflow:
+                try:
+                    received = orjson.loads(response.body)
+                except orjson.JSONDecodeError:
+                    received = None
+                if isinstance(received, dict):
+                    echo = received.get("challenge")
+                    if isinstance(echo, str) and hmac.compare_digest(echo.encode(), challenge.encode()):
+                        self._verified[key] = self.clock.monotonic()
+                        return
+            raise VerificationError(-32015, {"reason": reason})
+        finally:
+            self._slots.release()
