@@ -15,6 +15,7 @@ import { watch } from 'vue'
 import { COMPOSER_PANEL } from './uploads/controller.js'
 import { entryPercent } from './uploads/display.js'
 import { makeClientId } from './uploads/ids.js'
+import { migrateLegacyAttachments } from './attachmentMigration.js'
 
 /** The upload origin panel of composer attachments (defined by the upload controller). */
 export { COMPOSER_PANEL }
@@ -291,6 +292,21 @@ export function optimisticAttachmentFields(attachments) {
  */
 export function canSendAttachments(records, runtimeStates) {
     return (records || []).every(record => runtimeStates?.[record.id]?.state === ATTACHMENT_STATE.READY)
+}
+
+/**
+ * True when the composer may send (D6, §9.6): every staged record is `ready`
+ * and no legacy media is left. A legacy media still in the composer (its
+ * migration pending or failed) blocks Send: the composer never sends legacy
+ * `images` / `documents` (Codex drops documents), only staged refs.
+ *
+ * @param {Array<{id: string}>} records
+ * @param {object} runtimeStates - `id → {state, …}`
+ * @param {number} legacyCount - legacy medias the composer still shows
+ * @returns {boolean}
+ */
+export function composerAttachmentsReady(records, runtimeStates, legacyCount) {
+    return !legacyCount && canSendAttachments(records, runtimeStates)
 }
 
 /**
@@ -651,6 +667,10 @@ export function createComposerAttachments(deps) {
     const previews = new Map()
     /** Object URLs whose record is gone, kept while an optimistic bubble shows them. */
     const releasedPreviews = new Set()
+    /** id → cleanups run once the attachment is `ready` (legacy row deletion, §9.6). */
+    const readyCleanups = new Map()
+    /** Ids a legacy migration is deciding about: no other status answer applies meanwhile. */
+    const migrating = new Set()
 
     function bump(id) {
         generations.set(id, (generations.get(id) || 0) + 1)
@@ -706,7 +726,29 @@ export function createComposerAttachments(deps) {
         rt.state = state
         rt.retryable = state === ATTACHMENT_STATE.FAILED && files.has(id)
         if (state !== ATTACHMENT_STATE.UPLOADING) rt.pauseReason = null
-        if (state === ATTACHMENT_STATE.READY) rt.progress = 100
+        if (state === ATTACHMENT_STATE.READY) {
+            rt.progress = 100
+            runReadyCleanups(id)
+        }
+    }
+
+    function runReadyCleanups(id) {
+        const cleanups = readyCleanups.get(id)
+        if (!cleanups) return
+        readyCleanups.delete(id)
+        for (const cleanup of cleanups) {
+            Promise.resolve()
+                .then(cleanup)
+                .catch(error => console.warn('Attachment readiness cleanup failed', error))
+        }
+    }
+
+    /** Run `cleanup` once the attachment is `ready` (at once if it is); dropped with the record. */
+    function whenReady(id, cleanup) {
+        if (!findRecord(id)) return
+        if (!readyCleanups.has(id)) readyCleanups.set(id, [])
+        readyCleanups.get(id).push(cleanup)
+        if (runtime[id]?.state === ATTACHMENT_STATE.READY) runReadyCleanups(id)
     }
 
     function createRuntime(id) {
@@ -731,6 +773,7 @@ export function createComposerAttachments(deps) {
         delete runtime[id]
         files.delete(id)
         attempts.delete(id)
+        readyCleanups.delete(id)
         releasePreview(id)
         bump(id)
     }
@@ -1068,7 +1111,7 @@ export function createComposerAttachments(deps) {
     async function reconcileRecords(list, { hydrate }) {
         const targets = []
         for (const record of list) {
-            if (hasLiveLocalUpload(record.id)) continue
+            if (hasLiveLocalUpload(record.id) || migrating.has(record.id)) continue
             targets.push({
                 record,
                 previous: hydrate ? undefined : runtime[record.id]?.state,
@@ -1087,20 +1130,140 @@ export function createComposerAttachments(deps) {
             const status = statuses[index]
             const id = record.id
             if (findRecord(id) !== record || (generations.get(id) || 0) !== generation || hasLiveLocalUpload(id)) return
+            if (migrating.has(id)) return
             if (status?.bucket !== record.bucket || status?.id !== id) return
-            const rt = runtime[id] || createRuntime(id)
-            const { state } = mapAttachmentStatus(status, previous)
-            const clientId = status.state === 'uploading' && typeof status.client_id === 'string' ? status.client_id : null
-            attempts.set(id, { clientId, pending: false, seen: false })
-            rt.clientId = clientId
-            rt.uploadKey = null
-            rt.pauseReason = null
-            rt.progress = state === ATTACHMENT_STATE.UPLOADING && record.size > 0
-                ? Math.min(100, Math.floor((100 * (status.offset || 0)) / record.size))
-                : 0
-            setState(id, state)
+            applyStatusAnswer(record, status, previous)
         })
         syncUploadStates()
+    }
+
+    /** Chip state and current attempt of one record from its `status/` item (§9.2). */
+    function applyStatusAnswer(record, status, previous) {
+        const id = record.id
+        const rt = runtime[id] || createRuntime(id)
+        const { state } = mapAttachmentStatus(status, previous)
+        const clientId = status.state === 'uploading' && typeof status.client_id === 'string' ? status.client_id : null
+        attempts.set(id, { clientId, pending: false, seen: false })
+        rt.clientId = clientId
+        rt.uploadKey = null
+        rt.pauseReason = null
+        rt.progress = state === ATTACHMENT_STATE.UPLOADING && record.size > 0
+            ? Math.min(100, Math.floor((100 * (status.offset || 0)) / record.size))
+            : 0
+        setState(id, state)
+    }
+
+    /**
+     * Records of legacy medias (§9.6): a record already holding a media id is
+     * reused (its position and bucket unchanged); otherwise the media is
+     * claimed from the legacy chips (`claim` false: removed meanwhile, skipped)
+     * and a record is created with the media id, `bucket = sessionId`, after
+     * the composer's records. Published synchronously with the claim, then the
+     * new records are written in one transaction. The decoded `File` is kept
+     * in memory (previews, uploads, Retry). Ids already under migration are
+     * skipped.
+     *
+     * @param {string} sessionId
+     * @param {Array<{media: object, file: File}>} entries
+     * @param {{claim: (media: object) => boolean, unclaim: (media: object) => void}} legacy
+     * @returns {Promise<object[]>} the records, marked as under migration
+     */
+    async function adoptMigratedRecords(sessionId, entries, { claim, unclaim }) {
+        const owner = resolveOwner(sessionId)
+        let position = maxPosition(Object.values(records[owner] || {})) + 1
+        const adopted = []
+        const created = []
+        for (const { media, file } of entries) {
+            const id = media.id
+            if (migrating.has(id)) continue
+            let record = findRecord(id)
+            if (!record) {
+                if (!claim(media)) continue
+                if (!records[owner]) records[owner] = {}
+                records[owner][id] = {
+                    id,
+                    sessionId: owner,
+                    bucket: sessionId,
+                    position: position++,
+                    name: file.name,
+                    size: file.size,
+                    mimeType: file.type || '',
+                    kind: getDisplayKind(file),
+                }
+                record = findRecord(id)
+                createRuntime(id)
+                created.push({ media, record })
+            } else if (!runtime[id]) {
+                createRuntime(id)
+            }
+            if (!files.has(id)) {
+                files.set(id, file)
+                if (!previews.has(id)) createPreview(id, file, record.kind)
+                if (runtime[id].state === ATTACHMENT_STATE.FAILED) runtime[id].retryable = true
+            }
+            migrating.add(id)
+            adopted.push(record)
+        }
+        if (created.length) {
+            try {
+                await storage.saveDraftAttachments(created.map(({ record }) => plainRecord(record)))
+            } catch (error) {
+                for (const record of adopted) migrating.delete(record.id)
+                for (const { media, record } of created) {
+                    if (findRecord(record.id) === record) dropLocal(record.id)
+                    unclaim(media)
+                }
+                throw error
+            }
+        }
+        const current = []
+        for (const record of adopted) {
+            if (findRecord(record.id) === record) {
+                current.push(record)
+            } else {
+                // Removed during the write: no row survives it.
+                migrating.delete(record.id)
+                if (created.some(entry => entry.record === record)) storage.deleteDraftAttachment(record.id).catch(() => {})
+            }
+        }
+        return current
+    }
+
+    /**
+     * Migrate legacy medias into the composer of `sessionId` (startup and the
+     * Edit of a legacy failed send, §9.5, §9.6): see `migrateLegacyAttachments`.
+     *
+     * @param {string} sessionId - the migration session id (the new records' bucket)
+     * @param {object[]} medias - legacy `draftMedias` rows
+     * @param {string[]} mediaIds - the draft's media order
+     * @param {{claim: (media: object) => boolean, unclaim: (media: object) => void}} legacy -
+     *     take a media out of the legacy chips (false when it is gone), or put it back
+     * @returns {Promise<void>} rejects when the records cannot be stored
+     */
+    function migrateLegacy(sessionId, medias, mediaIds, legacy) {
+        return migrateLegacyAttachments({
+            sessionId,
+            medias,
+            mediaIds,
+            dependencies: {
+                tabId: uploads.tabId,
+                adoptRecords: (id, entries) => adoptMigratedRecords(id, entries, legacy),
+                hasLiveLocalUpload,
+                isCurrent: record => findRecord(record.id) === record,
+                whenReady,
+                deleteLegacyMedia: id => storage.deleteLegacyMedia(id),
+                statusRefs: refs => statusRefs(refs, fetchFn),
+                applyStatus: (record, status) => {
+                    applyStatusAnswer(record, status, undefined)
+                    syncUploadStates()
+                },
+                markFailed: id => setState(id, ATTACHMENT_STATE.FAILED),
+                startUpload: record => startAttempt(record),
+                finish: list => {
+                    for (const record of list) migrating.delete(record.id)
+                },
+            },
+        })
     }
 
     /**
@@ -1183,6 +1346,7 @@ export function createComposerAttachments(deps) {
         releaseAttachments,
         rebindDraftAttachments,
         restoreDraftAttachmentRefs,
+        migrateLegacy,
         retryAttachment,
         reconcileAttachmentStatuses,
         touchHeldAttachments,

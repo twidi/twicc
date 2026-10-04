@@ -17,15 +17,11 @@ import { ensureProjectTrust } from '../../composables/useTrustGate'
 import { useFooterBlockMotion } from '../../composables/useFooterMotion.js'
 import { resolveProjectTrust } from '../../utils/trust'
 import { vPopoverFocusFix } from '../../directives/vPopoverFocusFix'
-import {
-    draftMediaToMediaItem,
-    mediasToSdkFormat,
-    resizeMediasForSend,
-} from '../../utils/fileUtils'
+import { draftMediaToMediaItem } from '../../utils/fileUtils'
 import {
     ATTACHMENT_STATE,
     attachmentChipItem,
-    canSendAttachments,
+    composerAttachmentsReady,
     sendComposerMessage,
 } from '../../utils/composerAttachments'
 import { toast } from '../../composables/useToast'
@@ -412,7 +408,8 @@ const optimisticMessageText = computed(() => {
 // Attachments for this session (spec 2026-10-03 §9.3). Any file is accepted;
 // each one is uploaded to the server staging store and shown as a chip, in
 // add order. Legacy medias (drafts saved before staged uploads) are shown
-// first and keep their legacy send path until their migration.
+// first until their migration turns them into staged chips (§9.6); they are
+// never sent as such.
 const legacyAttachments = computed(() => store.getAttachments(props.sessionId))
 const legacyAttachmentCount = computed(() => store.getAttachmentCount(props.sessionId))
 const composerRecords = computed(() => store.getComposerAttachments(props.sessionId))
@@ -422,13 +419,12 @@ const chipItems = computed(() => composerRecords.value.map(record => attachmentC
     store.getAttachmentRuntime(record.id),
     { previewUrl: store.getAttachmentPreviewUrl(record.id) },
 )))
-// Send waits for every upload (D6): never queued behind them. Legacy medias
-// and staged refs cannot share one frame (§8), so a composer holding both
-// waits for the legacy migration.
-const attachmentsReady = computed(() =>
-    canSendAttachments(composerRecords.value, store.localState.attachmentRuntime)
-    && !(legacyAttachmentCount.value > 0 && composerRecords.value.length > 0)
-)
+// Send waits for every upload (D6): never queued behind them. A legacy media
+// waits for its migration (pending, or failed: Remove, or the next start):
+// the composer only sends staged refs, never legacy images / documents.
+const attachmentsReady = computed(() => composerAttachmentsReady(
+    composerRecords.value, store.localState.attachmentRuntime, legacyAttachmentCount.value,
+))
 const attachmentsNeedAttention = computed(() =>
     chipItems.value.filter(item => item.state === ATTACHMENT_STATE.FAILED || item.state === ATTACHMENT_STATE.MISSING).length
 )
@@ -1580,7 +1576,8 @@ async function handleSend() {
     // resize. Read after the trust dialog, so a chip added meanwhile is
     // either sent ready or blocks the send (before any frame goes out).
     const records = isSettingsOnlyUpdate ? [] : [...composerRecords.value]
-    if (!canSendAttachments(records, store.localState.attachmentRuntime)) return
+    const legacyCount = isSettingsOnlyUpdate ? 0 : legacyAttachmentCount.value
+    if (!composerAttachmentsReady(records, store.localState.attachmentRuntime, legacyCount)) return
 
     // Commit a staged hybrid switch FIRST. The WS consumer processes frames in
     // order, so the backend flips ``session.hybrid`` (killing the SDK agent)
@@ -1630,36 +1627,16 @@ async function handleSend() {
         emit('needs-title')
     }
 
-    // Legacy medias (a draft saved before staged uploads, never mixed with
-    // staged refs in one frame): the legacy path, in SDK format, resized
-    // down for the active model by the provider's helper.
-    const legacyMedias = !isSettingsOnlyUpdate && !records.length && legacyAttachmentCount.value > 0
-        ? store.getAttachments(props.sessionId)
-        : []
-    if (legacyMedias.length) {
-        const effectiveModel = selectedModel.value ?? settings.providerStore.value?.defaultModel
-        const processedMedias = await resizeMediasForSend(
-            legacyMedias, getProviderHelpers(session.value?.provider), effectiveModel,
-        )
-        const { images, documents } = mediasToSdkFormat(processedMedias)
-        if (images.length > 0) {
-            payload.images = images
-        }
-        if (documents.length > 0) {
-            payload.documents = documents
-        }
-    }
-
     // Correlation id echoed by the backend in every reply frame, so an error
     // can be matched back to this exact send (recovery flow).
     const requestId = generateUUID()
     payload.request_id = requestId
 
     // Only after a successful socket send: snapshot the send (refs and
-    // metadata, or the original draft-format legacy medias) + optimistic
-    // bubble + optimistic starting state, THEN forget exactly the sent
-    // records locally (the server owns their entries now; an attachment
-    // added after this send stays). A failed socket send keeps the draft.
+    // metadata) + optimistic bubble + optimistic starting state, THEN forget
+    // exactly the sent records locally (the server owns their entries now;
+    // an attachment added after this send stays). A failed socket send keeps
+    // the draft. Legacy medias never reach this point (attachmentsReady).
     const success = sendComposerMessage({
         payload,
         records,
@@ -1669,9 +1646,6 @@ async function handleSend() {
             store.registerOutgoingSend(props.sessionId, props.projectId, requestId, {
                 text,
                 attachments,
-                medias: legacyMedias,
-                images: payload.images,
-                documents: payload.documents,
             })
         },
         forget: ids => store.forgetAttachments(props.sessionId, { ids }).catch(err =>
@@ -1694,11 +1668,6 @@ async function handleSend() {
 
         // Clear draft message from store (and IndexedDB)
         store.clearDraftMessage(props.sessionId)
-
-        // Clear the sent legacy medias from store and IndexedDB
-        if (legacyMedias.length) {
-            await store.clearAttachmentsForSession(props.sessionId)
-        }
 
         // Clear draft session from IndexedDB only (if this was a draft session)
         // Keep in store so session stays visible until backend confirms with session_updated

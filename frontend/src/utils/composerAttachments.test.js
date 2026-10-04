@@ -1078,7 +1078,7 @@ test('entry points: every file is accepted, the paperclip always shows, screensh
     assert.doesNotMatch(input, /:accept=|\baccept="/)
     assert.doesNotMatch(input, /getAttachmentSupport|attachmentSupport|canAttachAnything|resizeMediasForSend\(\s*records/)
     assert.match(input, /sendComposerMessage\(/)
-    assert.match(input, /canSendAttachments\(/)
+    assert.match(input, /composerAttachmentsReady\(/)
     const paste = input.slice(input.indexOf('async function onPaste('), input.indexOf('\n}\n', input.indexOf('async function onPaste(')))
     assert.match(paste, /item\.kind === 'file'/)
     assert.doesNotMatch(paste, /type|accepted/)

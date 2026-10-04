@@ -156,12 +156,13 @@ async function edit() {
         .querySelector('.message-input.collapsed')
         ?.dispatchEvent(new CustomEvent('twicc:expand-composer'))
     // Staged refs come back as draft records (same id and bucket, appended
-    // after the composer's attachments); legacy medias keep the legacy path.
-    // Only forgets the snapshot: the refs now belong to the draft.
+    // after the composer's attachments); legacy medias go through the legacy
+    // migration (spec 2026-10-03 §9.5, §9.6), appended the same way. Only
+    // forgets the snapshot: the refs now belong to the draft.
     if (entry.attachments?.length) {
         await store.restoreDraftAttachmentRefs(props.sessionId, entry.attachments)
     } else if (entry.medias?.length) {
-        await store.restoreDraftAttachments(props.sessionId, entry.medias)
+        await store.restoreLegacyDraftMedias(props.sessionId, entry.medias)
     }
     store.removeFailedSend(props.sessionId, entry.requestId)
 }

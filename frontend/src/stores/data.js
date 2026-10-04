@@ -63,6 +63,7 @@ import {
     uniqueRefs,
 } from '../utils/composerAttachments'
 import { attachmentCountForMessage, attachmentMatchKey, inflightAttachmentCount } from '../utils/attachmentStrip'
+import { groupLegacyMedias } from '../utils/attachmentMigration'
 import { randomHexFromUUID } from '../utils/uploads/ids'
 import { generateUUID } from '../utils/crypto'
 import { debounce } from '../utils/debounce'
@@ -4026,7 +4027,9 @@ export const useDataStore = defineStore('data', {
 
         /**
          * Put snapshotted medias back into the session's draft attachments
-         * (in-memory map + IndexedDB), used by the send-failure restore.
+         * (in-memory map + IndexedDB, draft `mediaIds`), the first step of
+         * `restoreLegacyDraftMedias` (the migration then turns them into
+         * staged records).
          * @param {string} sessionId
          * @param {Array<Object>} medias - original draft-format media objects
          */
@@ -6484,6 +6487,59 @@ export const useDataStore = defineStore('data', {
         },
 
         /**
+         * Migrate a session's legacy medias to staged composer records
+         * (spec 2026-10-03 §9.6): same id, `bucket = sessionId`, uploaded
+         * unless the server already holds the entry; each legacy row is
+         * deleted once its entry is ready, and kept after a failure (the next
+         * start retries). A media leaves the legacy chips when its record
+         * appears, and comes back if the records cannot be stored. Once the
+         * actions are built, the records are claimed synchronously.
+         * @param {string} sessionId
+         * @param {Object[]} medias - legacy `draftMedias` rows
+         * @param {string[]} mediaIds - the draft's media order
+         * @returns {Promise<void>}
+         */
+        async _migrateLegacyMedias(sessionId, medias, mediaIds) {
+            if (!medias?.length) return
+            const composer = composerAttachmentsInstance || await composerAttachmentsFor(this)
+            const legacyChips = this.localState.attachments
+            await composer.migrateLegacy(sessionId, medias, mediaIds, {
+                claim: media => {
+                    const map = legacyChips[sessionId]
+                    if (!map?.has(media.id)) return false
+                    map.delete(media.id)
+                    if (!map.size) delete legacyChips[sessionId]
+                    return true
+                },
+                unclaim: media => {
+                    if (!legacyChips[sessionId]) legacyChips[sessionId] = new Map()
+                    legacyChips[sessionId].set(media.id, media)
+                },
+            })
+        },
+
+        /**
+         * Edit of a legacy failed send (§9.5): its medias come back as legacy
+         * rows of the composer's session (kept until migrated, so a failure
+         * or a reload loses nothing), then the migration turns them into
+         * staged records appended after the composer's attachments.
+         * @param {string} sessionId
+         * @param {Object[]} medias - the snapshot's original draft-format medias
+         * @returns {Promise<void>}
+         */
+        async restoreLegacyDraftMedias(sessionId, medias) {
+            if (!medias?.length) return
+            const rows = medias.map(media => ({ ...media, sessionId }))
+            await this.restoreDraftAttachments(sessionId, rows)
+            try {
+                await this._migrateLegacyMedias(sessionId, rows, rows.map(media => media.id))
+            } catch (err) {
+                // The rows stay legacy chips (removable); the next start migrates them.
+                console.warn('Legacy draft media migration failed:', err)
+            }
+        },
+
+        /**
          * Delete the legacy `draftMedias` row with this id, and drop it from
          * its draft's `mediaIds` (§9.6): a removed attachment never comes back
          * through the migration.
@@ -6570,30 +6626,51 @@ export const useDataStore = defineStore('data', {
          * Called at app startup.
          */
         async hydrateAttachments() {
+            let allMedias = []
             try {
-                const allMedias = await getAllDraftMedias()
-                // Group by sessionId
-                for (const media of allMedias) {
-                    if (!this.localState.attachments[media.sessionId]) {
-                        this.localState.attachments[media.sessionId] = new Map()
-                    }
-                    this.localState.attachments[media.sessionId].set(media.id, media)
-                }
+                allMedias = await getAllDraftMedias()
             } catch (err) {
                 console.warn('Failed to load attachments from IndexedDB:', err)
             }
+            let records = []
             try {
-                const records = await getAllDraftAttachments()
-                if (records.length) {
-                    const composer = await composerAttachmentsFor(this)
-                    composer.hydrate(records)
-                    // Not awaited: the status request must not delay the app
-                    // mount. The first heartbeat runs once the snapshots are
-                    // hydrated too (main.js).
-                    composer.reconcileAttachmentStatuses({ hydrate: true })
-                }
+                records = await getAllDraftAttachments()
             } catch (err) {
                 console.warn('Failed to load attachment records from IndexedDB:', err)
+            }
+            // Legacy medias (spec 2026-10-03 §9.6): a row a composer record
+            // already holds (an earlier migration) is not a legacy chip.
+            const { bySession, visible } = groupLegacyMedias(allMedias, new Set(records.map(record => record.id)))
+            for (const media of visible) {
+                if (!this.localState.attachments[media.sessionId]) {
+                    this.localState.attachments[media.sessionId] = new Map()
+                }
+                this.localState.attachments[media.sessionId].set(media.id, media)
+            }
+            if (records.length || bySession.size) {
+                try {
+                    let drafts = {}
+                    if (bySession.size) {
+                        drafts = await getAllDraftMessages().catch(err => {
+                            console.warn('Failed to load draft media order:', err)
+                            return {}
+                        })
+                    }
+                    const composer = await composerAttachmentsFor(this)
+                    composer.hydrate(records)
+                    // Not awaited: neither the migration nor the status
+                    // request may delay the app mount. The migrations start
+                    // first, so the hydrate status request skips their
+                    // records. The first heartbeat runs once the snapshots
+                    // are hydrated too (main.js).
+                    for (const [sessionId, medias] of bySession) {
+                        this._migrateLegacyMedias(sessionId, medias, drafts[sessionId]?.mediaIds || [])
+                            .catch(err => console.warn('Legacy draft media migration failed:', err))
+                    }
+                    composer.reconcileAttachmentStatuses({ hydrate: true })
+                } catch (err) {
+                    console.warn('Failed to hydrate composer attachments:', err)
+                }
             }
             // Not awaited: the existence checks must not delay the app mount.
             this._dropOrphanAttachments()
