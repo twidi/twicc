@@ -421,6 +421,10 @@ class Session(models.Model):
     # Cleared whenever the history is successfully rebuilt.
     unavailable_reason = models.CharField(max_length=100, null=True, blank=True)
     title = models.CharField(max_length=250, null=True, blank=True)  # Session title (from first user message or custom-title)
+    # Legacy/unknown and user titles stay frozen; automatic titles can be revised.
+    title_origin = models.CharField(max_length=8, default="", blank=True)
+    title_check_count = models.PositiveIntegerField(null=True, blank=True)  # Relevant messages at the last successful check
+    title_checked_at = models.DateTimeField(null=True, blank=True)  # Last attempt, successful or not
     user_message_count = models.PositiveIntegerField(default=0)  # Number of user messages (message turns)
 
     # Cost and context usage fields (computed from items)

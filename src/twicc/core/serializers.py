@@ -130,7 +130,7 @@ SESSION_LISTING_FIELDS = (
     # Identity, filiation included: ``parent_session_id`` is what tells a
     # subagent apart from a session — including in the ``process`` block the
     # CLI joins on top, whose ``null`` means exactly "subagent".
-    "id", "project_id", "provider", "title", "annotations",
+    "id", "project_id", "provider", "title", "title_origin", "annotations",
     "parent_session_id", "spawned_by", "spawn_root",
     # Position in time and budget
     "created_at", "last_new_content_at",
@@ -182,7 +182,8 @@ def serialize_session(session):
     from twicc.paths import get_session_artifacts_dir
 
     # Use pending title if available, otherwise use the stored title
-    title = get_pending_title(session.id) or session.title
+    pending_title = get_pending_title(session.id)
+    title = pending_title or session.title
 
     # O(1) in-memory read of the ArtifactsWatcher set (no I/O — safe here per
     # the module docstring's "no DB / no I/O" contract).
@@ -205,6 +206,8 @@ def serialize_session(session):
         "last_viewed_at": session.last_viewed_at.isoformat() if session.last_viewed_at else None,
         "stale": session.stale,
         "title": title,  # Session title (from pending, first user message, or custom-title)
+        "title_origin": session.title_origin,
+        "has_pending_title": pending_title is not None,
         # Provider-supplied short identifier — Codex stores the agent_nickname
         # of a subagent here (e.g. "Bohr"), the frontend uses it for the
         # subagent tab labels and the SessionHeader name.

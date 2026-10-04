@@ -12,7 +12,7 @@ from twicc.cli import sessions as cli_sessions
 from twicc.cli import sessions_get as cli_sessions_get
 from twicc.cli._session_payload import CLI_ENRICHED_KEYS, cli_session_payloads
 from twicc.core.models import Project, Session, SessionType
-from twicc.core.serializers import serialize_session
+from twicc.core.serializers import serialize_session, slim_session
 from twicc.paths import get_session_artifacts_dir, get_session_scratch_dir
 
 SYNCED = {
@@ -61,6 +61,17 @@ def test_paths_and_directory(project):
     assert row["has_artifacts"] is False
     assert row["scratch_dir"] == str(get_session_scratch_dir("e1"))
     assert row["orchestration_scratch_dir"] is None
+
+
+def test_title_origin_survives_slim_cli_payload(project):
+    session = make(project, "title-origin", title="Automatic", title_origin="auto")
+    [row] = cli_session_payloads([session])
+    assert row["title_origin"] == "auto"
+    assert slim_session(row)["title_origin"] == "auto"
+    assert row["has_pending_title"] is False
+    assert "has_pending_title" not in slim_session(row)
+    assert "title_check_count" not in row
+    assert "title_checked_at" not in row
 
 
 def test_orchestration_scratch_dir_comes_from_the_annotation(project):
