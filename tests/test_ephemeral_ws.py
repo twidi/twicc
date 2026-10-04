@@ -3,8 +3,16 @@
 import asyncio
 from unittest.mock import AsyncMock, patch
 
+from twicc import asgi
 from twicc.agent import ephemeral
 from twicc.asgi import WSConsumer
+
+
+async def _send_and_wait(consumer: WSConsumer, content: dict) -> None:
+    """Dispatch a send frame, then wait for its detached lane task to finish."""
+    await consumer._handle_send_message(content)
+    while asgi._DETACHED_TASKS:
+        await asyncio.gather(*list(asgi._DETACHED_TASKS))
 
 
 def test_ws_reserves_before_lookup_and_settles_failed_validation():
@@ -21,7 +29,8 @@ def test_ws_reserves_before_lookup_and_settles_failed_validation():
             patch("twicc.asgi.get_project_directory", new=AsyncMock(return_value=None)),
             patch("twicc.asgi.ensure_provider_running"),
         ):
-            await consumer._handle_send_message(
+            await _send_and_wait(
+                consumer,
                 {"session_id": "draft", "project_id": "p", "provider": "claude_code", "ephemeral": True, "text": "go"}
             )
         assert ephemeral.pending_snapshot() == []
@@ -40,7 +49,8 @@ def test_ws_existing_persistent_row_is_untouched_and_unreserved():
             patch("twicc.asgi.get_session_provider", new=AsyncMock(return_value="claude_code")),
             patch("twicc.asgi.get_project_directory", new=AsyncMock()) as project_lookup,
         ):
-            await consumer._handle_send_message(
+            await _send_and_wait(
+                consumer,
                 {
                     "session_id": "persistent",
                     "project_id": "p",
@@ -113,7 +123,8 @@ def test_ws_normal_followup_does_not_conflict_with_registered_normal_claim():
         consumer = WSConsumer()
         consumer.send_json = AsyncMock()
         consumer._handle_send_message_admitted = AsyncMock(return_value=True)
-        await consumer._handle_send_message(
+        await _send_and_wait(
+            consumer,
             {"session_id": "normal", "project_id": "p", "provider": "claude_code", "text": "followup"}
         )
         consumer._handle_send_message_admitted.assert_awaited_once()

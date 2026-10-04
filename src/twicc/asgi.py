@@ -40,6 +40,7 @@ from twicc.core.services.session_creation import create_session_from_payload
 from twicc.core.services.title_suggestion import suggest_title
 from twicc.agent import ephemeral as ephemeral_runs
 from twicc.agent.exceptions import SendDeliveryError
+from twicc.agent.send_lanes import send_lane, wait_for_send_barrier
 from twicc.share.consumer import ShareConsumer
 from twicc.paths import is_first_run
 from twicc.providers.claude_code.ws import ClaudeCodeWSHandler
@@ -414,18 +415,21 @@ def _resolve_changelog_versions() -> tuple[str, str, bool]:
     return previous, last, show_forced
 
 
-# Detached background tasks spawned from the WS consumer (e.g. agent stops, which
-# hold the manager grace window for up to ~30s in ``interrupt_or_kill``). Awaiting
-# such an operation inline in ``receive_json`` would freeze the consumer: Channels
-# dispatches a connection's events serially (``await_many_dispatch``), so a blocked
-# handler stops the consumer answering the heartbeat ``ping`` — the client then
-# drops and reconnects the WS — and stops it flushing queued broadcasts until the
-# operation returns. Running detached keeps the receive loop free.
+# Detached background tasks spawned from the WS consumer (sends, and agent stops,
+# which hold the manager grace window for up to ~30s in ``interrupt_or_kill``).
+# Awaiting such an operation inline in ``receive_json`` would freeze the consumer:
+# Channels dispatches a connection's events serially (``await_many_dispatch``), so
+# a blocked handler stalls that connection's other business frames and its
+# outgoing broadcasts until the operation returns, and the transport stops reading
+# once ``MAX_QUEUED_EVENTS`` events are queued. (Heartbeat pings are answered
+# earlier, by ``websocket_transport.HeartbeatTransport``, so they keep flowing.)
+# Running detached keeps the receive loop free.
 #
-# The set lives at module scope, not on the consumer, on purpose: a stop must run
-# to completion (actually kill the agent) even if the spawning connection goes
-# away first. asyncio keeps only a weak reference to a running task, so without a
-# strong ref here the GC could destroy one mid-flight.
+# The set lives at module scope, not on the consumer, on purpose: a stop or an
+# admitted send must run to completion even if the spawning connection goes away
+# first (connection cleanup never cancels these tasks). asyncio keeps only a weak
+# reference to a running task, so without a strong ref here the GC could destroy
+# one mid-flight.
 _DETACHED_TASKS: set[asyncio.Task] = set()
 
 
@@ -1027,14 +1031,43 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             logger.exception("Error sending JSON message: %s", exc)
 
     async def _handle_send_message(self, content: dict) -> None:
+        """Check the frame shape inline, then run the send detached on its lane.
+
+        Only the shape checks run in the receive loop, so a slow send never
+        stalls this connection's other frames or broadcasts. The admitted send
+        runs in a detached task on the session's ordered lane
+        (``twicc.agent.send_lanes``), shared by every connection: two sends to
+        one session keep their arrival order, and a queued send never meets
+        the pending admission claim of the send ahead of it.
+        """
+        session_id = content.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            frame = {
+                "type": "error",
+                "code": "invalid_request",
+                "message": "send_message requires session_id and project_id",
+            }
+            if request_id := content.get("request_id"):
+                frame["request_id"] = request_id
+            logger.warning("send_message missing or invalid session_id: %r", session_id)
+            await self.send_json(frame)
+            return
+        _spawn_detached(
+            self._run_send_message(session_id, content),
+            label=f"send_message({session_id})",
+        )
+
+    async def _run_send_message(self, session_id: str, content: dict) -> None:
+        """Run one admitted send while holding the session's lane."""
+        async with send_lane(session_id):
+            await self._send_message_in_lane(session_id, content)
+
+    async def _send_message_in_lane(self, session_id: str, content: dict) -> None:
         """Reserve ephemeral admission before the first asynchronous lookup."""
         admission = None
-        session_id = content.get("session_id")
         try:
             ephemeral_runs.check_readonly(session_id)
-            if isinstance(session_id, str) and session_id and (
-                content.get("ephemeral") or not ephemeral_runs.is_active_normal(session_id)
-            ):
+            if content.get("ephemeral") or not ephemeral_runs.is_active_normal(session_id):
                 admission = ephemeral_runs.reserve(
                     session_id, str(content.get("provider") or ""), str(content.get("project_id") or ""),
                     ephemeral=bool(content.get("ephemeral")),
@@ -1455,12 +1488,13 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 pass  # Unknown provider value — let the registry handle it
 
         # Detached: a soft stop holds the manager grace window for up to ~30s
-        # (``interrupt_or_kill`` interrupts, waits, then force-kills). Awaiting it
-        # here would freeze this consumer's serial receive loop for that whole
-        # window — no heartbeat ``pong`` (the client drops + reconnects the WS),
-        # no broadcasts flushed. Nothing here needs the result: the stop reports
-        # itself via broadcasts (``stopping`` then the DEAD ``process_state``).
-        # ``hard_kill_agent`` is fast but detached too, for uniformity.
+        # (``interrupt_or_kill`` interrupts, waits, then force-kills), and first
+        # waits behind the sends queued on the session's lane. Awaiting it here
+        # would freeze this consumer's serial receive loop for that whole time —
+        # no other business frame handled, no broadcasts flushed. Nothing here
+        # needs the result: the stop reports itself via broadcasts (``stopping``
+        # then the DEAD ``process_state``). ``hard_kill_agent`` is fast but
+        # detached too, for uniformity.
         _spawn_detached(
             self._run_kill_process(session_id, force=bool(content.get("force"))),
             label=f"kill_process({session_id})",
@@ -1468,13 +1502,18 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
     async def _run_kill_process(self, session_id: str, *, force: bool) -> None:
         """Stop an agent off the receive loop. See ``_handle_kill_process``."""
-        registry = get_agent_manager_registry()
-        # ``force`` escalates to a hard kill: SIGKILL the process tree now,
-        # bypassing the manager lock a soft stop may hold (no grace window).
+        # ``force`` escalates to a hard kill: SIGKILL the current process tree
+        # now, bypassing both the send lane and the manager lock a soft stop
+        # may hold (no grace window). It does not cancel a send still queued or
+        # planning: that send may start a process afterwards.
         if force:
-            killed = await registry.hard_kill_agent(session_id)
+            killed = await get_agent_manager_registry().hard_kill_agent(session_id)
         else:
-            killed = await registry.kill_agent(session_id, reason="manual")
+            # A soft stop runs after the sends queued before it, without
+            # holding the lane during its grace window.
+            if isinstance(session_id, str):
+                await wait_for_send_barrier(session_id)
+            killed = await get_agent_manager_registry().kill_agent(session_id, reason="manual")
         if not killed:
             # Process not found or not in killable state — not an error, just log.
             logger.debug(
@@ -1624,11 +1663,12 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 pass  # Unknown provider value — let the registry handle it
 
         # Detached: the hybrid-Claude interrupt presses Escape and polls the TUI
-        # composer for up to ~15s, so awaiting it on this serial receive loop
-        # would stall the heartbeat pong (client drops + reconnects) and block
-        # broadcasts. The SDK/Codex paths are fast, but we detach uniformly. The
-        # outcome surfaces via the normal ``process_state`` broadcast (USER_TURN),
-        # not a return value, so nothing here needs to await it.
+        # composer for up to ~15s, and every interrupt first waits behind the
+        # sends queued on the session's lane, so awaiting it on this serial
+        # receive loop would stall this connection's other frames and its
+        # broadcasts. The outcome surfaces via the normal ``process_state``
+        # broadcast (USER_TURN), not a return value, so nothing here needs to
+        # await it.
         _spawn_detached(
             self._run_interrupt_session(session_id),
             label=f"interrupt_session({session_id})",
@@ -1636,6 +1676,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
     async def _run_interrupt_session(self, session_id: str) -> None:
         """Interrupt a session's turn off the receive loop. See ``_handle_interrupt_session``."""
+        # Run after the sends queued before this frame, without holding the
+        # lane while the interrupt executes.
+        if isinstance(session_id, str):
+            await wait_for_send_barrier(session_id)
         interrupted = await get_agent_manager_registry().interrupt_agent(session_id)
         if not interrupted:
             # Not found, not in ASSISTANT_TURN, or the runtime can't interrupt —

@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from .exceptions import SendDeliveryError
+from .send_lanes import bind_send_lane
 
 
 class Admission(NamedTuple):
@@ -61,6 +62,10 @@ def reserve(session_id: str, provider: str, project_id: str, *, ephemeral: bool 
 
 def bind(admission: Admission, canonical_id: str) -> None:
     check_readonly(canonical_id, admission, creation=True)
+    # Alias the canonical id's send lane to the draft's before any later send
+    # can see the canonical claim: such a send then queues behind the creation
+    # instead of meeting its still-pending admission (``agent_starting``).
+    bind_send_lane(admission.draft_session_id, canonical_id)
     _claims[canonical_id] = admission
     if admission.ephemeral:
         _known[canonical_id] = admission
