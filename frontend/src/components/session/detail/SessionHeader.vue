@@ -1427,18 +1427,11 @@ wa-divider {
 .share-button,
 .search-button,
 .debug-button {
-    opacity: 0.6;
-    transition: opacity 0.15s;
     flex-shrink: 0;
-}
-
-.debug-button.debug-button--active {
-    opacity: 1;
 }
 
 /* Unarchive button: same icon as archive, in yellow like the compact archived marker. */
 .archive-button.archive-button--archived {
-    opacity: 1;
     &::part(base) {
         color: var(--wa-color-yellow-80);
     }
@@ -1455,26 +1448,13 @@ wa-divider {
         transform: rotate(30deg);
     }
     &.pin-button--active {
-        opacity: 1;
         &::part(base) {
             color: var(--wa-color-yellow-80);
         }
     }
 }
 
-.pin-button:hover,
-.mute-button:hover,
-.archive-button:hover,
-.rename-button:hover,
-.share-button:hover,
-.search-button:hover,
-.debug-button:hover {
-    opacity: 1;
-}
-
 .mute-button.mute-button--active {
-    opacity: 1;
-
     &::part(base) {
         color: var(--wa-color-warning-60);
     }
@@ -1482,7 +1462,6 @@ wa-divider {
 
 /* Active share links → the button wears the brand colour (no count badge). */
 .share-button--active {
-    opacity: 1;
     &::part(base) {
         color: var(--wa-color-brand-60);
     }
