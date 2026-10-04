@@ -90,3 +90,116 @@ def check_claude_result(result: HermeticClaudeResult) -> None:
         return   # an error result keeps its signal; no ResultMessage means there is no turn count to judge
     if result.num_turns != 1:
         raise HermeticGuardViolation(f"expected one turn, got {result.num_turns!r}")
+
+
+from collections.abc import Callable
+
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeSDKClient,
+    ResultMessage,
+    SystemMessage,
+    TextBlock,
+)
+
+# Replaced by the unit tests.
+_client_factory = ClaudeSDKClient
+
+
+def _count_tool_blocks(message) -> int:
+    content = getattr(message, "content", None)
+    if not isinstance(content, list):
+        return 0
+    return sum(1 for block in content if type(block).__name__ in _TOOL_BLOCK_NAMES)
+
+
+async def _run(prompt, *, model, cwd, options_override, raise_on_violation) -> HermeticClaudeResult:
+    expected_cwd = Path(cwd) if cwd is not None else hermetic_cwd()
+    permission_calls: list[str] = []
+    options = _build_options(model=model, effort="low", cwd=expected_cwd, permission_calls=permission_calls)
+    guarded = options_override is None
+    if options_override is not None:
+        options = options_override(options)
+    client = _client_factory(options=options)
+
+    text = ""
+    assistant_error = None
+    init: dict = {}
+    usage: dict = {}
+    is_error = False
+    num_turns = None
+    tool_blocks = 0
+    violation: HermeticGuardViolation | None = None   # constructing it logs the single warning line
+    try:
+        await client.connect()
+        await client.query(prompt)
+        async for message in client.receive_messages():
+            if isinstance(message, SystemMessage) and getattr(message, "subtype", None) == "init":
+                init = dict(getattr(message, "data", {}) or {})
+                if guarded:
+                    try:
+                        check_claude_init(init, cwd=expected_cwd, alias=model)
+                    except HermeticGuardViolation as exc:
+                        violation = exc
+                        break
+            elif isinstance(message, AssistantMessage):
+                tool_blocks += _count_tool_blocks(message)
+                if message.error:
+                    assistant_error = message.error
+                text += "".join(b.text for b in message.content if isinstance(b, TextBlock))
+            elif isinstance(message, ResultMessage):
+                tool_blocks += _count_tool_blocks(message)
+                usage, is_error, num_turns = dict(message.usage or {}), bool(message.is_error), message.num_turns
+                break
+            else:
+                tool_blocks += _count_tool_blocks(message)
+        if violation is None and guarded and not init:
+            violation = HermeticGuardViolation("no init message received")
+        if violation is not None:
+            try:
+                await client.interrupt()
+            except Exception:
+                logger.debug("interrupt failed after a guard violation", exc_info=True)
+    finally:
+        try:
+            await client.disconnect()
+        except Exception:
+            logger.debug("disconnect failed", exc_info=True)
+
+    result = HermeticClaudeResult(
+        text=text.strip(), assistant_error=assistant_error, is_error=is_error, usage=usage, init=init,
+        num_turns=num_turns, tool_blocks_seen=tool_blocks, permission_callback_calls=len(permission_calls),
+    )
+    if guarded and violation is None:
+        try:
+            check_claude_result(result)   # tool activity counts even when no ResultMessage arrived
+        except HermeticGuardViolation as exc:
+            violation = exc
+    if violation is not None:
+        if raise_on_violation:
+            raise violation
+        return result._replace(violation=violation.reason)
+    return result
+
+
+async def run_hermetic_claude(prompt: str, *, model: str) -> HermeticClaudeResult:
+    """One hermetic Claude turn. Raises ``HermeticGuardViolation`` on a guard failure.
+
+    Callers wrap it in their own ``asyncio.wait_for`` and retry loop.
+    """
+    return await _run(prompt, model=model, cwd=None, options_override=None, raise_on_violation=True)
+
+
+async def _run_hermetic_claude_for_diagnostic(
+    prompt: str,
+    *,
+    model: str,
+    cwd: Path | None = None,
+    options_override: Callable[[ClaudeAgentOptions], ClaudeAgentOptions] | None = None,
+) -> HermeticClaudeResult:
+    """Diagnostic seam (§5.1): same implementation, but the violation is returned, not raised.
+
+    ``cwd`` sets both the options' working directory and the guard's expected one.
+    ``options_override`` builds the diagnostic's unrestricted control options; the guard is then skipped.
+    """
+    return await _run(prompt, model=model, cwd=cwd, options_override=options_override, raise_on_violation=False)
