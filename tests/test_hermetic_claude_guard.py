@@ -109,3 +109,8 @@ def test_deny_callback_records_and_interrupts(tmp_path):
     decision = async_to_sync(o.can_use_tool)("Bash", {"command": "ls"}, None)
     assert calls == ["Bash"]
     assert decision.interrupt is True
+
+
+def test_non_string_cwd_is_a_violation():
+    with pytest.raises(HermeticGuardViolation):
+        check_claude_init(good_init(cwd=123), cwd=CWD, alias="haiku")

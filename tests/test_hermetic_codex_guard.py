@@ -164,3 +164,8 @@ def test_refusing_handler_keeps_the_first_method():
     h = mod.RefusingApprovalHandler()
     h("a/b", None); h("c/d", None)
     assert h.method == "a/b"
+
+
+def test_non_dict_sandbox_is_a_violation():
+    with pytest.raises(HermeticGuardViolation):
+        check(start(sandbox="readOnly"))

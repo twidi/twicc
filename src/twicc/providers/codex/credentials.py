@@ -39,6 +39,8 @@ from openai_codex.generated.v2_all import ReasoningEffort
 
 from twicc.provider_homes import codex_home
 
+from twicc.providers.hermetic import HermeticConfigError, HermeticGuardViolation
+
 from .hermetic import prepare_hermetic_codex, run_hermetic_codex
 
 logger = logging.getLogger(__name__)
@@ -307,11 +309,19 @@ async def _codex_sdk_throwaway_call() -> None:
     await run_hermetic_codex(plan, _REFRESH_PROMPT, effort=ReasoningEffort.low)
 
 
-_UNAUTHORIZED_RE = re.compile(r"status 40[13]|unauthorized", re.IGNORECASE)
+_UNAUTHORIZED_RE = re.compile(r"\bstatus\s+40[13]\b|unauthorized", re.IGNORECASE)
 
 
 def is_unauthorized_exception(exc: BaseException) -> bool:
-    """Best effort: does this exception (or its cause chain) look like an HTTP 401/403 from the API?"""
+    """Best effort: does this exception (or its cause chain) look like an HTTP 401/403 from the API?
+
+    Guard violations never count. A ``HermeticConfigError`` counts only for the pre-turn request
+    failures (``start``, ``mcp-config``); ``catalog`` and ``cwd`` are local problems.
+    """
+    if isinstance(exc, HermeticGuardViolation):
+        return False
+    if isinstance(exc, HermeticConfigError) and exc.reason not in ("start", "mcp-config"):
+        return False
     seen: set[int] = set()
     while exc is not None and id(exc) not in seen:
         seen.add(id(exc))

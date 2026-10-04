@@ -235,3 +235,40 @@ def test_diagnostic_entry_points_are_not_referenced_from_src():
     for needle, definer in defining.items():
         users = [p for p in src.rglob("*.py") if needle in p.read_text() and p != definer]
         assert users == [], (needle, users)
+
+
+def test_token_usage_shape_drift_degrades_to_none(fake):
+    drifted = SimpleNamespace(method="thread/tokenUsage/updated",
+                              payload=SimpleNamespace(model_dump=lambda mode=None: {"token_usage": {}}))
+    fake.events = [drifted, item_event("item/completed", "agentMessage", "OK")]
+    result = run()
+    assert result.input_tokens is None and result.text == "OK"
+
+
+def test_the_stream_is_closed_when_the_turn_raises(fake):
+    closed = []
+
+    class Closing:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            return item_event("item/started", "commandExecution")
+
+        async def aclose(self):
+            closed.append(True)
+
+    original = FakeCodex._turn
+
+    async def _turn(self, *a, **k):
+        handle = await original(self, *a, **k)
+        handle.stream = lambda: Closing()
+        return handle
+
+    FakeCodex._turn = _turn
+    try:
+        with pytest.raises(HermeticGuardViolation):
+            run()
+    finally:
+        FakeCodex._turn = original
+    assert closed == [True]

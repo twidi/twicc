@@ -7,6 +7,9 @@ whenever the hermetic call fails (build, start or guard) — these tests pin tha
 contract, which a handler-level test cannot see.
 """
 
+import logging
+
+import pytest
 from asgiref.sync import async_to_sync
 
 from twicc.providers.claude_code import title_suggest as claude_title_suggest
@@ -30,3 +33,44 @@ def test_codex_returns_none_when_the_hermetic_plan_cannot_be_prepared(monkeypatc
     monkeypatch.setattr(codex_title_suggest, "prepare_hermetic_codex", _explode)
 
     assert async_to_sync(codex_title_suggest.generate_title)("hello", "Summarize: {text}") is None
+
+
+@pytest.fixture
+def title_logs():
+    """Collect the title modules' log lines even when an earlier test disabled or muted those loggers."""
+    records: list[str] = []
+
+    class _Collect(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    handler = _Collect()
+    loggers = [claude_title_suggest.logger, codex_title_suggest.logger]
+    saved = [(lg.disabled, lg.level) for lg in loggers]
+    for lg in loggers:
+        lg.disabled = False
+        lg.setLevel(logging.WARNING)
+        lg.addHandler(handler)
+    yield records
+    for lg, (disabled, level) in zip(loggers, saved):
+        lg.removeHandler(handler)
+        lg.setLevel(level)
+        lg.disabled = disabled
+
+
+def test_claude_error_log_carries_the_reason_code(monkeypatch, title_logs):
+    async def _explode(*_a, **_k):
+        raise HermeticConfigError("cwd", "neutral directory unusable")
+
+    monkeypatch.setattr(claude_title_suggest, "run_hermetic_claude", _explode)
+    async_to_sync(claude_title_suggest.generate_title)("hello", "Summarize: {text}")
+    assert any("(reason=cwd)" in line for line in title_logs)
+
+
+def test_codex_error_log_carries_the_reason_code(monkeypatch, title_logs):
+    async def _explode(model):
+        raise HermeticConfigError("catalog", "x")
+
+    monkeypatch.setattr(codex_title_suggest, "prepare_hermetic_codex", _explode)
+    async_to_sync(codex_title_suggest.generate_title)("hello", "Summarize: {text}")
+    assert any("(reason=catalog)" in line for line in title_logs)

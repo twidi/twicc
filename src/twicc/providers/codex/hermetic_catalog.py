@@ -201,7 +201,10 @@ def ensure_catalog(binary: Path, model: str, variant: str = "production", cache_
     ``os.replace``, and its content is a pure function of its name.
     """
     version, data = bundled_catalog(binary)
-    entries = [e for e in data.get("models", []) if e.get("slug") == model] if isinstance(data, dict) else []
+    models = data.get("models") if isinstance(data, dict) else None
+    if not isinstance(models, list):
+        raise HermeticConfigError("catalog", f"The bundled catalogue of {version} has no model list")
+    entries = [e for e in models if isinstance(e, dict) and e.get("slug") == model]
     if not entries:
         raise HermeticConfigError("catalog", f"The bundled catalogue of {version} has no model {model!r}")
     source = entries[0]
@@ -210,18 +213,26 @@ def ensure_catalog(binary: Path, model: str, variant: str = "production", cache_
         from twicc.paths import get_data_dir
 
         cache_dir = get_data_dir() / "cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise HermeticConfigError("catalog", f"Cannot create the catalogue cache directory {cache_dir}: {exc}") from exc
     path = cache_dir / catalog_cache_name(version, model, variant, entry_hash)
     if path.exists() and _file_problem(path, model, variant) is None:
         return path   # a damaged cache file falls through and is regenerated, without a failure log line
     content = {"models": [transform_entry(source, variant=variant)]}
     validate_catalog(content, model=model, variant=variant)
-    fd, tmp_name = tempfile.mkstemp(dir=cache_dir, prefix=path.name + ".", suffix=".tmp")
+    try:
+        fd, tmp_name = tempfile.mkstemp(dir=cache_dir, prefix=path.name + ".", suffix=".tmp")
+    except OSError as exc:
+        raise HermeticConfigError("catalog", f"Cannot write the catalogue file in {cache_dir}: {exc}") from exc
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(orjson.dumps(content))
         os.replace(tmp_name, path)
-    except BaseException:
+    except BaseException as exc:
         Path(tmp_name).unlink(missing_ok=True)
+        if isinstance(exc, OSError):
+            raise HermeticConfigError("catalog", f"Cannot write the catalogue file {path}: {exc}") from exc
         raise
     return path

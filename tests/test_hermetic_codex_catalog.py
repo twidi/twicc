@@ -211,3 +211,31 @@ def test_a_cached_file_that_fails_validation_is_regenerated(tmp_path, monkeypatc
     again = cat.ensure_catalog(tmp_path / "codex", "gpt-6-luna", cache_dir=tmp_path)
     assert again == path
     cat.validate_catalog_file(again, "gpt-6-luna", "production")  # raises if still damaged
+
+
+def test_unwritable_cache_dir_raises_catalog(tmp_path, monkeypatch):
+    monkeypatch.setattr(cat.subprocess, "run", FakeRun())
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x")
+    with pytest.raises(HermeticConfigError) as info:
+        cat.ensure_catalog(tmp_path / "codex", "gpt-6-luna", cache_dir=blocker / "cache")
+    assert info.value.reason == "catalog"
+
+
+def test_failed_temp_file_creation_raises_catalog(tmp_path, monkeypatch):
+    monkeypatch.setattr(cat.subprocess, "run", FakeRun())
+
+    def boom(**_kw):
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(cat.tempfile, "mkstemp", boom)
+    with pytest.raises(HermeticConfigError) as info:
+        cat.ensure_catalog(tmp_path / "codex", "gpt-6-luna", cache_dir=tmp_path)
+    assert info.value.reason == "catalog"
+
+
+def test_non_dict_model_entry_raises_catalog(tmp_path, monkeypatch):
+    monkeypatch.setattr(cat, "bundled_catalog", lambda binary: ("codex-cli 1.0", {"models": ["oops", None]}))
+    with pytest.raises(HermeticConfigError) as info:
+        cat.ensure_catalog(tmp_path / "codex", "gpt-6-luna", cache_dir=tmp_path)
+    assert info.value.reason == "catalog"

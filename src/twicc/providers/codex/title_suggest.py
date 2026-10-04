@@ -91,8 +91,8 @@ async def _call_codex(
     try:
         plan = await prepare_hermetic_codex(TITLE_MODEL)
     except Exception as e:
-        logger.exception("Codex title suggestion: client unavailable (source=%s, attempt=%d/%d): %s",
-                         source, attempt, MAX_RETRIES, e)
+        logger.exception("Codex title suggestion: client unavailable (source=%s, attempt=%d/%d): %s (reason=%s)",
+                         source, attempt, MAX_RETRIES, e, getattr(e, "reason", None))
         return None
 
     async def _execute() -> str:
@@ -125,7 +125,7 @@ async def _call_codex(
         return None
     except Exception as e:
         logger.exception(
-            "Codex title suggestion error (source=%s, attempt=%d/%d): %s",
-            source, attempt, MAX_RETRIES, e,
+            "Codex title suggestion error (source=%s, attempt=%d/%d): %s (reason=%s)",
+            source, attempt, MAX_RETRIES, e, getattr(e, "reason", None),
         )
         return None

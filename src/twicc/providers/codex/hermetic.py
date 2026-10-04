@@ -6,7 +6,7 @@ import asyncio
 import logging
 import threading
 from collections.abc import Iterable
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
 from typing import NamedTuple
 
@@ -118,6 +118,8 @@ def check_codex_thread_start(start: dict, *, model: str, cwd: Path, codex_home: 
         raise HermeticGuardViolation(f"thread/start reports model {got_model!r}")
     if Path(got_cwd).resolve() != Path(cwd).resolve():
         raise HermeticGuardViolation(f"thread/start reports cwd {got_cwd!r}")
+    if not isinstance(sandbox, dict):
+        raise HermeticGuardViolation(f"thread/start reports sandbox {sandbox!r}")
     if sandbox.get("type") != "readOnly" or sandbox.get("network_access", sandbox.get("networkAccess")):
         raise HermeticGuardViolation(f"thread/start reports sandbox {sandbox!r}")
     if approval != "never":
@@ -244,6 +246,15 @@ def _item_text(event) -> str:
     return data.get("text", "") if isinstance(data, dict) else ""
 
 
+def _last_input_tokens(payload) -> int | None:
+    """Last-turn input tokens, or ``None`` when the payload shape drifted (usage is informational only)."""
+    try:
+        value = payload.model_dump(mode="json")["token_usage"]["last"]["input_tokens"]
+    except (AttributeError, KeyError, TypeError):
+        return None
+    return value if isinstance(value, int) else None
+
+
 async def _interrupt(handle) -> None:
     try:
         await handle.interrupt()
@@ -276,23 +287,24 @@ class HermeticCodexThread:
         text: list[str] = []
         terminal_error = None
         tokens = None
-        async for event in handle.stream():
-            await self._check_flag(handle)
-            if event.method == "thread/tokenUsage/updated":
-                tokens = event.payload.model_dump(mode="json")["token_usage"]["last"]["input_tokens"]
-            elif event.method in ("item/started", "item/completed"):
-                type_name = _item_type(event)
-                try:
-                    classify_codex_item(type_name)
-                except HermeticGuardViolation:
-                    await _interrupt(handle)
-                    raise
-                if event.method == "item/completed" and type_name == "agentMessage":
-                    text.append(_item_text(event))
-            elif event.method == "error":
-                payload = getattr(event, "payload", None)
-                if isinstance(payload, ErrorNotification) and not payload.will_retry:
-                    terminal_error = payload
+        async with aclosing(handle.stream()) as stream:
+            async for event in stream:
+                await self._check_flag(handle)
+                if event.method == "thread/tokenUsage/updated":
+                    tokens = _last_input_tokens(event.payload)
+                elif event.method in ("item/started", "item/completed"):
+                    type_name = _item_type(event)
+                    try:
+                        classify_codex_item(type_name)
+                    except HermeticGuardViolation:
+                        await _interrupt(handle)
+                        raise
+                    if event.method == "item/completed" and type_name == "agentMessage":
+                        text.append(_item_text(event))
+                elif event.method == "error":
+                    payload = getattr(event, "payload", None)
+                    if isinstance(payload, ErrorNotification) and not payload.will_retry:
+                        terminal_error = payload
         await self._check_flag(handle)
         return HermeticCodexResult("".join(text).strip(), terminal_error, tokens, self.start)
 

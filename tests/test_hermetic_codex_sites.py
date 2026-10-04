@@ -6,7 +6,7 @@ from asgiref.sync import async_to_sync
 from twicc.providers.codex import credentials as cred
 from twicc.providers.codex import title_suggest as titles
 from twicc.providers.codex.hermetic import HermeticCodexResult
-from twicc.providers.hermetic import HermeticConfigError
+from twicc.providers.hermetic import HermeticConfigError, HermeticGuardViolation
 
 
 def patch(monkeypatch, module, *, run_result=None, prepare_error=None, run_error=None):
@@ -104,3 +104,21 @@ def test_throwaway_call_runs_the_refresh_prompt(monkeypatch):
     seen = patch(monkeypatch, cred, run_result=ok(text=""))
     async_to_sync(cred._codex_sdk_throwaway_call)()
     assert seen["model"] == cred._REFRESH_MODEL and seen["prompt"] == cred._REFRESH_PROMPT
+
+
+def test_is_unauthorized_ignores_guard_violations():
+    assert cred.is_unauthorized_exception(HermeticGuardViolation("refused request: status 401")) is False
+
+
+def test_is_unauthorized_ignores_local_config_errors():
+    assert cred.is_unauthorized_exception(HermeticConfigError("catalog", "status 401")) is False
+
+
+def test_is_unauthorized_counts_a_start_error_with_an_unauthorized_cause():
+    exc = HermeticConfigError("start", "thread/start failed")
+    exc.__cause__ = RuntimeError("Unauthorized")
+    assert cred.is_unauthorized_exception(exc) is True
+
+
+def test_is_unauthorized_needs_a_whole_status_number():
+    assert cred.is_unauthorized_exception(RuntimeError("status 4010")) is False

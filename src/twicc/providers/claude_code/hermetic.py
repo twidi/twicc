@@ -72,6 +72,8 @@ def check_claude_init(init: dict, *, cwd: Path, alias: str) -> None:
             raise HermeticGuardViolation(f"init reports non-empty {key}: {init[key]!r}")
     if init["permissionMode"] != "dontAsk":
         raise HermeticGuardViolation(f"init reports permissionMode {init['permissionMode']!r}")
+    if not isinstance(init["cwd"], str):
+        raise HermeticGuardViolation(f"init reports cwd {init['cwd']!r}")
     if Path(init["cwd"]).resolve() != Path(cwd).resolve():
         raise HermeticGuardViolation(f"init reports cwd {init['cwd']!r}")
     prefix = FAMILY_PREFIXES.get(alias)

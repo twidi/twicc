@@ -1,6 +1,6 @@
 # Hermetic LLM calls — one restricted, no-tools configuration for short non-session calls
 
-Date: 2026-10-03 — Status: design (spec), not implemented. Revision 6 (after eight adversarial reviews).
+Date: 2026-10-03 — Status: implemented (live checks pending the user's go). Revision 6 (after eight adversarial reviews).
 
 ## 1. Problem
 
@@ -444,7 +444,7 @@ disabled shell, absence of tools). It does not detect a tool that is offered but
 | 2 | `plan = await prepare_hermetic_codex(TITLE_MODEL)` **outside** the 15 s timeout, where `make_codex_config` runs today, then `run_hermetic_codex(plan, full_prompt, effort=low)` inside it, inside the retry loop | `text`; a `terminal_error` is a failed attempt, never a title candidate |
 | 3 | `run_hermetic_claude("ping", model="haiku")` inside the 30 s probe timeout | unchanged rule: any result without `authentication_failed` (an `is_error` result included, as today at `auth.py:318-322`) is a positive; `assistant_error == "authentication_failed"` is a negative; an exception, including a guard violation, is inconclusive |
 | 4 | `run_hermetic_claude("What model are you?", model="haiku")` inside the 30 s refresh timeout | none (the caller re-reads the stored expiry) |
-| 5 | `prepare_hermetic_codex(_REFRESH_MODEL)` and `run_hermetic_codex(plan, _REFRESH_PROMPT, effort=low)`, both inside the 30 s probe timeout where `make_codex_config` already runs | `terminal_error` classified with the existing unauthorised test. An unauthorised error raised by `model/list`, `config/read` or `thread/start` before the turn is classified like a `terminal_error` by the exception classifier of 5.6 (new behaviour, not "unchanged"), so a logged-out state still gives a negative (measured: these requests still answer when logged out, section 12) |
+| 5 | `prepare_hermetic_codex(_REFRESH_MODEL)` and `run_hermetic_codex(plan, _REFRESH_PROMPT, effort=low)`, both inside the 30 s probe timeout where `make_codex_config` already runs | `terminal_error` classified with the existing unauthorised test. The pre-turn requests (`model/list`, `config/read`, `thread/start`) were measured to answer when logged out (section 12), so the negative is expected from the turn's `terminal_error`. The exception classifier of 5.6 is only a safety net for an unauthorised error raised before the turn (new behaviour, not "unchanged") |
 | 6 | same as 5 for the refresh | none (the caller re-reads the stored refresh time) |
 
 The preparation step therefore runs exactly where `make_codex_config` runs today at each site. The catalogue subprocess
@@ -821,7 +821,8 @@ Codex CLI 0.160.0, `openai_codex` 1.95.0. No measurement below made a model call
 | Bogus catalogue (`shell_type` = `bogus`), O9-i | The binary exits at start (`failed to parse model_catalog_json ... unknown variant `bogus``). `hermetic_codex` raises `HermeticConfigError(reason="start")`, message starting "The Codex app-server did not start". No `thread/start`, no child left. |
 | Catalogue round trip, O3 | The binary reads back the hermetic entry unchanged. |
 | `debug prompt-input`, O5 | Skills block empty (nothing after `### Available skills`); permissions text `sandbox_mode` is `read-only`; no `apply_patch`, `exec_command` or `spawn_agent`; the repository `AGENTS.md` is absent; the home instruction file is injected (allowed). |
-| Logged-out Codex (throwaway `CODEX_HOME`, no `auth.json`) | `hermetic_codex(plan)` for the refresh model starts: `model/list`, `config/read` and `thread/start` all answer. No error shape to classify; `is_unauthorized_exception` needed no change. A logged-out state therefore surfaces at the turn (`terminal_error`), not before it. |
+| Logged-out Codex (throwaway `CODEX_HOME`, no `auth.json`) | `hermetic_codex(plan)` for the refresh model starts: `model/list`, `config/read` and `thread/start` all answer. No error shape to classify; `is_unauthorized_exception` needed no change. A logged-out state is expected to surface at the turn; not measured (no model call). |
+| Logged-out Claude probe (site 3), throwaway `CLAUDE_CONFIG_DIR` and securestorage dir, credential variables unset | `probe_auth_via_sdk()` returns `False`. The `init` still passes `check_claude_init`: `model` `claude-haiku-4-5-20251001`, `tools`/`mcp_servers`/`slash_commands`/`skills` all `[]`, `permissionMode` `dontAsk`, `cwd` the neutral directory, `apiKeySource` `none`. The result has `assistant_error` `authentication_failed`, `is_error` true, `num_turns` 1, zero token usage, text "Not logged in". No violation, no model tokens. |
 | Token counts of D2 / D10 | Not measured yet: pending the live run (needs the user's go). |
 | Live canary results (D1-D14) | Not measured yet: pending the live run (needs the user's go). |
 | Cost of one full diagnostic run | Not measured yet: pending the live run (needs the user's go). |

@@ -93,5 +93,8 @@ async def _call_haiku(
         )
         return None
     except Exception as e:
-        logger.exception("Title suggestion error (source=%s, attempt=%d/%d): %s", source, attempt, MAX_RETRIES, e)
+        logger.exception(
+            "Title suggestion error (source=%s, attempt=%d/%d): %s (reason=%s)",
+            source, attempt, MAX_RETRIES, e, getattr(e, "reason", None),
+        )
         return None
