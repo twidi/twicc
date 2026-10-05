@@ -106,8 +106,9 @@ const cumulative = computed(() => (props.cumulativeSeconds == null ? '-' : forma
     min-width: 0;
     padding: var(--wa-space-2xs) var(--wa-space-xs);
     border-radius: var(--wa-border-radius-m);
-    border: 1px solid var(--wa-color-surface-border);
-    background: color-mix(in oklab, var(--wa-color-surface-raised) 55%, transparent);
+    border: 1px solid var(--orch-card-border);
+    background: var(--orch-card-bg);
+    box-shadow: var(--orch-card-shadow);
 }
 
 .osum-label {

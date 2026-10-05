@@ -63,16 +63,17 @@
     gap: var(--wa-space-xs);
     padding: var(--wa-space-xs) var(--wa-space-s) var(--wa-space-s);
     border-radius: var(--wa-border-radius-m);
-    border: 1px solid var(--wa-color-surface-border);
+    border: 1px solid var(--orch-card-border);
     /* The left border carries the state: its colour is the node's state bucket. */
     border-left: 4px solid var(--ocard-border, var(--wa-color-surface-border));
-    background: color-mix(in oklab, var(--wa-color-surface-raised) 55%, transparent);
+    background: var(--orch-card-bg);
+    box-shadow: var(--orch-card-shadow);
     transition: opacity 0.15s ease;
 }
 
 /* The current session (first card of the sessions tree): a brand outline, no badge. */
 .ocard.is-current {
-    box-shadow: 0 0 0 1px var(--wa-color-brand-border-quiet);
+    box-shadow: 0 0 0 1px var(--wa-color-brand-border-quiet), var(--orch-card-shadow);
 }
 
 /* A hidden session: same content and colours, a card that reads as discreet. */
