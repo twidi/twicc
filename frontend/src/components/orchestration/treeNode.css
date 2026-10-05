@@ -116,6 +116,21 @@
     color: var(--wa-color-text-quiet);
 }
 
+.orch-current-tag {
+    flex-shrink: 0;
+    align-self: center;
+    white-space: nowrap;
+    padding: 0 var(--wa-space-2xs);
+    border: 1px solid var(--wa-color-brand-border-quiet);
+    border-radius: var(--wa-border-radius-s);
+    font-size: var(--wa-font-size-2xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    line-height: 1.4;
+    color: var(--wa-color-brand-on-quiet);
+}
+
 .orch-status-icon {
     flex-shrink: 0;
     font-size: var(--wa-font-size-m);

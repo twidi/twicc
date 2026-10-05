@@ -205,6 +205,7 @@ const expanded = ref(true)
                         class="orch-status-icon"
                         :class="status.pulse === 'work' ? 'robot-working' : (status.pulse ? `orch-status-icon--pulse-${status.pulse}` : null)"
                     ></wa-icon>
+                    <span v-if="isCurrent" class="orch-current-tag">current</span>
                 </span>
                 <button
                     v-if="hasChildren"
