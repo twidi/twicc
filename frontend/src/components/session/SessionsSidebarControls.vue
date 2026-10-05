@@ -31,7 +31,6 @@ const emit = defineEmits([
     'update:searchQuery',
     'optionSelect',
     'searchKeydown',
-    'openAdvancedSearch',
 ])
 
 const searchInputRef = ref(null)
@@ -130,17 +129,7 @@ defineExpose({ focus })
         >
             <wa-icon slot="start" name="magnifying-glass"></wa-icon>
         </wa-input>
-        <wa-button
-            id="search-advanced-button"
-            variant="brand"
-            appearance="outlined"
-            size="small"
-            class="search-advanced-button"
-            @click="emit('openAdvancedSearch')"
-        >
-            <wa-icon name="magnifying-glass"></wa-icon>
-        </wa-button>
-        <AppTooltip for="search-advanced-button">Full-text search (Ctrl+Shift+F)</AppTooltip>
+
     </div>
 </template>
 
@@ -173,24 +162,6 @@ defineExpose({ focus })
         &::part(base) {
             background: linear-gradient(var(--canvas-drawer-top), var(--canvas-drawer-top)), var(--canvas-color);
         }
-    }
-}
-
-.search-advanced-button {
-    flex-shrink: 0;
-    position: relative;
-    wa-icon {
-        position: relative;
-        top: 3px;
-        left: -3px;
-    }
-    &::part(base)::after {
-        content: "+";
-        scale: 1.2;
-        position: absolute;
-        top: 0;
-        right: 15%;
-        font-weight: bold;
     }
 }
 

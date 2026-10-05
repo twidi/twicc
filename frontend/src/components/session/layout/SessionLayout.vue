@@ -933,24 +933,24 @@ onBeforeUnmount(() => {
 }
 
 /* When the session-list sidebar is closed, its reopen toggle floats at the bottom-left of the
-   content area; nearby UI must clear it. The base values live once on body.sidebar-closed (App.vue);
+   content area; nearby UI must clear it. The base values live once on body.sidebar-toggle-floating (App.vue);
    here we refine per dock context. --left-x is the left-edge-only clearance (thin left rail →
    reduced, full left column → none). The composer's -x follows --left-x, but a bottom dock *region*
    zeroes it (the composer is lifted above the toggle); a bottom *gutter* does not (it's thin — the
    composer still overlaps the toggle). The composer, the left gutter and the terminal extra-keys bar
    below consume these — the single place "which dock context needs how much" lives. */
-body.sidebar-closed .session-layout.has-left-gutter:not(.has-left-col) {
+body.sidebar-toggle-floating .session-layout.has-left-gutter:not(.has-left-col) {
     --sidebar-toggle-clearance-left-x: 1rem;
 }
-body.sidebar-closed .session-layout.has-left-col {
+body.sidebar-toggle-floating .session-layout.has-left-col {
     --sidebar-toggle-clearance-left-x: 0rem;
 }
-body.sidebar-closed .session-layout {
+body.sidebar-toggle-floating .session-layout {
     --sidebar-toggle-clearance-x: var(--sidebar-toggle-clearance-left-x);
     /* Terminal extra-keys bar: no clearance by default (overridden below where it sits bottom-left). */
     --sidebar-toggle-clearance-extra-keys: var(--wa-space-xs);
 }
-body.sidebar-closed .session-layout.has-bottom-region {
+body.sidebar-toggle-floating .session-layout.has-bottom-region {
     --sidebar-toggle-clearance-x: 0rem;
 }
 
@@ -960,24 +960,24 @@ body.sidebar-closed .session-layout.has-bottom-region {
    bottom-left (no left column, no bottom dock lifting it), or it's maximized full-bleed. The value is
    set on the nearest layout element (the bottom dock region / the center slot / the maximized region);
    it inherits across the panel teleport into the bar, so no :deep into the relocated terminal needed. */
-body.sidebar-closed .session-layout:not(.has-left-col) .dock-region[data-rid="bottom"],
-body.sidebar-closed .session-layout:not(.has-left-col) .dock-region[data-rid="bottom-left"],
-body.sidebar-closed .session-layout .dock-region[data-rid="maximized"] {
+body.sidebar-toggle-floating .session-layout:not(.has-left-col) .dock-region[data-rid="bottom"],
+body.sidebar-toggle-floating .session-layout:not(.has-left-col) .dock-region[data-rid="bottom-left"],
+body.sidebar-toggle-floating .session-layout .dock-region[data-rid="maximized"] {
     --sidebar-toggle-clearance-extra-keys: calc(var(--sidebar-toggle-clearance-left-x) + 1rem);
 }
-body.sidebar-closed .session-layout:not(.has-left-col):not(.has-bottom-region) .center-slot {
+body.sidebar-toggle-floating .session-layout:not(.has-left-col):not(.has-bottom-region) .center-slot {
     --sidebar-toggle-clearance-extra-keys: calc(var(--sidebar-toggle-clearance-left-x) + 1rem);
 }
 
 /* The bottom gutter's own start icons sit slightly closer to the toggle than the composer, so they
    keep their own inset (not the shared -x) to stay pixel-stable. */
-body.sidebar-closed .session-layout.mode-widescreen:not(.has-left-gutter):not(.has-left-col) :deep(.dock-gutter.bottom .g-group.start) {
+body.sidebar-toggle-floating .session-layout.mode-widescreen:not(.has-left-gutter):not(.has-left-col) :deep(.dock-gutter.bottom .g-group.start) {
     padding-inline-start: 3rem;
 }
-body.sidebar-closed .session-layout.mode-widescreen.has-left-gutter :deep(.dock-gutter.bottom .g-group.start) {
+body.sidebar-toggle-floating .session-layout.mode-widescreen.has-left-gutter :deep(.dock-gutter.bottom .g-group.start) {
     padding-inline-start: 1.5rem;
 }
-body.sidebar-closed .session-layout :deep(.dock-gutter.left .g-group.end) {
+body.sidebar-toggle-floating .session-layout :deep(.dock-gutter.left .g-group.end) {
     padding-block-end: var(--sidebar-toggle-clearance-y);
 }
 

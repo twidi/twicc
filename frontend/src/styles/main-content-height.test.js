@@ -25,9 +25,8 @@ test('mobile sidebar drawer: no slide under reduced motion, it fades in instead'
     assert.ok(block, 'a mobile block with the reduced-motion rules')
     const css = block[0]
     assert.match(css, /:root\.reduce-motion \.sidebar \{\s*transition: none;/)
-    assert.match(css, /:root\.reduce-motion \.sidebar-toggle \{\s*transition: none;/)
     assert.match(css, /:checked\) \.sidebar \{\s*animation: sidebar-drawer-fade-in/)
-    // The toggle lives inside the drawer: a visibility on the closed drawer, or an opacity at rest, would hide it.
+    // The drawer stays off-screen at rest. Reduced-motion rules change only its entrance.
     assert.ok(!/visibility/.test(css), 'the closed drawer is never hidden')
     assert.ok(!/\.sidebar \{[^}]*opacity/.test(css), 'no opacity at rest on the drawer')
     assert.ok(!/translate|transform/.test(css), 'the reduced-motion rules move nothing')

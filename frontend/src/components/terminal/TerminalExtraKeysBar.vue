@@ -355,13 +355,13 @@ button {
    exact amount per terminal position via --sidebar-toggle-clearance-extra-keys (it inherits across
    the panel teleport into this bar); the fallback covers terminals outside the dockable layout (e.g.
    the project view), where it resolves to the left-edge clearance + 1rem. */
-:global(body.sidebar-closed .extra-keys-bar) {
+:global(body.sidebar-toggle-floating .extra-keys-bar) {
     @media (width >= 640px) {
         padding-left: var(--sidebar-toggle-clearance-extra-keys, calc(var(--sidebar-toggle-clearance-left-x) + 1rem));
     }
 }
 
-.extra-keys-bar {
+:global(body.sidebar-toggle-floating .extra-keys-bar) {
     @media (width < 640px) {
         padding-left: 4.25rem;
     }

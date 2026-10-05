@@ -57,11 +57,4 @@ function openInbox() {
     inline-size: var(--wa-form-control-height);
     padding-inline: 0;
 }
-/* Same footer degradation as CommandPaletteButton: drop out when the sidebar
-   gets too narrow, below SettingsPopover's compact threshold. */
-@container sidebar (width <= 9rem) {
-    .peer-inbox-button { display: none; }
-}
-/* SettingsPopover MIRRORS this threshold to reveal the count on the Settings
-   button, the only footer action left at that width. Move one, move both. */
 </style>

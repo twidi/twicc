@@ -949,7 +949,7 @@ wa-dialog [slot="footer"] {
    there). Consumers, no fallback: the composer (MessageInput toolbar + CollapsedBar) reads -x; the
    left gutter reads -y; the terminal extra-keys bar derives from -left-x. Defined here so it also
    covers components mounted outside the dockable layout (e.g. the project view's terminal). */
-body.sidebar-closed {
+body.sidebar-toggle-floating {
     /* Left-edge-only clearance, by left dock context: nothing → full, a thin left gutter → reduced,
        a full left column → none. The base both -x and the extra-keys bar derive from. */
     --sidebar-toggle-clearance-left-x: 2.5rem;

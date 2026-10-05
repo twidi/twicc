@@ -363,3 +363,10 @@ test('AppTooltip: an 11px distance to the target, overridable by the caller', ()
     assert.ok(at >= 0, ':distance bound to the constant')
     assert.ok(tooltip.indexOf('v-bind="$attrs"') > at, 'declared before v-bind="$attrs"')
 })
+
+
+test('ProjectView hides all tooltips on effective sidebar or rail state changes', () => {
+    const script = scriptOf(read('../views/ProjectView.vue'))
+    assert.match(script, /import AppTooltip, \{ hideAllTooltips \} from/)
+    assert.match(script, /watch\(\[sidebarOpen, railCollapsed\], \(\) => \{\s*hideAllTooltips\(\)\s*}\)/)
+})

@@ -2379,15 +2379,15 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
     align-items: center;
     justify-content: space-between;
     gap: var(--wa-space-s);
-    @media (width < 640px) {
-        padding-left: 2.75rem;
-    }
 }
 
 /* When the sidebar is closed its reopen toggle overlaps the toolbar's bottom-left; clear it. The
-   amount is --sidebar-toggle-clearance-x, defined on body.sidebar-closed (App.vue) and refined per
+   amount is --sidebar-toggle-clearance-x, defined on body.sidebar-toggle-floating (App.vue) and refined per
    dock context on .session-layout — so it's always set whenever this rule applies. */
-body.sidebar-closed .message-input-toolbar {
+body.sidebar-toggle-floating .message-input-toolbar {
+    @media (width < 640px) {
+        padding-left: 2.75rem;
+    }
     @media (width >= 640px) {
         padding-left: var(--sidebar-toggle-clearance-x);
     }

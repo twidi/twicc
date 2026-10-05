@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch, onMounted, onUnmounted, onBeforeUnmount, provide, nextTick } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted, onBeforeUnmount, provide, nextTick, shallowRef } from 'vue'
 import { useElementHover, useMediaQuery } from '@vueuse/core'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
@@ -25,14 +25,12 @@ import SessionList from '../components/session/list/SessionList.vue'
 import SessionsSidebarControls from '../components/session/SessionsSidebarControls.vue'
 import ArtifactBookmarksSidebarControls from '../components/artifacts/ArtifactBookmarksSidebarControls.vue'
 import ArtifactBookmarkList from '../components/artifacts/ArtifactBookmarkList.vue'
-import SidebarViewSwitch from '../components/sidebar/SidebarViewSwitch.vue'
+import SidebarRail from '../components/sidebar/SidebarRail.vue'
+import { OPEN_SIDEBAR_LABEL } from '../utils/sidebarRail'
 import { lastSessionsLocation, lastArtifactsLocation, memoryScope, resetSidebarViewMemory } from '../utils/sidebarViewMemory'
 import ArtifactsBrowserView from './ArtifactsBrowserView.vue'
 import SessionSelectionBar from '../components/session/list/SessionSelectionBar.vue'
 import FetchErrorPanel from '../components/ui/FetchErrorPanel.vue'
-import SettingsPopover from '../components/app/SettingsPopover.vue'
-import CommandPaletteButton from '../components/app/CommandPaletteButton.vue'
-import PeerInboxButton from '../components/peer/PeerInboxButton.vue'
 import PeerInboxBadge from '../components/peer/PeerInboxBadge.vue'
 import ProjectBadge from '../components/project/ProjectBadge.vue'
 import ProjectMark from '../components/project/ProjectMark.vue'
@@ -54,7 +52,7 @@ import { getUsageRingColor, formatBurnChip, formatExtraUsageAmount, formatResetT
 import { buildProjectTree, flattenProjectTree } from '../utils/projectTree'
 import { sessionRouteLocation } from '../utils/sessionRoute'
 import { artifactBookmarkRouteLocation } from '../utils/artifactBookmark'
-import AppTooltip from '../components/ui/AppTooltip.vue'
+import AppTooltip, { hideAllTooltips } from '../components/ui/AppTooltip.vue'
 import QuotaTooltipContent from '../components/app/QuotaTooltipContent.vue'
 import UsageGraphDialog from '../components/app/UsageGraphDialog.vue'
 import AggregatedProcessIndicator from '../components/ui/AggregatedProcessIndicator.vue'
@@ -72,7 +70,7 @@ const sharesStore = useSharesStore()
 const peersStore = usePeersStore()
 const peerSystemConfigured = usePeerSystemConfigured()
 const helpStore = useHelpStore()
-const { registerCommands, unregisterCommands } = useCommandRegistry()
+const { registerCommands, unregisterCommands, openPalette } = useCommandRegistry()
 
 // Persistent-frame host. hostMounted must be true BEFORE any child mounts
 // (panes register their frames at setup, and a cold-load deep link mounts them
@@ -1378,7 +1376,7 @@ const MOBILE_BREAKPOINT = 640
 // the sidebar is a ~300px drawer, so a right-placed tooltip would overflow the
 // viewport and get clipped — there we right-align it above the row instead so it
 // stays fully visible.
-const isNarrowViewport = useMediaQuery(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
+const isNarrowViewport = useMediaQuery(`(width < ${MOBILE_BREAKPOINT}px)`)
 const usageTooltipPlacement = computed(() => (isNarrowViewport.value ? 'top-end' : 'right'))
 
 // Tooltip trigger: a pointer that hovers keeps hover/focus; a touch pointer uses
@@ -1423,7 +1421,7 @@ function saveSidebarState(state) {
 const sidebarState = loadSidebarState()
 
 // Check if we're on mobile (for initial sidebar state)
-const isMobile = () => window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`).matches
+const isMobile = () => window.matchMedia(`(width < ${MOBILE_BREAKPOINT}px)`).matches
 
 // Initial checkbox state:
 // - On mobile: checked = open, so check when no session
@@ -1437,10 +1435,23 @@ const initialSidebarChecked = computed(() => {
     return !sidebarState.open
 })
 
-// Collapsed sidebar, as a reactive fact (the `body.sidebar-closed` class is
-// the CSS-side twin). The footer folds its buttons away at that width, so the
-// peer inbox badge moves onto the toggle — the only control left on screen.
-const sidebarClosed = ref(false)
+// Derive the effective open state from the checkbox and viewport.
+const checked = ref(initialSidebarChecked.value)
+const sidebarOpen = computed(() => isNarrowViewport.value ? checked.value : !checked.value)
+const railCollapsed = computed(() => !sidebarOpen.value && !settingsStore.isSidebarRailVisibleWhenClosed)
+const floatingToggleEl = shallowRef(null)
+const hasSidebarFooter = computed(() => !!((quotaHasUsage.value && quotaComputed.value) || unauthenticatedProviders.value.length))
+
+watch(initialSidebarChecked, syncSidebarState, { flush: 'post' })
+watch(railCollapsed, (collapsed) => {
+    document.body.classList.toggle('sidebar-toggle-floating', collapsed)
+}, { immediate: true })
+watch([sidebarOpen, railCollapsed], () => {
+    hideAllTooltips()
+})
+onBeforeUnmount(() => {
+    document.body.classList.remove('sidebar-toggle-floating')
+})
 
 // Track all route changes for MRU (Most Recently Used) navigation.
 // Stores the full path (including sub-routes like /files, /git, /terminal)
@@ -1527,7 +1538,7 @@ watch(sessionId, (newSessionId) => {
     if (checkbox) {
         checkbox.checked = false
     }
-    updateSidebarClosedClass(true)
+    syncSidebarState()
 })
 
 // Reset sidebar to default width on divider double-click.
@@ -1546,8 +1557,8 @@ function resetSidebarToDefault() {
         })
         sidebarState.width = DEFAULT_SIDEBAR_WIDTH
         lastKnownPosition = DEFAULT_SIDEBAR_WIDTH
-        saveSidebarState({ open: true, width: DEFAULT_SIDEBAR_WIDTH })
-        updateSidebarClosedClass(false)
+        syncSidebarState()
+        saveSidebarState({ open: sidebarOpen.value, width: DEFAULT_SIDEBAR_WIDTH })
     }
 }
 
@@ -1582,12 +1593,7 @@ onMounted(() => {
         // double-clicks on the divider. Native dblclick is blocked by the drag handler.
         splitPanel.addEventListener('pointerdown', handleSplitPanelPointerDown, true)
     }
-    // Set initial sidebar-closed class on body
-    if (isMobile()) {
-        updateSidebarClosedClass(!!sessionId.value)
-    } else {
-        updateSidebarClosedClass(!sidebarState.open)
-    }
+    syncSidebarState()
 
     // Register contextual commands in the command palette
     registerCommands([
@@ -1710,7 +1716,7 @@ function handleSplitReposition(event) {
         lastKnownPosition = 0
         checkbox.checked = true
         saveSidebarState({ open: false, width: sidebarState.width })
-        updateSidebarClosedClass(true)
+        syncSidebarState()
         // Restore width, ignoring the resulting reposition event
         ignoringReposition = true
         requestAnimationFrame(() => {
@@ -1724,7 +1730,7 @@ function handleSplitReposition(event) {
         lastKnownPosition = newWidth
         sidebarState.width = newWidth
         saveSidebarState({ open: true, width: newWidth })
-        updateSidebarClosedClass(false)
+        syncSidebarState()
     }
 }
 
@@ -1745,36 +1751,68 @@ function handleToggleSidebarShortcut(event) {
     if (toggleSidebar() && event?.detail) event.detail.handled = true
 }
 
-// Handle sidebar toggle (called when checkbox changes)
-function handleSidebarToggle(event) {
-    const checked = event.target.checked
-    if (isMobile()) {
-        // Mobile: checked = open
-        updateSidebarClosedClass(!checked)
-    } else {
-        // Desktop: checked = closed
-        const isOpen = !checked
-        lastKnownPosition = isOpen ? sidebarState.width : 0
-        saveSidebarState({ open: isOpen, width: sidebarState.width })
-        updateSidebarClosedClass(checked)
+// Handle checkbox changes and preserve desktop width persistence.
+function handleSidebarToggle() {
+    syncSidebarState()
+    if (!isMobile()) {
+        lastKnownPosition = sidebarOpen.value ? sidebarState.width : 0
+        saveSidebarState({ open: sidebarOpen.value, width: sidebarState.width })
     }
 }
 
-// Toggle body class to indicate sidebar is closed.
-// Used by child components (e.g. MessageInput) to adjust layout
-// when the sidebar toggle button overlaps their content.
-// The mirrored ref is the same fact for this template: every collapse path
-// (desktop toggle, mobile route change, drag to zero) funnels through here.
-function updateSidebarClosedClass(closed) {
-    document.body.classList.toggle('sidebar-closed', closed)
-    sidebarClosed.value = closed
+function syncSidebarState() {
+    const checkbox = document.getElementById('sidebar-toggle-state')
+    if (checkbox) checked.value = checkbox.checked
+}
+
+async function handleRailToggle() {
+    toggleSidebar()
+    await nextTick()
+    if (railCollapsed.value) floatingToggleEl.value?.focus()
+}
+
+async function handleFloatingToggle() {
+    toggleSidebar()
+    await nextTick()
+    document.getElementById('sidebar-rail-toggle')?.focus()
+}
+
+function handleRailSelectMode(mode) {
+    if (mode === (isArtifactsMode.value ? 'artifacts' : 'sessions')) return
+    toggleSidebarView()
+}
+
+function openPeerInbox() {
+    window.dispatchEvent(new CustomEvent('twicc:open-peer-inbox'))
 }
 </script>
 
 <template>
-    <div class="project-view-wrapper">
+    <div class="project-view-wrapper"
+         :class="{ 'project-view-wrapper--peer': peerSystemConfigured }"
+         :data-rail-when-closed="settingsStore.isSidebarRailVisibleWhenClosed ? 'visible' : 'hidden'">
         <!-- Hidden checkbox for pure CSS sidebar toggle -->
         <input type="checkbox" id="sidebar-toggle-state" class="sidebar-toggle-checkbox" :checked="initialSidebarChecked" @change="handleSidebarToggle"/>
+
+        <SidebarRail
+            :mode="isArtifactsMode ? 'artifacts' : 'sessions'"
+            :sidebar-open="sidebarOpen"
+            :peer-configured="peerSystemConfigured"
+            :inbox-count="peersStore.inboxCount"
+            :settings-anchor="railCollapsed ? floatingToggleEl : null"
+            @home="handleBackHome"
+            @select-mode="handleRailSelectMode"
+            @search="openAdvancedSearch"
+            @palette="openPalette"
+            @inbox="openPeerInbox"
+            @toggle-sidebar="handleRailToggle"
+        />
+        <button id="sidebar-toggle-button" ref="floatingToggleEl" type="button"
+                class="sidebar-toggle rail-button" :aria-label="OPEN_SIDEBAR_LABEL" @click="handleFloatingToggle">
+            <wa-icon name="angles-right"></wa-icon>
+            <PeerInboxBadge v-if="peersStore.inboxCount > 0" :count="peersStore.inboxCount" />
+        </button>
+        <AppTooltip for="sidebar-toggle-button" placement="top">{{ OPEN_SIDEBAR_LABEL }}</AppTooltip>
 
         <wa-split-panel
             ref="projectSplitRef"
@@ -1790,13 +1828,9 @@ function updateSidebarClosedClass(closed) {
             <span slot="divider" class="panel-grip" aria-hidden="true"></span>
 
             <!-- Sidebar -->
-        <aside slot="start" class="sidebar">
+        <aside slot="start" class="sidebar" :class="{ 'sidebar--no-footer': !hasSidebarFooter }">
             <div class="sidebar-header">
                 <div class="sidebar-header-row">
-                    <wa-button id="back-button" class="back-button" variant="brand" appearance="outlined" size="small" @click="handleBackHome">
-                        <wa-icon name="arrow-left"></wa-icon>
-                    </wa-button>
-                    <AppTooltip for="back-button">Back to projects list</AppTooltip>
                     <wa-dropdown
                         ref="selectorEl"
                         id="project-selector"
@@ -2039,7 +2073,6 @@ function updateSidebarClosedClass(closed) {
                             </template>
                         </template>
                     </wa-dropdown>
-                    <SidebarViewSwitch :is-artifacts-mode="isArtifactsMode" @toggle="toggleSidebarView" />
                 </div>
 
                 <SessionsSidebarControls
@@ -2054,7 +2087,6 @@ function updateSidebarClosedClass(closed) {
                     :is-touch-device="settingsStore.isTouchDevice"
                     @option-select="handleSessionOptionsSelect"
                     @search-keydown="handleSearchKeydown"
-                    @open-advanced-search="openAdvancedSearch"
                 />
                 <ArtifactBookmarksSidebarControls
                     v-show="isArtifactsMode"
@@ -2386,9 +2418,9 @@ function updateSidebarClosedClass(closed) {
                 <AppTooltip v-if="isAllProjectsMode" for="new-session-all-projects-button">Create a new session</AppTooltip>
             </div>
 
-            <wa-divider></wa-divider>
+            <wa-divider v-if="hasSidebarFooter"></wa-divider>
 
-            <div class="sidebar-footer">
+            <div v-if="hasSidebarFooter" class="sidebar-footer">
                 <div v-if="quotaHasUsage && quotaComputed" ref="usageBlockRef" class="sidebar-footer-usage glass-surface">
                     <div class="usage-header">
                         <div
@@ -2582,38 +2614,6 @@ function updateSidebarClosedClass(closed) {
                         </wa-callout>
                     </div>
                 </template>
-
-                <wa-divider></wa-divider>
-
-                <div
-                    class="sidebar-footer-buttons"
-                    :class="{ 'sidebar-footer-buttons--with-inbox': peerSystemConfigured }"
-                >
-                    <!-- Sidebar Toggle button (label for hidden checkbox, wa-button inside for styling) -->
-                    <label for="sidebar-toggle-state" class="sidebar-toggle" id="sidebar-toggle-label">
-                        <wa-button id="sidebar-toggle-button" variant="brand" appearance="outlined" size="small">
-                            <wa-icon class="icon-collapse" name="angles-left"></wa-icon>
-                            <wa-icon class="icon-expand" name="angles-right"></wa-icon>
-                        </wa-button>
-                        <!-- Collapsed only: PeerInboxButton is folded away at
-                             this width, so the count would disappear with it.
-                             Indicative — the click still opens the sidebar. -->
-                        <PeerInboxBadge v-if="sidebarClosed" :count="peersStore.inboxCount" />
-                    </label>
-                    <AppTooltip for="sidebar-toggle-label">Toggle sidebar (Alt+Shift+B)</AppTooltip>
-
-                    <!-- Placeholder to occupy the same space a the sidebar toggle button that is absolute for goot reasons -->
-                    <wa-button variant="brand" appearance="outlined" size="small" style="visibility: hidden; pointer-events: none"><wa-icon name="angles-left"></wa-icon></wa-button>
-
-                    <!-- Opens the command palette (mouse/touch access to the Cmd/Ctrl+K
-                         shortcut); folds away on its own when the sidebar is too narrow. -->
-                    <CommandPaletteButton />
-
-                    <!-- Peer inbox (renders nothing while the peer system is unconfigured). -->
-                    <PeerInboxButton />
-
-                    <SettingsPopover />
-                </div>
             </div>
 
         </aside>
@@ -2717,6 +2717,8 @@ function updateSidebarClosedClass(closed) {
 
 <style scoped>
 .project-view-wrapper {
+    position: relative;
+    display: flex;
     height: 100dvh;
 }
 
@@ -2728,6 +2730,8 @@ function updateSidebarClosedClass(closed) {
 }
 
 .project-view {
+    flex: 1;
+    min-width: 0;
     /* The divider column IS the gap between the sidebar and the content card.
        Beats App.vue's global `wa-split-panel { --divider-width: … !important }`. */
     --divider-width: var(--panel-gap) !important;
@@ -2807,7 +2811,7 @@ function updateSidebarClosedClass(closed) {
     flex: 1;
     overflow: hidden;
     display: inline-flex;
-    max-width: min(50rem, calc(100vw - 100px));
+    max-width: 50rem;
     &::part(menu) {
        max-width: min(50rem, calc(100vw - 2rem)) !important
     }
@@ -3210,6 +3214,10 @@ wa-dropdown-item:hover .row-menu-trigger,
     }
 }
 
+.sidebar--no-footer {
+    padding-bottom: var(--panel-gap);
+}
+
 .sidebar-footer {
     flex-shrink: 0;
 }
@@ -3218,14 +3226,13 @@ wa-dropdown-item:hover .row-menu-trigger,
     display: flex;
     flex-direction: column;
     /* A floating glass card (styles/glass.css), inset from the sidebar edges like the panels. */
-    margin: var(--wa-space-xs) var(--sidebar-footer-inset, var(--wa-space-s));
+    margin: var(--wa-space-xs) var(--wa-space-s);
     padding: var(--wa-space-xs) var(--wa-space-s);
     border-radius: var(--panel-radius);
 }
 
 /* The card floats on its own: the separators that framed the old flat block go. */
-.sidebar > wa-divider:has(+ .sidebar-footer > .sidebar-footer-usage),
-.sidebar-footer-usage + wa-divider {
+.sidebar > wa-divider:has(+ .sidebar-footer > .sidebar-footer-usage) {
     display: none;
 }
 
@@ -3285,12 +3292,7 @@ wa-dropdown-item:hover .row-menu-trigger,
 }
 
 .sidebar-footer-provider-auth {
-    padding: var(--wa-space-xs) var(--sidebar-footer-inset, var(--wa-space-s));
-}
-
-/* The callouts stand on their own: no separator after the last one either. */
-.sidebar-footer-provider-auth + wa-divider {
-    display: none;
+    padding: var(--wa-space-xs) var(--wa-space-s);
 }
 
 .sidebar-footer-provider-auth-callout {
@@ -3660,128 +3662,69 @@ html.wa-dark .usage-burn-chip-danger {
     width: 100%;
 }
 
-.sidebar-footer-buttons {
-    flex-shrink: 0;
-    display: flex;
-    gap: var(--wa-space-s);
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--sidebar-footer-inset, var(--wa-space-s));
-    position: relative;
-    background: var(--main-header-footer-bg-color);
-}
-
-/* Inbox adds a fourth footer action, present as soon as the peer system is
-   configured. These reductions only apply while that conditional action
-   exists; the historical three-action footer is unchanged. */
-@container sidebar (width <= 19rem) {
-    .sidebar-footer-buttons--with-inbox {
-        gap: var(--wa-space-xs);
-    }
-    /* One inset for the whole footer: the buttons row pads with it and the quota card is
-       inset by it, so their edges line up whatever the width or the number of buttons. */
-    .sidebar-footer:has(.sidebar-footer-buttons--with-inbox) {
-        --sidebar-footer-inset: var(--wa-space-xs);
-    }
-    .sidebar-footer-buttons--with-inbox .sidebar-toggle {
-        --sidebar-toggle-offset: var(--wa-space-xs);
-    }
-}
-
-@container sidebar (width <= 17rem) {
-    .sidebar-footer-buttons--with-inbox :deep(#settings-trigger) {
-        &::part(base) {
-            padding: var(--wa-space-s);
-        }
-        & > span {
-            display: none;
-        }
-    }
-}
-
-@container sidebar (width <= 13rem) {
-    .sidebar-footer-buttons--with-inbox :deep(.command-palette-button) {
-        display: none;
-    }
-}
-
-/* Sidebar toggle label */
+/* The floating reopen control keeps its rect while its tooltip hides. */
 .sidebar-toggle {
     position: absolute;
-    /* Offset from the footer's corner; --sidebar-toggle-shift adds the panel gap while the
-       desktop sidebar is collapsed, so the floating toggle keeps its distance from the card. */
+    visibility: hidden;
+    z-index: 5;
+    --rail-button-bg: var(--wa-color-surface-default);
+    border: var(--panel-border);
+    border-radius: var(--panel-radius);
+    box-shadow: var(--panel-shadow);
     --sidebar-toggle-offset: var(--wa-space-s);
-    bottom: calc(var(--sidebar-toggle-offset) + var(--sidebar-toggle-shift, 0px));
-    left: calc(var(--sidebar-toggle-offset) + var(--sidebar-toggle-shift, 0px));
-    z-index: 10;
-    cursor: pointer;
-
-    /* wa-button inside label: disable pointer events so clicks go to label */
-    wa-button {
-        pointer-events: none;
-        wa-icon {
-            position: relative;
-            top: -1px;
-        }
-    }
-
-    /* Default state: sidebar is expanded, show collapse icon */
-    .icon-collapse {
-        display: inline;
-    }
-    .icon-expand {
-        display: none;
-    }
+    left: var(--sidebar-toggle-offset);
+    bottom: var(--sidebar-toggle-offset);
+}
+.project-view-wrapper--peer .sidebar-toggle {
+    --sidebar-toggle-offset: var(--wa-space-xs);
 }
 
-/* Drawer backdrop: only exists in the narrow, overlay-sidebar layout */
 .sidebar-backdrop {
     display: none;
 }
 
-/* Container query: when sidebar is collapsed (≤ 50px), show expand icon */
 @container sidebar (width <= 50px) {
-    /* Collapsed: the sidebar is only a 0-wide grid column, nothing hides its content, and the
-       header rows (wider than that) would spill over the content. They serve no purpose here;
-       the footer keeps its own rules (the reopen toggle must stay visible). */
     .sidebar-header {
         visibility: hidden;
     }
-
-    .sidebar-toggle .icon-collapse {
-        display: none;
-    }
-
-    .sidebar-toggle .icon-expand {
-        display: inline;
-    }
 }
 
-/* Desktop: checkbox checked = sidebar collapsed */
-.project-view-wrapper:has(.sidebar-toggle-checkbox:checked) .project-view {
-    grid-template-columns: 0 var(--divider-width) auto !important;
-    &::part(divider) {
-        opacity: 0;
-        pointer-events: none;
-    }
-}
-
-/* Desktop collapsed sidebar: the toggle floats over the content card, which starts one gap
-   in — shift it by that gap. Keyed on the checkbox (the fact that collapses the grid), not on
-   body.sidebar-closed, which goes stale across the 640px breakpoint. */
+/* Desktop: checked means the sidebar is closed. */
 @media (width >= 640px) {
-    .project-view-wrapper:has(.sidebar-toggle-checkbox:checked) .sidebar-toggle {
-        --sidebar-toggle-shift: var(--panel-gap);
+    .sidebar-toggle {
+        left: calc(var(--sidebar-toggle-offset) + var(--panel-gap));
+        bottom: calc(var(--sidebar-toggle-offset) + var(--panel-gap));
     }
-    /* Floating over the content, the (outlined, so transparent) toggle needs an opaque fill. */
-    .project-view-wrapper:has(.sidebar-toggle-checkbox:checked) #sidebar-toggle-button::part(base) {
-        background: var(--wa-color-surface-default);
+    .project-view-wrapper:has(.sidebar-toggle-checkbox:checked) .project-view {
+        grid-template-columns: 0 var(--divider-width) auto !important;
+        &::part(divider) {
+            opacity: 0;
+            pointer-events: none;
+        }
+    }
+    .project-view-wrapper[data-rail-when-closed="hidden"]:has(.sidebar-toggle-checkbox:checked) {
+        --rail-width: 0px;
+    }
+    .project-view-wrapper[data-rail-when-closed="hidden"]:has(.sidebar-toggle-checkbox:checked) .sidebar-rail {
+        overflow: hidden;
+        visibility: hidden;
+    }
+    .project-view-wrapper[data-rail-when-closed="hidden"]:has(.sidebar-toggle-checkbox:checked) .sidebar-toggle {
+        visibility: visible;
     }
 }
-/* Mobile, drawer closed: the toggle sticks out of the drawer, over the content. */
+
+/* Mobile: unchecked means the sidebar is closed. */
 @media (width < 640px) {
-    .project-view-wrapper:has(.sidebar-toggle-checkbox:not(:checked)) #sidebar-toggle-button::part(base) {
-        background: var(--wa-color-surface-default);
+    .project-view-wrapper[data-rail-when-closed="hidden"]:has(.sidebar-toggle-checkbox:not(:checked)) {
+        --rail-width: 0px;
+    }
+    .project-view-wrapper[data-rail-when-closed="hidden"]:has(.sidebar-toggle-checkbox:not(:checked)) .sidebar-rail {
+        overflow: hidden;
+        visibility: hidden;
+    }
+    .project-view-wrapper[data-rail-when-closed="hidden"]:has(.sidebar-toggle-checkbox:not(:checked)) .sidebar-toggle {
+        visibility: visible;
     }
 }
 
@@ -3809,17 +3752,17 @@ html.wa-dark .usage-burn-chip-danger {
 
     /* Sidebar becomes a fixed drawer */
     .sidebar {
-        --sidebar-width: min(300px, 80vw);
+        --sidebar-width: min(300px, calc(80vw - var(--rail-width)));
         /* The drawer overlays the content: the full canvas (auras included), still opaque
            (its last layer is the solid canvas color). */
         background: var(--canvas-background);
         position: absolute;
-        left: 0;
+        left: var(--rail-width);
         top: 0;
         width: var(--sidebar-width);
         height: 100dvh;
         z-index: 100;
-        transform: translateX(-100%);
+        transform: translateX(calc(-100% - var(--rail-width)));
         transition: transform var(--transition-duration) ease;
         box-shadow: var(--wa-shadow-xl);
         border-right: solid var(--wa-color-neutral-border-normal) 0.25rem;
@@ -3832,19 +3775,6 @@ html.wa-dark .usage-burn-chip-danger {
         background: color-mix(in oklab, white 14%, transparent);
     }
 
-    /* Toggle button sticks out from the sidebar when closed */
-    .sidebar-toggle {
-        /* Position at right edge of sidebar, offset to stick out */
-        transform: translateX(var(--sidebar-width));
-        transition: transform var(--transition-duration) ease;
-        .icon-collapse {
-            display: none;
-        }
-        .icon-expand {
-            display: inline;
-        }
-    }
-
     /* Backdrop covering the whole viewport, under the drawer. Fixed, so it
        never contributes to the document's scrollable overflow — the sidebar
        escapes every ancestor clip here (it is absolute, so the split panel's
@@ -3854,6 +3784,7 @@ html.wa-dark .usage-burn-chip-danger {
         display: block;
         position: fixed;
         inset: 0;
+        left: var(--rail-width);
         /* Above the main pane, below .sidebar (z-index: 100), which paints
            over it with its own opaque background. */
         z-index: 99;
@@ -3877,16 +3808,6 @@ html.wa-dark .usage-burn-chip-danger {
             transform: translateX(0);
         }
 
-         .sidebar-toggle {
-            transform: translateX(0);
-            .icon-collapse {
-                display: inline;
-            }
-            .icon-expand {
-                display: none;
-            }
-        }
-
         .sidebar-backdrop {
             pointer-events: all;
             --glass-veil-opacity: 1;
@@ -3904,9 +3825,6 @@ html.wa-dark .usage-burn-chip-danger {
    which lives inside it and sticks out over the content. */
 @media (width < 640px) {
     :root.reduce-motion .sidebar {
-        transition: none;
-    }
-    :root.reduce-motion .sidebar-toggle {
         transition: none;
     }
     :root.reduce-motion .project-view-wrapper:has(.sidebar-toggle-checkbox:checked) .sidebar {
