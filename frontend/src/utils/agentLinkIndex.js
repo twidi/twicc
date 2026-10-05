@@ -26,11 +26,12 @@ export function setAgentLink(state, owner, tool, entry, live = true) {
     if (live && prior?.agentId === entry.agentId) {
         entry = { ...entry, agentStoppedAt: prior.agentStoppedAt }
     }
-    // ``metrics`` (cost / turns / context) and ``displayName`` only ever arrive
+    // ``metrics`` (cost / turns / context), ``displayName`` and ``model`` only ever arrive
     // with a snapshot; a live event carries identity, so it must not erase them.
     if (prior?.agentId === entry.agentId) {
         if (entry.metrics === undefined) entry = { ...entry, metrics: prior.metrics }
         if (entry.displayName === undefined) entry = { ...entry, displayName: prior.displayName }
+        if (entry.model === undefined) entry = { ...entry, model: prior.model }
     }
     const idle = state.agentIdle[entry.agentId]
     if (idle) entry = { ...entry, agentStoppedAt: idle.stoppedAt }
@@ -184,6 +185,8 @@ export function applyAgentSnapshot(state, root, agents, token) {
             // What the launcher called this agent, resolved from the spawn call
             // (see utils/agentLabel.js). Shared payloads carry it too.
             displayName: agent.display_name ?? null,
+            // The agent's last used model ({raw, family, version}), as the session header shows it.
+            model: agent.model ?? null,
             // Owner payload only (never shared): the agent's own numbers, for a
             // tree node that has no Session row loaded.
             metrics: Object.hasOwn(agent, 'total_cost')

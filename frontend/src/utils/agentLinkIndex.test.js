@@ -295,3 +295,20 @@ test('agent tree re-anchors an unreachable owner chain on the root', () => {
     assert.deepEqual(tree.map(n => n.id).sort(), ['loopA', 'loopB', 'orphan'])
     assert.deepEqual(tree.flatMap(n => n.children), [])
 })
+
+test('applyAgentSnapshot carries the agent model and a live link event keeps it', () => {
+    const state = agentLinkState()
+    const model = { raw: 'claude-opus-4-5-20251101', family: 'opus', version: '4.5' }
+    snapshot(state, [{ ...api(), model }])
+    assert.deepEqual(state.agentLinkIndex.child.model, model)
+
+    // A live event carries identity only: it must not erase what the snapshot learned.
+    setAgentLink(state, 'launcher', 'spawn-child', { agentId: 'child', rootSessionId: 'root', startedAt: start })
+    assert.deepEqual(state.agentLinkIndex.child.model, model)
+})
+
+test('a snapshot entry without a model stores null', () => {
+    const state = agentLinkState()
+    snapshot(state, [api()])
+    assert.equal(state.agentLinkIndex.child.model, null)
+})
