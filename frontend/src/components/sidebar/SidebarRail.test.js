@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
 
 const read = () => readFileSync(new URL('./SidebarRail.vue', import.meta.url), 'utf8')
 
@@ -86,4 +87,19 @@ test('rail SFC compiles its script, template, and scoped style', async () => {
     for (const style of descriptor.styles) {
         assert.deepEqual(compileStyle({ source: style.content, filename: 'SidebarRail.vue', id, scoped: style.scoped }).errors, [])
     }
+})
+
+test('rail accepts all navigation modes and defaults an omitted sidebar state to closed', async () => {
+    const { parse, compileScript } = await import('@vue/compiler-sfc')
+    const { descriptor } = parse(read(), { filename: 'SidebarRail.vue' })
+    const script = compileScript(descriptor, { id: 'data-v-rail' }).content
+        .replace(/^import .*$/gm, '')
+        .replace('export default', 'const component =')
+    const props = runInNewContext(`${script}; component.props`)
+    for (const mode of ['home', 'sessions', 'artifacts']) {
+        assert.equal(props.mode.validator(mode), true, mode)
+    }
+    assert.equal(props.mode.validator('unknown'), false)
+    assert.equal(props.sidebarOpen.required, undefined)
+    assert.equal(props.sidebarOpen.default, false)
 })

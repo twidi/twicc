@@ -28,15 +28,17 @@ test('resolves the shipped items with the specified icons, labels and groups', (
     assert.deepEqual(resolveRailItems(state, RAIL_ITEM_DEFINITIONS), items)
 })
 
-test('sets boolean active states only on the two mode items', () => {
-    for (const [mode, sessionsActive, artifactsActive] of [
-        ['sessions', true, false],
-        ['artifacts', false, true],
+test('sets boolean active states only on the three mode items', () => {
+    for (const [mode, homeActive, sessionsActive, artifactsActive] of [
+        ['home', true, false, false],
+        ['sessions', false, true, false],
+        ['artifacts', false, false, true],
     ]) {
         const items = resolveRailItems({ ...state, mode })
+        assert.equal(items.find(item => item.id === 'home').active, homeActive)
         assert.equal(items.find(item => item.id === 'sessions').active, sessionsActive)
         assert.equal(items.find(item => item.id === 'artifacts').active, artifactsActive)
-        assert.ok(items.filter(item => !['sessions', 'artifacts'].includes(item.id)).every(item => item.active === undefined))
+        assert.ok(items.filter(item => !['home', 'sessions', 'artifacts'].includes(item.id)).every(item => item.active === undefined))
     }
 })
 
@@ -102,9 +104,25 @@ test('orders top items before bottom items and keeps toggle last', () => {
 })
 
 test('session search is visible only in Sessions, with either sidebar state', () => {
-    for (const mode of ['sessions', 'artifacts']) for (const sidebarOpen of [false, true]) {
+    for (const mode of ['home', 'sessions', 'artifacts']) for (const sidebarOpen of [false, true]) {
         const items = resolveRailItems({ ...state, mode, sidebarOpen })
         assert.equal(items.some(item => item.id === 'search'), mode === 'sessions')
         assert.equal(items.some(item => item.id === 'palette'), true)
+    }
+})
+
+test('Home preserves navigation and global actions without sidebar controls', () => {
+    for (const peerConfigured of [false, true]) {
+        const items = resolveRailItems({ mode: 'home', peerConfigured, inboxCount: 3, isMac: false })
+        assert.deepEqual(items.map(item => item.id), peerConfigured
+            ? ['home', 'sessions', 'artifacts', 'palette', 'inbox', 'settings']
+            : ['home', 'sessions', 'artifacts', 'palette', 'settings'])
+        assert.equal(items.find(item => item.id === 'home').label, 'Home')
+        if (peerConfigured) assert.equal(items.find(item => item.id === 'inbox').badge, 3)
+    }
+    for (const sidebarOpen of [false, true]) {
+        const items = resolveRailItems({ ...state, mode: 'home', sidebarOpen })
+        assert.equal(items.some(item => item.id === 'toggle'), false)
+        assert.equal(items.some(item => item.id === 'search'), false)
     }
 })

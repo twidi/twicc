@@ -4,7 +4,7 @@ export const OPEN_SIDEBAR_LABEL = 'Open sidebar (Alt+Shift+B)'
 export const CLOSE_SIDEBAR_LABEL = 'Close sidebar (Alt+Shift+B)'
 
 export const RAIL_ITEM_DEFINITIONS = [
-    { id: 'home', icon: 'house', label: 'Back to projects list', group: 'top' },
+    { id: 'home', icon: 'house', label: state => state.mode === 'home' ? 'Home' : 'Back to projects list', group: 'top' },
     { id: 'sessions', icon: 'comments', label: 'Sessions', group: 'top' },
     { id: 'artifacts', icon: ARTIFACT_ICON, label: 'Artifacts', group: 'top' },
     {
@@ -31,6 +31,7 @@ export const RAIL_ITEM_DEFINITIONS = [
     { id: 'settings', icon: 'gear', label: 'Settings', group: 'bottom' },
     {
         id: 'toggle',
+        requires: state => state.mode !== 'home',
         icon: 'angles-left',
         label: state => state.sidebarOpen ? CLOSE_SIDEBAR_LABEL : OPEN_SIDEBAR_LABEL,
         group: 'bottom',
@@ -55,7 +56,7 @@ export function resolveRailItems(state, definitions = RAIL_ITEM_DEFINITIONS) {
                 label: typeof label === 'function' ? label(state) : label,
                 group,
                 visibleWhen,
-                active: id === 'sessions' || id === 'artifacts' ? state.mode === id : undefined,
+                active: ['home', 'sessions', 'artifacts'].includes(id) ? state.mode === id : undefined,
                 disabled,
                 ...(badge ? { badge: badge(state) } : {}),
             }

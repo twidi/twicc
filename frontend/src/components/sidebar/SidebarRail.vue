@@ -7,8 +7,8 @@ import SettingsPopover from '../app/SettingsPopover.vue'
 import PeerInboxBadge from '../peer/PeerInboxBadge.vue'
 
 const props = defineProps({
-    mode: { type: String, required: true, validator: value => ['sessions', 'artifacts'].includes(value) },
-    sidebarOpen: { type: Boolean, required: true },
+    mode: { type: String, required: true, validator: value => ['home', 'sessions', 'artifacts'].includes(value) },
+    sidebarOpen: { type: Boolean, default: false },
     peerConfigured: { type: Boolean, required: true },
     inboxCount: { type: Number, required: true },
     settingsAnchor: { type: Object, default: null },
