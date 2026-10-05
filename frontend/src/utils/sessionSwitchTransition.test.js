@@ -137,14 +137,12 @@ for (const name of [
     })
 }
 
-test('same-mode artifact selection, login, first load, and no-op navigation run no transition', () => {
+test('empty artifact selections, login, first load, and no-op navigation run no transition', () => {
     const router = fakeRouter()
     let starts = 0
     installSessionSwitchTransition(router, { run: () => { starts++ } })
     const cases = [
         [route(null, 'project-artifacts'), route(null, 'projects-artifacts')],
-        [{ ...route(null, 'project-artifacts'), params: { projectId: 'p', bookmarkId: 'b' } },
-            { ...route(null, 'project-artifacts'), params: { projectId: 'p', bookmarkId: 'a' } }],
         [route(null, 'home'), route(null, 'home')],
         [route(null, 'home'), route(null, 'login')],
         [route(null, 'login'), route(null, 'session')],
@@ -177,6 +175,7 @@ function memoryRouter() {
             { path: '/projects', name: 'projects-all', component },
             { path: '/projects/artifacts/:bookmarkId?', name: 'projects-artifacts', component },
             { path: '/projects/session/:sessionId', name: 'projects-session', component },
+            { path: '/project/:projectId/artifacts/:bookmarkId?', name: 'project-artifacts', component },
         ],
     })
 }
@@ -244,6 +243,128 @@ test('mode navigation without the browser API uses the real immediate fallback',
     const router = fakeRouter()
     installSessionSwitchTransition(router)
     const guarded = router.guards.resolve[0](route(null, 'home'), route(null, 'project-artifacts'))
+    assert.ok(guarded instanceof Promise)
+    await guarded
+    router.guards.after[0]()
+})
+
+const artifactRoute = (bookmarkId, name = 'project-artifacts', projectId = 'p') => ({
+    name, params: { projectId, bookmarkId },
+})
+
+// Missing bookmark comparison prevents these navigations from capturing the old artifact.
+for (const [fromName, toName] of [
+    ['project-artifacts', 'project-artifacts'],
+    ['projects-artifacts', 'projects-artifacts'],
+    ['project-artifacts', 'projects-artifacts'],
+    ['projects-artifacts', 'project-artifacts'],
+]) {
+    for (const [fromId, toId] of [['a', 'b'], ['b', 'a']]) {
+        test(`artifact ${fromName}/${fromId} → ${toName}/${toId} holds navigation for one root fade`, async () => {
+            const router = fakeRouter()
+            const calls = []
+            let release
+            installSessionSwitchTransition(router, { run: (update, options) => { calls.push(options); release = update } })
+            let passed = false
+            const guarded = router.guards.resolve[0](artifactRoute(toId, toName, 'q'), artifactRoute(fromId, fromName))
+            assert.ok(guarded instanceof Promise)
+            guarded.then(() => { passed = true })
+            await Promise.resolve()
+            assert.equal(passed, false)
+            assert.deepEqual(calls, [{ kind: 'session', settle: true, updateTimeoutMs: 800 }])
+            let landed = false
+            const update = release().then(() => { landed = true })
+            await guarded
+            assert.equal(landed, false)
+            router.guards.after[0]()
+            await update
+            assert.equal(landed, true)
+        })
+    }
+}
+
+test('same bookmark, query changes, empty endpoints, and in-session artifact panes gain no fade', () => {
+    const router = fakeRouter()
+    let starts = 0
+    installSessionSwitchTransition(router, { run: () => { starts++ } })
+    const cases = [
+        [artifactRoute('a'), artifactRoute('a')],
+        [artifactRoute('a', 'projects-artifacts'), artifactRoute('a')],
+        [{ ...artifactRoute('a'), query: { preview: '1' } }, artifactRoute('a')],
+        [artifactRoute('a'), artifactRoute('')],
+        [artifactRoute(''), artifactRoute('a')],
+        [artifactRoute('a'), artifactRoute(undefined)],
+        [artifactRoute(undefined), artifactRoute('a')],
+        [artifactRoute('a'), { name: undefined, params: {} }],
+        [{ ...route('s', 'session-artifacts'), params: { sessionId: 's', bookmarkId: 'b' } },
+            { ...route('s', 'session-artifacts'), params: { sessionId: 's', bookmarkId: 'a' } }],
+        [{ ...route('s', 'projects-session-artifacts'), params: { sessionId: 's', bookmarkId: 'b' } },
+            { ...route('s', 'projects-session-artifacts'), params: { sessionId: 's', bookmarkId: 'a' } }],
+    ]
+    for (const [to, from] of cases) assert.equal(router.guards.resolve[0](to, from), undefined)
+    assert.equal(starts, 0)
+})
+
+test('artifact push, redirected replace, and back/forward use the final bookmarks and one transition owner', async () => {
+    const router = memoryRouter()
+    router.beforeEach((to) => {
+        if (to.name === 'projects-all') return { name: 'project-artifacts', params: { projectId: 'p', bookmarkId: 'c' } }
+    })
+    const updates = []
+    installSessionSwitchTransition(router, { run: (update) => { updates.push(update()) } })
+    await router.push('/projects/artifacts/a')
+    assert.equal(updates.length, 0, 'initial selected artifact has no fade')
+    await router.push('/projects/artifacts/b')
+    await updates[0]
+    assert.equal(updates.length, 1)
+    await router.replace('/projects')
+    await updates[1]
+    assert.equal(router.currentRoute.value.params.bookmarkId, 'c')
+    assert.equal(updates.length, 2, 'redirected cross-scope selection fades once')
+    for (const [direction, bookmarkId, count] of [['back', 'a', 3], ['forward', 'c', 4]]) {
+        const landed = new Promise((resolve) => {
+            const remove = router.afterEach(() => { remove(); resolve() })
+        })
+        router[direction]()
+        await landed
+        await updates[count - 1]
+        assert.equal(router.currentRoute.value.params.bookmarkId, bookmarkId)
+        assert.equal(updates.length, count)
+    }
+    await router.push({ name: 'project-artifacts', params: { projectId: 'p', bookmarkId: 'c' }, query: { preview: '1' } })
+    assert.equal(updates.length, 4, 'query-only navigation has no fade')
+})
+
+test('aborted and throwing artifact navigation release updates and permit later selection', async () => {
+    const router = memoryRouter()
+    const updates = []
+    installSessionSwitchTransition(router, { run: (update) => { updates.push(update()) } })
+    let failure = null
+    router.beforeResolve(() => {
+        if (failure === 'abort') return false
+        if (failure === 'error') throw new Error('artifact navigation failed')
+    })
+    router.onError(() => {})
+    await router.push('/projects/artifacts/a')
+    failure = 'abort'
+    assert.equal(isNavigationFailure(await router.push('/projects/artifacts/b')), true)
+    await updates[0]
+    assert.equal(router.currentRoute.value.params.bookmarkId, 'a')
+    failure = 'error'
+    await assert.rejects(router.push('/projects/artifacts/b'), /artifact navigation failed/)
+    await updates[1]
+    assert.equal(router.currentRoute.value.params.bookmarkId, 'a')
+    failure = null
+    await router.push('/projects/artifacts/b')
+    await updates[2]
+    assert.equal(router.currentRoute.value.params.bookmarkId, 'b')
+    assert.equal(updates.length, 3)
+})
+
+test('artifact navigation without the browser API uses the real immediate fallback', async () => {
+    const router = fakeRouter()
+    installSessionSwitchTransition(router)
+    const guarded = router.guards.resolve[0](artifactRoute('b'), artifactRoute('a'))
     assert.ok(guarded instanceof Promise)
     await guarded
     router.guards.after[0]()

@@ -1,4 +1,4 @@
-// Session switches and changes between Home, Sessions, and Artifacts use the same root crossfade.
+// Session switches, artifact selection switches, and Home/Sessions/Artifacts mode changes use the same root crossfade.
 // beforeResolve sees the final route after redirects and holds navigation until the old state is captured.
 // The update releases navigation, then waits for afterEach or an error before capturing the new state.
 
@@ -34,7 +34,10 @@ export function installSessionSwitchTransition(router, { isDraft = () => false, 
         const toMode = routeMode(to)
         const fromMode = routeMode(from)
         if (!toMode || !fromMode) return
-        if (toMode === fromMode && !isSessionSwitch(to, from, isDraft)) return
+        const artifactSwitch = toMode === 'artifacts' && fromMode === 'artifacts'
+            && to.params?.bookmarkId && from.params?.bookmarkId
+            && to.params.bookmarkId !== from.params.bookmarkId
+        if (toMode === fromMode && !isSessionSwitch(to, from, isDraft) && !artifactSwitch) return
         settle()
         return new Promise((resolve) => {
             run(() => new Promise((done) => {
