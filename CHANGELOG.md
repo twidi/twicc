@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **Codex message delivery** — A rejected steer tries a normal send, then one final steer. Intermediate rejections stay out of the UI. Timeouts and transport failures are not retried, to prevent duplicate messages.
 - **Codex task tracking** — Tasks follow confirmed SDK plan updates, including dynamic code-mode calls. The latest SDK state survives backend restarts and metadata recomputes.
 - **Session scrolling** — Reading earlier messages no longer makes the view jump or return to the bottom.
 

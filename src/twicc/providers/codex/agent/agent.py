@@ -35,6 +35,7 @@ from openai_codex import (
     TextInput,
     TransportClosedError,
 )
+from openai_codex.errors import JsonRpcError
 from openai_codex.generated.v2_all import (
     CodexErrorInfoValue,
     CollaborationMode,
@@ -480,6 +481,12 @@ class CodexAgent(BaseAgent):
         # still ``None`` despite ``state == ASSISTANT_TURN``.
         self._current_turn_ready: asyncio.Event = asyncio.Event()
         self._turn_task: asyncio.Task[None] | None = None
+        # Drain the preceding stream before consuming a replacement. Hold its
+        # terminal state transition until a fallback's delivery is resolved.
+        self._turn_stream_done = asyncio.Event()
+        self._turn_stream_done.set()
+        self._send_delivery_done = asyncio.Event()
+        self._send_delivery_done.set()
         # Manual-compaction tracking. ``compact()`` flips the agent into a
         # synthetic ASSISTANT_TURN and sets this flag; when the ``compacted``
         # JSONL line lands, the watcher → manager → ``notify_compacted`` path
@@ -855,6 +862,8 @@ class CodexAgent(BaseAgent):
                     "Codex steer failed for session %s: %s",
                     self.session_id, e,
                 )
+                if isinstance(e, JsonRpcError) and e.code in {-32600, -32602}:
+                    return await self._send_after_rejected_steer(turn_input)
                 raise RuntimeError(f"Steer failed: {e}") from e
 
             self.last_activity = time.time()
@@ -865,6 +874,67 @@ class CodexAgent(BaseAgent):
         await self._notify_state_change()
 
         self._schedule_turn(text, images)
+        return True
+
+    async def _send_after_rejected_steer(self, turn_input: list[InputItem]) -> bool:
+        """Try a normal send, then one current-turn steer after explicit rejection.
+
+        Reuse the prepared input: context injection consumes pending state.
+        Timeouts, transport failures and internal errors do not prove rejection
+        and must never cause replay of input that may already be accepted.
+        """
+        self._send_delivery_done.clear()
+        try:
+            return await self._deliver_after_rejected_steer(turn_input)
+        finally:
+            self._send_delivery_done.set()
+
+    async def _deliver_after_rejected_steer(self, turn_input: list[InputItem]) -> bool:
+        """Resolve delivery while the preceding turn's terminal state is gated."""
+        try:
+            turn_handle = await self._open_turn(turn_input)
+        except TransportClosedError:
+            raise
+        except Exception as exc:
+            if not isinstance(exc, JsonRpcError) or exc.code not in {-32600, -32602}:
+                raise RuntimeError(f"Normal send failed after rejected steer: {exc}") from exc
+            self._logger.warning(
+                "Codex normal send rejected after steer for session %s: %s",
+                self.session_id, exc,
+            )
+            # The stream consumer may have published a different physical turn
+            # while turn/start was pending. Read it again instead of replaying
+            # the rejected handle's ID.
+            current_turn = self._current_turn
+            if current_turn is None:
+                raise RuntimeError(f"Cannot retry steer: no active turn after normal send failed: {exc}") from exc
+            try:
+                await current_turn.steer(turn_input)
+            except TransportClosedError:
+                raise
+            except Exception as final_exc:
+                raise RuntimeError(f"Steer failed after normal send failed: {final_exc}") from final_exc
+            self.last_activity = time.time()
+            return True
+
+        # Keep the preceding stream's queued item/completed events: they retire
+        # placeholders, register stream UUIDs and clear active tools. Its final
+        # state transition waits on _send_delivery_done, so it cannot announce
+        # USER_TURN or open an automatic continuation over this replacement.
+        previous_task = self._turn_task
+        if previous_task is not None and not previous_task.done():
+            await self._turn_stream_done.wait()
+        if self.state == AgentState.DEAD:
+            raise TransportClosedError("Agent stopped while the accepted replacement turn was waiting for stream cleanup")
+        self._set_state(AgentState.ASSISTANT_TURN)
+        self.last_activity = time.time()
+        self._current_turn = turn_handle
+        self._current_turn_ready.set()
+        self._turn_task = asyncio.create_task(
+            self._run_turn("", None, turn_handle=turn_handle),
+            name=f"codex-turn-{self.session_id}",
+        )
+        await self._notify_state_change()
         return True
 
     def _schedule_turn(self, text: str, images: list[dict] | None) -> None:
@@ -929,7 +999,46 @@ class CodexAgent(BaseAgent):
             items.append(TextInput(text))
         return items
 
-    async def _run_turn(self, text: str, images: list[dict] | None) -> None:
+    async def _open_turn(self, turn_input: list[InputItem]) -> AsyncTurnHandle:
+        """Open a turn with current settings; leave delivery errors to the caller."""
+        effort = self._sdk_effort(self.agent_settings.effort)
+        turn_mode = self.agent_settings.permission_mode
+        if self._untrusted:
+            # Security floor (trust design §13.4): live settings updates refresh
+            # the bundle between turns, so re-clamp at every turn — an untrusted
+            # project never escalates past the untrusted-allowed set.
+            from twicc.core.services.trust import clamp_permission_mode_for_untrusted
+
+            turn_mode = await sync_to_async(clamp_permission_mode_for_untrusted)(
+                Provider.CODEX, turn_mode,
+            )
+        # Grant the agent prompt-free writes to its own artifacts/scratch (and
+        # the orchestration root's shared scratch) via the workspace-write
+        # sandbox's writable_roots. The list is resolved + pre-created once in
+        # ``start()`` (cached on ``self._work_dirs``) and re-sent on every turn:
+        # each turn's sandbox_policy replaces the previous one, so omitting it
+        # would wipe the roots. No-op for read-only/strict (no writes) and yolo
+        # (writes everywhere) — those sandbox types don't carry the field.
+        sandbox_policy, approval_policy, approvals_reviewer = resolve_codex_turn_overrides(
+            turn_mode, writable_roots=self._work_dirs,
+        )
+        sdk_model = get_provider_helpers(Provider.CODEX).resolve_sdk_model(
+            self.agent_settings.selected_model,
+        )
+        service_tier = service_tier_from_fast_mode(self.agent_settings.fast_mode)
+        return await self._thread.turn_with_policy(
+            turn_input,
+            model=sdk_model,
+            effort=effort,
+            service_tier=service_tier,
+            approval_policy=approval_policy,
+            approvals_reviewer=approvals_reviewer,
+            sandbox_policy=sandbox_policy,
+        )
+
+    async def _run_turn(
+        self, text: str, images: list[dict] | None, *, turn_handle: AsyncTurnHandle | None = None,
+    ) -> None:
         """Open one turn, wait for it to complete, transition to USER_TURN.
 
         Errors raised by the SDK (transport closed, RPC errors, ...) are
@@ -966,50 +1075,19 @@ class CodexAgent(BaseAgent):
         # forwarded as ``TurnStartParams`` on top of the values bound at
         # ``thread_start``, so the current turn keeps its policy but the
         # next one picks up the new picker value.
-        effort = self._sdk_effort(self.agent_settings.effort)
-        turn_mode = self.agent_settings.permission_mode
-        if self._untrusted:
-            # Security floor (trust design §13.4): live settings updates refresh
-            # the bundle between turns, so re-clamp at every turn — an untrusted
-            # project never escalates past the untrusted-allowed set.
-            from twicc.core.services.trust import clamp_permission_mode_for_untrusted
-
-            turn_mode = await sync_to_async(clamp_permission_mode_for_untrusted)(
-                Provider.CODEX, turn_mode,
-            )
-        # Grant the agent prompt-free writes to its own artifacts/scratch (and
-        # the orchestration root's shared scratch) via the workspace-write
-        # sandbox's writable_roots. The list is resolved + pre-created once in
-        # ``start()`` (cached on ``self._work_dirs``) and re-sent on every turn:
-        # each turn's sandbox_policy replaces the previous one, so omitting it
-        # would wipe the roots. No-op for read-only/strict (no writes) and yolo
-        # (writes everywhere) — those sandbox types don't carry the field.
-        sandbox_policy, approval_policy, approvals_reviewer = resolve_codex_turn_overrides(
-            turn_mode, writable_roots=self._work_dirs,
-        )
-        sdk_model = get_provider_helpers(Provider.CODEX).resolve_sdk_model(
-            self.agent_settings.selected_model,
-        )
-        service_tier = service_tier_from_fast_mode(self.agent_settings.fast_mode)
-        turn_input = await self._build_turn_input(text, images)
-        try:
-            turn_handle = await self._thread.turn_with_policy(
-                turn_input,
-                model=sdk_model,
-                effort=effort,
-                service_tier=service_tier,
-                approval_policy=approval_policy,
-                approvals_reviewer=approvals_reviewer,
-                sandbox_policy=sandbox_policy,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            await self._handle_error(f"Failed to open turn: {e}", exc=e)
-            return
+        if turn_handle is None:
+            turn_input = await self._build_turn_input(text, images)
+            try:
+                turn_handle = await self._open_turn(turn_input)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                await self._handle_error(f"Failed to open turn: {e}", exc=e)
+                return
 
         self._current_turn = turn_handle
         self._current_turn_ready.set()
+        self._turn_stream_done.clear()
 
         # Consume the turn's notification stream ourselves (instead of the
         # blackbox ``turn_handle.run()``) so we can:
@@ -1042,6 +1120,13 @@ class CodexAgent(BaseAgent):
         finally:
             self._current_turn = None
             self._current_turn_ready.clear()
+            self._turn_stream_done.set()
+
+        await self._send_delivery_done.wait()
+        if self._turn_task is not None and self._turn_task is not asyncio.current_task():
+            # A fallback owns the replacement. This stream has drained, but its
+            # old completion must not settle or continue the replacement turn.
+            return
 
         # Skip the USER_TURN transition if an in-stream branch already
         # moved us to DEAD (e.g. terminal ``error`` notification). The
