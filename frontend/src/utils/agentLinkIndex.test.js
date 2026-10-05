@@ -351,3 +351,23 @@ test('a repeated snapshot keeps every link reference; a changed agent gets a new
     assert.notEqual(state.agentLinks.root['spawn-b'], b)
     assert.equal(state.agentLinkIndex.b, state.agentLinks.root['spawn-b'])
 })
+
+test('an equal snapshot after markAgentStopped keeps the entry and the stop time it already holds', () => {
+    const state = agentLinkState()
+    snapshot(state, [withRun(api('a', 'root'))])
+    const entry = state.agentLinks.root['spawn-a']
+    markAgentStopped(state, 'a', stop, 'root')
+    assert.equal(entry.stoppedAt, stop, 'markAgentStopped mutates the stored entry in place')
+    snapshot(state, [withRun(api('a', 'root'))])
+    // The snapshot carries no stop time: the stop learned meanwhile is kept, whichever object is stored.
+    assert.equal(state.agentLinkIndex.a.stoppedAt, stop)
+    assert.equal(state.agentLinks.root['spawn-a'], state.agentLinkIndex.a)
+})
+
+test('null and undefined fields are not the same value: a null model replaces an unknown one', () => {
+    const state = agentLinkState()
+    const first = setAgentLink(state, 'root', 't', { agentId: 'child', rootSessionId: 'root', startedAt: start }, false)
+    const second = setAgentLink(state, 'root', 't', { agentId: 'child', rootSessionId: 'root', startedAt: start, model: null }, false)
+    assert.notEqual(second, first)
+    assert.equal(state.agentLinkIndex.child.model, null)
+})

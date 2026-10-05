@@ -92,7 +92,8 @@ export function reuseUnchangedMap(previousMap, nextMap) {
     const result = {}
     for (const key of keys) {
         const previous = previousMap[key]
-        const keep = previous !== undefined && JSON.stringify(previous) === JSON.stringify(nextMap[key])
+        // Same reference (the nodes were already reused): nothing to compare.
+        const keep = previous !== undefined && (previous === nextMap[key] || JSON.stringify(previous) === JSON.stringify(nextMap[key]))
         result[key] = keep ? previous : nextMap[key]
         if (!keep) identical = false
     }
