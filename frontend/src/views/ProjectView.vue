@@ -3260,6 +3260,7 @@ wa-dropdown-item:hover .row-menu-trigger,
     margin: var(--sidebar-gutter);
     padding: var(--wa-space-xs) var(--wa-space-s);
     border-radius: var(--panel-radius);
+    box-shadow: var(--panel-shadow);
 }
 
 /* The card floats on its own: the separators that framed the old flat block go. */
@@ -3327,7 +3328,7 @@ wa-dropdown-item:hover .row-menu-trigger,
 }
 
 .sidebar-footer-provider-auth-callout {
-    box-shadow: var(--glass-shadow-live);
+    box-shadow: var(--panel-shadow);
 }
 
 .sidebar-footer-provider-auth-head {
