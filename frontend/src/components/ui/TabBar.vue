@@ -75,8 +75,26 @@ function onWheel(event) {
 let listObserver = null
 let pendingFrame = 0
 
+// WA applies the `active` binding only when it CHANGES and once at its first render. A tab that arrives
+// LATER with the panel the binding already names (Orchestration, Tasks, Plan... appear once their data has
+// landed, e.g. on a direct URL or a bookmark) is therefore never activated: the group ends up with no
+// active tab and a blank body until the user clicks one. When the tab list changes, activate the tab the
+// group's own `active` names if it exists and is not the active one yet. No tab events are emitted: the
+// binding already says this is the tab to show, nothing was switched by the user.
+function reapplyActive() {
+    const host = el.value
+    const active = host?.active
+    if (!active || typeof host.setActiveTab !== 'function') return
+    const tab = [...host.querySelectorAll(':scope > wa-tab')].find((t) => t.panel === active)
+    if (!tab || tab.active) return
+    // WA's cache of tabs and panels is refreshed by its own slotchange; make sure it already knows the new ones.
+    host.syncTabsAndPanels?.()
+    host.setActiveTab(tab, { emitEvents: false })
+}
+
 function ensureActiveVisible() {
     pendingFrame = 0
+    reapplyActive()
     if (!navEl || navEl.scrollWidth <= navEl.clientWidth) return
     const active = el.value?.active
     if (!active) return
