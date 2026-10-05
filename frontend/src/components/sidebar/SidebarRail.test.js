@@ -84,6 +84,14 @@ test('rail SFC compiles its script, template, and scoped style', async () => {
         assert.equal(tooltip.tag, 'AppTooltip')
         assert.equal(attrs(tooltip)[':for'], attrs(button)[':id'])
     }
+    const [sessionEntry] = children(spacer)
+    const [sessionButton, sessionTooltip] = children(sessionEntry)
+    assert.equal(attrs(sessionButton)[':aria-pressed'], 'row.session.id === currentSessionId')
+    const [preview] = children(sessionTooltip)
+    const [sessionRow] = children(preview)
+    assert.equal(sessionRow.tag, 'SessionListItem')
+    assert.equal(attrs(sessionRow)[':active'], 'row.session.id === currentSessionId')
+    assert.equal(attrs(sessionRow)[':highlight-active'], 'false')
     const id = 'data-v-rail'
     const script = compileScript(descriptor, { id })
     assert.deepEqual(compileTemplate({ source: descriptor.template.content, filename: 'SidebarRail.vue', id,

@@ -90,3 +90,55 @@ test('preview modifier clicks never enter multi-selection or emit drag selection
     assert.equal(sidebarRow.selected.value, true)
     assert.equal(dragOptions.shouldActivate(), true)
 })
+
+
+test('active preview keeps unread suppression without active row styling', () => {
+    const { descriptor } = parse(source, { filename: 'SessionListItem.vue' })
+    const compiled = compileScript(descriptor, { id: 'row-active-style-test' }).content
+        .replace(/import[\s\S]*?from ['"][^'"]+['"]\s*;?/g, '')
+        .replace('export default', 'const component =')
+    const context = {
+        computed: getter => ({ get value() { return getter() } }),
+        watch() {}, inject: () => null,
+        useRoute: () => ({ params: {}, query: {} }), useRouter: () => ({}),
+        useDataStore: () => ({ getProcessState: () => null }),
+        useSettingsStore: () => ({}), useCodeCommentsStore: () => ({}),
+        useSessionSelectionStore: () => ({}), useDragHover: () => ({ cancel() {} }),
+        isSessionUnread: () => true,
+    }
+    for (const match of source.matchAll(/import ([\s\S]*?) from ['"][^'"]+['"]/g)) {
+        for (const name of match[1].replace(/[{}]/g, '').split(',').map(value => value.trim()).filter(Boolean)) {
+            if (!(name in context)) context[name] = () => {}
+        }
+    }
+    const component = runInNewContext(`${compiled}; component`, context)
+    const props = { session: { id: 'same-session' }, active: true, highlightActive: false,
+        showMenu: false, highlighted: false, compactView: false, selectionEnabled: false }
+    const row = component.setup(props, { expose() {}, emit() {} })
+    assert.equal(row.showActiveStyle?.value, false)
+    assert.equal(row.hasUnread.value, false)
+    const element = descriptor.template.ast.children.find(node => node.type === 1)
+    const button = element.children.find(node => node.type === 1 && node.tag === 'wa-button')
+    const evaluate = (node, name) => {
+        const binding = node.props.find(prop => prop.type === 7 && prop.arg?.content === name)
+        return runInNewContext(`(${binding.exp.content})`, {
+            ...props, showActiveStyle: row.showActiveStyle.value, selected: false, isDragPending: false,
+        })
+    }
+    const wrapperClasses = evaluate(element, 'class')
+    assert.equal(wrapperClasses['session-item-wrapper--active'], false)
+    assert.equal(wrapperClasses['sidebar-row-wrapper--active'], false)
+    const buttonClasses = evaluate(button, 'class')
+    assert.equal(buttonClasses['session-item--active'], false)
+    assert.equal(buttonClasses['sidebar-row--active'], false)
+    assert.equal(evaluate(button, 'appearance'), 'plain')
+    assert.equal(evaluate(button, 'variant'), 'neutral')
+    assert.equal(component.props.highlightActive.default, true)
+    props.highlightActive = component.props.highlightActive.default
+    assert.equal(row.showActiveStyle.value, true)
+    assert.equal(evaluate(button, 'appearance'), 'outlined')
+    assert.equal(evaluate(button, 'variant'), 'brand')
+    props.active = false
+    assert.equal(row.showActiveStyle.value, false)
+    assert.equal(row.hasUnread.value, true)
+})

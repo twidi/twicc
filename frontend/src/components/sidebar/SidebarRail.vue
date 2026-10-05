@@ -95,7 +95,7 @@ function activate(item) {
                     >
                         <div class="rail-session-preview">
                             <SessionListItem
-                                :session="row.session" :active="row.session.id === currentSessionId"
+                                :session="row.session" :active="row.session.id === currentSessionId" :highlight-active="false"
                                 id-prefix="rail-preview-" :show-menu="false" :selection-enabled="false"
                                 :compact-view="false" :show-project-name="true" :show-title-tooltip="false"
                                 @select="openSession"

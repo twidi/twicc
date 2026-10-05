@@ -42,6 +42,8 @@ const props = defineProps({
     showMenu: { type: Boolean, default: true },
     // Preview rows navigate without changing sidebar selection or accepting drops.
     selectionEnabled: { type: Boolean, default: true },
+    // Preview rows keep active semantics without the sidebar selection style.
+    highlightActive: { type: Boolean, default: true },
     session: {
         type: Object,
         required: true
@@ -91,6 +93,8 @@ function rowId(name) {
 }
 
 const emit = defineEmits(['select', 'drop-data', 'selection-click'])
+
+const showActiveStyle = computed(() => props.active && props.highlightActive)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Drag-hover: spring-loaded session switching (hover 1s while dragging to switch)
@@ -456,12 +460,12 @@ function handleMenuSelect(event) {
         class="session-item-wrapper sidebar-row-wrapper"
         :class="{
             'session-item-wrapper--no-menu': !showMenu,
-            'session-item-wrapper--active': active,
+            'session-item-wrapper--active': showActiveStyle,
             'session-item-wrapper--highlighted': highlighted,
             'session-item-wrapper--compact': compactView,
             'session-item-wrapper--drag-pending': isDragPending,
             'session-item-wrapper--selected': selected,
-            'sidebar-row-wrapper--active': active,
+            'sidebar-row-wrapper--active': showActiveStyle,
             'sidebar-row-wrapper--compact': compactView,
             'sidebar-row-wrapper--selected': selected,
         }"
@@ -473,13 +477,13 @@ function handleMenuSelect(event) {
         <wa-button
             :id="rowId('session-button')"
             :href="sessionHref"
-            :appearance="active ? 'outlined' : 'plain'"
-            :variant="active ? 'brand' : 'neutral'"
+            :appearance="showActiveStyle ? 'outlined' : 'plain'"
+            :variant="showActiveStyle ? 'brand' : 'neutral'"
             class="session-item sidebar-row"
             :class="{
-                'session-item--active': active,
+                'session-item--active': showActiveStyle,
                 'session-item--highlighted': highlighted,
-                'sidebar-row--active': active,
+                'sidebar-row--active': showActiveStyle,
                 'sidebar-row--highlighted': highlighted
             }"
             @click="handleClick"
