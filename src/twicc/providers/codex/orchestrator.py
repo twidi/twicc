@@ -96,6 +96,7 @@ class CodexOrchestrator(BaseOrchestrator):
         # reset the inherited pre-set events so the CLI actually waits
         # for our broadcasts.
         self.initial_sync_done = asyncio.Event()
+        self.initial_sync_succeeded = False
         self.compute_done = asyncio.Event()
 
         # Cooperative stop event for the initial sync thread
@@ -158,6 +159,7 @@ class CodexOrchestrator(BaseOrchestrator):
         # exit on the first ``is_set()`` check.
         self._sync_stop_event.clear()
         self.initial_sync_done.clear()
+        self.initial_sync_succeeded = False
         self.compute_done.clear()
 
         # Register the TwiCC marketplace and (re)install the plugin before
@@ -428,6 +430,8 @@ class CodexOrchestrator(BaseOrchestrator):
                 "to apply — affected sessions will be re-synced on the next start",
                 provider_value, failed_payloads,
             )
+
+        self.initial_sync_succeeded = failed_payloads == 0
 
         await broadcast_startup_progress(
             "initial_sync", total_sessions, total_sessions,

@@ -98,6 +98,40 @@ def read_question_snapshot(session_id: str) -> dict:
     return _snapshot(session, state)
 
 
+def read_question_send_statuses(session_id: str, request_ids: list[str]) -> dict:
+    """Read native delivery bookkeeping; absence alone is not safe to retry."""
+    facts = _state(session_id).get("facts", {})
+    result = {}
+    for request_id in request_ids:
+        data = facts.get(f"send:{request_id}", {}).get("data")
+        result[request_id] = (
+            "missing" if data is None else "not_admitted" if data.get("not_admitted") else
+            data["status"] if data.get("status") in {"accepted", "rejected"} else "uncertain"
+        )
+    return result
+
+
+@transaction.atomic
+def retire_unadmitted_question_sends(session_id: str, request_ids: list[str]) -> dict:
+    """Fence absent identities under the manager gate before permitting recovery.
+
+    A delayed original frame must not deliver after the browser edits or retries
+    its recovered draft. These rejected facts survive recompute with other sends.
+    """
+    session = _session(session_id, mutation=True)
+    state = _state(session_id)
+    at = datetime.now(UTC).isoformat()
+    facts = [QuestionFact(
+        f"send:{request_id}", "user_submission", at, None, None, None,
+        {"request_id": request_id, "client_message_id": request_id, "origin": "human",
+         "origin_source": "live", "status": "rejected", "not_admitted": True,
+         "boundary": {}, "text": ""},
+    ) for request_id in request_ids if f"send:{request_id}" not in state.get("facts", {})]
+    _merge(session, state, facts)
+    return {"requests": read_question_send_statuses(session_id, request_ids),
+            "snapshot": read_question_snapshot(session_id)}
+
+
 @transaction.atomic
 def refresh_question_widget_snapshot(session_id: str, *, previous_enabled: bool) -> None:
     """Order an effective widget change after every older hydration snapshot.
@@ -142,6 +176,8 @@ def prepare_question_send(
     if stored is not None:
         # Retry returns stored final text. Never format it a second time.
         data = deepcopy(stored["data"])
+        if data.get("not_admitted"):
+            raise ValueError("async_questions_not_admitted")
         return PreparedQuestionSend(data["text"], data)
     snapshot = _snapshot(session, current)
     answers = validate_question_answers(snapshot, response)

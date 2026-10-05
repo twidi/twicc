@@ -1109,6 +1109,21 @@ def test_sdk_user_start_links_submission_with_provider_timestamp(harness, monkey
     assert data["boundary"] == prepared.submission["boundary"]
 
 
+def cold_reconciliation_client(monkeypatch, sdk):
+    """Use the real recovery construction path with only native transport mocked."""
+    from twicc.providers.codex.agent import manager as module
+
+    monkeypatch.setattr(module, "make_codex_config", AsyncMock(return_value=object()))
+    monkeypatch.setattr(module, "TwiccAsyncCodex", lambda **_: sdk)
+    monkeypatch.setattr(module, "attach_stderr_logging", lambda *_: None)
+    monkeypatch.setattr(module, "resolve_and_create_work_dirs", AsyncMock(side_effect=AssertionError("No workdir writes")))
+    monkeypatch.setattr(module.CodexAgent, "start", AsyncMock(side_effect=AssertionError("No start")))
+    monkeypatch.setattr(module.CodexAgent, "_admit_async_question_owner", AsyncMock(side_effect=AssertionError("No owner")))
+    sdk.thread_resume_with_policy = AsyncMock(side_effect=AssertionError("No thread resume"))
+    sdk.thread_start_with_policy = AsyncMock(side_effect=AssertionError("No thread start"))
+    sdk._client.request = AsyncMock(side_effect=AssertionError("No turn start/steer"))
+
+
 def test_manager_recovers_cold_uncertain_replay_without_another_sdk_send(harness, monkeypatch):
     from openai_codex.generated.v2_all import UserMessageThreadItem
     from twicc.providers import db_writer
@@ -1139,8 +1154,7 @@ def test_manager_recovers_cold_uncertain_replay_without_another_sdk_send(harness
                 )
             )
         )
-        create = AsyncMock(return_value=agent)
-        monkeypatch.setattr(harness.manager, "_create_agent", create)
+        cold_reconciliation_client(monkeypatch, sdk)
         try:
             assert (
                 await harness.manager.send_to_session(
@@ -1155,7 +1169,11 @@ def test_manager_recovers_cold_uncertain_replay_without_another_sdk_send(harness
                 )
                 is True
             )
-            create.assert_awaited_once()
+            sdk._ensure_initialized.assert_awaited_once()
+            sdk._client.thread_read.assert_awaited_once_with(harness.session.id, include_turns=True)
+            sdk.thread_resume_with_policy.assert_not_awaited()
+            sdk.thread_start_with_policy.assert_not_awaited()
+            sdk._client.request.assert_not_awaited()
             sdk.close.assert_awaited_once()
             thread.turn_with_policy.assert_not_awaited()
             assert harness.manager._agents == {}
@@ -1200,8 +1218,7 @@ def test_cold_reconciliation_without_native_delivery_proof_never_retries(harness
         )
         if history == "read_failure":
             sdk._client.thread_read.side_effect = OSError("history unavailable")
-        create = AsyncMock(return_value=agent)
-        monkeypatch.setattr(harness.manager, "_create_agent", create)
+        cold_reconciliation_client(monkeypatch, sdk)
         agent.start = AsyncMock()
         agent._admit_async_question_owner = AsyncMock()
         try:
@@ -1217,7 +1234,11 @@ def test_cold_reconciliation_without_native_delivery_proof_never_retries(harness
                     async_questions=response(),
                 )
             assert error.value.code == "send_uncertain"
-            create.assert_awaited_once()
+            sdk._ensure_initialized.assert_awaited_once()
+            sdk._client.thread_read.assert_awaited_once_with(harness.session.id, include_turns=True)
+            sdk.thread_resume_with_policy.assert_not_awaited()
+            sdk.thread_start_with_policy.assert_not_awaited()
+            sdk._client.request.assert_not_awaited()
             sdk.close.assert_awaited_once()
             thread.turn_with_policy.assert_not_awaited()
             agent.start.assert_not_awaited()

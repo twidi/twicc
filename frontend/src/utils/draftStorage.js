@@ -401,6 +401,20 @@ export async function deleteAsyncQuestionDraft(sessionId, openDb = getDb) {
         tx => tx.objectStore(ASYNC_QUESTION_DRAFTS_STORE).delete(sessionId))
 }
 
+/** Remove deleted-session question drafts and recovery snapshots in one commit. */
+export async function deleteAsyncQuestionRecovery(sessionId, openDb = getDb) {
+    return commitTransaction(await openDb(), [ASYNC_QUESTION_DRAFTS_STORE, INFLIGHT_SENDS_STORE], tx => {
+        tx.objectStore(ASYNC_QUESTION_DRAFTS_STORE).delete(sessionId)
+        const request = tx.objectStore(INFLIGHT_SENDS_STORE).openCursor()
+        request.onsuccess = () => {
+            const cursor = request.result
+            if (!cursor) return
+            if (cursor.value.sessionId === sessionId && (cursor.value.asyncQuestions || cursor.value.async_questions)) cursor.delete()
+            cursor.continue()
+        }
+    })
+}
+
 export async function getAllAsyncQuestionDrafts(openDb = getDb) {
     const db = await openDb()
     return new Promise((resolve, reject) => {

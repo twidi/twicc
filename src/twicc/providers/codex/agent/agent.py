@@ -471,7 +471,7 @@ class CodexAgent(BaseAgent):
         cwd: str,
         settings: AgentSettings,
         codex: TwiccAsyncCodex,
-        thread: TwiccAsyncThread,
+        thread: TwiccAsyncThread | None,
         untrusted: bool = False,
         work_dirs: list[str] | None = None,
         *,
@@ -2357,6 +2357,7 @@ class CodexAgent(BaseAgent):
         """Stream physical goal turns without starting or interrupting them."""
         self._note_main_turn_opening()
         stream = monitor.stream()
+        terminal_outcome = "unknown"
         try:
             async for event in stream:
                 if event.method == "turn/started":
@@ -2364,6 +2365,7 @@ class CodexAgent(BaseAgent):
                     self._current_turn = AsyncTurnHandle(self._codex, self._thread.id, event.payload.turn.id)
                     self._current_turn_ready.set()
                 elif event.method == "turn/completed":
+                    terminal_outcome = _enum_value(event.payload.turn.status)
                     await self._link_async_question_turn(event.payload.turn.id)
                     await self._continue_async_questions(event.payload.turn.id)
                     if self._current_turn is not None and self._current_turn.id == event.payload.turn.id:
@@ -2391,7 +2393,7 @@ class CodexAgent(BaseAgent):
                 self._current_turn = None
                 self._current_turn_ready.clear()
         turns = getattr(self, "_async_question_turns", [])
-        await self._settle_async_questions(turns[-1] if turns else None, outcome="completed")
+        await self._settle_async_questions(turns[-1] if turns else None, outcome=terminal_outcome)
         await self.notify_goal_continuation_stopped()
 
     async def _set_goal(self, objective: str) -> None:

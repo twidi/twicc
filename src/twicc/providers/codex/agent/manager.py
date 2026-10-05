@@ -226,6 +226,21 @@ class CodexAgentManager(BaseAgentManager):
                 async_questions=async_questions, request_id=request_id, send_origin=send_origin,
             )
 
+    async def reconcile_question_sends(
+        self, session_id: str, project_id: str, cwd: str, settings: AgentSettings, request_ids: list[str],
+    ) -> dict:
+        """Reconcile existing identity only. Never admit an owner or send input."""
+        from twicc.core.services.async_questions import read_question_send_statuses, retire_unadmitted_question_sends
+        from twicc.providers.db_writer import run_under_db_write_lock
+
+        async with gate_for(session_id):
+            statuses = await sync_to_async(read_question_send_statuses)(session_id, request_ids)
+            if "uncertain" in statuses.values():
+                await self._reconcile_question_send_under_gate(session_id, project_id, cwd, settings)
+            return await run_under_db_write_lock(lambda: sync_to_async(retire_unadmitted_question_sends)(
+                session_id, request_ids,
+            ))
+
     async def dismiss_async_question(self, session_id: str, item_id: str, *, request_id: str) -> dict:
         """Dismiss under the same gate as send admission and SDK delivery."""
         from twicc.core.services.async_questions import dismiss_question_batch
@@ -327,11 +342,13 @@ class CodexAgentManager(BaseAgentManager):
         try:
             async with self._lock:
                 agent = self._agents.get(session_id)
-                if agent is None or agent.state == AgentState.DEAD:
-                    temporary = await self._create_agent(
-                        session_id, project_id, cwd, resume=True, settings=settings,
-                    )
-                    agent = temporary
+            if agent is None or agent.state == AgentState.DEAD:
+                # History recovery must not resume a thread, apply settings, create
+                # work directories, or arm native goal continuations.
+                temporary = TwiccAsyncCodex(config=await make_codex_config(cwd=cwd))
+                attach_stderr_logging(session_id, temporary)
+                await temporary._ensure_initialized()
+                agent = CodexAgent(session_id, project_id, cwd, settings, temporary, None)
             reconcile = getattr(agent, "_reconcile_question_submissions", None)
             if reconcile is not None:
                 await reconcile()
@@ -340,7 +357,7 @@ class CodexAgentManager(BaseAgentManager):
         finally:
             if temporary is not None:
                 try:
-                    await temporary._codex.close()
+                    await temporary.close()
                 except Exception:
                     logger.warning("Cannot close Codex send reconciliation client for %s", session_id, exc_info=True)
 

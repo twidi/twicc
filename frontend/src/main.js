@@ -327,6 +327,7 @@ if (!authStore.needsLogin) {
         dataStore.hydrateInflightSends(),
     ])
     await dataStore.hydrateAsyncQuestionDrafts()
+    dataStore.refreshActiveAsyncQuestions().catch(error => console.warn('Failed to recover question sends:', error))
 
     // Wire the global auto-apply title watcher. Module-level watchEffect that
     // survives router.replace (which would otherwise tear down a watcher held

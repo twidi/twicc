@@ -227,7 +227,7 @@ it('reload after recovery abort retains choices, source, and dismissal IDs witho
 })
 
 it('keeps uncertain send answers until native acceptance identity resolves them', async () => {
-    const pending = { local: { async_questions: { batch_ids: ['q1'] }, status: 'uncertain' } }
+    const pending = { local: { async_questions: { batch_ids: ['q1'], answers: [{ item_id: 'q1', index: 3, kind: 'other', value: 'Old answer' }] }, status: 'uncertain' } }
     const { state } = harness({ pendingSends: () => pending })
     await state.setAsyncQuestionDraft('s', saved())
     await state.applyAsyncQuestionSnapshot('s', snapshot())
@@ -332,7 +332,7 @@ it('hydrated local dismissal identity suppresses external recovery after reload'
 
 function acknowledgementHarness(recover) {
     const disk = { questions: { s: saved() }, inflight: { local: {
-        sessionId: 's', text: 'Already delivered', async_questions: { batch_ids: ['q1'] }, sentAt: 1,
+        sessionId: 's', text: 'Already delivered', async_questions: { batch_ids: ['q1'], answers: [{ item_id: 'q1', index: 3, kind: 'other', value: 'Old answer' }] }, sentAt: 1,
     } } }
     const pending = new Map(Object.entries(structuredClone(disk.inflight)))
     const { state } = harness({ recover: async (...args) => {

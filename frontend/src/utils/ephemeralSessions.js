@@ -33,6 +33,18 @@ export function summarizeEphemeralAttachments(medias = []) {
 /** Send failure consumption is shared with Pinia, including persistent snapshot disposal. */
 export function createSendFailureActions(inflightSends, { deleteInflight } = {}) {
     return {
+        forgetAsyncQuestionSends(sessionId) {
+            for (const [id, entry] of inflightSends) {
+                if (entry.sessionId === sessionId && retainsAsyncQuestionSend(entry)) inflightSends.delete(id)
+            }
+            for (const [id, entry] of Object.entries(this.localState.failedSends[sessionId] || {})) {
+                if (retainsAsyncQuestionSend(entry)) delete this.localState.failedSends[sessionId][id]
+            }
+            if (this.localState.failedSends[sessionId] && !Object.keys(this.localState.failedSends[sessionId]).length) {
+                delete this.localState.failedSends[sessionId]
+            }
+            this.recomputeVisualItems?.(sessionId)
+        },
         markInflightSendAccepted(sessionId, requestId) {
             let entry = inflightSends.get(requestId)
             if (!entry) {

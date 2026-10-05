@@ -371,3 +371,87 @@ def test_committed_dismissal_identity_exists_before_broadcast_and_ack(monkeypatc
         "item_id": "q1", "request_id": "identity",
     }))
     assert observations == ["broadcast", "ack"]
+
+@pytest.mark.parametrize("sync_ready", [False, True])
+def test_existence_probe_preserves_hidden_and_waits_for_successful_sync(authenticated_client, session, monkeypatch, sync_ready):
+    session.hidden = True
+    session.save(update_fields=["hidden"])
+    monkeypatch.setattr("twicc.providers.state.get_enabled_providers", lambda: {Provider.CODEX})
+    orchestrator = SimpleNamespace(initial_sync_succeeded=sync_ready, initial_sync_done=SimpleNamespace(is_set=lambda: True))
+    monkeypatch.setattr("twicc.orchestrator.get_orchestrator_registry", lambda: SimpleNamespace(get=lambda _: orchestrator))
+    result = authenticated_client.post("/api/async-questions/existence/", {
+        "session_ids": [session.id, "deleted-session"],
+    }, content_type="application/json")
+    assert result.status_code == 200
+    assert result.json() == {"sessions": {session.id: "present", "deleted-session": "deleted" if sync_ready else "unknown"}}
+
+
+def test_recovery_routes_require_authentication(client, session, settings):
+    settings.TWICC_PASSWORD_HASH = "test-password-hash"
+    settings.TWICC_DEV_LOCAL_BYPASS = False
+    for url in ("/api/async-questions/existence/", question_url(session) + "reconcile/"):
+        assert client.post(url, {}, content_type="application/json").status_code == 401
+
+
+@pytest.mark.parametrize("ids", [[], [""], ["x" * 129], [None], ["x"] * 101, "x"])
+def test_recovery_routes_validate_bounded_ids(authenticated_client, session, ids):
+    assert authenticated_client.post("/api/async-questions/existence/", {"session_ids": ids},
+                                     content_type="application/json").status_code == 400
+    assert authenticated_client.post(question_url(session) + "reconcile/", {"request_ids": ids},
+                                     content_type="application/json").status_code == 400
+
+
+@pytest.mark.parametrize("field,value", [("hidden", True), ("type", SessionType.SUBAGENT),
+                                        ("provider", Provider.CLAUDE_CODE)])
+def test_request_reconciliation_retains_session_scope(authenticated_client, session, field, value):
+    setattr(session, field, value)
+    session.save(update_fields=[field])
+    assert authenticated_client.post(question_url(session) + "reconcile/", {"request_ids": ["request"]},
+                                     content_type="application/json").status_code == 404
+
+
+def test_request_reconciliation_rejects_wrong_project(authenticated_client, session):
+    wrong = question_url(session).replace(session.project_id, "wrong-project") + "reconcile/"
+    assert authenticated_client.post(wrong, {"request_ids": ["request"]}, content_type="application/json").status_code == 404
+
+@pytest.mark.parametrize("producer_fails,failed_payloads", [(False, 0), (True, 0), (False, 1)])
+def test_existence_cleanup_waits_for_successful_producer_and_writer_drain(monkeypatch, producer_fails, failed_payloads):
+    from twicc.providers.codex import orchestrator as module
+
+    async def run():
+        orch = module.CodexOrchestrator()
+        marker_seen = asyncio.Event()
+        marker = None
+
+        def produce(*args, **kwargs):
+            if producer_fails:
+                raise RuntimeError("Producer failed")
+
+        async def put(message, stop):
+            nonlocal marker
+            marker = message
+            marker_seen.set()
+            return True
+
+        monkeypatch.setattr(module, "_count_total_sessions", lambda: 0)
+        monkeypatch.setattr(module, "sync_all", produce)
+        monkeypatch.setattr(module, "broadcast_startup_progress", AsyncMock())
+        monkeypatch.setattr("twicc.providers.db_writer.get_thread_queue", lambda: None)
+        monkeypatch.setattr("twicc.providers.db_writer.put_thread_message", put)
+        task = asyncio.create_task(orch._initial_sync_task())
+        await asyncio.wait_for(marker_seen.wait(), 1)
+        assert not getattr(orch, "initial_sync_succeeded", False)
+        assert not orch.initial_sync_done.is_set()
+        marker.done_future.set_result(failed_payloads)
+        await task
+        assert orch.initial_sync_done.is_set()
+        assert orch.initial_sync_succeeded is (not producer_fails and failed_payloads == 0)
+
+    asyncio.run(run())
+
+
+def test_disabled_provider_never_proves_absence(authenticated_client, monkeypatch):
+    monkeypatch.setattr("twicc.providers.state.get_enabled_providers", lambda: set())
+    response = authenticated_client.post("/api/async-questions/existence/", {"session_ids": ["missing"]},
+                                         content_type="application/json")
+    assert response.json() == {"sessions": {"missing": "unknown"}}

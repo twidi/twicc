@@ -1876,6 +1876,9 @@ export function useWebSocket() {
                 break
             case 'startup_progress':
                 store.setStartupProgress(msg.provider, msg.phase, msg.current, msg.total, msg.completed, msg.detail)
+                if (msg.provider === 'codex' && msg.phase === 'initial_sync' && msg.completed) {
+                    store.reconcileAsyncQuestionExistence().catch(error => console.warn('Failed to check question draft sessions:', error))
+                }
                 break
             case 'update_available':
                 store.setLatestVersion(msg.latest_version, msg.release_url)

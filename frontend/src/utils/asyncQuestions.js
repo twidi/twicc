@@ -86,12 +86,20 @@ export function recoverResolvedAnswers({ draft = {}, choices = {}, snapshot, pen
             || sends.some(([id, send]) => id === requestId && send.status !== 'rejected'))
         const referencing = sends.filter(([, send]) => (send.async_questions ?? send.asyncQuestions)?.batch_ids?.includes(itemId))
         if (!ownDismiss && !ownSend && referencing.some(([, send]) => !['accepted', 'rejected'].includes(send.status))) continue
-        if (!ownDismiss && !ownSend && !recovered.has(itemId)) {
+        const captured = next.acceptedSendAnswers?.[requestId]
+            ?? (sends.find(([id]) => id === requestId)?.[1]?.asyncQuestions
+                ?? sends.find(([id]) => id === requestId)?.[1]?.async_questions)?.answers
+        // Acceptance consumes only exact values carried by that request. Retry can
+        // leave newer selections in the composer, including previously empty answers.
+        const unsent = ownSend ? Object.entries(selected).filter(([index, answer]) =>
+            !captured?.some(value => value.item_id === itemId && value.index === Number(index)
+                && value.kind === answer.kind && value.value === answer.value)) : Object.entries(selected)
+        if (!ownDismiss && unsent.length && !recovered.has(itemId)) {
             const source = next.sourceBatches[itemId] ?? snapshot.batches?.find(batch => batch.item_id === itemId)
             // Keep answers if their source is unavailable. Never silently lose text.
             if (!source) continue
             batches.push(source)
-            for (const [index, answer] of Object.entries(selected)) answers.push({ ...answer, item_id: itemId, index: Number(index) })
+            for (const [index, answer] of unsent) answers.push({ ...answer, item_id: itemId, index: Number(index) })
         }
         recovered.add(itemId)
         delete next.choices[itemId]

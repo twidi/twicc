@@ -79,6 +79,16 @@ function database() {
         const tx = { names, objectStore: name => ({
             put(value, key) { next[name][key] = structuredClone(value); return {} },
             delete(key) { delete next[name][key]; return {} },
+            openCursor() {
+                const request = {}, keys = Object.keys(next[name]); let index = 0
+                const advance = () => queueMicrotask(() => {
+                    const key = keys[index++]
+                    request.result = key === undefined ? null : { key, value: next[name][key],
+                        delete: () => { delete next[name][key] }, continue: advance }
+                    request.onsuccess?.()
+                })
+                advance(); return request
+            },
             get(key) { const request = {}; queueMicrotask(() => { request.result = next[name][key]; request.onsuccess?.() }); return request },
         }), commit() { for (const name of Object.keys(data)) data[name] = next[name]; tx.oncomplete() },
         abort() { tx.onabort() }, }
@@ -474,4 +484,179 @@ it('external resolution during composer preparation waits for its original reque
     assert.match(h.state.localState.draftMessages.s.message, /Original answer/)
     assert.deepEqual(h.state.getPendingAsyncQuestionIds('s'), [])
     assert.equal(h.frames.length, 0)
+})
+
+async function retryCaptured(h, captured = outgoing()) {
+    const source = readFileSync(new URL('../components/session/detail/items/FailedSendBanner.vue', import.meta.url), 'utf8')
+    const start = source.indexOf('async function retry()'), end = source.indexOf('\n/** Put', start)
+    const entry = { ...captured, requestId: 'failed', medias: [], code: 'send_failed' }
+    h.state.localState.failedSends.s = { failed: entry }
+    h.disk.sends.failed = structuredClone(entry)
+    h.state.getSession = () => ({ provider: 'codex' })
+    h.state.applyCreationSendMode = () => {}
+    const deps = { getEntry: () => entry, working: { value: false },
+        retryState: { value: questions.asyncQuestionRetryState(entry, ready()) }, props: { sessionId: 's', projectId: 'p' },
+        generateUUID: () => 'retry', resizeMediasForSend: async values => values, getProviderHelpers: () => ({}),
+        getProviderStore: () => ({}), mediasToSdkFormat: () => ({ images: [], documents: [] }),
+        toast: { error: message => assert.fail(message) }, store: h.state }
+    await new Function(...Object.keys(deps), `${source.slice(start, end)}; return retry`)(...Object.values(deps))()
+}
+
+for (const order of ['ack', 'snapshot', 'reload-before-ack', 'reload-after-ack']) {
+    it(`Retry acceptance preserves changed and newly answered questions: ${order}`, async () => {
+        let h = production()
+        h.state.localState.draftMessages.s.message = 'New draft text'
+        h.state.localState.asyncQuestionDrafts.s.choices.q1[3].value = 'New unsent answer'
+        h.state.localState.asyncQuestionDrafts.s.choices.unanswered = { 3: { kind: 'other', value: 'Newly answered' } }
+        h.state.localState.asyncQuestionDrafts.s.sourceBatches.unanswered = batch('unanswered')
+        await retryCaptured(h)
+        assert.equal(h.frames[0].async_questions.answers[0].value, 'Original answer')
+        const update = { ...resolution('retry'), resolutions: {
+            q1: { status: 'sent', request_id: 'retry' }, unanswered: { status: 'sent', request_id: 'retry' },
+        } }
+        if (order === 'ack' || order === 'reload-after-ack') await h.state.acknowledgeInflightSend('s', 'retry')
+        if (order.startsWith('reload')) {
+            const disk = structuredClone(h.disk)
+            h = production()
+            h.state.localState.draftMessages.s = disk.draft
+            h.state.localState.asyncQuestionDrafts.s = disk.questions
+            h.disk.sends = disk.sends
+            for (const [id, entry] of Object.entries(disk.sends)) if (id === 'retry') h.pending.set(id, entry)
+        }
+        await h.state.applyAsyncQuestionSnapshot('s', update)
+        await h.state.acknowledgeInflightSend('s', 'retry')
+        await h.state.applyAsyncQuestionSnapshot('s', update)
+        const text = h.state.localState.draftMessages.s.message
+        assert.match(text, /New unsent answer/)
+        assert.match(text, /Newly answered/)
+        assert.ok(text.endsWith('New draft text'))
+        assert.doesNotMatch(text, /Original answer/)
+        assert.equal(text.split('Answers to your questions:').length - 1, 1)
+        assert.deepEqual(h.state.localState.asyncQuestionDrafts.s.choices, {})
+    })
+}
+
+function recoveryBrowser(status, storedStatus = 'dispatched') {
+    const reads = []
+    const h = production({ fetch: async (url, options) => {
+        reads.push([url, options])
+        return { ok: true, json: async () => options?.method === 'POST'
+            ? { requests: { local: status }, snapshot: status === 'accepted' ? resolution('local') : ready() }
+            : ready() }
+    } })
+    h.state.sessions.s.project_id = 'p'
+    h.state.localState.draftAliases = {}
+    h.state.processStates = {}
+    h.state.isEphemeralDiscarded = () => false
+    h.state.dropDiscardedSendFailure = () => false
+    h.state._materializeFailedSendItem = send => ({ failedSend: send })
+    h.state.recomputeVisualItems = () => {}
+    h.state.auditAllLoadedInflightSends = () => {}
+    Object.assign(h.state, createSendFailureActions(h.pending, { deleteInflight: async id => { delete h.disk.sends[id] } }))
+    Object.assign(h.state, storeActions({
+        getAllInflightSends: async () => structuredClone(h.disk.sends), inflightSends: h.pending,
+        deleteInflightSend: async id => { delete h.disk.sends[id] }, retainsAsyncQuestionSend: questions.retainsAsyncQuestionSend,
+        INFLIGHT_SEND_TTL_MS: 10, isLaunchedEphemeral: () => false, PROCESS_STATE: { STARTING: 'starting' },
+        saveInflightSend: async (id, entry) => { h.disk.sends[id] = structuredClone(entry) },
+    }, ['hydrateInflightSends', '_applySendFailure']))
+    h.disk.sends.local = { ...outgoing(), sessionId: 's', status: storedStatus, sentAt: 1 }
+    return { ...h, reads }
+}
+
+for (const status of ['rejected', 'not_admitted', 'accepted', 'uncertain']) {
+    it(`reload and reconnect reconcile durable ${status} without automatic resend`, async () => {
+        const h = recoveryBrowser(status, status === 'not_admitted' ? 'staged' : 'dispatched')
+        await h.state.hydrateInflightSends()
+        await h.state.loadAsyncQuestions('p', 's')
+        assert.ok(h.reads.some(([url, options]) => url.endsWith('/reconcile/') && options.method === 'POST'))
+        assert.equal(h.frames.length, 0)
+        if (status === 'accepted') {
+            assert.equal(h.state.getFailedSend('s', 'local'), undefined)
+            assert.equal(h.disk.sends.local, undefined)
+        } else {
+            const failed = h.state.getFailedSend('s', 'local')
+            assert.equal(questions.asyncQuestionRetryState(failed, ready()).canRetry, status !== 'uncertain')
+            assert.equal(await h.state.editAsyncQuestionFailure('s', 'local'), status !== 'uncertain')
+            if (status !== 'uncertain') assert.equal(h.state.localState.asyncQuestionDrafts.s.choices.q1[3].value, 'Original answer')
+        }
+        assert.deepEqual(h.state.getPendingAsyncQuestionIds('s'), status === 'uncertain' ? ['q1', 'unanswered'] : [])
+        await h.state.refreshActiveAsyncQuestions()
+        assert.equal(h.frames.length, 0)
+    })
+}
+
+for (const status of ['present', 'deleted', 'unknown']) {
+    it(`offline session existence ${status} preserves hidden drafts or cleans authoritative deletion`, async () => {
+        const h = production({
+            fetch: async () => ({ ok: true, json: async () => ({ sessions: { s: status } }) }),
+            remove: async () => { h.disk.questions = undefined; h.disk.sends = {} },
+        })
+        h.state.sessions = {} // Legacy saved records need no project identity.
+        h.pending.set('local', { ...outgoing(), sessionId: 's', status: 'uncertain' })
+        h.disk.sends.local = structuredClone(h.pending.get('local'))
+        h.state.lockAsyncQuestionSend('s', 'local', outgoing().asyncQuestions)
+        Object.assign(h.state, createSendFailureActions(h.pending, { deleteInflight: async () => {} }))
+        await h.state.reconcileAsyncQuestionExistence()
+        if (status === 'deleted') {
+            assert.equal(h.state.localState.asyncQuestionDrafts.s, undefined)
+            assert.equal(h.state.localState.asyncQuestionSnapshots.s, undefined)
+            assert.equal(h.disk.questions, undefined)
+            assert.deepEqual(h.disk.sends, {})
+            assert.deepEqual(h.state.getPendingAsyncQuestionIds('s'), [])
+            assert.equal(h.pending.size, 0)
+            // A snapshot already in transit cannot recreate deleted state.
+            await h.state.applyAsyncQuestionSnapshot('s', ready())
+            assert.equal(h.state.localState.asyncQuestionSnapshots.s, undefined)
+        } else {
+            assert.equal(h.state.localState.asyncQuestionDrafts.s.choices.q1[3].value, 'Original answer')
+            assert.deepEqual(h.state.getPendingAsyncQuestionIds('s'), ['q1', 'unanswered'])
+            assert.equal(h.pending.size, 1)
+        }
+    })
+}
+
+it('deleted-session cleanup commits draft and retained sends together, preserving unrelated sends', async () => {
+    const db = database()
+    db.data.inflightSends = { local: { ...outgoing(), sessionId: 's' },
+        other: { ...outgoing(), sessionId: 'other' }, ordinary: { sessionId: 's', text: 'Ordinary' } }
+    const aborted = storage.deleteAsyncQuestionRecovery('s', db.open)
+    await tick(); db.transactions[0].abort()
+    await assert.rejects(aborted, /abort/)
+    assert.ok(db.data.asyncQuestionDrafts.s)
+    assert.ok(db.data.inflightSends.local)
+    const deleted = storage.deleteAsyncQuestionRecovery('s', db.open)
+    await tick()
+    assert.ok(db.data.asyncQuestionDrafts.s)
+    db.transactions[1].commit(); await deleted
+    assert.equal(db.data.asyncQuestionDrafts.s, undefined)
+    assert.equal(db.data.inflightSends.local, undefined)
+    assert.ok(db.data.inflightSends.other)
+    assert.ok(db.data.inflightSends.ordinary)
+})
+
+it('session_removed production action probes existence and preserves hidden session question drafts', async () => {
+    const h = production({ fetch: async () => ({ ok: true, json: async () => ({ sessions: { s: 'present' } }) }) })
+    let checked
+    const probe = h.state.reconcileAsyncQuestionExistence.bind(h.state)
+    h.state.reconcileAsyncQuestionExistence = ids => { checked = probe(ids); return checked }
+    h.state.unloadSession = () => {}
+    h.state.removeMruSession = () => {}
+    Object.assign(h.state, storeActions({ dropsProcessStateOnRemoval: () => false }, ['removeSession']))
+    h.state.removeSession('s')
+    await checked
+    assert.equal(h.state.sessions.s, undefined)
+    assert.deepEqual(h.state.localState.asyncQuestionDrafts.s.choices, choices().choices)
+})
+
+for (const order of ['ack', 'snapshot']) it(`Retry consumes unchanged Other whitespace: ${order}`, async () => {
+    const h = production()
+    const draft = choices(); draft.choices.q1[3].value = '  Unchanged answer\n '
+    const captured = questions.prepareAsyncQuestionSend({ snapshot: ready(), questionDraft: draft, rawText: 'Original text' })
+    h.state.localState.asyncQuestionDrafts.s = structuredClone(draft)
+    h.state.localState.draftMessages.s.message = 'New draft'
+    await retryCaptured(h, captured)
+    if (order === 'ack') await h.state.acknowledgeInflightSend('s', 'retry')
+    await h.state.applyAsyncQuestionSnapshot('s', resolution('retry'))
+    assert.equal(h.state.localState.draftMessages.s.message, 'New draft')
+    assert.equal(h.state.localState.asyncQuestionDrafts.s.choices.q1, undefined)
 })

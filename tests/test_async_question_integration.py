@@ -412,6 +412,7 @@ def test_question_generated_during_older_send_remains_ready_after_acceptance_and
     harness.thread.turn_with_policy.side_effect = delayed_delivery
     assert harness.run(lambda: harness.send("Answer the first question", structured(ready)))
     collecting = harness.hydrate()
+    assert collecting["batches"][0]["status"] == "collecting"
     assert [batch["item_id"] for batch in collecting["batches"]] == [OBSERVED[1][0]]
     assert collecting["resolutions"] == {OBSERVED[0][0]: {"status": "sent", "request_id": "send-1"}}
 
@@ -472,3 +473,102 @@ def test_disabled_widget_hydration_keeps_canonical_transcript_and_recompute_stat
     assert projection(recompute(harness.session)) == projection(ready)
     source = orjson.loads(SessionItem.objects.get(session=harness.session, line_num=1).content)
     assert source == canonical_question()
+
+@pytest.mark.parametrize("outcome", ["interrupted", "failed", "unknown"])
+def test_goal_records_terminal_physical_outcome(harness, outcome):
+    from openai_codex.generated.v2_all import TurnCompletedNotification
+
+    harness.ingest([canonical_question()])
+
+    class Monitor:
+        async def stream(self):
+            if outcome == "unknown":
+                return
+            yield Notification("turn/completed", TurnCompletedNotification.model_validate({
+                "threadId": harness.session.id,
+                "turn": {"id": "t1", "status": outcome, "items": [], "itemsView": "full"},
+            }))
+
+        def close(self):
+            pass
+
+    async def run():
+        await harness.agent._admit_async_question_owner()
+        monitor = Monitor()
+        harness.agent._goal_monitor = monitor
+        await harness.agent._run_goal_continuation(monitor)
+
+    harness.run(run)
+    state = AsyncQuestionState.objects.get(session=harness.session).state
+    returned = next(fact for fact in state["facts"].values() if fact["kind"] == "control_return")
+    assert returned["data"]["outcome"] == outcome
+
+@pytest.mark.parametrize("cold", [False, True])
+@pytest.mark.parametrize("delivery", ["rejected", "accepted", "uncertain", "not_admitted"])
+def test_browser_request_reconciliation_never_redelivers(harness, monkeypatch, delivery, cold):
+    monkeypatch.setattr("twicc.views.get_agent_manager_registry", lambda: SimpleNamespace(get=lambda _: harness.manager))
+    ready = harness.ingest([canonical_question(), record("task_complete", second=2)])
+    payload = structured(ready)
+    if delivery == "rejected":
+        harness.thread.turn_with_policy.side_effect = JsonRpcError(-32602, "Invalid input")
+        with pytest.raises(JsonRpcError):
+            harness.run(lambda: harness.send("Keep text", payload))
+    elif delivery in {"accepted", "uncertain"}:
+        harness.thread.turn_with_policy.side_effect = TimeoutError("Lost reply")
+        with pytest.raises(SendDeliveryError):
+            harness.run(lambda: harness.send("Keep text", payload))
+        # Read-only native history is the only acceptance evidence.
+        item = SimpleNamespace(model_dump=lambda **_: {
+            "type": "userMessage", "id": "native-input", "clientId": "send-1",
+            "content": [{"type": "text", "text": "Unrelated text is not an acceptance key"}],
+        })
+        harness.sdk._client.thread_read = AsyncMock(return_value=SimpleNamespace(thread=SimpleNamespace(
+            turns=[SimpleNamespace(id="reply", items=[item] if delivery == "accepted" else [])],
+        )))
+    count = harness.thread.turn_with_policy.await_count
+    owners_before = {key for key in AsyncQuestionState.objects.get(session=harness.session).state["facts"]
+                     if key.startswith("owner:")}
+    original_start, original_admit = CodexAgent.start, CodexAgent._admit_async_question_owner
+    if cold:
+        from tests.test_codex_async_question_send import cold_reconciliation_client
+        harness.manager._agents.clear()
+        harness.sdk.close = AsyncMock()
+        cold_reconciliation_client(monkeypatch, harness.sdk)
+    client = harness.browser()
+
+    async def reconcile():
+        return await sync_to_async(client.post)(
+            f"/api/projects/{harness.session.project_id}/sessions/{harness.session.id}/async-questions/reconcile/",
+            data=orjson.dumps({"request_ids": ["send-1"]}), content_type="application/json",
+        )
+
+    response = harness.run(reconcile)
+    assert response.status_code == 200
+    assert response.json()["requests"] == {"send-1": delivery}
+    assert harness.thread.turn_with_policy.await_count == count
+    assert {key for key in AsyncQuestionState.objects.get(session=harness.session).state["facts"]
+            if key.startswith("owner:")} == owners_before
+    if cold:
+        assert harness.manager._agents == {}
+        if delivery in {"accepted", "uncertain"}:
+            harness.sdk.close.assert_awaited_once()
+            harness.sdk._ensure_initialized.assert_awaited_once()
+        else:
+            harness.sdk.close.assert_not_awaited()
+    if delivery == "accepted":
+        assert response.json()["snapshot"]["resolutions"][OBSERVED[0][0]]["request_id"] == "send-1"
+    else:
+        assert response.json()["snapshot"]["batches"][0]["status"] == "ready"
+    if delivery == "not_admitted":
+        recompute(harness.session)
+        # A delayed original socket frame cannot race a fresh explicit Retry.
+        with pytest.raises(SendDeliveryError) as failure:
+            harness.run(lambda: harness.send("Keep text", payload))
+        assert failure.value.code == "async_questions_not_admitted"
+        assert harness.thread.turn_with_policy.await_count == 0
+        if cold:
+            monkeypatch.setattr(CodexAgent, "start", original_start)
+            monkeypatch.setattr(CodexAgent, "_admit_async_question_owner", original_admit)
+            harness.manager._agents[harness.session.id] = harness.agent
+        assert harness.run(lambda: harness.send("Keep text", payload, request_id="fresh-retry"))
+        assert harness.thread.turn_with_policy.await_count == 1

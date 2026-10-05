@@ -42,7 +42,7 @@ import {
     deleteAllDraftMediasForSession,
     getAllDraftMedias,
     getAllAsyncQuestionDrafts,
-    deleteAsyncQuestionDraft,
+    deleteAsyncQuestionRecovery,
     saveAsyncQuestionRecovery,
     stageAsyncQuestionSend,
     markAsyncQuestionSendDispatched,
@@ -1444,7 +1444,7 @@ export const useDataStore = defineStore('data', {
             stageSend: stageAsyncQuestionSend,
             markDispatched: markAsyncQuestionSendDispatched,
             restoreStaged: restoreStagedAsyncQuestionSend,
-            remove: deleteAsyncQuestionDraft,
+            remove: deleteAsyncQuestionRecovery,
             fetch: apiFetch,
             uuid: generateUUID,
             send: async frame => {
@@ -1701,6 +1701,7 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          */
         removeSession(sessionId) {
+            this.reconcileAsyncQuestionExistence([sessionId]).catch(error => console.warn('Failed to check removed session:', error))
             this.unloadSession(sessionId)
             if (dropsProcessStateOnRemoval(this.processStates, sessionId)) {
                 this._dropProcessState(sessionId)
@@ -3712,6 +3713,7 @@ export const useDataStore = defineStore('data', {
                 rawText: entry.rawText,
                 sourceBatches: entry.sourceBatches,
                 questionDraft: entry.questionDraft,
+                projectId: entry.projectId,
             }
             failedSend.item = this._materializeFailedSendItem(failedSend)
             if (!this.localState.failedSends[sessionId]) {

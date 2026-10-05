@@ -59,11 +59,20 @@ describe('async question pure transforms', () => {
         for (const status of ['dismissed', 'sent']) {
             const result = questions.recoverResolvedAnswers({ draft: { message: 'Keep' }, choices: record(), snapshot: resolved(status, 'local'),
                 pendingDismissals: status === 'dismissed' ? { q1: 'local' } : {},
-                pendingSends: status === 'sent' ? { local: { async_questions: { batch_ids: ['q1'] }, status: 'uncertain' } } : {} })
+                pendingSends: status === 'sent' ? { local: { async_questions: { batch_ids: ['q1'],
+                    answers: [{ item_id: 'q1', index: 2, kind: 'other', value: 'My own answer' }] }, status: 'uncertain' } } : {} })
             assert.equal(result.draft.message, 'Keep')
             assert.deepEqual(result.choices.choices, {})
             assert.equal(result.notice, null)
         }
+    })
+    it('legacy own acceptance without captured answers recovers current choices instead of deleting them', () => {
+        const result = questions.recoverResolvedAnswers({ draft: { message: 'Keep' }, choices: record(),
+            snapshot: resolved('sent', 'legacy'),
+            pendingSends: { legacy: { async_questions: { batch_ids: ['q1'] }, status: 'accepted' } } })
+        assert.match(result.draft.message, /Answer: My own answer/)
+        assert.ok(result.draft.message.endsWith('Keep'))
+        assert.deepEqual(result.choices.choices, {})
     })
     it('holds local answers while an unmatched local send remains uncertain', () => {
         const choices = record()
