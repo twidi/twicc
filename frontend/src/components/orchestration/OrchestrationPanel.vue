@@ -275,6 +275,17 @@ watch(
     { immediate: true },
 )
 
+// The tab can become active BEFORE what it shows has arrived: on a direct URL or a bookmark the session
+// row (its ``spawn_root``, hence ``hasSpawnTree``) and the agent links land after the first render, and
+// ``load()`` is a no-op without a spawn tree. Re-read as soon as each source becomes available while the
+// tab is active; otherwise it would sit on an empty state until the next activation.
+watch(() => props.hasSpawnTree, (has) => {
+    if (has && props.active) load()
+})
+watch(hasAgents, (has) => {
+    if (has && props.active) refreshAgents()
+})
+
 // ── Scroll-to-edge buttons ──────────────────────────────────────────────────
 // Shown only when the list actually scrolls. The scrolling element is ``.orch-content`` in the wide layout
 // and ``.orch-frame`` in the narrow one (below 480px the header scrolls away with the body), so both are
@@ -393,7 +404,8 @@ onUnmounted(() => {
                     </div>
                 </template>
                 <template v-else>
-                    <div v-if="loading && !topology" class="orch-state">
+                    <!-- Spinner until the first snapshot lands (not only while a request is in flight: the first read can start late). -->
+                    <div v-if="!topology && !error" class="orch-state">
                         <wa-spinner></wa-spinner>
                         <span>Loading topology…</span>
                     </div>
