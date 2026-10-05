@@ -530,7 +530,7 @@ def test_snapshot_publication_occurs_after_commit_and_never_after_rollback(monke
             "data": {
                 "type": "async_questions_updated",
                 "session_id": session.id,
-                "async_questions": snapshot,
+                "snapshot": snapshot,
             },
         },
     )
@@ -666,3 +666,175 @@ def test_historical_internal_prompt_cannot_join_distinct_runtime_owners(monkeypa
         assert state()["batches"]["q2"]["status"] == "collecting"
 
     asyncio.run(run())
+
+
+def recovery_agent(session, *, status="idle", turns=()):
+    from twicc.providers.helpers import AgentSettings
+
+    client = SimpleNamespace(
+        _sync=SimpleNamespace(_approval_handler=None),
+        thread_read=AsyncMock(
+            return_value=SimpleNamespace(
+                thread=SimpleNamespace(
+                    status=SimpleNamespace(root=SimpleNamespace(type=status)),
+                    turns=list(turns),
+                )
+            )
+        ),
+    )
+    if status is None:
+        client.thread_read.side_effect = RuntimeError("Provider status unavailable")
+    agent = CodexAgent(
+        session.id,
+        session.project_id,
+        "/tmp",
+        AgentSettings(permission_mode="yolo"),
+        SimpleNamespace(_client=client),
+        SimpleNamespace(goal_get=AsyncMock(return_value=None)),
+    )
+    agent._notify_state_change = AsyncMock()
+    return agent
+
+
+def admitted_owner(group, second):
+    return protocol.QuestionFact(
+        f"owner:{group}",
+        "live_owner",
+        f"2026-10-05T09:12:{second:02d}Z",
+        None,
+        None,
+        None,
+        {"group_id": group, "root_turn_id": None, "state": "pending"},
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_restart_recovers_provider_turns_before_any_source_facts_arrive():
+    from datetime import datetime
+    from asgiref.sync import sync_to_async
+    from twicc.core.enums import Provider
+    from twicc.core.models import AsyncQuestionState, Project, Session
+    from twicc.core.services.async_questions import merge_question_facts, read_question_snapshot
+    from twicc.providers import db_writer
+
+    session = Session.objects.create(
+        id="unlinked-restart", provider=Provider.CODEX, project=Project.objects.create(id="unlinked-project")
+    )
+    merge_question_facts(session.id, [admitted_owner("g1", 0), admitted_owner("g2", 10), admitted_owner("g3", 20)])
+    base = int(datetime.fromisoformat("2026-10-05T09:12:00+00:00").timestamp())
+    agent = recovery_agent(
+        session,
+        turns=[
+            SimpleNamespace(id="prior", started_at=base - 20),
+            SimpleNamespace(id="t1", started_at=base + 1),
+            SimpleNamespace(id="t2", started_at=base + 11),
+            SimpleNamespace(id="unknown", started_at=None),
+        ],
+    )
+
+    async def run():
+        db_writer.start_db_writer()
+        try:
+            await agent._reconcile_async_question_owners()
+            await agent._record_async_question_facts(
+                [
+                    *protocol.extract_async_question_facts(question(turn="t1"), line=1),
+                    *protocol.extract_async_question_facts(question(turn="t2", item="q2", second=11), line=2),
+                ]
+            )
+            return await sync_to_async(read_question_snapshot)(session.id)
+        finally:
+            await db_writer.stop_db_writer()
+
+    snapshot = asyncio.run(run())
+    assert [batch["status"] for batch in snapshot["batches"]] == ["ready", "ready"]
+    facts = AsyncQuestionState.objects.get(session=session).state["facts"]
+    assert facts["return:g1"]["data"]["turn_ids"] == ["t1"]
+    assert facts["return:g2"]["data"]["turn_ids"] == ["t2"]
+    assert "return:g3" not in facts
+    assert agent._async_question_pending_owners is True
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("status", ["active", None])
+def test_explicit_stop_settles_all_retained_restart_owners(status):
+    from asgiref.sync import sync_to_async
+    from twicc.agent import AgentState
+    from twicc.core.enums import Provider
+    from twicc.core.models import Project, Session
+    from twicc.core.services.async_questions import merge_question_facts, read_question_snapshot
+    from twicc.providers import db_writer
+
+    session = Session.objects.create(
+        id="stop-restart", provider=Provider.CODEX, project=Project.objects.create(id="stop-project")
+    )
+    merge_question_facts(session.id, [admitted_owner("g1", 0), admitted_owner("g2", 10)])
+    agent = recovery_agent(session, status=status)
+
+    async def run():
+        db_writer.start_db_writer()
+        try:
+            await agent._reconcile_async_question_owners()
+            # Source questions can arrive after conservative restart reconciliation.
+            await agent._record_async_question_facts(
+                [
+                    *protocol.extract_async_question_facts(question(turn="t1"), line=1),
+                    *protocol.extract_async_question_facts(question(turn="t2", item="q2", second=11), line=2),
+                ]
+            )
+            before = await sync_to_async(read_question_snapshot)(session.id)
+            assert [batch["status"] for batch in before["batches"]] == ["collecting", "collecting"]
+            agent.kill_reason = "user"
+            await agent._transition_to_dead()
+            assert agent.state == AgentState.DEAD
+            return await sync_to_async(read_question_snapshot)(session.id)
+        finally:
+            await db_writer.stop_db_writer()
+
+    assert [batch["status"] for batch in asyncio.run(run())["batches"]] == ["ready", "ready"]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("initial_hidden,committed_hidden", [(True, True), (False, True), (True, False)])
+def test_question_publication_uses_committed_session_visibility(monkeypatch, initial_hidden, committed_hidden):
+    from django.db import transaction
+    from twicc.core.enums import Provider
+    from twicc.core.models import Project, Session
+    from twicc.core.services.async_questions import merge_question_facts
+
+    layer = SimpleNamespace(group_send=AsyncMock())
+    monkeypatch.setattr("twicc.providers.codex.question_snapshots.get_channel_layer", lambda: layer)
+    session = Session.objects.create(
+        id="visibility-session",
+        provider=Provider.CODEX,
+        hidden=initial_hidden,
+        project=Project.objects.create(id="visibility-project"),
+    )
+    with transaction.atomic():
+        snapshot = merge_question_facts(session.id, protocol.extract_async_question_facts(question(), line=1))
+        Session.objects.filter(pk=session.id).update(hidden=committed_hidden)
+        layer.group_send.assert_not_awaited()
+    if committed_hidden:
+        layer.group_send.assert_not_awaited()
+    else:
+        layer.group_send.assert_awaited_once()
+        assert layer.group_send.await_args.args[1]["data"]["snapshot"] == snapshot
+
+
+def test_restart_explicit_owner_links_override_provider_admission_intervals():
+    from datetime import datetime
+
+    owner = admitted_owner("g1", 0)
+    facts = {
+        owner.key: owner._replace(turn_id="t1", data={**owner.data, "root_turn_id": "t1"})._asdict(),
+        "owner:g2": admitted_owner("g2", 10)._asdict(),
+    }
+    base = int(datetime.fromisoformat("2026-10-05T09:12:00+00:00").timestamp())
+    assert CodexAgent._async_question_recovery_groups(
+        facts,
+        [
+            SimpleNamespace(id="prior", started_at=base - 10),
+            SimpleNamespace(id="t1", started_at=base + 11),
+            SimpleNamespace(id="t2", started_at=base + 12),
+        ],
+    ) == {"g1": ["t1"], "g2": ["t2"]}

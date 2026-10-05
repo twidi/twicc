@@ -1116,8 +1116,44 @@ class CodexAgent(BaseAgent):
         self._async_question_group = None
         self._async_question_turns = []
 
-    async def _reconcile_async_question_owners(self) -> None:
-        """Recover abandoned ownership only after provider state proves an idle thread."""
+    @staticmethod
+    def _async_question_recovery_groups(facts: dict, provider_turns: list) -> dict[str, list[str]]:
+        """Associate known turns with admission intervals, preserving explicit links."""
+        owners = sorted(
+            (fact for fact in facts.values() if fact["kind"] == "live_owner"),
+            key=lambda fact: (datetime.fromisoformat(fact["at"]), fact["key"]),
+        )
+        claimed = {}
+        for fact in facts.values():
+            data = fact["data"]
+            if fact["kind"] in {"live_owner", "settlement_decision", "control_return"}:
+                for turn_id in (fact.get("turn_id"), data.get("root_turn_id"),
+                                data.get("successor_turn_id"), *data.get("turn_ids", [])):
+                    if turn_id:
+                        claimed[turn_id] = data["group_id"]
+        source_turns = [
+            (fact["turn_id"], datetime.fromisoformat(fact["at"]).timestamp())
+            for fact in facts.values() if fact["kind"] in {"question", "turn_end"} and fact.get("turn_id")
+        ]
+        history_turns = [(turn.id, getattr(turn, "started_at", None)) for turn in provider_turns]
+        groups = {}
+        for index, owner in enumerate(owners):
+            group = owner["data"]["group_id"]
+            if f"return:{group}" in facts:
+                continue
+            start = datetime.fromisoformat(owner["at"]).timestamp()
+            end = datetime.fromisoformat(owners[index + 1]["at"]).timestamp() if index + 1 < len(owners) else None
+            turns = {turn_id for turn_id, owner_group in claimed.items() if owner_group == group}
+            for turn_id, at in [*source_turns, *history_turns]:
+                if claimed.get(turn_id, group) != group or at is None:
+                    continue
+                if at >= start and (end is None or at < end):
+                    turns.add(turn_id)
+            groups[group] = sorted(turns)
+        return groups
+
+    async def _reconcile_async_question_owners(self, *, stopped: bool = False) -> None:
+        """Recover idle ownership, or settle retained groups after confirmed stop."""
         if getattr(self, "ephemeral", False):
             return
         from twicc.core.models import AsyncQuestionState
@@ -1130,37 +1166,36 @@ class CodexAgent(BaseAgent):
         facts = state.get("facts", {})
         pending = [fact for fact in facts.values() if fact["kind"] == "live_owner"
                    and f"return:{fact['data']['group_id']}" not in facts]
+        self._async_question_pending_owners = bool(pending)
         if not pending:
             return
-        try:
-            response = await self._codex._client.thread_read(self.session_id, include_turns=True)
-            status = _enum_value(response.thread.status.root.type)
-            goal = await self._thread.goal_get()
-        except Exception:
-            logger.warning("Cannot reconcile async question owners for %s", self.session_id, exc_info=True)
-            return
-        if status not in {"idle", "systemError"} or (goal is not None and _enum_value(goal.status) == "active"):
-            return
+        status = None
+        if not stopped:
+            try:
+                response = await self._codex._client.thread_read(self.session_id, include_turns=True)
+                self._async_question_recovery_turns = list(response.thread.turns or [])
+                status = _enum_value(response.thread.status.root.type)
+                goal = await self._thread.goal_get()
+            except Exception:
+                logger.warning("Cannot reconcile async question owners for %s", self.session_id, exc_info=True)
+                return
+            if status not in {"idle", "systemError"} or (goal is not None and _enum_value(goal.status) == "active"):
+                return
+        groups = self._async_question_recovery_groups(
+            facts, getattr(self, "_async_question_recovery_turns", []),
+        )
         recovered = []
         at = datetime.now(UTC).isoformat()
-        for owner in pending:
-            group = owner["data"]["group_id"]
-            turns = {fact.get("turn_id") for fact in facts.values()
-                     if fact["kind"] in {"live_owner", "settlement_decision"} and fact["data"].get("group_id") == group}
-            # Admission can precede the RPC response and its root link. Provider
-            # history supplies turns created during that admitted interval.
-            for turn in response.thread.turns or []:
-                turn_id = turn.id
-                evidence = [fact for fact in facts.values()
-                            if fact.get("turn_id") == turn_id and fact["kind"] in {"question", "turn_end"}]
-                if any(datetime.fromisoformat(fact["at"]) >= datetime.fromisoformat(owner["at"])
-                       for fact in evidence):
-                    turns.add(turn_id)
-            turns.discard(None)
+        for group, turns in groups.items():
+            # A history without timing or durable linkage cannot identify an
+            # admitted turn. Retain that owner for later source reconciliation.
+            if not turns:
+                continue
             recovered.append(QuestionFact(f"return:{group}", "control_return", at, None, None, None,
-                                          {"group_id": group, "turn_ids": sorted(turns),
+                                          {"group_id": group, "turn_ids": turns,
                                            "outcome": "failed" if status == "systemError" else "interrupted"}))
         await self._record_async_question_facts(recovered)
+        self._async_question_pending_owners = any(not turns for turns in groups.values())
 
     async def _open_turn(self, turn_input: list[InputItem]) -> AsyncTurnHandle:
         """Open a turn with current settings; leave delivery errors to the caller."""
@@ -2722,6 +2757,8 @@ class CodexAgent(BaseAgent):
                 outcome="failed" if getattr(self, "kill_reason", None) in {None, "error", "auth_required"}
                 else "interrupted",
             )
+            if getattr(self, "_async_question_pending_owners", False):
+                await self._reconcile_async_question_owners(stopped=True)
         await super()._transition_to_dead()
 
     async def _handle_error(
