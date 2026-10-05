@@ -12,6 +12,10 @@
     --rail-width: calc(var(--rail-card-width) + var(--panel-gap));
 }
 
+html:not(.wa-dark) {
+    --rail-button-fill-active: color-mix(in oklab, var(--wa-color-brand-on-quiet) 14%, var(--wa-color-brand-fill-quiet));
+}
+
 .rail-button {
     height: var(--rail-button-size);
     width: var(--rail-button-size);
