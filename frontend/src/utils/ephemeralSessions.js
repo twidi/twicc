@@ -49,6 +49,7 @@ export function createSendFailureActions(inflightSends, { deleteInflight } = {})
             const entry = inflightSends.get(requestId)
             if (retainsAsyncQuestionSend(entry) && !acceptancePersisted) return false
             inflightSends.delete(requestId)
+            if (entry) this.releaseAsyncQuestionSendLock?.(entry.sessionId, requestId)
             Promise.resolve(deleteInflight(requestId)).catch(error => console.warn('Failed to delete in-flight send snapshot:', error))
             return true
         },

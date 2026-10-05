@@ -105,3 +105,80 @@ export function recoverResolvedAnswers({ draft = {}, choices = {}, snapshot, pen
     return { draft: resultDraft, choices: next, recoveredIds: next.recoveredIds,
         notice: recoveredText ? ASYNC_QUESTION_RECOVERY_NOTICE : null }
 }
+
+/** Capture the submission boundary. New revisions alone do not change its identity. */
+export function prepareAsyncQuestionSend({ snapshot, questionDraft = {}, rawText = '', pendingQuestionIds = [] }) {
+    const batches = snapshot?.widget_enabled === false ? [] : (snapshot?.batches || [])
+        .filter(batch => batch.status === 'ready' && !pendingQuestionIds.includes(batch.item_id))
+    const sourceBatches = clone(batches)
+    const answers = batches.flatMap(batch => batch.questions.flatMap(question => {
+        const answer = questionDraft.choices?.[batch.item_id]?.[question.index]
+        return answer && classifyAsyncQuestionSend({ answers: [answer] }).hasAnswers
+            ? [{ ...answer, item_id: batch.item_id, index: question.index }] : []
+    }))
+    const selected = {}
+    for (const answer of answers) {
+        selected[answer.item_id] ||= {}
+        selected[answer.item_id][answer.index] = { kind: answer.kind, value: answer.value }
+    }
+    return { rawText, text: formatAsyncQuestionMessage(sourceBatches, answers, rawText), sourceBatches,
+        questionDraft: { choices: selected, sourceBatches: Object.fromEntries(sourceBatches.map(b => [b.item_id, b])), recoveredIds: [] },
+        ...(batches.length ? { asyncQuestions: { revision: snapshot.revision, batch_ids: batches.map(b => b.item_id), answers } } : {}),
+    }
+}
+
+/** Report native acceptance before considering another client's recovery. */
+export function reconcileSend(input) {
+    const entries = input.pendingSends instanceof Map ? [...input.pendingSends] : Object.entries(input.pendingSends || {})
+    const acceptedRequestIds = entries.filter(([id, send]) => send.status === 'accepted'
+        || Object.values(input.snapshot?.resolutions || {}).some(r => r.status === 'sent' && r.request_id === id))
+        .map(([id]) => id)
+    const pendingQuestionIds = [...new Set(entries.filter(([id, send]) => !acceptedRequestIds.includes(id) && send.status !== 'rejected')
+        .flatMap(([, send]) => (send.asyncQuestions ?? send.async_questions)?.batch_ids || []))]
+    const result = recoverResolvedAnswers({ ...input, pendingSends: Object.fromEntries(entries.map(([id, send]) =>
+        [id, acceptedRequestIds.includes(id) ? { ...send, status: 'accepted' } : send])) })
+    const oldText = input.draft?.message || ''
+    const newText = result.draft.message || ''
+    const recoveredText = newText === oldText ? '' : oldText ? newText.slice(0, -oldText.length - 2) : newText
+    return { ...result, recoveredText, acceptedRequestId: acceptedRequestIds[0] || null, acceptedRequestIds, pendingQuestionIds }
+}
+
+export function asyncQuestionRetryState(entry, snapshot) {
+    const payload = entry.asyncQuestions ?? entry.async_questions
+    const uncertain = entry.code === 'send_uncertain' || entry.status === 'uncertain' || entry.acceptancePending
+    const sources = entry.sourceBatches || []
+    const ready = !payload || (snapshot?.widget_enabled !== false && payload.batch_ids.every(id => {
+        const current = snapshot?.batches?.find(batch => batch.item_id === id && batch.status === 'ready')
+        const source = sources.find(batch => batch.item_id === id)
+        return current && (!source || JSON.stringify(current.questions) === JSON.stringify(source.questions))
+    }))
+    return { canRetry: !uncertain && entry.code !== 'async_questions_stale' && !!ready, text: payload ? (entry.rawText ?? '') : entry.text, asyncQuestions: payload }
+}
+
+/** Remove only unchanged captured values. Typing during a commit stays in the draft. */
+export function consumeAsyncQuestionSend(send, draft = {}, questionDraft = {}) {
+    const next = clone(questionDraft); next.choices ||= {}; next.sourceBatches ||= {}
+    for (const [id, answers] of Object.entries(send.questionDraft?.choices || {})) {
+        for (const [index, answer] of Object.entries(answers)) {
+            if (JSON.stringify(next.choices[id]?.[index]) === JSON.stringify(answer)) delete next.choices[id][index]
+        }
+        if (next.choices[id] && !Object.keys(next.choices[id]).length) { delete next.choices[id]; delete next.sourceBatches[id] }
+    }
+    const raw = send.rawText || ''
+    const current = draft.message || ''
+    return { draft: { ...draft, message: raw && current.startsWith(raw) ? current.slice(raw.length) : current }, questionDraft: next }
+}
+
+/** Ready failures recover editable choices. Stale failures recover ordinary formatted text. */
+export function restoreAsyncQuestionSend(send, draft = {}, questionDraft = {}, snapshot, { forceChoices = false } = {}) {
+    const editable = forceChoices || asyncQuestionRetryState(send, snapshot).canRetry
+    const next = clone(questionDraft); next.choices ||= {}; next.sourceBatches ||= {}
+    const text = editable ? (send.rawText ?? send.text) : send.text
+    if (editable) {
+        for (const [id, answers] of Object.entries(send.questionDraft?.choices || {})) {
+            next.choices[id] = { ...answers, ...next.choices[id] }
+            next.sourceBatches[id] ||= clone(send.questionDraft.sourceBatches[id])
+        }
+    }
+    return { draft: { ...draft, message: text ? (draft.message ? `${text}\n\n${draft.message}` : text) : draft.message || '' }, questionDraft: next }
+}

@@ -44,6 +44,9 @@ import {
     getAllAsyncQuestionDrafts,
     deleteAsyncQuestionDraft,
     saveAsyncQuestionRecovery,
+    stageAsyncQuestionSend,
+    markAsyncQuestionSendDispatched,
+    restoreStagedAsyncQuestionSend,
 } from '../utils/draftStorage'
 import { createAsyncQuestionActions } from '../utils/asyncQuestionState'
 import { retainsAsyncQuestionSend } from '../utils/asyncQuestions'
@@ -600,6 +603,7 @@ export const useDataStore = defineStore('data', {
             asyncQuestionSnapshots: {},
             asyncQuestionDrafts: {},
             asyncQuestionNotices: {},
+            asyncQuestionSendLocks: {},
 
             // Monotonic per-session counters bumped by appendDraftMessage.
             // A mounted composer watches its counter to resync its textarea:
@@ -1437,12 +1441,15 @@ export const useDataStore = defineStore('data', {
             getAll: getAllAsyncQuestionDrafts,
             getAllMessages: getAllDraftMessages,
             recover: saveAsyncQuestionRecovery,
+            stageSend: stageAsyncQuestionSend,
+            markDispatched: markAsyncQuestionSendDispatched,
+            restoreStaged: restoreStagedAsyncQuestionSend,
             remove: deleteAsyncQuestionDraft,
             fetch: apiFetch,
             uuid: generateUUID,
             send: async frame => {
                 const { sendWsMessage } = await import('../composables/useWebSocket')
-                return sendWsMessage(frame)
+                return sendWsMessage(frame, { buffer: !frame.async_questions })
             },
             pendingSends: (sessionId, store) => {
                 const records = Object.fromEntries([...inflightSends].filter(([, entry]) => entry.sessionId === sessionId))
@@ -3535,6 +3542,14 @@ export const useDataStore = defineStore('data', {
 
         // Send-failure recovery actions (see registerInflightSend for the flow)
 
+        /** Undo an undispatched send after its atomic draft restore commits. */
+        cancelStagedOutgoingSend(sessionId, requestId) {
+            const entry = inflightSends.get(requestId)
+            if (entry?.optimisticShown) this.clearOptimisticMessage(sessionId)
+            if (entry?.startingSet && this.processStates[sessionId]?.state === PROCESS_STATE.STARTING) delete this.processStates[sessionId]
+            inflightSends.delete(requestId) // The restore transaction already deletes its durable record.
+        },
+
         /**
          * Snapshot an outgoing send so it can be restored if the backend
          * cannot deliver it to the agent.
@@ -3549,16 +3564,16 @@ export const useDataStore = defineStore('data', {
          * @param {string} requestId
          * @param {Object} snapshot - { sessionId, text, medias, optimisticShown, startingSet, noLineExpected }
          */
-        registerInflightSend(requestId, snapshot) {
+        registerInflightSend(requestId, snapshot, { prePersisted = false } = {}) {
             const now = Date.now()
             for (const [id, entry] of inflightSends) {
                 if (now - entry.sentAt > INFLIGHT_SEND_TTL_MS) this._dropInflightSend(id)
             }
-            const entry = { ...snapshot, sentAt: now }
+            const entry = { ...snapshot, sentAt: snapshot.sentAt || now }
             inflightSends.set(requestId, entry)
             // Write-through to IndexedDB so the snapshot survives a killed
             // or frozen tab (the audit rediscovers it at the next boot).
-            saveInflightSend(requestId, entry).catch(err =>
+            if (!prePersisted) saveInflightSend(requestId, entry).catch(err =>
                 console.warn('Failed to persist in-flight send snapshot:', err)
             )
         },
@@ -3576,7 +3591,7 @@ export const useDataStore = defineStore('data', {
          *   medias in original draft format (for restore), images/documents
          *   in SDK format (for the optimistic bubble)
          */
-        registerOutgoingSend(sessionId, projectId, requestId, { text, medias, images, documents }) {
+        registerOutgoingSend(sessionId, projectId, requestId, { text, medias, images, documents, prePersisted = false, ...questionSend }) {
             const ephemeralSend = this.promoteEphemeralSession(sessionId, { text, medias })
             const state = this.processStates[sessionId]?.state
             const optimisticShown = state !== PROCESS_STATE.ASSISTANT_TURN
@@ -3591,6 +3606,7 @@ export const useDataStore = defineStore('data', {
                 && !session?.hybrid
                 && state === PROCESS_STATE.ASSISTANT_TURN
             this.registerInflightSend(requestId, {
+                ...questionSend,
                 sessionId,
                 text,
                 medias: medias || [],
@@ -3598,7 +3614,7 @@ export const useDataStore = defineStore('data', {
                 startingSet,
                 noLineExpected,
                 ephemeral: ephemeralSend,
-            })
+            }, { prePersisted })
             if (optimisticShown) {
                 const attachments = (images?.length || documents?.length)
                     ? { images, documents }
@@ -3644,7 +3660,7 @@ export const useDataStore = defineStore('data', {
             if (hasFailed) {
                 for (const entry of Object.values(failed)) {
                     const key = inflightSendMatchKey(entry)
-                    if (key && keys.has(key)) this.removeFailedSend(sessionId, entry.requestId)
+                    if (key && keys.has(key) && !retainsAsyncQuestionSend(entry)) this.removeFailedSend(sessionId, entry.requestId)
                 }
             }
         },
@@ -3679,6 +3695,8 @@ export const useDataStore = defineStore('data', {
                 delete this.processStates[sessionId]
             }
             const code = info.code || 'send_failed'
+            if (code !== 'send_uncertain') this.releaseAsyncQuestionSendLock(sessionId, requestId)
+            else this.lockAsyncQuestionSend(sessionId, requestId, entry.asyncQuestions || entry.async_questions)
             const message = info.message || 'The message could not be delivered.'
             const failedAt = info.failedAt || Date.now()
             const failedSend = {
@@ -3690,7 +3708,10 @@ export const useDataStore = defineStore('data', {
                 code,
                 message,
                 sentAt: entry.sentAt || failedAt,
-                async_questions: entry.async_questions || entry.asyncQuestions,
+                asyncQuestions: entry.async_questions || entry.asyncQuestions,
+                rawText: entry.rawText,
+                sourceBatches: entry.sourceBatches,
+                questionDraft: entry.questionDraft,
             }
             failedSend.item = this._materializeFailedSendItem(failedSend)
             if (!this.localState.failedSends[sessionId]) {
@@ -3733,6 +3754,7 @@ export const useDataStore = defineStore('data', {
             parsed.syntheticKind = syntheticKind
             parsed.failedSend = {
                 requestId: failedSend.requestId,
+                text: failedSend.text,
                 code: failedSend.code,
                 message: failedSend.message,
                 mediasDropped: failedSend.mediasDropped,
@@ -3798,18 +3820,23 @@ export const useDataStore = defineStore('data', {
                     deleteInflightSend(requestId).catch(() => {})
                     continue
                 }
-                if (!entry?.sessionId || (!entry.text && !entry.medias?.length)
+                if (!entry?.sessionId || (!retainsAsyncQuestionSend(entry) && !entry.text && !entry.medias?.length)
                     || (!retainsAsyncQuestionSend(entry) && now - (entry.sentAt || 0) > INFLIGHT_SEND_TTL_MS)) {
                     deleteInflightSend(requestId).catch(() => {})
                     continue
                 }
-                if (entry.failed && !(retainsAsyncQuestionSend(entry) && entry.failed.code === 'send_uncertain')) {
+                if (retainsAsyncQuestionSend(entry)) this.lockAsyncQuestionSend?.(entry.sessionId, requestId, entry.asyncQuestions || entry.async_questions)
+                if (entry.failed && (['staged', 'dispatched'].includes(entry.status) || !(retainsAsyncQuestionSend(entry) && entry.failed.code === 'send_uncertain'))) {
                     // The failure (and its precise reason) was already known
                     // before the reload — re-materialize the bubble directly,
                     // no audit needed.
                     if (!this.localState.failedSends[entry.sessionId]?.[requestId]) {
                         this._applySendFailure(requestId, entry, entry.failed)
                     }
+                    continue
+                }
+                if (retainsAsyncQuestionSend(entry) && ['staged', 'dispatched'].includes(entry.status)) {
+                    this._applySendFailure(requestId, entry, { code: 'send_uncertain', message: 'Delivery is not confirmed. Waiting for source evidence.' })
                     continue
                 }
                 if (!inflightSends.has(requestId)) inflightSends.set(requestId, entry)
@@ -3908,7 +3935,7 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          * @param {Array<Object>} medias - original draft-format media objects
          */
-        async restoreDraftAttachments(sessionId, medias) {
+        async restoreDraftAttachments(sessionId, medias, { strict = false } = {}) {
             if (!medias?.length) return
             if (!this.localState.attachments[sessionId]) {
                 this.localState.attachments[sessionId] = new Map()
@@ -3920,10 +3947,17 @@ export const useDataStore = defineStore('data', {
                 try {
                     await saveDraftMedia(media)
                 } catch (err) {
+                    if (strict) throw err
                     console.warn('Failed to re-save restored draft media:', err)
                 }
                 map.set(media.id, media)
                 if (!draft.mediaIds.includes(media.id)) draft.mediaIds.push(media.id)
+            }
+            if (this.localState.asyncQuestionDrafts[sessionId]) {
+                const current = this.localState.draftMessages[sessionId] ||= {}
+                current.mediaIds = [...new Set([...(current.mediaIds || []), ...medias.map(media => media.id)])]
+                await this.persistComposerDraft(sessionId)
+                return
             }
             await saveDraftMessage(sessionId, draft).catch(err =>
                 console.warn('Failed to save restored draft message:', err)
@@ -6277,6 +6311,13 @@ export const useDataStore = defineStore('data', {
             // Remove from in-memory state
             this.localState.attachments[sessionId]?.delete(mediaId)
 
+            // Question sends share the atomic composer queue; preserve concurrent typing.
+            if (this.localState.asyncQuestionDrafts[sessionId]) {
+                const current = this.localState.draftMessages[sessionId]
+                if (current?.mediaIds) current.mediaIds = current.mediaIds.filter(id => id !== mediaId)
+                await this.persistComposerDraft(sessionId)
+                return
+            }
             // Update draft message to remove media ID
             const draft = await getDraftMessage(sessionId)
             if (draft?.mediaIds) {

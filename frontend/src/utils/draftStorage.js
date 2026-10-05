@@ -425,3 +425,49 @@ export async function saveAsyncQuestionRecovery(sessionId, draft, questionDraft,
         tx.objectStore(ASYNC_QUESTION_DRAFTS_STORE).put(questionRecord, sessionId)
     })
 }
+
+/** Apply the existing 8 MiB in-flight attachment limit to every persistence route. */
+export function inflightSnapshotRecord(snapshot) {
+    const record = plainRecord(snapshot)
+    // Processed payload copies must not bypass the capped original-media snapshot.
+    delete record.images
+    delete record.documents
+    const medias = record.medias || []
+    const mediaCount = record.mediaCount ?? medias.length
+    return medias.reduce((sum, media) => sum + (media.data?.length || 0), 0) > 8 * 1024 * 1024
+        ? { ...record, medias: [], mediaCount, mediasDropped: true }
+        : { ...record, medias, mediaCount }
+}
+
+/** Persist the outgoing snapshot and consume its active draft in one commit. */
+export async function stageAsyncQuestionSend(requestId, snapshot, nextDraft, nextQuestionDraft, openDb = getDb) {
+    const record = inflightSnapshotRecord({ ...snapshot, status: 'staged' })
+    const draft = plainRecord(nextDraft), questions = plainRecord(nextQuestionDraft)
+    return commitTransaction(await openDb(), [DRAFT_MESSAGES_STORE, ASYNC_QUESTION_DRAFTS_STORE, INFLIGHT_SENDS_STORE], tx => {
+        tx.objectStore(INFLIGHT_SENDS_STORE).put(record, requestId)
+        if (snapshot.retryRequestId) tx.objectStore(INFLIGHT_SENDS_STORE).delete(snapshot.retryRequestId)
+        tx.objectStore(DRAFT_MESSAGES_STORE).put(draft, snapshot.sessionId)
+        tx.objectStore(ASYNC_QUESTION_DRAFTS_STORE).put(questions, snapshot.sessionId)
+    })
+}
+
+/** Read-modify-write: an acknowledgement can delete the snapshot before this runs. */
+export async function markAsyncQuestionSendDispatched(requestId, openDb = getDb) {
+    return commitTransaction(await openDb(), INFLIGHT_SENDS_STORE, tx => {
+        const store = tx.objectStore(INFLIGHT_SENDS_STORE)
+        const request = store.get(requestId)
+        request.onsuccess = () => {
+            if (request.result?.status === 'staged' && !request.result.failed) store.put({ ...request.result, status: 'dispatched' }, requestId)
+        }
+    })
+}
+
+/** Restore before deleting the staged identity. Aborts leave the snapshot available. */
+export async function restoreStagedAsyncQuestionSend(requestId, sessionId, draft, questionDraft, openDb = getDb) {
+    const message = plainRecord(draft), questions = plainRecord(questionDraft)
+    return commitTransaction(await openDb(), [DRAFT_MESSAGES_STORE, ASYNC_QUESTION_DRAFTS_STORE, INFLIGHT_SENDS_STORE], tx => {
+        tx.objectStore(DRAFT_MESSAGES_STORE).put(message, sessionId)
+        tx.objectStore(ASYNC_QUESTION_DRAFTS_STORE).put(questions, sessionId)
+        tx.objectStore(INFLIGHT_SENDS_STORE).delete(requestId)
+    })
+}

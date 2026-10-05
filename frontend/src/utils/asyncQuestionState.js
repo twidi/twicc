@@ -1,10 +1,16 @@
-import { recoverResolvedAnswers, retainsAsyncQuestionSend } from './asyncQuestions.js'
+import { reconcileSend, retainsAsyncQuestionSend, consumeAsyncQuestionSend, restoreAsyncQuestionSend } from './asyncQuestions.js'
 
 const clone = value => JSON.parse(JSON.stringify(value))
 const emptyDraft = () => ({ choices: {}, sourceBatches: {}, recoveredIds: [], pendingDismissals: {} })
 
 /** Production Pinia actions with injectable storage and network boundaries. */
-export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages, recover, fetch, send, uuid, pendingSends, cancelDraftSave, remove }) {
+export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages, recover, fetch, send, uuid, pendingSends, cancelDraftSave, remove, stageSend, markDispatched, restoreStaged }) {
+    const preparingSends = new Map()
+    const getSends = (sessionId, owner) => {
+        const existing = pendingSends(sessionId, owner)
+        return new Map([...(existing instanceof Map ? existing : Object.entries(existing)),
+            ...[...preparingSends].filter(([, entry]) => entry.sessionId === sessionId)])
+    }
     const writes = new Map()
     const touched = new Set()
     const editedAnswers = new Map()
@@ -30,6 +36,97 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
         })
     }
     return {
+        getPendingAsyncQuestionIds(sessionId) {
+            return [...new Set(Object.values(this.localState.asyncQuestionSendLocks?.[sessionId] || {}).flat())]
+        },
+
+        lockAsyncQuestionSend(sessionId, requestId, payload) {
+            if (!payload?.batch_ids?.length) return
+            this.localState.asyncQuestionSendLocks ||= {}
+            this.localState.asyncQuestionSendLocks[sessionId] ||= {}
+            this.localState.asyncQuestionSendLocks[sessionId][requestId] = [...payload.batch_ids]
+        },
+
+        releaseAsyncQuestionSendLock(sessionId, requestId) {
+            if (this.localState.asyncQuestionSendLocks?.[sessionId]) delete this.localState.asyncQuestionSendLocks[sessionId][requestId]
+        },
+
+        async sendAsyncQuestionMessage(sessionId, projectId, requestId, payload, outgoing, { retryRequestId = null } = {}) {
+            const ids = outgoing.asyncQuestions.batch_ids
+            if (ids.some(id => this.getPendingAsyncQuestionIds(sessionId).includes(id))) return false
+            // Reserve before the first await. Only these batches stop accepting edits.
+            this.lockAsyncQuestionSend(sessionId, requestId, outgoing.asyncQuestions)
+            const snapshot = clone({ ...outgoing, sessionId, sentAt: Date.now(), status: 'staged', retryRequestId })
+            preparingSends.set(requestId, snapshot)
+            let staged = false
+            try {
+                await enqueue(sessionId, async () => {
+                    cancelDraftSave(sessionId)
+                    const next = retryRequestId
+                        ? { draft: this.localState.draftMessages[sessionId] || {}, questionDraft: this.localState.asyncQuestionDrafts[sessionId] || emptyDraft() }
+                        : consumeAsyncQuestionSend(snapshot, this.localState.draftMessages[sessionId], this.localState.asyncQuestionDrafts[sessionId])
+                    await stageSend(requestId, snapshot, next.draft, next.questionDraft)
+                    staged = true
+                    if (!retryRequestId) {
+                        const current = consumeAsyncQuestionSend(snapshot, this.localState.draftMessages[sessionId], this.localState.asyncQuestionDrafts[sessionId])
+                        this.localState.draftMessages[sessionId] = current.draft
+                        this.localState.asyncQuestionDrafts[sessionId] = current.questionDraft
+                        this.localState.draftAppendSignals[sessionId] = (this.localState.draftAppendSignals[sessionId] || 0) + 1
+                    }
+                    this.registerOutgoingSend(sessionId, projectId, requestId, { ...snapshot, prePersisted: true })
+                    preparingSends.delete(requestId)
+                    if (retryRequestId) this.removeFailedSend(sessionId, retryRequestId, { preserveSnapshot: true })
+                })
+            } catch (error) {
+                if (!staged) {
+                    preparingSends.delete(requestId)
+                    this.releaseAsyncQuestionSendLock(sessionId, requestId)
+                    this.reconcileAsyncQuestionDraft(sessionId).catch(() => {})
+                }
+                throw error
+            }
+            // Save edits made during staging through the same per-session queue.
+            persist(this, sessionId).catch(error => console.warn('Failed to persist edits after question staging:', error))
+            let dispatched = false
+            try { dispatched = await send(payload) } catch { /* A socket throw means the frame did not leave. */ }
+            if (!dispatched) {
+                await this.restoreAsyncQuestionSnapshot(sessionId, requestId, snapshot, { forceChoices: true })
+                this.cancelStagedOutgoingSend?.(sessionId, requestId)
+                this.releaseAsyncQuestionSendLock(sessionId, requestId)
+                await this.reconcileAsyncQuestionDraft(sessionId)
+                return false
+            }
+            // Failure here retains a staged (uncertain) snapshot. Never resend automatically.
+            try { await markDispatched(requestId) }
+            catch (error) { console.warn('Failed to mark question send dispatched:', error) }
+            return true
+        },
+
+        async restoreAsyncQuestionSnapshot(sessionId, requestId, snapshot, options) {
+            if (snapshot.medias?.length) await this.restoreDraftAttachments?.(sessionId, snapshot.medias, { strict: true })
+            await enqueue(sessionId, async () => {
+                cancelDraftSave(sessionId)
+                const restore = () => restoreAsyncQuestionSend(snapshot, this.localState.draftMessages[sessionId],
+                    this.localState.asyncQuestionDrafts[sessionId], this.localState.asyncQuestionSnapshots[sessionId], options)
+                const next = restore()
+                await restoreStaged(requestId, sessionId, next.draft, next.questionDraft)
+                // A user can keep typing while IndexedDB commits.
+                const current = restore()
+                this.localState.draftMessages[sessionId] = current.draft
+                this.localState.asyncQuestionDrafts[sessionId] = current.questionDraft
+                this.localState.draftAppendSignals[sessionId] = (this.localState.draftAppendSignals[sessionId] || 0) + 1
+            })
+            persist(this, sessionId).catch(error => console.warn('Failed to save edits after message restoration:', error))
+        },
+
+        async editAsyncQuestionFailure(sessionId, requestId) {
+            const entry = this.getFailedSend(sessionId, requestId)
+            if (!entry || entry.code === 'send_uncertain') return false
+            await this.restoreAsyncQuestionSnapshot(sessionId, requestId, entry)
+            this.removeFailedSend(sessionId, requestId, { preserveSnapshot: true })
+            return true
+        },
+
         async loadAsyncQuestions(projectId, sessionId) {
             const session = this.sessions[sessionId]
             if (session && (session.provider !== 'codex' || session.type === 'subagent' || session.draft)) return null
@@ -50,18 +147,12 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
                     if (draft.choices?.[batch.item_id]) draft.sourceBatches[batch.item_id] = clone(batch)
                 }
             }
-            const reconciled = this.reconcileAsyncQuestionDraft(sessionId)
-            if (!this.confirmInflightSend) return reconciled
-            return reconciled.then(async result => {
-                const sends = pendingSends(sessionId, this)
-                const entries = sends instanceof Map ? sends : new Map(Object.entries(sends))
-                for (const resolution of Object.values(snapshot.resolutions || {})) {
-                    if (resolution.status === 'sent' && entries.has(resolution.request_id)) {
-                        await this.acknowledgeInflightSend(sessionId, resolution.request_id)
-                    }
-                }
-                return result
-            })
+            // Native acceptance settles before any external-resolution recovery.
+            const result = reconcileSend({ choices: draft || emptyDraft(), snapshot, pendingSends: getSends(sessionId, this) })
+            const accepted = this.confirmInflightSend
+                ? Promise.all(result.acceptedRequestIds.map(id => this.acknowledgeInflightSend(sessionId, id)))
+                : Promise.resolve()
+            return accepted.then(() => this.reconcileAsyncQuestionDraft(sessionId))
         },
 
         setAsyncQuestionDraft(sessionId, draft) {
@@ -95,8 +186,8 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
             const snapshot = this.localState.asyncQuestionSnapshots[sessionId]
             if (!record || !snapshot) return Promise.resolve(false)
             const previousDraft = this.localState.draftMessages[sessionId] || {}
-            const result = recoverResolvedAnswers({ draft: previousDraft, choices: record, snapshot,
-                pendingSends: pendingSends(sessionId, this), pendingDismissals: record.pendingDismissals || {} })
+            const result = reconcileSend({ draft: previousDraft, choices: record, snapshot,
+                pendingSends: getSends(sessionId, this), pendingDismissals: record.pendingDismissals || {} })
             if (JSON.stringify(result.choices) === JSON.stringify(record)) return Promise.resolve(false)
             touched.add(sessionId)
             this.localState.asyncQuestionDrafts[sessionId] = result.choices
@@ -153,6 +244,7 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
         },
 
         async dismissAsyncQuestion(projectId, sessionId, itemId) {
+            if (this.getPendingAsyncQuestionIds(sessionId).includes(itemId)) return null
             const record = this.localState.asyncQuestionDrafts[sessionId] ||= emptyDraft()
             record.pendingDismissals ||= {}
             const requestId = uuid()
@@ -204,7 +296,7 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
                 this.confirmInflightSend(sessionId, requestId, { acceptancePersisted: true })
                 return Promise.resolve()
             }
-            const sends = pendingSends(sessionId, this)
+            const sends = getSends(sessionId, this)
             const entry = sends instanceof Map ? sends.get(requestId) : sends[requestId]
             if (!this.localState.asyncQuestionDrafts[sessionId] && !retainsAsyncQuestionSend(entry)) {
                 this.confirmInflightSend(sessionId, requestId)
@@ -217,6 +309,7 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
             const acknowledgement = this.settleAsyncQuestionSend(sessionId, requestId, 'accepted').then(() => {
                 committedAcknowledgements.add(requestId)
                 this.confirmInflightSend(sessionId, requestId, { acceptancePersisted: true })
+                this.releaseAsyncQuestionSendLock(sessionId, requestId)
             })
             acknowledgements.set(requestId, acknowledgement)
             acknowledgement.finally(() => {

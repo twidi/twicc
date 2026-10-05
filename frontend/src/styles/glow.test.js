@@ -718,13 +718,14 @@ test('21. the pending request card and the accent fixes (§8)', () => {
         '../components/message/PendingRequestForm.vue',
         '../components/session/detail/items/claude_code/PendingRequestBody.vue',
         '../components/session/detail/items/codex/RequestUserInputBody.vue',
+        '../components/message/QuestionFields.vue',
     ]) {
         assert.ok(!read(file).includes('--wa-color-primary'), `${file}: no --wa-color-primary`)
     }
     assert.equal(rule(form, ['.question-icon'], topLevel).decls.color, 'var(--wa-color-brand-60)')
     for (const file of [
         '../components/session/detail/items/claude_code/PendingRequestBody.vue',
-        '../components/session/detail/items/codex/RequestUserInputBody.vue',
+        '../components/message/QuestionFields.vue',
     ]) {
         assert.equal(rule(parseCss(styleOf(read(file))), ['.other-toggle-link'], topLevel).decls.color,
             'var(--wa-color-brand-60)', `${file}: .other-toggle-link`)

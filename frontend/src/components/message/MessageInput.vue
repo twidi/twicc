@@ -38,7 +38,7 @@ import AgentSettingsPopover from './AgentSettingsPopover.vue'
 import CollapsedBar from './CollapsedBar.vue'
 import HybridModeExplainer from './HybridModeExplainer.vue'
 import AsyncQuestions from './AsyncQuestions.vue'
-import { classifyAsyncQuestionSend } from '../../utils/asyncQuestions.js'
+import { classifyAsyncQuestionSend, prepareAsyncQuestionSend } from '../../utils/asyncQuestions.js'
 import { useMessageSnippetsStore } from '../../stores/messageSnippets'
 import { useWorkspacesStore } from '../../stores/workspaces'
 import { getUnavailablePlaceholders, resolveSnippetText } from '../../utils/snippetPlaceholders'
@@ -154,7 +154,8 @@ const readyAsyncQuestionCount = computed(() => readyAsyncQuestionBatches.value
     .reduce((count, batch) => count + batch.questions.length, 0))
 const hasCollectingAsyncQuestions = computed(() => asyncQuestionWidgetEnabled.value
     && asyncQuestionSnapshot.value.batches.some(batch => batch.status === 'collecting'))
-const asyncQuestionAnswers = computed(() => readyAsyncQuestionBatches.value.flatMap(batch =>
+const asyncQuestionAnswers = computed(() => readyAsyncQuestionBatches.value
+    .filter(batch => !store.getPendingAsyncQuestionIds(props.sessionId).includes(batch.item_id)).flatMap(batch =>
     batch.questions.flatMap(question => {
         const answer = asyncQuestionDraft.value?.choices?.[batch.item_id]?.[question.index]
         return answer ? [{ ...answer, item_id: batch.item_id, index: question.index }] : []
@@ -519,14 +520,15 @@ const hasUnappliedChanges = computed(() =>
 )
 // Attachments count as a message, so they keep the button on "Send" even when
 // settings are staged (the send applies them on the way, like a text message).
+const isComposerCommand = computed(() => messageText.value.trim().startsWith('/')
+    && (getProviderHelpers(session.value?.provider)?.getBuiltInCommands('/') || [])
+        .some(command => command.name === messageText.value.trim().slice(1).trim().split(/\s+/u)[0]))
 const asyncQuestionSendClassification = computed(() => classifyAsyncQuestionSend({
     text: messageText.value,
     answers: asyncQuestionAnswers.value,
     attachments: canSendAttachmentsOnly.value ? attachments.value : [],
     settingsOnly: hasUnappliedChanges.value,
-    command: messageText.value.trim().startsWith('/')
-        && (getProviderHelpers(session.value?.provider)?.getBuiltInCommands('/') || [])
-            .some(command => command.name === messageText.value.trim().slice(1).trim().split(/\s+/u)[0]),
+    command: isComposerCommand.value,
 }))
 const isSettingsOnlyButton = computed(() => asyncQuestionSendClassification.value.settingsOnly)
 const buttonLabel = computed(() => {
@@ -1573,7 +1575,8 @@ async function handleSend() {
     // Sending is locked while a pending request shares the footer: the composer
     // is for *preparing* only. Guards both the click and the keyboard shortcut.
     if (props.sendingLocked) return
-    const text = messageText.value.trim()
+    const rawText = messageText.value
+    const text = rawText.trim()
     const classification = asyncQuestionSendClassification.value
     if (classification.commandBlocked) {
         toast.warning('Use a normal message or clear your question answers before sending a command.')
@@ -1617,8 +1620,17 @@ async function handleSend() {
     if (hasStagedHybrid) {
         sendWsMessage({ type: 'set_session_hybrid', session_id: props.sessionId })
         store.setStagedHybrid(props.sessionId, false)
-        if (!text && !attachmentsOnly) return
+        if (!text && !attachmentsOnly && !classification.hasAnswers) return
     }
+
+    const outgoing = prepareAsyncQuestionSend({
+        snapshot: isSettingsOnlyUpdate || isComposerCommand.value
+            ? null : asyncQuestionSnapshot.value,
+        questionDraft: asyncQuestionDraft.value || {}, rawText,
+        pendingQuestionIds: store.getPendingAsyncQuestionIds(props.sessionId),
+    })
+    const questionSend = !!outgoing.asyncQuestions
+    const sentMedias = store.getAttachments(props.sessionId).map(media => ({ ...media }))
 
     // Build the message payload
     // For context_max: when the auto-force-to-1M rule is active we send 1M
@@ -1629,7 +1641,7 @@ async function handleSend() {
         session_id: props.sessionId,
         project_id: props.projectId,
         provider: session.value?.provider,
-        text: text,
+        text: questionSend ? rawText : text,
         // Settings: null = use global default, explicit value = forced for this session
         permission_mode: selectedPermissionMode.value,
         selected_model: selectedModel.value,
@@ -1641,6 +1653,8 @@ async function handleSend() {
             ? store.getEffectiveContextMax(props.sessionId, selectedModel.value ?? settings.providerStore.value?.defaultModel)
             : selectedContextMax.value,
     }
+
+    if (questionSend) payload.async_questions = outgoing.asyncQuestions
 
     // For draft sessions with a title, include it
     if (isDraft.value && session.value?.title) {
@@ -1662,7 +1676,7 @@ async function handleSend() {
     // Anthropic enforces a 2000 px cap on requests with >20 images, and
     // Codex re-resizes server-side so we hand it the stored blob.
     if (attachmentCount.value > 0) {
-        const medias = store.getAttachments(props.sessionId)
+        const medias = sentMedias
         const effectiveModel = selectedModel.value ?? settings.providerStore.value?.defaultModel
         const processedMedias = await resizeMediasForSend(
             medias, getProviderHelpers(session.value?.provider), effectiveModel,
@@ -1681,7 +1695,17 @@ async function handleSend() {
     const requestId = generateUUID()
     payload.request_id = requestId
 
-    const success = sendWsMessage(payload)
+    let success
+    if (questionSend) {
+        try {
+            success = await store.sendAsyncQuestionMessage(props.sessionId, props.projectId, requestId, payload, {
+                ...outgoing, medias: sentMedias, images: payload.images, documents: payload.documents,
+            })
+        } catch {
+            toast.error('Failed to save the question send. Your message remains available for recovery.')
+            return
+        }
+    } else success = sendWsMessage(payload)
 
     if (success) {
         // Sync active values to match what was just sent to the backend.
@@ -1699,7 +1723,7 @@ async function handleSend() {
 
         // Snapshot the send (original draft-format medias, BEFORE the draft
         // is cleared below) + optimistic bubble + optimistic starting state.
-        store.registerOutgoingSend(props.sessionId, props.projectId, requestId, {
+        if (!questionSend) store.registerOutgoingSend(props.sessionId, props.projectId, requestId, {
             text,
             medias: attachmentCount.value > 0 ? store.getAttachments(props.sessionId) : [],
             images: payload.images,
@@ -1707,10 +1731,12 @@ async function handleSend() {
         })
 
         // Clear draft message from store (and IndexedDB)
-        store.clearDraftMessage(props.sessionId)
+        if (!questionSend) store.clearDraftMessage(props.sessionId)
 
         // Clear attachments from store and IndexedDB
-        if (attachmentCount.value > 0) {
+        if (questionSend) {
+            for (const media of sentMedias) await store.removeAttachment(props.sessionId, media.id)
+        } else if (attachmentCount.value > 0) {
             await store.clearAttachmentsForSession(props.sessionId)
         }
 
@@ -1724,16 +1750,16 @@ async function handleSend() {
         // Force-clear the Web Component's value property directly: Vue may skip
         // re-pushing "" via :value.prop if it already pushed "" on a previous send
         // (Vue's template binding deduplicates identical prop values).
-        messageText.value = ''
+        messageText.value = questionSend ? (store.getDraftMessage(props.sessionId)?.message || '') : ''
         if (textareaRef.value) {
             // Force-clear both the Web Component property and its internal <textarea>.
             // Setting wa.value alone may be ignored by the Lit setter's dedup check
             // (if _value is already ""), and even when accepted, the Lit re-render
             // with live() can be skipped if Vue's binding already pushed the same value.
             // Directly clearing the inner textarea ensures the DOM is always updated.
-            textareaRef.value.value = ''
+            textareaRef.value.value = messageText.value
             const inner = textareaRef.value.shadowRoot?.querySelector('textarea')
-            if (inner) inner.value = ''
+            if (inner) inner.value = messageText.value
             await nextTick()
             adjustTextareaHeight()
         }

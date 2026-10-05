@@ -252,13 +252,16 @@ export const versionMismatchDetected = ref(false)
  * Send a JSON message through the WebSocket connection.
  * Returns false if not connected.
  * @param {object} data - The data to send (will be JSON-stringified)
+ * @param {object} options - Set buffer:false to require immediate socket dispatch.
  * @returns {boolean} - True if message was sent, false if not connected
  */
-export function sendWsMessage(data) {
+export function sendWsMessage(data, { buffer = true } = {}) {
     if (!__hmrState.wsSendFn) {
         console.warn('WebSocket not initialized, cannot send message')
         return false
     }
+    // Structured sends must roll back when disconnected, never enter the reconnect buffer.
+    if (!buffer) return __hmrState.wsSendFn(JSON.stringify(data), false)
     __hmrState.wsSendFn(JSON.stringify(data))
     return true
 }

@@ -5,9 +5,11 @@
 // rendered by the provider's user-message renderer; this banner only reads
 // the synthetic parsed content's ``failedSend`` field and the store entry.
 
-import { computed, inject } from 'vue'
+import { computed, inject, ref } from 'vue'
 import { useDataStore } from '../../../../stores/data'
 import { sendWsMessage } from '../../../../composables/useWebSocket'
+import { asyncQuestionRetryState } from '../../../../utils/asyncQuestions.js'
+import { toast } from '../../../../composables/useToast'
 import { generateUUID } from '../../../../utils/crypto'
 import { mediasToSdkFormat, resizeMediasForSend } from '../../../../utils/fileUtils'
 import { getProviderHelpers, getProviderStore } from '../../../../providers'
@@ -31,6 +33,9 @@ const props = defineProps({
 const store = useDataStore()
 const insertTextAtCursor = inject('insertTextAtCursor', null)
 
+const working = ref(false)
+const retryState = computed(() => asyncQuestionRetryState(getEntry() || {}, store.getAsyncQuestionSnapshot(props.sessionId)))
+const uncertain = computed(() => getEntry()?.code === 'send_uncertain')
 const failedSend = computed(() => props.content?.failedSend || null)
 
 // A hybrid send rejected because the CLI composer was busy (a TUI dialog was
@@ -72,73 +77,92 @@ function getEntry() {
  */
 async function retry() {
     const entry = getEntry()
-    if (!entry) return
-    const session = store.getSession(props.sessionId)
-    const requestId = generateUUID()
-    // Same send-time resize as the composer. The model is the one the payload
-    // below re-sends: the session's stored model, else the provider's default.
-    const medias = await resizeMediasForSend(
-        entry.medias || [],
-        getProviderHelpers(session?.provider),
-        session?.selected_model ?? getProviderStore(session?.provider)?.defaultModel,
-    )
-    // A concurrent Retry / Edit / Delete may have consumed the entry meanwhile.
-    if (getEntry() !== entry) return
-    const { images, documents } = mediasToSdkFormat(medias)
-    const payload = {
-        type: 'send_message',
-        session_id: props.sessionId,
-        project_id: props.projectId,
-        provider: session?.provider,
-        text: entry.text,
-        permission_mode: session?.permission_mode ?? null,
-        selected_model: session?.selected_model ?? null,
-        effort: session?.effort ?? null,
-        thinking_enabled: session?.thinking_enabled ?? null,
-        claude_in_chrome: session?.claude_in_chrome ?? null,
-        fast_mode: session?.fast_mode ?? null,
-        context_max: session?.context_max ?? null,
-        request_id: requestId,
-    }
-    if (images.length) payload.images = images
-    if (documents.length) payload.documents = documents
-    store.applyCreationSendMode(payload)
-    // WebSocket down: keep the failed bubble, the user can retry later
-    if (!sendWsMessage(payload)) return
-    store.registerOutgoingSend(props.sessionId, props.projectId, requestId, {
-        text: entry.text,
-        medias: entry.medias || [],
-        images,
-        documents,
-    })
-    store.removeFailedSend(props.sessionId, entry.requestId)
+    if (!entry || working.value || !retryState.value.canRetry) return
+    working.value = true
+    try {
+        const session = store.getSession(props.sessionId)
+        const requestId = generateUUID()
+        // Same send-time resize as the composer. The model is the one the payload
+        // below re-sends: the session's stored model, else the provider's default.
+        const medias = await resizeMediasForSend(
+            entry.medias || [],
+            getProviderHelpers(session?.provider),
+            session?.selected_model ?? getProviderStore(session?.provider)?.defaultModel,
+        )
+        // A concurrent Retry / Edit / Delete may have consumed the entry meanwhile.
+        if (getEntry() !== entry || !retryState.value.canRetry) return
+        const { images, documents } = mediasToSdkFormat(medias)
+        const payload = {
+            type: 'send_message',
+            session_id: props.sessionId,
+            project_id: props.projectId,
+            provider: session?.provider,
+            text: retryState.value.text,
+            permission_mode: session?.permission_mode ?? null,
+            selected_model: session?.selected_model ?? null,
+            effort: session?.effort ?? null,
+            thinking_enabled: session?.thinking_enabled ?? null,
+            claude_in_chrome: session?.claude_in_chrome ?? null,
+            fast_mode: session?.fast_mode ?? null,
+            context_max: session?.context_max ?? null,
+            request_id: requestId,
+        }
+        if (retryState.value.asyncQuestions) payload.async_questions = retryState.value.asyncQuestions
+        if (images.length) payload.images = images
+        if (documents.length) payload.documents = documents
+        store.applyCreationSendMode(payload)
+        if (payload.async_questions) {
+            await store.sendAsyncQuestionMessage(props.sessionId, props.projectId, requestId, payload, {
+                ...entry, asyncQuestions: payload.async_questions, images, documents,
+            }, { retryRequestId: entry.requestId })
+            return
+        }
+        // WebSocket down: keep the failed bubble, the user can retry later
+        if (!sendWsMessage(payload)) return
+        store.registerOutgoingSend(props.sessionId, props.projectId, requestId, {
+            text: entry.text,
+            medias: entry.medias || [],
+            images,
+            documents,
+        })
+        store.removeFailedSend(props.sessionId, entry.requestId)
+    } catch {
+        toast.error('Failed to save the retry. Your message remains available for recovery.')
+    } finally { working.value = false }
 }
 
 /** Put the message back into the composer for rework, then drop the bubble. */
 async function edit() {
     const entry = getEntry()
-    if (!entry || !insertTextAtCursor) return
-    insertTextAtCursor(entry.text)
-    // insertTextAtCursor only focuses when the composer is already expanded; a
-    // collapsed composer just gets the text appended to its draft and stays put
-    // (so reading + commenting never pops it open). But Edit is an explicit "I
-    // want to rework this now", so open + focus the composer. Mirror the "Expand
-    // Message Input" command: dispatch twicc:expand-composer on the collapsed
-    // composer — MessageInput expands it, reduces any pending request, and
-    // focuses the textarea itself. (Not focusChatPrimary, which would steer focus
-    // to a pending request instead of the composer.)
-    document
-        .querySelector('.message-input.collapsed')
-        ?.dispatchEvent(new CustomEvent('twicc:expand-composer'))
-    if (entry.medias?.length) {
-        await store.restoreDraftAttachments(props.sessionId, entry.medias)
-    }
-    store.removeFailedSend(props.sessionId, entry.requestId)
+    if (!entry || !insertTextAtCursor || working.value || uncertain.value) return
+    working.value = true
+    try {
+        if (entry.asyncQuestions || entry.async_questions) {
+            if (!await store.editAsyncQuestionFailure(props.sessionId, entry.requestId)) return
+        } else {
+            if (entry.medias?.length) await store.restoreDraftAttachments(props.sessionId, entry.medias)
+            insertTextAtCursor(entry.text)
+        }
+        // insertTextAtCursor only focuses when the composer is already expanded; a
+        // collapsed composer just gets the text appended to its draft and stays put
+        // (so reading + commenting never pops it open). But Edit is an explicit "I
+        // want to rework this now", so open + focus the composer. Mirror the "Expand
+        // Message Input" command: dispatch twicc:expand-composer on the collapsed
+        // composer — MessageInput expands it, reduces any pending request, and
+        // focuses the textarea itself. (Not focusChatPrimary, which would steer focus
+        // to a pending request instead of the composer.)
+        document
+            .querySelector('.message-input.collapsed')
+            ?.dispatchEvent(new CustomEvent('twicc:expand-composer'))
+        store.removeFailedSend(props.sessionId, entry.requestId)
+    } catch {
+        toast.error('Failed to restore the message. Your message remains available for recovery.')
+    } finally { working.value = false }
 }
 
 function discard() {
     const entry = getEntry()
-    if (!entry) return
+    if (!entry || working.value || uncertain.value) return
     store.removeFailedSend(props.sessionId, entry.requestId)
 }
 </script>
@@ -167,7 +191,7 @@ function discard() {
                     size="small"
                     variant="danger"
                     appearance="outlined"
-                    :disabled="nothingLeftToSend"
+                    :disabled="nothingLeftToSend || working || !retryState.canRetry"
                     @click="retry"
                 >
                     <wa-icon slot="start" name="rotate-right"></wa-icon>
@@ -178,13 +202,13 @@ function discard() {
                     size="small"
                     variant="neutral"
                     appearance="outlined"
-                    :disabled="nothingLeftToSend"
+                    :disabled="nothingLeftToSend || working || uncertain"
                     @click="edit"
                 >
                     <wa-icon slot="start" name="pen"></wa-icon>
                     Edit
                 </wa-button>
-                <wa-button size="small" variant="neutral" appearance="plain" @click="discard">
+                <wa-button size="small" variant="neutral" appearance="plain" :disabled="working || uncertain" @click="discard">
                     Delete
                 </wa-button>
             </div>

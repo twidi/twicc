@@ -11,6 +11,7 @@ const props = defineProps({
 const emit = defineEmits(['dismiss'])
 const store = useDataStore()
 const draft = computed(() => store.getAsyncQuestionDraft(props.sessionId))
+const pendingIds = computed(() => store.getPendingAsyncQuestionIds(props.sessionId))
 const batches = computed(() => props.snapshot.widget_enabled === false ? []
     : props.snapshot.batches.filter(batch => batch.status === 'ready'))
 
@@ -22,6 +23,7 @@ function fields(batch) {
 }
 
 function updateChoices(batch, choices) {
+    if (pendingIds.value.includes(batch.item_id)) return
     // Preserve the entire record, including source content and request identities.
     const record = {
         ...draft.value,
@@ -41,7 +43,7 @@ function updateChoices(batch, choices) {
             <QuestionFields
                 :questions="fields(batch)"
                 :model-value="draft?.choices?.[batch.item_id] || {}"
-                :disabled="!!draft?.pendingDismissals?.[batch.item_id]"
+                :disabled="!!draft?.pendingDismissals?.[batch.item_id] || pendingIds.includes(batch.item_id)"
                 :auto-focus="false"
                 :allow-clear="true"
                 :allow-other="true"
@@ -52,7 +54,7 @@ function updateChoices(batch, choices) {
                 appearance="outlined"
                 size="small"
                 class="dismiss-batch"
-                :disabled="!!draft?.pendingDismissals?.[batch.item_id]"
+                :disabled="!!draft?.pendingDismissals?.[batch.item_id] || pendingIds.includes(batch.item_id)"
                 @click="emit('dismiss', batch.item_id)"
             >
                 <wa-icon slot="start" name="ban" variant="classic"></wa-icon>

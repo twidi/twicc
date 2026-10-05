@@ -175,6 +175,7 @@ function mountAsync(widgetEnabled = true) {
         sourceBatches: { 'batch-b': { item_id: 'batch-b' } }, recoveredIds: ['older'],
         acceptedSendIds: ['accepted-id'], pendingDismissals: { 'batch-c': 'dismiss-id' } }
     const store = {
+        getPendingAsyncQuestionIds: () => [],
         getAsyncQuestionDraft: () => record,
         setAsyncQuestionDraft(sessionId, next) {
             assert.equal(sessionId, 'session-a')
@@ -210,7 +211,7 @@ it('widget-disabled async host hides batches and keeps stored answers', () => {
 
 it('composer blocks actual slash commands with answers and permits ordinary slash-prefixed text', () => {
     const source = readFileSync(new URL('../components/message/MessageInput.vue', import.meta.url), 'utf8')
-    const start = source.indexOf('const asyncQuestionSendClassification = computed(')
+    const start = source.indexOf('const isComposerCommand = computed(')
     const end = source.indexOf('const isSettingsOnlyButton =', start)
     const setup = new Function('computed', 'classifyAsyncQuestionSend', 'getProviderHelpers', 'session',
         'messageText', 'asyncQuestionAnswers', 'canSendAttachmentsOnly', 'attachments', 'hasUnappliedChanges', `

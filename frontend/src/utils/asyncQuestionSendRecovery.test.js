@@ -1,0 +1,388 @@
+import assert from 'node:assert/strict'
+import { it } from 'node:test'
+import { readFileSync } from 'node:fs'
+import { createSendFailureActions } from './ephemeralSessions.js'
+import * as questions from './asyncQuestions.js'
+import * as storage from './draftStorage.js'
+import { createAsyncQuestionActions } from './asyncQuestionState.js'
+
+const batch = (id = 'q1') => ({ item_id: id, status: 'ready', questions: [{ index: 3, title: 'Choose?', options: ['Yes'] }] })
+const ready = () => ({ revision: 1, widget_enabled: true, batches: [batch(), batch('unanswered')], resolutions: {} })
+const choices = () => ({ choices: { q1: { 3: { kind: 'other', value: 'Original answer' } } }, sourceBatches: { q1: batch() }, recoveredIds: [] })
+const outgoing = () => questions.prepareAsyncQuestionSend({ snapshot: ready(), questionDraft: choices(), rawText: '  Extra text  ' })
+const resolution = (id = 'external', status = 'sent') => ({ ...ready(), revision: 2, batches: [], resolutions: { q1: { status, request_id: id } } })
+
+it('snapshots raw text, selected answers and every ready batch once', () => {
+    const send = outgoing()
+    assert.equal(send.rawText, '  Extra text  ')
+    assert.deepEqual(send.asyncQuestions.batch_ids, ['q1', 'unanswered'])
+    assert.equal(send.text, 'Answers to your questions:\n\nQuestion: Choose?\nAnswer: Original answer\n\nAdditional message:\n  Extra text  ')
+    assert.equal(questions.asyncQuestionRetryState(send, { ...ready(), revision: 99 }).canRetry, true)
+    assert.equal(questions.asyncQuestionRetryState(send, ready()).text, send.rawText)
+})
+it('filters empty Other, disabled controls and pending batches', () => {
+    const draft = choices(); draft.choices.q1[3].value = ' \n '
+    assert.deepEqual(questions.prepareAsyncQuestionSend({ snapshot: ready(), questionDraft: draft, rawText: 'Hi' }).asyncQuestions.answers, [])
+    assert.equal(questions.prepareAsyncQuestionSend({ snapshot: { ...ready(), widget_enabled: false }, questionDraft: choices(), rawText: 'Hi' }).asyncQuestions, undefined)
+    assert.deepEqual(questions.prepareAsyncQuestionSend({ snapshot: ready(), questionDraft: choices(), rawText: 'Hi', pendingQuestionIds: ['q1'] }).asyncQuestions.batch_ids, ['unanswered'])
+})
+it('does not recover its own accepted answers as an external resolution', () => {
+    const result = questions.reconcileSend({ draft: {}, choices: choices(), snapshot: resolution('send-1'), pendingSends: { 'send-1': outgoing() } })
+    assert.equal(result.recoveredText, '')
+    assert.equal(result.acceptedRequestId, 'send-1')
+    assert.deepEqual(result.pendingQuestionIds, [])
+})
+for (const status of ['sent', 'dismissed']) it(`recovers Other before external ${status} without a send`, () => {
+    const result = questions.reconcileSend({ draft: { message: 'Later text', mediaIds: ['m'] }, choices: choices(), snapshot: resolution('browser-2', status) })
+    assert.match(result.recoveredText, /Original answer/)
+    assert.ok(result.draft.message.endsWith('Later text'))
+    assert.deepEqual(result.draft.mediaIds, ['m'])
+})
+it('keeps uncertain sends locked until native evidence resolves them', () => {
+    const send = { ...outgoing(), status: 'uncertain', code: 'send_uncertain' }
+    const result = questions.reconcileSend({ choices: choices(), snapshot: resolution(), pendingSends: { local: send } })
+    assert.equal(result.recoveredText, '')
+    assert.deepEqual(result.pendingQuestionIds, ['q1', 'unanswered'])
+    assert.equal(questions.asyncQuestionRetryState(send, ready()).canRetry, false)
+})
+it('consumes only the captured text and choices, preserving later edits and new batches', () => {
+    const send = outgoing(), later = choices()
+    later.choices.new = { 0: { kind: 'other', value: 'New answer' } }
+    later.sourceBatches.new = batch('new')
+    const result = questions.consumeAsyncQuestionSend(send, { message: send.rawText + 'New text', mediaIds: ['m'] }, later)
+    assert.equal(result.draft.message, 'New text')
+    assert.equal(result.questionDraft.choices.q1, undefined)
+    assert.equal(result.questionDraft.choices.new[0].value, 'New answer')
+    const changed = choices(); changed.choices.q1[3].value = 'Edited during commit'
+    assert.equal(questions.consumeAsyncQuestionSend(send, { message: 'Replaced' }, changed).questionDraft.choices.q1[3].value, 'Edited during commit')
+})
+it('stale Edit produces ordinary text and Retry cannot send stale references', () => {
+    const send = outgoing()
+    assert.equal(questions.asyncQuestionRetryState(send, resolution()).canRetry, false)
+    const result = questions.restoreAsyncQuestionSend(send, { message: 'Later' }, { choices: {} }, resolution())
+    assert.equal(result.draft.message, send.text + '\n\nLater')
+    assert.deepEqual(result.questionDraft.choices, {})
+})
+it('ready Edit restores raw text and choices without double formatting; legacy stays ordinary', () => {
+    const send = outgoing()
+    const result = questions.restoreAsyncQuestionSend(send, {}, { choices: {} }, ready())
+    assert.equal(result.draft.message, send.rawText)
+    assert.equal(result.questionDraft.choices.q1[3].value, 'Original answer')
+    assert.deepEqual(questions.asyncQuestionRetryState({ text: 'Legacy' }, null), { canRetry: true, text: 'Legacy', asyncQuestions: undefined })
+})
+
+function database() {
+    const data = { draftMessages: { s: { message: 'before' } }, asyncQuestionDrafts: { s: choices() }, inflightSends: {} }
+    const transactions = []
+    const db = { transaction(names) {
+        const next = structuredClone(data)
+        const tx = { names, objectStore: name => ({
+            put(value, key) { next[name][key] = structuredClone(value); return {} },
+            delete(key) { delete next[name][key]; return {} },
+            get(key) { const request = {}; queueMicrotask(() => { request.result = next[name][key]; request.onsuccess?.() }); return request },
+        }), commit() { for (const name of Object.keys(data)) data[name] = next[name]; tx.oncomplete() },
+        abort() { tx.onabort() }, }
+        transactions.push(tx); return tx
+    } }
+    return { data, transactions, open: async () => db }
+}
+const tick = async () => { for (let i = 0; i < 8; i++) await Promise.resolve() }
+it('staging waits for commit, includes all three stores, abort preserves reload state', async () => {
+    const db = database(); const send = { ...outgoing(), sessionId: 's' }
+    let done = false
+    const p = storage.stageAsyncQuestionSend('r', send, { message: '' }, { choices: {} }, db.open).then(() => { done = true })
+    await tick()
+    assert.equal(done, false)
+    assert.deepEqual(new Set(db.transactions[0].names), new Set(['draftMessages', 'asyncQuestionDrafts', 'inflightSends']))
+    assert.equal(db.data.draftMessages.s.message, 'before')
+    db.transactions[0].abort()
+    await assert.rejects(p, /abort/)
+    assert.equal(db.data.draftMessages.s.message, 'before')
+    assert.deepEqual(db.data.inflightSends, {})
+    const staged = storage.stageAsyncQuestionSend('r', send, { message: '' }, { choices: {} }, db.open)
+    await tick(); db.transactions[1].commit(); await staged
+    assert.equal(db.data.inflightSends.r.status, 'staged')
+    assert.equal(db.data.draftMessages.s.message, '')
+    assert.equal(db.data.inflightSends.r.rawText, send.rawText)
+})
+it('dispatched status cannot recreate a snapshot deleted by an early ack', async () => {
+    const db = database()
+    const p = storage.markAsyncQuestionSendDispatched('accepted', db.open)
+    await tick(); db.transactions[0].commit(); await p
+    assert.deepEqual(db.data.inflightSends, {})
+})
+it('socket rollback commits restored draft and snapshot deletion together', async () => {
+    const db = database(); db.data.inflightSends.r = { ...outgoing(), status: 'staged' }
+    const p = storage.restoreStagedAsyncQuestionSend('r', 's', { message: 'restored' }, choices(), db.open)
+    await tick()
+    assert.ok(db.data.inflightSends.r)
+    db.transactions[0].commit(); await p
+    assert.equal(db.data.draftMessages.s.message, 'restored')
+    assert.deepEqual(db.data.inflightSends, {})
+})
+
+function production(overrides = {}) {
+    const pending = new Map(), frames = [], disk = { questions: choices(), draft: { message: '  Extra text  ' }, sends: {} }
+    const state = { sessions: { s: { provider: 'codex' } }, localState: { draftMessages: { s: structuredClone(disk.draft) },
+        asyncQuestionDrafts: { s: choices() }, asyncQuestionSnapshots: { s: ready() }, asyncQuestionNotices: {}, draftAppendSignals: {}, failedSends: {} } }
+    const deps = {
+        pendingSends: () => Object.fromEntries([...pending, ...Object.entries(state.localState.failedSends.s || {}).map(([id, send]) =>
+            [id, { ...send, status: send.code === 'send_uncertain' ? 'uncertain' : 'rejected' }])]),
+        cancelDraftSave() {}, recover: async (id, draft, q) => { disk.draft = structuredClone(draft); disk.questions = structuredClone(q) },
+        stageSend: async (id, entry, draft, q) => { disk.sends[id] = structuredClone(entry); disk.draft = structuredClone(draft); disk.questions = structuredClone(q) },
+        restoreStaged: async (id, sessionId, draft, q) => { delete disk.sends[id]; disk.draft = structuredClone(draft); disk.questions = structuredClone(q) },
+        markDispatched: async id => { if (disk.sends[id]) disk.sends[id].status = 'dispatched' },
+        send: async frame => { assert.ok(pending.has(frame.request_id)); frames.push(frame); return true }, ...overrides,
+    }
+    Object.assign(state, createAsyncQuestionActions(deps))
+    state.registerOutgoingSend = (sessionId, projectId, id, entry) => { assert.ok(disk.sends[id]); pending.set(id, entry) }
+    state.cancelStagedOutgoingSend = (sessionId, id) => pending.delete(id)
+    state.removeFailedSend = (sessionId, id) => { if (state.localState.failedSends[sessionId]) delete state.localState.failedSends[sessionId][id] }
+    state.getFailedSend = (sessionId, id) => state.localState.failedSends[sessionId]?.[id]
+    state.markInflightSendAccepted = (sessionId, id) => { const send = pending.get(id); if (send) send.status = 'accepted' }
+    state.confirmInflightSend = (sessionId, id) => { pending.delete(id); delete disk.sends[id] }
+    return { state, disk, frames, pending, deps }
+}
+const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b }); return { promise, resolve, reject } }
+const dispatch = (h, id = 'local', send = outgoing()) => h.state.sendAsyncQuestionMessage('s', 'p', id, { request_id: id, text: send.rawText, async_questions: send.asyncQuestions }, send)
+it('production abort before dispatch retains text and choices and releases only its locks', async () => {
+    const h = production({ stageSend: async () => { throw new Error('Abort before dispatch') } })
+    await assert.rejects(dispatch(h), /Abort before dispatch/)
+    assert.equal(h.frames.length, 0)
+    assert.equal(h.state.localState.draftMessages.s.message, '  Extra text  ')
+    assert.deepEqual(h.state.localState.asyncQuestionDrafts.s, choices())
+    assert.deepEqual(h.state.getPendingAsyncQuestionIds('s'), [])
+})
+it('production staging reserves batches, waits for commit, then preserves concurrent typing and new choices', async () => {
+    const wait = deferred()
+    const original = production({ stageSend: async (id, entry, draft, q) => {
+        await wait.promise
+        original.disk.sends[id] = structuredClone(entry)
+        original.disk.draft = structuredClone(draft)
+        original.disk.questions = structuredClone(q)
+    } })
+    const sending = dispatch(original)
+    await tick()
+    assert.equal(original.frames.length, 0)
+    assert.deepEqual(original.state.getPendingAsyncQuestionIds('s'), ['q1', 'unanswered'])
+    assert.equal(await dispatch(original, 'duplicate'), false)
+    original.state.localState.draftMessages.s.message += 'Later'
+    original.state.localState.asyncQuestionDrafts.s.choices.new = { 0: { kind: 'other', value: 'Later answer' } }
+    wait.resolve(); await sending
+    assert.equal(original.frames.length, 1)
+    assert.equal(original.state.localState.draftMessages.s.message, 'Later')
+    assert.equal(original.state.localState.asyncQuestionDrafts.s.choices.new[0].value, 'Later answer')
+})
+it('production socket failure restores the staged text, choices and leaves attachments in their store', async () => {
+    const h = production({ send: async () => false })
+    assert.equal(await dispatch(h), false)
+    assert.deepEqual(h.state.localState.asyncQuestionDrafts.s.choices, choices().choices)
+    assert.equal(h.state.localState.draftMessages.s.message, '  Extra text  ')
+    assert.deepEqual(h.disk.sends, {})
+    assert.deepEqual(h.state.getPendingAsyncQuestionIds('s'), [])
+})
+for (const first of ['ack', 'snapshot']) it(`production ${first} first settles acceptance and preserves a new batch`, async () => {
+    const h = production(); await dispatch(h)
+    h.state.localState.draftMessages.s.message = 'Later'
+    h.state.localState.asyncQuestionDrafts.s.choices.new = { 0: { kind: 'other', value: 'New' } }
+    const update = { ...resolution('local'), batches: [batch('new')] }
+    if (first === 'ack') { await h.state.acknowledgeInflightSend('s', 'local'); await h.state.applyAsyncQuestionSnapshot('s', update) }
+    else { await h.state.applyAsyncQuestionSnapshot('s', update); await h.state.acknowledgeInflightSend('s', 'local') }
+    assert.equal(h.state.localState.draftMessages.s.message, 'Later')
+    assert.equal(h.state.localState.asyncQuestionDrafts.s.choices.new[0].value, 'New')
+    assert.deepEqual(h.disk.sends, {})
+    assert.deepEqual(h.state.getPendingAsyncQuestionIds('s'), [])
+})
+it('production early acknowledgement cannot be undone by dispatch completion', async () => {
+    let live
+    live = production({ send: async frame => { await live.state.acknowledgeInflightSend('s', frame.request_id); return true } })
+    await dispatch(live)
+    assert.deepEqual(live.disk.sends, {})
+    assert.deepEqual(live.state.localState.asyncQuestionDrafts.s.acceptedSendIds, ['local'])
+})
+it('production failed Edit restores raw choices if ready and ordinary text if stale', async () => {
+    for (const stale of [false, true]) {
+        const h = production(); h.state.localState.draftMessages.s = { message: 'Later' }; h.state.localState.asyncQuestionDrafts.s = { choices: {} }
+        const entry = { ...outgoing(), requestId: 'failed', code: 'send_failed' }
+        h.state.localState.failedSends.s = { failed: entry }; h.disk.sends.failed = entry
+        if (stale) h.state.localState.asyncQuestionSnapshots.s = resolution()
+        await h.state.editAsyncQuestionFailure('s', 'failed')
+        assert.equal(h.state.localState.draftMessages.s.message, (stale ? entry.text : entry.rawText) + '\n\nLater')
+        assert.equal(!!h.state.localState.asyncQuestionDrafts.s.choices.q1, !stale)
+        assert.deepEqual(h.disk.sends, {})
+    }
+})
+
+it('a snapshot during staging cannot recover locked outgoing choices as an external send', async () => {
+    const wait = deferred()
+    const h = production({ stageSend: async (id, entry) => { await wait.promise; h.disk.sends[id] = entry } })
+    const sending = dispatch(h)
+    await tick()
+    await h.state.applyAsyncQuestionSnapshot('s', resolution('another-browser'))
+    assert.equal(h.state.localState.draftMessages.s.message, '  Extra text  ')
+    assert.equal(h.state.localState.asyncQuestionDrafts.s.choices.q1[3].value, 'Original answer')
+    wait.resolve(); await sending
+    assert.equal(h.state.localState.draftMessages.s.message, '')
+})
+it('retry staging atomically replaces the old failed request and keeps new draft content', async () => {
+    const db = database(); db.data.inflightSends.failed = outgoing()
+    const p = storage.stageAsyncQuestionSend('fresh', { ...outgoing(), sessionId: 's', retryRequestId: 'failed' }, { message: 'Later' }, { choices: {} }, db.open)
+    await tick(); db.transactions[0].commit(); await p
+    assert.equal(db.data.inflightSends.failed, undefined)
+    assert.equal(db.data.inflightSends.fresh.rawText, '  Extra text  ')
+    assert.equal(db.data.draftMessages.s.message, 'Later')
+})
+it('staged media copies retain the existing cap without duplicate SDK blobs', () => {
+    const huge = 'x'.repeat(8 * 1024 * 1024 + 1)
+    const result = storage.inflightSnapshotRecord({ ...outgoing(), medias: [{ id: 'm', data: huge }], images: [{ data: huge }], documents: [] })
+    assert.equal(result.mediasDropped, true)
+    assert.equal(result.mediaCount, 1)
+    assert.deepEqual(result.medias, [])
+    assert.equal(result.images, undefined)
+    assert.equal(result.documents, undefined)
+    assert.equal(storage.inflightSnapshotRecord(result).mediaCount, 1)
+})
+
+const dataSource = readFileSync(new URL('../stores/data.js', import.meta.url), 'utf8')
+function storeActions(deps, names) {
+    const source = names.map(name => {
+        let start = dataSource.indexOf(`        ${name}(`)
+        if (start < 0) start = dataSource.indexOf(`        async ${name}(`)
+        assert.ok(start >= 0)
+        let end = dataSource.indexOf('\n        /**', start)
+        if (end < 0) end = dataSource.length
+        return dataSource.slice(start, end)
+    }).join('\n')
+    return new Function(...Object.keys(deps), `return {${source}}`)(...Object.values(deps))
+}
+for (const status of ['staged', 'dispatched']) it(`reload after ${status} retains an uncertain identity until matching native evidence`, async () => {
+    const h = production()
+    h.disk.sends.local = { ...outgoing(), sessionId: 's', status, sentAt: 1 }
+    h.state.localState.draftAliases = {}
+    h.state.isEphemeralDiscarded = () => false
+    h.state.auditAllLoadedInflightSends = () => {}
+    Object.assign(h.state, createSendFailureActions(h.pending, { deleteInflight: async id => { delete h.disk.sends[id] } }))
+    h.state._applySendFailure = (id, entry, info) => {
+        h.state.localState.failedSends.s ||= {}
+        h.state.localState.failedSends.s[id] = { ...entry, ...info, requestId: id }
+    }
+    Object.assign(h.state, storeActions({
+        getAllInflightSends: async () => structuredClone(h.disk.sends), inflightSends: h.pending,
+        deleteInflightSend: async id => { delete h.disk.sends[id] }, retainsAsyncQuestionSend: questions.retainsAsyncQuestionSend,
+        INFLIGHT_SEND_TTL_MS: 10,
+    }, ['hydrateInflightSends']))
+    await h.state.hydrateInflightSends()
+    const failed = h.state.getFailedSend('s', 'local')
+    assert.equal(failed.code, 'send_uncertain')
+    assert.equal(questions.asyncQuestionRetryState(failed, ready()).canRetry, false)
+    assert.deepEqual(h.state.getPendingAsyncQuestionIds('s'), ['q1', 'unanswered'])
+    await h.state.applyAsyncQuestionSnapshot('s', resolution('local'))
+    assert.equal(h.disk.sends.local, undefined)
+    assert.deepEqual(h.state.getPendingAsyncQuestionIds('s'), [])
+    assert.equal(h.state.localState.draftMessages.s.message, '  Extra text  ')
+})
+it('correlated uncertain failure stays locked while a definite failure releases only its batches', () => {
+    const h = production()
+    const deps = { isLaunchedEphemeral: () => false, PROCESS_STATE: { STARTING: 'starting' },
+        saveInflightSend: async () => {} }
+    h.state.localState.draftAliases = {}; h.state.processStates = {}
+    h.state.dropDiscardedSendFailure = () => false
+    h.state._materializeFailedSendItem = send => ({ failedSend: send })
+    h.state.recomputeVisualItems = () => {}
+    Object.assign(h.state, storeActions(deps, ['_applySendFailure']))
+    h.state.lockAsyncQuestionSend('s', 'new', { batch_ids: ['new-batch'] })
+    h.state.lockAsyncQuestionSend('s', 'old', outgoing().asyncQuestions)
+    h.state._applySendFailure('old', { ...outgoing(), sessionId: 's' }, { code: 'send_uncertain' })
+    assert.deepEqual(new Set(h.state.getPendingAsyncQuestionIds('s')), new Set(['new-batch', 'q1', 'unanswered']))
+    h.state._applySendFailure('old', { ...outgoing(), sessionId: 's' }, { code: 'async_questions_stale' })
+    assert.deepEqual(h.state.getPendingAsyncQuestionIds('s'), ['new-batch'])
+    assert.equal(h.state.getFailedSend('s', 'old').rawText, outgoing().rawText)
+})
+
+it('production composer sends answer-only after a staged hybrid change and retains post-send typing and new attachments', async () => {
+    const source = readFileSync(new URL('../components/message/MessageInput.vue', import.meta.url), 'utf8')
+    const start = source.indexOf('async function handleSend()')
+    const end = source.indexOf('\n/**', start)
+    const frames = [], removed = [], medias = [{ id: 'original', data: 'image' }]
+    const ref = value => ({ value })
+    const messageText = ref('')
+    const store = {
+        setStagedHybrid() {}, getPendingAsyncQuestionIds: () => [], getAttachments: () => medias,
+        applyCreationSendMode() {},
+        async sendAsyncQuestionMessage(s, p, id, payload, send) {
+            frames.push(payload)
+            assert.equal(payload.text, '')
+            assert.equal(send.text, questions.formatAsyncQuestionMessage(send.sourceBatches, send.asyncQuestions.answers, ''))
+            assert.deepEqual(payload.async_questions.batch_ids, ['q1', 'unanswered'])
+            messageText.value = 'New typing'
+            medias.push({ id: 'new', data: 'new image' })
+            return true
+        },
+        removeAttachment: async (s, id) => removed.push(id), getDraftMessage: () => ({ message: 'New typing' }),
+        clearDraftMessage() { assert.fail('A question send must not globally clear the draft') },
+        clearAttachmentsForSession() { assert.fail('A question send must not globally clear attachments') },
+    }
+    const deps = { props: { sessionId: 's', projectId: 'p', sendingLocked: false }, messageText,
+        asyncQuestionSendClassification: ref({ hasAnswers: true, canSend: true, commandBlocked: false, settingsOnly: false }),
+        canSendAttachmentsOnly: ref(true), isHybridStaged: ref(true), isDisabled: ref(false), isDraft: ref(false),
+        isComposerCommand: ref(false), asyncQuestionSnapshot: ref(ready()), asyncQuestionDraft: ref(choices()),
+        prepareAsyncQuestionSend: questions.prepareAsyncQuestionSend, store, session: ref({ provider: 'codex' }),
+        isContextMaxForced: ref(false), attachmentCount: ref(1), settings: { providerStore: ref({ defaultModel: 'model' }) },
+        resizeMediasForSend: async values => values, getProviderHelpers: () => ({}),
+        mediasToSdkFormat: () => ({ images: ['image'], documents: [] }), generateUUID: () => 'fresh',
+        sendWsMessage: payload => { frames.push(payload); return true }, textareaRef: ref(null),
+        toast: { error: message => assert.fail(message), warning: message => assert.fail(message) },
+    }
+    for (const setting of ['Model', 'PermissionMode', 'Effort', 'Thinking', 'ClaudeInChrome', 'FastMode', 'ContextMax']) {
+        deps['selected' + setting] = ref(null); deps['active' + setting] = ref(null)
+    }
+    const send = new Function(...Object.keys(deps), `${source.slice(start, end)}; return handleSend`)(...Object.values(deps))
+    await send()
+    assert.equal(frames[0].type, 'set_session_hybrid')
+    assert.equal(frames[1].type, 'send_message')
+    assert.equal(messageText.value, 'New typing')
+    assert.deepEqual(removed, ['original'])
+})
+
+it('production Retry sends raw text and structured answers under a fresh identity', async () => {
+    const source = readFileSync(new URL('../components/session/detail/items/FailedSendBanner.vue', import.meta.url), 'utf8')
+    const start = source.indexOf('async function retry()'), end = source.indexOf('\n/** Put', start)
+    const entry = { ...outgoing(), requestId: 'failed', medias: [], code: 'send_failed' }
+    let sent
+    const deps = {
+        getEntry: () => entry, working: { value: false }, retryState: { value: questions.asyncQuestionRetryState(entry, ready()) },
+        props: { sessionId: 's', projectId: 'p' }, generateUUID: () => 'fresh',
+        resizeMediasForSend: async values => values, getProviderHelpers: () => ({}), getProviderStore: () => ({}),
+        mediasToSdkFormat: () => ({ images: [], documents: [] }),
+        toast: { error: message => assert.fail(message) },
+        store: { getSession: () => ({ provider: 'codex' }), applyCreationSendMode() {},
+            sendAsyncQuestionMessage: async (...args) => { sent = args } },
+    }
+    await new Function(...Object.keys(deps), `${source.slice(start, end)}; return retry`)(...Object.values(deps))()
+    assert.equal(sent[2], 'fresh')
+    assert.equal(sent[3].text, entry.rawText)
+    assert.deepEqual(sent[3].async_questions, entry.asyncQuestions)
+    assert.equal(sent[4].text, entry.text)
+    assert.equal(sent[5].retryRequestId, 'failed')
+})
+
+it('production socket wrapper reports a closed socket without buffering structured sends', () => {
+    const source = readFileSync(new URL('../composables/useWebSocket.js', import.meta.url), 'utf8')
+    const start = source.indexOf('export function sendWsMessage('), end = source.indexOf('\n/**', start)
+    const calls = [], state = { wsSendFn: (...args) => { calls.push(args); return false } }
+    const send = new Function('__hmrState', `${source.slice(start, end).replace('export ', '')}; return sendWsMessage`)(state)
+    assert.equal(send({ async_questions: { batch_ids: ['q1'] } }, { buffer: false }), false)
+    assert.equal(calls[0][1], false)
+    assert.equal(send({ text: 'ordinary' }), true, 'Legacy callers keep their existing behavior')
+    state.wsSendFn = (...args) => { calls.push(args); return true }
+    assert.equal(send({ async_questions: { batch_ids: ['q1'] } }, { buffer: false }), true)
+    assert.equal(calls[2][1], false)
+})
+
+it('an explicit stale rejection disables Retry before a fresh lifecycle snapshot arrives', () => {
+    const send = { ...outgoing(), code: 'async_questions_stale' }
+    assert.equal(questions.asyncQuestionRetryState(send, ready()).canRetry, false)
+    const recovered = questions.restoreAsyncQuestionSend(send, {}, { choices: {} }, ready())
+    assert.equal(recovered.draft.message, send.text)
+    assert.deepEqual(recovered.questionDraft.choices, {})
+})
