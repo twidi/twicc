@@ -1,5 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { createRailScopeNavigation, openSidebarCheckbox, isRailScopeRootNavigation } from './railScopeNavigation.js'
 
@@ -81,4 +83,42 @@ test('cold destination listener mounts through Vue before the open event', async
         await navigate('project', 'cold')
         assert.equal(opened, 1)
     } finally { stop() }
+})
+
+// Install the production workspace guards without loading the browser-only router.
+function registerWorkspaceGuards(router, browser) {
+    const source = readFileSync(new URL('../router.js', import.meta.url), 'utf8')
+    const start = source.indexOf('// Propagate workspace query param')
+    const end = source.indexOf('// Per-scope last-location memory', start)
+    runInNewContext(source.slice(start, end), {
+        router, window: browser, history: browser.history, URLSearchParams,
+    })
+}
+
+test('All Projects root clears workspace and selection, bypasses remembered tools, and reopens on duplicate clicks', async () => {
+    const { registerScopeMemory } = await import('./scopeMemory.js')
+    const f = await fixture()
+    f.router.addRoute({ path: '/projects/files', name: 'projects-files', component: {} })
+    f.router.addRoute({ path: '/projects/:projectId/session/:sessionId', name: 'projects-session', component: {} })
+    const originalWindow = globalThis.window
+    const browser = { history: { state: { position: 0 }, replaceState: (_state, _title, url) => browser.url = url } }
+    globalThis.window = browser
+    try {
+        registerWorkspaceGuards(f.router, browser)
+        registerScopeMemory(f.router)
+        await f.router.push({ name: 'projects-files' })
+        const selectedSession = { name: 'projects-session', params: { projectId: 'p', sessionId: 's' }, query: { workspace: 'w' } }
+        await f.router.push(selectedSession)
+        await f.router.push({ name: 'projects-all', query: { workspace: '' } })
+        assert.equal(f.router.currentRoute.value.name, 'projects-files', 'ordinary scope entry restores the remembered Files tab')
+        await f.router.push(selectedSession)
+        await f.navigate('all-projects')
+        assert.equal(f.router.currentRoute.value.name, 'projects-all')
+        assert.deepEqual(f.router.currentRoute.value.params, {})
+        assert.deepEqual(f.router.currentRoute.value.query, { workspace: '' })
+        assert.equal(browser.url, '/projects', 'production cleanup removes the clear signal from the browser URL')
+        assert.deepEqual(f.events, ['/projects?workspace='])
+        await f.navigate('all-projects')
+        assert.deepEqual(f.events, ['/projects?workspace=', '/projects?workspace='], 'duplicate navigation opens again')
+    } finally { globalThis.window = originalWindow }
 })

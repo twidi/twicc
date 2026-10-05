@@ -1,5 +1,5 @@
 <script setup>
-import { openSidebarCheckbox } from '../utils/railScopeNavigation.js'
+import { createRailScopeNavigation, openSidebarCheckbox } from '../utils/railScopeNavigation.js'
 import { computed, ref, watch, onMounted, onUnmounted, onBeforeUnmount, provide, nextTick, shallowRef } from 'vue'
 import { useElementHover, useMediaQuery } from '@vueuse/core'
 import { useRoute, useRouter } from 'vue-router'
@@ -62,6 +62,7 @@ import { usePeerSystemConfigured } from '../composables/usePeerSystemConfigured'
 
 const route = useRoute()
 const router = useRouter()
+const navigateRailScope = createRailScopeNavigation(router)
 const store = useDataStore()
 const settingsStore = useSettingsStore()
 const sharesStore = useSharesStore()
@@ -1666,7 +1667,10 @@ async function handleFloatingToggle() {
 }
 
 function handleRailSelectMode(mode) {
-    if (mode === (isArtifactsMode.value ? 'artifacts' : 'sessions')) return
+    if (mode === (isArtifactsMode.value ? 'artifacts' : 'sessions')) {
+        if (mode === 'sessions') return navigateRailScope('all-projects')
+        return
+    }
     toggleSidebarView()
 }
 

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { readFileSync, existsSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { computed, ref, reactive, watch, nextTick, effectScope } from 'vue'
+import { createRouter, createMemoryHistory } from 'vue-router'
+import { createRailScopeNavigation, openSidebarCheckbox } from '../utils/railScopeNavigation.js'
 
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8')
 const source = read('./ProjectView.vue')
@@ -83,7 +85,6 @@ test('rail actions, unconditional floating anchor, and focus transfers are conne
     const floating = body('handleFloatingToggle')
     assert.match(floating, /toggleSidebar\(\)\s*await nextTick\(\)\s*document.getElementById\('sidebar-rail-toggle'\)\?\.focus\(\)/)
     assert.match(body('handleRailToggle'), /toggleSidebar\(\)\s*await nextTick\(\)\s*if \(railCollapsed.value\) floatingToggleEl.value\?\.focus\(\)/)
-    assert.match(body('handleRailSelectMode'), /if \(mode === \(isArtifactsMode.value \? 'artifacts' : 'sessions'\)\) return\s*toggleSidebarView\(\)/)
     for (const attr of [':settings-anchor="railCollapsed ? floatingToggleEl : null"', `:mode="isArtifactsMode ? 'artifacts' : 'sessions'"`, ':sidebar-open="sidebarOpen"', ':peer-configured="peerSystemConfigured"', ':inbox-count="peersStore.inboxCount"', '@home="handleBackHome"', '@search="openAdvancedSearch"', '@palette="openPalette"', '@inbox="openPeerInbox"', '@toggle-sidebar="handleRailToggle"', '@select-mode="handleRailSelectMode"']) assert.ok(source.includes(attr), attr)
     assert.match(body('openPeerInbox'), /dispatchEvent\(new CustomEvent\('twicc:open-peer-inbox'\)\)/)
     const button = source.match(/<button[^>]*id="sidebar-toggle-button"[^>]*>/)?.[0]
@@ -119,17 +120,28 @@ test('toggle handlers wait for the update before transferring focus', async () =
     }
 })
 
-test('selecting the active rail mode does nothing and other modes retain navigation memory', () => {
+test('active Sessions opens All Projects; active Artifacts stays put and cross-mode switches retain memory', async () => {
     for (const artifacts of [false, true]) for (const mode of ['sessions', 'artifacts']) {
+        const router = createRouter({ history: createMemoryHistory(), routes: [
+            { path: '/project/:projectId/session/:sessionId', name: 'project-session', component: {} },
+            { path: '/projects', name: 'projects-all', component: {} },
+        ] })
+        await router.push('/project/p/session/s?workspace=w')
         let toggles = 0
-        runInNewContext(`${body('handleRailSelectMode')}; handleRailSelectMode(mode)`, {
+        let opens = 0
+        await runInNewContext(`${body('handleRailSelectMode')}; handleRailSelectMode(mode)`, {
             mode, isArtifactsMode: { value: artifacts }, toggleSidebarView: () => toggles++,
+            navigateRailScope: createRailScopeNavigation(router, () => opens++),
         })
+        const activeSessions = !artifacts && mode === 'sessions'
+        assert.equal(router.currentRoute.value.name, activeSessions ? 'projects-all' : 'project-session')
+        if (activeSessions) {
+            assert.deepEqual(router.currentRoute.value.params, {})
+            assert.deepEqual(router.currentRoute.value.query, { workspace: '' })
+        }
+        assert.equal(opens, activeSessions ? 1 : 0)
         assert.equal(toggles, mode === (artifacts ? 'artifacts' : 'sessions') ? 0 : 1)
     }
-    const navigation = body('toggleSidebarView')
-    assert.match(navigation, /if \(lastSessionsLocation.value\) router.push\(lastSessionsLocation.value\)/)
-    assert.match(navigation, /if \(lastArtifactsLocation.value\) router.push\(lastArtifactsLocation.value\)/)
 })
 
 test('floating surfaces, mobile geometry, and conditional footer replace old controls', () => {
@@ -213,6 +225,40 @@ ${entryWatcher}
         collapseByDrag: () => runInNewContext('const panel = { positionInPixels: 30 }; handleSplitReposition({ target: panel, currentTarget: panel })', context),
         stop: () => scope.stop() }
 }
+
+test('active Sessions and duplicate clicks open the sidebar with saved width and mobile polarity', async () => {
+    for (const mobile of [false, true]) {
+        const h = sidebarHarness({ mobile, open: false })
+        const router = createRouter({ history: createMemoryHistory(), routes: [
+            { path: '/project/:projectId/session/:sessionId', name: 'project-session', component: {} },
+            { path: '/projects', name: 'projects-all', component: {} },
+        ] })
+        await router.push('/project/p/session/s')
+        h.checkbox.dispatchEvent = event => {
+            assert.equal(event.type, 'change')
+            h.toggle()
+        }
+        const navigateRailScope = createRailScopeNavigation(router, () => {
+            runInNewContext(`${body('handleOpenSidebar')}; handleOpenSidebar()`, {
+                openSidebarCheckbox, document: { getElementById: () => h.checkbox }, isMobile: () => mobile,
+            })
+        })
+        try {
+            for (let click = 0; click < 2; click++) {
+                h.checkbox.checked = !mobile
+                h.toggle()
+                await runInNewContext(`${body('handleRailSelectMode')}; handleRailSelectMode('sessions')`, {
+                    isArtifactsMode: h.isArtifactsMode, navigateRailScope,
+                    toggleSidebarView: () => assert.fail('active Sessions must return to All Projects'),
+                })
+                assert.equal(h.sidebarOpen.value, true)
+                assert.equal(h.checkbox.checked, mobile)
+                if (!mobile) assert.deepEqual(JSON.parse(JSON.stringify(h.saved.at(-1))), { open: true, width: 320 })
+                else assert.deepEqual(h.saved, [])
+            }
+        } finally { h.stop() }
+    }
+})
 
 test('the whole footer follows desktop and mobile toggles without changing its mount condition', async () => {
     const { parse } = await import('@vue/compiler-sfc')

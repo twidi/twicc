@@ -14,7 +14,7 @@ export function createRailScopeNavigation(router, open = () => window.dispatchEv
         const current = ++navigation
         const target = kind === 'project'
             ? { name: 'project', params: { projectId: id }, query: { workspace: '' } }
-            : { name: 'projects-all', query: { workspace: id } }
+            : { name: 'projects-all', query: { workspace: kind === 'workspace' ? id : '' } }
         const destination = router.resolve(target).fullPath
         const context = { destination }
         rootNavigations.set(router, context)
