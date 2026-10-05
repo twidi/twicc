@@ -37,6 +37,8 @@ import AgentSettingsSummary from './AgentSettingsSummary.vue'
 import AgentSettingsPopover from './AgentSettingsPopover.vue'
 import CollapsedBar from './CollapsedBar.vue'
 import HybridModeExplainer from './HybridModeExplainer.vue'
+import AsyncQuestions from './AsyncQuestions.vue'
+import { classifyAsyncQuestionSend } from '../../utils/asyncQuestions.js'
 import { useMessageSnippetsStore } from '../../stores/messageSnippets'
 import { useWorkspacesStore } from '../../stores/workspaces'
 import { getUnavailablePlaceholders, resolveSnippetText } from '../../utils/snippetPlaceholders'
@@ -69,6 +71,8 @@ const props = defineProps({
         default: 'paused',
         validator: value => ['paused', 'disabled'].includes(value)
     },
+    // Blocking requests own the footer fields. Keep optional choices in the store.
+    hideAsyncQuestions: { type: Boolean, default: false },
     // When true, another panel (a pending request, the hybrid terminal block
     // and/or the goal bar) is rendered above the composer in the footer —
     // regardless of that panel's own expanded/collapsed state. Drives the top
@@ -138,6 +142,40 @@ const session = computed(() => store.getSession(props.sessionId))
 const isDraft = computed(() => session.value?.draft === true)
 const providerLabel = computed(() => getProviderLabel(session.value?.provider))
 const providerIcon = computed(() => getProviderIcon(session.value?.provider))
+const asyncQuestionSnapshot = computed(() => session.value?.provider === 'codex'
+    && session.value?.type !== 'subagent' && !session.value?.parent_session_id && !isDraft.value
+    ? store.getAsyncQuestionSnapshot(props.sessionId) : null)
+const asyncQuestionDraft = computed(() => store.getAsyncQuestionDraft(props.sessionId))
+const asyncQuestionWidgetEnabled = computed(() => asyncQuestionSnapshot.value
+    && asyncQuestionSnapshot.value.widget_enabled !== false)
+const readyAsyncQuestionBatches = computed(() => asyncQuestionWidgetEnabled.value
+    ? asyncQuestionSnapshot.value.batches.filter(batch => batch.status === 'ready') : [])
+const readyAsyncQuestionCount = computed(() => readyAsyncQuestionBatches.value
+    .reduce((count, batch) => count + batch.questions.length, 0))
+const hasCollectingAsyncQuestions = computed(() => asyncQuestionWidgetEnabled.value
+    && asyncQuestionSnapshot.value.batches.some(batch => batch.status === 'collecting'))
+const asyncQuestionAnswers = computed(() => readyAsyncQuestionBatches.value.flatMap(batch =>
+    batch.questions.flatMap(question => {
+        const answer = asyncQuestionDraft.value?.choices?.[batch.item_id]?.[question.index]
+        return answer ? [{ ...answer, item_id: batch.item_id, index: question.index }] : []
+    })))
+const asyncQuestionNotice = computed(() => store.localState.asyncQuestionNotices[props.sessionId])
+
+async function dismissAsyncQuestion(itemId) {
+    try {
+        await store.dismissAsyncQuestion(props.projectId, props.sessionId, itemId)
+    } catch {
+        toast.error('Failed to dismiss questions. Your answers remain in your draft.')
+    }
+}
+
+function onAsyncQuestionKeydown(event) {
+    if (!(event.metaKey || event.ctrlKey) || event.key !== 'Enter') return
+    if (!event.composedPath().some(element => ['WA-TEXTAREA', 'WA-INPUT'].includes(element.tagName))) return
+    event.preventDefault()
+    event.stopPropagation()
+    handleSend()
+}
 
 const ephemeralDialogRef = ref(null)
 const ephemeralConfirmRef = ref(null)
@@ -481,9 +519,16 @@ const hasUnappliedChanges = computed(() =>
 )
 // Attachments count as a message, so they keep the button on "Send" even when
 // settings are staged (the send applies them on the way, like a text message).
-const isSettingsOnlyButton = computed(() =>
-    hasUnappliedChanges.value && !messageText.value.trim() && !canSendAttachmentsOnly.value
-)
+const asyncQuestionSendClassification = computed(() => classifyAsyncQuestionSend({
+    text: messageText.value,
+    answers: asyncQuestionAnswers.value,
+    attachments: canSendAttachmentsOnly.value ? attachments.value : [],
+    settingsOnly: hasUnappliedChanges.value,
+    command: messageText.value.trim().startsWith('/')
+        && (getProviderHelpers(session.value?.provider)?.getBuiltInCommands('/') || [])
+            .some(command => command.name === messageText.value.trim().slice(1).trim().split(/\s+/u)[0]),
+}))
+const isSettingsOnlyButton = computed(() => asyncQuestionSendClassification.value.settingsOnly)
 const buttonLabel = computed(() => {
     const state = processState.value?.state
     if (state === 'starting') return 'Starting...'
@@ -720,6 +765,15 @@ function adjustTextareaHeight() {
 // single line is — and whether anything is waiting in it. We deliberately do NOT
 // preview the text; we only signal that a message has been started.
 const collapsedLabel = computed(() => {
+    const parts = []
+    if (readyAsyncQuestionCount.value > 0) {
+        parts.push(`${readyAsyncQuestionCount.value} question${readyAsyncQuestionCount.value === 1 ? '' : 's'} ready`)
+    }
+    if (hasCollectingAsyncQuestions.value) parts.push('Questions pending')
+    if (parts.length) return `${parts.join(' · ')} · ${collapsedMessageLabel.value}`
+    return collapsedMessageLabel.value
+})
+const collapsedMessageLabel = computed(() => {
     const hasText = messageText.value.trim().length > 0
     const count = attachmentCount.value
     const filesPart = count > 0 ? `${count} file${count > 1 ? 's' : ''} attached` : ''
@@ -1520,16 +1574,20 @@ async function handleSend() {
     // is for *preparing* only. Guards both the click and the keyboard shortcut.
     if (props.sendingLocked) return
     const text = messageText.value.trim()
+    const classification = asyncQuestionSendClassification.value
+    if (classification.commandBlocked) {
+        toast.warning('Use a normal message or clear your question answers before sending a command.')
+        return
+    }
     // Attachments alone make a real message, so they take precedence over the
     // settings-only interpretation of an empty composer.
     const attachmentsOnly = !text && canSendAttachmentsOnly.value
     // A staged hybrid switch is an unapplied change too — committed below.
     const hasStagedHybrid = isHybridStaged.value
-    const isSettingsOnlyUpdate = !text && !attachmentsOnly
-        && (hasSettingsChanged.value || hasStagedHybrid)
+    const isSettingsOnlyUpdate = classification.settingsOnly
 
     // Need text, attachments, a settings change, or a staged hybrid switch
-    if ((!text && !attachmentsOnly && !isSettingsOnlyUpdate) || isDisabled.value) return
+    if (!classification.canSend || isDisabled.value) return
 
     // Trust gate for drafts whose project is still unresolved — e.g. a draft
     // hydrated from before the trust system existed, or one created while the
@@ -1905,7 +1963,8 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
 </script>
 
 <template>
-    <div class="message-input" ref="rootRef" :class="{ collapsed, 'message-input--has-panel-above': hasPanelAbove }">
+    <div class="message-input" ref="rootRef" :class="{ collapsed, 'message-input--has-panel-above': hasPanelAbove,
+        'message-input--has-questions': readyAsyncQuestionCount > 0 && !hideAsyncQuestions }">
         <!-- Collapsed bar: single line shown in place of the whole composer.
              Clickable anywhere to restore; the explicit button is the visual cue.
              Keeps the .message-input-collapsed-bar class so the collapsed-state
@@ -1976,6 +2035,17 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
                 {{ commentsWithContentCount === 1 ? 'Clear comment' : 'Clear comments' }}
             </wa-button>
         </div>
+        <div v-if="hasCollectingAsyncQuestions && !hideAsyncQuestions" class="async-question-pending" role="status">
+            Questions pending
+        </div>
+        <div v-if="asyncQuestionNotice" class="async-question-notice" role="status">{{ asyncQuestionNotice }}</div>
+        <AsyncQuestions
+            v-if="readyAsyncQuestionCount > 0 && !hideAsyncQuestions"
+            :session-id="sessionId"
+            :snapshot="asyncQuestionSnapshot"
+            @dismiss="dismissAsyncQuestion"
+            @keydown="onAsyncQuestionKeydown"
+        />
         <wa-textarea
             ref="textareaRef"
             :id="textareaAnchorId"
@@ -1988,6 +2058,10 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
             @paste="onPaste"
             @focus="adjustTextareaHeight"
         ></wa-textarea>
+
+        <div v-if="asyncQuestionSendClassification.commandBlocked" class="async-question-notice" role="status">
+            Use a normal message or clear your question answers before sending a command.
+        </div>
 
         <!-- Popups teleported out of the flex container -->
         <Teleport to="body">
@@ -2218,7 +2292,7 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
                     v-if="!sendingLocked || sendingLockedPresentation === 'disabled'"
                     :id="sendingLocked ? sendingLockedId : undefined"
                     variant="brand"
-                    :disabled="sendingLocked || isDisabled || (!messageText.trim() && !canSendAttachmentsOnly && !hasUnappliedChanges)"
+                    :disabled="sendingLocked || isDisabled || !asyncQuestionSendClassification.canSend"
                     @click="handleSend"
                     size="small"
                     class="send-button"
@@ -2360,6 +2434,15 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
     max-height: 40dvh;
     /* Allow scrolling when content exceeds max-height */
     overflow-y: auto;
+}
+
+.message-input--has-questions > wa-textarea::part(textarea) {
+    max-height: 20dvh;
+}
+.async-question-pending,
+.async-question-notice {
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
 }
 
 /* The composer stands out (level 2) instead of the recessed look of other fields. The

@@ -9,6 +9,14 @@ const clone = value => JSON.parse(JSON.stringify(value))
 const time = entry => Date.parse(entry.at) * 1000 + Number((entry.at.match(/\.(\d+)/)?.[1] || '').padEnd(6, '0').slice(3, 6))
 // Python str.strip includes NEL and excludes BOM. JS trim has different rules.
 const hasText = text => /[^\u0009-\u000D\u001C-\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]/u.test(text)
+/** Classify composer content without changing choices or formatting raw text. */
+export function classifyAsyncQuestionSend({ text = '', answers = [], attachments = [], settingsOnly = false, command = false }) {
+    const hasAnswers = answers.some(answer => typeof answer?.value === 'string' && hasText(answer.value))
+    const hasMessage = !!text.trim() || attachments.length > 0 || hasAnswers
+    const commandBlocked = !!command && hasAnswers
+    return { hasAnswers, commandBlocked, settingsOnly: !!settingsOnly && !hasMessage,
+        canSend: !commandBlocked && (hasMessage || !!settingsOnly) }
+}
 const compareText = (a, b) => a < b ? -1 : a > b ? 1 : 0
 const compareTime = (a, b) => time(a) - time(b) || compareText(a.key ?? a.item_id ?? '', b.key ?? b.item_id ?? '')
 
