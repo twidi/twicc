@@ -776,7 +776,7 @@ const trimmedSearchQuery = computed(() => sessionsSearchQuery.value.trim())
 // (v-show-hidden) ArtifactsBrowserView keeps its rendered, running artifact
 // instead of tearing it down when the route drops :bookmarkId. The per-mode
 // last URLs live in the shared sidebarViewMemory module (so the command palette
-// switch matches the sidebar toggle); ProjectView is their single writer.
+// switch matches the icon bar buttons); ProjectView is their single writer.
 const lastArtifactBookmarkId = ref(null)
 
 // A FilePane preview going full-window expands in place (position:fixed) rather
@@ -987,8 +987,8 @@ function switchToSessions() {
 }
 
 // Record the current full route as its mode's last location, so any switch
-// (sidebar toggle or command palette) returns to that exact URL. ProjectView is
-// the single writer of the shared memory; it stays mounted across the toggle
+// (icon bar buttons or command palette) returns to that exact URL. ProjectView is
+// the single writer of the shared memory; it stays mounted across mode changes
 // (both /…/ and /…/artifacts resolve to it), so this watch never misses a hop.
 watch(() => route.fullPath, () => {
     const loc = { name: route.name, params: { ...route.params }, query: { ...route.query } }
@@ -1003,7 +1003,7 @@ watch(() => [isArtifactsMode.value, route.params.bookmarkId], () => {
     if (isArtifactsMode.value) lastArtifactBookmarkId.value = route.params.bookmarkId || null
 }, { immediate: true })
 
-// Sidebar header view switch (SidebarViewSwitch): flip to the other list,
+// Icon bar mode buttons: switch to the other list,
 // restoring that mode's last URL when we have one (same logic the command
 // palette uses), else the mode's bare root.
 function toggleSidebarView() {
@@ -1734,7 +1734,7 @@ function handleSplitReposition(event) {
     }
 }
 
-// Toggle the whole sidebar open/closed — identical to clicking the footer toggle
+// Toggle the whole sidebar open/closed — identical to clicking the icon bar toggle
 // button: it flips the hidden checkbox that drives the CSS layout (its `change`
 // runs handleSidebarToggle). Shared by the command palette and the Alt+Shift+B
 // shortcut so neither re-implements the toggle. Returns true when it acted.
@@ -2654,9 +2654,8 @@ function openPeerInbox() {
     <!-- Drawer backdrop (narrow layout only). A second label on the same
          checkbox, so clicking it closes the sidebar without any JS. It sits
          here, outside the sidebar, because `position: fixed` must resolve
-         against the viewport: both `.sidebar-toggle` (transform) and
-         `.sidebar` (container-type) would otherwise become its containing
-         block. Fixed also keeps it out of the document's scrollable
+         against the viewport: `.sidebar` (container-type) would otherwise
+         become its containing block. Fixed also keeps it out of the document's scrollable
          overflow, which a sticky/translated box inside the sidebar was not. -->
     <label for="sidebar-toggle-state" class="sidebar-backdrop glass-veil"></label>
 
@@ -2828,7 +2827,7 @@ function openPeerInbox() {
 .project-selector-trigger {
     width: 100%;
     /* Painted with the canvas (fixed, so pixel-identical to the canvas behind): it reads as
-       tinted like the sidebar, yet stays opaque when it widens over the peer button. */
+       tinted like the sidebar and stays opaque when it widens. */
     background: var(--canvas-background);
     background-attachment: fixed;
     /* Mobile drawer: it is transformed, which turns `fixed` into `scroll` (the field would
@@ -3062,8 +3061,7 @@ wa-dropdown-item:hover .row-menu-trigger,
     overflow-clip-margin: var(--panel-gap);
     /* Opaque, painted with the canvas itself (fixed to the viewport, so pixel-identical to
        body::before): this area is stacked above the sidebar (z-index 1) and must keep hiding
-       what spills out of it — e.g. the button pushed out when the project selector widens on
-       hover/focus/open — while the selector trigger (z-index 11) still shows over it. */
+       sidebar overflow while the selector trigger (z-index 11) still shows over it. */
     background: var(--canvas-background);
     background-attachment: fixed;
     z-index: 1;
@@ -3802,7 +3800,7 @@ html.wa-dark .usage-burn-chip-danger {
         transition: opacity var(--transition-duration, .3s) ease, visibility 0s linear var(--transition-duration, .3s);
     }
 
-    /* When sidebar is open, button goes back inside */
+    /* Open drawer: restore its position and enable the backdrop. */
     .project-view-wrapper:has(.sidebar-toggle-checkbox:checked)  {
         .sidebar {
             transform: translateX(0);
@@ -3819,10 +3817,9 @@ html.wa-dark .usage-burn-chip-danger {
     }
 }
 
-/* Reduced motion, mobile: the drawer and its toggle no longer slide: they take their place at
-   once, and the drawer fades in when it opens (the veil already fades). The closed drawer is
-   off-screen, so it needs no opacity or visibility of its own: both would also hide the toggle,
-   which lives inside it and sticks out over the content. */
+/* Reduced motion, mobile: the drawer opens without sliding and fades in (the veil already fades).
+   The closed drawer is off-screen, so it needs no opacity or visibility of its own.
+   The icon bar and floating reopen button have no visibility animation. */
 @media (width < 640px) {
     :root.reduce-motion .sidebar {
         transition: none;

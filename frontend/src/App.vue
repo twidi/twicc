@@ -514,7 +514,7 @@ function handleGlobalKeydown(e) {
             }
         }
     }
-    // Alt+Shift+B: toggle the sidebar — the keyboard equivalent of the sidebar footer
+    // Alt+Shift+B: toggle the sidebar — the keyboard equivalent of the icon bar
     // toggle button. Global (any route where ProjectView is mounted); its listener flips
     // detail.handled so we swallow the key (and the character macOS composes from
     // Alt+Shift+B) only when it actually toggled. e.code is the physical key (layout-safe).
@@ -944,7 +944,7 @@ wa-dialog [slot="footer"] {
     flex-wrap: wrap;
 }
 
-/* Clearance the closed-sidebar floating reopen toggle (bottom-left) needs from nearby content — the
+/* Clearance nearby content needs only while the floating reopen button is visible (bottom-left) — the
    single source of these values. SessionLayout refines them per dock context on .session-layout (see
    there). Consumers, no fallback: the composer (MessageInput toolbar + CollapsedBar) reads -x; the
    left gutter reads -y; the terminal extra-keys bar derives from -left-x. Defined here so it also

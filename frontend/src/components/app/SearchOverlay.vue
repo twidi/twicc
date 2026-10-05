@@ -4,7 +4,7 @@
  *
  * Opens via:
  * - Ctrl+Shift+F (global shortcut in App.vue)
- * - "+" button in sidebar (ProjectView.vue)
+ * - Full-text search button in the icon bar (SidebarRail.vue)
  * - "Search Sessions…" command in Command Palette
  *
  * All three dispatch CustomEvent('twicc:open-search'), which this component listens for.

@@ -2381,7 +2381,7 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
     gap: var(--wa-space-s);
 }
 
-/* When the sidebar is closed its reopen toggle overlaps the toolbar's bottom-left; clear it. The
+/* Clear the toolbar's bottom-left only while the floating reopen button is visible. The
    amount is --sidebar-toggle-clearance-x, defined on body.sidebar-toggle-floating (App.vue) and refined per
    dock context on .session-layout — so it's always set whenever this rule applies. */
 body.sidebar-toggle-floating .message-input-toolbar {

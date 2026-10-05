@@ -22,8 +22,8 @@ defineProps({
         validator: (v) => ['warning', 'brand', 'success', 'neutral'].includes(v),
     },
     // Add left padding so the content clears the floating sidebar-toggle button
-    // that overlaps the bottom-left of the chat surface (mobile always; desktop
-    // when the sidebar is collapsed). Only the bottom-most bar needs this.
+    // only while it is visible at the bottom-left of the chat surface.
+    // Only the bottom-most bar needs this.
     sidebarToggleClearance: { type: Boolean, default: false },
 })
 const emit = defineEmits(['expand'])
@@ -72,15 +72,15 @@ const restoreButtonId = useId()
 .collapsed-bar:hover {
     background: var(--wa-color-neutral-fill-quiet);
 }
-/* On mobile the sidebar toggle button always overlaps the bottom-left of the
-   chat surface; mirror the toolbar's offset so the label clears it. */
+/* On mobile, clear the floating reopen button only while it is visible.
+   Mirror the toolbar's offset so the label clears it. */
 body.sidebar-toggle-floating .collapsed-bar--sidebar-clearance {
     @media (width < 640px) {
         padding-block: var(--wa-space-s);
         padding-left: 4rem;
     }
 }
-/* When the sidebar is collapsed, the toggle overlaps the bottom-left on desktop too — same as
+/* While the floating reopen button is visible, clear it on desktop too — same as
    .message-input-toolbar, reading the centralized --sidebar-toggle-clearance-x but sitting 0.5rem
    further in (so full=3rem, partial=1.5rem). */
 body.sidebar-toggle-floating .collapsed-bar--sidebar-clearance {

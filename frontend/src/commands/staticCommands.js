@@ -613,7 +613,7 @@ export function initStaticCommands(router) {
             // in the route (home / settings).
             when: () => route.name !== 'project-artifacts' && route.name !== 'projects-artifacts',
             action: () => {
-                // Same restore-the-last-URL behaviour as the sidebar view switch.
+                // Same restore-the-last-URL behaviour as the icon bar mode buttons.
                 if (lastArtifactsLocation.value) { router.push(lastArtifactsLocation.value); return }
                 const workspaceQuery = route.query.workspace ? { workspace: route.query.workspace } : {}
                 const projectId = routeProjectId()
@@ -634,7 +634,7 @@ export function initStaticCommands(router) {
             // ProjectView's switchToSessions.
             when: () => route.name === 'project-artifacts' || route.name === 'projects-artifacts',
             action: () => {
-                // Same restore-the-last-URL behaviour as the sidebar view switch.
+                // Same restore-the-last-URL behaviour as the icon bar mode buttons.
                 if (lastSessionsLocation.value) { router.push(lastSessionsLocation.value); return }
                 const workspaceQuery = route.query.workspace ? { workspace: route.query.workspace } : {}
                 const projectId = routeProjectId()
@@ -1351,7 +1351,7 @@ export function initStaticCommands(router) {
             icon: 'envelope',
             category: 'ui',
             // The three peer commands share the condition that decides whether
-            // the peer surfaces exist at all (sidebar button, Settings → Peers
+            // the peer surfaces exist at all (icon bar inbox button, Settings → Peers
             // actions): an address, or peers/messages that outlived one. With
             // nothing at all, Peers is still a setup form and they lead nowhere.
             when: () => peerSystemConfigured.value,

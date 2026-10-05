@@ -706,7 +706,7 @@ const shareBaseUrlInputRef = ref(null)
 const peerBaseUrlInputRef = ref(null)
 
 // Whether the peer actions are worth showing — the same condition that decides
-// whether the sidebar inbox button exists. See `usePeerSystemConfigured`.
+// whether the icon bar inbox button exists. See `usePeerSystemConfigured`.
 const hasPeerActions = usePeerSystemConfigured()
 const showShareManager = ref(false)
 

@@ -1537,8 +1537,8 @@ wa-divider {
     flex-shrink: 0;
 }
 
-/* The pill: one outlined brand button cut in segments, like the back / selector / search buttons at the
-   top of the sidebar: a brand border, the same raised shadow and top highlight (depth.css, themed for
+/* The pill: one outlined brand button cut in segments, like the sidebar project selector:
+   a brand border, the same raised shadow and top highlight (depth.css, themed for
    light and dark), transparent inside. It is made of buttons only: no padding, no gap, each button fills
    its share and a line in the border colour separates two of them. The overflow clip rounds the buttons'
    hover fill to the pill. Its buttons overhang the row by a negative margin, so it does not make the row

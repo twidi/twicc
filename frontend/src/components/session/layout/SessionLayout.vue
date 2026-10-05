@@ -53,7 +53,7 @@ const isCenterMaximized = computed(() => !!maximizedRegion.value?.slots.some((s)
 const maximizedDockRegion = computed(() => (maximizedRegion.value && !isCenterMaximized.value) ? maximizedRegion.value : null)
 
 // Context classes on the root so descendant CSS can react to the mode and to what sits on the
-// edges. Used to inset gutter icons away from the sidebar-reopen toggle when closed, and to
+// edges. Used to inset gutter icons while the floating reopen button is visible, and to
 // modulate the chat composer's toggle-clearance padding: a bottom dock/gutter lifts the composer
 // above the toggle, a left column pushes it clear, a left gutter clears it only partly.
 const rootClasses = computed(() => {
@@ -932,8 +932,8 @@ onBeforeUnmount(() => {
     overflow: hidden;
 }
 
-/* When the session-list sidebar is closed, its reopen toggle floats at the bottom-left of the
-   content area; nearby UI must clear it. The base values live once on body.sidebar-toggle-floating (App.vue);
+/* Only while the floating reopen button is visible, nearby UI must clear the bottom-left of the
+   content area. The base values live once on body.sidebar-toggle-floating (App.vue);
    here we refine per dock context. --left-x is the left-edge-only clearance (thin left rail →
    reduced, full left column → none). The composer's -x follows --left-x, but a bottom dock *region*
    zeroes it (the composer is lifted above the toggle); a bottom *gutter* does not (it's thin — the

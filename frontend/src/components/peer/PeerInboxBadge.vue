@@ -4,8 +4,8 @@
  * lands. Renders nothing at zero.
  *
  * Pinned (default): hangs over the top-inline-end corner of the positioned
- * element it sits in — the sidebar's inbox button, and the sidebar toggle
- * while the sidebar is collapsed and that button is folded away.
+ * element it sits in — an inbox button or the floating reopen button
+ * while the icon bar is hidden.
  *
  * `inline`: stays in normal flow, for a nav row or a button label. Inside a
  * `wa-button`, wrap the label and this badge in one element: the button pins

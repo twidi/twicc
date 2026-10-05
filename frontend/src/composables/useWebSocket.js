@@ -1385,7 +1385,7 @@ export function useWebSocket() {
                     peersStore.upsertMessage(msg.message)
                     const peerName = peersStore.peerLabel(msg.message?.peer_id)
                     // Auto-dismissing, like the extra-usage alert above: the
-                    // persistent surface is the sidebar inbox badge, which
+                    // persistent surface is the peer inbox badge, which
                     // counts this message for as long as it awaits review.
                     // A toast cannot hold that role — it is per-tab, so an
                     // infinite one survives on every other device long after

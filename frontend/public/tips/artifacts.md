@@ -9,6 +9,6 @@ with it.
 
 Bookmark an artifact to reach it again anytime, without hunting for the
 session that created it. Bookmarks get their own sidebar list — switch to it
-with the icon at the top of the sidebar, to the right of the project selector.
+with the **Artifacts** button in the icon bar.
 
 New to artifacts? See [What are artifacts?](help/what-are-artifacts).

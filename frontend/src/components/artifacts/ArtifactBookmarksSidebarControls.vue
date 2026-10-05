@@ -1,8 +1,7 @@
 <script setup>
 // ArtifactBookmarksSidebarControls.vue — the sidebar's second header row in Artifacts
 // mode: a trimmed options dropdown ("Compact view") and an artifact filter
-// input. No advanced (full-text) search button — that indexes session history,
-// not bookmarks.
+// input. Full-text search stays available in the icon bar and indexes session history.
 //
 // Mirrors SessionsSidebarControls' contract:
 //  - update:searchQuery : v-model passthrough for the filter input
@@ -10,7 +9,7 @@
 //                         (only "compact-view" reaches ProjectView's handler)
 //  - searchKeydown      : the keydown event from the filter input (drives
 //                         ArtifactBookmarkList keyboard navigation, like Sessions mode)
-// (The Sessions ↔ Artifacts view switch is NOT here — see SidebarViewSwitch.)
+// Sessions and Artifacts navigation live in the icon bar.
 import { ref } from 'vue'
 import AppTooltip from '../ui/AppTooltip.vue'
 

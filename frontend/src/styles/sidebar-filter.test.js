@@ -14,8 +14,8 @@ const rule = (selector) => {
 }
 
 // Visual refresh retouches: the filter field of the sidebar header (sessions and artifacts, which share
-// the .sidebar-header-row) takes the brand look of its neighbours, the outlined brand buttons and the
-// project selector: their border colour and their text colour (both schemes follow the tokens).
+// .sidebar-header-row) uses brand border and text colour tokens, like the adjacent options dropdown.
+// Both schemes follow the tokens.
 test('1. the sidebar filter field wears the brand border and text colours of the header buttons', () => {
     assert.equal(rule(':where(.sidebar-header-row .session-search)::part(base)'), 'border-color: var(--wa-color-brand-border-loud);')
     assert.equal(rule(':where(.sidebar-header-row .session-search)::part(input)'), 'color: var(--wa-color-brand-on-quiet);')

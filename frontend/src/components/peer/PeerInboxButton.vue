@@ -2,7 +2,7 @@
 /**
  * PeerInboxButton — badge entry point to the peer inbox.
  *
- * Sits next to the Settings button (ProjectView sidebar footer, HomeView).
+ * Sits next to Settings on HomeView. ProjectView uses the icon bar inbox button.
  * Rendered as soon as the peer system is configured, pending work or not: the
  * inbox is a surface the user reaches on their own terms, and an empty one
  * still shows the history. An instance without peers grows no chrome at all.
@@ -16,8 +16,7 @@ import AppTooltip from '../ui/AppTooltip.vue'
 import PeerInboxBadge from './PeerInboxBadge.vue'
 
 const props = defineProps({
-    // Solid `accent` where the button floats over scrolling content (home page); `outlined`
-    // on the sidebar canvas.
+    // Home uses solid `accent` over scrolling content. The default remains `outlined`.
     appearance: { type: String, default: 'outlined' },
 })
 

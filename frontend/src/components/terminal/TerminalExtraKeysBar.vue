@@ -351,7 +351,7 @@ button {
     -webkit-user-select: none;
 }
 
-/* When the sidebar is closed, its reopen toggle overlaps the bottom-left. SessionLayout drives the
+/* Only while the floating reopen button is visible, clear the bottom-left. SessionLayout drives the
    exact amount per terminal position via --sidebar-toggle-clearance-extra-keys (it inherits across
    the panel teleport into this bar); the fallback covers terminals outside the dockable layout (e.g.
    the project view), where it resolves to the left-edge clearance + 1rem. */

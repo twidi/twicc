@@ -84,7 +84,7 @@ function onAfterHide(event) {
         // backdrop teardown are complete, so the click below lands on a
         // fully interactive page rather than mid-close. Assumes
         // #settings-trigger is present — it lives in SettingsPopover, mounted
-        // by the two app shells (HomeView.vue, ProjectView.vue) where this
+        // by HomeView.vue and SidebarRail.vue in ProjectView.vue where this
         // notice fires; a no-op elsewhere.
         document.querySelector('#settings-trigger')?.click()
     }

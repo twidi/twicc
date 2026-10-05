@@ -1,5 +1,5 @@
 // Shared memory of the last full route location per sidebar mode (Sessions vs
-// Artifacts). Switching modes — from the sidebar's view-switch button, the
+// Artifacts). Switching modes — from the icon bar mode buttons, the
 // command palette, anywhere — restores the target mode's last URL, so you land
 // back exactly where you were (open session/sub-tab, or open bookmark) instead
 // of a bare mode root.

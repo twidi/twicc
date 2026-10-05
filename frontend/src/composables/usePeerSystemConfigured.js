@@ -5,7 +5,7 @@ import { useSettingsStore } from '../stores/settings'
 
 /**
  * Whether the peer system is configured — the single condition that decides if
- * the peer surfaces (sidebar inbox button, Settings › Peers actions) exist at
+ * the peer surfaces (icon bar inbox button, Settings › Peers actions) exist at
  * all.
  *
  * The address is what makes the feature usable — `PeersManagerDialog` gates its

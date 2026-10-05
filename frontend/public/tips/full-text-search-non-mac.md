@@ -8,4 +8,4 @@ Press **Ctrl+Shift+F** to search across all sessions.
 
 You can filter by project, workspace, source, date and archived sessions, then open a result in context.
 
-You can also open it from the **search** button (a magnifying glass with a **+**) next to the sidebar session filter.
+You can also open it from the **Full-text search** button in the icon bar.

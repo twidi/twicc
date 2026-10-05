@@ -1,7 +1,6 @@
 <script setup>
 // SessionsSidebarControls.vue — the sidebar's second header row in Sessions
-// mode: the session-list options dropdown, the filter input, and the
-// full-text (advanced) search button. Extracted verbatim from ProjectView.vue
+// mode: the session-list options dropdown and the filter input. Extracted from ProjectView.vue
 // so Artifacts mode can swap in its own controls (ArtifactBookmarksSidebarControls)
 // without bolting v-ifs onto session-specific UI.
 //
@@ -11,9 +10,7 @@
 //  - optionSelect        : the @wa-select event from the options dropdown,
 //                          consumed unchanged by ProjectView.handleSessionOptionsSelect
 //  - searchKeydown       : the keydown event from the filter input
-//  - openAdvancedSearch  : the advanced-search button click
-// (The Sessions ↔ Artifacts view switch is NOT here — it lives in the sidebar
-// header's context row, see SidebarViewSwitch.)
+// Sessions and Artifacts navigation and full-text search live in the icon bar.
 import { ref } from 'vue'
 import AppTooltip from '../ui/AppTooltip.vue'
 

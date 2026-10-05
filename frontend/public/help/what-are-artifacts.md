@@ -33,8 +33,7 @@ and hand the agent a precise description of it — with an optional note and
 screenshot — instead of describing it with words. They work exactly as in
 the [Browser tab](help/browser-tab).
 
-The **Artifacts view** (open it from anywhere with the icon at the top of
-the sidebar, just to the right of the project selector) gathers the
-artifacts you've bookmarked, each shown according to the scope you chose for
-it. When creating bookmarks, give them clear, meaningful names so they're
+The **Artifacts view** (open it with the **Artifacts** button in the icon
+bar) gathers the artifacts you've bookmarked. Each artifact appears according
+to the scope you chose for it. When creating bookmarks, give them clear, meaningful names so they're
 easy to find there.
