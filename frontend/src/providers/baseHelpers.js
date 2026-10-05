@@ -34,6 +34,10 @@ function todayIsoDay() {
  * identity itself.
  */
 export class BaseProviderHelpers {
+    matchesStreamingBlock(parsed, itemKind, messageId, block) {
+        return false
+    }
+
     static provider = null
     static label = null
     static icon = null

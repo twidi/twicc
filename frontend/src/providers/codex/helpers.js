@@ -1,3 +1,4 @@
+import { matchesStreamingBlock } from './streamMatching.js'
 import { buildEphemeralResultContent } from '../ephemeralContent.js'
 import { BaseProviderHelpers, formatRetirementDate } from '../baseHelpers'
 import { PROVIDER, SYNTHETIC_ITEM } from '../../constants'
@@ -182,6 +183,10 @@ const AGENT_SETTINGS_CHOICES = {
 }
 
 export class CodexHelpers extends BaseProviderHelpers {
+    matchesStreamingBlock(parsed, itemKind, messageId, block) {
+        return matchesStreamingBlock(parsed, itemKind, messageId, block)
+    }
+
     static provider = PROVIDER.CODEX
     static label = 'Codex'
     static icon = 'openai'
