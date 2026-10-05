@@ -51,12 +51,28 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
             if (this.localState.asyncQuestionSendLocks?.[sessionId]) delete this.localState.asyncQuestionSendLocks[sessionId][requestId]
         },
 
-        async sendAsyncQuestionMessage(sessionId, projectId, requestId, payload, outgoing, { retryRequestId = null } = {}) {
-            const ids = outgoing.asyncQuestions.batch_ids
-            if (ids.some(id => this.getPendingAsyncQuestionIds(sessionId).includes(id))) return false
-            // Reserve before the first await. Only these batches stop accepting edits.
+        reserveAsyncQuestionSend(sessionId, requestId, outgoing) {
+            if (outgoing.asyncQuestions.batch_ids.some(id => this.getPendingAsyncQuestionIds(sessionId).includes(id))) return false
+            // Capture and reserve together, before asynchronous attachment preparation.
+            preparingSends.set(requestId, clone({ ...outgoing, sessionId, status: 'preparing' }))
             this.lockAsyncQuestionSend(sessionId, requestId, outgoing.asyncQuestions)
-            const snapshot = clone({ ...outgoing, sessionId, sentAt: Date.now(), status: 'staged', retryRequestId })
+            return true
+        },
+
+        async cancelAsyncQuestionPreparation(sessionId, requestId) {
+            const entry = preparingSends.get(requestId)
+            if (!entry || entry.sessionId !== sessionId) return
+            preparingSends.delete(requestId)
+            this.releaseAsyncQuestionSendLock(sessionId, requestId)
+            await this.reconcileAsyncQuestionDraft(sessionId)
+        },
+
+        async sendAsyncQuestionMessage(sessionId, projectId, requestId, payload, outgoing, { retryRequestId = null } = {}) {
+            if (!preparingSends.has(requestId) && !this.reserveAsyncQuestionSend(sessionId, requestId, outgoing)) return false
+            const preparation = preparingSends.get(requestId)
+            if (preparation.sessionId !== sessionId) return false
+            const snapshot = clone({ ...outgoing, ...preparation, medias: outgoing.medias,
+                images: outgoing.images, documents: outgoing.documents, sentAt: Date.now(), status: 'staged', retryRequestId })
             preparingSends.set(requestId, snapshot)
             let staged = false
             try {
@@ -79,9 +95,7 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
                 })
             } catch (error) {
                 if (!staged) {
-                    preparingSends.delete(requestId)
-                    this.releaseAsyncQuestionSendLock(sessionId, requestId)
-                    this.reconcileAsyncQuestionDraft(sessionId).catch(() => {})
+                    await this.cancelAsyncQuestionPreparation(sessionId, requestId).catch(() => {})
                 }
                 throw error
             }

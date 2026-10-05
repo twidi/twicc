@@ -1631,6 +1631,8 @@ async function handleSend() {
     })
     const questionSend = !!outgoing.asyncQuestions
     const sentMedias = store.getAttachments(props.sessionId).map(media => ({ ...media }))
+    const requestId = generateUUID()
+    if (questionSend && !store.reserveAsyncQuestionSend(props.sessionId, requestId, outgoing)) return
 
     // Build the message payload
     // For context_max: when the auto-force-to-1M rule is active we send 1M
@@ -1675,24 +1677,29 @@ async function handleSend() {
     // re-resize down for the active model — Sonnet/Haiku want 1568 px,
     // Anthropic enforces a 2000 px cap on requests with >20 images, and
     // Codex re-resizes server-side so we hand it the stored blob.
-    if (attachmentCount.value > 0) {
-        const medias = sentMedias
-        const effectiveModel = selectedModel.value ?? settings.providerStore.value?.defaultModel
-        const processedMedias = await resizeMediasForSend(
-            medias, getProviderHelpers(session.value?.provider), effectiveModel,
-        )
-        const { images, documents } = mediasToSdkFormat(processedMedias)
-        if (images.length > 0) {
-            payload.images = images
+    try {
+        if (attachmentCount.value > 0) {
+            const medias = sentMedias
+            const effectiveModel = selectedModel.value ?? settings.providerStore.value?.defaultModel
+            const processedMedias = await resizeMediasForSend(
+                medias, getProviderHelpers(session.value?.provider), effectiveModel,
+            )
+            const { images, documents } = mediasToSdkFormat(processedMedias)
+            if (images.length > 0) {
+                payload.images = images
+            }
+            if (documents.length > 0) {
+                payload.documents = documents
+            }
         }
-        if (documents.length > 0) {
-            payload.documents = documents
-        }
+    } catch (error) {
+        if (!questionSend) throw error
+        await store.cancelAsyncQuestionPreparation(props.sessionId, requestId).catch(() => {})
+        toast.error('Failed to prepare attachments. Your message and question answers remain in the draft.')
+        return
     }
 
-    // Correlation id echoed by the backend in every reply frame, so an error
-    // can be matched back to this exact send (recovery flow).
-    const requestId = generateUUID()
+    // Keep the reservation's identity through preparation, staging, and dispatch.
     payload.request_id = requestId
 
     let success

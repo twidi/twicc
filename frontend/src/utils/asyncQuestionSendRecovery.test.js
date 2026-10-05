@@ -308,6 +308,7 @@ it('production composer sends answer-only after a staged hybrid change and retai
     const messageText = ref('')
     const store = {
         setStagedHybrid() {}, getPendingAsyncQuestionIds: () => [], getAttachments: () => medias,
+        reserveAsyncQuestionSend: () => true,
         applyCreationSendMode() {},
         async sendAsyncQuestionMessage(s, p, id, payload, send) {
             frames.push(payload)
@@ -385,4 +386,92 @@ it('an explicit stale rejection disables Retry before a fresh lifecycle snapshot
     const recovered = questions.restoreAsyncQuestionSend(send, {}, { choices: {} }, ready())
     assert.equal(recovered.draft.message, send.text)
     assert.deepEqual(recovered.questionDraft.choices, {})
+})
+
+function delayedComposer() {
+    const h = production(), wait = deferred(), errors = [], medias = [{ id: 'original', data: 'image' }]
+    const ref = value => ({ value })
+    const computed = fn => ({ get value() { return fn() } })
+    const messageText = computed(() => h.state.localState.draftMessages.s?.message || '')
+    const source = readFileSync(new URL('../components/message/MessageInput.vue', import.meta.url), 'utf8')
+    const start = source.indexOf('async function handleSend()'), end = source.indexOf('\n/**', start)
+    Object.assign(h.state, createSendFailureActions(h.pending, { deleteInflight: async id => { delete h.disk.sends[id] } }))
+    Object.assign(h.state, {
+        getAttachments: () => medias, applyCreationSendMode() {},
+        getDraftMessage: () => h.state.localState.draftMessages.s,
+        removeAttachment: async (s, id) => { const index = medias.findIndex(media => media.id === id); if (index >= 0) medias.splice(index, 1) },
+    })
+    const deps = { props: { sessionId: 's', projectId: 'p', sendingLocked: false },
+        messageText: { get value() { return messageText.value }, set value(value) { h.state.localState.draftMessages.s = { message: value } } },
+        asyncQuestionSendClassification: ref({ hasAnswers: true, canSend: true, commandBlocked: false, settingsOnly: false }),
+        canSendAttachmentsOnly: ref(true), isHybridStaged: ref(false), isDisabled: ref(false), isDraft: ref(false),
+        isComposerCommand: ref(false), asyncQuestionSnapshot: computed(() => h.state.localState.asyncQuestionSnapshots.s),
+        asyncQuestionDraft: computed(() => h.state.localState.asyncQuestionDrafts.s),
+        prepareAsyncQuestionSend: questions.prepareAsyncQuestionSend, store: h.state, session: ref({ provider: 'codex' }),
+        isContextMaxForced: ref(false), attachmentCount: ref(1), settings: { providerStore: ref({ defaultModel: 'model' }) },
+        resizeMediasForSend: () => wait.promise, getProviderHelpers: () => ({}),
+        mediasToSdkFormat: () => ({ images: ['image'], documents: [] }), generateUUID: () => 'prepared',
+        sendWsMessage: () => assert.fail('Question sends use the staged action'), textareaRef: ref(null),
+        toast: { error: message => errors.push(message), warning: message => assert.fail(message) },
+    }
+    const widget = readFileSync(new URL('../components/message/AsyncQuestions.vue', import.meta.url), 'utf8')
+        .split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm, '')
+    h.state.getAsyncQuestionDraft = () => h.state.localState.asyncQuestionDrafts.s
+    const updateChoices = new Function('computed', 'defineProps', 'defineEmits', 'useDataStore', 'toast',
+        `${widget}; return updateChoices`)(computed, () => ({ sessionId: 's', snapshot: ready() }), () => () => {}, () => h.state, deps.toast)
+    for (const setting of ['Model', 'PermissionMode', 'Effort', 'Thinking', 'ClaudeInChrome', 'FastMode', 'ContextMax']) {
+        deps['selected' + setting] = ref(null); deps['active' + setting] = ref(null)
+    }
+    const send = new Function(...Object.keys(deps), `${source.slice(start, end)}; return handleSend`)(...Object.values(deps))
+    return { ...h, wait, send, updateChoices, errors, medias }
+}
+
+it('composer reserves captured answers before delayed resize and rejects edits until own acceptance', async () => {
+    const h = delayedComposer()
+    const sending = h.send()
+    await tick()
+    h.updateChoices(batch(), { 3: { kind: 'other', value: 'Unsent edit during resize' } })
+    assert.equal(h.state.localState.asyncQuestionDrafts.s.choices.q1[3].value, 'Original answer')
+    assert.deepEqual(h.state.getPendingAsyncQuestionIds('s'), ['q1', 'unanswered'])
+    h.state.localState.draftMessages.s.message += 'Later text'
+    h.updateChoices(batch('new'), { 3: { kind: 'other', value: 'Unrelated new answer' } })
+    h.wait.resolve(h.medias)
+    await sending
+    assert.equal(h.frames[0].request_id, 'prepared')
+    assert.equal(h.frames[0].async_questions.answers[0].value, 'Original answer')
+    await h.state.applyAsyncQuestionSnapshot('s', { ...resolution('prepared'), batches: [batch('new')] })
+    assert.equal(h.state.localState.draftMessages.s.message, 'Later text')
+    assert.equal(h.state.localState.asyncQuestionDrafts.s.choices.new[3].value, 'Unrelated new answer')
+    assert.equal(h.state.localState.asyncQuestionDrafts.s.choices.q1, undefined)
+    assert.deepEqual(h.disk.sends, {})
+})
+it('composer preparation failure releases its reservation without changing drafts or sending a frame', async () => {
+    const h = delayedComposer(), before = structuredClone(h.state.localState.asyncQuestionDrafts.s)
+    const sending = h.send()
+    await tick()
+    assert.deepEqual(h.state.getPendingAsyncQuestionIds('s'), ['q1', 'unanswered'])
+    h.wait.reject(new Error('Resize failed'))
+    await sending
+    assert.deepEqual(h.state.getPendingAsyncQuestionIds('s'), [])
+    assert.deepEqual(h.state.localState.asyncQuestionDrafts.s, before)
+    assert.equal(h.state.localState.draftMessages.s.message, '  Extra text  ')
+    assert.equal(h.medias.length, 1)
+    assert.equal(h.frames.length, 0)
+    assert.deepEqual(h.disk.sends, {})
+    assert.equal(h.errors.length, 1)
+    h.updateChoices(batch(), { 3: { kind: 'other', value: 'Editable after failure' } })
+    assert.equal(h.state.localState.asyncQuestionDrafts.s.choices.q1[3].value, 'Editable after failure')
+})
+it('external resolution during composer preparation waits for its original request boundary', async () => {
+    const h = delayedComposer(), sending = h.send()
+    await tick()
+    await h.state.applyAsyncQuestionSnapshot('s', resolution('another-browser'))
+    assert.equal(h.state.localState.draftMessages.s.message, '  Extra text  ')
+    assert.equal(h.state.localState.asyncQuestionDrafts.s.choices.q1[3].value, 'Original answer')
+    h.wait.reject(new Error('Preparation cancelled'))
+    await sending
+    await h.state.reconcileAsyncQuestionDraft('s')
+    assert.match(h.state.localState.draftMessages.s.message, /Original answer/)
+    assert.deepEqual(h.state.getPendingAsyncQuestionIds('s'), [])
+    assert.equal(h.frames.length, 0)
 })
