@@ -119,7 +119,7 @@ const displayItems = computed(() => {
 </script>
 
 <template>
-    <WorkingAssistantMessage v-if="isStartingAssistantMessage" label="starting" process-state="starting" />
+    <WorkingAssistantMessage v-if="isStartingAssistantMessage" label="starting" process-state="starting" :session-id="sessionId" />
     <WorkingAssistantMessage v-else-if="isWorkingAssistantMessage" :label="data.label || null" :tools="data.tools || []" :last-started-tool-id="data.lastStartedToolId || null" :last-tool-visible="data.lastToolVisible !== false" :session-id="sessionId" />
     <ContentList
         v-else
