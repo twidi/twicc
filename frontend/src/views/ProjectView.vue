@@ -1428,7 +1428,7 @@ const isMobile = () => window.matchMedia(`(width < ${MOBILE_BREAKPOINT}px)`).mat
 const initialSidebarChecked = computed(() => {
     if (typeof window === 'undefined') return false
     const open = isArtifactsMode.value
-        ? (!route.params.bookmarkId || sidebarState.open)
+        ? ((!route.params.bookmarkId && store.artifactBookmarksLoaded && Object.keys(store.artifactBookmarks).length > 0) || sidebarState.open)
         : (isMobile() ? !sessionId.value : sidebarState.open)
     return isMobile() ? open : !open
 })
@@ -1440,15 +1440,24 @@ const railCollapsed = computed(() => !sidebarOpen.value && !settingsStore.isSide
 const floatingToggleEl = shallowRef(null)
 const hasSidebarFooter = computed(() => !!((quotaHasUsage.value && quotaComputed.value) || unauthenticatedProviders.value.length))
 
-// Open the sidebar on entry to an unselected Artifacts route from any navigation source.
-// Run after the checkbox patch; selected restores and in-mode route changes retain state.
-watch(isArtifactsMode, (artifacts, wasArtifacts) => {
-    if (!artifacts || wasArtifacts || route.params.bookmarkId) return
-    const checkbox = document.getElementById('sidebar-toggle-state')
-    if (!checkbox) return
-    checkbox.checked = isMobile()
-    handleSidebarToggle()
-}, { flush: 'post' })
+// Open the sidebar on entry only when an unselected Artifacts route has bookmarks.
+// Cold entry waits for the first snapshot. User actions cancel that pending decision.
+let pendingArtifactSidebarEntry = isArtifactsMode.value && !route.params.bookmarkId && !store.artifactBookmarksLoaded
+watch([isArtifactsMode, () => store.artifactBookmarksLoaded, () => route.params.bookmarkId, isNarrowViewport],
+    ([artifacts, loaded, bookmarkId, narrow], [wasArtifacts, , , wasNarrow]) => {
+        if (!artifacts || bookmarkId || narrow !== wasNarrow) {
+            pendingArtifactSidebarEntry = false
+            return
+        }
+        if (!wasArtifacts) pendingArtifactSidebarEntry = true
+        if (!pendingArtifactSidebarEntry || !loaded) return
+        pendingArtifactSidebarEntry = false
+        if (Object.keys(store.artifactBookmarks).length === 0) return
+        const checkbox = document.getElementById('sidebar-toggle-state')
+        if (!checkbox) return
+        checkbox.checked = isMobile()
+        handleSidebarToggle()
+    }, { flush: 'post' })
 watch(railCollapsed, (collapsed) => {
     document.body.classList.toggle('sidebar-toggle-floating', collapsed)
 }, { immediate: true })
@@ -1714,6 +1723,7 @@ function handleSplitReposition(event) {
             return
         }
         // Auto-collapse: mark as closed, reset width to stored value
+        pendingArtifactSidebarEntry = false
         lastKnownPosition = 0
         checkbox.checked = true
         saveSidebarState({ open: false, width: sidebarState.width })
@@ -1754,6 +1764,7 @@ function handleToggleSidebarShortcut(event) {
 
 // Handle checkbox changes and preserve desktop width persistence.
 function handleSidebarToggle() {
+    pendingArtifactSidebarEntry = false
     syncSidebarState()
     if (!isMobile()) {
         lastKnownPosition = sidebarOpen.value ? sidebarState.width : 0

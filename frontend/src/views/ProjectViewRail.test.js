@@ -168,20 +168,22 @@ test('project view SFC compiles script, template, and styles', async () => {
 })
 
 // Execute the production state and watchers with Vue's real scheduler.
-function sidebarHarness({ mobile, open, artifacts = false, bookmarkId }) {
+function sidebarHarness({ mobile, open, artifacts = false, bookmarkId, bookmarks = { pinned: { id: 'pinned' } }, loaded = true }) {
     const scope = effectScope()
     const route = reactive({ params: { sessionId: artifacts ? undefined : 'session', bookmarkId } })
     const isArtifactsMode = ref(artifacts)
     const narrow = ref(mobile)
     const checkbox = { checked: false }
     const saved = []
+    const store = reactive({ artifactBookmarks: bookmarks, artifactBookmarksLoaded: loaded })
     const context = {
-        computed, ref, watch, route, isArtifactsMode,
+        computed, ref, watch, route, isArtifactsMode, store,
         sessionId: computed(() => route.params.sessionId),
         isNarrowViewport: narrow,
         sidebarState: { open, width: 320 },
         isMobile: () => narrow.value,
         window: {}, document: { getElementById: () => checkbox },
+        SIDEBAR_COLLAPSE_THRESHOLD: 50, requestAnimationFrame: () => {},
         settingsStore: { isSidebarRailVisibleWhenClosed: true },
         quotaHasUsage: ref(false), quotaComputed: ref(null), unauthenticatedProviders: ref([]),
         shallowRef: ref, saveSidebarState: state => saved.push(state),
@@ -195,8 +197,10 @@ function sidebarHarness({ mobile, open, artifacts = false, bookmarkId }) {
     scope.run(() => {
         result = runInNewContext(`${state}
 let lastKnownPosition = 0;
+let ignoringReposition = false;
 ${body('syncSidebarState')}
 ${body('handleSidebarToggle')}
+${body('handleSplitReposition')}
 ${mobileWatcher}
 ${entryWatcher}
 ;({ checked, sidebarOpen })`, context)
@@ -204,7 +208,10 @@ ${entryWatcher}
         // Simulate the checkbox property patch before post-flush route effects.
         watch(result.checked, value => { checkbox.checked = value })
     })
-    return { ...result, route, isArtifactsMode, narrow, checkbox, saved, stop: () => scope.stop() }
+    return { ...result, route, isArtifactsMode, narrow, checkbox, saved,
+        store, toggle: () => runInNewContext('handleSidebarToggle()', context),
+        collapseByDrag: () => runInNewContext('const panel = { positionInPixels: 30 }; handleSplitReposition({ target: panel, currentTarget: panel })', context),
+        stop: () => scope.stop() }
 }
 
 test('artifact entry opens only unselected destinations after route and checkbox updates', async () => {
@@ -306,4 +313,102 @@ test('shared route memory restores the selected artifact and exact Sessions rout
     runInNewContext(`${body('toggleSidebarView')}; toggleSidebarView()`, context)
     assert.deepEqual(JSON.parse(JSON.stringify(pushed.pop())), artifacts)
     scope.stop()
+})
+
+
+test('empty bookmark store preserves sidebar state on artifact mount and entry', async () => {
+    for (const mobile of [false, true]) for (const open of [false, true]) for (const artifacts of [false, true]) {
+        const h = sidebarHarness({ mobile, open, artifacts, bookmarks: {} })
+        if (artifacts) assert.equal(h.sidebarOpen.value, open, 'empty artifact mount keeps stored state')
+        if (!artifacts) {
+            h.checked.value = mobile ? open : !open
+            await nextTick()
+            h.route.params.sessionId = undefined
+            h.isArtifactsMode.value = true
+            await nextTick()
+            assert.equal(h.sidebarOpen.value, open, 'empty mode entry keeps current state')
+        }
+        h.store.artifactBookmarks = { later: { id: 'later' } }
+        await nextTick()
+        assert.equal(h.sidebarOpen.value, open, 'later pin creation is not entry')
+        assert.equal(h.saved.length, 0)
+        h.stop()
+    }
+})
+
+test('cold artifact mount and entry resolve bookmark presence once loading completes', async () => {
+    for (const mobile of [false, true]) for (const artifacts of [false, true]) for (const hasPins of [false, true]) {
+        const h = sidebarHarness({ mobile, open: false, artifacts, loaded: false, bookmarks: {} })
+        h.route.params.sessionId = undefined
+        h.isArtifactsMode.value = true
+        await nextTick()
+        assert.equal(h.sidebarOpen.value, false, 'unknown pins keep the sidebar closed')
+        h.store.artifactBookmarks = hasPins ? { pinned: { id: 'pinned' } } : {}
+        h.store.artifactBookmarksLoaded = true
+        await nextTick()
+        assert.equal(h.sidebarOpen.value, hasPins, 'first loaded snapshot resolves entry')
+        h.checkbox.checked = !mobile
+        h.toggle()
+        h.store.artifactBookmarksLoaded = false
+        await nextTick()
+        h.store.artifactBookmarks = { refresh: { id: 'refresh' } }
+        h.store.artifactBookmarksLoaded = true
+        await nextTick()
+        assert.equal(h.sidebarOpen.value, false, 'refresh does not repeat entry')
+        h.stop()
+    }
+})
+
+test('pending cold artifact entry cancels on user toggle, selection, exit, or viewport change', async () => {
+    for (const mobile of [false, true]) for (const action of ['toggle', 'select', 'exit', 'resize']) {
+        const h = sidebarHarness({ mobile, open: action === 'toggle', artifacts: true, loaded: false, bookmarks: {} })
+        if (action === 'toggle') {
+            h.checkbox.checked = !mobile
+            h.toggle()
+        } else if (action === 'select') h.route.params.bookmarkId = 'selected'
+        else if (action === 'exit') {
+            h.isArtifactsMode.value = false
+            h.route.params.sessionId = 'session'
+        } else h.narrow.value = !mobile
+        await nextTick()
+        if (action === 'select') {
+            h.route.params.bookmarkId = undefined
+            await nextTick()
+        }
+        const stateAfterAction = h.sidebarOpen.value
+        const savedAfterAction = h.saved.length
+        h.store.artifactBookmarks = { pinned: { id: 'pinned' } }
+        h.store.artifactBookmarksLoaded = true
+        await nextTick()
+        assert.equal(h.sidebarOpen.value, stateAfterAction, action)
+        assert.equal(h.saved.length, savedAfterAction, 'loading must not apply another toggle')
+        h.stop()
+    }
+})
+
+test('selected cold artifact mount preserves stored state after load and deselection', async () => {
+    for (const mobile of [false, true]) for (const open of [false, true]) {
+        const h = sidebarHarness({ mobile, open, artifacts: true, bookmarkId: 'selected', loaded: false, bookmarks: {} })
+        assert.equal(h.sidebarOpen.value, open)
+        h.store.artifactBookmarks = { pinned: { id: 'pinned' } }
+        h.store.artifactBookmarksLoaded = true
+        await nextTick()
+        h.route.params.bookmarkId = undefined
+        await nextTick()
+        assert.equal(h.sidebarOpen.value, open)
+        assert.equal(h.saved.length, 0)
+        h.stop()
+    }
+})
+
+
+test('desktop drag collapse cancels pending cold artifact entry', async () => {
+    const h = sidebarHarness({ mobile: false, open: true, artifacts: true, loaded: false, bookmarks: {} })
+    h.collapseByDrag()
+    assert.equal(h.sidebarOpen.value, false)
+    h.store.artifactBookmarks = { pinned: { id: 'pinned' } }
+    h.store.artifactBookmarksLoaded = true
+    await nextTick()
+    assert.equal(h.sidebarOpen.value, false, 'loading preserves explicit drag collapse')
+    h.stop()
 })
