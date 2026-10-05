@@ -51,7 +51,7 @@ shows its model.
 ```
 
 The header spans the full width of the pane. It keeps the bottom divider the toolbar has today. At pane widths below
-480 px the tiles lay out as two columns, and the header is no longer fixed: it scrolls away
+480 px the tiles lay out as two columns with a smaller value font, and the header is no longer fixed: it scrolls away
 with the body, so a short pane keeps room for the cards.
 
 ### 3.1 Header, top row
@@ -69,18 +69,14 @@ allow this.
 ### 3.2 Header, summary tiles
 
 A row of tiles (`grid`, `repeat(auto-fit, minmax(7.5rem, 1fr))`). Each tile is a small bordered card with a small caps
-label and a value at normal text size.
+label and a large value.
 
 | Tile | Sessions view | Subagents view |
 |---|---|---|
 | 1. Count | Number of spawned sessions (descendants of the current session, current session excluded). A donut of the state buckets. A caption "N running". | Number of subagents (all depths). Donut of working / stopped. Caption "N running". |
 | 2. Working / Stopped | Number of nodes in `starting` or `assistant_turn`. Caption "N awaiting" (`awaiting_user_input`). | Number of stopped subagents (label "Stopped"). No caption. |
 | 3. Total cost | See 3.2.1. Hidden when costs are hidden (D9). | `agentForestCost` (unchanged). Hidden when costs are hidden. |
-| 4. Span, Cumulative duration | Span: duration of the time range of section 6, formatted with `formatDuration`; a dash when no node has a start date. Under it, "Cumulative": the sum of the durations of every descendant session (current session excluded). | Same, the cumulative line summing every subagent. |
-
-**Cumulative duration.** A node's duration is its end minus its start, with the rules of the time bars (section 6):
-nodes with no start are skipped; a working node ends at the range end; otherwise the end is the node's end, raised to
-its start. Overlapping nodes are simply summed, so the total can exceed the Span. A dash when no node qualifies.
+| 4. Span | Duration of the time range of section 6, formatted with `formatDuration`; a dash when no node has a start date. | Same, over the agent tree. |
 
 **Node set.** Tiles 1 and 2 and the donut count the **descendants** of the current session (current session excluded),
 at any depth. The cost tile (3.2.1) and the Span tile (section 6) include the current session. Subagents: every agent of the tree.
@@ -151,8 +147,8 @@ The text of the existing note: "Sessions marked [eye-slash] were created hidden 
   a fixed inset from the parent card's left edge (about 0.8 rem); each child card has an elbow from that line to its left
   edge, at the middle of its title line; the last child's line stops at its elbow. `OrchestrationNode` and
   `AgentTreeNode` keep sharing the same stylesheet.
-- Every node with children has a collapse button at the top right of its card. Expanded by default. The
-  button always shows the number of descendants, expanded or collapsed.
+- Every node with children has a collapse button at the top right of its card. Expanded by default. When collapsed, the
+  button also shows the number of hidden descendants.
 - The topology payload is still the whole spawn tree (`GET .../topology/`, unchanged). The re-rooting is frontend-only.
   `topology.total_cost` and `topology.node_count` (whole tree) are no longer used by this tab.
 - Empty states keep their current texts ("No orchestration data.", "No subagent."). A current session with no
@@ -216,9 +212,8 @@ The left border colour (5.1) follows the buckets of 3.2.
 ### 5.3 Settings row, sessions
 
 `AgentSettingsSummaryView` with the existing `summaryParts` (model with version, effort, thinking, permission, flags) and
-`:mark-forced="false"`. Unchanged. The `ProjectBadge` (`:use-directory-for-unnamed="true"`) sits next to it, at the right of
-the last line of the row, like the cost in the facts row. The summary takes the remaining width and may wrap onto
-several lines. A very long project name is cut, it never pushes the summary away.
+`:mark-forced="false"`. Unchanged. The `ProjectBadge` (`:use-directory-for-unnamed="true"`) sits next to it, on the same
+line, wrapping under it when narrow.
 
 ### 5.4 Settings row, subagents (D7)
 
@@ -255,11 +250,9 @@ Annotations are a free-form key/value object. Keys can contain dots.
   whole (`team.name`). A long value is cut with an ellipsis. Value text: strings as is; numbers and booleans as text;
   `null` as `null`; an object or an array as compact JSON, cut with an ellipsis. The line never wraps: tags that do not
   fit are hidden.
-- **A chevron button always follows the tags** as soon as the session has at least one annotation, whether or not some tags
+- **A chevron button always ends the line** as soon as the session has at least one annotation, whether or not some tags
   are hidden. It opens a `wa-popover` (already imported in `main.js`) anchored to it. Light dismiss and Escape close it.
   One popover is open at a time. When tags are hidden, the button also shows how many.
-  It sits right after the last displayed tag, and reaches the right edge only when the tags are cut. It is styled like
-  the collapse button (plain, quiet colour, hover background).
 - The popover lists **all** annotations as a tree. Keys are split on `.`. Entries that share a prefix share a parent
   level. Example: `team.name`, `team.lead`, `run.limits.tokens` give a `team` level with `name` and `lead`, and a `run`
   level, then `limits`, then `tokens`. A level shows its name with a chevron. A leaf shows `key: value`. Same connector
