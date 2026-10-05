@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../../stores/data'
 import { useRailActiveSessions } from '../../composables/useRailActiveSessions'
@@ -9,7 +9,8 @@ import ProcessIndicator from '../ui/ProcessIndicator.vue'
 import SessionListItem from '../session/list/SessionListItem.vue'
 import { useSettingsStore } from '../../stores/settings'
 import { resolveRailItems } from '../../utils/sidebarRail.js'
-import AppTooltip from '../ui/AppTooltip.vue'
+import AppTooltip, { onTooltipDismissal } from '../ui/AppTooltip.vue'
+import { createRailSessionLongPress } from '../../utils/railSessionLongPress.js'
 import SettingsPopover from '../app/SettingsPopover.vue'
 import PeerInboxBadge from '../peer/PeerInboxBadge.vue'
 
@@ -28,7 +29,59 @@ const router = useRouter()
 const currentSessionId = computed(() => props.mode === 'sessions' ? route.params.sessionId || null : null)
 const { rows } = useRailActiveSessions(store, () => currentSessionId.value)
 
+const sessionTooltips = new Map()
+const touchInput = ref(false)
+const sessionTooltipTrigger = computed(() => settingsStore.isTouchDevice || touchInput.value ? 'manual' : 'hover focus')
+const longPress = createRailSessionLongPress({
+    document,
+    show: id => sessionTooltips.get(id)?.show(),
+    hide: () => { for (const tooltip of sessionTooltips.values()) tooltip.hide() },
+})
+const stopDismissalWatch = onTooltipDismissal(longPress.cancel)
+
+function setSessionTooltip(id, tooltip) {
+    if (tooltip) sessionTooltips.set(id, tooltip)
+    else {
+        sessionTooltips.delete(id)
+        longPress.cancel()
+    }
+}
+
+function sessionPointerDown(session, event) {
+    touchInput.value = event.pointerType === 'touch'
+    // Vue renders after pointerdown. Set the native trigger before default focus.
+    for (const tooltip of sessionTooltips.values()) tooltip.setTrigger(sessionTooltipTrigger.value)
+    longPress.start(session.id, event)
+}
+
+function sessionPointerEnter(event) {
+    if (event.pointerType !== 'mouse' || settingsStore.isTouchDevice) return
+    touchInput.value = false
+    for (const tooltip of sessionTooltips.values()) tooltip.setTrigger('hover focus')
+}
+
+function sessionKeyboardInput() {
+    if (settingsStore.isTouchDevice || !touchInput.value) return
+    longPress.cancel()
+    touchInput.value = false
+    for (const tooltip of sessionTooltips.values()) tooltip.setTrigger('hover focus')
+}
+
+document.addEventListener('keydown', sessionKeyboardInput, { capture: true })
+
+function sessionClick(session, event) {
+    if (!longPress.consumeClick(session.id, event)) openSession(session)
+}
+
+watch([() => route.fullPath, () => props.mode, () => props.sidebarOpen], () => longPress.cancel(), { flush: 'sync' })
+onBeforeUnmount(() => {
+    document.removeEventListener('keydown', sessionKeyboardInput, { capture: true })
+    stopDismissalWatch()
+    longPress.dispose()
+})
+
 function openSession(session) {
+    longPress.cancel()
     router.push(sessionRouteLocation(session, route))
 }
 
@@ -74,7 +127,10 @@ function activate(item) {
                         type="button" class="rail-button rail-session-button"
                         :aria-label="row.session.title || row.session.id"
                         :aria-pressed="row.session.id === currentSessionId"
-                        @click="openSession(row.session)"
+                        @pointerdown.passive="sessionPointerDown(row.session, $event)"
+                        @pointerenter="sessionPointerEnter"
+                        @click="sessionClick(row.session, $event)"
+                        @contextmenu.prevent
                     >
                         <ProjectMark
                             :icon-url="store.resolvedProjectIcons[row.session.project_id] || null"
@@ -91,6 +147,8 @@ function activate(item) {
                     </button>
                     <AppTooltip
                         :for="`sidebar-rail-session-${row.session.id}`"
+                        :ref="tooltip => setSessionTooltip(row.session.id, tooltip)"
+                        :trigger="sessionTooltipTrigger"
                         force interactive hoist placement="right" class="rail-session-tooltip"
                     >
                         <div class="rail-session-preview">
@@ -172,6 +230,8 @@ function activate(item) {
 }
 
 .rail-session-button {
+    user-select: none;
+    -webkit-touch-callout: none;
     display: flex;
     justify-content: center;
     gap: 0.2rem;

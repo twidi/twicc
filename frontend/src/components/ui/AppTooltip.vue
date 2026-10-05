@@ -1,5 +1,12 @@
 <script>
 const mountedTooltips = new Set()
+const tooltipDismissals = new Set()
+const openInteractiveTooltips = new Set()
+
+export function onTooltipDismissal(callback) {
+    tooltipDismissals.add(callback)
+    return () => tooltipDismissals.delete(callback)
+}
 
 function clearPendingTimer(el) {
     if (typeof el?.hoverTimeout === 'number') {
@@ -8,6 +15,7 @@ function clearPendingTimer(el) {
 }
 
 export function hideAllTooltips() {
+    for (const callback of tooltipDismissals) callback()
     for (const el of mountedTooltips) {
         clearPendingTimer(el)
         el.hide()
@@ -71,8 +79,6 @@ const TOOLTIP_DISTANCE = 11
  * is shorter), and the two would overlap — anchors are usually stacked close
  * together, their tooltips are much taller than the anchors themselves.
  */
-const openInteractiveTooltips = new Set()
-
 const props = defineProps({
     force: {
         type: Boolean,
@@ -88,6 +94,24 @@ const settingsStore = useSettingsStore()
 const shouldShow = computed(() => props.force || !settingsStore.isTouchDevice)
 
 const tooltipEl = ref(null)
+
+function show() {
+    clearPendingTimer(tooltipEl.value)
+    return tooltipEl.value?.show()
+}
+
+function hide() {
+    clearPendingTimer(tooltipEl.value)
+    return tooltipEl.value?.hide()
+}
+
+// Update synchronously before the browser sends focus or compatibility mouse events.
+function setTrigger(trigger) {
+    clearPendingTimer(tooltipEl.value)
+    if (tooltipEl.value) tooltipEl.value.trigger = trigger
+}
+
+defineExpose({ show, hide, setTrigger })
 
 /**
  * wa-tooltip never cancels a pending hide when the pointer enters the tooltip:
@@ -107,7 +131,7 @@ function cancelPendingHide() {
 }
 
 /**
- * Light-dismiss for click-triggered tooltips.
+ * Light-dismiss for click-triggered and manual tooltips.
  *
  * wa-tooltip has no backdrop and no outside-click handling: once open, it only
  * closes on a second click on its own anchor, on Escape, or — for interactive
@@ -147,7 +171,7 @@ function startOutsideWatch() {
     // Read the trigger off the element: it can change at runtime (the sidebar
     // quota tooltips swap hover for click on touch devices).
     const trigger = tooltipEl.value?.trigger
-    if (watchingOutside || !trigger?.split(' ').includes('click')) {
+    if (watchingOutside || !trigger?.split(' ').some(value => value === 'click' || value === 'manual')) {
         return
     }
     document.addEventListener('pointerdown', handleOutsidePointerDown, { capture: true })
