@@ -12,9 +12,9 @@
  * any wa-badge slotted straight into it to its top corner
  * (`.button ::slotted(wa-badge)`), which the wrapper takes it out of.
  *
- * The count is the caller's to pick: the sidebar shows the sum (messages
- * awaiting review + pairing requests), while the settings buttons each own
- * the half they act on.
+ * The caller selects the count. The icon bar and floating reopen button show
+ * the sum of messages awaiting review and pairing requests. Each Settings button
+ * shows the count for its own action.
  *
  * Always indicative, never interactive: `pointer-events: none` leaves the
  * click to whatever it sits on.
