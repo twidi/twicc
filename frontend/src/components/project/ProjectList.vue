@@ -16,7 +16,7 @@ const settingsStore = useSettingsStore()
 const showArchivedProjects = computed(() => settingsStore.isShowArchivedProjects)
 const hasArchivedProjects = computed(() => store.getListableProjects.some(p => p.archived))
 
-// Named projects (have a user-assigned name), sorted by mtime desc (from store)
+// Named projects (have a user-assigned name), sorted by effective activity (from store)
 const namedProjects = computed(() =>
     store.getListableProjects.filter(p => p.name !== null && (showArchivedProjects.value || !p.archived))
 )
@@ -88,7 +88,7 @@ function handleToggleShowArchived(event) {
             </div>
         </div>
 
-        <!-- Section 1: Named projects (flat, by mtime) -->
+        <!-- Section 1: Named projects (flat, by effective activity) -->
         <div class="section-subheader">Named projects</div>
         <div v-if="namedProjects.length" class="project-cards">
             <ProjectCard

@@ -434,8 +434,8 @@ export function initStaticCommands(router) {
         return PROJECT_DETAIL_ROUTES.has(route.name)
     }
 
-    /** Projects + worktrees for palette pickers, mixed and sorted by mtime desc
-     *  (getProjects is the raw list, worktrees included). Archived entries are
+    /** Projects + worktrees for palette pickers, mixed and sorted by effective activity
+     *  (getProjects returns raw objects, worktrees included). Archived entries are
      *  dropped unless the "show archived projects" setting is enabled. */
     function pickerEntries() {
         return data.getProjects.filter(p => settings.isShowArchivedProjects || !p.archived)

@@ -37,6 +37,8 @@ const emit = defineEmits(['select', 'menu-select'])
 const store = useDataStore()
 const settingsStore = useSettingsStore()
 
+const lastActivity = computed(() => store.getProjectActivity(props.project.id))
+
 // Home card cascade (step 7b): the card enters when the home shows it.
 const cardRef = ref(null)
 useHomeCardEntrance(cardRef)
@@ -135,10 +137,10 @@ function handleMenuSelect(event) {
                     </template>
                     <span :id="`project-mtime-${project.id}`" class="project-mtime">
                         <wa-icon auto-width name="clock" variant="regular"></wa-icon>
-                        <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(project.mtime)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
-                        <span v-else>{{ formatDate(project.mtime) }}</span>
+                        <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(lastActivity)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
+                        <span v-else>{{ formatDate(lastActivity) }}</span>
                     </span>
-                    <AppTooltip :for="`project-mtime-${project.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(project.mtime)}` : 'Last activity' }}</AppTooltip>
+                    <AppTooltip :for="`project-mtime-${project.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(lastActivity)}` : 'Last activity' }}</AppTooltip>
                 </div>
                 <div :id="`project-sparkline-${project.id}`" class="project-graph">
                     <ActivitySparkline :id-suffix="project.id" :data="store.weeklyActivity[project.id] || []" />

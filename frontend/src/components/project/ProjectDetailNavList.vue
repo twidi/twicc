@@ -2,7 +2,7 @@
 // ProjectDetailNavList.vue - Horizontal navigation list of workspaces and/or projects.
 //
 // Quick navigation displayed in header panels:
-// - "All Projects" mode: workspaces (getSelectableWorkspaces order) + all projects (named first, then unnamed, mtime desc)
+// - "All Projects" mode: workspaces (getSelectableWorkspaces order) + all projects (named first, then unnamed, effective activity desc)
 // - Workspace mode: ↑ All Projects + projects in the workspace's custom order
 // - Single project mode: ↑ All Projects + ↑ workspaces the project belongs to + ↑ the main repository this project is a worktree of (if any) + this project's own worktrees (if any, shown like workspace members), store order, respecting archived setting
 //
@@ -55,7 +55,7 @@ const items = computed(() => {
             result.push({ type: 'divider' })
         }
 
-        // 2. All visible projects: named first, then unnamed (both in mtime desc from store).
+        // 2. All visible projects: named first, then unnamed (both in effective activity desc from store).
         //    Worktrees are excluded from the project links (getListableProjects).
         const showArchived = settingsStore.isShowArchivedProjects
         const projects = dataStore.getListableProjects.filter(p => showArchived || !p.archived)

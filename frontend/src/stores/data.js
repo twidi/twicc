@@ -1,3 +1,4 @@
+import { buildProjectActivityIndex, createProjectActivityComparator } from '../utils/projectActivity.js'
 import { sessionSortComparator } from '../utils/sessionSort.js'
 import { agentLinkState, setAgentLink as cacheAgentLink, clearAgentLinks as clearAgentLinkCache, markAgentStopped as cacheAgentStop, markAgentIdle, beginAgentFetch, applyAgentSnapshot, rootAgentToolLine, staleSyntheticAgentIds, buildAgentTree, hasTreeAgents, runStateFromPayload, interactionFromPayload, setAgentRunState as cacheAgentRunState, setAgentInteraction as cacheAgentInteraction, dropRootAgentState, effectiveAgentRun } from '../utils/agentLinkIndex'
 // frontend/src/stores/data.js
@@ -750,22 +751,30 @@ export const useDataStore = defineStore('data', {
             }
             return out
         },
-        // Data getters (sorted by mtime descending - most recent first)
-        getProjects: (state) => Object.values(state.projects).sort((a, b) => b.mtime - a.mtime),
-        // Projects shown in "all projects" pickers/lists: excludes git worktrees
-        // (those with `worktree_of` set), which are surfaced separately under
-        // their main repository. Use this for every surface that lists or counts
-        // top-level projects; keep `getProjects` (raw) for aggregates over
-        // sessions/cost and for uniqueness checks that must see every project.
-        getListableProjects: (state) =>
-            Object.values(state.projects).filter(p => !p.worktree_of).sort((a, b) => b.mtime - a.mtime),
-        // Worktree projects whose main repository is `projectId` (i.e. their
-        // `worktree_of` points at it), sorted by mtime desc. Used to nest a
-        // project's worktrees under it in the sidebar selector / New Session.
-        getWorktreesOf: (state) => (projectId) =>
-            Object.values(state.projects)
-                .filter(p => p.worktree_of === projectId)
-                .sort((a, b) => b.mtime - a.mtime),
+        // Data getters: derived activity keeps raw mtimes intact for synchronization.
+        projectActivityById: (state) => buildProjectActivityIndex(Object.values(state.projects)),
+        getProjectActivity() {
+            const activityById = this.projectActivityById
+            return (projectId) => activityById.get(projectId) ?? 0
+        },
+        projectActivityComparator() {
+            return createProjectActivityComparator(this.projectActivityById)
+        },
+        // Includes every raw project object for aggregates and uniqueness checks.
+        getProjects(state) {
+            return Object.values(state.projects).sort(this.projectActivityComparator)
+        },
+        // Top-level lists inherit cached worktree activity before UI visibility filters.
+        getListableProjects() {
+            return this.getProjects.filter(project => !project.worktree_of)
+        },
+        // Worktree rows retain their own activity, ordered most recent first.
+        getWorktreesOf(state) {
+            const comparator = this.projectActivityComparator
+            return (projectId) => Object.values(state.projects)
+                .filter(project => project.worktree_of === projectId)
+                .sort(comparator)
+        },
         // Session scope of a project: the project itself plus its own git
         // worktrees. A worktree's sessions/cost/activity belong to its main
         // repository's whole, so viewing a main repo aggregates its worktrees'
