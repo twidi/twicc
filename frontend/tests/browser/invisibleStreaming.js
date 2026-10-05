@@ -155,14 +155,14 @@ store.projects[projectId] = { id: projectId, directory: '/invisible-stream-fixtu
 store.projectsLoaded = true
 function finalContent(text, blockType, messageId, uuid) {
     if (provider === 'claude_code') return { type: 'assistant', uuid, message: { id: messageId, role: 'assistant', content: [blockType === 'thinking' ? { type: 'thinking', thinking: text } : { type: 'text', text }] } }
-    if (blockType === 'thinking') return { type: 'response_item', payload: { type: 'reasoning', summary: [{ type: 'summary_text', text }] } }
-    return { type: 'event_msg', payload: { type: 'item_completed', item: { type: 'AgentMessage', content: [{ type: 'Text', text }] } } }
+    if (blockType === 'thinking') return { type: 'response_item', payload: { type: 'reasoning', id: messageId, summary: [{ type: 'summary_text', text }] } }
+    return { type: 'event_msg', payload: { type: 'item_completed', item: { type: 'AgentMessage', id: messageId, content: [{ type: 'Text', text }] } } }
 }
 function seedSession(id, parent = null) {
     const history = Array.from({ length: 100 }, (_, index) => ({
         line_num: index + 1, kind: 'assistant_message', display_level: DISPLAY_LEVEL.ALWAYS,
         group_head: null, group_tail: null, timestamp: '2026-10-02T12:00:00Z',
-        content: JSON.stringify(finalContent(`History ${index + 1}. ${'Readable history content. '.repeat(8)}`, 'text', 'history', `history-${index}`)),
+        content: JSON.stringify(finalContent(`History ${index + 1}. ${'Readable history content. '.repeat(8)}`, 'text', `history-${index}`, `history-${index}`)),
     }))
     store.sessions[id] = { id, project_id: projectId, provider, title: id, last_line: history.length,
         parent_session_id: parent, type: parent ? 'subagent' : 'session', compute_version_up_to_date: true,
@@ -186,7 +186,7 @@ function seedHistory(id, count) {
         return { line_num: number, kind: 'assistant_message', display_level: DISPLAY_LEVEL.ALWAYS,
             group_head: null, group_tail: null, timestamp: '2026-10-02T12:00:00Z',
             content: JSON.stringify(finalContent(`History ${number}. ${'Readable history content. '.repeat(8)}`,
-                'text', 'history', `history-${number}`)) }
+                'text', `history-${number}`, `history-${number}`)) }
     })
     store.addSessionItems(id, added)
     store.sessions[id].last_line = count
@@ -461,14 +461,14 @@ async function runPublicationRateScenario({ blockType = 'text', sourceKind = 'pl
         result.scrollerBeforeRetirement = scrollerDiagnostics(listInstance(mainId))
         mark('terminal retirement')
         withPublicationBoundary('terminal', () => {
-            const uuid = `final-${messageId}`
+            const uuid = provider === 'codex' ? messageId : `final-${messageId}`
             store.streamBlockStop(mainId, messageId, 0)
             store.streamBlockEnd(mainId, messageId, 0, uuid)
             const realLine = store.sessionItems[mainId].length + 1
             store.addSessionItems(mainId, [{ line_num: realLine,
                 kind: blockType === 'thinking' && provider === 'codex' ? 'reasoning' : 'assistant_message',
                 display_level: DISPLAY_LEVEL.ALWAYS, group_head: null, group_tail: null,
-                stream_uuid: provider === 'codex' ? uuid : undefined,
+
                 content: JSON.stringify(finalContent(result.source, blockType, messageId, uuid)) }])
             store.sessions[mainId].last_line = realLine
             result.realLine = realLine
@@ -647,7 +647,7 @@ async function runLargeHistorySuspension({ mode = 'keepAlive', replacements = 60
     for (let index = 0; index < replacements; index++) {
         const text = `History 1000 replacement ${String(index).padStart(2, '0')}. ${'Readable history content. '.repeat(8)}`
         store.updateSessionItemsContent(mainId, [{ line_num: 1000,
-            content: JSON.stringify(finalContent(text, 'text', 'history', `history-replacement-${index}`)) }])
+            content: JSON.stringify(finalContent(text, 'text', `history-replacement-${index}`, `history-replacement-${index}`)) }])
         await nextTick()
         await new Promise(resolve => nativeRAF(resolve))
         assert(unref(scroller.positions) === frozenPositions, 'Suspended geometry changed identity')
@@ -719,7 +719,7 @@ async function runReconcileHideReturn({ expectedViewport = null } = {}) {
     assert(!scroller.isAtBottom(), 'The parent would skip its reading-position restore')
     const stream = store.localState.streamingBlocks[mainId]
     const text = stream.blocks[0].text
-    const uuid = `final-${messageId}`
+    const uuid = provider === 'codex' ? messageId : `final-${messageId}`
     store.streamBlockStop(mainId, messageId, 0)
     store.streamBlockEnd(mainId, messageId, 0, uuid)
     const realLine = store.sessionItems[mainId].length + 1
@@ -731,7 +731,7 @@ async function runReconcileHideReturn({ expectedViewport = null } = {}) {
     }
     try {
         store.addSessionItems(mainId, [{ line_num: realLine, kind: 'assistant_message', display_level: DISPLAY_LEVEL.ALWAYS,
-            group_head: null, group_tail: null, stream_uuid: provider === 'codex' ? uuid : undefined,
+            group_head: null, group_tail: null,
             content: JSON.stringify(finalContent(text, 'text', messageId, uuid)) }])
         store.sessions[mainId].last_line = realLine
         assert(scroller.getItemHeight(realLine) === measuredHeight, 'The parent did not seed the final row height')
@@ -813,13 +813,13 @@ async function runVisible(blockType, proposed = false) {
         const text = store.localState.streamingBlocks[currentId()].blocks[0].text
         assert(row().innerText.includes(proposed ? 'Growing plan details.' : 'Visible update 23.'), 'Visible body misses final content')
         const id = currentId(), messageId = store.localState.streamingBlocks[id].messageId
-        const uuid = `final-${messageId}`
+        const uuid = provider === 'codex' ? messageId : `final-${messageId}`
         store.streamBlockStop(id, messageId, 0)
         store.streamBlockEnd(id, messageId, 0, uuid)
         const realLine = store.sessionItems[id].length + 1
         store.addSessionItems(id, [{ line_num: realLine, kind: blockType === 'thinking' && provider === 'codex' ? 'reasoning' : 'assistant_message',
             display_level: DISPLAY_LEVEL.ALWAYS, group_head: null, group_tail: null,
-            stream_uuid: provider === 'codex' ? uuid : undefined, content: JSON.stringify(finalContent(text, blockType, messageId, uuid)) }])
+            content: JSON.stringify(finalContent(text, blockType, messageId, uuid)) }])
         store.sessions[id].last_line = realLine
         await settle(700)
         assert(!store.localState.streamingBlocks[id], 'Final reconciliation retains synthetic block')

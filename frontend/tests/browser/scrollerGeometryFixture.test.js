@@ -210,7 +210,7 @@ test('missing-content substitution uses the public cache-invalidating action and
         group_head: null, group_tail: null, content: JSON.stringify({ text: 'old content' }) }
     getParsedContent(item)
     const store = { sessionItems: { main: [item] }, visual: [], ...actions,
-        clearOptimisticMessageIfMatched() {}, recomputeVisualItems(id) { this.visual = computeVisualItems(this.sessionItems[id], DISPLAY_MODE.NORMAL) },
+        _retireStreamingBlocks() { return [] }, clearOptimisticMessageIfMatched() {}, recomputeVisualItems(id) { this.visual = computeVisualItems(this.sessionItems[id], DISPLAY_MODE.NORMAL) },
         getSessionVisualItems() { return this.visual } }
     store.recomputeVisualItems('main')
     const fixture = { ids: { mainId: 'main' }, store }
