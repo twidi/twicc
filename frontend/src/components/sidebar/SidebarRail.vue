@@ -13,6 +13,7 @@ import AppTooltip, { onTooltipDismissal } from '../ui/AppTooltip.vue'
 import { createRailSessionLongPress } from '../../utils/railSessionLongPress.js'
 import SettingsPopover from '../app/SettingsPopover.vue'
 import PeerInboxBadge from '../peer/PeerInboxBadge.vue'
+import NewSessionProjectPicker from '../project/NewSessionProjectPicker.vue'
 
 const props = defineProps({
     mode: { type: String, required: true, validator: value => ['home', 'sessions', 'artifacts'].includes(value) },
@@ -21,7 +22,7 @@ const props = defineProps({
     inboxCount: { type: Number, required: true },
     settingsAnchor: { type: Object, default: null },
 })
-const emit = defineEmits(['home', 'select-mode', 'search', 'palette', 'inbox', 'toggle-sidebar'])
+const emit = defineEmits(['new-session', 'home', 'select-mode', 'search', 'palette', 'inbox', 'toggle-sidebar'])
 const settingsStore = useSettingsStore()
 const store = useDataStore()
 const route = useRoute()
@@ -170,6 +171,17 @@ function activate(item) {
                         tooltip-placement="right" :trigger-label="item.label" :position-anchor="settingsAnchor"
                     />
                 </div>
+                <template v-else-if="item.id === 'new-session'">
+                    <NewSessionProjectPicker placement="right-end" @select-project="emit('new-session', $event)">
+                        <template #trigger>
+                            <button id="sidebar-rail-new-session" slot="trigger" type="button" class="rail-button"
+                                    :aria-label="item.label">
+                                <wa-icon :name="item.icon" />
+                            </button>
+                        </template>
+                    </NewSessionProjectPicker>
+                    <AppTooltip for="sidebar-rail-new-session" placement="right">{{ item.label }}</AppTooltip>
+                </template>
                 <template v-else>
                     <button
                         :id="`sidebar-rail-${item.id}`" type="button" class="rail-button"
@@ -294,8 +306,8 @@ function activate(item) {
     }
 }
 
-@container rail (height < 22rem) {
-    /* Navigation stays reachable when the fixed controls exceed the viewport. */
+@container rail (height < 25rem) {
+    /* Reserve nine controls, session dividers, and card spacing before scrolling. */
     .panel-card {
         overflow-x: hidden;
         overflow-y: auto;

@@ -54,7 +54,7 @@ test('main imports rail styles between tool cards and scrollbars', () => {
     assert.match(source, /import '\.\/styles\/surfaces.css'\s*\/\/[^\n]*\nimport '\.\/styles\/sidebar-rows.css'\s*\/\/[^\n]*\nimport '\.\/styles\/option-cards.css'/)
 })
 
-test('22rem threshold fits all real items and preserves the focus ring at every root size', () => {
+test('short-height fallback fits nine controls and session dividers while preserving the focus ring', () => {
     const rail = tokens(body(css(), ':root'))
     // WA theme spacing map. These values are documented because node_modules is absent.
     const spacing = { '--wa-space-xs': '0.5rem', '--wa-space-2xs': '0.25rem' }
@@ -65,6 +65,7 @@ test('22rem threshold fits all real items and preserves the focus ring at every 
     const threshold = read('../components/sidebar/SidebarRail.vue').match(/@container rail \(height < ([\d.]+rem)\)/)[1]
     const count = Math.max(...[true, false].map(sidebarOpen => resolveRailItems({ mode: 'sessions', sidebarOpen,
         peerConfigured: true, inboxCount: 1, isMac: false }).length))
+    assert.equal(count, 9, 'maximum fixed controls includes New session')
     const px = (length, root) => {
         assert.match(length, /^[\d.]+(?:rem|px)$/)
         return parseFloat(length) * (length.endsWith('rem') ? root : 1)
@@ -73,9 +74,14 @@ test('22rem threshold fits all real items and preserves the focus ring at every 
         const padding = px(rail['--rail-card-padding'], root)
         assert.ok(padding >= px(glow['--wa-focus-ring-width'], root) + px(glow['--wa-focus-ring-offset'], root))
         for (const gap of panelGaps) {
-            const required = count * px(rail['--rail-button-size'], root) + count * px(rail['--rail-gap'], root)
-                + 2 * padding + 2 * px(divider, root) + 2 * px(gap, root)
+            // Two divider rows add two gaps and two one-pixel borders around active sessions.
+            const required = count * px(rail['--rail-button-size'], root) + (count + 2) * px(rail['--rail-gap'], root)
+                + 2 * padding + 4 * px(divider, root) + 2 * px(gap, root)
             assert.ok(required < px(threshold, root), `${count} items at ${root}px root with ${gap} panel gap`)
+            if (root === 12 && gap === '0.5rem') {
+                assert.equal(required, 298, 'nine controls plus session dividers need 298px')
+                assert.ok(288 < px(threshold, root), '288px viewport enables scrolling before controls overflow')
+            }
         }
     }
 })

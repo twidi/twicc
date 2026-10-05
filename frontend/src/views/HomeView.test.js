@@ -18,12 +18,14 @@ const rail = elements(root).find(node => node.tag === 'SidebarRail')
 function setup() {
     const routes = []
     const events = []
+    const newSessions = []
     let paletteOpens = 0
     const bindings = Object.fromEntries(Object.keys(script.bindings).map(name => [name, {}]))
     Object.assign(bindings, {
         computed, ref,
         onMounted() {}, onUnmounted() {}, onBeforeUnmount() {},
         provideHomeCardCascade() {}, useStartupPolling() {},
+        useNewSessionCreation: () => projectId => newSessions.push(projectId),
         useRouter: () => ({ push: route => routes.push(JSON.parse(JSON.stringify(route))) }),
         useDataStore: () => ({ getProjects: [], weeklyActivity: {} }),
         useWorkspacesStore: () => ({}),
@@ -35,7 +37,7 @@ function setup() {
     })
     const executable = script.content.replace(/^import .*$/gm, '').replace('export default', 'const component =')
     const state = runInNewContext(`${executable}; component.setup({}, { expose() {} })`, bindings)
-    return { state, routes, events, paletteOpens: () => paletteOpens }
+    return { state, routes, events, newSessions, paletteOpens: () => paletteOpens }
 }
 
 test('Home always mounts the existing rail in Home mode without a sidebar', () => {
@@ -82,4 +84,11 @@ test('Home compiles and reserves space for its fixed viewport rail', () => {
     assert.match(css, /\.home-page\s*\{[^}]*padding-inline-start:\s*var\(--rail-width\)/)
     assert.match(css, /\.home-rail\s*\{[^}]*position:\s*fixed;[^}]*inset-block:\s*0;[^}]*inset-inline-start:\s*0;[^}]*height:\s*100dvh;/)
     assert.match(css, /\.home-view\s*\{[^}]*max-width:\s*900px;[^}]*margin:\s*0 auto;/)
+})
+
+test('Home rail passes the selected project to the shared New session handler', () => {
+    const { state, newSessions } = setup()
+    assert.equal(attrs(rail)['@new-session'], 'handleNewSession')
+    state[attrs(rail)['@new-session']]('chosen-project')
+    assert.deepEqual(newSessions, ['chosen-project'])
 })

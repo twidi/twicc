@@ -14,6 +14,7 @@ export const RAIL_ITEM_DEFINITIONS = [
         label: state => state.isMac ? 'Full-text search (⌘⇧F)' : 'Full-text search (Ctrl+Shift+F)',
         group: 'top',
     },
+    { id: 'new-session', icon: 'plus', label: 'New session', group: 'bottom' },
     {
         id: 'palette',
         icon: 'bars-staggered',

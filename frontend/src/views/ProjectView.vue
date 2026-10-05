@@ -14,18 +14,18 @@ import { useCommandRegistry } from '../composables/useCommandRegistry'
 import { useStartupPolling } from '../composables/useStartupPolling'
 import { useToast } from '../composables/useToast'
 import { useProviderActivation } from '../composables/useProviderActivation'
-import { ensureProjectTrust } from '../composables/useTrustGate'
+import { useNewSessionCreation } from '../composables/useNewSessionCreation'
 import { useTerminalCommandStore } from '../stores/terminalCommand'
 import { useSessionSelectionStore } from '../stores/sessionSelection'
 import { getRegisteredProviders, getProviderHelpers, getProviderStore, getProviderLabel, getProviderIcon } from '../providers'
 import ProviderIcon from '../components/ui/ProviderIcon.vue'
 import { toWorkspaceProjectId } from '../utils/workspaceIds'
-import { splitProjectsByPriority } from '../utils/projectSort'
 import SessionList from '../components/session/list/SessionList.vue'
 import SessionsSidebarControls from '../components/session/SessionsSidebarControls.vue'
 import ArtifactBookmarksSidebarControls from '../components/artifacts/ArtifactBookmarksSidebarControls.vue'
 import ArtifactBookmarkList from '../components/artifacts/ArtifactBookmarkList.vue'
 import SidebarRail from '../components/sidebar/SidebarRail.vue'
+import NewSessionProjectPicker from '../components/project/NewSessionProjectPicker.vue'
 import { OPEN_SIDEBAR_LABEL } from '../utils/sidebarRail'
 import { lastSessionsLocation, lastArtifactsLocation, memoryScope, resetSidebarViewMemory } from '../utils/sidebarViewMemory'
 import ArtifactsBrowserView from './ArtifactsBrowserView.vue'
@@ -36,9 +36,6 @@ import ProjectBadge from '../components/project/ProjectBadge.vue'
 import ProjectMark from '../components/project/ProjectMark.vue'
 import ProjectSelectorRow from '../components/project/ProjectSelectorRow.vue'
 import WorktreeSelectorRows from '../components/project/WorktreeSelectorRows.vue'
-import WorktreePickerRows from '../components/project/WorktreePickerRows.vue'
-import WorktreeButton from '../components/project/WorktreeButton.vue'
-import WorktreeDialog from '../components/project/WorktreeDialog.vue'
 import ProjectDetailPanel from '../components/project/ProjectDetailPanel.vue'
 import SessionRenameDialog from '../components/session/detail/SessionRenameDialog.vue'
 import ProjectEditDialog from '../components/project/ProjectEditDialog.vue'
@@ -619,37 +616,6 @@ watch(() => store.getProject(projectId.value)?.worktree_of, (parent) => {
     if (parent) expandedWorktrees.value.add(parent)
 }, { immediate: true })
 
-// --- Worktree entries in the "New session" project pickers ----------------
-// Same collapsible "Worktrees (N)" entry as the navigation selector above, but
-// for the two "New session" project pickers (the split-button dropdown in
-// single-project mode and the standalone dropdown in all-projects mode — only
-// one is rendered at a time, so they share one expansion set). Expansion is
-// ephemeral and starts collapsed: these pickers choose where to create a
-// session, so there is no "current" worktree to auto-expand.
-const newSessionExpandedWorktrees = ref(new Set())
-function isNewSessionWorktreesExpanded(id) {
-    return newSessionExpandedWorktrees.value.has(id)
-}
-function toggleNewSessionWorktrees(id) {
-    if (newSessionExpandedWorktrees.value.has(id)) {
-        newSessionExpandedWorktrees.value.delete(id)
-    } else {
-        newSessionExpandedWorktrees.value.add(id)
-    }
-}
-/**
- * Worktrees of a project that can host a new session: same archived rule as the
- * picker's parent projects, and stale worktrees excluded (their directory is
- * gone — you cannot create a session there), mirroring `nonStaleProjects`.
- */
-function pickableWorktreesOf(id) {
-    return store.getWorktreesOf(id).filter(p => (showArchivedProjects.value || !p.archived) && !p.stale)
-}
-
-const activeWsLabel = computed(() =>
-    activeWorkspace.value ? `${activeWorkspace.value.name} projects` : null
-)
-
 // Effective project ID for store operations
 const effectiveProjectId = computed(() => {
     if (!isAllProjectsMode.value) return projectId.value
@@ -662,40 +628,6 @@ const effectiveProjectId = computed(() => {
 const allProjects = computed(() =>
     store.getListableProjects.filter(p => showArchivedProjects.value || !p.archived)
 )
-// Non-stale projects only — used in "new session" dropdowns to prevent creating sessions in stale projects
-const nonStaleProjects = computed(() => allProjects.value.filter(p => !p.stale))
-const nonStaleNamedProjects = computed(() =>
-    nonStaleProjects.value.filter(p => p.name !== null)
-)
-const nonStaleFlatTree = computed(() => {
-    const unnamed = nonStaleProjects.value.filter(p => p.name === null)
-    const roots = buildProjectTree(unnamed)
-    return flattenProjectTree(roots)
-})
-
-// Workspace-first split for "New session" dropdowns.
-// When a workspace is active, workspace projects appear first, then others after a divider.
-const wsVisibleSet = computed(() =>
-    activeWorkspaceId.value ? new Set(workspaceVisibleProjectIds.value) : null
-)
-const wsPriorityIds = computed(() =>
-    activeWorkspace.value ? activeWorkspace.value.projectIds : null
-)
-const splitNamedProjects = computed(() =>
-    splitProjectsByPriority(nonStaleNamedProjects.value, wsPriorityIds.value, wsVisibleSet.value)
-)
-const splitFlatTree = computed(() => {
-    const unnamed = nonStaleProjects.value.filter(p => p.name === null)
-    if (!wsPriorityIds.value) {
-        return { prioritized: [], others: flattenProjectTree(buildProjectTree(unnamed)) }
-    }
-    const { prioritized: priProjects, others: otherProjects } = splitProjectsByPriority(unnamed, wsPriorityIds.value, wsVisibleSet.value)
-    return {
-        prioritized: flattenProjectTree(buildProjectTree(priProjects)),
-        others: flattenProjectTree(buildProjectTree(otherProjects)),
-    }
-})
-
 // Projects not in the active workspace (for the "other" section in the dropdown)
 const otherProjectsOutsideWorkspace = computed(() => {
     if (!activeWorkspaceId.value) return []
@@ -1154,42 +1086,12 @@ function onNewSessionButtonClick() {
     handleNewSession()
 }
 
-async function handleNewSession(targetProjectId = null) {
-    const projectIdToUse = targetProjectId || projectId.value
-    if (!projectIdToUse) return
+const handleNewSession = useNewSessionCreation({
+    projectId: () => projectId.value,
+    allProjects: () => isAllProjectsMode.value,
+})
 
-    // Trust gate: settle the project's trust before starting a session in it.
-    // Its result is authoritative for the draft seed (the store may not have
-    // caught up with a backend seed broadcast yet).
-    const gate = await ensureProjectTrust(projectIdToUse)
-    if (!gate) return
-
-    const newSessionId = store.createDraftSession(projectIdToUse, gate.state)
-
-    // `query: route.query` preserves ?workspace=… (and any other query params)
-    // across the navigation. The router guard would normally drop workspace
-    // when navigating to a project outside it, but we set workspace explicitly
-    // so the guard short-circuits and our value wins.
-    if (isAllProjectsMode.value) {
-        router.push({
-            name: 'projects-session',
-            params: { projectId: projectIdToUse, sessionId: newSessionId },
-            query: route.query,
-        })
-    } else {
-        // Single-project mode: URL's projectId stays on the current filter so
-        // the sidebar does not switch. When targetProjectId is not set,
-        // projectId.value === projectIdToUse so the URL matches the draft
-        // naturally; when it is set, they differ (cross-filter draft).
-        router.push({
-            name: 'session',
-            params: { projectId: projectId.value, sessionId: newSessionId },
-            query: route.query,
-        })
-    }
-}
-
-// Create project from the "New session" dropdown
+// Create project from the command palette
 const createProjectDialogRef = ref(null)
 
 // Workspace management dialog
@@ -1326,40 +1228,7 @@ function onWorkspaceRowMenuSelect(event, ws) {
     }
 }
 
-function handleNewSessionSelect(e) {
-    const value = e.detail.item.value
-    if (value.startsWith('worktrees-toggle:')) {
-        // Expand/collapse a project's worktrees inline — keep the dropdown open.
-        toggleNewSessionWorktrees(value.slice('worktrees-toggle:'.length))
-        e.preventDefault()
-        return
-    }
-    if (value === '__new_project__') {
-        createProjectDialogRef.value?.open()
-    } else {
-        handleNewSession(value)
-    }
-}
-
 function handleProjectCreated(project) {
-    handleNewSession(project.id)
-}
-
-// ----- New worktree (button on git-project rows of the "New session" dropdowns) -----
-const worktreeDialogRef = ref(null)
-const newSessionSplitDropdownRef = ref(null)
-const newSessionAllDropdownRef = ref(null)
-
-function openWorktreeDialog(project) {
-    // The button click is stopPropagation'd (no row selection), so the hosting
-    // dropdown stays open — close whichever one is visible before the dialog.
-    for (const dd of [newSessionSplitDropdownRef.value, newSessionAllDropdownRef.value]) {
-        if (dd) dd.open = false
-    }
-    worktreeDialogRef.value?.open(project)
-}
-
-function handleWorktreeResolved(project) {
     handleNewSession(project.id)
 }
 
@@ -1812,6 +1681,7 @@ function openPeerInbox() {
             :peer-configured="peerSystemConfigured"
             :inbox-count="peersStore.inboxCount"
             :settings-anchor="railCollapsed ? floatingToggleEl : null"
+            @new-session="handleNewSession"
             @home="handleBackHome"
             @select-mode="handleRailSelectMode"
             @search="openAdvancedSearch"
@@ -2196,115 +2066,22 @@ function openPeerInbox() {
                     </wa-button>
 
                     <!-- Dropdown arrow: choose a different project -->
-                    <wa-dropdown
-                        ref="newSessionSplitDropdownRef"
+                    <NewSessionProjectPicker
                         placement="top-end"
-                        @wa-select="handleNewSessionSelect"
+                        @select-project="handleNewSession"
                     >
-                        <wa-button
-                            id="new-session-project-picker"
-                            slot="trigger"
-                            variant="brand"
-                            appearance="accent"
-                            size="small"
-                        >
-                            <wa-icon name="chevron-up" label="Choose another project"></wa-icon>
-                        </wa-button>
-                        <wa-dropdown-item value="__new_project__">
-                            <wa-icon slot="icon" name="plus"></wa-icon>
-                            New project
-                        </wa-dropdown-item>
-
-                        <!-- Workspace projects first (when workspace active) -->
-                        <template v-if="splitNamedProjects.prioritized.length || splitFlatTree.prioritized.length">
-                            <wa-divider></wa-divider>
-                            <wa-dropdown-item v-if="activeWsLabel" disabled class="section-header-item"><wa-icon name="layer-group" auto-width :style="activeWorkspace?.color ? { color: activeWorkspace.color } : null"></wa-icon> {{ activeWsLabel }}</wa-dropdown-item>
-                        </template>
-                        <template v-for="p in splitNamedProjects.prioritized" :key="p.id">
-                            <wa-dropdown-item :value="p.id" class="project-picker-row">
-                                <ProjectBadge :project-id="p.id" />
-                                <WorktreeButton v-if="!p.worktree_of" :project-id="p.id" slot="details" @create="openWorktreeDialog(p)" />
-                            </wa-dropdown-item>
-                            <WorktreePickerRows
-                                :parent-id="p.id"
-                                :worktrees="pickableWorktreesOf(p.id)"
-                                :expanded="isNewSessionWorktreesExpanded(p.id)"
-                                :base-depth="0"
-                            />
-                        </template>
-                        <template v-for="item in splitFlatTree.prioritized" :key="'wsp-' + item.key">
-                            <wa-dropdown-item
-                                v-if="item.isFolder"
-                                disabled
-                                class="tree-folder-dropdown-item"
+                        <template #trigger>
+                            <wa-button
+                                id="new-session-project-picker"
+                                slot="trigger"
+                                variant="brand"
+                                appearance="accent"
+                                size="small"
                             >
-                                <span class="tree-folder-label" :title="item.path" :style="{ paddingLeft: `${item.depth * 12}px` }">
-                                    {{ item.segment }}
-                                </span>
-                            </wa-dropdown-item>
-                            <template v-else>
-                                <wa-dropdown-item :value="item.project.id" class="project-picker-row">
-                                    <span :style="{ paddingLeft: `${item.depth * 12}px` }">
-                                        <ProjectBadge :project-id="item.project.id" />
-                                    </span>
-                                    <WorktreeButton v-if="!item.project.worktree_of" :project-id="item.project.id" slot="details" @create="openWorktreeDialog(item.project)" />
-                                </wa-dropdown-item>
-                                <WorktreePickerRows
-                                    :parent-id="item.project.id"
-                                    :worktrees="pickableWorktreesOf(item.project.id)"
-                                    :expanded="isNewSessionWorktreesExpanded(item.project.id)"
-                                    :base-depth="item.depth"
-                                />
-                            </template>
+                                <wa-icon name="chevron-up" label="Choose another project"></wa-icon>
+                            </wa-button>
                         </template>
-
-                        <!-- Other projects -->
-                        <template v-if="activeWsLabel && (splitNamedProjects.others.length || splitFlatTree.others.length)">
-                            <wa-divider></wa-divider>
-                            <wa-dropdown-item disabled class="section-header-item">Other projects</wa-dropdown-item>
-                        </template>
-                        <wa-divider v-else-if="splitNamedProjects.others.length"></wa-divider>
-                        <template v-for="p in splitNamedProjects.others" :key="p.id">
-                            <wa-dropdown-item :value="p.id" class="project-picker-row">
-                                <ProjectBadge :project-id="p.id" />
-                                <WorktreeButton v-if="!p.worktree_of" :project-id="p.id" slot="details" @create="openWorktreeDialog(p)" />
-                            </wa-dropdown-item>
-                            <WorktreePickerRows
-                                :parent-id="p.id"
-                                :worktrees="pickableWorktreesOf(p.id)"
-                                :expanded="isNewSessionWorktreesExpanded(p.id)"
-                                :base-depth="0"
-                            />
-                        </template>
-
-                        <!-- Other unnamed projects (flattened tree) -->
-                        <wa-divider v-if="splitFlatTree.others.length"></wa-divider>
-                        <template v-for="item in splitFlatTree.others" :key="item.key">
-                            <wa-dropdown-item
-                                v-if="item.isFolder"
-                                disabled
-                                class="tree-folder-dropdown-item"
-                            >
-                                <span class="tree-folder-label" :title="item.path" :style="{ paddingLeft: `${item.depth * 12}px` }">
-                                    {{ item.segment }}
-                                </span>
-                            </wa-dropdown-item>
-                            <template v-else>
-                                <wa-dropdown-item :value="item.project.id" class="project-picker-row">
-                                    <span :style="{ paddingLeft: `${item.depth * 12}px` }">
-                                        <ProjectBadge :project-id="item.project.id" />
-                                    </span>
-                                    <WorktreeButton v-if="!item.project.worktree_of" :project-id="item.project.id" slot="details" @create="openWorktreeDialog(item.project)" />
-                                </wa-dropdown-item>
-                                <WorktreePickerRows
-                                    :parent-id="item.project.id"
-                                    :worktrees="pickableWorktreesOf(item.project.id)"
-                                    :expanded="isNewSessionWorktreesExpanded(item.project.id)"
-                                    :base-depth="item.depth"
-                                />
-                            </template>
-                        </template>
-                    </wa-dropdown>
+                    </NewSessionProjectPicker>
                 </wa-button-group>
 
                 <template v-if="!isAllProjectsMode">
@@ -2313,120 +2090,27 @@ function openPeerInbox() {
                 </template>
 
                 <!-- In all projects mode: dropdown to choose project (Sessions mode only) -->
-                <wa-dropdown
+                <NewSessionProjectPicker
                     v-if="!isArtifactsMode && isAllProjectsMode"
                     id="new-session-dropdown"
-                    ref="newSessionAllDropdownRef"
                     class="new-session-dropdown"
                     placement="top-end"
-                    @wa-select="handleNewSessionSelect"
+                    @select-project="handleNewSession"
                 >
-                    <wa-button
-                        id="new-session-all-projects-button"
-                        slot="trigger"
-                        variant="brand"
-                        appearance="accent"
-                        size="small"
-                    >
-                        <wa-icon slot="end" name="chevron-up"></wa-icon>
-                        <wa-icon name="plus"></wa-icon>
-                        <span>New session</span>
-                    </wa-button>
-                    <wa-dropdown-item value="__new_project__">
-                        <wa-icon slot="icon" name="plus"></wa-icon>
-                        New project
-                    </wa-dropdown-item>
-
-                    <!-- Workspace projects first (when workspace active) -->
-                    <template v-if="splitNamedProjects.prioritized.length || splitFlatTree.prioritized.length">
-                        <wa-divider></wa-divider>
-                        <wa-dropdown-item v-if="activeWsLabel" disabled class="section-header-item"><wa-icon name="layer-group" auto-width :style="activeWorkspace?.color ? { color: activeWorkspace.color } : null"></wa-icon> {{ activeWsLabel }}</wa-dropdown-item>
-                    </template>
-                    <template v-for="p in splitNamedProjects.prioritized" :key="p.id">
-                        <wa-dropdown-item :value="p.id" class="project-picker-row">
-                            <ProjectBadge :project-id="p.id" />
-                            <WorktreeButton v-if="!p.worktree_of" :project-id="p.id" slot="details" @create="openWorktreeDialog(p)" />
-                        </wa-dropdown-item>
-                        <WorktreePickerRows
-                            :parent-id="p.id"
-                            :worktrees="pickableWorktreesOf(p.id)"
-                            :expanded="isNewSessionWorktreesExpanded(p.id)"
-                            :base-depth="0"
-                        />
-                    </template>
-                    <template v-for="item in splitFlatTree.prioritized" :key="'wsp-' + item.key">
-                        <wa-dropdown-item
-                            v-if="item.isFolder"
-                            disabled
-                            class="tree-folder-dropdown-item"
+                    <template #trigger>
+                        <wa-button
+                            id="new-session-all-projects-button"
+                            slot="trigger"
+                            variant="brand"
+                            appearance="accent"
+                            size="small"
                         >
-                            <span class="tree-folder-label" :title="item.path" :style="{ paddingLeft: `${item.depth * 12}px` }">
-                                {{ item.segment }}
-                            </span>
-                        </wa-dropdown-item>
-                        <template v-else>
-                            <wa-dropdown-item :value="item.project.id" class="project-picker-row">
-                                <span :style="{ paddingLeft: `${item.depth * 12}px` }">
-                                    <ProjectBadge :project-id="item.project.id" />
-                                </span>
-                                <WorktreeButton v-if="!item.project.worktree_of" :project-id="item.project.id" slot="details" @create="openWorktreeDialog(item.project)" />
-                            </wa-dropdown-item>
-                            <WorktreePickerRows
-                                :parent-id="item.project.id"
-                                :worktrees="pickableWorktreesOf(item.project.id)"
-                                :expanded="isNewSessionWorktreesExpanded(item.project.id)"
-                                :base-depth="item.depth"
-                            />
-                        </template>
+                            <wa-icon slot="end" name="chevron-up"></wa-icon>
+                            <wa-icon name="plus"></wa-icon>
+                            <span>New session</span>
+                        </wa-button>
                     </template>
-
-                    <!-- Other projects -->
-                    <template v-if="activeWsLabel && (splitNamedProjects.others.length || splitFlatTree.others.length)">
-                        <wa-divider></wa-divider>
-                        <wa-dropdown-item disabled class="section-header-item">Other projects</wa-dropdown-item>
-                    </template>
-                    <wa-divider v-else-if="splitNamedProjects.others.length"></wa-divider>
-                    <template v-for="p in splitNamedProjects.others" :key="p.id">
-                        <wa-dropdown-item :value="p.id" class="project-picker-row">
-                            <ProjectBadge :project-id="p.id" />
-                            <WorktreeButton v-if="!p.worktree_of" :project-id="p.id" slot="details" @create="openWorktreeDialog(p)" />
-                        </wa-dropdown-item>
-                        <WorktreePickerRows
-                            :parent-id="p.id"
-                            :worktrees="pickableWorktreesOf(p.id)"
-                            :expanded="isNewSessionWorktreesExpanded(p.id)"
-                            :base-depth="0"
-                        />
-                    </template>
-
-                    <!-- Other unnamed projects (flattened tree) -->
-                    <wa-divider v-if="splitFlatTree.others.length"></wa-divider>
-                    <template v-for="item in splitFlatTree.others" :key="item.key">
-                        <wa-dropdown-item
-                            v-if="item.isFolder"
-                            disabled
-                            class="tree-folder-dropdown-item"
-                        >
-                            <span class="tree-folder-label" :title="item.path" :style="{ paddingLeft: `${item.depth * 12}px` }">
-                                {{ item.segment }}
-                            </span>
-                        </wa-dropdown-item>
-                        <template v-else>
-                            <wa-dropdown-item :value="item.project.id" class="project-picker-row">
-                                <span :style="{ paddingLeft: `${item.depth * 12}px` }">
-                                    <ProjectBadge :project-id="item.project.id" />
-                                </span>
-                                <WorktreeButton v-if="!item.project.worktree_of" :project-id="item.project.id" slot="details" @create="openWorktreeDialog(item.project)" />
-                            </wa-dropdown-item>
-                            <WorktreePickerRows
-                                :parent-id="item.project.id"
-                                :worktrees="pickableWorktreesOf(item.project.id)"
-                                :expanded="isNewSessionWorktreesExpanded(item.project.id)"
-                                :base-depth="item.depth"
-                            />
-                        </template>
-                    </template>
-                </wa-dropdown>
+                </NewSessionProjectPicker>
                 <AppTooltip v-if="isAllProjectsMode" for="new-session-all-projects-button">Create a new session</AppTooltip>
             </div>
 
@@ -2677,9 +2361,8 @@ function openPeerInbox() {
         :session="sessionToRename"
     />
 
-    <!-- Create project dialog (opened from "New session" dropdown) -->
+    <!-- Create project dialog (opened from the command palette) -->
     <ProjectEditDialog ref="createProjectDialogRef" @saved="handleProjectCreated" />
-    <WorktreeDialog ref="worktreeDialogRef" @resolved="handleWorktreeResolved" />
 
     <!-- Edit project dialog (opened from a selector row's "…" menu) -->
     <ProjectEditDialog ref="sidebarProjectEditRef" :project="sidebarEditingProject" />
@@ -3136,15 +2819,6 @@ wa-dropdown-item:hover .row-menu-trigger,
     font-size: var(--wa-font-size-s);
 }
 
-/* Project rows of the two "New session" dropdowns: reserve right padding for
-   the absolutely-positioned "new worktree" overlay button (WorktreeButton:
-   2.25rem wide, pinned 0.5em from the edge), so long project names never run
-   under it. Applied to every project row (git or not) so all rows keep the
-   same content width. */
-.project-picker-row {
-    padding-inline-end: calc(2.25rem + 0.5em + var(--wa-space-2xs));
-}
-
 /* Floating "New session" split button (single project mode) */
 /* "Fake disabled": the button LOOKS disabled but stays live, so clicking it can
    explain why no session starts here. The real `disabled` cannot be used —
@@ -3176,16 +2850,10 @@ wa-dropdown-item:hover .row-menu-trigger,
         align-items: center;
         gap: var(--wa-space-xs);
     }
-
-    /* Limit dropdown menu height: set the variable directly on #menu (via ::part)
-       so it overrides the value inherited from wa-popup's inline style */
-    & wa-dropdown::part(menu) {
-        --auto-size-available-height: 50dvh;
-    }
 }
 
 /* New session dropdown (for All Projects mode) - floating like the button */
-.new-session-dropdown {
+:deep(.new-session-dropdown) {
     /* Override display:contents to allow absolute positioning */
     display: block;
     position: absolute;
@@ -3194,12 +2862,6 @@ wa-dropdown-item:hover .row-menu-trigger,
     z-index: 5;
     /* Only take the width needed by the trigger button */
     width: fit-content;
-
-    /* Limit dropdown menu height: set the variable directly on #menu (via ::part)
-       so it overrides the value inherited from wa-popup's inline style */
-    &::part(menu) {
-        --auto-size-available-height: 50dvh;
-    }
 
     /* Style the trigger button label */
     & > wa-button::part(label) {

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
+import { useNewSessionCreation } from '../composables/useNewSessionCreation'
 import { useDataStore } from '../stores/data'
 import { useWorkspacesStore } from '../stores/workspaces'
 import { usePeersStore } from '../stores/peers'
@@ -21,6 +22,7 @@ import WorkspaceManageDialog from '../components/workspace/WorkspaceManageDialog
 import { ARTIFACT_ICON } from '../utils/artifactBookmark'
 
 const router = useRouter()
+const handleNewSession = useNewSessionCreation()
 const store = useDataStore()
 const workspacesStore = useWorkspacesStore()
 const peersStore = usePeersStore()
@@ -127,6 +129,7 @@ onBeforeUnmount(() => {
             mode="home"
             :peer-configured="peerSystemConfigured"
             :inbox-count="peersStore.inboxCount"
+            @new-session="handleNewSession"
             @select-mode="handleRailSelectMode"
             @palette="openPalette"
             @inbox="openPeerInbox"
