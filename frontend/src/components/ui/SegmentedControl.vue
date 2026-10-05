@@ -58,9 +58,9 @@ useGlideInk({
             :value.prop="modelValue"
             @change="onChange"
         >
-            <wa-radio v-for="option in options" :key="option.value" appearance="button" :value="option.value">
+            <wa-radio v-for="option in options" :key="option.value" appearance="button" :value="option.value" :title="option.label">
                 <wa-icon v-if="option.icon" :name="option.icon" class="segmented-icon"></wa-icon>
-                {{ option.label }}
+                <span class="segmented-label">{{ option.label }}</span>
                 <slot :name="`option-${option.value}`" :option="option"></slot>
             </wa-radio>
         </wa-radio-group>

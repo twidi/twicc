@@ -311,7 +311,7 @@ test('SegmentedControl: button radios, ink, not-ready fill, change guard, value 
     const template = templateOf(sfc)
     const { child } = firstChildOf(template, 'segmented-control')
     assert.equal(child, '<span ref="inkRef" class="glide-ink" aria-hidden="true">')
-    assert.match(template, /<wa-radio v-for="option in options" :key="option.value" appearance="button" :value="option.value">/)
+    assert.match(template, /<wa-radio v-for="option in options" :key="option.value" appearance="button" :value="option.value" :title="option.label">/)
     assert.match(template, /:value\.prop="modelValue"/)
     const script = scriptOf(sfc)
     assert.match(script, /if \(event\.target !== event\.currentTarget\) return/)
