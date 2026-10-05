@@ -16,6 +16,13 @@ html:not(.wa-dark) {
     --rail-button-fill-active: color-mix(in oklab, var(--wa-color-brand-on-quiet) 14%, var(--wa-color-brand-fill-quiet));
 }
 
+/* Sidebar and rail separators share an accent-based color on their tinted canvas.
+   Sidebar list section labels and quota rows inherit the same color. */
+.sidebar,
+.sidebar-rail {
+    --sidebar-divider-color: oklch(from color-mix(in oklab, var(--wa-color-brand-border-normal), var(--wa-color-brand-border-loud)) l calc(c * 0.5) h);
+}
+
 .rail-button {
     height: var(--rail-button-size);
     width: var(--rail-button-size);

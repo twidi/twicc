@@ -2700,13 +2700,6 @@ wa-dropdown-item:hover .row-menu-trigger,
     pointer-events: auto;
 }
 
-/* Separators on the sidebar canvas: the neutral surface border barely shows on the tinted
-   canvas, so they take an accent-based color. Inherited by the list's section labels
-   (SidebarListSeparator) and the quota rows. */
-.sidebar {
-    --sidebar-divider-color: oklch(from color-mix(in oklab, var(--wa-color-brand-border-normal), var(--wa-color-brand-border-loud)) l calc(c * 0.5) h);
-}
-
 .sidebar wa-divider {
     flex-shrink: 0;
     --width: var(--divider-size);

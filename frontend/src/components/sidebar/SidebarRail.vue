@@ -326,6 +326,7 @@ function activate(item) {
 
 .rail-divider {
     flex: none;
+    --color: var(--sidebar-divider-color);
     margin: 0;
 }
 
