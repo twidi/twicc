@@ -8,8 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **Automatic session titles** — The backend names eligible sessions and updates titles when main subjects change, even without an open tab. Checks require six new messages and 15 minutes; manual stop/archive checks require three new messages. Saving a title or explicitly renaming it freezes updates. Existing titles remain frozen. Includes a read-only paired Haiku/Luna diagnostic and TwiCC plugin 0.107.3 documentation.
-- **Codex live status** — While Codex runs a tool, the status line under the conversation says what it is doing (e.g. "Codex is sleeping") instead of "thinking", and the `clock.sleep` card shows its duration ("Sleep for 45s").
+- **Automatic title updates** — Session titles now follow the conversation’s main subjects. Titles you save stay unchanged. The title generation prompt is completely rewritten. If you use a custom prompt, rebuild it from the new default.
 - **Orchestration activity** — The Orchestration tab shows at a glance when its sessions or subagents are working.
 - **Task progress** — The Tasks tab shows how many tasks are done out of the total, and a green check once all are done.
 
@@ -19,8 +18,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- **Codex message delivery** — A rejected steer tries a normal send, then one final steer. Intermediate rejections stay out of the UI. Timeouts and transport failures are not retried, to prevent duplicate messages.
-- **Codex task tracking** — Tasks follow confirmed SDK plan updates, including dynamic code-mode calls. The latest SDK state survives backend restarts and metadata recomputes.
 - **Session scrolling** — Reading earlier messages no longer makes the view jump or return to the bottom.
 
 ## [1.95.0] - 2026-10-03
