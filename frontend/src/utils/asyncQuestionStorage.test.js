@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
+import { readFileSync } from 'node:fs'
 import * as storage from './draftStorage.js'
 import { createAsyncQuestionActions } from './asyncQuestionState.js'
+import { createSendFailureActions } from './ephemeralSessions.js'
+import { retainsAsyncQuestionSend } from './asyncQuestions.js'
 
 const batch = { item_id: 'q1', status: 'ready', questions: [{ index: 3, title: 'Original title', options: [] }] }
 const saved = () => ({ choices: { q1: { 3: { kind: 'other', value: 'Old answer' } } }, sourceBatches: { q1: batch }, recoveredIds: [] })
@@ -325,4 +328,166 @@ it('hydrated local dismissal identity suppresses external recovery after reload'
     assert.deepEqual(state.localState.asyncQuestionDrafts.s.choices, {})
     assert.equal(state.localState.draftMessages.s, undefined)
     assert.deepEqual(state.localState.asyncQuestionDrafts.s.pendingDismissals, {})
+})
+
+function acknowledgementHarness(recover) {
+    const disk = { questions: { s: saved() }, inflight: { local: {
+        sessionId: 's', text: 'Already delivered', async_questions: { batch_ids: ['q1'] }, sentAt: 1,
+    } } }
+    const pending = new Map(Object.entries(structuredClone(disk.inflight)))
+    const { state } = harness({ recover: async (...args) => {
+        await recover(...args)
+        disk.questions[args[0]] = structuredClone(args[2])
+    }, pendingSends: () => Object.fromEntries(pending) })
+    state.localState.asyncQuestionDrafts.s = saved()
+    state.localState.failedSends = {}
+    Object.assign(state, createSendFailureActions(pending, {
+        deleteInflight: async requestId => { delete disk.inflight[requestId] },
+    }))
+    // These are existing store boundaries. The acknowledgement orchestration is the production action.
+    state.removeFailedSend = () => {}
+    state.recomputeVisualItems = () => {}
+    state.isEphemeralDiscarded = () => false
+    state._applySendFailure = () => assert.fail('An accepted send must not become a provider failure')
+    return { state, disk, pending }
+}
+
+it('ack keeps durable original send identity until delayed acceptance commits', async () => {
+    const wait = deferred()
+    const { state, disk, pending } = acknowledgementHarness(() => wait.promise)
+    const ack = state.acknowledgeInflightSend('s', 'local')
+    await nextTurn()
+    assert.ok(disk.inflight.local, 'Reload must retain the original request until acceptance commits')
+    assert.ok(pending.has('local'))
+    const { state: reload } = harness({ getAll: async () => disk.questions, pendingSends: () => disk.inflight })
+    await reload.hydrateAsyncQuestionDrafts()
+    await reload.applyAsyncQuestionSnapshot('s', { ...snapshot(4), resolutions: { q1: { status: 'sent', request_id: 'local' } } })
+    assert.equal(reload.localState.draftMessages.s, undefined)
+    wait.resolve()
+    await ack
+    assert.ok(disk.questions.s.acceptedSendIds.includes('local'))
+    assert.equal(disk.inflight.local, undefined)
+})
+
+it('failed acceptance persistence retains delivered identity and a repeated ack retries safely', async () => {
+    let attempts = 0
+    const { state, disk, pending } = acknowledgementHarness(async () => {
+        if (++attempts === 1) throw new Error('Acceptance transaction aborted')
+    })
+    await assert.rejects(state.acknowledgeInflightSend('s', 'local'), /Acceptance transaction aborted/)
+    assert.ok(disk.inflight.local)
+    assert.equal(pending.get('local').status, 'accepted')
+    assert.equal(state.failInflightSend('local', { code: 'delivery_unconfirmed' }), true)
+    const { state: reload } = harness({ getAll: async () => disk.questions, pendingSends: () => disk.inflight })
+    await reload.hydrateAsyncQuestionDrafts()
+    await reload.applyAsyncQuestionSnapshot('s', { ...snapshot(4), resolutions: { q1: { status: 'sent', request_id: 'local' } } })
+    assert.equal(reload.localState.draftMessages.s, undefined)
+    await state.acknowledgeInflightSend('s', 'local')
+    await state.acknowledgeInflightSend('s', 'local')
+    assert.equal(disk.inflight.local, undefined)
+    assert.deepEqual(disk.questions.s.acceptedSendIds, ['local'])
+})
+
+// Execute actual store actions. Node cannot load the store's extensionless browser imports.
+const storeSource = readFileSync(new URL('../stores/data.js', import.meta.url), 'utf8')
+function actualStoreActions(dependencies) {
+    const names = ['registerInflightSend', 'resolveInflightSends', 'hydrateInflightSends', 'auditInflightSends', 'removeFailedSend']
+    const methods = names.map(name => {
+        const start = storeSource.indexOf(`        ${name}(`) >= 0
+            ? storeSource.indexOf(`        ${name}(`) : storeSource.indexOf(`        async ${name}(`)
+        assert.ok(start >= 0, `Missing production action ${name}`)
+        const end = storeSource.indexOf('        /**', start)
+        assert.ok(end > start, `Missing production action boundary ${name}`)
+        return storeSource.slice(start, end)
+    })
+    return new Function(...Object.keys(dependencies), `return {${methods.join('\n')}}`)(...Object.values(dependencies))
+}
+
+function attachActualStoreActions(state, pending, disk) {
+    const actions = actualStoreActions({ inflightSends: pending, retainsAsyncQuestionSend,
+        INFLIGHT_SEND_TTL_MS: 10, INFLIGHT_AUDIT_MIN_AGE_MS: 0, INFLIGHT_AUDIT_FETCH_CAP: 10,
+        PROCESS_STATE: { ASSISTANT_TURN: 'assistant_turn', STARTING: 'starting' },
+        getProviderHelpers: () => ({}), getParsedContent: item => item.parsed,
+        userMessageMatchKey: (provider, parsed) => parsed.text, inflightSendMatchKey: entry => entry.text,
+        hasContent: () => true,
+        saveInflightSend: async (id, entry) => { disk.inflight[id] = structuredClone(entry) },
+        deleteInflightSend: async id => { delete disk.inflight[id] },
+        getAllInflightSends: async () => structuredClone(disk.inflight),
+    })
+    Object.assign(state, actions)
+    state.localState.sessions = { s: { itemsFetched: true } }
+    state.localState.draftAliases = {}
+    state.sessionItems = { s: [{ kind: 'user_message', parsed: { text: 'Already delivered' } }] }
+    state.processStates = {}
+    state.getSession = id => state.sessions[id]
+    state.auditAllLoadedInflightSends = () => state.auditInflightSends('s')
+}
+
+it('production native-source, expiry, audit, and late-failure paths retain identity during delayed ack', async () => {
+    const wait = deferred()
+    const { state, disk, pending } = acknowledgementHarness(() => wait.promise)
+    attachActualStoreActions(state, pending, disk)
+    const ack = state.acknowledgeInflightSend('s', 'local')
+    await nextTurn()
+    state.resolveInflightSends('s', state.sessionItems.s)
+    state.registerInflightSend('different', { sessionId: 'other', text: 'Other send' })
+    await state.auditInflightSends('s')
+    assert.equal(state.failPendingSendsForSession('s', { code: 'delivery_unconfirmed' }), false)
+    assert.equal(state.failInflightSend('local', { code: 'send_failed' }), true)
+    assert.ok(pending.has('local'))
+    assert.ok(disk.inflight.local)
+    wait.resolve()
+    await ack
+    assert.ok(disk.questions.s.acceptedSendIds.includes('local'))
+    assert.equal(disk.inflight.local, undefined)
+})
+
+it('reload retains original identity through production expiry and audit until native resolution', async () => {
+    const { state, disk } = acknowledgementHarness(async () => { throw new Error('Storage unavailable') })
+    await assert.rejects(state.acknowledgeInflightSend('s', 'local'), /Storage unavailable/)
+    const pending = new Map()
+    const { state: reload } = harness({ getAll: async () => disk.questions,
+        pendingSends: () => Object.fromEntries(pending),
+        recover: async (id, draft, record) => { disk.questions[id] = structuredClone(record) },
+    })
+    Object.assign(reload, createSendFailureActions(pending, { deleteInflight: async id => { delete disk.inflight[id] } }))
+    reload.localState.failedSends = {}
+    reload.recomputeVisualItems = () => {}
+    reload.isEphemeralDiscarded = () => false
+    reload._applySendFailure = () => assert.fail('A retained delivered send must not become a provider failure')
+    attachActualStoreActions(reload, pending, disk)
+    await reload.hydrateInflightSends()
+    await reload.auditInflightSends('s')
+    assert.equal(reload.failPendingSendsForSession('s', { code: 'delivery_unconfirmed' }), false)
+    assert.ok(pending.has('local'))
+    assert.ok(disk.inflight.local)
+    await reload.hydrateAsyncQuestionDrafts()
+    await reload.applyAsyncQuestionSnapshot('s', { ...snapshot(4), resolutions: { q1: { status: 'sent', request_id: 'local' } } })
+    assert.equal(reload.localState.draftMessages.s, undefined)
+    assert.deepEqual(disk.questions.s.choices, {})
+    assert.deepEqual(disk.questions.s.acceptedSendIds, ['local'])
+    assert.equal(disk.inflight.local, undefined)
+})
+
+it('production ack coalesces concurrent persistence and leaves legacy sends synchronous', async () => {
+    let commits = 0
+    const wait = deferred()
+    const { state, disk } = acknowledgementHarness(async () => { commits++; await wait.promise })
+    const first = state.acknowledgeInflightSend('s', 'local')
+    const second = state.acknowledgeInflightSend('s', 'local')
+    assert.equal(first, second)
+    await nextTurn()
+    assert.equal(commits, 1)
+    wait.resolve()
+    await first
+    await state.acknowledgeInflightSend('s', 'local')
+    assert.equal(commits, 1)
+    const legacy = { sessionId: 'legacy', text: 'Ordinary message' }
+    disk.inflight.legacy = legacy
+    // No question draft or structured payload enters the legacy path.
+    state.confirmInflightSend = (sessionId, requestId) => { delete disk.inflight[requestId] }
+    const ack = state.acknowledgeInflightSend('legacy', 'legacy')
+    assert.equal(disk.inflight.legacy, undefined)
+    await ack
+    assert.equal(commits, 1)
 })

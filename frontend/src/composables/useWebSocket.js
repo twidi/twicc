@@ -1885,8 +1885,7 @@ export function useWebSocket() {
                 // This is the only delivery confirmation for messages Claude
                 // Code accepts mid-turn — they never get a user_message line.
                 if (msg.request_id) {
-                    store.settleAsyncQuestionSend(msg.session_id, msg.request_id, 'accepted').catch(error => console.warn('Failed to reconcile async question send:', error))
-                    store.confirmInflightSend(msg.session_id, msg.request_id)
+                    store.acknowledgeInflightSend(msg.session_id, msg.request_id).catch(error => console.warn('Failed to persist accepted async question send:', error))
                 }
                 break
             }

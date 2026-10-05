@@ -46,6 +46,7 @@ import {
     saveAsyncQuestionRecovery,
 } from '../utils/draftStorage'
 import { createAsyncQuestionActions } from '../utils/asyncQuestionState'
+import { retainsAsyncQuestionSend } from '../utils/asyncQuestions'
 import { saveInflightSend, deleteInflightSend, getAllInflightSends } from '../utils/inflightStorage'
 import { liveDraftKey, sweepPendingRequestDrafts } from '../utils/pendingRequestDraftStorage'
 import {
@@ -1430,7 +1431,7 @@ export const useDataStore = defineStore('data', {
     },
 
     actions: {
-        ...createSendFailureActions(inflightSends),
+        ...createSendFailureActions(inflightSends, { deleteInflight: deleteInflightSend }),
         ...createAsyncQuestionActions({
             saveMessage: saveDraftMessage,
             getAll: getAllAsyncQuestionDrafts,
@@ -3562,14 +3563,6 @@ export const useDataStore = defineStore('data', {
             )
         },
 
-        /** Drop a snapshot from both the registry and IndexedDB. */
-        _dropInflightSend(requestId) {
-            inflightSends.delete(requestId)
-            deleteInflightSend(requestId).catch(err =>
-                console.warn('Failed to delete in-flight send snapshot:', err)
-            )
-        },
-
         /**
          * Shared post-send bookkeeping for the composer and the failed-bubble
          * Retry: snapshot the outgoing send, show the optimistic bubble, and
@@ -3664,40 +3657,6 @@ export const useDataStore = defineStore('data', {
          * @returns {boolean} true when a snapshot was found and handled
          */
 
-        /**
-         * Positive delivery acknowledgement from the backend (``send_ack``
-         * frame): the message reached the agent. Drop the snapshot, and heal
-         * any failed bubble a lost or premature failure signal produced for
-         * it (the ack is authoritative — it proves delivery). This is the
-         * only confirmation for messages Claude Code accepts mid-turn, which
-         * never get their own user_message line.
-         * @param {string} sessionId
-         * @param {string} requestId
-         */
-        confirmInflightSend(sessionId, requestId) {
-            this._dropInflightSend(requestId)
-            if (sessionId) this.removeFailedSend(sessionId, requestId)
-        },
-
-        /**
-         * Late-failure path: the agent died after accepting the send but
-         * possibly before processing it. Every unresolved snapshot of the
-         * session becomes a failed bubble.
-         * @param {string} sessionId
-         * @param {Object} info - { code, message }
-         * @returns {boolean} true when an unresolved snapshot existed
-         */
-        failPendingSendsForSession(sessionId, info) {
-            let any = false
-            for (const [id, entry] of inflightSends) {
-                if (entry.sessionId !== sessionId) continue
-                inflightSends.delete(id)
-                this._applySendFailure(id, entry, info)
-                any = true
-            }
-            return any
-        },
-
         // Turn a failed in-flight send into a "failed message" bubble shown
         // in situ in the conversation flow (messaging pattern), with
         // Retry/Edit/Delete actions. The in-memory registry entry is
@@ -3789,14 +3748,14 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          * @param {string} requestId
          */
-        removeFailedSend(sessionId, requestId) {
+        removeFailedSend(sessionId, requestId, { preserveSnapshot = false } = {}) {
             const failed = this.localState.failedSends[sessionId]
             if (!failed?.[requestId]) return
             delete failed[requestId]
             if (!Object.keys(failed).length) {
                 delete this.localState.failedSends[sessionId]
             }
-            deleteInflightSend(requestId).catch(err =>
+            if (!preserveSnapshot) deleteInflightSend(requestId).catch(err =>
                 console.warn('Failed to delete in-flight send snapshot:', err)
             )
             this.recomputeVisualItems(sessionId)
@@ -3839,11 +3798,12 @@ export const useDataStore = defineStore('data', {
                     deleteInflightSend(requestId).catch(() => {})
                     continue
                 }
-                if (!entry?.sessionId || (!entry.text && !entry.medias?.length) || now - (entry.sentAt || 0) > INFLIGHT_SEND_TTL_MS) {
+                if (!entry?.sessionId || (!entry.text && !entry.medias?.length)
+                    || (!retainsAsyncQuestionSend(entry) && now - (entry.sentAt || 0) > INFLIGHT_SEND_TTL_MS)) {
                     deleteInflightSend(requestId).catch(() => {})
                     continue
                 }
-                if (entry.failed) {
+                if (entry.failed && !(retainsAsyncQuestionSend(entry) && entry.failed.code === 'send_uncertain')) {
                     // The failure (and its precise reason) was already known
                     // before the reload — re-materialize the bubble directly,
                     // no audit needed.
@@ -3886,6 +3846,7 @@ export const useDataStore = defineStore('data', {
             const candidates = []
             for (const [id, entry] of inflightSends) {
                 if (entry.sessionId !== sessionId) continue
+                if (!this.shouldAuditInflightSend(id)) continue
                 // No user_message line will ever confirm these (Claude Code
                 // mid-turn); only the backend send_ack does. Absence here is
                 // not evidence of failure — never declare them undelivered.
@@ -3924,7 +3885,7 @@ export const useDataStore = defineStore('data', {
                 + 'it may never have reached the agent (interrupted connection?).'
             for (const id of candidates) {
                 const entry = inflightSends.get(id)
-                if (!entry) continue // resolved by a fetched line or a concurrent audit
+                if (!entry || !this.shouldAuditInflightSend(id)) continue // resolved or accepted during the content fetch
                 inflightSends.delete(id)
                 this._applySendFailure(id, entry, { code: 'delivery_unconfirmed', message })
             }

@@ -1,5 +1,10 @@
 export const ASYNC_QUESTION_RECOVERY_NOTICE = 'These questions were handled elsewhere. Your answers are kept in your draft.'
 
+/** Native question resolution must settle these sends before generic audit or expiry. */
+export function retainsAsyncQuestionSend(entry) {
+    return !!entry?.acceptancePending || !!(entry?.async_questions ?? entry?.asyncQuestions)?.batch_ids?.length
+}
+
 const clone = value => JSON.parse(JSON.stringify(value))
 const time = entry => Date.parse(entry.at) * 1000 + Number((entry.at.match(/\.(\d+)/)?.[1] || '').padEnd(6, '0').slice(3, 6))
 // Python str.strip includes NEL and excludes BOM. JS trim has different rules.

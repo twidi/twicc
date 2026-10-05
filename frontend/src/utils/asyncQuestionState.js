@@ -1,4 +1,4 @@
-import { recoverResolvedAnswers } from './asyncQuestions.js'
+import { recoverResolvedAnswers, retainsAsyncQuestionSend } from './asyncQuestions.js'
 
 const clone = value => JSON.parse(JSON.stringify(value))
 const emptyDraft = () => ({ choices: {}, sourceBatches: {}, recoveredIds: [], pendingDismissals: {} })
@@ -8,6 +8,8 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
     const writes = new Map()
     const touched = new Set()
     const editedAnswers = new Map()
+    const acknowledgements = new Map()
+    const committedAcknowledgements = new Set()
     function enqueue(sessionId, write) {
         const previous = writes.get(sessionId) || Promise.resolve()
         const next = previous.catch(() => {}).then(write)
@@ -48,7 +50,18 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
                     if (draft.choices?.[batch.item_id]) draft.sourceBatches[batch.item_id] = clone(batch)
                 }
             }
-            return this.reconcileAsyncQuestionDraft(sessionId)
+            const reconciled = this.reconcileAsyncQuestionDraft(sessionId)
+            if (!this.confirmInflightSend) return reconciled
+            return reconciled.then(async result => {
+                const sends = pendingSends(sessionId, this)
+                const entries = sends instanceof Map ? sends : new Map(Object.entries(sends))
+                for (const resolution of Object.values(snapshot.resolutions || {})) {
+                    if (resolution.status === 'sent' && entries.has(resolution.request_id)) {
+                        await this.acknowledgeInflightSend(sessionId, resolution.request_id)
+                    }
+                }
+                return result
+            })
         },
 
         setAsyncQuestionDraft(sessionId, draft) {
@@ -184,6 +197,32 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
                 await persist(this, sessionId)
             }
             await this.reconcileAsyncQuestionDraft(sessionId)
+        },
+
+        acknowledgeInflightSend(sessionId, requestId) {
+            if (committedAcknowledgements.has(requestId)) {
+                this.confirmInflightSend(sessionId, requestId, { acceptancePersisted: true })
+                return Promise.resolve()
+            }
+            const sends = pendingSends(sessionId, this)
+            const entry = sends instanceof Map ? sends.get(requestId) : sends[requestId]
+            if (!this.localState.asyncQuestionDrafts[sessionId] && !retainsAsyncQuestionSend(entry)) {
+                this.confirmInflightSend(sessionId, requestId)
+                return Promise.resolve()
+            }
+            this.localState.asyncQuestionDrafts[sessionId] ||= emptyDraft()
+            if (acknowledgements.has(requestId)) return acknowledgements.get(requestId)
+            // Acceptance is known now. A storage failure must not become a provider failure.
+            this.markInflightSendAccepted(sessionId, requestId)
+            const acknowledgement = this.settleAsyncQuestionSend(sessionId, requestId, 'accepted').then(() => {
+                committedAcknowledgements.add(requestId)
+                this.confirmInflightSend(sessionId, requestId, { acceptancePersisted: true })
+            })
+            acknowledgements.set(requestId, acknowledgement)
+            acknowledgement.finally(() => {
+                if (acknowledgements.get(requestId) === acknowledgement) acknowledgements.delete(requestId)
+            }).catch(() => {})
+            return acknowledgement
         },
 
         refreshActiveAsyncQuestions() {
