@@ -2639,6 +2639,7 @@ function onChangelogClose() {
 
 .settings-notice {
     font-size: var(--wa-font-size-xs);
+    line-height: 1.4;
     color: var(--wa-color-text-quiet);
     margin: 0;
     display: flex;
@@ -2921,6 +2922,7 @@ wa-popover > wa-divider {
 
 .hint {
     font-size: var(--wa-font-size-s);
+    line-height: 1.4;
     color: var(--wa-color-neutral-fill-loud);
 }
 
@@ -2975,9 +2977,9 @@ wa-popover > wa-divider {
         justify-content: flex-start;
         margin-bottom: var(--wa-space-s);
     }
-    /* Keep a control and its following help text together with the group gap. */
+    /* Halve the group gap between a control and its following help text. */
     > :not(label):not(.setting-group-hint):has(+ .setting-group-hint) {
-        margin-bottom: 0;
+        margin-bottom: calc(-1 * var(--wa-space-2xs));
     }
 }
 
@@ -3043,8 +3045,13 @@ wa-popover > wa-divider {
 
 .settings-sections .setting-group-hint {
     font-size: var(--wa-font-size-s);
+    line-height: 1.4;
     color: var(--wa-color-text-quiet);
     font-style: italic;
+}
+/* Reset the native form-control height so the help icon fits the text line. */
+.settings-sections .setting-group-hint .help-icon-button {
+    height: auto;
 }
 /* Inline icon inside a hint (e.g. the layout-menu chevron) — keep it on the text baseline. */
 .settings-sections .setting-group-hint .inline-hint-icon {
