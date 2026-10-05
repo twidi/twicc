@@ -15,7 +15,8 @@
 // bare scope-home route (sidebar rows, the project button, the workspace / All
 // Projects selectors, the deselect toggle).
 
-import { buildTabRouteName, buildSubagentRouteName, pickDefined } from './granularRoutes'
+import { isRailScopeRootNavigation } from './railScopeNavigation.js'
+import { buildTabRouteName, buildSubagentRouteName, pickDefined } from './granularRoutes.js'
 
 // --- Route-name families (authoritative; mirrors router.js) ---
 
@@ -118,6 +119,7 @@ export function registerScopeMemory(router) {
 
     // Active restore: rewrite an enter-scope navigation to the scope's last location.
     router.beforeEach((to, from) => {
+        if (isRailScopeRootNavigation(router, to)) return true // explicit rail Sessions root
         if (isHistoryNav()) return true                       // Back/Forward: never touch
         if (!isScopeHome(to)) return true                     // only intercept entry routes
         const toKey = scopeKey(to)

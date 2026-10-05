@@ -12,11 +12,11 @@ test('rail has keyed groups, native accessible buttons, and a stable Settings fr
     assert.equal((source.match(/class="rail-spacer"/g) ?? []).length, 1)
     assert.ok(source.indexOf('item in top') < source.indexOf('class="rail-spacer"'))
     assert.ok(source.indexOf('class="rail-spacer"') < source.indexOf('item in bottom'))
-    assert.equal((source.match(/<button\b/g) ?? []).length, 4)
+    assert.equal((source.match(/<button\b/g) ?? []).length, 6)
     assert.equal((source.match(/:aria-pressed="item.active"/g) ?? []).length, 2)
     assert.equal((source.match(/:aria-label="item.label"/g) ?? []).length, 3)
     assert.equal((source.match(/:disabled="item.disabled"/g) ?? []).length, 2)
-    assert.equal((source.match(/<\/button>\s*<AppTooltip/g) ?? []).length, 3)
+    assert.equal((source.match(/<\/button>\s*<AppTooltip/g) ?? []).length, 5)
     assert.doesNotMatch(source, /aria-expanded|glass-/)
     for (const attribute of ['trigger-appearance="plain"', 'trigger-icon-only', 'placement="right-end"',
         'tooltip-placement="right"', ':trigger-label="item.label"', ':position-anchor="settingsAnchor"']) {
@@ -64,7 +64,7 @@ test('rail SFC compiles its script, template, and scoped style', async () => {
     const [top, firstDivider, spacer, secondDivider, bottom] = children(card)
     for (const divider of [firstDivider, secondDivider]) {
         assert.equal(divider.tag, 'wa-divider')
-        assert.equal(attrs(divider)['v-if'], 'rows.length')
+        assert.equal(attrs(divider)['v-if'], 'hasCentralContent')
     }
     assert.deepEqual([attrs(top)['v-for'], attrs(bottom)['v-for']], ['item in top', 'item in bottom'])
     for (const group of [top, bottom]) {
@@ -125,7 +125,7 @@ test('global active entries reuse the full isolated row and canonical navigation
     assert.match(source, /props.mode === 'sessions' \? route.params.sessionId \|\| null : null/)
     assert.match(source, /router.push\(sessionRouteLocation\(session, route\)\)/)
     assert.match(source, /v-for="row in rows" :key="row.session.id"/)
-    assert.equal((source.match(/v-if="rows.length"/g) ?? []).length, 2)
+    assert.equal((source.match(/v-if="hasCentralContent"/g) ?? []).length, 2)
     assert.match(source, /force interactive hoist placement="right"/)
     assert.match(source, /id-prefix="rail-preview-" :show-menu="false" :selection-enabled="false"/)
     assert.match(source, /:compact-view="false" :show-project-name="true" :show-title-tooltip="false"/)

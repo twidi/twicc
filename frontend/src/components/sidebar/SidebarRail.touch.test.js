@@ -32,13 +32,15 @@ function fixture(t, isTouchDevice = true) {
     let unmount
     const { descriptor } = parse(source)
     const script = descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
-    const api = runInNewContext(`${script}\n;({setSessionTooltip, sessionPointerDown, sessionPointerEnter, sessionClick, sessionTooltipTrigger})`, {
+    const api = runInNewContext(`${script}\n;({setSessionTooltip, sessionPointerDown, sessionPointerEnter, sessionClick, sessionTooltipTrigger, setEntryTooltip, entryPointerDown, scopeClick, scopeSelected})`, {
         document, Map, createRailSessionLongPress,
         ref: value => ({ value }), computed: fn => ({ get value() { return fn() } }),
         defineProps: () => ({ mode: 'sessions', sidebarOpen: false }), defineEmits: () => () => {},
         useSettingsStore: () => ({ isTouchDevice }), useDataStore: () => ({}),
         useRoute: () => ({ params: {}, fullPath: '/sessions' }), useRouter: () => ({ push: route => pushed.push(route) }),
-        useRailActiveSessions: () => ({ rows: [] }), sessionRouteLocation: session => session.id,
+        useRailRecentProjects: () => ({ recentProjects: { value: [] }, recentWorkspaces: { value: [] } }),
+        useWorkspacesStore: () => ({}), createRailScopeNavigation: () => (kind, id) => pushed.push(`${kind}:${id}`),
+        useRailActiveSessions: () => ({ rows: { value: [] } }), sessionRouteLocation: session => session.id,
         onTooltipDismissal: callback => { globalDismiss = callback; return () => { globalDismiss = null } },
         onBeforeUnmount: callback => { unmount = callback }, watch: (_, callback) => watchers.push(callback),
     })
@@ -103,4 +105,28 @@ test('keyboard input cancels pending hybrid hold and unmount removes document li
     for (const listeners of f.listeners.values()) assert.equal(listeners.size, 0)
     f.key(); f.tooltip.focus(); t.mock.timers.tick(450)
     assert.equal(f.tooltip.shown, 0, 'removed keyboard listener cannot restore native focus')
+})
+
+for (const kind of ['project', 'workspace']) {
+    test(`${kind} touch tap navigates; hold suppresses only that entry kind`, t => {
+        const f = fixture(t)
+        f.api.setEntryTooltip(`${kind}:one`, f.tooltip)
+        const press = () => f.api.entryPointerDown(`${kind}:one`, { pointerType: 'touch', pointerId: 1,
+            isPrimary: true, button: 0, currentTarget: { isConnected: true }, clientX: 0, clientY: 0 })
+        const click = () => f.api.scopeClick(kind, 'one', { detail: 1, preventDefault() {}, stopPropagation() {} })
+        press(); click(); assert.deepEqual(f.pushed, [`${kind}:one`])
+        press(); t.mock.timers.tick(450); click()
+        assert.equal(f.tooltip.shown, 1)
+        assert.deepEqual(f.pushed, [`${kind}:one`])
+        f.api.sessionClick({ id: 'one' }, { detail: 1 })
+        assert.deepEqual(f.pushed, [`${kind}:one`, 'one'], 'same ID in another group remains navigable')
+        press(); click()
+        assert.deepEqual(f.pushed, [`${kind}:one`, 'one', `${kind}:one`])
+    })
+}
+
+test('scope selected state does not mark recent entries on unrelated session routes', t => {
+    const f = fixture(t)
+    assert.equal(f.api.scopeSelected('project', 'one'), false)
+    assert.equal(f.api.scopeSelected('workspace', 'one'), false)
 })

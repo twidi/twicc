@@ -1,4 +1,5 @@
 <script setup>
+import { openSidebarCheckbox } from '../utils/railScopeNavigation.js'
 import { computed, ref, watch, onMounted, onUnmounted, onBeforeUnmount, provide, nextTick, shallowRef } from 'vue'
 import { useElementHover, useMediaQuery } from '@vueuse/core'
 import { useRoute, useRouter } from 'vue-router'
@@ -1519,6 +1520,7 @@ onMounted(() => {
     window.addEventListener('twicc:open-share-dialog', openShareDialog)
     // Alt+Shift+B sidebar toggle shortcut (dispatched by App.vue)
     window.addEventListener('twicc:toggle-sidebar', handleToggleSidebarShortcut)
+    window.addEventListener('twicc:open-sidebar', handleOpenSidebar)
 })
 
 function openNewProjectDialog() {
@@ -1542,6 +1544,7 @@ onBeforeUnmount(() => {
     window.removeEventListener('twicc:open-edit-workspace-dialog', openEditWorkspaceDialog)
     window.removeEventListener('twicc:open-share-dialog', openShareDialog)
     window.removeEventListener('twicc:toggle-sidebar', handleToggleSidebarShortcut)
+    window.removeEventListener('twicc:open-sidebar', handleOpenSidebar)
 })
 
 // Guard flag to ignore reposition events triggered by width restore after auto-collapse
@@ -1627,6 +1630,10 @@ function toggleSidebar() {
 }
 // Alt+Shift+B (dispatched by App.vue): toggle the sidebar, flagging the event handled
 // so App.vue swallows the key only when this view is mounted to act on it.
+function handleOpenSidebar() {
+    openSidebarCheckbox(document.getElementById('sidebar-toggle-state'), isMobile())
+}
+
 function handleToggleSidebarShortcut(event) {
     if (toggleSidebar() && event?.detail) event.detail.handled = true
 }

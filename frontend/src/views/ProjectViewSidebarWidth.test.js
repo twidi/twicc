@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { openSidebarCheckbox } from '../utils/railScopeNavigation.js'
 import { runInNewContext } from 'node:vm'
 
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8')
@@ -95,3 +96,23 @@ test('missing saved state uses the default width for split-panel initialization'
     assert.equal(state.split.positionInPixels, 300)
     assert.deepEqual(state.saved(), { open: true, width: 300 })
 })
+
+for (const mobile of [false, true]) {
+    test(`rail open event uses the real ${mobile ? 'mobile' : 'desktop'} checkbox and persistence handler`, () => {
+        const state = lifecycle({ open: false, width: 437 })
+        const { context, checkbox } = state
+        context.isMobile = () => mobile
+        context.openSidebarCheckbox = openSidebarCheckbox
+        checkbox.checked = !mobile
+        checkbox.dispatchEvent = () => {
+            context.sidebarOpen.value = mobile ? checkbox.checked : !checkbox.checked
+            context.handleSidebarToggle()
+        }
+        runInNewContext(body('handleOpenSidebar'), context)
+        context.handleOpenSidebar()
+        context.handleOpenSidebar()
+        assert.equal(context.checked.value, mobile)
+        assert.equal(context.sidebarOpen.value, true)
+        assert.deepEqual(state.saved(), { open: !mobile, width: 437 }, 'desktop persists width; mobile keeps desktop state')
+    })
+}

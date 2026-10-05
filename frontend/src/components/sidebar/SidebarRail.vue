@@ -4,6 +4,11 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../../stores/data'
 import { useRailActiveSessions } from '../../composables/useRailActiveSessions'
 import { sessionRouteLocation } from '../../utils/sessionRoute'
+import { useWorkspacesStore } from '../../stores/workspaces'
+import { useRailRecentProjects } from '../../composables/useRailRecentProjects.js'
+import { createRailScopeNavigation } from '../../utils/railScopeNavigation.js'
+import ProjectBadge from '../project/ProjectBadge.vue'
+import AggregatedProcessIndicator from '../ui/AggregatedProcessIndicator.vue'
 import ProjectMark from '../project/ProjectMark.vue'
 import ProcessIndicator from '../ui/ProcessIndicator.vue'
 import SessionListItem from '../session/list/SessionListItem.vue'
@@ -25,11 +30,25 @@ const props = defineProps({
 const emit = defineEmits(['new-session', 'home', 'select-mode', 'search', 'palette', 'inbox', 'toggle-sidebar'])
 const settingsStore = useSettingsStore()
 const store = useDataStore()
+const workspacesStore = useWorkspacesStore()
+const { recentProjects, recentWorkspaces } = useRailRecentProjects(store, workspacesStore, settingsStore)
 const route = useRoute()
 const router = useRouter()
 const currentSessionId = computed(() => props.mode === 'sessions' ? route.params.sessionId || null : null)
 const { rows } = useRailActiveSessions(store, () => currentSessionId.value)
 
+const hasCentralContent = computed(() => rows.value.length || recentProjects.value.length || recentWorkspaces.value.length)
+const navigateScope = createRailScopeNavigation(router)
+function scopeSelected(kind, id) {
+    return kind === 'project'
+        ? route.name === 'project' && route.params.projectId === id && !route.query.workspace
+        : route.name === 'projects-all' && route.query.workspace === id
+}
+function scopeClick(kind, id, event) {
+    if (longPress.consumeClick(`${kind}:${id}`, event)) return
+    longPress.cancel()
+    navigateScope(kind, id)
+}
 const sessionTooltips = new Map()
 const touchInput = ref(false)
 const sessionTooltipTrigger = computed(() => settingsStore.isTouchDevice || touchInput.value ? 'manual' : 'hover focus')
@@ -41,6 +60,10 @@ const longPress = createRailSessionLongPress({
 const stopDismissalWatch = onTooltipDismissal(longPress.cancel)
 
 function setSessionTooltip(id, tooltip) {
+    setEntryTooltip(`session:${id}`, tooltip)
+}
+
+function setEntryTooltip(id, tooltip) {
     if (tooltip) sessionTooltips.set(id, tooltip)
     else {
         sessionTooltips.delete(id)
@@ -49,10 +72,14 @@ function setSessionTooltip(id, tooltip) {
 }
 
 function sessionPointerDown(session, event) {
+    entryPointerDown(`session:${session.id}`, event)
+}
+
+function entryPointerDown(id, event) {
     touchInput.value = event.pointerType === 'touch'
     // Vue renders after pointerdown. Set the native trigger before default focus.
     for (const tooltip of sessionTooltips.values()) tooltip.setTrigger(sessionTooltipTrigger.value)
-    longPress.start(session.id, event)
+    longPress.start(id, event)
 }
 
 function sessionPointerEnter(event) {
@@ -71,7 +98,7 @@ function sessionKeyboardInput() {
 document.addEventListener('keydown', sessionKeyboardInput, { capture: true })
 
 function sessionClick(session, event) {
-    if (!longPress.consumeClick(session.id, event)) openSession(session)
+    if (!longPress.consumeClick(`session:${session.id}`, event)) openSession(session)
 }
 
 watch([() => route.fullPath, () => props.mode, () => props.sidebarOpen], () => longPress.cancel(), { flush: 'sync' })
@@ -120,7 +147,7 @@ function activate(item) {
                 </button>
                 <AppTooltip :for="`sidebar-rail-${item.id}`" placement="right">{{ item.label }}</AppTooltip>
             </template>
-            <wa-divider v-if="rows.length" class="rail-divider" />
+            <wa-divider v-if="hasCentralContent" class="rail-divider" />
             <div class="rail-spacer">
                 <div v-for="row in rows" :key="row.session.id" class="rail-session">
                     <button
@@ -162,8 +189,43 @@ function activate(item) {
                         </div>
                     </AppTooltip>
                 </div>
+                <wa-divider v-if="rows.length && recentProjects.length" class="rail-divider rail-group-divider" />
+                <div v-for="project in recentProjects" :key="`project:${project.id}`" class="rail-scope">
+                    <button :id="`sidebar-rail-project-${project.id}`" type="button" class="rail-button rail-scope-button"
+                        :aria-label="store.getProjectDisplayName(project.id)" :aria-pressed="scopeSelected('project', project.id)"
+                        @pointerdown.passive="entryPointerDown(`project:${project.id}`, $event)"
+                        @pointerenter="sessionPointerEnter" @click="scopeClick('project', project.id, $event)" @contextmenu.prevent>
+                        <ProjectMark :icon-url="store.resolvedProjectIcons[project.id] || null" :color="projectColor(project.id)" />
+                    </button>
+                    <AppTooltip :for="`sidebar-rail-project-${project.id}`"
+                        :ref="tooltip => setEntryTooltip(`project:${project.id}`, tooltip)" :trigger="sessionTooltipTrigger"
+                        force interactive hoist placement="right" class="rail-scope-tooltip">
+                        <div class="rail-scope-preview">
+                            <ProjectBadge :project-id="project.id" flag-missing-directory />
+                            <AggregatedProcessIndicator :project-ids="[project.id]" />
+                        </div>
+                    </AppTooltip>
+                </div>
+                <wa-divider v-if="recentWorkspaces.length && (rows.length || recentProjects.length)" class="rail-divider rail-group-divider" />
+                <div v-for="workspace in recentWorkspaces" :key="`workspace:${workspace.id}`" class="rail-scope">
+                    <button :id="`sidebar-rail-workspace-${workspace.id}`" type="button" class="rail-button rail-scope-button"
+                        :aria-label="workspace.name" :aria-pressed="scopeSelected('workspace', workspace.id)"
+                        @pointerdown.passive="entryPointerDown(`workspace:${workspace.id}`, $event)"
+                        @pointerenter="sessionPointerEnter" @click="scopeClick('workspace', workspace.id, $event)" @contextmenu.prevent>
+                        <wa-icon name="layer-group" :style="{ color: workspace.color || undefined }" />
+                    </button>
+                    <AppTooltip :for="`sidebar-rail-workspace-${workspace.id}`"
+                        :ref="tooltip => setEntryTooltip(`workspace:${workspace.id}`, tooltip)" :trigger="sessionTooltipTrigger"
+                        force interactive hoist placement="right" class="rail-scope-tooltip">
+                        <div class="rail-scope-preview">
+                            <wa-icon name="layer-group" :style="{ color: workspace.color || undefined }" />
+                            <span class="rail-scope-name">{{ workspace.name }}</span>
+                            <AggregatedProcessIndicator :project-ids="workspacesStore.getVisibleProjectIds(workspace.id)" />
+                        </div>
+                    </AppTooltip>
+                </div>
             </div>
-            <wa-divider v-if="rows.length" class="rail-divider" />
+            <wa-divider v-if="hasCentralContent" class="rail-divider" />
             <template v-for="item in bottom" :key="item.id">
                 <div v-if="item.id === 'settings'" class="rail-settings">
                     <SettingsPopover
@@ -232,9 +294,35 @@ function activate(item) {
     display: none;
 }
 
-.rail-session + .rail-session {
+.rail-session + .rail-session, .rail-scope + .rail-scope {
     margin-top: var(--rail-gap);
 }
+
+.rail-divider.rail-group-divider { margin-block: var(--rail-gap); }
+
+.rail-scope-button {
+    user-select: none;
+    -webkit-touch-callout: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.rail-scope-tooltip {
+    --max-width: min(24rem, calc(100vw - var(--rail-width) - 1.5rem));
+}
+
+.rail-scope-preview {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-s);
+    max-width: min(22rem, calc(100vw - var(--rail-width) - 3rem));
+    white-space: normal;
+}
+
+.rail-scope-name { min-width: 0; overflow-wrap: anywhere; }
+.rail-scope-preview :deep(.project-badge-name) { white-space: normal; overflow-wrap: anywhere; }
+.rail-scope-preview > :last-child { flex-shrink: 0; margin-inline-start: auto; }
 
 .rail-divider {
     flex: none;
@@ -307,7 +395,7 @@ function activate(item) {
 }
 
 @container rail (height < 25rem) {
-    /* Reserve nine controls, session dividers, and card spacing before scrolling. */
+    /* Keep controls reachable and bound the independently scrolling central groups. */
     .panel-card {
         overflow-x: hidden;
         overflow-y: auto;
@@ -316,7 +404,8 @@ function activate(item) {
 
     .rail-spacer {
         flex: none;
-        overflow: visible;
+        max-height: 8rem;
+        overflow-y: auto;
     }
 
     .panel-card::-webkit-scrollbar {
