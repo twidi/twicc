@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { runInNewContext } from 'node:vm'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const read = (rel) => readFileSync(join(here, rel), 'utf8')
@@ -14,6 +15,11 @@ const collapse = (text) => text.trim().replace(/\s+/g, ' ')
 const stripComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '')
 
 const scriptOf = (sfc) => sfc.match(/<script setup>([\s\S]*?)<\/script>/)[1]
+const plainScriptOf = (sfc) => {
+    const match = sfc.match(/<script>([\s\S]*?)<\/script>/)
+    assert.ok(match, 'plain script exists')
+    return match[1]
+}
 const templateOf = (sfc) =>
     sfc.replace(/<style[\s\S]*?<\/style>/g, '').replace(/<script[\s\S]*?<\/script>/g, '').replace(/<!--[\s\S]*?-->/g, '')
 const styleOf = (sfc) => [...sfc.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n')
@@ -275,6 +281,68 @@ test('SessionSwitcher: the moving panel fades its content through --twicc-reveal
 // ---------------------------------------------------------------------------
 // Tooltip delay (§5.4)
 // ---------------------------------------------------------------------------
+
+test('AppTooltip: the shared registry follows the listener lifecycle', () => {
+    const sfc = read('../components/ui/AppTooltip.vue')
+    const plainScript = plainScriptOf(sfc)
+    const setup = scriptOf(sfc)
+    assert.match(plainScript, /const mountedTooltips = new Set\(\)/)
+    assert.match(plainScript, /export function hideAllTooltips\(\)/)
+    assert.match(functionBody(plainScript, 'clearPendingTimer'), /typeof el\?\.hoverTimeout === 'number'/)
+    assert.ok(!setup.includes('function clearPendingTimer('), 'timer cancellation belongs to the shared script')
+
+    const stop = functionBody(setup, 'stopListening')
+    assert.ok(stop.includes('mountedTooltips.delete(listeningEl)'), 'stopListening removes the element')
+    assert.ok(stop.indexOf('mountedTooltips.delete(listeningEl)') < stop.indexOf('listeningEl = null'))
+    const binding = setup.slice(setup.indexOf('watch([tooltipEl,'))
+    assert.ok(binding.indexOf('mountedTooltips.add(el)') > binding.indexOf("el.addEventListener('wa-after-hide'"))
+    assert.match(setup, /onBeforeUnmount\(stopListening\)/)
+
+    const hide = functionBody(plainScript, 'hideAllTooltips')
+    assert.ok(hide.indexOf('clearPendingTimer(el)') >= 0)
+    assert.ok(hide.indexOf('el.hide()') > hide.indexOf('clearPendingTimer(el)'), 'cancel before hiding')
+})
+
+test('AppTooltip: hideAllTooltips hides registered elements and cancels pending shows', () => {
+    let nextHandle = 0
+    const callbacks = new Map()
+    const schedule = (callback) => {
+        const handle = nextHandle++
+        callbacks.set(handle, callback)
+        return handle
+    }
+    const plainScript = plainScriptOf(read('../components/ui/AppTooltip.vue'))
+    const { mountedTooltips, hideAllTooltips } = runInNewContext(
+        `${plainScript.replace(/export function /g, 'function ')}\n({ mountedTooltips, hideAllTooltips })`,
+        { clearTimeout: (handle) => callbacks.delete(handle) },
+    )
+    let showCount = 0
+    const hidden = []
+    const pending = {
+        hoverTimeout: schedule(() => showCount++),
+        hide() {
+            assert.ok(!callbacks.has(this.hoverTimeout), 'pending show is cancelled before hide')
+            hidden.push(this)
+        },
+    }
+    const open = { hide() { hidden.push(this) } }
+    const removed = { hide() { assert.fail('unregistered element must not hide') } }
+    mountedTooltips.add(pending)
+    mountedTooltips.add(open)
+    mountedTooltips.add(removed)
+    mountedTooltips.delete(removed)
+    let unrelatedRan = false
+    schedule(() => { unrelatedRan = true })
+
+    hideAllTooltips()
+    assert.deepEqual(hidden, [pending, open], 'every registered element hides')
+    for (const [handle, callback] of callbacks) {
+        callbacks.delete(handle)
+        callback()
+    }
+    assert.equal(showCount, 0, 'cancelled show never runs')
+    assert.equal(unrelatedRan, true, 'scheduler flushes uncancelled callbacks')
+})
 
 test('AppTooltip: a 250ms show delay, overridable by the caller', () => {
     const sfc = read('../components/ui/AppTooltip.vue')

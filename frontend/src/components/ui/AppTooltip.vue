@@ -1,3 +1,20 @@
+<script>
+const mountedTooltips = new Set()
+
+function clearPendingTimer(el) {
+    if (typeof el?.hoverTimeout === 'number') {
+        clearTimeout(el.hoverTimeout)
+    }
+}
+
+export function hideAllTooltips() {
+    for (const el of mountedTooltips) {
+        clearPendingTimer(el)
+        el.hide()
+    }
+}
+</script>
+
 <script setup>
 /**
  * AppTooltip - Unified tooltip wrapper around wa-tooltip.
@@ -87,12 +104,6 @@ const tooltipEl = ref(null)
  */
 function cancelPendingHide() {
     clearPendingTimer(tooltipEl.value)
-}
-
-function clearPendingTimer(el) {
-    if (typeof el?.hoverTimeout === 'number') {
-        clearTimeout(el.hoverTimeout)
-    }
 }
 
 /**
@@ -185,6 +196,7 @@ function stopListening() {
     listeningEl.removeEventListener('mouseover', cancelPendingHide)
     listeningEl.removeEventListener('wa-show', handleShow)
     listeningEl.removeEventListener('wa-after-hide', handleAfterHide)
+    mountedTooltips.delete(listeningEl)
     openInteractiveTooltips.delete(listeningEl)
     stopOutsideWatch()
     listeningEl = null
@@ -203,6 +215,7 @@ watch([tooltipEl, () => props.interactive], ([el, interactive]) => {
     }
     el.addEventListener('wa-show', handleShow)
     el.addEventListener('wa-after-hide', handleAfterHide)
+    mountedTooltips.add(el)
     listeningEl = el
 })
 
