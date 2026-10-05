@@ -312,3 +312,42 @@ test('a snapshot entry without a model stores null', () => {
     snapshot(state, [api()])
     assert.equal(state.agentLinkIndex.child.model, null)
 })
+
+test('setAgentLink keeps the stored object when the entry is unchanged, and still stamps the live revision', () => {
+    const state = agentLinkState()
+    const first = setAgentLink(state, 'root', 't', { agentId: 'child', rootSessionId: 'root', startedAt: start, model: { raw: 'm', family: 'f', version: '1' }, metrics: { totalCost: 1, userMessageCount: 2, contextUsage: 3 } }, false)
+    const again = setAgentLink(state, 'root', 't', { agentId: 'child', rootSessionId: 'root', startedAt: start, model: { raw: 'm', family: 'f', version: '1' }, metrics: { totalCost: 1, userMessageCount: 2, contextUsage: 3 } })
+    assert.equal(again, first)
+    assert.equal(state.agentLinks.root.t, first)
+    assert.equal(state.agentLinkIndex.child, first)
+    assert.equal(state.agentRevisions.child, state.agentRevision)
+    assert.ok(state.agentRevision > 0)
+})
+
+test('setAgentLink replaces the stored object when a field, the model or the metrics change', () => {
+    const state = agentLinkState()
+    const base = { agentId: 'child', rootSessionId: 'root', startedAt: start, model: { raw: 'm' }, metrics: { totalCost: 1 } }
+    const first = setAgentLink(state, 'root', 't', base, false)
+    const stopped = setAgentLink(state, 'root', 't', { ...base, stoppedAt: stop }, false)
+    assert.notEqual(stopped, first)
+    assert.equal(stopped.stoppedAt, stop)
+    const model = setAgentLink(state, 'root', 't', { ...base, stoppedAt: stop, model: { raw: 'other' } }, false)
+    assert.notEqual(model, stopped)
+    const metrics = setAgentLink(state, 'root', 't', { ...base, stoppedAt: stop, model: { raw: 'other' }, metrics: { totalCost: 2 } }, false)
+    assert.notEqual(metrics, model)
+    assert.equal(state.agentLinkIndex.child, metrics)
+})
+
+test('a repeated snapshot keeps every link reference; a changed agent gets a new one', () => {
+    const state = agentLinkState()
+    const links = [withRun(api('a', 'root')), withRun(api('b', 'root'))]
+    snapshot(state, links)
+    const a = state.agentLinks.root['spawn-a'], b = state.agentLinks.root['spawn-b']
+    snapshot(state, links)
+    assert.equal(state.agentLinks.root['spawn-a'], a)
+    assert.equal(state.agentLinks.root['spawn-b'], b)
+    snapshot(state, [links[0], withRun({ ...api('b', 'root'), is_background: false })])
+    assert.equal(state.agentLinks.root['spawn-a'], a)
+    assert.notEqual(state.agentLinks.root['spawn-b'], b)
+    assert.equal(state.agentLinkIndex.b, state.agentLinks.root['spawn-b'])
+})

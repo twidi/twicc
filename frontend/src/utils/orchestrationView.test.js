@@ -4,7 +4,7 @@ import test from 'node:test'
 import {
     agentModelLabel, annotationEntries, annotationValueText, bucketOfProcessState, buildAnnotationTree,
     computeTimeline, computeTreeGeometry, countBuckets, cumulativeSeconds, findSubtree, flattenAnnotations, flattenTree, isoMs, parentOf,
-    lineIndices, nextFitCount, splitCommonPrefix,
+    lineIndices, nextFitCount, splitCommonPrefix, reuseUnchangedNodes, reuseUnchangedTree, reuseUnchangedMap,
 } from './orchestrationView.js'
 
 const tree = {
@@ -434,4 +434,63 @@ test('tree geometry: a deep chain narrows level by level', () => {
     near(geometry.l2.width, 50)
     near(geometry.l3.left, 50)
     near(geometry.l3.width, 50)
+})
+
+// ── reference reuse across topology reloads ─────────────────────────────────
+test('reuseUnchangedNodes keeps the previous reference of an unchanged node and takes the new one otherwise', () => {
+    const prev = [{ id: 'a', process: { state: 'dead' } }, { id: 'b', process: { state: 'user_turn' } }]
+    const next = [{ id: 'a', process: { state: 'dead' } }, { id: 'b', process: { state: 'assistant_turn' } }, { id: 'c' }]
+    const result = reuseUnchangedNodes(prev, next)
+    assert.equal(result.length, 3)
+    assert.equal(result[0], prev[0])
+    assert.equal(result[1], next[1])
+    assert.equal(result[2], next[2])
+})
+
+test('reuseUnchangedNodes follows the next order, drops absent nodes and tolerates a missing previous list', () => {
+    const prev = [{ id: 'a', n: 1 }, { id: 'b', n: 2 }]
+    const next = [{ id: 'b', n: 2 }, { id: 'a', n: 1 }]
+    const result = reuseUnchangedNodes(prev, next)
+    assert.deepEqual(result.map(n => n.id), ['b', 'a'])
+    assert.equal(result[0], prev[1])
+    assert.equal(result[1], prev[0])
+    assert.equal(reuseUnchangedNodes(null, next)[0], next[0])
+    assert.deepEqual(reuseUnchangedNodes(prev, []), [])
+})
+
+test('reuseUnchangedTree returns the previous tree when structurally identical', () => {
+    const prev = { id: 'root', children: [{ id: 'a', children: [] }] }
+    const next = { id: 'root', children: [{ id: 'a', children: [] }] }
+    assert.equal(reuseUnchangedTree(prev, next), prev)
+})
+
+test('reuseUnchangedTree reuses unchanged subtrees inside a changed tree', () => {
+    const prev = { id: 'root', children: [{ id: 'a', children: [{ id: 'a1', children: [] }] }, { id: 'b', children: [] }] }
+    const next = { id: 'root', children: [{ id: 'a', children: [{ id: 'a1', children: [] }] }, { id: 'b', children: [{ id: 'b1', children: [] }] }] }
+    const result = reuseUnchangedTree(prev, next)
+    assert.notEqual(result, prev)
+    assert.equal(result.children[0], prev.children[0])
+    assert.notEqual(result.children[1], prev.children[1])
+    assert.equal(result.children[1].children[0].id, 'b1')
+})
+
+test('reuseUnchangedTree takes the next tree when there is no previous one or the root differs', () => {
+    const next = { id: 'root', children: [] }
+    assert.equal(reuseUnchangedTree(null, next), next)
+    assert.equal(reuseUnchangedTree({ id: 'other', children: [] }, next), next)
+    assert.equal(reuseUnchangedTree(next, null), null)
+})
+
+test('reuseUnchangedMap keeps the previous value objects that are equal and the whole previous map when nothing changed', () => {
+    const prev = { a: { left: 1, width: 2 }, b: { left: 3, width: 4 } }
+    const same = reuseUnchangedMap(prev, { a: { left: 1, width: 2 }, b: { left: 3, width: 4 } })
+    assert.equal(same, prev)
+    const changed = reuseUnchangedMap(prev, { a: { left: 1, width: 2 }, b: { left: 3, width: 5 }, c: { left: 0, width: 1 } })
+    assert.notEqual(changed, prev)
+    assert.equal(changed.a, prev.a)
+    assert.notEqual(changed.b, prev.b)
+    assert.deepEqual(Object.keys(changed), ['a', 'b', 'c'])
+    const next = { a: 1 }
+    assert.equal(reuseUnchangedMap(undefined, next), next)
+    assert.notEqual(reuseUnchangedMap(prev, { a: prev.a }), prev)
 })

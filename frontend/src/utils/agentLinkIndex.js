@@ -13,6 +13,14 @@ export function agentLinkState() {
 }
 const time = value => value ? Date.parse(value) || 0 : 0
 const latest = (a, b) => time(a) >= time(b) ? a : b
+// Field-by-field equality of two cache entries (plain JSON-like values, ``metrics`` and ``model`` nested).
+// An ``undefined`` field counts as absent.
+function sameValue(a, b) {
+    if (a === b) return true
+    if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false
+    const keys = Object.keys(a).filter(key => a[key] !== undefined)
+    return keys.length === Object.keys(b).filter(key => b[key] !== undefined).length && keys.every(key => sameValue(a[key], b[key]))
+}
 export function setAgentLink(state, owner, tool, entry, live = true) {
     if (!entry.agentId) return
     const map = state.agentLinks[owner] ||= {}
@@ -35,7 +43,9 @@ export function setAgentLink(state, owner, tool, entry, live = true) {
     }
     const idle = state.agentIdle[entry.agentId]
     if (idle) entry = { ...entry, agentStoppedAt: idle.stoppedAt }
-    const value = { ...entry, stoppedAt, ownerSessionId: owner, toolUseId: tool }
+    let value = { ...entry, stoppedAt, ownerSessionId: owner, toolUseId: tool }
+    // An unchanged entry keeps its stored object, so what renders from it (the tree cards) is not re-patched.
+    if (prior && sameValue(prior, value)) value = prior
     map[tool] = value
     state.agentLinkIndex[entry.agentId] = value
     if (live) state.agentRevisions[entry.agentId] = ++state.agentRevision

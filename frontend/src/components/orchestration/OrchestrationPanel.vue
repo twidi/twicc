@@ -28,6 +28,7 @@ import { useSettingsStore } from '../../stores/settings'
 import { agentForestCost } from '../../utils/agentTreeMetrics'
 import {
     bucketOfProcessState, computeTimeline, computeTreeGeometry, cumulativeSeconds, countBuckets, findSubtree, flattenTree, isoMs, parentOf,
+    reuseUnchangedMap, reuseUnchangedNodes, reuseUnchangedTree,
 } from '../../utils/orchestrationView'
 import { sessionRouteLocation } from '../../utils/sessionRoute'
 
@@ -77,10 +78,11 @@ let nowTimer = null
 let inFlightController = null
 
 // ── Sessions view: the topology re-rooted on the current session ────────────
-const nodesById = computed(() => {
+// Stable across reloads: an unchanged map keeps its identity, so the cards bound to it are not re-patched.
+const nodesById = computed((previous) => {
     const map = {}
     for (const node of topology.value?.nodes ?? []) map[node.id] = node
-    return map
+    return reuseUnchangedMap(previous, map)
 })
 // ``null`` when the current session is not in the payload (a corrupt spawn edge): "No orchestration data."
 const subtree = computed(() => {
@@ -156,13 +158,15 @@ const timelineItems = computed(() => {
 const globalTimeline = computed(() => computeTimeline(timelineItems.value, now.value))
 // Bar geometry: root = the re-rooted subtree (sessions view) or a virtual node standing for the current
 // session (subagents view; with no item while its row is not loaded, the first level then ranges itself).
-const timeline = computed(() => {
+const timeline = computed((previous) => {
     const root = view.value === 'agents'
         ? { id: props.sessionId, children: agentTree.value }
         : subtree.value
     if (!root) return { geometry: {} }
     const itemsById = Object.fromEntries(timelineItems.value.map(item => [item.id, item]))
-    return { geometry: computeTreeGeometry(root, itemsById, now.value) }
+    // Per-node geometry objects (and the whole result) are reused when unchanged, like the nodes.
+    const geometry = reuseUnchangedMap(previous?.geometry, computeTreeGeometry(root, itemsById, now.value))
+    return geometry === previous?.geometry ? previous : { geometry }
 })
 const hasWorkingNode = computed(() => timelineItems.value.some(item => item.working))
 
@@ -184,22 +188,28 @@ const hasLiveNode = computed(() =>
     (topology.value?.nodes ?? []).some(n => (n.process?.state ?? 'dead') !== 'dead'),
 )
 
-// ``silent`` ticks (background polls) never touch ``loading`` and keep the last good snapshot on failure,
-// so the tree never flashes a spinner or error banner under the user.
+// ``loading`` covers EVERY topology read in flight (user click, activation, silent poll tick): it drives the
+// Refresh button's spinner and nothing else, so the tree already rendered stays on screen while it runs.
+// ``silent`` ticks (background polls) keep the last good snapshot on failure and raise no error banner.
 async function load({ silent = false } = {}) {
     if (!props.projectId || !props.sessionId) return
     if (!props.hasSpawnTree) return  // no spawned session: nothing to fetch
     if (inFlightController) inFlightController.abort()
     const controller = new AbortController()
     inFlightController = controller
-    if (!silent) loading.value = true
+    loading.value = true
     try {
         const url = `/api/projects/${encodeURIComponent(props.projectId)}/sessions/${encodeURIComponent(props.sessionId)}/topology/`
         const response = await fetch(url, { signal: controller.signal })
         if (!response.ok) {
             throw new Error(`Failed to load topology: ${response.status}`)
         }
-        topology.value = await response.json()
+        const payload = await response.json()
+        const previous = topology.value
+        // Unchanged nodes / subtrees keep their previous objects: Vue then patches only what changed.
+        topology.value = previous
+            ? { ...payload, nodes: reuseUnchangedNodes(previous.nodes, payload.nodes ?? []), tree: reuseUnchangedTree(previous.tree, payload.tree) }
+            : payload
         now.value = Date.now()
         error.value = null
     } catch (e) {
@@ -209,8 +219,11 @@ async function load({ silent = false } = {}) {
             error.value = 'Failed to load the orchestration topology.'
         }
     } finally {
-        if (inFlightController === controller) inFlightController = null
-        if (!silent) loading.value = false
+        // A superseded (aborted) read leaves the flag to the newer one, which owns the controller now.
+        if (inFlightController === controller) {
+            inFlightController = null
+            loading.value = false
+        }
     }
 }
 
@@ -250,14 +263,16 @@ watch([() => props.active, hasWorkingNode], syncNow, { immediate: true })
 
 // Refreshing the agent view re-reads the ``/subagents/`` snapshot: the tree itself is live over the
 // WebSocket, but the per-agent numbers it carries (cost, turns, context, model) only move with a read.
-const agentsLoading = ref(false)
-const refreshing = computed(() => (view.value === 'agents' ? agentsLoading.value : loading.value))
+// A counter: the activation read, the "agents appeared" read and a click can overlap.
+const agentReads = ref(0)
+// The Refresh button spins while ANY read is in flight (topology or subagents snapshot), whichever view is shown.
+const refreshing = computed(() => loading.value || agentReads.value > 0)
 async function refreshAgents() {
-    agentsLoading.value = true
+    agentReads.value++
     try {
         await store.fetchSubagentsState(props.projectId, props.sessionId)
     } finally {
-        agentsLoading.value = false
+        agentReads.value--
     }
 }
 function refresh() {
@@ -409,11 +424,13 @@ onUnmounted(() => {
                         <wa-spinner></wa-spinner>
                         <span>Loading topology…</span>
                     </div>
-                    <wa-callout v-else-if="error" variant="danger" size="small">
+                    <template v-else>
+                    <!-- A failed read never replaces a tree already shown: the banner sits above it. -->
+                    <wa-callout v-if="error" variant="danger" size="small">
                         <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
                         {{ error }}
                     </wa-callout>
-                    <template v-else-if="subtree">
+                    <template v-if="subtree">
                         <div v-if="parentNode" class="orch-parent">
                             <wa-icon name="arrow-turn-up" class="orch-parent-icon"></wa-icon>
                             <span class="orch-parent-label">Spawned by</span>
@@ -439,10 +456,11 @@ onUnmounted(() => {
                             This session has not spawned any session.
                         </div>
                     </template>
-                    <div v-else class="orch-state orch-state-empty">
+                    <div v-else-if="topology" class="orch-state orch-state-empty">
                         <wa-icon name="sitemap"></wa-icon>
                         <span>No orchestration data.</span>
                     </div>
+                    </template>
                 </template>
                 <Transition name="orch-scroll-fade">
                     <wa-button

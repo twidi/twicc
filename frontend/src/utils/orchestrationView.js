@@ -53,6 +53,52 @@ export function findSubtree(tree, id) {
     return null
 }
 
+/**
+ * ``nextNodes`` (a fresh topology payload's ``nodes``) with the PREVIOUS object substituted for every node
+ * whose content is unchanged (same id, same JSON), so Vue does not re-render the cards of unchanged nodes.
+ * Follows the next order; nodes absent from ``nextNodes`` are dropped.
+ */
+export function reuseUnchangedNodes(previousNodes, nextNodes) {
+    const previousById = new Map((previousNodes ?? []).map(node => [node.id, node]))
+    return nextNodes.map(node => {
+        const previous = previousById.get(node.id)
+        return previous && JSON.stringify(previous) === JSON.stringify(node) ? previous : node
+    })
+}
+
+/**
+ * ``nextTree`` ({ id, children }) with previous objects substituted: the whole previous tree when it is
+ * identical, otherwise a new node whose children reuse the previous subtrees (matched by id) that did not change.
+ */
+export function reuseUnchangedTree(previousTree, nextTree) {
+    if (!previousTree || !nextTree || previousTree.id !== nextTree.id) return nextTree
+    if (JSON.stringify(previousTree) === JSON.stringify(nextTree)) return previousTree
+    const previousChildren = new Map((previousTree.children ?? []).map(child => [child.id, child]))
+    return {
+        ...nextTree,
+        children: (nextTree.children ?? []).map(child => reuseUnchangedTree(previousChildren.get(child.id), child)),
+    }
+}
+
+/**
+ * ``nextMap`` (an object of plain values) with the previous value objects substituted where equal (same JSON).
+ * Returns ``previousMap`` itself when the keys and every value are unchanged, so a prop holding the map does
+ * not change either.
+ */
+export function reuseUnchangedMap(previousMap, nextMap) {
+    if (!previousMap) return nextMap
+    const keys = Object.keys(nextMap)
+    let identical = keys.length === Object.keys(previousMap).length
+    const result = {}
+    for (const key of keys) {
+        const previous = previousMap[key]
+        const keep = previous !== undefined && JSON.stringify(previous) === JSON.stringify(nextMap[key])
+        result[key] = keep ? previous : nextMap[key]
+        if (!keep) identical = false
+    }
+    return identical ? previousMap : result
+}
+
 /** The node followed by its descendants, depth first. */
 export function flattenTree(node) {
     return [node, ...(node.children ?? []).flatMap(flattenTree)]
