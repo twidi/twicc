@@ -2975,6 +2975,10 @@ wa-popover > wa-divider {
         justify-content: flex-start;
         margin-bottom: var(--wa-space-s);
     }
+    /* Keep a control and its following help text together with the group gap. */
+    > :not(label):not(.setting-group-hint):has(+ .setting-group-hint) {
+        margin-bottom: 0;
+    }
 }
 
 /* The "View help" link in the Sharing section hugs its content, pinned to
