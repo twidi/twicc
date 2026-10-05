@@ -14,13 +14,15 @@
 //
 // Each time bar is relative to its direct parent's span (``computeTreeGeometry``); ``now`` is refreshed on each load and
 // by a 30s timer that runs only while the tab is active and a displayed node is working.
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted, useId } from 'vue'
+import { useResizeObserver } from '@vueuse/core'
 import { useRoute } from 'vue-router'
 import OrchestrationNode from './OrchestrationNode.vue'
 import AgentTreeNode from './AgentTreeNode.vue'
 import OrchestrationSummary from './OrchestrationSummary.vue'
 import OrchestrationTabActivity from './OrchestrationTabActivity.vue'
 import SegmentedControl from '../ui/SegmentedControl.vue'
+import AppTooltip from '../ui/AppTooltip.vue'
 import { useDataStore } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
 import { agentForestCost } from '../../utils/agentTreeMetrics'
@@ -273,6 +275,38 @@ watch(
     { immediate: true },
 )
 
+// ── Scroll-to-edge buttons ──────────────────────────────────────────────────
+// Shown only when the list actually scrolls. The scrolling element is ``.orch-content`` in the wide layout
+// and ``.orch-frame`` in the narrow one (below 480px the header scrolls away with the body), so both are
+// checked; the one that does not scroll just reports no overflow. The tree is observed too: in the wide
+// layout the content box keeps its size while the tree inside grows, so it would never notify by itself.
+const frameEl = ref(null)
+const contentEl = ref(null)
+const treeEl = ref(null)
+const hasOverflow = ref(false)
+const scrollBottomButtonId = useId()
+const scrollTopButtonId = useId()
+
+function updateOverflow() {
+    hasOverflow.value = [frameEl.value, contentEl.value].some(
+        el => el && el.scrollHeight > el.clientHeight + 1,
+    )
+}
+useResizeObserver([frameEl, contentEl, treeEl], updateOverflow)
+// Data changes that alter the list's height without necessarily resizing an observed box.
+watch(
+    [view, loading, error, topology, () => sessionNodes.value.length, () => agentNodes.value.length],
+    () => nextTick(updateOverflow),
+    { flush: 'post' },
+)
+onMounted(() => nextTick(updateOverflow))
+
+function scrollListTo(toBottom) {
+    for (const el of [contentEl.value, frameEl.value]) {
+        el?.scrollTo({ top: toBottom ? el.scrollHeight : 0, behavior: 'smooth' })
+    }
+}
+
 onUnmounted(() => {
     stopAuto()
     stopNow()
@@ -282,7 +316,7 @@ onUnmounted(() => {
 
 <template>
     <div class="orchestration-panel">
-        <div class="orch-frame">
+        <div ref="frameEl" class="orch-frame">
             <div class="orch-header">
                 <div class="orch-toolbar">
                     <SegmentedControl
@@ -320,9 +354,30 @@ onUnmounted(() => {
                 <OrchestrationSummary v-if="summary" v-bind="summary" :show-costs="showCosts" />
             </div>
 
-            <div class="orch-content">
+            <div ref="contentEl" class="orch-content">
+                <!-- Edge-to-edge scroll buttons, only when the list scrolls: "down" opens the list,
+                     "up" closes it (its twin sits after the views). -->
+                <Transition name="orch-scroll-fade">
+                    <wa-button
+                        v-if="hasOverflow"
+                        :id="scrollBottomButtonId"
+                        class="orch-scroll-btn floating-over-text"
+                        size="small"
+                        variant="neutral"
+                        appearance="filled"
+                        aria-label="Scroll to bottom"
+                        @click="scrollListTo(true)"
+                    >
+                        <wa-icon name="arrow-down"></wa-icon>
+                    </wa-button>
+                </Transition>
+                <AppTooltip
+                    v-if="hasOverflow"
+                    :for="scrollBottomButtonId"
+                    placement="left"
+                >Scroll to bottom</AppTooltip>
                 <template v-if="view === 'agents'">
-                    <div v-if="agentNodes.length" class="orch-tree">
+                    <div v-if="agentNodes.length" ref="treeEl" class="orch-tree">
                         <AgentTreeNode
                             v-for="node in agentTree"
                             :key="node.id"
@@ -359,7 +414,7 @@ onUnmounted(() => {
                         <div v-if="showHiddenNote" class="orch-note">
                             Sessions marked <wa-icon name="eye-slash" class="orch-note-icon"></wa-icon> were created hidden by their parent and can't be opened.
                         </div>
-                        <div class="orch-tree">
+                        <div ref="treeEl" class="orch-tree">
                             <OrchestrationNode
                                 :node="subtree"
                                 :nodes-by-id="nodesById"
@@ -377,6 +432,25 @@ onUnmounted(() => {
                         <span>No orchestration data.</span>
                     </div>
                 </template>
+                <Transition name="orch-scroll-fade">
+                    <wa-button
+                        v-if="hasOverflow"
+                        :id="scrollTopButtonId"
+                        class="orch-scroll-btn floating-over-text"
+                        size="small"
+                        variant="neutral"
+                        appearance="filled"
+                        aria-label="Scroll to top"
+                        @click="scrollListTo(false)"
+                    >
+                        <wa-icon name="arrow-up"></wa-icon>
+                    </wa-button>
+                </Transition>
+                <AppTooltip
+                    v-if="hasOverflow"
+                    :for="scrollTopButtonId"
+                    placement="left"
+                >Scroll to top</AppTooltip>
             </div>
         </div>
     </div>
@@ -538,6 +612,33 @@ a.orch-parent-link:hover {
 .orch-state-empty {
     flex-direction: column;
     font-size: var(--wa-font-size-l);
+}
+
+/* Scroll-to-edge buttons: same look as the Plan tab's "scroll to top" (FilePane.vue
+   .preview-action-btn / .preview-scroll-top-btn, scoped there, hence repeated here): a small round
+   button, subtle at rest and solid on hover, on the translucent .floating-over-text surface
+   (styles/transcript-tokens.css). Unlike it, they are in the flow, right-aligned. */
+.orch-scroll-btn {
+    align-self: flex-end;
+    flex: none;
+    opacity: 0.6;
+    transition: opacity 0.15s ease;
+}
+.orch-scroll-btn:hover {
+    opacity: 1;
+}
+.orch-scroll-btn::part(base) {
+    border-radius: 50%;
+    aspect-ratio: 1;
+    padding: 0;
+}
+.orch-scroll-fade-enter-active,
+.orch-scroll-fade-leave-active {
+    transition: opacity 0.2s ease;
+}
+.orch-scroll-fade-enter-from,
+.orch-scroll-fade-leave-to {
+    opacity: 0 !important;
 }
 
 /* Narrow pane: the switch and Refresh go icon-only (labels stay for assistive tech), and the header is no
