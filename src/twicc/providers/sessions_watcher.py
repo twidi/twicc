@@ -924,13 +924,6 @@ class BaseSessionsWatcher:
                 if not session.hidden:
                     # Broadcast new items (with updated metadata of pre-existing items if any)
                     new_items = await get_session_items(session, new_line_nums)
-                    # Per-provider wire-only enrichment (e.g. Codex stamps
-                    # ``stream_uuid`` so the frontend can retire its streaming
-                    # placeholder). Default helper implementation is a no-op
-                    # so this stays generic.
-                    get_provider_helpers(self.get_compute().provider).enrich_live_items_payload(
-                        session.id, new_items,
-                    )
                     if new_items:
                         message = {
                             "type": "session_items_added",

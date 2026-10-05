@@ -70,7 +70,6 @@ from twicc.providers.helpers import AgentSettings, get_provider_helpers
 
 from ..permission_modes import resolve_codex_turn_overrides
 from ..sdk_wrappers import TwiccAsyncCodex, TwiccAsyncThread, service_tier_from_fast_mode
-from ..streaming_registry import get_streamed_item_registry
 from .active_tools import active_tool_from_item
 from .approvals import (
     ELICITATION_METHOD,
@@ -1089,14 +1088,10 @@ class CodexAgent(BaseAgent):
         self._current_turn_ready.set()
         self._turn_stream_done.clear()
 
-        # Consume the turn's notification stream ourselves (instead of the
-        # blackbox ``turn_handle.run()``) so we can:
-        #   - Broadcast ``stream_block_*`` WS events that paint the live
-        #     assistant text in the frontend before the JSONL line lands.
-        #   - Push each completed ``agentMessage`` item_id onto the FIFO
-        #     registry so the watcher can stamp the matching SessionItem
-        #     with ``stream_uuid`` and the frontend can retire the synthetic
-        #     placeholder. (See ``streaming_registry.py`` for the why.)
+        # Consume the turn's notification stream ourselves (instead of
+        # ``turn_handle.run()``) to broadcast ``stream_block_*`` WS events
+        # before the JSONL line lands. The frontend retires these blocks
+        # using the native item identity in the persisted JSONL content.
         try:
             stream = turn_handle.stream()
             try:
@@ -2511,12 +2506,6 @@ class CodexAgent(BaseAgent):
             self._goal_monitor = None
         self._goal_continuation_active = False
 
-        # Drop any item_ids buffered for this session. The agent is going
-        # away, so the watcher will never get matching JSONL lines for
-        # whatever was streamed and not yet completed (or whatever was
-        # completed in the SDK after we tore the transport down). Keeping
-        # them would corrupt the FIFO for the next agent on the same id.
-        get_streamed_item_registry().clear_session(self.session_id)
         # Drop the side-table — no more turns will read it on this agent.
         self._items_by_id.clear()
         self._user_terminated_tool_ids.clear()
@@ -2558,7 +2547,6 @@ class CodexAgent(BaseAgent):
                 "codex.close() during error handling failed for session %s",
                 self.session_id, exc_info=True,
             )
-        get_streamed_item_registry().clear_session(self.session_id)
         self.last_activity = time.time()
         await self._transition_to_dead()
 
@@ -2704,8 +2692,7 @@ class CodexAgent(BaseAgent):
         - ``item/agentMessage/delta`` → ``stream_block_delta``.
         - ``item/completed`` on an ``agentMessage``
             → ``stream_block_stop`` + ``stream_block_end`` (``uuid`` =
-              ``item_id``). Pushes the ``item_id`` onto the FIFO registry
-              so the watcher can stamp the matching SessionItem.
+              ``item_id``). The persisted item carries the same identity.
 
         - ``item/reasoning/summaryPartAdded``
             → ``stream_block_start`` on the first summary part we see for
@@ -2725,9 +2712,8 @@ class CodexAgent(BaseAgent):
               one continuous block).
         - ``item/completed`` on a ``reasoning`` with non-empty summary
             → ``stream_block_stop`` + ``stream_block_end`` on
-              ``block_index=0``, then a single registry push (the JSONL
-              persists the whole reasoning as a single line, so a single
-              pop on the watcher side will pair them).
+              ``block_index=0``. JSONL persists the whole reasoning as
+              a single item with the same identity.
         """
         # Mirror the raw SDK notification into the per-session debug log
         # before any local processing. No-op when TWICC_DEBUG is unset.
@@ -2760,20 +2746,9 @@ class CodexAgent(BaseAgent):
         # Rust process, single notification stream). Each notification
         # carries its origin ``thread_id`` — for subagent items it
         # differs from ``self.session_id``. We must drop those events
-        # here for two reasons:
-        #
-        #   1. ``stream_block_*`` broadcasts go out tagged with
-        #      ``self.session_id``, so painting the subagent's text
-        #      into the parent conversation would surface content the
-        #      user already sees through the spawn_agent tool card +
-        #      the dedicated subagent tab.
-        #   2. The :class:`StreamedItemRegistry` FIFO is keyed by
-        #      ``self.session_id``. A subagent push would consume the
-        #      slot meant for the parent's next ``agent_message``,
-        #      leaving the streaming placeholder stuck — the
-        #      ``stream_uuid`` stamped on the parent's SessionItem ends
-        #      up being a subagent item id the frontend never painted a
-        #      placeholder for, so retirement-by-uuid never matches.
+        # here because ``stream_block_*`` broadcasts use ``self.session_id``.
+        # The user sees subagent content in the spawn_agent tool card and
+        # the dedicated subagent tab.
         #
         # Notifications without a ``thread_id`` (none today, but keep
         # the guard defensive against future SDK additions) flow
@@ -2856,7 +2831,6 @@ class CodexAgent(BaseAgent):
 
             # Drop side-tables tied to this session so a future agent on
             # the same id starts clean (same cleanup as ``interrupt_or_kill``).
-            get_streamed_item_registry().clear_session(self.session_id)
             self._items_by_id.clear()
             self._user_terminated_tool_ids.clear()
             clear_original_files_for_session(self.session_id)
@@ -3053,9 +3027,6 @@ class CodexAgent(BaseAgent):
                     "block_type": "text",
                     "uuid": item_id,
                 })
-                # Hand the item_id off to the watcher so it can stamp the
-                # matching SessionItem when the JSONL line lands.
-                get_streamed_item_registry().push(self.session_id, item_id)
                 return
 
             if item_type == "reasoning":
@@ -3064,7 +3035,7 @@ class CodexAgent(BaseAgent):
                 # the set is empty (or absent) — typical when OpenAI didn't
                 # produce a summary at all, in which case the JSONL line
                 # carries ``summary: []`` and the watcher classifies it as
-                # SYSTEM. No SessionItem to retire, no push needed.
+                # SYSTEM. No streaming block needs completion.
                 indices = self._reasoning_summary_indices.pop(item_id, set())
                 if not indices:
                     return
@@ -3086,9 +3057,6 @@ class CodexAgent(BaseAgent):
                     "block_type": "thinking",
                     "uuid": item_id,
                 })
-                # One JSONL line per reasoning item, so a single registry
-                # push regardless of how many summary parts streamed.
-                get_streamed_item_registry().push(self.session_id, item_id)
                 return
 
     async def _handle_auto_review_completed(

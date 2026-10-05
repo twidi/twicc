@@ -929,22 +929,6 @@ class BaseProviderHelpers:
         """
         raise NotImplementedError
 
-    def enrich_live_items_payload(self, session_id: str, items: list[dict]) -> None:
-        """Mutate a freshly built ``session_items_added`` items list in place.
-
-        Default is a no-op. Providers override this when they need to add
-        wire-only metadata on top of the DB-derived serialization — e.g.
-        Codex stamps ``stream_uuid`` so the frontend can retire its
-        streaming placeholder, using an in-memory FIFO populated by the
-        live agent. Wire-only because the value has no meaning outside
-        the live broadcast (post-reload there is no placeholder to
-        retire) and shouldn't pollute the DB.
-
-        Called exactly once per WS broadcast in
-        :func:`twicc.providers.sessions_watcher.BaseSessionsWatcher`'s
-        item-broadcast path, after :func:`serialize_session_item`.
-        """
-
     def serialize_model(self, model: str | None) -> dict | None:
         """Serialize a raw model identifier into ``{raw, family, version}``.
 

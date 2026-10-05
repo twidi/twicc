@@ -44,7 +44,6 @@ from .canonical import (
     user_message_text,
 )
 from .pricing import extract_model_info
-from .streaming_registry import get_streamed_item_registry
 
 logger = logging.getLogger(__name__)
 
@@ -847,45 +846,6 @@ class CodexHelpers(BaseProviderHelpers):
                 continue
             results.append(payload)
         return results
-
-    def enrich_live_items_payload(self, session_id: str, items: list[dict]) -> None:
-        """Attach ``stream_uuid`` to each newly broadcast streaming-eligible item.
-
-        The Codex agent pushes one SDK ``item_id`` per completed
-        ``agentMessage`` *and* per completed ``reasoning`` with non-empty
-        summary onto the :class:`StreamedItemRegistry`. Here we pop one
-        entry per matching payload in the order the watcher serialized
-        them — the FIFO invariant (single Codex CLI process emits SDK
-        events and JSONL lines in lockstep) makes that pairing safe
-        without comparing text or timestamps.
-
-        The two streaming-eligible kinds are
-        :class:`ItemKind.ASSISTANT_MESSAGE` (``event_msg.agent_message``)
-        and :class:`ItemKind.REASONING` (``response_item.reasoning`` with
-        a non-empty ``summary``). Both share a single FIFO queue: the
-        agent pushes them in the same order the watcher will see the
-        JSONL lines, so a single ``pop_next`` per matching item keeps
-        the pairing aligned across kinds.
-
-        ``pop_next`` returning ``None`` is the expected path on sessions
-        synced outside a live agent run (initial sync, recompute, agent
-        already dead): we simply don't attach ``stream_uuid`` and the
-        frontend has no placeholder to retire anyway. The sibling
-        ``response_item.message`` line for an exchange is bucketed as
-        ``SYSTEM``/``DEBUG_ONLY`` by :meth:`compute_item_kind` and a
-        reasoning line whose summary is empty is bucketed the same way,
-        so neither consumes the queue.
-        """
-        if not items:
-            return
-        registry = get_streamed_item_registry()
-        streaming_kinds = {ItemKind.ASSISTANT_MESSAGE, ItemKind.REASONING}
-        for item in items:
-            if item.get("kind") not in streaming_kinds:
-                continue
-            stream_uuid = registry.pop_next(session_id)
-            if stream_uuid is not None:
-                item["stream_uuid"] = stream_uuid
 
     async def try_handle_async_job(self, job, settle_async_job) -> bool:
         """Route Codex-specific async-queue jobs to their handler.
