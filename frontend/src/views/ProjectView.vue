@@ -2644,7 +2644,7 @@ function openPeerInbox() {
                     <ProjectDetailPanel :project-id="effectiveProjectId" :active="!sessionId" :key="effectiveProjectId" />
                 </KeepAlive>
             </div>
-            <div v-show="isArtifactsMode" class="artifacts-browser-content panel-card">
+            <div v-show="isArtifactsMode" class="artifacts-browser-content">
                 <KeepAlive>
                     <ArtifactsBrowserView
                         :bookmark-id="lastArtifactBookmarkId"
@@ -3102,9 +3102,10 @@ wa-dropdown-item:hover .row-menu-trigger,
 .artifacts-browser-content {
     height: 100%;
 }
-/* Cards: clip (both axes) follows the rounded corners and is not a scroll container. */
+/* The artifact header sits on the canvas; the preview card keeps its shadow within the panel gap. */
 .artifacts-browser-content {
     overflow: clip;
+    overflow-clip-margin: var(--panel-gap);
 }
 /* The project page is a header on the canvas and a card below it (ProjectDetailPanel), like the session
    view: clip with a gap-sized margin lets the card's shadow paint into .main-content's padding. */

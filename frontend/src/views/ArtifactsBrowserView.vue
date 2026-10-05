@@ -193,20 +193,20 @@ function openInSession() {
 <template>
     <div class="artifacts-browser">
         <!-- No bookmark selected -->
-        <div v-if="bookmarkId == null" class="abv-empty">
+        <div v-if="bookmarkId == null" class="abv-empty panel-card">
             <wa-icon :name="ARTIFACT_ICON" class="abv-empty__icon"></wa-icon>
             <div>Select an artifact</div>
             <ArtifactsHelpButton />
         </div>
 
         <!-- Loading (deep-link, not yet in the store) -->
-        <div v-else-if="loading && !bookmark" class="abv-empty">
+        <div v-else-if="loading && !bookmark" class="abv-empty panel-card">
             <wa-spinner></wa-spinner>
             <span>Loading…</span>
         </div>
 
         <!-- Unknown bookmark id -->
-        <div v-else-if="notFound" class="abv-empty">
+        <div v-else-if="notFound" class="abv-empty panel-card">
             <wa-callout variant="warning" size="small">
                 <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
                 This bookmark no longer exists.
@@ -301,7 +301,7 @@ function openInSession() {
             </header>
 
             <!-- Missing file: lazy availability came back false -->
-            <div v-if="available === false" class="abv-missing">
+            <div v-if="available === false" class="abv-missing panel-card">
                 <wa-callout variant="warning">
                     <wa-icon slot="icon" name="file-circle-exclamation"></wa-icon>
                     <strong>This artifact is no longer available.</strong>
@@ -326,7 +326,7 @@ function openInSession() {
                  v-else) even during a missing-artifact detour so that detour
                  doesn't evict the other cached previews; the FilePane itself is
                  v-if'd out then (deactivated, kept in cache). -->
-            <div v-show="available !== false" class="abv-content">
+            <div v-show="available !== false" class="abv-content panel-card">
                 <KeepAlive :max="MAX_CACHED_ARTIFACTS">
                     <FilePane
                         v-if="available !== false"
@@ -361,11 +361,14 @@ function openInSession() {
     display: flex;
     flex-direction: column;
     min-height: 0;
-    overflow: hidden;
+    overflow: clip;
+    overflow-clip-margin: var(--panel-gap);
 }
 
 .abv-empty {
     flex: 1;
+    min-height: 0;
+    overflow: auto;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -387,10 +390,12 @@ function openInSession() {
     align-items: center;
     justify-content: space-between;
     gap: var(--wa-space-m);
-    padding: var(--wa-space-xs) var(--wa-space-m);
-    padding-right: var(--wa-space-xs);
-    border-bottom: 1px solid var(--wa-color-surface-border);
+    padding: 0 var(--wa-space-m) var(--wa-space-xs);
     min-width: 0;
+}
+
+:where(html.compact-height) .abv-header {
+    padding-inline: var(--wa-space-xs);
 }
 
 .abv-header__title {
@@ -445,13 +450,14 @@ function openInSession() {
 .abv-content {
     flex: 1;
     min-height: 0;
-    overflow: hidden;
+    overflow: clip;
     display: flex;
     flex-direction: column;
 }
 
 .abv-missing {
     flex: 1;
+    min-height: 0;
     overflow: auto;
     padding: var(--wa-space-l);
 }
