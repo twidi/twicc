@@ -1,14 +1,17 @@
 <script setup>
-// A session's annotations (free-form key/value): ONE line of tags that never wraps (tags that do not
-// fit are hidden), and a chevron button that is always there. The button opens a popover listing ALL
-// annotations as a tree (dotted keys become levels). When tags are hidden, the button shows their count.
+// A session's annotations (free-form key/value): tags that wrap onto up to MAX_LINES lines (tags that do not
+// fit in those lines are hidden), followed in the same flow by a chevron button that is always there. The
+// button opens a popover listing ALL annotations as a tree (dotted keys become levels). When entry tags are
+// hidden, the button shows their count.
 import { computed, nextTick, onMounted, ref, useId, watch } from 'vue'
 import { useResizeObserver } from '@vueuse/core'
 import AnnotationTreeLevel from './AnnotationTreeLevel.vue'
 import { vPopoverFocusFix } from '../../directives/vPopoverFocusFix'
 import {
-    annotationValueText, buildAnnotationTree, flattenAnnotations, splitCommonPrefix,
+    annotationValueText, buildAnnotationTree, flattenAnnotations, lineIndices, nextFitCount, splitCommonPrefix,
 } from '../../utils/orchestrationView'
+
+const MAX_LINES = 3
 
 const props = defineProps({
     annotations: { type: Object, required: true },
@@ -23,31 +26,55 @@ const prefix = computed(() => split.value.prefix)
 const entries = computed(() => split.value.entries)
 const tree = computed(() => buildAnnotationTree(props.annotations))
 
-// How many tags fit on the line: measured on the rendered row. Hidden tags stay in the layout
-// (``visibility: hidden``) so the measurement is stable.
+// How many entry tags are displayed: measured on the rendered flow. Hidden entries are ``display: none`` so the
+// button, which follows the tags in the same flow, sits right after the last displayed tag.
 const tagsEl = ref(null)
 const fitCount = ref(entries.value.length)
 const hiddenCount = computed(() => entries.value.length - fitCount.value)
 
-// Hysteresis: the count only changes when the row width does. If every tag would fit without the button but
-// not with it, one tag can stay hidden until the next resize. Accepted.
-function measure() {
-    const el = tagsEl.value
-    if (!el) return
-    const limit = el.clientWidth
-    let fit = 0
-    for (const child of el.children) {
-        // The prefix tag always stays visible: not counted, but its width is part of the offsets below.
-        if (child.classList.contains('oann-prefix')) continue
-        if (child.offsetLeft + child.offsetWidth <= limit) fit += 1
-        else break
+// Lay out all entries, then hide entries until the button (the last flow item, showing ``+N``) is within
+// MAX_LINES. Hiding changes the width of ``+N`` and so the wrapping: re-measure after every step. The count
+// only decreases within a run, so the loop ends after at most one step per entry; ``run`` drops a stale run.
+let run = 0
+async function measure() {
+    const current = ++run
+    fitCount.value = entries.value.length
+    await nextTick()
+    for (let step = 0; step <= entries.value.length; step++) {
+        const el = tagsEl.value
+        if (!el || current !== run) return
+        const button = el.querySelector('.oann-button')
+        const shown = [...el.querySelectorAll('.oann-entry:not(.is-hidden)')]
+        // The prefix tag (when present) is the first flow item: always displayed, never counted.
+        const prefixEl = el.querySelector('.oann-prefix')
+        const flow = [...(prefixEl ? [prefixEl] : []), ...shown, button]
+        const lines = lineIndices(flow.map((child) => child.offsetTop))
+        const next = nextFitCount({
+            entryLines: lines.slice(prefixEl ? 1 : 0, -1),
+            chevronLine: lines[lines.length - 1],
+            maxLines: MAX_LINES,
+        })
+        if (next === shown.length) return
+        fitCount.value = next
+        await nextTick()
     }
-    fitCount.value = fit
 }
 
-onMounted(measure)
-useResizeObserver(tagsEl, measure)
-watch([entries, prefix], () => nextTick(measure))
+// Only a width change re-measures: hiding tags changes the height, which must not retrigger a measure.
+let lastWidth = -1
+function onResize() {
+    const width = tagsEl.value?.clientWidth ?? -1
+    if (width === lastWidth) return
+    lastWidth = width
+    measure()
+}
+
+onMounted(() => {
+    lastWidth = tagsEl.value?.clientWidth ?? -1
+    measure()
+})
+useResizeObserver(tagsEl, onResize)
+watch([entries, prefix], measure)
 </script>
 
 <template>
@@ -57,17 +84,17 @@ watch([entries, prefix], () => nextTick(measure))
             <span
                 v-for="(entry, index) in entries"
                 :key="`${index}:${entry.fullKey}`"
-                class="oann-tag"
+                class="oann-tag oann-entry"
                 :class="{ 'is-hidden': index >= fitCount }"
             >
                 <span class="oann-key">{{ entry.key }}</span>
                 <span class="oann-value">{{ annotationValueText(entry.value) }}</span>
             </span>
+            <button :id="buttonId" type="button" class="oann-button" aria-label="Show all annotations">
+                <span v-if="hiddenCount > 0" class="oann-count">+{{ hiddenCount }}</span>
+                <wa-icon auto-width name="chevron-down"></wa-icon>
+            </button>
         </div>
-        <button :id="buttonId" type="button" class="oann-button" aria-label="Show all annotations">
-            <span v-if="hiddenCount > 0" class="oann-count">+{{ hiddenCount }}</span>
-            <wa-icon auto-width name="chevron-down"></wa-icon>
-        </button>
         <wa-popover v-popover-focus-fix :for="buttonId" placement="bottom-start" class="oann-popover">
             <div class="oann-popover-body">
                 <div class="oann-popover-title">Annotations</div>
@@ -79,21 +106,15 @@ watch([entries, prefix], () => nextTick(measure))
 
 <style scoped>
 .oann {
-    display: flex;
-    align-items: center;
-    gap: var(--wa-space-2xs);
     min-width: 0;
 }
 
 .oann-tags {
-    position: relative;
-    /* As wide as its tags, up to the available width: the button follows the last displayed tag. */
-    flex: 0 1 auto;
     min-width: 0;
     display: flex;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
+    align-items: flex-start;
     gap: var(--wa-space-2xs);
-    overflow: hidden;
 }
 
 .oann-tag {
@@ -117,7 +138,7 @@ watch([entries, prefix], () => nextTick(measure))
 }
 
 .oann-tag.is-hidden {
-    visibility: hidden;
+    display: none;
 }
 
 .oann-key {

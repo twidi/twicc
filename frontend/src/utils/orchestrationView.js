@@ -238,3 +238,34 @@ export function agentModelLabel(model) {
     if (!model?.family || !model?.version) return null
     return `${model.family} ${model.version}`
 }
+
+/**
+ * Line index (0-based) of each element of a wrapping flex row, from their `offsetTop`s in flow order:
+ * the first element is on line 0, and a new line starts whenever the top grows.
+ */
+export function lineIndices(tops) {
+    const lines = []
+    let line = -1
+    let lineTop = null
+    for (const top of tops) {
+        if (lineTop === null || top > lineTop) {
+            line += 1
+            lineTop = top
+        }
+        lines.push(line)
+    }
+    return lines
+}
+
+/**
+ * One step of the "fit tags in `maxLines` lines" loop. `entryLines` are the line indices of the entry tags
+ * currently displayed, `chevronLine` the one of the button that follows them. Returns the entry count to
+ * display next: the same count when the button is within the budget (stable), else fewer, never more than
+ * the entries within the budget and always at least one fewer than shown (the button needs room too).
+ */
+export function nextFitCount({ entryLines, chevronLine, maxLines }) {
+    const shown = entryLines.length
+    if (chevronLine < maxLines || shown === 0) return shown
+    const inBudget = entryLines.filter((line) => line < maxLines).length
+    return Math.min(shown - 1, inBudget)
+}

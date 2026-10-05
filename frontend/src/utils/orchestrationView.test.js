@@ -4,7 +4,7 @@ import test from 'node:test'
 import {
     agentModelLabel, annotationEntries, annotationValueText, bucketOfProcessState, buildAnnotationTree,
     computeTimeline, countBuckets, cumulativeSeconds, findSubtree, flattenAnnotations, flattenTree, isoMs, parentOf,
-    splitCommonPrefix,
+    lineIndices, nextFitCount, splitCommonPrefix,
 } from './orchestrationView.js'
 
 const tree = {
@@ -286,4 +286,30 @@ test('cumulativeSeconds is null when no node qualifies', () => {
     assert.equal(cumulativeSeconds([], T(1)), null)
     assert.equal(cumulativeSeconds([{ id: 'a', start: null, end: null, working: false }], T(1)), null)
     assert.equal(cumulativeSeconds([{ id: 'a', start: T(0), end: T(1), working: false }], T(1), 'a'), null)
+})
+
+// ── annotation tag lines ────────────────────────────────────────────────────
+test('lineIndices numbers lines from the first top; a new line starts when the top grows', () => {
+    assert.deepEqual(lineIndices([]), [])
+    assert.deepEqual(lineIndices([4, 4, 4]), [0, 0, 0])
+    assert.deepEqual(lineIndices([4, 4, 28, 28, 28, 52]), [0, 0, 1, 1, 1, 2])
+})
+
+test('nextFitCount keeps the count when the chevron is within the line budget', () => {
+    assert.equal(nextFitCount({ entryLines: [0, 0, 1], chevronLine: 1, maxLines: 3 }), 3)
+    assert.equal(nextFitCount({ entryLines: [], chevronLine: 0, maxLines: 3 }), 0)
+    assert.equal(nextFitCount({ entryLines: [0, 1, 2], chevronLine: 2, maxLines: 3 }), 3)
+})
+
+test('nextFitCount drops entries on a line past the budget', () => {
+    // 5 entries, 2 of them on lines 3+: keep 3 (and at least one fewer than shown)
+    assert.equal(nextFitCount({ entryLines: [0, 1, 2, 3, 4], chevronLine: 4, maxLines: 3 }), 3)
+})
+
+test('nextFitCount hides one more entry when only the chevron overflows', () => {
+    assert.equal(nextFitCount({ entryLines: [0, 1, 2], chevronLine: 3, maxLines: 3 }), 2)
+})
+
+test('nextFitCount never goes below zero', () => {
+    assert.equal(nextFitCount({ entryLines: [], chevronLine: 3, maxLines: 3 }), 0)
 })
