@@ -78,11 +78,11 @@
 
 /* A hidden session: same content and colours, a card that reads as discreet. */
 .ocard.is-hidden {
-    opacity: 0.6;
+    opacity: 0.78;
 }
 
 .ocard.is-hidden:hover {
-    opacity: 0.9;
+    opacity: 0.95;
 }
 
 .ocard-head {

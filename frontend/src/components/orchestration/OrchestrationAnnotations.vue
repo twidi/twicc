@@ -114,7 +114,8 @@ watch([entries, prefix], measure)
     display: flex;
     flex-wrap: wrap;
     align-items: flex-start;
-    gap: var(--wa-space-2xs);
+    /* Row gap half the column gap: wrapped tag lines sit closer than tags side by side. */
+    gap: calc(var(--wa-space-2xs) / 2) var(--wa-space-2xs);
 }
 
 .oann-tag {
