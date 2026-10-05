@@ -390,11 +390,11 @@ onUnmounted(() => {
 }
 
 /* Dark: the raised surface vanishes over the dark veil, so the card is a lit brand tint over the
-   opaque page surface (the idiom of the tool cards), with a brand hairline and the level-1 depth. */
+   opaque page surface (the idiom of the tool cards), with a brand hairline and the level-2 depth. */
 .wa-dark .orchestration-panel {
-    --orch-card-bg: color-mix(in oklab, var(--wa-color-brand-60) 14%, var(--surface-solid));
-    --orch-card-border: color-mix(in oklab, var(--wa-color-brand-60) 32%, var(--surface-solid));
-    --orch-card-shadow: var(--depth-1);
+    --orch-card-bg: color-mix(in oklab, var(--wa-color-brand-60) 24%, var(--surface-solid));
+    --orch-card-border: color-mix(in oklab, var(--wa-color-brand-60) 55%, var(--surface-solid));
+    --orch-card-shadow: var(--depth-2);
 }
 
 .orch-frame {
