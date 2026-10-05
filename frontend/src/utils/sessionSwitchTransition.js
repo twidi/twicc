@@ -1,10 +1,6 @@
-// Session switch crossfade (visual refresh retouches): moving from one session to another runs in a
-// document view transition (utils/viewTransition.js, kind `session`), so the old session fades into the new
-// one like the tab panels do (styles/motion.css). Every navigation goes through the router, so the hook
-// lives there: a `beforeResolve` guard holds the navigation until the transition has captured the old state,
-// the transition's update then lets it through and waits for it to land (`afterEach`, or an error).
-// Only a switch from one session to another: a tab change inside a session, a project, the home, a first load
-// and the swap of a draft for its real session (a replace that keeps what is on screen) never animate.
+// Session switches and changes between Home, Sessions, and Artifacts use the same root crossfade.
+// beforeResolve sees the final route after redirects and holds navigation until the old state is captured.
+// The update releases navigation, then waits for afterEach or an error before capturing the new state.
 
 import { runViewTransition } from './viewTransition.js'
 
@@ -14,6 +10,14 @@ export function isSessionSwitch(to, from, isDraft = () => false) {
     const fromId = from?.params?.sessionId
     if (!toId || !fromId || toId === fromId) return false
     return !isDraft(fromId)
+}
+
+function routeMode(route) {
+    const name = route?.name
+    if (name === 'home') return 'home'
+    if (name === 'project-artifacts' || name === 'projects-artifacts') return 'artifacts'
+    if (typeof name === 'string' && /^(project|projects|session)(-|$)/.test(name)) return 'sessions'
+    return null
 }
 
 /** Install the guards on `router`; returns uninstall(). */
@@ -27,7 +31,10 @@ export function installSessionSwitchTransition(router, { isDraft = () => false, 
     }
 
     const removeGuard = router.beforeResolve((to, from) => {
-        if (!isSessionSwitch(to, from, isDraft)) return
+        const toMode = routeMode(to)
+        const fromMode = routeMode(from)
+        if (!toMode || !fromMode) return
+        if (toMode === fromMode && !isSessionSwitch(to, from, isDraft)) return
         settle()
         return new Promise((resolve) => {
             run(() => new Promise((done) => {

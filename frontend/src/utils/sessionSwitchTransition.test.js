@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createMemoryHistory, createRouter, isNavigationFailure } from 'vue-router'
 import { installSessionSwitchTransition, isSessionSwitch } from './sessionSwitchTransition.js'
 
 const route = (sessionId, name = 'session') => ({ name, params: sessionId ? { projectId: 'p', sessionId } : { projectId: 'p' } })
@@ -84,4 +85,166 @@ test('8. uninstall removes the three guards', () => {
     const uninstall = installSessionSwitchTransition(router, { run: () => {} })
     uninstall()
     assert.deepEqual([router.guards.resolve.length, router.guards.after.length, router.guards.error.length], [0, 0, 0])
+})
+
+// These cases catch missing mode transitions and accidental animation of pane changes.
+for (const [fromName, toName] of [
+    ['home', 'project'],
+    ['project', 'home'],
+    ['home', 'projects-artifacts'],
+    ['projects-artifacts', 'home'],
+    ['session-artifacts', 'project-artifacts'],
+    ['project-artifacts', 'session-artifacts'],
+]) {
+    test(`mode change ${fromName} → ${toName} holds navigation for one root fade`, async () => {
+        const router = fakeRouter()
+        const calls = []
+        let release
+        installSessionSwitchTransition(router, { run: (update, options) => { calls.push(options); release = update } })
+        let passed = false
+        const guarded = router.guards.resolve[0](route(null, toName), route(null, fromName))
+        assert.ok(guarded instanceof Promise)
+        guarded.then(() => { passed = true })
+        await Promise.resolve()
+        assert.equal(passed, false)
+        assert.deepEqual(calls, [{ kind: 'session', settle: true, updateTimeoutMs: 800 }])
+        const update = release()
+        await guarded
+        router.guards.after[0]()
+        await update
+    })
+}
+
+for (const name of [
+    'project', 'project-files', 'project-git', 'project-terminal',
+    'projects-all', 'projects-files', 'projects-git', 'projects-terminal',
+    'session', 'session-subagent', 'session-files', 'session-artifacts', 'session-git',
+    'session-terminal', 'session-orchestration', 'session-plan', 'session-tasks',
+    'session-workflows', 'session-browser',
+    'projects-session', 'projects-session-subagent', 'projects-session-files', 'projects-session-artifacts',
+    'projects-session-git', 'projects-session-terminal', 'projects-session-orchestration',
+    'projects-session-plan', 'projects-session-tasks', 'projects-session-workflows', 'projects-session-browser',
+]) {
+    test(`${name} belongs to Sessions mode, including in-session artifact panes`, async () => {
+        const router = fakeRouter()
+        let starts = 0
+        installSessionSwitchTransition(router, { run: (update) => { starts++; update() } })
+        await router.guards.resolve[0](route(null, name), route(null, 'home'))
+        assert.equal(starts, 1)
+        router.guards.after[0]()
+        assert.equal(router.guards.resolve[0](route(null, name), route(null, 'projects-all')), undefined)
+        assert.equal(starts, 1)
+    })
+}
+
+test('same-mode artifact selection, login, first load, and no-op navigation run no transition', () => {
+    const router = fakeRouter()
+    let starts = 0
+    installSessionSwitchTransition(router, { run: () => { starts++ } })
+    const cases = [
+        [route(null, 'project-artifacts'), route(null, 'projects-artifacts')],
+        [{ ...route(null, 'project-artifacts'), params: { projectId: 'p', bookmarkId: 'b' } },
+            { ...route(null, 'project-artifacts'), params: { projectId: 'p', bookmarkId: 'a' } }],
+        [route(null, 'home'), route(null, 'home')],
+        [route(null, 'home'), route(null, 'login')],
+        [route(null, 'login'), route(null, 'session')],
+        [route(null, 'project-artifacts'), { name: undefined, params: {} }],
+    ]
+    for (const [to, from] of cases) assert.equal(router.guards.resolve[0](to, from), undefined)
+    assert.equal(starts, 0)
+})
+
+for (const event of ['after', 'error']) {
+    test(`mode navigation ${event} releases its pending update`, async () => {
+        const router = fakeRouter()
+        let release
+        installSessionSwitchTransition(router, { run: (update) => { release = update } })
+        const guarded = router.guards.resolve[0](route(null, 'home'), route(null, 'project-artifacts'))
+        assert.ok(guarded instanceof Promise)
+        const update = release()
+        await guarded
+        router.guards[event][0](new Error('navigation failed'))
+        await update
+    })
+}
+
+function memoryRouter() {
+    const component = { render: () => null }
+    return createRouter({
+        history: createMemoryHistory(),
+        routes: [
+            { path: '/', name: 'home', component },
+            { path: '/projects', name: 'projects-all', component },
+            { path: '/projects/artifacts/:bookmarkId?', name: 'projects-artifacts', component },
+            { path: '/projects/session/:sessionId', name: 'projects-session', component },
+        ],
+    })
+}
+
+test('redirected entries use the final mode; push, replace, and history use one transition owner', async () => {
+    const router = memoryRouter()
+    let destination = 'projects-artifacts'
+    router.beforeEach((to) => {
+        if (to.name === 'projects-all') return { name: destination, params: destination === 'projects-session' ? { sessionId: 'a' } : {} }
+    })
+    const updates = []
+    installSessionSwitchTransition(router, { run: (update) => { updates.push(update()) } })
+    await router.push('/')
+    assert.equal(updates.length, 0, 'first load has no transition')
+    await router.push('/projects')
+    await updates[0]
+    assert.equal(router.currentRoute.value.name, 'projects-artifacts')
+    assert.equal(updates.length, 1, 'redirect to Artifacts starts once')
+    await router.push('/projects/artifacts/bookmark')
+    assert.equal(updates.length, 1, 'selecting an artifact stays in Artifacts mode')
+    destination = 'projects-session'
+    await router.replace('/projects')
+    await updates[1]
+    assert.equal(router.currentRoute.value.name, 'projects-session')
+    assert.equal(updates.length, 2, 'redirect from Artifacts to Sessions starts once')
+    const landed = new Promise((resolve) => {
+        const remove = router.afterEach(() => { remove(); resolve() })
+    })
+    router.back()
+    await landed
+    await updates[2]
+    assert.equal(router.currentRoute.value.name, 'projects-artifacts')
+    assert.equal(updates.length, 3, 'history starts the same transition')
+    await router.push('/projects/artifacts')
+    assert.equal(updates.length, 3, 'a no-op route starts no transition')
+})
+
+test('aborted and throwing mode navigation release updates and permit later navigation', async () => {
+    const router = memoryRouter()
+    const updates = []
+    installSessionSwitchTransition(router, { run: (update) => { updates.push(update()) } })
+    let failure = null
+    router.beforeResolve(() => {
+        if (failure === 'abort') return false
+        if (failure === 'error') throw new Error('mode navigation failed')
+    })
+    router.onError(() => {})
+    await router.push('/')
+    failure = 'abort'
+    assert.equal(isNavigationFailure(await router.push('/projects')), true)
+    await updates[0]
+    assert.equal(router.currentRoute.value.name, 'home')
+    failure = 'error'
+    await assert.rejects(router.push('/projects'), /mode navigation failed/)
+    await updates[1]
+    assert.equal(router.currentRoute.value.name, 'home')
+    failure = null
+    await router.push('/projects')
+    await updates[2]
+    assert.equal(router.currentRoute.value.name, 'projects-all')
+    assert.equal(updates.length, 3)
+})
+
+test('mode navigation without the browser API uses the real immediate fallback', async () => {
+    const router = fakeRouter()
+    installSessionSwitchTransition(router)
+    const guarded = router.guards.resolve[0](route(null, 'home'), route(null, 'project-artifacts'))
+    assert.ok(guarded instanceof Promise)
+    await guarded
+    router.guards.after[0]()
 })
