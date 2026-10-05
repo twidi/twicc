@@ -16,6 +16,7 @@ from twicc.core.agent_runs import agent_run_states, serialize_runs
 from twicc.core.models import AgentInteractionKind, SessionItem, Share
 from twicc.core.services.share_tokens import mint_token
 from twicc.core.session_queries import build_subagents_state, serialize_agent_links
+from twicc.providers.helpers import get_provider_helpers
 from twicc.share.display import visible_call_lines
 from tests import test_agent_run_states, test_subagents_tree_endpoint
 from tests.test_agent_run_states import (
@@ -275,3 +276,26 @@ def test_owner_api_lists_every_interaction(tree):
 
     row = next(row for row in response.json() if row["agent_id"] == child_session.id)
     assert [entry["tool_use_id"] for entry in row["interactions"]] == ["tu-debug"]
+
+
+# --- Subagent model ----------------------------------------------------------
+
+
+def test_entry_carries_the_agents_model(root):
+    subagent = child(root, "a1")
+    subagent.model = "claude-opus-4-5-20251101"
+    subagent.save(update_fields=["model"])
+    link(root, "a1", "tu-spawn", line=1, started_at=t(0))
+    expected = get_provider_helpers("claude_code").serialize_model("claude-opus-4-5-20251101")
+
+    assert expected["family"] == "opus"
+    # A plain field: present with and without the owner-only metrics.
+    assert entries(root)["a1"]["model"] == expected
+    assert entries(root, include_metrics=True)["a1"]["model"] == expected
+
+
+def test_entry_model_is_none_when_the_agent_has_no_model(root):
+    child(root, "a1")
+    link(root, "a1", "tu-spawn", line=1, started_at=t(0))
+
+    assert entries(root)["a1"]["model"] is None

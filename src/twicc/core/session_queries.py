@@ -319,6 +319,7 @@ def serialize_agent_links(
     """
     from twicc.core.agent_runs import UNKNOWN_STATE, serialize_runs
     from twicc.core.models import Session
+    from twicc.providers.helpers import get_provider_helpers
 
     links = list(links)
     run_states = run_states or {}
@@ -327,12 +328,14 @@ def serialize_agent_links(
     subagents = {
         row[0]: row[1:]
         for row in Session.objects.filter(id__in=[link.agent_id for link in links])
-        .values_list("id", "slug", "last_stopped_at", "total_cost", "user_message_count", "context_usage")
+        .values_list(
+            "id", "slug", "last_stopped_at", "total_cost", "user_message_count", "context_usage", "model", "provider",
+        )
     }
     result = []
     for link in links:
-        slug, agent_stopped, total_cost, turns, context_usage = subagents.get(
-            link.agent_id, (None, None, None, 0, None)
+        slug, agent_stopped, total_cost, turns, context_usage, model, provider = subagents.get(
+            link.agent_id, (None, None, None, 0, None, None, None)
         )
         state = run_states.get(link.agent_id, UNKNOWN_STATE)
         metrics = {} if not include_metrics else {
@@ -344,6 +347,9 @@ def serialize_agent_links(
             **metrics,
             "agent_id": link.agent_id,
             "agent_slug": slug,
+            # The agent's last used model, as the session header shows it. A plain
+            # field (not an owner-only metric): the Orchestration tab displays it.
+            "model": get_provider_helpers(provider).serialize_model(model) if model and provider else None,
             # What the launcher called this agent. Not sensitive — the spawn
             # card already shows it — so a share carries it too.
             "display_name": display_names.get((link.session_id, link.tool_use_id)),
