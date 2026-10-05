@@ -108,6 +108,34 @@ export function computeTimeline(items, now) {
 }
 
 /**
+ * Bar geometry of a whole tree, each node relative to the span of its DIRECT parent.
+ *
+ * ``root``: ``{ id, children }`` (recursive); ``itemsById``: a Map or plain object id -> item (same shape as
+ * the ``items`` of ``computeTimeline``). The root is relative to itself (full track). The children of a node
+ * share ``computeTimeline([node, ...children])``: the parent's span, extended only if a child falls outside it.
+ * An id with no item (or no start) gets no entry; a node without item still ranges its children.
+ * Returns a plain object id -> ``{ left, width, live }``.
+ */
+export function computeTreeGeometry(root, itemsById, now) {
+    const lookup = itemsById instanceof Map ? id => itemsById.get(id) : id => itemsById?.[id]
+    const geometry = {}
+    const itemsOf = nodes => nodes.map(n => lookup(n.id)).filter(Boolean)
+    const rootItem = lookup(root.id)
+    if (rootItem) Object.assign(geometry, computeTimeline([rootItem], now).geometry)
+    const visit = (node) => {
+        const children = node.children ?? []
+        if (!children.length) return
+        const { geometry: local } = computeTimeline(itemsOf([node, ...children]), now)
+        for (const child of children) {
+            if (local[child.id]) geometry[child.id] = local[child.id]
+            visit(child)
+        }
+    }
+    visit(root)
+    return geometry
+}
+
+/**
  * Sum, in seconds, of the durations of the nodes of ``items`` (same shape as ``computeTimeline``), except
  * ``excludeId``. A node's duration follows the bars: nothing without a start; a working node ends at
  * ``rangeEnd``; otherwise it ends at its end, raised to its start. Overlaps are simply summed.

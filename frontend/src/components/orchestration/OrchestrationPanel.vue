@@ -12,7 +12,7 @@
 // node of the payload is live (any process state other than ``dead``); the tab also force-fetches once on
 // every (re)activation. Polling is a stop-gap until the tree is pushed over the WebSocket.
 //
-// The time bars share one range computed here (``computeTimeline``); ``now`` is refreshed on each load and
+// Each time bar is relative to its direct parent's span (``computeTreeGeometry``); ``now`` is refreshed on each load and
 // by a 30s timer that runs only while the tab is active and a displayed node is working.
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
@@ -25,7 +25,7 @@ import { useDataStore } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
 import { agentForestCost } from '../../utils/agentTreeMetrics'
 import {
-    bucketOfProcessState, computeTimeline, cumulativeSeconds, countBuckets, findSubtree, flattenTree, isoMs, parentOf,
+    bucketOfProcessState, computeTimeline, computeTreeGeometry, cumulativeSeconds, countBuckets, findSubtree, flattenTree, isoMs, parentOf,
 } from '../../utils/orchestrationView'
 import { sessionRouteLocation } from '../../utils/sessionRoute'
 
@@ -117,8 +117,8 @@ const agentIsRunning = (id) => !!store.getProcessState(id)
 const agentCounts = computed(() => countBuckets(agentNodes.value.map(n => (agentIsRunning(n.id) ? 'working' : 'stopped'))))
 const agentTotalCost = computed(() => agentForestCost(store, agentTree.value))
 
-// ── Time bars: one range per view, over every displayed node ────────────────
-// The current session's own span anchors the range in BOTH views: it is the first card of the sessions
+// ── Time bars: each node relative to its direct parent ──────────────────────
+// The current session's own span anchors the first level in BOTH views: it is the first card of the sessions
 // view, and an extra item (no card) of the subagents view. ``null`` while its row is not loaded.
 const currentSessionItem = computed(() => {
     const row = store.getSession(props.sessionId)
@@ -150,14 +150,25 @@ const timelineItems = computed(() => {
         }
     })
 })
-const timeline = computed(() => computeTimeline(timelineItems.value, now.value))
+// The global range only serves the cumulative-time tile (``rangeEnd``); the bars use ``timeline`` below.
+const globalTimeline = computed(() => computeTimeline(timelineItems.value, now.value))
+// Bar geometry: root = the re-rooted subtree (sessions view) or a virtual node standing for the current
+// session (subagents view; with no item while its row is not loaded, the first level then ranges itself).
+const timeline = computed(() => {
+    const root = view.value === 'agents'
+        ? { id: props.sessionId, children: agentTree.value }
+        : subtree.value
+    if (!root) return { geometry: {} }
+    const itemsById = Object.fromEntries(timelineItems.value.map(item => [item.id, item]))
+    return { geometry: computeTreeGeometry(root, itemsById, now.value) }
+})
 const hasWorkingNode = computed(() => timelineItems.value.some(item => item.working))
 
 // The header's tiles. ``null`` while there is nothing to summarise (loading, error, no data).
 const summary = computed(() => {
     // Every node below the current session: the current session (first card, or the extra item of the
     // subagents view) is never counted.
-    const cumulative = cumulativeSeconds(timelineItems.value, timeline.value.range?.end, props.sessionId)
+    const cumulative = cumulativeSeconds(timelineItems.value, globalTimeline.value.range?.end, props.sessionId)
     if (view.value === 'agents') {
         return { kind: 'agents', counts: agentCounts.value, cost: agentTotalCost.value, cumulativeSeconds: cumulative }
     }

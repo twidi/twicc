@@ -3,7 +3,7 @@ import test from 'node:test'
 
 import {
     agentModelLabel, annotationEntries, annotationValueText, bucketOfProcessState, buildAnnotationTree,
-    computeTimeline, countBuckets, cumulativeSeconds, findSubtree, flattenAnnotations, flattenTree, isoMs, parentOf,
+    computeTimeline, computeTreeGeometry, countBuckets, cumulativeSeconds, findSubtree, flattenAnnotations, flattenTree, isoMs, parentOf,
     lineIndices, nextFitCount, splitCommonPrefix,
 } from './orchestrationView.js'
 
@@ -312,4 +312,126 @@ test('nextFitCount hides one more entry when only the chevron overflows', () => 
 
 test('nextFitCount never goes below zero', () => {
     assert.equal(nextFitCount({ entryLines: [], chevronLine: 3, maxLines: 3 }), 0)
+})
+
+// ── computeTreeGeometry: each node relative to its direct parent ────────────
+const H = 3600 * 1000
+const node = (id, ...children) => ({ id, children })
+const item = (id, startH, endH, working = false) => ({
+    id, start: startH == null ? null : startH * H, end: endH == null ? null : endH * H, working,
+})
+const byId = (...items) => Object.fromEntries(items.map(i => [i.id, i]))
+const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-6, `${actual} !~ ${expected}`)
+
+test('tree geometry: each level is relative to its direct parent, not to the first level', () => {
+    const geometry = computeTreeGeometry(
+        node('p', node('c', node('g'))),
+        byId(item('p', 1, 7), item('c', 2, 6), item('g', 3, 4)),
+        8 * H,
+    )
+    near(geometry.p.left, 0)
+    near(geometry.p.width, 100)
+    near(geometry.c.left, 100 / 6)
+    near(geometry.c.width, 400 / 6)
+    near(geometry.g.left, 25)
+    near(geometry.g.width, 25)
+})
+
+test('tree geometry: a stopped root alone fills the track', () => {
+    const geometry = computeTreeGeometry(node('r'), byId(item('r', 1, 3)), 10 * H)
+    assert.deepEqual(geometry.r, { left: 0, width: 100, live: false })
+})
+
+test('tree geometry: a working parent spans start to now for its children', () => {
+    const geometry = computeTreeGeometry(
+        node('p', node('c')),
+        byId(item('p', 0, null, true), item('c', 2, 3)),
+        4 * H,
+    )
+    assert.deepEqual(geometry.p, { left: 0, width: 100, live: true })
+    near(geometry.c.left, 50)
+    near(geometry.c.width, 25)
+})
+
+test('tree geometry: a child starting before its parent extends the range and stays inside the track', () => {
+    const geometry = computeTreeGeometry(
+        node('p', node('c')),
+        byId(item('p', 2, 4), item('c', 1, 3)),
+        10 * H,
+    )
+    near(geometry.c.left, 0)
+    near(geometry.c.width, (2 / 3) * 100)
+    for (const id of ['p', 'c']) assert.ok(geometry[id].left + geometry[id].width <= 100 + 1e-9)
+})
+
+test('tree geometry: a node with no start has no entry', () => {
+    const geometry = computeTreeGeometry(
+        node('p', node('c'), node('d')),
+        byId(item('p', 0, 4), item('c', null, null), item('d', 1, 2)),
+        10 * H,
+    )
+    assert.equal('c' in geometry, false)
+    near(geometry.d.left, 25)
+})
+
+test('tree geometry: a missing item is skipped, its children still get a range from themselves', () => {
+    const geometry = computeTreeGeometry(
+        node('p', node('c', node('g1'), node('g2'))),
+        byId(item('p', 0, 4), item('g1', 1, 2), item('g2', 3, 5)),
+        10 * H,
+    )
+    assert.equal('c' in geometry, false)
+    near(geometry.g1.left, 0)
+    near(geometry.g1.width, 25)
+    near(geometry.g2.left, 50)
+    near(geometry.g2.width, 50)
+})
+
+test('tree geometry: the virtual root of the subagents view anchors the first-level agents', () => {
+    const geometry = computeTreeGeometry(
+        node('session', node('a1', node('a2')), node('b1')),
+        byId(item('session', 0, 10), item('a1', 2, 6), item('a2', 3, 4), item('b1', 5, 10)),
+        20 * H,
+    )
+    near(geometry.a1.left, 20)
+    near(geometry.a1.width, 40)
+    near(geometry.b1.left, 50)
+    near(geometry.a2.left, 25)
+    near(geometry.a2.width, 25)
+})
+
+test('tree geometry: a virtual root without item gives the first level a sibling-only range', () => {
+    const geometry = computeTreeGeometry(
+        node('session', node('a'), node('b')),
+        byId(item('a', 0, 2), item('b', 2, 4)),
+        20 * H,
+    )
+    assert.equal('session' in geometry, false)
+    near(geometry.a.left, 0)
+    near(geometry.a.width, 50)
+    near(geometry.b.left, 50)
+})
+
+test('tree geometry: siblings share the range of their parent', () => {
+    const geometry = computeTreeGeometry(
+        node('p', node('a'), node('b')),
+        byId(item('p', 0, 8), item('a', 0, 2), item('b', 4, 8)),
+        20 * H,
+    )
+    near(geometry.a.left, 0)
+    near(geometry.a.width, 25)
+    near(geometry.b.left, 50)
+    near(geometry.b.width, 50)
+})
+
+test('tree geometry: a deep chain narrows level by level', () => {
+    const geometry = computeTreeGeometry(
+        node('l0', node('l1', node('l2', node('l3')))),
+        byId(item('l0', 0, 8), item('l1', 0, 4), item('l2', 0, 2), item('l3', 1, 2)),
+        20 * H,
+    )
+    near(geometry.l1.width, 50)
+    near(geometry.l2.width, 50)
+    near(geometry.l3.left, 50)
+    near(geometry.l3.width, 50)
 })
