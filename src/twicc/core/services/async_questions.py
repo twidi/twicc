@@ -34,7 +34,6 @@ def _session(session_id: str, *, mutation: bool = False) -> Session | None:
             "type",
             "parent_session_id",
             "question_widget",
-            "last_line",
         )
         .first()
     )
@@ -118,7 +117,8 @@ def prepare_question_send(
     boundary = build_question_boundary(
         current,
         at=at,
-        line=session.last_line or None,
+        # The ingestion cursor does not identify the source submission item.
+        line=None,
         batch_ids=response["batch_ids"] if response is not None else None,
     )
     submission = {

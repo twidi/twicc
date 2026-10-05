@@ -203,6 +203,43 @@ def test_question_after_boundary_remains_ready(session):
     assert snapshot["batches"][0]["status"] == "ready"
 
 
+def test_watcher_lag_does_not_replace_live_submission_boundary(session):
+    session.last_line = 100
+    session.save(update_fields=["last_line"])
+    service.merge_question_facts(session.id, [end()])
+    prepared = prepare(session)
+    service.accept_question_send(session.id, prepared.submission)
+    snapshot = service.merge_question_facts(
+        session.id,
+        [
+            question(line=110),
+            end(line=120),
+            question("q2", "t2", second=5, line=130),
+            end("t2", second=6, line=140),
+        ],
+    )
+    assert snapshot["resolutions"].get("q1") == {"status": "sent", "request_id": "send-1"}
+    assert [batch["item_id"] for batch in snapshot["batches"]] == ["q2"]
+    assert prepared.submission["boundary"]["line"] is None
+    assert prepared.submission["boundary"]["at"] == at(4)
+    source = QuestionFact(
+        "user:u1",
+        "user_submission",
+        at(7),
+        "t3",
+        "u1",
+        150,
+        {
+            "source": "jsonl",
+            "origin": "human",
+            "client_message_id": "send-1",
+        },
+    )
+    enriched = service.merge_question_facts(session.id, [source])
+    assert [batch["item_id"] for batch in enriched["batches"]] == ["q2"]
+    assert state(session)["facts"]["send:send-1"]["data"]["boundary"] == prepared.submission["boundary"]
+
+
 @pytest.mark.parametrize("same_turn", [False, True])
 def test_new_ready_batch_absent_from_response_remains(session, same_turn):
     first = service.merge_question_facts(session.id, [question(), end()])
