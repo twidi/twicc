@@ -607,3 +607,32 @@ def test_mixed_sdk_and_rollout_batches_have_deterministic_source_order(arrival):
     facts = [question("q1", second=8, line=10), question("q2", second=4), question("q3", second=2, line=12)]
     state = reduce_question_state({}, [facts[index] for index in arrival])
     assert list(state["batches"]) == ["q2", "q1", "q3"]
+
+
+@pytest.mark.parametrize("outcome", ["interrupted", "failed"])
+@pytest.mark.parametrize("arrival", list(permutations(range(5))))
+def test_successor_without_terminal_completion_preserves_control_return_boundary(outcome, arrival):
+    facts = [
+        question()._replace(
+            line=1, data={"source": "jsonl", "questions": [{"index": 0, "title": "First?", "options": []}]}
+        ),
+        end(line=2, continuation_turn_id="t2"),
+        question("q2", "t2", 4, 4)._replace(
+            data={"source": "jsonl", "questions": [{"index": 0, "title": "Second?", "options": []}]}
+        ),
+        QuestionFact(
+            "user:u1",
+            "user_submission",
+            at(5),
+            "t2",
+            "u1",
+            5,
+            {"source": "jsonl", "origin": "human", "status": "accepted"},
+        ),
+        control_return(turn_ids=["t1", "t2"], second=6, outcome=outcome)._replace(turn_id="t2", line=6),
+    ]
+    state = {}
+    for index in arrival:
+        state = reduce_question_state(state, [facts[index]])
+    assert state["batches"]["q1"]["status"] == "ready"
+    assert state["batches"]["q2"]["status"] == "ready"

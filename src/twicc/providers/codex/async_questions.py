@@ -293,8 +293,10 @@ def _ready_boundaries(facts: list[dict], groups: dict, names: dict) -> dict:
         if group is None:
             continue
         linked_ends = [ended for turn, ended in ends.items() if groups.get(turn) == group]
-        # Runtime delivery delay must not move source completion after a human reply.
-        boundary = _ordered(linked_ends)[-1] if linked_ends else fact
+        terminal_completion = all(turn in ends for turn, member_group in groups.items() if member_group == group)
+        # Only terminal source completion can replace runtime return chronology.
+        # An interrupted/failed successor can return control without completing.
+        boundary = _ordered(linked_ends)[-1] if linked_ends and terminal_completion else fact
         if group not in ready or _compare(boundary, ready[group]) < 0:
             ready[group] = boundary
     members = {}
