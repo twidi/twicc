@@ -13,9 +13,38 @@ Automated acceptance does not approve release. Task 15 remains a mandatory manua
 - Tests use `twicc.settings_test` and the test database. No running-instance migration or restart occurs.
 - The inherited `VIRTUAL_ENV` mismatch warning is expected. No command uses `--active` or `uv pip`.
 - No plugin version, plugin skill, changelog, frontend, CLI command, RPC route, or MCP tool change occurs.
-- One migration, `0150_mcp_event_subscriptions.py`, adds the subscription model and `Session.history_epoch`.
+- One migration, `0151_mcp_event_subscriptions.py`, adds the subscription model and `Session.history_epoch`.
 - `_SessionWait` remains unchanged. Event registration applies only to `_external_server`.
 - The only dependency addition is the previously authorized `standardwebhooks>=1.1.0`.
+
+## Rebase validation — 2026-10-05
+
+The feature is not present in local `main` before this rebase.
+All 18 feature commits replay onto `main` at `92e0633cf88144fe2576fbf44d099cee8d0bd62c` without textual conflicts.
+The backup ref is `backup/mcp-events-before-main-rebase-2026-10-05`.
+
+Both branches originally use migration number 0150. The event migration becomes
+`0151_mcp_event_subscriptions`, with `0150_session_automatic_titles` as its dependency.
+The migration regression checks the single core leaf, the dependency, existing title state,
+and the zero history epoch. The worktree database has no migration history to reconcile.
+No running-instance migration or server restart occurs.
+
+The rebase also duplicates the explicit provider-settings fixture in `test_wait_reply.py`.
+The duplicate is removed; the main fixture remains. Main's `--from-line` CLI spelling,
+automatic-title state, title hooks, and provider helper changes remain present.
+
+Fresh checks after the rebase:
+
+| Command | Result |
+|---|---|
+| `TWICC_DATA_DIR=$PWD uv run python -m django makemigrations --check --dry-run --settings=twicc.settings_test` | No changes detected. |
+| `TWICC_DATA_DIR=$PWD uv run pytest -q tests/test_mcp*.py tests/test_title*.py tests/test_wait_reply.py tests/test_wait_background.py tests/test_wait_default_cursor.py tests/test_cli_session_wait.py tests/test_cli_sessions_wait_reply.py tests/test_send_messages_wait.py tests/test_codex_rollout_migration.py tests/test_codex_hardcoded_commands.py tests/test_history_facts.py tests/test_codex_recompute_persistence.py tests/test_watcher_source_identity.py tests/test_watcher_catch_up.py tests/test_live_sync_slices.py tests/test_sqlite_migration_integration.py --tb=short` | **1498 passed**. |
+| `TWICC_DATA_DIR=$PWD uv run pytest -q tests/test_mcp_events_storage.py tests/test_title_state.py tests/test_sqlite_migration_integration.py --tb=short` | **28 passed**, including the strengthened migration regression. |
+| `uvx ruff check <existing Python paths changed from main>` | All checks passed. |
+| `git diff --check` | Passed. |
+| `git merge-base --is-ancestor main HEAD` | Passed. |
+
+Task 15 remains pending. This rebase does not approve the manual release gate.
 
 ## Acceptance audit findings
 

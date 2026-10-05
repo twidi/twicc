@@ -75,21 +75,31 @@ def test_owner_snapshot_does_not_expose_subscription_secrets(subscription):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_migration_sets_existing_session_epoch_zero():
+def test_migration_preserves_title_state_and_sets_existing_session_epoch_zero():
     executor = MigrationExecutor(connection)
-    target = [("core", "0150_mcp_event_subscriptions")]
+    target = [("core", "0151_mcp_event_subscriptions")]
+    assert executor.loader.graph.leaf_nodes("core") == target
     previous = executor.loader.graph.node_map[target[0]].parents
+    assert {node.key for node in previous} == {("core", "0150_session_automatic_titles")}
     source = [node.key for node in previous]
     try:
         executor.migrate(source)
         old_session = executor.loader.project_state(source).apps.get_model("core", "Session")
         old_project = executor.loader.project_state(source).apps.get_model("core", "Project")
         project = old_project.objects.create(id="pre-events-project", directory="/tmp/events")
-        old_session.objects.create(id="pre-events-session", project_id=project.pk)
+        checked_at = timezone.now()
+        old_session.objects.create(
+            id="pre-events-session", project_id=project.pk, title="Existing title",
+            title_origin="auto", title_check_count=7, title_checked_at=checked_at,
+        )
         executor = MigrationExecutor(connection)
         executor.migrate(target)
         migrated_session = executor.loader.project_state(target).apps.get_model("core", "Session")
-        assert migrated_session.objects.get(pk="pre-events-session").history_epoch == 0
+        session = migrated_session.objects.get(pk="pre-events-session")
+        assert session.history_epoch == 0
+        assert (session.title, session.title_origin, session.title_check_count, session.title_checked_at) == (
+            "Existing title", "auto", 7, checked_at,
+        )
         assert executor.loader.detect_conflicts() == {}
     finally:
         executor = MigrationExecutor(connection)

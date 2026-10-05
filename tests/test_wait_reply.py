@@ -1521,12 +1521,6 @@ def test_create_session_hands_its_wait_arguments_over(monkeypatch, tmp_path, arg
     from twicc.cli._drop_request import bootstrap_local
     from twicc.cli._drop_request.polling import PollOutcome
 
-    from twicc.cli._drop_request import bootstrap_local
-
-    monkeypatch.setattr(bootstrap_local, "read_synced_settings", lambda: {
-        "disabledProviders": [], "defaultProvider": "claude_code",
-    })
-
     seen: dict = {}
 
     def _probe(session_id, *, since_line_num, timeout, want_text, wait_background=False):

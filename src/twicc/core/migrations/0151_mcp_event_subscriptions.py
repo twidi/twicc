@@ -8,7 +8,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0148_live_contribution_indexes_squashed_0149_remove_redundant_message_index'),
+        ('core', '0150_session_automatic_titles'),
     ]
 
     operations = [
