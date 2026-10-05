@@ -1454,6 +1454,14 @@ function onChangelogClose() {
                                 size="small"
                             ></wa-slider>
                         </div>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Keep the icon bar visible when the sidebar is closed</label>
+                            <wa-switch
+                                :checked="sidebarRailVisibleWhenClosed"
+                                @change="onSidebarRailVisibleWhenClosedChange"
+                                size="small"
+                            >Enabled</wa-switch>
+                        </div>
                         <wa-divider></wa-divider>
                         <div class="setting-group">
                             <label class="setting-group-label">Time display</label>
@@ -1853,14 +1861,6 @@ function onChangelogClose() {
                             <wa-switch
                                 :checked="compactSessionList"
                                 @change="onCompactSessionListChange"
-                                size="small"
-                            >Enabled</wa-switch>
-                        </div>
-                        <div class="setting-group">
-                            <label class="setting-group-label">Keep the icon bar visible when the sidebar is closed</label>
-                            <wa-switch
-                                :checked="sidebarRailVisibleWhenClosed"
-                                @change="onSidebarRailVisibleWhenClosedChange"
                                 size="small"
                             >Enabled</wa-switch>
                         </div>
