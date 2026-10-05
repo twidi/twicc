@@ -118,14 +118,29 @@ const agentCounts = computed(() => countBuckets(agentNodes.value.map(n => (agent
 const agentTotalCost = computed(() => agentForestCost(store, agentTree.value))
 
 // ── Time bars: one range per view, over every displayed node ────────────────
-const timelineItems = computed(() => (view.value === 'agents'
-    ? agentNodes.value.map(n => ({
-        id: n.id,
-        start: isoMs(n.entry?.startedAt),
-        end: isoMs(n.entry?.stoppedAt ?? n.entry?.agentStoppedAt),
-        working: agentIsRunning(n.id),
-    }))
-    : sessionNodes.value.map(n => {
+// The current session's own span anchors the range in BOTH views: it is the first card of the sessions
+// view, and an extra item (no card) of the subagents view. ``null`` while its row is not loaded.
+const currentSessionItem = computed(() => {
+    const row = store.getSession(props.sessionId)
+    if (!row) return null
+    return {
+        id: props.sessionId,
+        start: isoMs(row.created_at),
+        end: isoMs(row.last_new_content_at),
+        working: bucketOfProcessState(store.getProcessState(props.sessionId)?.state ?? 'dead') === 'working',
+    }
+})
+const timelineItems = computed(() => {
+    if (view.value === 'agents') {
+        const items = agentNodes.value.map(n => ({
+            id: n.id,
+            start: isoMs(n.entry?.startedAt),
+            end: isoMs(n.entry?.stoppedAt ?? n.entry?.agentStoppedAt),
+            working: agentIsRunning(n.id),
+        }))
+        return currentSessionItem.value ? [currentSessionItem.value, ...items] : items
+    }
+    return sessionNodes.value.map(n => {
         const node = nodesById.value[n.id]
         return {
             id: n.id,
@@ -133,24 +148,21 @@ const timelineItems = computed(() => (view.value === 'agents'
             end: isoMs(node?.session?.last_new_content_at),
             working: stateBucketOf(n.id) === 'working',
         }
-    })))
+    })
+})
 const timeline = computed(() => computeTimeline(timelineItems.value, now.value))
 const hasWorkingNode = computed(() => timelineItems.value.some(item => item.working))
 
 // The header's tiles. ``null`` while there is nothing to summarise (loading, error, no data).
 const summary = computed(() => {
-    const spanSeconds = timeline.value.range?.spanSeconds ?? null
-    // Every node below the current session: every subagent, or every session but the current one.
-    const cumulative = cumulativeSeconds(
-        timelineItems.value,
-        timeline.value.range?.end,
-        view.value === 'agents' ? null : props.sessionId,
-    )
+    // Every node below the current session: the current session (first card, or the extra item of the
+    // subagents view) is never counted.
+    const cumulative = cumulativeSeconds(timelineItems.value, timeline.value.range?.end, props.sessionId)
     if (view.value === 'agents') {
-        return { kind: 'agents', counts: agentCounts.value, cost: agentTotalCost.value, spanSeconds, cumulativeSeconds: cumulative }
+        return { kind: 'agents', counts: agentCounts.value, cost: agentTotalCost.value, cumulativeSeconds: cumulative }
     }
     if (!subtree.value) return null
-    return { kind: 'sessions', counts: sessionCounts.value, cost: sessionsCost.value, spanSeconds, cumulativeSeconds: cumulative }
+    return { kind: 'sessions', counts: sessionCounts.value, cost: sessionsCost.value, cumulativeSeconds: cumulative }
 })
 
 // Auto-refresh gate: the poll runs while at least one node of the WHOLE payload is not ``dead`` (a live

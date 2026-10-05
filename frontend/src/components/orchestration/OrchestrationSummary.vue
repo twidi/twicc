@@ -1,8 +1,7 @@
 <script setup>
-// The four summary tiles under the Orchestration header: count with a donut of the state buckets,
-// working (sessions) or stopped (subagents), total cost, span with the cumulative duration. Counts and
-// donut are over the displayed nodes (descendants only for sessions); cost, span and cumulative duration
-// are passed in already resolved (spec 3.2).
+// The four summary tiles under the Orchestration header: the number of nodes, one icon row per non-empty
+// state, total cost, cumulative duration. Counts are over the displayed nodes (descendants only for
+// sessions); cost and cumulative duration are passed in already resolved. Every tile is vertically centred.
 import { computed } from 'vue'
 import CostDisplay from '../ui/CostDisplay.vue'
 import { formatDuration } from '../../utils/date'
@@ -13,58 +12,62 @@ const props = defineProps({
     counts: { type: Object, required: true }, // { working, awaiting, idle, stopped }
     cost: { type: Number, default: null },
     showCosts: { type: Boolean, default: true },
-    spanSeconds: { type: Number, default: null },
     // Sum of the durations of every node below the current session (null: none).
     cumulativeSeconds: { type: Number, default: null },
 })
 
 const total = computed(() => BUCKET_ORDER.reduce((n, bucket) => n + props.counts[bucket], 0))
-const running = computed(() => total.value - props.counts.stopped)
 
-// Conic gradient: one arc per non-empty bucket; a neutral full ring with no node.
-const donut = computed(() => {
-    if (!total.value) return `conic-gradient(${BUCKET_COLORS.stopped} 0 100%)`
-    let from = 0
-    const stops = []
-    for (const bucket of BUCKET_ORDER) {
-        if (!props.counts[bucket]) continue
-        const to = from + (props.counts[bucket] / total.value) * 100
-        stops.push(`${BUCKET_COLORS[bucket]} ${from}% ${to}%`)
-        from = to
-    }
-    return `conic-gradient(${stops.join(', ')})`
-})
+const SESSION_STATES = [
+    { bucket: 'working', icon: 'robot', label: 'Working', color: BUCKET_COLORS.working },
+    { bucket: 'awaiting', icon: 'hand', label: 'Awaiting', color: BUCKET_COLORS.awaiting },
+    { bucket: 'idle', icon: 'check', label: 'Idle', color: BUCKET_COLORS.idle },
+    { bucket: 'stopped', icon: 'circle-stop', label: 'Stopped', color: BUCKET_COLORS.stopped },
+]
+// A subagent is running or done: done is green, not neutral.
+const AGENT_STATES = [
+    { bucket: 'working', icon: 'robot', label: 'Running', color: BUCKET_COLORS.working },
+    { bucket: 'stopped', icon: 'check', label: 'Done', color: BUCKET_COLORS.idle },
+]
+const stateRows = computed(() => (props.kind === 'agents' ? AGENT_STATES : SESSION_STATES)
+    .map(state => ({ ...state, count: props.counts[state.bucket] }))
+    .filter(row => row.count > 0))
 
 const countLabel = computed(() => (props.kind === 'agents' ? 'Subagents' : 'Spawned sessions'))
-const span = computed(() => (props.spanSeconds == null ? '-' : formatDuration(props.spanSeconds)))
 const cumulative = computed(() => (props.cumulativeSeconds == null ? '-' : formatDuration(props.cumulativeSeconds)))
 </script>
 
 <template>
     <div class="osum">
-        <div class="osum-tile osum-tile--donut">
-            <span class="osum-donut" :style="{ background: donut }" aria-hidden="true"></span>
-            <div class="osum-body">
-                <span class="osum-label">{{ countLabel }}</span>
-                <span class="osum-value">{{ total }}<small>{{ running }} running</small></span>
-            </div>
+        <div class="osum-tile">
+            <span class="osum-label">{{ countLabel }}</span>
+            <span class="osum-value">{{ total }}</span>
         </div>
-        <div v-if="kind === 'sessions'" class="osum-tile">
-            <span class="osum-label">Working</span>
-            <span class="osum-value osum-value--working">{{ counts.working }}<small>{{ counts.awaiting }} awaiting</small></span>
-        </div>
-        <div v-else class="osum-tile">
-            <span class="osum-label">Stopped</span>
-            <span class="osum-value">{{ counts.stopped }}</span>
+        <div class="osum-tile">
+            <span class="osum-label">State</span>
+            <span v-if="stateRows.length" class="osum-states">
+                <span
+                    v-for="row in stateRows"
+                    :key="row.bucket"
+                    class="osum-state"
+                    :style="{ color: row.color }"
+                    :title="row.label"
+                    role="img"
+                    :aria-label="`${row.label}: ${row.count}`"
+                >
+                    <wa-icon :name="row.icon"></wa-icon>
+                    <span class="osum-state-count">{{ row.count }}</span>
+                </span>
+            </span>
+            <span v-else class="osum-value">-</span>
         </div>
         <div v-if="showCosts" class="osum-tile">
             <span class="osum-label">Total cost</span>
             <span class="osum-value"><CostDisplay :cost="cost" /></span>
         </div>
         <div class="osum-tile">
-            <span class="osum-label">Span</span>
-            <span class="osum-value">{{ span }}</span>
-            <span class="osum-sub">Cumulative {{ cumulative }}</span>
+            <span class="osum-label">Cumulative time</span>
+            <span class="osum-value">{{ cumulative }}</span>
         </div>
     </div>
 </template>
@@ -79,25 +82,13 @@ const cumulative = computed(() => (props.cumulativeSeconds == null ? '-' : forma
 .osum-tile {
     display: flex;
     flex-direction: column;
+    justify-content: center;
     gap: var(--wa-space-3xs);
     min-width: 0;
     padding: var(--wa-space-2xs) var(--wa-space-xs);
     border-radius: var(--wa-border-radius-m);
     border: 1px solid var(--wa-color-surface-border);
     background: color-mix(in oklab, var(--wa-color-surface-raised) 55%, transparent);
-}
-
-.osum-tile--donut {
-    flex-direction: row;
-    align-items: center;
-    gap: var(--wa-space-xs);
-}
-
-.osum-body {
-    display: flex;
-    flex-direction: column;
-    gap: var(--wa-space-3xs);
-    min-width: 0;
 }
 
 .osum-label {
@@ -117,38 +108,21 @@ const cumulative = computed(() => (props.cumulativeSeconds == null ? '-' : forma
     font-variant-numeric: tabular-nums;
 }
 
-.osum-value small {
-    font-size: var(--wa-font-size-xs);
-    font-weight: 400;
-    color: var(--wa-color-text-quiet);
+/* One row per non-empty state: the state's icon and its count, in the state's colour. */
+.osum-states {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-3xs);
 }
 
-.osum-sub {
-    font-size: var(--wa-font-size-xs);
-    color: var(--wa-color-text-quiet);
+.osum-state {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+    font-size: var(--wa-font-size-m);
+    font-weight: 650;
+    line-height: 1.2;
     font-variant-numeric: tabular-nums;
-}
-
-.osum-value--working {
-    color: var(--wa-color-blue-60);
-}
-
-.osum-donut {
-    flex: none;
-    width: 1.6rem;
-    height: 1.6rem;
-    border-radius: 50%;
-    display: grid;
-    place-items: center;
-}
-
-/* The hole: the page surface as an opaque colour (the cards' own surface token is transparent). */
-.osum-donut::before {
-    content: '';
-    width: 64%;
-    height: 64%;
-    border-radius: 50%;
-    background: var(--surface-solid);
 }
 
 /* Narrow pane: two columns, so the header stays short. */
