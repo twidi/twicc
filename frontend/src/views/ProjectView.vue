@@ -262,6 +262,29 @@ const quotaSevenDayCost = computed(() => quotaComputed.value?.sevenDayCost ?? nu
 const quotaFiveHourRingColor = computed(() => getUsageRingColor(quotaFiveHour.value))
 const quotaSevenDayRingColor = computed(() => getUsageRingColor(quotaSevenDay.value))
 
+// Keep the tooltip anchored to its row while its displayed period changes.
+const fiveHourTooltipPeriod = ref('five-hour')
+const sevenDayTooltipPeriod = ref('seven-day')
+const canCycleQuotaPeriod = computed(() => !!quotaFiveHour.value && !!quotaSevenDay.value)
+function quotaTooltipData(period) {
+    const sevenDay = period === 'seven-day' ? !!quotaSevenDay.value : !quotaFiveHour.value
+    return {
+        quota: sevenDay ? quotaSevenDay.value : quotaFiveHour.value,
+        cost: sevenDay ? quotaSevenDayCost.value : quotaFiveHourCost.value,
+        color: sevenDay ? quotaSevenDayRingColor.value : quotaFiveHourRingColor.value,
+        periodLabel: sevenDay ? '7 days' : '5 hours',
+        periodShort: sevenDay ? '7d' : '5h',
+        roundToHour: sevenDay,
+    }
+}
+const fiveHourTooltipData = computed(() => quotaTooltipData(fiveHourTooltipPeriod.value))
+const sevenDayTooltipData = computed(() => quotaTooltipData(sevenDayTooltipPeriod.value))
+function resetQuotaTooltipPeriod(event, period) {
+    if (event.target.localName !== 'wa-tooltip') return
+    if (period === 'five-hour') fiveHourTooltipPeriod.value = period
+    else sevenDayTooltipPeriod.value = period
+}
+
 // Burn-rate chip shown at the end of each paced quota bar (5h / 7d).
 const quotaFiveHourChip = computed(() => formatBurnChip(quotaFiveHour.value))
 const quotaSevenDayChip = computed(() => formatBurnChip(quotaSevenDay.value))
@@ -2428,18 +2451,18 @@ function updateSidebarClosedClass(closed) {
                             </span>
                         </div>
                     </div>
-                    <AppTooltip v-if="quotaFiveHour" for="quota-five-hour" hoist force interactive class="quota-tooltip-wide" :placement="usageTooltipPlacement" :trigger="usageTooltipTrigger">
+                    <AppTooltip v-if="quotaFiveHour" for="quota-five-hour" hoist force interactive class="quota-tooltip-wide" :placement="usageTooltipPlacement" :trigger="usageTooltipTrigger" @wa-show="resetQuotaTooltipPeriod($event, 'five-hour')">
                         <QuotaTooltipContent
-                            :quota="quotaFiveHour"
-                            :cost="quotaFiveHourCost"
-                            :color="quotaFiveHourRingColor"
+                            v-bind="fiveHourTooltipData"
+                            :provider="currentUsageProvider"
                             :provider-label="currentUsageProviderLabel"
-                            period-label="5 hours"
-                            period-short="5h"
-                            :round-to-hour="false"
+                            :can-cycle-provider="hasMultipleUsageProviders"
+                            :can-cycle-period="canCycleQuotaPeriod"
                             :show-costs="showCosts"
                             :external-link="usageExternalLink"
-                            @open-graph="openUsageGraph('five-hour')"
+                            @cycle-provider="cycleUsageProvider()"
+                            @cycle-period="fiveHourTooltipPeriod = fiveHourTooltipData.roundToHour ? 'five-hour' : 'seven-day'"
+                            @open-graph="openUsageGraph(fiveHourTooltipData.roundToHour ? 'seven-day' : 'five-hour')"
                         />
                     </AppTooltip>
                     <div id="quota-seven-day" class="usage-quota" v-if="quotaSevenDay">
@@ -2464,18 +2487,18 @@ function updateSidebarClosedClass(closed) {
                             </span>
                         </div>
                     </div>
-                    <AppTooltip v-if="quotaSevenDay" for="quota-seven-day" hoist force interactive class="quota-tooltip-wide" :placement="usageTooltipPlacement" :trigger="usageTooltipTrigger">
+                    <AppTooltip v-if="quotaSevenDay" for="quota-seven-day" hoist force interactive class="quota-tooltip-wide" :placement="usageTooltipPlacement" :trigger="usageTooltipTrigger" @wa-show="resetQuotaTooltipPeriod($event, 'seven-day')">
                         <QuotaTooltipContent
-                            :quota="quotaSevenDay"
-                            :cost="quotaSevenDayCost"
-                            :color="quotaSevenDayRingColor"
+                            v-bind="sevenDayTooltipData"
+                            :provider="currentUsageProvider"
                             :provider-label="currentUsageProviderLabel"
-                            period-label="7 days"
-                            period-short="7d"
-                            :round-to-hour="true"
+                            :can-cycle-provider="hasMultipleUsageProviders"
+                            :can-cycle-period="canCycleQuotaPeriod"
                             :show-costs="showCosts"
                             :external-link="usageExternalLink"
-                            @open-graph="openUsageGraph('seven-day')"
+                            @cycle-provider="cycleUsageProvider()"
+                            @cycle-period="sevenDayTooltipPeriod = sevenDayTooltipData.roundToHour ? 'five-hour' : 'seven-day'"
+                            @open-graph="openUsageGraph(sevenDayTooltipData.roundToHour ? 'seven-day' : 'five-hour')"
                         />
                     </AppTooltip>
                     <div id="quota-extra-usage" class="usage-quota" v-if="quotaExtraUsage">

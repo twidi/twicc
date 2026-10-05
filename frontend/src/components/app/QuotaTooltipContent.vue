@@ -7,6 +7,7 @@
 import { computed } from 'vue'
 import { formatRecentDelta, formatQuotaMoment, formatResetTimePrecise } from '../../utils/usage'
 import CostDisplay from '../ui/CostDisplay.vue'
+import ProviderIcon from '../ui/ProviderIcon.vue'
 
 const props = defineProps({
     /** Computed quota (computeUsageData): utilization, timePct, burnRate, resetsAt, recentLong/Short */
@@ -16,6 +17,9 @@ const props = defineProps({
     /** CSS color of the severity (ring color) */
     color: { type: String, required: true },
     providerLabel: { type: String, default: '' },
+    provider: { type: String, default: null },
+    canCycleProvider: { type: Boolean, default: false },
+    canCyclePeriod: { type: Boolean, default: false },
     /** Long period name for the header, e.g. "5 hours" */
     periodLabel: { type: String, required: true },
     /** Short period name for the estimate label, e.g. "5h" */
@@ -26,7 +30,7 @@ const props = defineProps({
     externalLink: { type: Object, default: null },
 })
 
-const emit = defineEmits(['open-graph'])
+const emit = defineEmits(['open-graph', 'cycle-provider', 'cycle-period'])
 
 const exhausted = computed(() => (props.quota.utilization ?? 0) >= 100)
 const cutoffAt = computed(() => props.cost?.cutoffAt ?? null)
@@ -114,7 +118,30 @@ const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 
 <template>
     <div class="quota-tip" :style="{ '--quota-color': color }">
         <div class="quota-tip-head">
-            <span class="quota-tip-title">{{ providerLabel }} <span class="quota-tip-period">· {{ periodLabel }}</span></span>
+            <div class="quota-tip-title">
+                <button
+                    type="button"
+                    class="quota-tip-control"
+                    :disabled="!canCycleProvider"
+                    :title="canCycleProvider ? 'Click to switch to the next provider' : undefined"
+                    @click="emit('cycle-provider')"
+                >
+                    <ProviderIcon class="quota-tip-provider-icon" :provider="provider" />
+                    <span class="quota-tip-provider-name">{{ providerLabel }}</span>
+                    <wa-icon v-if="canCycleProvider" class="quota-tip-switch" name="repeat"></wa-icon>
+                </button>
+                <span class="quota-tip-period">·</span>
+                <button
+                    type="button"
+                    class="quota-tip-control quota-tip-period"
+                    :disabled="!canCyclePeriod"
+                    :title="canCyclePeriod ? 'Click to switch between 5 hours and 7 days' : undefined"
+                    @click="emit('cycle-period')"
+                >
+                    <span>{{ periodLabel }}</span>
+                    <wa-icon v-if="canCyclePeriod" class="quota-tip-switch" name="repeat"></wa-icon>
+                </button>
+            </div>
             <span v-if="hasReset" class="quota-tip-reset" :title="formatResetTimePrecise(quota.resetsAt)">Resets {{ compactMoment(quota.resetsAt) }}</span>
         </div>
 
@@ -187,7 +214,53 @@ const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 
     white-space: nowrap;
 }
 .quota-tip-title {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
     font-weight: var(--wa-font-weight-bold);
+}
+.quota-tip-control {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+    padding: var(--wa-space-3xs) var(--wa-space-2xs);
+    border: 0;
+    border-radius: var(--wa-border-radius-m);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+}
+/* Native button styles add icon margins; the widget uses only the flex gap. */
+.quota-tip-control > wa-icon {
+    margin-inline: 0;
+}
+.quota-tip-control:not(:disabled) {
+    cursor: pointer;
+    transition: background 0.12s;
+}
+.quota-tip-control:not(:disabled):hover {
+    background: var(--wa-color-neutral-fill-quiet);
+}
+.quota-tip-control:focus-visible {
+    outline: 2px solid var(--wa-color-brand);
+    outline-offset: 2px;
+}
+.quota-tip-provider-icon {
+    font-size: var(--wa-font-size-l);
+    color: var(--wa-color-neutral-content);
+    flex: 0 0 auto;
+}
+.quota-tip-provider-name {
+    font-size: var(--wa-font-size-xs);
+    font-weight: var(--wa-font-weight-semibold);
+    color: var(--wa-color-neutral-content);
+}
+.quota-tip-switch {
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-neutral-muted);
+}
+.quota-tip-control:hover .quota-tip-switch {
+    color: var(--wa-color-neutral-content);
 }
 .quota-tip-period {
     font-weight: var(--wa-font-weight-normal);
