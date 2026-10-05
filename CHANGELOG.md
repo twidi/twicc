@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **Orchestration tab** — The Orchestration tab gets a brand new look.
 - **Artifacts tab always available** — The tab now shows for every session, even before it has any artifact. Right-click "Session artifacts" to create a file or folder, or upload files.
 
 ### Fixed
