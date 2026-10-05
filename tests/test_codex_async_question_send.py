@@ -521,9 +521,8 @@ def test_dismissal_waits_for_send_delivery_gate(harness):
             assert not dismiss.done()
             release.set()
             assert await send is True
-            with pytest.raises(SendDeliveryError) as error:
-                await dismiss
-            assert error.value.code == "async_questions_stale"
+            resolved = await dismiss
+            assert resolved["resolutions"]["q1"] == {"status": "sent", "request_id": "gate-1"}
         finally:
             await db_writer.stop_db_writer()
 
@@ -567,8 +566,8 @@ def test_background_delivery_keeps_send_gate_until_native_acceptance(harness):
             assert not dismiss.done()
             release.set()
             assert await send is True
-            with pytest.raises(SendDeliveryError):
-                await dismiss
+            resolved = await dismiss
+            assert resolved["resolutions"]["q1"] == {"status": "sent", "request_id": "scheduled-gate"}
         finally:
             release.set()
             if dismiss:

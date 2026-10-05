@@ -80,9 +80,40 @@ def _merge(session: Session, state: dict, facts: list[QuestionFact]) -> dict:
 
 
 def read_question_snapshot(session_id: str) -> dict:
-    """Read current display state without creating a row."""
+    """Read settings and lifecycle in one coherent, read-only DB snapshot."""
+    session = (
+        Session.objects.filter(
+            id=session_id, provider=Provider.CODEX, type=SessionType.SESSION, parent_session_id__isnull=True,
+        )
+        .select_related("async_question_state")
+        .only("question_widget", "async_question_state__state")
+        .first()
+    )
+    state = {}
+    if session is not None:
+        try:
+            state = session.async_question_state.state
+        except AsyncQuestionState.DoesNotExist:
+            pass
+    return _snapshot(session, state)
+
+
+@transaction.atomic
+def refresh_question_widget_snapshot(session_id: str, *, previous_enabled: bool) -> None:
+    """Order an effective widget change after every older hydration snapshot.
+
+    The settings writer calls this inside its transaction and writer lease.
+    Question facts remain unchanged. Reads never increment the revision.
+    """
     session = _session(session_id)
-    return _snapshot(session, _state(session_id) if session is not None else {})
+    if session is None or (session.question_widget is not False) == previous_enabled:
+        return
+    state = _state(session_id)
+    state["revision"] += 1
+    AsyncQuestionState.objects.update_or_create(session=session, defaults={"state": state})
+    from twicc.providers.codex.question_snapshots import publish_question_snapshot_on_commit
+
+    publish_question_snapshot_on_commit(session_id, _snapshot(session, state))
 
 
 @transaction.atomic
@@ -188,7 +219,7 @@ def dismiss_question_batch(session_id: str, item_id: str, *, request_id: str) ->
     """Resolve a ready batch locally, retaining the request ID for recovery."""
     session = _session(session_id, mutation=True)
     current = _state(session_id)
-    if not isinstance(request_id, str) or not request_id.strip():
+    if not isinstance(request_id, str) or not request_id.strip() or not isinstance(item_id, str) or not item_id.strip():
         raise ValueError("async_questions_invalid")
     prior = current["facts"].get(f"dismiss:{request_id}")
     if prior is not None:
@@ -196,6 +227,8 @@ def dismiss_question_batch(session_id: str, item_id: str, *, request_id: str) ->
             raise ValueError("async_questions_invalid")
         return _snapshot(session, current)
     batch = current["batches"].get(item_id)
+    if batch is not None and batch["status"] in {"sent", "dismissed"}:
+        return _snapshot(session, current)
     if batch is None or batch["status"] != "ready":
         raise ValueError("async_questions_stale")
     fact = QuestionFact(

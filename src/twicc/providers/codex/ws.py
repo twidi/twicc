@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 
+from twicc.agent import SendDeliveryError
 from twicc.core.enums import Provider
 from twicc.providers.state import ProviderDisabledError, ensure_provider_running
 from twicc.usage_task import broadcast_usage_updated, get_usage_message_for_connection
@@ -46,6 +47,10 @@ class CodexWSHandler:
 
     async def dispatch(self, action: str, content: dict) -> bool:
         """Dispatch a Codex-prefixed message."""
+        if action == "dismiss_async_question":
+            await self._handle_dismiss_async_question(content)
+            return True
+
         if action == "pending_request_response":
             await self._handle_pending_request_response(content)
             return True
@@ -70,6 +75,39 @@ class CodexWSHandler:
             return True
 
         return False
+
+    async def _handle_dismiss_async_question(self, content: dict) -> None:
+        """Resolve a batch through gated admission without starting a turn."""
+        session_id = content.get("session_id")
+        item_id = content.get("item_id")
+        request_id = content.get("request_id")
+
+        async def send_error(message: str, code: str) -> None:
+            await self.consumer.send_json({
+                "type": "error", "code": code, "message": message,
+                "session_id": session_id, "request_id": request_id,
+            })
+
+        if any(not isinstance(value, str) or not value.strip() for value in (session_id, item_id, request_id)):
+            await send_error("Invalid async question dismissal", "async_questions_invalid")
+            return
+        try:
+            ensure_provider_running(Provider.CODEX)
+            manager = get_agent_manager_registry().get(Provider.CODEX)
+            snapshot = await manager.dismiss_async_question(session_id, item_id, request_id=request_id)
+        except ProviderDisabledError as exc:
+            await send_error(str(exc), "provider_disabled")
+            return
+        except SendDeliveryError as exc:
+            await send_error(str(exc), exc.code)
+            return
+        except RuntimeError as exc:
+            await send_error(str(exc), "session_busy")
+            return
+        await self.consumer.send_json({
+            "type": "async_question_dismissed", "session_id": session_id,
+            "item_id": item_id, "request_id": request_id, "snapshot": snapshot,
+        })
 
     async def _handle_pending_request_response(self, content: dict) -> None:
         """Route the user's decision to the right agent's right future.

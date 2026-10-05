@@ -86,6 +86,7 @@ urlpatterns = [
     path("api/projects/<str:project_id>/uploads/", upload_views.upload_create),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/user-messages/", views.user_messages),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/", views.session_detail),
+    path("api/projects/<str:project_id>/sessions/<str:session_id>/async-questions/", views.session_async_questions),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/items/", views.session_items),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/items/metadata/", views.session_items_metadata),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/items/<int:line_num>/tool-results/<str:tool_id>/", views.tool_results),

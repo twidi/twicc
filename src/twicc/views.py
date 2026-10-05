@@ -1059,6 +1059,18 @@ async def _resolve_session_or_404(session_id, project_id, parent_session_id):
     return session
 
 
+async def session_async_questions(request, project_id, session_id):
+    """Read main-session questions independently of transcript pagination."""
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+    session = await _resolve_session_or_404(session_id, project_id, None)
+    if session.type != SessionType.SESSION:
+        raise Http404("Session not found")
+    from twicc.core.services.async_questions import read_question_snapshot
+
+    return JsonResponse(await sync_to_async(read_question_snapshot)(session.id))
+
+
 async def session_detail(request, project_id, session_id, parent_session_id=None):
     """GET/PATCH /api/projects/<id>/sessions/<session_id>/ - Detail or rename session.
 

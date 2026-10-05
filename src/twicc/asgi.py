@@ -902,6 +902,9 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         elif msg_type == "send_message":
             await self._handle_send_message(content)
 
+        elif msg_type == "codex_dismiss_async_question":
+            await self._provider_handlers[Provider.CODEX].dispatch("dismiss_async_question", content)
+
         elif msg_type == "kill_process":
             await self._handle_kill_process(content)
 
@@ -1224,10 +1227,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 # Values are null (use global default) or explicit (forced).
                 from twicc.core.models import Session
                 from twicc.core.serializers import serialize_session
+                from twicc.core.services.session_update import persist_session_settings
+
                 await run_under_db_write_lock(
-                    lambda: Session.objects.filter(id=session_id).aupdate(
-                        **agent_settings._asdict()
-                    )
+                    lambda: sync_to_async(persist_session_settings)(session_id, agent_settings._asdict())
                 )
                 # Broadcast session update so all clients see the new settings
                 session_obj = await sync_to_async(Session.objects.filter(id=session_id).first)()
