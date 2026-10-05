@@ -1,0 +1,52 @@
+/* Shared native icon buttons for the navigation rail and floating sidebar toggle. */
+:root {
+    --rail-button-size: 2.25rem;
+    --rail-icon-size: 1.125rem;
+    --rail-button-color: var(--wa-color-text-quiet);
+    --rail-button-fill-hover: var(--wa-color-neutral-fill-quiet);
+    --rail-button-fill-active: var(--wa-color-brand-fill-quiet);
+    --rail-button-color-active: var(--wa-color-brand-on-quiet);
+    --rail-card-padding: 0.25rem;
+    --rail-gap: 0.25rem;
+    --rail-card-width: calc(var(--rail-button-size) + 2 * var(--rail-card-padding) + 2 * var(--divider-size));
+    --rail-width: calc(var(--rail-card-width) + var(--panel-gap));
+}
+
+.rail-button {
+    height: var(--rail-button-size);
+    width: var(--rail-button-size);
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    line-height: 1;
+    border-radius: var(--wa-form-control-border-radius);
+    color: var(--rail-button-color);
+    transition: none;
+    position: relative;
+    flex: none;
+    font-size: var(--rail-icon-size);
+    background-color: var(--rail-button-bg, transparent);
+    background-image: none;
+}
+
+.rail-button > wa-icon {
+    margin: 0;
+}
+
+@media (hover: hover) {
+    .rail-button:hover:not(:disabled) {
+        background-image: linear-gradient(var(--rail-button-fill-hover), var(--rail-button-fill-hover));
+    }
+}
+
+.rail-button:active:not(:disabled) {
+    background-image: linear-gradient(var(--rail-button-fill-hover), var(--rail-button-fill-hover));
+}
+
+.rail-button[aria-pressed="true"],
+.rail-button[aria-pressed="true"]:hover:not(:disabled),
+.rail-button[aria-pressed="true"]:active:not(:disabled) {
+    background-image: linear-gradient(var(--rail-button-fill-active), var(--rail-button-fill-active));
+    color: var(--rail-button-color-active);
+}

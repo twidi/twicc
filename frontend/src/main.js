@@ -39,6 +39,8 @@ import './styles/tags.css'
 import './styles/quote-card.css'
 // Tool cards: the collapsible rows of the chat wear the same card, in the neutral colour (SPA only).
 import './styles/tool-cards.css'
+// Native icon buttons shared by the navigation rail and floating sidebar toggle.
+import './styles/rail-button.css'
 // Scrollbars: thin, in the app's colours, visible track (SPA only).
 import './styles/scrollbars.css'
 // Scroll-edge shadows: a zone that can still scroll shows a shadow at that edge (SPA only).
