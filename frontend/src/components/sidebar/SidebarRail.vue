@@ -1,5 +1,12 @@
 <script setup>
 import { computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useDataStore } from '../../stores/data'
+import { useRailActiveSessions } from '../../composables/useRailActiveSessions'
+import { sessionRouteLocation } from '../../utils/sessionRoute'
+import ProjectMark from '../project/ProjectMark.vue'
+import ProcessIndicator from '../ui/ProcessIndicator.vue'
+import SessionListItem from '../session/list/SessionListItem.vue'
 import { useSettingsStore } from '../../stores/settings'
 import { resolveRailItems } from '../../utils/sidebarRail.js'
 import AppTooltip from '../ui/AppTooltip.vue'
@@ -15,6 +22,20 @@ const props = defineProps({
 })
 const emit = defineEmits(['home', 'select-mode', 'search', 'palette', 'inbox', 'toggle-sidebar'])
 const settingsStore = useSettingsStore()
+const store = useDataStore()
+const route = useRoute()
+const router = useRouter()
+const currentSessionId = computed(() => props.mode === 'sessions' ? route.params.sessionId || null : null)
+const { rows } = useRailActiveSessions(store, () => currentSessionId.value)
+
+function openSession(session) {
+    router.push(sessionRouteLocation(session, route))
+}
+
+function projectColor(projectId) {
+    const project = store.getProject(projectId)
+    return project?.color || (project?.worktree_of ? store.getProject(project.worktree_of)?.color : null) || null
+}
 const items = computed(() => resolveRailItems({
     mode: props.mode,
     sidebarOpen: props.sidebarOpen,
@@ -45,7 +66,45 @@ function activate(item) {
                 </button>
                 <AppTooltip :for="`sidebar-rail-${item.id}`" placement="right">{{ item.label }}</AppTooltip>
             </template>
-            <div class="rail-spacer" aria-hidden="true"></div>
+            <wa-divider v-if="rows.length" class="rail-divider" />
+            <div class="rail-spacer">
+                <div v-for="row in rows" :key="row.session.id" class="rail-session">
+                    <button
+                        :id="`sidebar-rail-session-${row.session.id}`"
+                        type="button" class="rail-button rail-session-button"
+                        :aria-label="row.session.title || row.session.id"
+                        :aria-pressed="row.session.id === currentSessionId"
+                        @click="openSession(row.session)"
+                    >
+                        <ProjectMark
+                            :icon-url="store.resolvedProjectIcons[row.session.project_id] || null"
+                            :color="projectColor(row.session.project_id)"
+                        />
+                        <wa-icon v-if="row.hasUnread" name="eye" class="rail-unread" />
+                        <wa-icon v-else-if="row.pendingRequest" name="hand" class="rail-pending" />
+                        <ProcessIndicator
+                            v-else :state="row.processState.state" size="small"
+                            :has-active-crons="row.hasActiveCrons"
+                            :background-shells="row.userTurnBackgroundShells"
+                            :animate-states="['assistant_turn']"
+                        />
+                    </button>
+                    <AppTooltip
+                        :for="`sidebar-rail-session-${row.session.id}`"
+                        force interactive hoist placement="right" class="rail-session-tooltip"
+                    >
+                        <div class="rail-session-preview">
+                            <SessionListItem
+                                :session="row.session" :active="row.session.id === currentSessionId"
+                                id-prefix="rail-preview-" :show-menu="false" :selection-enabled="false"
+                                :compact-view="false" :show-project-name="true" :show-title-tooltip="false"
+                                @select="openSession"
+                            />
+                        </div>
+                    </AppTooltip>
+                </div>
+            </div>
+            <wa-divider v-if="rows.length" class="rail-divider" />
             <template v-for="item in bottom" :key="item.id">
                 <div v-if="item.id === 'settings'" class="rail-settings">
                     <SettingsPopover
@@ -86,12 +145,76 @@ function activate(item) {
     gap: var(--rail-gap);
     padding: var(--rail-card-padding);
     flex: 1;
+    min-height: 0;
     margin-block: var(--panel-gap);
     margin-inline-start: var(--panel-gap);
 }
 
 .rail-spacer {
     flex: 1;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: none;
+}
+
+.rail-spacer::-webkit-scrollbar {
+    display: none;
+}
+
+.rail-session + .rail-session {
+    margin-top: var(--rail-gap);
+}
+
+.rail-divider {
+    flex: none;
+    margin: 0;
+}
+
+.rail-session-button {
+    display: flex;
+    justify-content: center;
+    gap: 0.2rem;
+    --project-mark-size: 0.55rem;
+    --project-mark-icon-size: 0.95rem;
+}
+
+.rail-session-button > wa-icon {
+    font-size: 0.75rem;
+}
+
+.rail-unread, .rail-pending {
+    color: var(--wa-color-warning-60);
+    animation: motion-status-pulse 2.4s ease-in-out infinite;
+}
+
+.rail-pending {
+    animation-duration: 1.5s;
+}
+
+.rail-session-tooltip {
+    --max-width: min(24rem, calc(100vw - var(--rail-width) - 1.5rem));
+}
+
+.rail-session-preview {
+    /* Reserve the rail, popup distance, body padding, and viewport edge. */
+    width: min(22rem, calc(100vw - var(--rail-width) - 3rem));
+    max-width: 100%;
+    white-space: normal;
+    container-type: inline-size;
+    container-name: session-list;
+}
+
+.rail-session-preview :deep(.session-item-wrapper) {
+    box-sizing: border-box;
+}
+
+.rail-session-preview :deep(.session-name) {
+    min-width: 0;
+}
+
+.rail-session-preview :deep(wa-button)::part(base) {
+    white-space: normal;
 }
 
 .rail-settings {
@@ -112,10 +235,16 @@ function activate(item) {
 }
 
 @container rail (height < 22rem) {
+    /* Navigation stays reachable when the fixed controls exceed the viewport. */
     .panel-card {
         overflow-x: hidden;
         overflow-y: auto;
         scrollbar-width: none;
+    }
+
+    .rail-spacer {
+        flex: none;
+        overflow: visible;
     }
 
     .panel-card::-webkit-scrollbar {

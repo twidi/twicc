@@ -12,11 +12,11 @@ test('rail has keyed groups, native accessible buttons, and a stable Settings fr
     assert.equal((source.match(/class="rail-spacer"/g) ?? []).length, 1)
     assert.ok(source.indexOf('item in top') < source.indexOf('class="rail-spacer"'))
     assert.ok(source.indexOf('class="rail-spacer"') < source.indexOf('item in bottom'))
-    assert.equal((source.match(/<button\b/g) ?? []).length, 2)
+    assert.equal((source.match(/<button\b/g) ?? []).length, 3)
     assert.equal((source.match(/:aria-pressed="item.active"/g) ?? []).length, 2)
     assert.equal((source.match(/:aria-label="item.label"/g) ?? []).length, 2)
     assert.equal((source.match(/:disabled="item.disabled"/g) ?? []).length, 2)
-    assert.equal((source.match(/<\/button>\s*<AppTooltip/g) ?? []).length, 2)
+    assert.equal((source.match(/<\/button>\s*<AppTooltip/g) ?? []).length, 3)
     assert.doesNotMatch(source, /aria-expanded|glass-/)
     for (const attribute of ['trigger-appearance="plain"', 'trigger-icon-only', 'placement="right-end"',
         'tooltip-placement="right"', ':trigger-label="item.label"', ':position-anchor="settingsAnchor"']) {
@@ -40,12 +40,12 @@ test('rail slot, flexible spacer, and short-height scrolling preserve button siz
     assert.match(source, /z-index: 3;/)
     assert.match(source, /@media \(width < 640px\)[\s\S]*z-index: 101;[\s\S]*background: var\(--canvas-background\);[\s\S]*background-attachment: fixed;/)
     assert.match(source, /\.panel-card \{[^}]*flex-direction: column;[^}]*gap: var\(--rail-gap\);[^}]*padding: var\(--rail-card-padding\);[^}]*flex: 1;[^}]*margin-block: var\(--panel-gap\);[^}]*margin-inline-start: var\(--panel-gap\);/)
-    assert.match(source, /\.rail-spacer \{\s*flex: 1;/)
+    assert.match(source, /\.rail-spacer \{\s*flex: 1;\s*min-height: 0;\s*overflow-x: hidden;\s*overflow-y: auto;/)
     assert.match(source, /\.rail-settings \{[^}]*display: flex;[^}]*flex: none;/)
     assert.match(source, /:deep\(wa-tooltip\) \{\s*position: absolute;/)
     assert.match(source, /@container rail \(height < 22rem\)[\s\S]*overflow-x: hidden;[\s\S]*overflow-y: auto;[\s\S]*scrollbar-width: none;/)
     assert.match(source, /\.panel-card::-webkit-scrollbar \{\s*display: none;/)
-    assert.doesNotMatch(source.slice(source.indexOf('<style'), source.indexOf('@container')), /overflow:/)
+    assert.match(source, /\.rail-divider \{\s*flex: none;/)
 })
 
 test('rail SFC compiles its script, template, and scoped style', async () => {
@@ -61,7 +61,11 @@ test('rail SFC compiles its script, template, and scoped style', async () => {
     assert.equal(attrs(nav)['aria-label'], 'Main navigation')
     const [card] = children(nav)
     assert.equal(attrs(card).class, 'panel-card')
-    const [top, spacer, bottom] = children(card)
+    const [top, firstDivider, spacer, secondDivider, bottom] = children(card)
+    for (const divider of [firstDivider, secondDivider]) {
+        assert.equal(divider.tag, 'wa-divider')
+        assert.equal(attrs(divider)['v-if'], 'rows.length')
+    }
     assert.deepEqual([attrs(top)['v-for'], attrs(bottom)['v-for']], ['item in top', 'item in bottom'])
     for (const group of [top, bottom]) {
         assert.equal(group.tag, 'template')
@@ -102,4 +106,32 @@ test('rail accepts all navigation modes and defaults an omitted sidebar state to
     assert.equal(props.mode.validator('unknown'), false)
     assert.equal(props.sidebarOpen.required, undefined)
     assert.equal(props.sidebarOpen.default, false)
+})
+
+
+test('global active entries reuse the full isolated row and canonical navigation', () => {
+    const source = read()
+    assert.match(source, /useRailActiveSessions\(store, \(\) => currentSessionId.value\)/)
+    assert.match(source, /props.mode === 'sessions' \? route.params.sessionId \|\| null : null/)
+    assert.match(source, /router.push\(sessionRouteLocation\(session, route\)\)/)
+    assert.match(source, /v-for="row in rows" :key="row.session.id"/)
+    assert.equal((source.match(/v-if="rows.length"/g) ?? []).length, 2)
+    assert.match(source, /force interactive hoist placement="right"/)
+    assert.match(source, /id-prefix="rail-preview-" :show-menu="false" :selection-enabled="false"/)
+    assert.match(source, /:compact-view="false" :show-project-name="true" :show-title-tooltip="false"/)
+    assert.match(source, /<ProjectMark[\s\S]*v-if="row.hasUnread"[\s\S]*v-else-if="row.pendingRequest"[\s\S]*<ProcessIndicator/)
+    assert.match(source, /--max-width: min\(24rem, calc\(100vw - var\(--rail-width\) - 1.5rem\)\)/)
+    assert.match(source, /container-name: session-list/)
+    assert.doesNotMatch(source, /loadProjectSessions|selectedSessionId/)
+})
+
+
+test('preview width reserves the rail and popup space on narrow viewports', () => {
+    const source = read()
+    assert.match(source, /width: min\(22rem, calc\(100vw - var\(--rail-width\) - 3rem\)\)/)
+    // Browser regression: 360px viewport, 352px client width, popup begins at 56px.
+    // The row width plus the tooltip's 16px body padding must remain inside that edge.
+    const previewWidth = Math.min(22 * 16, 360 - 54 - 3 * 16)
+    assert.ok(56 + previewWidth + 16 <= 352)
+    assert.equal(Math.min(22 * 16, 1280 - 54 - 3 * 16), 22 * 16)
 })
