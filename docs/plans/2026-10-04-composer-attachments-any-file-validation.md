@@ -160,7 +160,7 @@ The repository rule is: no CHANGELOG entry without an explicit request. This is 
 
 ## 6. Post-merge reminders for the user
 
-- **Restart the backend** with `devctl.py` (for example `uv run ./devctl.py restart back`). The compute versions changed: **Claude 112 → 113**, **Codex 53 → 54**. Every session recomputes in the background at the next backend start.
+- **Restart the backend** with `devctl.py` (for example `uv run ./devctl.py restart back`). The compute versions are **not** bumped (Claude 112, Codex 53): no stored JSONL holds a manifest yet, and live ingestion extracts it from new messages, so no session recompute is needed. A session already ingested by an earlier build of this branch keeps its raw manifest block in the user text until the next compute-version bump.
 - **No database migration.** No model changed.
 - **No package installation.** No dependency changed (Pillow and `tus-js-client` were already declared).
 - **Frontend build.** Run `cd frontend && npm run build`: the share viewer bundle (`share-session/`, the history strip in shares) is not HMR'd.
