@@ -100,6 +100,20 @@ def question_fact(record: dict, *, source: str, at: str, line: int | None = None
     if item.get("type") in {"UserMessage", "userMessage"}:
         data = {"source": source, "origin": "human", "status": "accepted", "source_item_id": item_id}
         client_id = _identifier(item.get("clientId")) or _identifier(item.get("client_id"))
+        text = "".join(
+            entry.get("text", "")
+            for entry in item.get("content", [])
+            if isinstance(entry, dict) and isinstance(entry.get("text"), str)
+        ).strip()
+        if text.startswith(("<twicc-resume>", '<codex_internal_context source="goal">')) or text in {
+            "/compact",
+            "/plan",
+            "/goal clear",
+            "Retry the exact action I just approved.",
+        }:
+            data["origin"] = "internal"
+        elif text.startswith("Message Type:") and "\nSender:" in text:
+            data["origin"] = "agent"
         if client_id:
             data["client_message_id"] = client_id
         return QuestionFact(f"user:{item_id}", "user_submission", at, turn_id, item_id, line, data)
@@ -117,6 +131,162 @@ def question_fact(record: dict, *, source: str, at: str, line: int | None = None
         line,
         {"source": source, "questions": [question._asdict() for question in questions]},
     )
+
+
+def extract_async_question_facts(record: dict, *, line: int) -> list[QuestionFact]:
+    """Extract canonical evidence before display rewrites; ignore legacy copies.
+
+    ``history_context`` retains source turn starts and goal state. Its keys use
+    semantic IDs and occurrence timestamps, never the mutable rollout line.
+    """
+    from .canonical import user_message_text
+    from .compute import _goal_context_objective, _goal_snapshot_from_tool_result
+
+    at = record.get("timestamp")
+    if not isinstance(at, str):
+        return []
+    payload = record.get("payload") or {}
+    turn_id = payload.get("turn_id") or record.get("turn_id")
+    fact = question_fact(record, source="jsonl", at=at, line=line)
+    facts = []
+    if fact is not None:
+        if fact.kind == "user_submission":
+            text = (user_message_text(record) or "").strip()
+            original = record.get("twiccOriginalContent")
+            internal = (
+                isinstance(original, dict)
+                or text.startswith(("<twicc-resume>", '<codex_internal_context source="goal">'))
+                or text in {"/compact", "/plan", "/goal clear", "Retry the exact action I just approved."}
+            )
+            agent = text.startswith("Message Type:") and "\nSender:" in text
+            data = {**fact.data, "origin": "agent" if agent else "internal" if internal else "human"}
+            if text.startswith("<twicc-resume>") or text == "Retry the exact action I just approved.":
+                data["internal_successor"] = True
+            fact = fact._replace(data=data)
+        facts.append(fact)
+    goal = _goal_snapshot_from_tool_result(record)
+    if payload.get("type") == "thread_goal_updated":
+        goal = payload.get("goal")
+    goal_context = _goal_context_objective(record)
+    context = None
+    if isinstance(goal, dict) and isinstance(goal.get("status"), str):
+        context = {"event": "goal", "status": goal["status"], "goal_id": goal.get("id")}
+    elif goal_context is not None:
+        context = {"event": "goal", "status": "active", "goal_id": None, "internal_successor": True}
+    elif payload.get("type") == "task_started" and turn_id:
+        context = {"event": "turn_start"}
+    elif (user_message_text(record) or "").strip() == "/goal clear":
+        context = {"event": "goal", "status": "cleared", "goal_id": None}
+    if context is not None:
+        identity = context.get("goal_id") or turn_id or at
+        suffix = context.get("status", "")
+        facts.append(
+            QuestionFact(
+                f"history:{context['event']}:{identity}:{suffix}:{at}",
+                "history_context",
+                at,
+                turn_id,
+                None,
+                line,
+                {"source": "jsonl", **context},
+            )
+        )
+    # Abort records are source terminal evidence, including interrupted goals.
+    if payload.get("type") == "turn_aborted" and turn_id:
+        facts.append(
+            QuestionFact(
+                f"end:{turn_id}", "turn_end", at, turn_id, None, line, {"source": "jsonl", "outcome": "interrupted"}
+            )
+        )
+    return facts
+
+
+def _reconstruct_question_history(stored: dict) -> list[dict]:
+    """Derive fallback links from all source evidence without rewriting facts.
+
+    Generated goal returns never override a runtime owner. Rebuilding this view
+    on every merge avoids retaining stale inferred links after line remapping.
+    """
+    ordered = _ordered(deepcopy(list(stored.values())))
+    owned_turns = set()
+    for fact in ordered:
+        if fact["kind"] in {"live_owner", "settlement_decision"}:
+            owned_turns.update(
+                filter(
+                    None, (fact.get("turn_id"), fact["data"].get("root_turn_id"), fact["data"].get("successor_turn_id"))
+                )
+            )
+    goal_turns, goal_active, last_end = [], False, None
+    goal_terminal = None
+    current_turn = None
+    derived = []
+
+    def finish_goal():
+        if not goal_turns or goal_terminal is None or any(turn in owned_turns for turn in goal_turns):
+            return
+        if any(
+            fact["kind"] == "live_owner"
+            and f"return:{fact['data']['group_id']}" not in stored
+            and _compare(goal_terminal, fact) >= 0
+            for fact in ordered
+        ):
+            return
+        ends = {fact["turn_id"]: fact for fact in ordered if fact["kind"] == "turn_end"}
+        if any(turn not in ends for turn in goal_turns):
+            return
+        terminal = _ordered([goal_terminal, *(ends[turn] for turn in goal_turns)])[-1]
+        group = f"history-goal:{goal_turns[0]}"
+        derived.append(
+            {
+                **terminal,
+                "key": f"return:{group}",
+                "kind": "control_return",
+                "data": {"group_id": group, "turn_ids": list(goal_turns), "source": "history", "source_boundary": True},
+            }
+        )
+
+    for fact in ordered:
+        data, turn = fact["data"], fact.get("turn_id")
+        if fact["kind"] == "history_context" and data["event"] == "turn_start":
+            current_turn = turn
+        if fact["kind"] == "history_context" and data["event"] == "goal":
+            if data["status"] == "active":
+                was_active = goal_active
+                if not goal_active:
+                    finish_goal()
+                    goal_turns, goal_terminal = [], None
+                goal_active = True
+                if data.get("internal_successor"):
+                    turn = turn or current_turn
+                    preceding = last_end if not was_active else None
+                    for member in (preceding, turn):
+                        if member and member not in goal_turns:
+                            goal_turns.append(member)
+                    for previous in ordered:
+                        if previous["kind"] == "turn_end" and previous["turn_id"] == preceding:
+                            previous["data"]["goal_active"] = True
+            else:
+                goal_active = False
+                goal_terminal = fact
+        if turn and (goal_active or (goal_terminal is not None and turn in goal_turns)):
+            if turn not in goal_turns:
+                goal_turns.append(turn)
+            if fact["kind"] == "turn_end":
+                data["goal_active"] = True
+                if data.get("outcome") == "interrupted":
+                    goal_active, goal_terminal = False, fact
+        if (
+            fact["kind"] == "user_submission"
+            and data.get("internal_successor")
+            and last_end
+            and turn not in owned_turns
+            and last_end not in owned_turns
+        ):
+            data["continuation_from_turn_id"] = last_end
+        if fact["kind"] == "turn_end":
+            last_end = turn
+    finish_goal()
+    return _ordered([*ordered, *derived])
 
 
 def _time(value: str) -> datetime:
@@ -272,7 +442,7 @@ def _ready_boundaries(facts: list[dict], groups: dict, names: dict) -> dict:
         fact
         for fact in facts
         if (
-            (fact["kind"] == "live_owner" and not (fact["data"].get("root_turn_id") or fact.get("turn_id")))
+            fact["kind"] == "live_owner"
             or (
                 fact["kind"] == "settlement_decision"
                 and fact["data"].get("decision") == "continuation"
@@ -296,7 +466,11 @@ def _ready_boundaries(facts: list[dict], groups: dict, names: dict) -> dict:
         terminal_completion = all(turn in ends for turn, member_group in groups.items() if member_group == group)
         # Only terminal source completion can replace runtime return chronology.
         # An interrupted/failed successor can return control without completing.
-        boundary = _ordered(linked_ends)[-1] if linked_ends and terminal_completion else fact
+        boundary = (
+            _ordered(linked_ends)[-1]
+            if linked_ends and terminal_completion and not data.get("source_boundary")
+            else fact
+        )
         if group not in ready or _compare(boundary, ready[group]) < 0:
             ready[group] = boundary
     members = {}
@@ -387,7 +561,7 @@ def build_question_boundary(
     Explicit membership excludes other known ready batches. Unknown older
     questions remain eligible through the complete settled-turn boundary.
     """
-    facts = _ordered(list(state.get("facts", {}).values()))
+    facts = _reconstruct_question_history(state.get("facts", {}))
     groups, names = _group_evidence(facts)
     readiness = _ready_boundaries(facts, groups, names)
     boundary = {"at": at, "line": line}
@@ -411,7 +585,7 @@ def reduce_question_state(state: dict, facts: list[QuestionFact]) -> dict:
         old = stored.get(fact.key)
         stored[fact.key] = _merge_fact(old, incoming) if old is not None else incoming
     submissions = _submissions(stored)
-    ordered = _ordered(list(stored.values()))
+    ordered = _reconstruct_question_history(stored)
     groups, names = _group_evidence(ordered)
     readiness = _ready_boundaries(ordered, groups, names)
     dismissals = [fact for fact in ordered if fact["kind"] == "dismiss"]

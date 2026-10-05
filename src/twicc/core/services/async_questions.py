@@ -73,6 +73,9 @@ def _merge(session: Session, state: dict, facts: list[QuestionFact]) -> dict:
     merged = reduce_question_state(state, facts)
     if merged != state:
         AsyncQuestionState.objects.update_or_create(session=session, defaults={"state": merged})
+        from twicc.providers.codex.question_snapshots import publish_question_snapshot_on_commit
+
+        publish_question_snapshot_on_commit(session.id, _snapshot(session, merged))
     return _snapshot(session, merged)
 
 

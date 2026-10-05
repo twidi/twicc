@@ -29,6 +29,7 @@ from datetime import datetime, UTC
 
 import orjson
 import pytest
+from django.db.models import F
 
 from twicc.core.enums import Provider
 from twicc.core.models import Project, Session, SessionItem, ToolResultLink
@@ -217,3 +218,53 @@ class TestRecomputePreservesToolResultLinkError:
         assert link is not None, "Batch compute should have created a ToolResultLink for the new pair"
         # No error expected for a clean 'ok' output with no exit code trailer.
         assert link.error is None
+
+
+@pytest.mark.parametrize("stale", [False, True])
+def test_async_questions_apply_only_after_compute_guard(codex_session, stale):
+    from twicc.core.models import AsyncQuestionState
+    from twicc.core.services.async_questions import read_question_snapshot
+    from tests.test_codex_async_question_lifecycle import question, record, user
+
+    records = [question(), record("task_complete", second=2), user("Yes")]
+    for line, value in enumerate(records, 1):
+        SessionItem.objects.create(session=codex_session, line_num=line, content=orjson.dumps(value).decode())
+    compute, result_q = get_compute(), queue.Queue()
+    compute.compute_session_metadata(codex_session.id, result_q, run_id=0)
+    assert not AsyncQuestionState.objects.filter(session=codex_session).exists()
+    if stale:
+        Session.objects.filter(pk=codex_session.pk).update(last_offset=1000)
+    _apply_compute_results(result_q, compute)
+    snapshot = read_question_snapshot(codex_session.id)
+    if stale:
+        assert snapshot["revision"] == 0
+    else:
+        assert snapshot["resolutions"] == {"q1": {"status": "sent", "request_id": None}}
+
+
+def test_async_questions_recompute_remaps_lines_preserves_dismissal(codex_session):
+    from twicc.core.models import AsyncQuestionState
+    from twicc.core.services.async_questions import dismiss_question_batch, read_question_snapshot
+    from tests.test_codex_async_question_lifecycle import question, record
+
+    values = [record("thread_goal_updated", second=0, goal={"id": "g1", "status": "active"}),
+              question(), record("thread_goal_updated", second=2, goal={"id": "g1", "status": "complete"}),
+              record("task_complete", second=3)]
+    for line, value in enumerate(values, 1):
+        SessionItem.objects.create(session=codex_session, line_num=line, content=orjson.dumps(value).decode())
+    compute = get_compute()
+    def rebuild():
+        result_q = queue.Queue()
+        compute.compute_session_metadata(codex_session.id, result_q, run_id=0)
+        _apply_compute_results(result_q, compute)
+    rebuild()
+    dismiss_question_batch(codex_session.id, "q1", request_id="dismiss-1")
+    before = AsyncQuestionState.objects.get(session=codex_session).state
+    SessionItem.objects.filter(session=codex_session).update(line_num=100 + F("line_num"))
+    rebuild()
+    after = AsyncQuestionState.objects.get(session=codex_session).state
+    assert set(after["facts"]) == set(before["facts"])
+    assert after["facts"]["question:q1"]["line"] == 102
+    assert read_question_snapshot(codex_session.id)["resolutions"]["q1"] == {
+        "status": "dismissed", "request_id": "dismiss-1",
+    }

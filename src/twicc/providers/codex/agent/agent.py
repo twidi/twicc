@@ -26,7 +26,7 @@ from collections.abc import Collection
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, ClassVar, NamedTuple
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 from openai_codex import (
     AsyncTurnHandle,
@@ -90,6 +90,9 @@ from .original_files_cache import (
     clear_session as clear_original_files_for_session,
 )
 from .sdk_logger import log_approval_request, log_approval_response, log_stream_event
+
+if TYPE_CHECKING:
+    from ..async_questions import QuestionFact
 
 logger = logging.getLogger(__name__)
 
@@ -739,6 +742,10 @@ class CodexAgent(BaseAgent):
         if self._work_dirs is None:
             self._work_dirs = await self._resolve_and_create_work_dirs()
 
+        await self._ensure_async_question_session()
+        if resume:
+            await self._reconcile_async_question_owners()
+
         if command is not None:
             # Run a hardcoded command (e.g. ``/compact`` on a cold session, or
             # ``/goal`` as a brand-new session's first message) with no initial
@@ -998,6 +1005,163 @@ class CodexAgent(BaseAgent):
             items.append(TextInput(text))
         return items
 
+    async def _ensure_async_question_session(self) -> None:
+        """Use watcher creation for a new thread before the first owned turn."""
+        if getattr(self, "ephemeral", False):
+            return
+        from django.db import transaction
+        from twicc.core.models import Project, Session, SessionType
+        from twicc.pending_agent_settings import pop_pending_agent_settings
+        from twicc.provider_homes import codex_sessions_dir
+        from twicc.providers.db_writer import run_under_db_write_lock
+        from twicc.providers.sessions_watcher import ParsedSessionFile
+        from ..sessions_watcher import get_watcher
+
+        @transaction.atomic
+        def ensure():
+            if Session.objects.filter(id=self.session_id).exists():
+                return
+            started = self._thread.start_response
+            path = Path(str(started.thread.path)).relative_to(codex_sessions_dir())
+            parsed = ParsedSessionFile(self.project_id, self.session_id, SessionType.SESSION,
+                                       file_path=str(path), compute_ready_on_create=True)
+            project = Project.objects.get(id=self.project_id)
+            settings = pop_pending_agent_settings(self.session_id) or self.agent_settings
+            get_watcher().create_session_sync(parsed, project, agent_settings=settings)
+
+        await run_under_db_write_lock(lambda: sync_to_async(ensure)())
+
+    async def _record_async_question_facts(self, facts: list[QuestionFact]) -> None:
+        """Serialize SDK evidence with watcher writes; publication follows commit."""
+        if getattr(self, "ephemeral", False) or not facts:
+            return
+        from twicc.core.models import Session, SessionType
+        from twicc.core.services.async_questions import merge_question_facts
+        from twicc.providers.db_writer import run_under_db_write_lock
+
+        def persist():
+            session = Session.objects.only("type", "parent_session_id").get(id=self.session_id)
+            if session.type == SessionType.SESSION and session.parent_session_id is None:
+                merge_question_facts(self.session_id, facts)
+
+        await run_under_db_write_lock(lambda: sync_to_async(persist)())
+
+    async def _record_async_question_fact(self, fact: QuestionFact) -> None:
+        await self._record_async_question_facts([fact])
+
+    async def _admit_async_question_owner(self) -> None:
+        """Persist admission before an RPC can expose a completed physical turn."""
+        from ..async_questions import QuestionFact
+
+        if getattr(self, "_async_question_group", None) is not None:
+            return
+        group = str(uuid.uuid4())
+        self._async_question_group = group
+        self._async_question_turns = []
+        await self._record_async_question_fact(QuestionFact(
+            f"owner:{group}", "live_owner", datetime.now(UTC).isoformat(), None, None, None,
+            {"group_id": group, "root_turn_id": None, "state": "pending"},
+        ))
+
+    async def _link_async_question_turn(self, turn_id: str) -> None:
+        """Link a returned or goal-routed turn before consuming its completion."""
+        from ..async_questions import QuestionFact
+
+        await self._admit_async_question_owner()
+        turns = self._async_question_turns
+        if turn_id in turns:
+            return
+        group, at = self._async_question_group, datetime.now(UTC).isoformat()
+        facts = []
+        if not turns:
+            facts.append(QuestionFact(f"owner:{group}", "live_owner", at, turn_id, None, None,
+                                     {"group_id": group, "root_turn_id": turn_id, "state": "pending"}))
+        else:
+            facts.append(QuestionFact(f"decision:{turns[-1]}", "settlement_decision", at, turns[-1], None, None,
+                                     {"group_id": group, "turn_id": turns[-1], "decision": "continuation",
+                                      "successor_turn_id": turn_id}))
+        turns.append(turn_id)
+        facts.append(QuestionFact(f"decision:{turn_id}", "settlement_decision", at, turn_id, None, None,
+                                 {"group_id": group, "turn_id": turn_id, "decision": "pending",
+                                  "successor_turn_id": None}))
+        await self._record_async_question_facts(facts)
+
+    async def _continue_async_questions(self, turn_id: str) -> None:
+        from ..async_questions import QuestionFact
+
+        group = getattr(self, "_async_question_group", None)
+        if group is not None:
+            await self._record_async_question_fact(QuestionFact(
+                f"decision:{turn_id}", "settlement_decision", datetime.now(UTC).isoformat(), turn_id, None, None,
+                {"group_id": group, "turn_id": turn_id, "decision": "continuation", "successor_turn_id": None},
+            ))
+
+    async def _settle_async_questions(self, turn_id: str | None, *, outcome: str) -> None:
+        """Commit the return decision and group return together before any hold."""
+        from ..async_questions import QuestionFact
+
+        group = getattr(self, "_async_question_group", None)
+        if group is None:
+            return
+        at = datetime.now(UTC).isoformat()
+        facts = []
+        if turn_id:
+            facts.append(QuestionFact(f"decision:{turn_id}", "settlement_decision", at, turn_id, None, None,
+                                     {"group_id": group, "turn_id": turn_id, "decision": "return",
+                                      "successor_turn_id": None}))
+        facts.append(QuestionFact(f"return:{group}", "control_return", at, turn_id, None, None,
+                                 {"group_id": group, "turn_ids": list(self._async_question_turns),
+                                  "outcome": outcome}))
+        await self._record_async_question_facts(facts)
+        self._async_question_group = None
+        self._async_question_turns = []
+
+    async def _reconcile_async_question_owners(self) -> None:
+        """Recover abandoned ownership only after provider state proves an idle thread."""
+        if getattr(self, "ephemeral", False):
+            return
+        from twicc.core.models import AsyncQuestionState
+        from ..async_questions import QuestionFact
+
+        state = await sync_to_async(lambda: AsyncQuestionState.objects.filter(session_id=self.session_id)
+                                   .values_list("state", flat=True).first())()
+        if not state:
+            return
+        facts = state.get("facts", {})
+        pending = [fact for fact in facts.values() if fact["kind"] == "live_owner"
+                   and f"return:{fact['data']['group_id']}" not in facts]
+        if not pending:
+            return
+        try:
+            response = await self._codex._client.thread_read(self.session_id, include_turns=True)
+            status = _enum_value(response.thread.status.root.type)
+            goal = await self._thread.goal_get()
+        except Exception:
+            logger.warning("Cannot reconcile async question owners for %s", self.session_id, exc_info=True)
+            return
+        if status not in {"idle", "systemError"} or (goal is not None and _enum_value(goal.status) == "active"):
+            return
+        recovered = []
+        at = datetime.now(UTC).isoformat()
+        for owner in pending:
+            group = owner["data"]["group_id"]
+            turns = {fact.get("turn_id") for fact in facts.values()
+                     if fact["kind"] in {"live_owner", "settlement_decision"} and fact["data"].get("group_id") == group}
+            # Admission can precede the RPC response and its root link. Provider
+            # history supplies turns created during that admitted interval.
+            for turn in response.thread.turns or []:
+                turn_id = turn.id
+                evidence = [fact for fact in facts.values()
+                            if fact.get("turn_id") == turn_id and fact["kind"] in {"question", "turn_end"}]
+                if any(datetime.fromisoformat(fact["at"]) >= datetime.fromisoformat(owner["at"])
+                       for fact in evidence):
+                    turns.add(turn_id)
+            turns.discard(None)
+            recovered.append(QuestionFact(f"return:{group}", "control_return", at, None, None, None,
+                                          {"group_id": group, "turn_ids": sorted(turns),
+                                           "outcome": "failed" if status == "systemError" else "interrupted"}))
+        await self._record_async_question_facts(recovered)
+
     async def _open_turn(self, turn_input: list[InputItem]) -> AsyncTurnHandle:
         """Open a turn with current settings; leave delivery errors to the caller."""
         effort = self._sdk_effort(self.agent_settings.effort)
@@ -1025,7 +1189,8 @@ class CodexAgent(BaseAgent):
             self.agent_settings.selected_model,
         )
         service_tier = service_tier_from_fast_mode(self.agent_settings.fast_mode)
-        return await self._thread.turn_with_policy(
+        await self._admit_async_question_owner()
+        handle = await self._thread.turn_with_policy(
             turn_input,
             model=sdk_model,
             effort=effort,
@@ -1034,6 +1199,8 @@ class CodexAgent(BaseAgent):
             approvals_reviewer=approvals_reviewer,
             sandbox_policy=sandbox_policy,
         )
+        await self._link_async_question_turn(handle.id)
+        return handle
 
     async def _run_turn(
         self, text: str, images: list[dict] | None, *, turn_handle: AsyncTurnHandle | None = None,
@@ -1084,6 +1251,8 @@ class CodexAgent(BaseAgent):
                 await self._handle_error(f"Failed to open turn: {e}", exc=e)
                 return
 
+        await self._link_async_question_turn(turn_handle.id)
+        self._async_question_outcome = "completed"
         self._current_turn = turn_handle
         self._current_turn_ready.set()
         self._turn_stream_done.clear()
@@ -1131,6 +1300,10 @@ class CodexAgent(BaseAgent):
         if self.state == AgentState.DEAD:
             return
 
+        if self._async_question_outcome != "completed":
+            self._auto_review_retry_after_turn = False
+            self._plan_item_this_turn = False
+
         if self._auto_review_retry_after_turn:
             self._auto_review_retry_after_turn = False
             self._auto_review_retry_action = None
@@ -1139,8 +1312,16 @@ class CodexAgent(BaseAgent):
                 "for session %s",
                 self.session_id,
             )
+            await self._continue_async_questions(turn_handle.id)
             await self._run_turn(_AUTO_REVIEW_RETRY_PROMPT, None)
             return
+
+        if getattr(self, "_goal_monitor", None) is not None:
+            await self._continue_async_questions(turn_handle.id)
+            await self._run_goal_continuation(self._goal_monitor)
+            return
+
+        await self._settle_async_questions(turn_handle.id, outcome=self._async_question_outcome)
 
         if self._plan_item_this_turn:
             # The turn delivered a Plan-mode final answer: ask what to do next
@@ -1988,9 +2169,12 @@ class CodexAgent(BaseAgent):
         try:
             async for event in stream:
                 if event.method == "turn/started":
+                    await self._link_async_question_turn(event.payload.turn.id)
                     self._current_turn = AsyncTurnHandle(self._codex, self._thread.id, event.payload.turn.id)
                     self._current_turn_ready.set()
                 elif event.method == "turn/completed":
+                    await self._link_async_question_turn(event.payload.turn.id)
+                    await self._continue_async_questions(event.payload.turn.id)
                     if self._current_turn is not None and self._current_turn.id == event.payload.turn.id:
                         self._current_turn = None
                         self._current_turn_ready.clear()
@@ -2015,6 +2199,8 @@ class CodexAgent(BaseAgent):
                 self._goal_monitor = None
                 self._current_turn = None
                 self._current_turn_ready.clear()
+        turns = getattr(self, "_async_question_turns", [])
+        await self._settle_async_questions(turns[-1] if turns else None, outcome="completed")
         await self.notify_goal_continuation_stopped()
 
     async def _set_goal(self, objective: str) -> None:
@@ -2034,12 +2220,15 @@ class CodexAgent(BaseAgent):
         if new_monitor:
             self._goal_monitor = GoalContinuation(self._codex, self._thread.id)
             self._goal_monitor.command_done.clear()
+        await self._admit_async_question_owner()
         try:
             await self._thread.goal_set(objective)
         except BaseException:
             if new_monitor:
                 self._goal_monitor.close()
                 self._goal_monitor = None
+                turns = getattr(self, "_async_question_turns", [])
+                await self._settle_async_questions(turns[-1] if turns else None, outcome="failed")
             raise
 
     async def _settle_after_command(self, state: AgentState, done_event: str) -> None:
@@ -2525,6 +2714,16 @@ class CodexAgent(BaseAgent):
             self.last_activity = time.time()
             await self._transition_to_dead()
 
+    async def _transition_to_dead(self) -> None:
+        turns = getattr(self, "_async_question_turns", [])
+        if getattr(self, "kill_reason", None) not in {"shutdown", "backend_shutdown"}:
+            await self._settle_async_questions(
+                turns[-1] if turns else None,
+                outcome="failed" if getattr(self, "kill_reason", None) in {None, "error", "auth_required"}
+                else "interrupted",
+            )
+        await super()._transition_to_dead()
+
     async def _handle_error(
         self, error_message: str, exc: Exception | None = None,
     ) -> None:
@@ -2756,6 +2955,25 @@ class CodexAgent(BaseAgent):
         payload_thread_id = getattr(payload, "thread_id", None)
         if payload_thread_id is not None and payload_thread_id != self.session_id:
             return
+
+        if method in {"item/completed", "turn/completed"} and not getattr(self, "ephemeral", False):
+            from ..async_questions import question_fact
+
+            if method == "turn/completed" and getattr(self, "_async_question_group", None):
+                self._async_question_outcome = _enum_value(getattr(payload.turn, "status", "completed"))
+                await self._link_async_question_turn(payload.turn.id)
+            if hasattr(payload, "model_dump"):
+                raw = payload.model_dump(mode="json", by_alias=True)
+                source_time = raw.get("completedAtMs")
+                if source_time is not None:
+                    at = datetime.fromtimestamp(source_time / 1000, UTC).isoformat()
+                elif (raw.get("turn") or {}).get("completedAt") is not None:
+                    at = datetime.fromtimestamp(raw["turn"]["completedAt"], UTC).isoformat()
+                else:
+                    at = datetime.now(UTC).isoformat()
+                fact = question_fact({"method": method, "params": raw}, source="sdk", at=at)
+                if fact is not None:
+                    await self._record_async_question_fact(fact)
 
         self._note_command_execution(method, payload)
 
