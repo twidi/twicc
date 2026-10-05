@@ -48,6 +48,7 @@ import { originFromElement, setNextSchemeOrigin } from '../../utils/colorSchemeT
 import {
     SETTINGS_POPOVER_WIDTH_RATIO,
     SETTINGS_POPOVER_MAX_WIDTH,
+    SETTINGS_POPOVER_MARGIN,
     resolveSettingsPlacement,
 } from '../../utils/settingsPopoverPlacement'
 
@@ -1233,6 +1234,12 @@ function resetTitleSystemPrompt() {
 function onPopoverShow() {
     popoverOpen = true
     const popover = popoverRef.value
+    // Bound the whole body, including the wrapped footer, to the anchor's available space.
+    if (popover?.popup) {
+        popover.popup.autoSize = 'vertical'
+        popover.popup.autoSizePadding = SETTINGS_POPOVER_MARGIN
+        popover.popup.shiftPadding = SETTINGS_POPOVER_MARGIN
+    }
     if (props.placement !== 'top' && popover?.anchor) {
         popover.placement = resolveSettingsPlacement({
             preferred: props.placement,
@@ -2423,6 +2430,13 @@ function onChangelogClose() {
 
 .settings-popover::part(body) {
     padding: 0;
+    box-sizing: border-box;
+    max-height: var(--auto-size-available-height, calc(100dvh - 32px));
+    overflow: auto;
+}
+
+.settings-popover > :not(.settings-layout) {
+    flex-shrink: 0;
 }
 
 /* -- Master-detail layout -- */
@@ -2431,6 +2445,8 @@ function onChangelogClose() {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    /* Keep a usable panel when the footer needs more space; the body then scrolls. */
+    min-height: min(8rem, var(--auto-size-available-height, calc(100dvh - 32px)));
     height: min(calc(90dvh - 8rem), 50rem);
     width: min(v-bind(popoverWidth), v-bind(popoverMaxWidth));
 }

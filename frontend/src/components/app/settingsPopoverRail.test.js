@@ -56,6 +56,36 @@ test('opening placement stays synchronous and preserves reset/seeding', () => {
     assert.match(fn('onPopoverAfterHide'), /resetTransientControls\(\)[\s\S]*popoverOpen = false[\s\S]*applyAnchor\(\)/)
 })
 
+test('opening Settings bounds the whole popup to the available anchor space', () => {
+    const popup = {}
+    const context = {
+        popoverRef: { value: { popup } }, popoverOpen: false,
+        props: { placement: 'top' }, SETTINGS_POPOVER_MARGIN: 16,
+        benchmarkTaskStore: { resetTransientControls() {} },
+        mobileShowContent: { value: true }, afterSwap: () => {},
+        worktreeDirInput: { value: '' }, worktreeDirectoryTemplate: { value: '' },
+        seedOriginField() {}, activeSection: { value: 'general' },
+    }
+    runInNewContext(`${fn('onPopoverShow')}; onPopoverShow()`, context)
+    assert.equal(popup.autoSize, 'vertical')
+    assert.equal(popup.autoSizePadding, 16)
+    assert.equal(popup.shiftPadding, 16)
+})
+
+test('whole Settings body shrinks the scrolling panels without losing footer access', () => {
+    const body = style.match(/\.settings-popover::part\(body\) \{([^}]+)\}/)[1]
+    assert.match(body, /box-sizing: border-box/)
+    assert.match(body, /max-height: var\(--auto-size-available-height,/)
+    assert.match(body, /overflow: auto/)
+    const layout = style.match(/\.settings-layout \{([^}]+)\}/)[1]
+    assert.match(layout, /min-height: min\(8rem, var\(--auto-size-available-height,/)
+    assert.match(layout, /height: min\(calc\(90dvh - 8rem\), 50rem\)/)
+    assert.match(style, /\.settings-popover > :not\(\.settings-layout\) \{\s*flex-shrink: 0/)
+    for (const panel of ['settings-nav', 'settings-detail']) {
+        assert.match(style.match(new RegExp(`\\.${panel} \\{([^}]+)\\}`))[1], /overflow-y: auto/)
+    }
+})
+
 test('anchor waits, reads latest props, defers while open, restores, and guards unmount', async () => {
     let ready
     const oldAnchor = {}
