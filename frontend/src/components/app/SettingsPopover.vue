@@ -45,11 +45,20 @@ import { useProviderActivation } from '../../composables/useProviderActivation'
 import { vPopoverFocusFix } from '../../directives/vPopoverFocusFix'
 import { useGlideInk } from '../../composables/useGlideInk'
 import { originFromElement, setNextSchemeOrigin } from '../../utils/colorSchemeTransition'
+import {
+    SETTINGS_POPOVER_WIDTH_RATIO,
+    SETTINGS_POPOVER_MAX_WIDTH,
+    resolveSettingsPlacement,
+} from '../../utils/settingsPopoverPlacement'
 
 const props = defineProps({
-    // The trigger floats over scrolling content on the home page, where it must be opaque
-    // (solid `accent`); in the sidebar footer it sits on the canvas (`outlined`).
+    // Home uses an opaque accent trigger; the icon bar uses a plain trigger.
     triggerAppearance: { type: String, default: 'outlined' },
+    triggerLabel: { type: String, default: null },
+    triggerIconOnly: { type: Boolean, default: false },
+    placement: { type: String, default: 'top' },
+    tooltipPlacement: { type: String, default: 'top' },
+    positionAnchor: { type: Object, default: null },
 })
 
 const router = useRouter()
@@ -110,6 +119,27 @@ const sections = computed(() => [
 const activeSection = ref('general')
 const mobileShowContent = ref(false)
 const popoverRef = ref(null)
+let popoverOpen = false
+const popoverWidth = computed(() => `${SETTINGS_POPOVER_WIDTH_RATIO * 100}vw`)
+const popoverMaxWidth = computed(() => `${SETTINGS_POPOVER_MAX_WIDTH}px`)
+
+async function applyAnchor() {
+    const popover = popoverRef.value
+    if (!popover) return
+    await popover.updateComplete
+    if (!popoverRef.value || popoverOpen) return
+    const anchor = props.positionAnchor ?? document.getElementById('settings-trigger')
+    if (anchor && anchor !== popover.anchor) popover.anchor = anchor
+}
+
+onMounted(applyAnchor)
+watch(() => props.positionAnchor, applyAnchor)
+
+function onPopoverAfterHide() {
+    benchmarkTaskStore.resetTransientControls()
+    popoverOpen = false
+    applyAnchor()
+}
 
 // The chosen section's light fill glides from item to item (visual refresh step 4c).
 const navRef = ref(null)
@@ -505,6 +535,7 @@ const isMac = computed(() => store.isMac)
 const isLinux = computed(() => store.isLinux)
 const worktreeDirectoryTemplate = computed(() => store.getWorktreeDirectoryTemplate)
 const compactSessionList = computed(() => store.isCompactSessionList)
+const sidebarRailVisibleWhenClosed = computed(() => store.isSidebarRailVisibleWhenClosed)
 const reduceEffects = computed(() => store.isReduceEffects)
 const showMessageTimestamps = computed(() => store.areMessageTimestampsShown)
 const showDiffs = computed(() => store.isShowDiffs)
@@ -1129,6 +1160,10 @@ function onReduceEffectsChange(event) {
     store.setReduceEffects(event.target.checked)
 }
 
+function onSidebarRailVisibleWhenClosedChange(event) {
+    store.setSidebarRailVisibleWhenClosed(event.target.checked)
+}
+
 function onCompactSessionListChange(event) {
     store.setCompactSessionList(event.target.checked)
 }
@@ -1196,6 +1231,15 @@ function resetTitleSystemPrompt() {
  * restricts it to the popover's own event (target === currentTarget).
  */
 function onPopoverShow() {
+    popoverOpen = true
+    const popover = popoverRef.value
+    if (props.placement !== 'top' && popover?.anchor) {
+        popover.placement = resolveSettingsPlacement({
+            preferred: props.placement,
+            anchorRight: popover.anchor.getBoundingClientRect().right,
+            innerWidth: window.innerWidth,
+        })
+    }
     // The provider sections' model × effort matrix starts with older models
     // hidden and auto-select off, whatever the last opening (or the session
     // popover) left behind.
@@ -1260,1064 +1304,1105 @@ function onChangelogClose() {
 </script>
 
 <template>
-    <wa-button id="settings-trigger" variant="brand" :appearance="props.triggerAppearance" size="small">
-        <wa-icon name="gear"></wa-icon><span>Settings</span>
-        <!-- Last stop for the peer count: see the container query below. -->
-        <PeerInboxBadge :count="peersStore.inboxCount" class="settings-trigger-badge" />
+    <wa-button id="settings-trigger" :class="{ 'settings-trigger--icon-only': props.triggerIconOnly }" variant="brand" :appearance="props.triggerAppearance" size="small">
+        <wa-icon name="gear"></wa-icon><span class="settings-trigger-label">{{ props.triggerLabel ?? 'Settings' }}</span>
     </wa-button>
-    <AppTooltip for="settings-trigger">Toggle settings</AppTooltip>
-    <wa-popover ref="popoverRef" v-popover-focus-fix for="settings-trigger" placement="top" class="settings-popover" @wa-show.self="onPopoverShow" @wa-after-hide.self="benchmarkTaskStore.resetTransientControls()">
-        <AppTooltip v-if="showLogout" :for="logoutButtonId">Logout</AppTooltip>
-        <div class="settings-layout">
-            <div class="settings-layout-inner" :class="{ 'showing-content': mobileShowContent }">
-                <!-- Nav: section list -->
-                <nav ref="navRef" v-scroll-shadow class="settings-nav">
-                    <span ref="navInkRef" class="glide-ink settings-nav-ink" aria-hidden="true"></span>
-                    <button
-                        v-for="section in sections"
-                        :key="section.id"
-                        class="settings-nav-item"
-                        :class="{ active: activeSection === section.id }"
-                        @click="selectSection(section.id)"
-                    >
-                        <ProviderIcon
-                            v-if="section.icon"
-                            :provider="section.provider"
-                            class="settings-nav-provider-icon"
-                        />
-                        {{ section.navLabel || section.label }}
-                        <PeerInboxBadge v-if="section.badge" :count="section.badge" inline />
-                        <wa-icon v-if="section.synced" name="cloud" class="synced-icon"></wa-icon>
-                    </button>
-                    <!-- Shortcuts is always present, so the divider is too. A touch device can
-                         have a keyboard plugged in at any moment (and unplugged the next), so
-                         the cheat sheet stays reachable everywhere rather than tracking a flag
-                         that would be stale as soon as it is read. -->
-                    <wa-divider class="settings-nav-divider"></wa-divider>
-                    <button
-                        class="settings-nav-item shortcuts-nav-item"
-                        :class="{ active: activeSection === 'shortcuts' }"
-                        @click="selectSection('shortcuts')"
-                    >
-                        Shortcuts
-                    </button>
-                    <button
-                        class="settings-nav-item tips-nav-item"
-                        :class="{ active: activeSection === 'tips' }"
-                        @click="selectSection('tips')"
-                    >
-                        Tips
-                    </button>
-                    <button
-                        class="settings-nav-item help-nav-item"
-                        :class="{ active: activeSection === 'help' }"
-                        @click="selectSection('help')"
-                    >
-                        Help
-                    </button>
-                </nav>
-
-                <wa-divider class="settings-vertical-divider" orientation="vertical"></wa-divider>
-
-                <!-- Detail: section content -->
-                <div ref="detailRef" v-scroll-shadow class="settings-detail">
-                    <div class="settings-detail-header glass-sticky" @click="goBackToNav">
-                        <wa-button
-                            variant="neutral"
-                            appearance="plain"
-                            size="small"
-                        >
-                            <wa-icon name="arrow-left"></wa-icon>
-                        </wa-button>
-                        <span class="settings-detail-header-title">
-                            {{ activeSectionLabel }}
-                            <wa-icon v-if="activeSectionObj?.synced" name="cloud" class="synced-icon"></wa-icon>
-                        </span>
-                    </div>
-                    <div class="settings-sections">
-                    <!-- Section crossfade (step 7f): one keyed wrapper, desktop only (see isNarrow). -->
-                    <Transition
-                        name="settings-swap"
-                        :mode="isNarrow ? undefined : 'out-in'"
-                        :css="!isNarrow"
-                        @before-leave="onSectionLeaving"
-                        @enter="onSectionEnter"
-                        @after-leave="onSectionLeft"
-                    >
-                    <div :key="activeSection" class="settings-swap">
-
-                <!-- General Section -->
-                <section v-if="activeSection === 'general'" class="settings-section">
-                    <h3 class="settings-section-title">General</h3>
-                    <div class="setting-group">
-                        <label class="setting-group-label">External address <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
-                        <div class="setting-input-apply-row">
-                            <wa-input
-                                ref="publicBaseUrlInputRef"
-                                :value="publicBaseUrlInput"
-                                @input="onPublicBaseUrlInputChange"
-                                @keydown.enter="onPublicBaseUrlApply"
-                                placeholder="https://twicc.example.com"
-                                size="small"
-                            ></wa-input>
-                            <wa-button
-                                size="small"
-                                variant="neutral"
-                                @click="onPublicBaseUrlApply"
-                            >
-                                <wa-icon :name="publicBaseUrlApplyIcon" slot="start"></wa-icon>
-                                Apply
-                            </wa-button>
-                        </div>
-                        <wa-callout v-if="publicBaseUrlError" variant="danger" size="small">{{ publicBaseUrlError }}</wa-callout>
-                        <span class="setting-group-hint">
-                            Where you reach TwiCC from your devices — used to build links back to
-                            your sessions (e.g. in notifications). Leave empty to omit those links.
-                            <HelpIconButton help-key="external-url" label="About tunnels &amp; remote access" />
-                        </span>
-                    </div>
-                    <wa-divider></wa-divider>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Reduce effects</label>
-                        <wa-switch
-                            :checked="reduceEffects"
-                            @change="onReduceEffectsChange"
-                            size="small"
-                        >Enabled</wa-switch>
-                        <span class="setting-group-hint">Turns off animations, glass blur and other costly effects. Useful on a slower device. Only applies to this device.</span>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Color scheme</label>
-                        <wa-select
-                            :value.prop="colorScheme"
-                            @change="onColorSchemeChange"
-                            size="small"
-                        >
-                            <wa-option
-                                v-for="option in colorSchemeOptions"
-                                :key="option.value"
-                                :value="option.value"
-                            >{{ option.label }}</wa-option>
-                        </wa-select>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Font size ({{fontSize}}px)</label>
-                        <wa-slider
-                            :min.prop="12"
-                            :max.prop="32"
-                            :step.prop="1"
-                            :value.prop="fontSize"
-                            @input="onFontSizeChange"
-                            size="small"
-                        ></wa-slider>
-                    </div>
-                    <wa-divider></wa-divider>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Time display</label>
-                        <wa-select
-                            :value.prop="sessionTimeFormat"
-                            @change="onSessionTimeFormatChange"
-                            size="small"
-                            class="session-time-format-select"
-                        >
-                            <wa-option
-                                v-for="option in sessionTimeFormatOptions"
-                                :key="option.value"
-                                :value="option.value"
-                            >{{ option.label }}</wa-option>
-                        </wa-select>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Show costs</label>
-                        <wa-switch
-                            :checked="showCosts"
-                            @change="onShowCostsChange"
-                            size="small"
-                        >Enabled</wa-switch>
-                    </div>
-                    <wa-divider></wa-divider>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Worktree directory template <wa-icon name="cloud" class="synced-icon"></wa-icon><HelpIconButton help-key="worktrees" label="What's a worktree?" /></label>
-                        <div class="setting-input-apply-row">
-                            <wa-input
-                                :value="worktreeDirInput"
-                                @input="onWorktreeDirInputChange"
-                                @keydown.enter="onWorktreeDirApply"
-                                placeholder="{git_root}/.worktrees"
-                                size="small"
-                            ></wa-input>
-                            <wa-button
-                                size="small"
-                                variant="neutral"
-                                @click="onWorktreeDirApply"
-                                :disabled="!worktreeTemplateValidation.valid"
-                            >
-                                <wa-icon :name="worktreeDirApplyIcon" slot="start"></wa-icon>
-                                Apply
-                            </wa-button>
-                        </div>
-                        <span class="setting-group-hint">
-                            Template for the base directory of new git worktrees; pre-fills the path when
-                            creating one (<code>../</code> allowed). Placeholders:
-                            <code>{git_root}</code> (the project's git root),
-                            <code>{project_name}</code> (its name, or its folder name if unnamed),
-                            <code>{project_basedir}</code> (its folder name).
-                            E.g. <code>{git_root}/.worktrees</code> or <code>/home/me/worktrees/{project_name}</code>.
-                            A project can override this with its own absolute directory. Leave empty for no default.
-                        </span>
-                        <wa-callout
-                            v-if="worktreeDirInput.trim() && !worktreeTemplateValidation.valid"
-                            variant="danger"
-                            size="small"
-                            class="usage-file-validation"
-                        >{{ worktreeTemplateError }}</wa-callout>
-                    </div>
-                    <wa-divider></wa-divider>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Anonymous telemetry <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
-                        <wa-switch
-                            :checked="telemetryEnabled"
-                            @change="onTelemetryEnabledChange"
-                            size="small"
-                        >Enabled</wa-switch>
-                        <span class="setting-group-hint">
-                            Anonymous usage statistics — counters only, never content, messages, titles or paths.
-                            <a href="https://twicc-telemetry.twidi.com/" target="_blank" rel="noopener">What is collected</a>
-                        </span>
-                        <div v-if="telemetryEnabled" class="telemetry-actions">
-                            <wa-button size="small" appearance="outlined" @click="showTelemetryPayload = true">View last payload</wa-button>
-                            <wa-button size="small" appearance="outlined" @click="resetTelemetryInstanceId">Reset instance ID</wa-button>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- Providers section -->
-                <section v-if="activeSection === 'providers'" class="settings-section">
-                    <h3 class="settings-section-title">Providers <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
-                    <div class="activated-providers-block">
-                        <h4>Activated providers</h4>
-                        <p class="hint">
-                            Disabling a provider stops all of its background tasks, prevents
-                            creating new sessions or renaming existing ones, and hides its
-                            settings section. Existing sessions remain readable.
-                        </p>
-                        <div class="provider-switches">
-                            <div v-for="p in getRegisteredProviders()" :key="p" class="provider-switch-row">
-                                <div class="provider-switch-line">
-                                    <wa-switch
-                                        class="provider-switch"
-                                        :checked="enabledProviders.has(p)"
-                                        :disabled="isSwitchDisabled(p)"
-                                        @change="(e) => onToggleProvider(p, e)"
-                                    >
-                                        <ProviderIcon
-                                            v-if="providerIconFor(p)"
-                                            :provider="p"
-                                            class="provider-switch-icon"
-                                        />
-                                        {{ providerLabelFor(p) }}
-                                    </wa-switch>
-                                    <template v-if="transitionLabelFor(p)">
-                                        <span class="transition-label">{{ transitionLabelFor(p) }}</span>
-                                        <wa-spinner class="transition-spinner"></wa-spinner>
-                                    </template>
-                                </div>
-                                <span v-if="reasonFor(p)" class="hint danger">{{ reasonFor(p) }}</span>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Default provider for new sessions</label>
-                        <wa-select
-                            :value.prop="defaultProvider"
-                            @change="onDefaultProviderChange"
-                            size="small"
+    <AppTooltip for="settings-trigger" :placement="props.tooltipPlacement">{{ props.triggerLabel ?? 'Toggle settings' }}</AppTooltip>
+    <Teleport to="body">
+        <wa-popover ref="popoverRef" v-popover-focus-fix for="settings-trigger" :placement="props.placement" class="settings-popover" @wa-show.self="onPopoverShow" @wa-after-hide.self="onPopoverAfterHide">
+            <AppTooltip v-if="showLogout" :for="logoutButtonId">Logout</AppTooltip>
+            <div class="settings-layout">
+                <div class="settings-layout-inner" :class="{ 'showing-content': mobileShowContent }">
+                    <!-- Nav: section list -->
+                    <nav ref="navRef" v-scroll-shadow class="settings-nav">
+                        <span ref="navInkRef" class="glide-ink settings-nav-ink" aria-hidden="true"></span>
+                        <button
+                            v-for="section in sections"
+                            :key="section.id"
+                            class="settings-nav-item"
+                            :class="{ active: activeSection === section.id }"
+                            @click="selectSection(section.id)"
                         >
                             <ProviderIcon
-                                v-if="providerIconFor(defaultProvider)"
-                                slot="start"
-                                :provider="defaultProvider"
+                                v-if="section.icon"
+                                :provider="section.provider"
+                                class="settings-nav-provider-icon"
                             />
-                            <wa-option
-                                v-for="option in enabledProviderOptions"
-                                :key="option.value"
-                                :value="option.value"
-                                :label="option.label"
-                            >
-                                <ProviderIcon
-                                    v-if="providerIconFor(option.value)"
-                                    :provider="option.value"
-                                    class="provider-option-icon"
-                                />
-                                {{ option.label }}
-                            </wa-option>
-                        </wa-select>
-                    </div>
-                </section>
-
-                <!-- Per-provider sections — one block per registered provider, identified by its wire key. -->
-                <template v-for="section in providerSections" :key="section.id">
-                    <ProviderSettingsSection
-                        v-if="activeSection === section.id"
-                        :provider="section.provider"
-                    />
-                </template>
-
-                <!-- Notifications Section -->
-                <NotificationSettings v-if="activeSection === 'notifications'" ref="notificationSettingsRef" @go-to-public-base-url="goToPublicBaseUrl" />
-
-                <McpSettings v-if="activeSection === 'mcp'" />
-                <!-- Sharing Section -->
-                <section v-if="activeSection === 'sharing'" class="settings-section">
-                    <h3 class="settings-section-title">Sharing</h3>
-                    <div class="setting-group">
-                        <wa-button size="small" appearance="plain" class="sharing-help-link" @click="showHelp('sharing', { showDontShowAgain: false })">
-                            <wa-icon name="circle-question" slot="start"></wa-icon>
-                            View help
-                        </wa-button>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Share host <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
-                        <div class="setting-input-apply-row">
-                            <wa-input
-                                ref="shareBaseUrlInputRef"
-                                :value="shareBaseUrlInput"
-                                @input="onShareBaseUrlInputChange"
-                                @keydown.enter="onShareBaseUrlApply"
-                                placeholder="share.example.com"
-                                size="small"
-                            ></wa-input>
-                            <wa-button
-                                size="small"
-                                variant="neutral"
-                                @click="onShareBaseUrlApply"
-                            >
-                                <wa-icon :name="shareBaseUrlApplyIcon" slot="start"></wa-icon>
-                                Apply
-                            </wa-button>
-                        </div>
-                        <wa-callout v-if="shareBaseUrlError" variant="danger" size="small">{{ shareBaseUrlError }}</wa-callout>
-                        <span class="setting-group-hint">
-                            Dedicated share host — a hostname distinct from this app, pointing at the
-                            same port (e.g. a second tunnel hostname). Required to create share links;
-                            a different port on the same hostname is not enough. Leave empty to disable sharing.
-                        </span>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Agent sharing <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
-                        <wa-switch
-                            :checked="allowAgentSessionShares"
-                            @change="onAllowAgentSessionSharesChange"
-                            size="small"
-                        >Session shares</wa-switch>
-                        <span class="setting-group-hint">
-                            Allows agents to create session shares whose target belongs to their own
-                            spawn subtree, and to manage session shares created by agents in their own
-                            spawn subtree. When enabled, agents can also revoke any existing session
-                            share, including links created by you, and read the URL of every existing
-                            session share, including links created by you or by another agent.
-                        </span>
-                        <wa-switch
-                            :checked="allowAgentArtifactShares"
-                            @change="onAllowAgentArtifactSharesChange"
-                            size="small"
-                        >Artifact shares</wa-switch>
-                        <span class="setting-group-hint">
-                            Allows agents to create artifact shares whose target belongs to their own
-                            spawn subtree, and to manage artifact shares created by agents in their own
-                            spawn subtree. When enabled, agents can also revoke any existing artifact
-                            share, including links created by you, and read the URL of every existing
-                            artifact share, including links created by you or by another agent.
-                        </span>
-                    </div>
-                    <div class="setting-group">
-                        <wa-button size="small" variant="neutral" appearance="accent" @click="showShareManager = true">
-                            <wa-icon name="share-nodes" slot="start"></wa-icon>
-                            Shared links
-                        </wa-button>
-                    </div>
-                </section>
-
-                <!-- Peers Section -->
-                <section v-if="activeSection === 'peers'" class="settings-section">
-                    <div class="peer-help-heading">
-                        <h3 class="settings-section-title">Peers</h3>
-                        <PeerHelpLink />
-                    </div>
-                    <!-- Once the feature is usable, these are the daily
-                         actions and the fields below become set-once
-                         configuration — so they lead. Before that the section
-                         is a setup form and they lead nowhere: the manager
-                         cannot even add a peer without an address. -->
-                    <div v-if="hasPeerActions" class="setting-group peer-actions">
-                        <wa-button size="small" variant="neutral" appearance="accent" @click="openPeersManager">
-                            <wa-icon name="user-group" slot="start"></wa-icon>
-                            <span class="peer-action-label">
-                                Manage peers
-                                <PeerInboxBadge :count="peersStore.pendingRequests.length" inline />
-                            </span>
-                        </wa-button>
-                        <wa-button size="small" variant="neutral" appearance="accent" @click="openPeerInbox">
-                            <wa-icon name="envelope" slot="start"></wa-icon>
-                            <span class="peer-action-label">
-                                Open inbox
-                                <PeerInboxBadge :count="peersStore.pendingInboundMessages.length" inline />
-                            </span>
-                        </wa-button>
-                    </div>
-                    <!-- Separates the actions from the configuration below;
-                         only meaningful when the actions are there. -->
-                    <wa-divider v-if="hasPeerActions"></wa-divider>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Your name <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
-                        <div class="setting-input-apply-row">
-                            <wa-input
-                                :value="peerDisplayNameInput"
-                                @input="onPeerDisplayNameInputChange"
-                                @keydown.enter="onPeerDisplayNameApply"
-                                placeholder="e.g. Stephane (laptop)"
-                                size="small"
-                            ></wa-input>
-                            <wa-button
-                                size="small"
-                                variant="neutral"
-                                @click="onPeerDisplayNameApply"
-                            >
-                                <wa-icon :name="peerDisplayNameApplyIcon" slot="start"></wa-icon>
-                                Apply
-                            </wa-button>
-                        </div>
-                        <span class="setting-group-hint">
-                            Shown to peers in your pairing requests so they know who is asking.
-                            Empty uses your address's hostname.
-                        </span>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Your address <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
-                        <div class="setting-input-apply-row">
-                            <wa-input
-                                ref="peerBaseUrlInputRef"
-                                :value="peerBaseUrlInput"
-                                @input="onPeerBaseUrlInputChange"
-                                @keydown.enter="onPeerBaseUrlApply"
-                                placeholder="https://twicc.example.com"
-                                size="small"
-                            ></wa-input>
-                            <wa-button
-                                size="small"
-                                variant="neutral"
-                                @click="onPeerBaseUrlApply"
-                            >
-                                <wa-icon :name="peerBaseUrlApplyIcon" slot="start"></wa-icon>
-                                Apply
-                            </wa-button>
-                        </div>
-                        <wa-callout v-if="peerBaseUrlError" variant="danger" size="small">{{ peerBaseUrlError }}</wa-callout>
-                        <wa-callout v-if="peerBaseUrlWarning" variant="warning" size="small">{{ peerBaseUrlWarning }}</wa-callout>
-                        <wa-callout v-if="peerBaseUrlConfirmation" variant="warning" size="small">
-                            <div class="peer-address-confirmation">
-                                <span>
-                                    Changing this address disables active Peer relationships and clears their credentials.
-                                    You must reconnect each Peer manually.
-                                </span>
-                                <div class="peer-address-confirmation__actions">
-                                    <wa-button size="small" variant="brand" @click="confirmPeerBaseUrlApply">Continue</wa-button>
-                                    <wa-button
-                                        size="small"
-                                        variant="neutral"
-                                        appearance="outlined"
-                                        @click="cancelPeerBaseUrlApply"
-                                    >Cancel</wa-button>
-                                </div>
-                            </div>
-                        </wa-callout>
-                        <!-- An action, so a <button> — styled as a link, since
-                             that is what reads as clickable in a hint-sized
-                             line under a field. -->
-                        <button
-                            v-if="canPrefillPeerBaseUrl"
-                            type="button" class="settings-link-button"
-                            @click="prefillPeerBaseUrlFromPublic"
-                        >
-                            Use the External address from General settings
+                            {{ section.navLabel || section.label }}
+                            <PeerInboxBadge v-if="section.badge" :count="section.badge" inline />
+                            <wa-icon v-if="section.synced" name="cloud" class="synced-icon"></wa-icon>
                         </button>
-                        <span class="setting-group-hint">
-                            Your address, advertised to peers. Empty disables peer messaging.
-                            A different address from External serves peer traffic only; the same
-                            address keeps the whole app reachable there.
-                            HTTPS strongly recommended. The host must be reachable
-                            machine-to-machine: a tunnel-level access gate (e.g. Cloudflare
-                            Access asking for an email or Google account) blocks peer calls —
-                            use a truly public hostname.
-                        </span>
-                    </div>
-                </section>
-
-                <!-- Sessions Section -->
-                <section v-if="activeSection === 'sessions'" class="settings-section">
-                    <h3 class="settings-section-title">Sessions</h3>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Display mode</label>
-                        <wa-select
-                            :value.prop="displayMode"
-                            @change="onDisplayModeChange"
-                            size="small"
+                        <!-- Shortcuts is always present, so the divider is too. A touch device can
+                             have a keyboard plugged in at any moment (and unplugged the next), so
+                             the cheat sheet stays reachable everywhere rather than tracking a flag
+                             that would be stale as soon as it is read. -->
+                        <wa-divider class="settings-nav-divider"></wa-divider>
+                        <button
+                            class="settings-nav-item shortcuts-nav-item"
+                            :class="{ active: activeSection === 'shortcuts' }"
+                            @click="selectSection('shortcuts')"
                         >
-                            <wa-option
-                                v-for="option in displayModeOptions"
-                                :key="option.value"
-                                :value="option.value"
-                            >{{ option.label }}</wa-option>
-                        </wa-select>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Diffs</label>
-                        <wa-switch
-                            :checked="showDiffs"
-                            @change="onShowDiffsChange"
-                            size="small"
-                        >Auto open edits</wa-switch>
-                        <wa-switch
-                            :checked="toolDiffWordWrap"
-                            @change="onToolDiffWordWrapChange"
-                            size="small"
-                        >Word wrap</wa-switch>
-                        <wa-switch
-                            :checked="toolDiffSideBySide"
-                            @change="onToolDiffSideBySideChange"
-                            size="small"
-                        >Side by side</wa-switch>
-                        <span class="setting-group-hint">Inactive if the screen is too narrow.</span>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Message timestamps</label>
-                        <wa-switch
-                            :checked="showMessageTimestamps"
-                            @change="onShowMessageTimestampsChange"
-                            size="small"
-                        >Show time under each message block</wa-switch>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Auto-unpin on archive <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
-                        <wa-switch
-                            :checked="autoUnpinOnArchive"
-                            @change="onAutoUnpinOnArchiveChange"
-                            size="small"
-                        >Enabled</wa-switch>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Compact session list</label>
-                        <wa-switch
-                            :checked="compactSessionList"
-                            @change="onCompactSessionListChange"
-                            size="small"
-                        >Enabled</wa-switch>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Session cache ({{ maxCachedSessions }})</label>
-                        <wa-slider
-                            :min.prop="1"
-                            :max.prop="50"
-                            :step.prop="1"
-                            :value.prop="maxCachedSessions"
-                            @input="onMaxCachedSessionsChange"
-                            size="small"
-                        ></wa-slider>
-                        <span class="setting-group-hint">Number of sessions kept in memory for instant switching.</span>
-                    </div>
-                </section>
-
-                <!-- Layouts Section -->
-                <section v-if="activeSection === 'layouts'" class="settings-section">
-                    <h3 class="settings-section-title">Layouts <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Default layout for new sessions</label>
-                        <wa-select
-                            :value.prop="defaultLayoutId"
-                            @change="onDefaultLayoutChange"
-                            size="small"
+                            Shortcuts
+                        </button>
+                        <button
+                            class="settings-nav-item tips-nav-item"
+                            :class="{ active: activeSection === 'tips' }"
+                            @click="selectSection('tips')"
                         >
-                            <wa-option
-                                v-for="l in selectableLayouts"
-                                :key="l.id"
-                                :value="l.id"
-                                :label="l.name"
-                            >{{ l.name }}</wa-option>
-                        </wa-select>
-                        <span class="setting-group-hint">
-                            Save new layouts from a session: dock some panels, then open the layout
-                            menu (the <wa-icon name="chevron-down" class="inline-hint-icon"></wa-icon>
-                            button at the right of the tab bar) and choose “Save layout”.
-                        </span>
-                    </div>
-                    <div class="setting-group">
-                        <wa-button appearance="accent" size="small" @click="onManageLayouts">
-                            <wa-icon slot="start" name="sliders"></wa-icon>
-                            Manage layouts…
-                        </wa-button>
-                    </div>
-                </section>
-
-                <!-- Title Suggestion Section -->
-                <section v-if="activeSection === 'title'" class="settings-section">
-                    <h3 class="settings-section-title">Title suggestion <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
-                    <div class="setting-group">
-                        <wa-switch
-                            :checked="titleGenerationEnabled"
-                            @change="onTitleGenerationChange"
-                            size="small"
-                        >Enabled</wa-switch>
-                        <wa-switch
-                            v-if="titleGenerationEnabled"
-                            :checked="titleAutoApply"
-                            @change="onTitleAutoApplyChange"
-                            size="small"
-                        >Automatic titles</wa-switch>
-                        <wa-radio-group
-                            label="Model"
-                            name="title-suggestion-model"
-                            size="small"
-                            :value="titleSuggestionModel"
-                            :disabled="!titleGenerationEnabled"
-                            @change="onTitleSuggestionModelChange"
-                            @click="onTitleSuggestionModelClick"
-                            @keydown="onTitleSuggestionModelKeydown"
+                            Tips
+                        </button>
+                        <button
+                            class="settings-nav-item help-nav-item"
+                            :class="{ active: activeSection === 'help' }"
+                            @click="selectSection('help')"
                         >
-                            <wa-radio :value="TITLE_SUGGESTION_MODEL.PROVIDER">
-                                Match session provider — Haiku for Claude Code, GPT-6 Luna for Codex
-                            </wa-radio>
-                            <wa-radio
-                                :value="TITLE_SUGGESTION_MODEL.HAIKU"
-                                :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.HAIKU]"
-                            >
-                                {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.HAIKU] }} for every session
-                                <span
-                                    v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.HAIKU]"
-                                    class="radio-note"
-                                >— {{ disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.HAIKU] }}</span>
-                            </wa-radio>
-                            <wa-radio
-                                :value="TITLE_SUGGESTION_MODEL.LUNA"
-                                :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
-                            >
-                                {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.LUNA] }} for every session
-                                <span class="radio-note">(much faster than Haiku)</span>
-                                <span
-                                    v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
-                                    class="radio-note"
-                                >— {{ disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA] }}</span>
-                            </wa-radio>
-                        </wa-radio-group>
-                        <span v-if="titleGenerationEnabled" class="setting-group-hint">
-                            If the selected provider cannot be used — disabled, over quota, or
-                            failing — TwiCC generates the title with the other provider, when that
-                            one is enabled.
-                            <template v-if="titleSuggestionModelIsDisplaced">
-                                Your choice is kept, and comes back as soon as you enable its
-                                provider again.
-                            </template>
-                        </span>
-                        <div v-if="titleGenerationEnabled" class="title-prompt-section">
-                            <label class="setting-group-label">System prompt</label>
-                            <wa-textarea
-                                :value.prop="titleSystemPromptInput"
-                                @input="onTitleSystemPromptChange"
+                            Help
+                        </button>
+                    </nav>
+
+                    <wa-divider class="settings-vertical-divider" orientation="vertical"></wa-divider>
+
+                    <!-- Detail: section content -->
+                    <div ref="detailRef" v-scroll-shadow class="settings-detail">
+                        <div class="settings-detail-header glass-sticky" @click="goBackToNav">
+                            <wa-button
+                                variant="neutral"
+                                appearance="plain"
                                 size="small"
-                                rows="7"
-                                resize="vertical"
-                                class="title-prompt-textarea"
-                            ></wa-textarea>
-                            <div class="title-prompt-hint">
-                                <span>Use <code>{text}</code> as placeholder. Press Apply to save.</span>
-                                <div class="title-prompt-actions">
-                                    <wa-button
-                                        v-if="!isDefaultPrompt"
-                                        variant="neutral"
-                                        appearance="outlined"
-                                        size="small"
-                                        @click.stop="resetTitleSystemPrompt"
-                                    >Reset to default</wa-button>
-                                    <wa-button
-                                        size="small"
-                                        variant="neutral"
-                                        @click.stop="onTitleSystemPromptApply"
-                                    >
-                                        <wa-icon :name="titleSystemPromptApplyIcon" slot="start"></wa-icon>
-                                        Apply
-                                    </wa-button>
+                            >
+                                <wa-icon name="arrow-left"></wa-icon>
+                            </wa-button>
+                            <span class="settings-detail-header-title">
+                                {{ activeSectionLabel }}
+                                <wa-icon v-if="activeSectionObj?.synced" name="cloud" class="synced-icon"></wa-icon>
+                            </span>
+                        </div>
+                        <div class="settings-sections">
+                        <!-- Section crossfade (step 7f): one keyed wrapper, desktop only (see isNarrow). -->
+                        <Transition
+                            name="settings-swap"
+                            :mode="isNarrow ? undefined : 'out-in'"
+                            :css="!isNarrow"
+                            @before-leave="onSectionLeaving"
+                            @enter="onSectionEnter"
+                            @after-leave="onSectionLeft"
+                        >
+                        <div :key="activeSection" class="settings-swap">
+
+                    <!-- General Section -->
+                    <section v-if="activeSection === 'general'" class="settings-section">
+                        <h3 class="settings-section-title">General</h3>
+                        <div class="setting-group">
+                            <label class="setting-group-label">External address <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <div class="setting-input-apply-row">
+                                <wa-input
+                                    ref="publicBaseUrlInputRef"
+                                    :value="publicBaseUrlInput"
+                                    @input="onPublicBaseUrlInputChange"
+                                    @keydown.enter="onPublicBaseUrlApply"
+                                    placeholder="https://twicc.example.com"
+                                    size="small"
+                                ></wa-input>
+                                <wa-button
+                                    size="small"
+                                    variant="neutral"
+                                    @click="onPublicBaseUrlApply"
+                                >
+                                    <wa-icon :name="publicBaseUrlApplyIcon" slot="start"></wa-icon>
+                                    Apply
+                                </wa-button>
+                            </div>
+                            <wa-callout v-if="publicBaseUrlError" variant="danger" size="small">{{ publicBaseUrlError }}</wa-callout>
+                            <span class="setting-group-hint">
+                                Where you reach TwiCC from your devices — used to build links back to
+                                your sessions (e.g. in notifications). Leave empty to omit those links.
+                                <HelpIconButton help-key="external-url" label="About tunnels &amp; remote access" />
+                            </span>
+                        </div>
+                        <wa-divider></wa-divider>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Reduce effects</label>
+                            <wa-switch
+                                :checked="reduceEffects"
+                                @change="onReduceEffectsChange"
+                                size="small"
+                            >Enabled</wa-switch>
+                            <span class="setting-group-hint">Turns off animations, glass blur and other costly effects. Useful on a slower device. Only applies to this device.</span>
+                        </div>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Color scheme</label>
+                            <wa-select
+                                :value.prop="colorScheme"
+                                @change="onColorSchemeChange"
+                                size="small"
+                            >
+                                <wa-option
+                                    v-for="option in colorSchemeOptions"
+                                    :key="option.value"
+                                    :value="option.value"
+                                >{{ option.label }}</wa-option>
+                            </wa-select>
+                        </div>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Font size ({{fontSize}}px)</label>
+                            <wa-slider
+                                :min.prop="12"
+                                :max.prop="32"
+                                :step.prop="1"
+                                :value.prop="fontSize"
+                                @input="onFontSizeChange"
+                                size="small"
+                            ></wa-slider>
+                        </div>
+                        <wa-divider></wa-divider>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Time display</label>
+                            <wa-select
+                                :value.prop="sessionTimeFormat"
+                                @change="onSessionTimeFormatChange"
+                                size="small"
+                                class="session-time-format-select"
+                            >
+                                <wa-option
+                                    v-for="option in sessionTimeFormatOptions"
+                                    :key="option.value"
+                                    :value="option.value"
+                                >{{ option.label }}</wa-option>
+                            </wa-select>
+                        </div>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Show costs</label>
+                            <wa-switch
+                                :checked="showCosts"
+                                @change="onShowCostsChange"
+                                size="small"
+                            >Enabled</wa-switch>
+                        </div>
+                        <wa-divider></wa-divider>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Worktree directory template <wa-icon name="cloud" class="synced-icon"></wa-icon><HelpIconButton help-key="worktrees" label="What's a worktree?" /></label>
+                            <div class="setting-input-apply-row">
+                                <wa-input
+                                    :value="worktreeDirInput"
+                                    @input="onWorktreeDirInputChange"
+                                    @keydown.enter="onWorktreeDirApply"
+                                    placeholder="{git_root}/.worktrees"
+                                    size="small"
+                                ></wa-input>
+                                <wa-button
+                                    size="small"
+                                    variant="neutral"
+                                    @click="onWorktreeDirApply"
+                                    :disabled="!worktreeTemplateValidation.valid"
+                                >
+                                    <wa-icon :name="worktreeDirApplyIcon" slot="start"></wa-icon>
+                                    Apply
+                                </wa-button>
+                            </div>
+                            <span class="setting-group-hint">
+                                Template for the base directory of new git worktrees; pre-fills the path when
+                                creating one (<code>../</code> allowed). Placeholders:
+                                <code>{git_root}</code> (the project's git root),
+                                <code>{project_name}</code> (its name, or its folder name if unnamed),
+                                <code>{project_basedir}</code> (its folder name).
+                                E.g. <code>{git_root}/.worktrees</code> or <code>/home/me/worktrees/{project_name}</code>.
+                                A project can override this with its own absolute directory. Leave empty for no default.
+                            </span>
+                            <wa-callout
+                                v-if="worktreeDirInput.trim() && !worktreeTemplateValidation.valid"
+                                variant="danger"
+                                size="small"
+                                class="usage-file-validation"
+                            >{{ worktreeTemplateError }}</wa-callout>
+                        </div>
+                        <wa-divider></wa-divider>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Anonymous telemetry <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <wa-switch
+                                :checked="telemetryEnabled"
+                                @change="onTelemetryEnabledChange"
+                                size="small"
+                            >Enabled</wa-switch>
+                            <span class="setting-group-hint">
+                                Anonymous usage statistics — counters only, never content, messages, titles or paths.
+                                <a href="https://twicc-telemetry.twidi.com/" target="_blank" rel="noopener">What is collected</a>
+                            </span>
+                            <div v-if="telemetryEnabled" class="telemetry-actions">
+                                <wa-button size="small" appearance="outlined" @click="showTelemetryPayload = true">View last payload</wa-button>
+                                <wa-button size="small" appearance="outlined" @click="resetTelemetryInstanceId">Reset instance ID</wa-button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Providers section -->
+                    <section v-if="activeSection === 'providers'" class="settings-section">
+                        <h3 class="settings-section-title">Providers <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
+                        <div class="activated-providers-block">
+                            <h4>Activated providers</h4>
+                            <p class="hint">
+                                Disabling a provider stops all of its background tasks, prevents
+                                creating new sessions or renaming existing ones, and hides its
+                                settings section. Existing sessions remain readable.
+                            </p>
+                            <div class="provider-switches">
+                                <div v-for="p in getRegisteredProviders()" :key="p" class="provider-switch-row">
+                                    <div class="provider-switch-line">
+                                        <wa-switch
+                                            class="provider-switch"
+                                            :checked="enabledProviders.has(p)"
+                                            :disabled="isSwitchDisabled(p)"
+                                            @change="(e) => onToggleProvider(p, e)"
+                                        >
+                                            <ProviderIcon
+                                                v-if="providerIconFor(p)"
+                                                :provider="p"
+                                                class="provider-switch-icon"
+                                            />
+                                            {{ providerLabelFor(p) }}
+                                        </wa-switch>
+                                        <template v-if="transitionLabelFor(p)">
+                                            <span class="transition-label">{{ transitionLabelFor(p) }}</span>
+                                            <wa-spinner class="transition-spinner"></wa-spinner>
+                                        </template>
+                                    </div>
+                                    <span v-if="reasonFor(p)" class="hint danger">{{ reasonFor(p) }}</span>
                                 </div>
                             </div>
                         </div>
-                    </div>
-                </section>
-
-                <!-- Editor Section -->
-                <section v-if="activeSection === 'editor'" class="settings-section">
-                    <h3 class="settings-section-title">Editor</h3>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Display</label>
-                        <wa-switch
-                            :checked="editorWordWrap"
-                            @change="onEditorWordWrapChange"
-                            size="small"
-                        >Word wrap</wa-switch>
-                        <wa-switch
-                            :checked="diffSideBySide"
-                            @change="onDiffSideBySideChange"
-                            size="small"
-                        >Diff side by side</wa-switch>
-                        <span class="setting-group-hint">Inactive if the screen is too narrow.</span>
-                    </div>
-                </section>
-
-                <!-- Terminal Section -->
-                <section v-if="activeSection === 'terminal'" class="settings-section">
-                    <h3 class="settings-section-title">Terminal</h3>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Persistent sessions (tmux) <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
-                        <wa-switch
-                            :checked="terminalUseTmux"
-                            @change="onTmuxChange"
-                            size="small"
-                        >Enabled</wa-switch>
-                        <span class="setting-group-hint">Tmux sessions are destroyed when their agent session is archived.</span>
-                    </div>
-                    <div class="setting-group" v-if="terminalUseTmux">
-                        <label class="setting-group-label">Tmux config file <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
-                        <div class="usage-file-input-row">
-                            <wa-input
-                                :value="tmuxConfigPathInput"
-                                @input="onTmuxConfigPathInputChange"
-                                @keydown.enter="onTmuxConfigPathApply"
-                                placeholder="/path/to/tmux.conf (leave empty to ignore)"
+                        <div class="setting-group">
+                            <label class="setting-group-label">Default provider for new sessions</label>
+                            <wa-select
+                                :value.prop="defaultProvider"
+                                @change="onDefaultProviderChange"
                                 size="small"
-                                :disabled="tmuxConfigValidating"
-                            ></wa-input>
-                            <wa-button
-                                size="small"
-                                variant="neutral"
-                                @click="onTmuxConfigPathApply"
-                                :disabled="tmuxConfigValidating"
                             >
-                                <wa-spinner v-if="tmuxConfigValidating" slot="start"></wa-spinner>
-                                <wa-icon v-else :name="tmuxConfigApplyIcon" slot="start"></wa-icon>
-                                Apply
+                                <ProviderIcon
+                                    v-if="providerIconFor(defaultProvider)"
+                                    slot="start"
+                                    :provider="defaultProvider"
+                                />
+                                <wa-option
+                                    v-for="option in enabledProviderOptions"
+                                    :key="option.value"
+                                    :value="option.value"
+                                    :label="option.label"
+                                >
+                                    <ProviderIcon
+                                        v-if="providerIconFor(option.value)"
+                                        :provider="option.value"
+                                        class="provider-option-icon"
+                                    />
+                                    {{ option.label }}
+                                </wa-option>
+                            </wa-select>
+                        </div>
+                    </section>
+
+                    <!-- Per-provider sections — one block per registered provider, identified by its wire key. -->
+                    <template v-for="section in providerSections" :key="section.id">
+                        <ProviderSettingsSection
+                            v-if="activeSection === section.id"
+                            :provider="section.provider"
+                        />
+                    </template>
+
+                    <!-- Notifications Section -->
+                    <NotificationSettings v-if="activeSection === 'notifications'" ref="notificationSettingsRef" @go-to-public-base-url="goToPublicBaseUrl" />
+
+                    <McpSettings v-if="activeSection === 'mcp'" />
+                    <!-- Sharing Section -->
+                    <section v-if="activeSection === 'sharing'" class="settings-section">
+                        <h3 class="settings-section-title">Sharing</h3>
+                        <div class="setting-group">
+                            <wa-button size="small" appearance="plain" class="sharing-help-link" @click="showHelp('sharing', { showDontShowAgain: false })">
+                                <wa-icon name="circle-question" slot="start"></wa-icon>
+                                View help
                             </wa-button>
                         </div>
-                        <span class="setting-group-hint">
-                            TwiCC always runs tmux on a dedicated socket per instance and forces
-                            <code>mouse off</code> after session creation — these invariants are required for
-                            frontend selection and scroll to work. Your config is loaded first (so status bar,
-                            colors, bindings apply), then the mouse option is overridden at the session level.
-                            Leave empty to ignore any config. Applies to new terminals only.
-                        </span>
-                        <wa-callout
-                            v-if="tmuxConfigValidation && !tmuxConfigValidation.valid"
-                            variant="danger"
-                            size="small"
-                            class="usage-file-validation"
-                        >{{ tmuxConfigValidation.message }}</wa-callout>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Copy on select</label>
-                        <wa-switch
-                            :checked="terminalCopyOnSelect"
-                            @change="onCopyOnSelectChange"
-                            size="small"
-                        >Enabled</wa-switch>
-                        <span class="setting-group-hint">
-                            When enabled, selecting text in a terminal with the mouse copies it to
-                            the clipboard automatically (paste with
-                            <kbd>{{ isMac ? '⌘V' : 'Ctrl+V' }}</kbd>) — no need to click Copy. The
-                            selection stays visible.
-                            <template v-if="isLinux">
-                                The text goes to the regular clipboard, <strong>not</strong> the
-                                mouse "primary" selection (middle-click paste): browsers can't write
-                                to the primary selection, so middle-click won't paste it.
-                            </template>
-                        </span>
-                    </div>
-                    <div class="setting-group" v-if="isMac">
-                        <label class="setting-group-label">Option key (⌥)</label>
-                        <wa-switch
-                            :checked="terminalMacOptionIsMeta"
-                            @change="onMacOptionIsMetaChange"
-                            size="small"
-                        >Use as Meta key</wa-switch>
-                        <span class="setting-group-hint">
-                            When enabled, Option acts as the Meta key for shell shortcuts
-                            (<kbd>⌥B</kbd>/<kbd>⌥F</kbd> to move word by word, <kbd>⌥.</kbd> for the last
-                            argument), but characters typed with Option — such as <code>|</code>,
-                            <code>{</code> or <code>\</code> on international keyboard layouts — can no
-                            longer be entered. Stored per device; applies to open terminals immediately.
-                        </span>
-                    </div>
-                </section>
-
-                <!-- Tips Section -->
-                <TipsSettings v-if="activeSection === 'tips'" />
-
-                <HelpSettings v-if="activeSection === 'help'" />
-
-                <!-- Providers quotas/usage Section -->
-                <section v-if="activeSection === 'usage'" class="settings-section">
-                    <h3 class="settings-section-title">Providers quotas/usage</h3>
-                    <div class="setting-group">
-                        <label class="setting-group-label">Show extra usage quota</label>
-                        <wa-switch
-                            :checked="extraUsageOnlyWhenNeeded"
-                            @change="onExtraUsageOnlyWhenNeededChange"
-                            size="small"
-                        >Only when needed</wa-switch>
-                    </div>
-                    <div class="setting-group">
-                        <label class="setting-group-label">When extra usage starts</label>
-                        <wa-switch
-                            :checked="notifyOnExtraUsageStart"
-                            @change="onNotifyOnExtraUsageStartChange"
-                            size="small"
-                        >Notify me</wa-switch>
-                        <span class="setting-group-hint">
-                            Alerts you when a provider starts consuming its extra usage credits again
-                            after a quiet period. See the
-                            <a href="#" @click.prevent="selectSection('notifications')">Notifications</a>
-                            tab for sound, browser and pushed-device options.
-                        </span>
-                    </div>
-                    <template v-for="(provider, idx) in usageProviders" :key="provider">
-                        <wa-divider v-if="idx === 0"></wa-divider>
-                        <div class="provider-usage-block">
-                            <h4 class="provider-usage-title">
-                                <ProviderIcon
-                                    v-if="providerIconFor(provider)"
-                                    :provider="provider"
-                                />
-                                {{ getProviderLabel(provider) }}
-                            </h4>
-                        <div v-if="supportsWakeup(provider)" class="setting-group">
-                            <label class="setting-group-label">Quota wake-up* <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
-                            <div class="wakeup-time-row">
-                                <wa-select
-                                    :value="getWakeupHour(provider)"
-                                    @change="onWakeupHourChange(provider, $event)"
+                        <div class="setting-group">
+                            <label class="setting-group-label">Share host <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <div class="setting-input-apply-row">
+                                <wa-input
+                                    ref="shareBaseUrlInputRef"
+                                    :value="shareBaseUrlInput"
+                                    @input="onShareBaseUrlInputChange"
+                                    @keydown.enter="onShareBaseUrlApply"
+                                    placeholder="share.example.com"
                                     size="small"
-                                >
-                                    <wa-option value="">Off</wa-option>
-                                    <wa-option v-for="opt in WAKEUP_HOUR_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</wa-option>
-                                </wa-select>
-                                <span class="wakeup-time-colon" :class="{ 'is-off': !getWakeupHour(provider) }">:</span>
-                                <wa-select
-                                    :value="getWakeupMinute(provider)"
-                                    @change="onWakeupMinuteChange(provider, $event)"
+                                ></wa-input>
+                                <wa-button
                                     size="small"
-                                    :disabled="!getWakeupHour(provider)"
+                                    variant="neutral"
+                                    @click="onShareBaseUrlApply"
                                 >
-                                    <wa-option v-for="m in WAKEUP_MINUTES" :key="m" :value="m">{{ m }}</wa-option>
-                                </wa-select>
+                                    <wa-icon :name="shareBaseUrlApplyIcon" slot="start"></wa-icon>
+                                    Apply
+                                </wa-button>
                             </div>
+                            <wa-callout v-if="shareBaseUrlError" variant="danger" size="small">{{ shareBaseUrlError }}</wa-callout>
+                            <span class="setting-group-hint">
+                                Dedicated share host — a hostname distinct from this app, pointing at the
+                                same port (e.g. a second tunnel hostname). Required to create share links;
+                                a different port on the same hostname is not enough. Leave empty to disable sharing.
+                            </span>
                         </div>
                         <div class="setting-group">
+                            <label class="setting-group-label">Agent sharing <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                             <wa-switch
-                                :checked="getReadEnabled(provider)"
-                                @change="onUsageFileEnabledChange(provider, $event)"
+                                :checked="allowAgentSessionShares"
+                                @change="onAllowAgentSessionSharesChange"
                                 size="small"
-                                :disabled="getDumpEnabled(provider)"
-                            >Read usage from file** <wa-icon name="cloud" class="synced-icon"></wa-icon></wa-switch>
-                            <template v-if="getReadEnabled(provider)">
-                                <div class="usage-file-input-row">
-                                    <wa-input
-                                        :value="usageFilePathInput[provider] ?? ''"
-                                        @input="onUsageFilePathInputChange(provider, $event)"
-                                        @keydown.enter="onUsageFilePathApply(provider)"
-                                        placeholder="/path/to/usage.json"
-                                        size="small"
-                                        :disabled="!!usageFileValidating[provider]"
-                                    ></wa-input>
-                                    <wa-button
-                                        size="small"
-                                        variant="neutral"
-                                        @click="onUsageFilePathApply(provider)"
-                                        :disabled="!!usageFileValidating[provider]"
-                                    >
-                                        <wa-spinner v-if="usageFileValidating[provider]" slot="start"></wa-spinner>
-                                        <wa-icon v-else :name="readApplyIcon(provider)" slot="start"></wa-icon>
-                                        Apply
-                                    </wa-button>
-                                </div>
-                                <span class="setting-group-hint">Press Apply or Enter to validate and save the path.</span>
-                                <wa-callout
-                                    v-if="usageFileValidation[provider] && !usageFileValidation[provider].valid"
-                                    variant="danger"
-                                    size="small"
-                                    class="usage-file-validation"
-                                >{{ usageFileValidation[provider].message }}</wa-callout>
-                            </template>
+                            >Session shares</wa-switch>
+                            <span class="setting-group-hint">
+                                Allows agents to create session shares whose target belongs to their own
+                                spawn subtree, and to manage session shares created by agents in their own
+                                spawn subtree. When enabled, agents can also revoke any existing session
+                                share, including links created by you, and read the URL of every existing
+                                session share, including links created by you or by another agent.
+                            </span>
+                            <wa-switch
+                                :checked="allowAgentArtifactShares"
+                                @change="onAllowAgentArtifactSharesChange"
+                                size="small"
+                            >Artifact shares</wa-switch>
+                            <span class="setting-group-hint">
+                                Allows agents to create artifact shares whose target belongs to their own
+                                spawn subtree, and to manage artifact shares created by agents in their own
+                                spawn subtree. When enabled, agents can also revoke any existing artifact
+                                share, including links created by you, and read the URL of every existing
+                                artifact share, including links created by you or by another agent.
+                            </span>
                         </div>
                         <div class="setting-group">
-                            <wa-switch
-                                :checked="getDumpEnabled(provider)"
-                                @change="onUsageDumpEnabledChange(provider, $event)"
-                                size="small"
-                                :disabled="getReadEnabled(provider)"
-                            >Dump usage to file*** <wa-icon name="cloud" class="synced-icon"></wa-icon></wa-switch>
-                            <template v-if="getDumpEnabled(provider)">
-                                <div class="usage-file-input-row">
-                                    <wa-input
-                                        :value="usageDumpPathInput[provider] ?? ''"
-                                        @input="onUsageDumpPathInputChange(provider, $event)"
-                                        @keydown.enter="onUsageDumpPathApply(provider)"
-                                        placeholder="/path/to/usage-dump.json"
-                                        size="small"
-                                        :disabled="!!usageDumpValidating[provider]"
-                                    ></wa-input>
-                                    <wa-button
-                                        size="small"
-                                        variant="neutral"
-                                        @click="onUsageDumpPathApply(provider)"
-                                        :disabled="!!usageDumpValidating[provider]"
-                                    >
-                                        <wa-spinner v-if="usageDumpValidating[provider]" slot="start"></wa-spinner>
-                                        <wa-icon v-else :name="dumpApplyIcon(provider)" slot="start"></wa-icon>
-                                        Apply
-                                    </wa-button>
-                                </div>
-                                <span class="setting-group-hint">Press Apply or Enter to validate and save the path.</span>
-                                <wa-callout
-                                    v-if="usageDumpValidation[provider] && !usageDumpValidation[provider].valid"
-                                    variant="danger"
-                                    size="small"
-                                    class="usage-file-validation"
-                                >{{ usageDumpValidation[provider].message }}</wa-callout>
-                            </template>
+                            <wa-button size="small" variant="neutral" appearance="accent" @click="showShareManager = true">
+                                <wa-icon name="share-nodes" slot="start"></wa-icon>
+                                Shared links
+                            </wa-button>
                         </div>
-                        </div>
-                    </template>
-                    <!-- Cross-provider explanations rendered once at the bottom, so each
-                         provider block above stays compact (just toggles + path inputs).
-                         The synced-icon lives next to each provider's read/dump
-                         switches above, where the actual settings are stored. -->
-                    <wa-divider></wa-divider>
-                    <div class="setting-group usage-mode-explanation">
-                        <label class="setting-group-label">* About quota wake-up</label>
-                        <span class="setting-group-hint">
-                            A provider's 5-hour quota window starts on its first request and resets 5 hours
-                            later, so opening it earlier fits more windows into your working day. Pick a time
-                            and TwiCC sends a tiny throwaway request at that hour each day to start the window
-                            early — skipped if one is already running. It only fires while TwiCC is running at
-                            that time (no catch-up if it was off).
-                        </span>
-                    </div>
-                    <div class="setting-group usage-mode-explanation">
-                        <label class="setting-group-label">** About read mode</label>
-                        <span class="setting-group-hint">
-                            If you already maintain a JSON file with usage data outside TwiCC (typically
-                            because the provider's API is rate-limited), point to it here and TwiCC will
-                            read from this file instead of calling the API directly.
-                        </span>
-                    </div>
-                    <div class="setting-group usage-mode-explanation">
-                        <label class="setting-group-label">*** About dump mode</label>
-                        <span class="setting-group-hint">
-                            Save the raw API response to a JSON file each time TwiCC fetches usage data.
-                            Useful if you want to share the data with other tools without extra API calls.
-                        </span>
-                    </div>
-                </section>
+                    </section>
 
-                <!-- Keyboard Shortcuts Section -->
-                <section v-if="activeSection === 'shortcuts'" class="settings-section shortcuts-section">
-                    <h3 class="settings-section-title">Keyboard shortcuts</h3>
-                    <div v-for="group in shortcutGroups" :key="group.label" class="shortcut-group">
-                        <h4 class="shortcut-group-title">{{ group.label }}</h4>
-                        <div class="shortcut-list">
-                            <div v-for="(shortcut, i) in group.shortcuts" :key="i" class="shortcut-item">
-                                <span class="shortcut-keys">
-                                    <template v-for="(key, j) in shortcut.keys" :key="j">
-                                        <span v-if="j > 0" class="shortcut-plus">+</span>
-                                        <kbd>{{ key }}</kbd>
-                                    </template>
+                    <!-- Peers Section -->
+                    <section v-if="activeSection === 'peers'" class="settings-section">
+                        <div class="peer-help-heading">
+                            <h3 class="settings-section-title">Peers</h3>
+                            <PeerHelpLink />
+                        </div>
+                        <!-- Once the feature is usable, these are the daily
+                             actions and the fields below become set-once
+                             configuration — so they lead. Before that the section
+                             is a setup form and they lead nowhere: the manager
+                             cannot even add a peer without an address. -->
+                        <div v-if="hasPeerActions" class="setting-group peer-actions">
+                            <wa-button size="small" variant="neutral" appearance="accent" @click="openPeersManager">
+                                <wa-icon name="user-group" slot="start"></wa-icon>
+                                <span class="peer-action-label">
+                                    Manage peers
+                                    <PeerInboxBadge :count="peersStore.pendingRequests.length" inline />
                                 </span>
-                                <span class="shortcut-description">{{ shortcut.description }}</span>
+                            </wa-button>
+                            <wa-button size="small" variant="neutral" appearance="accent" @click="openPeerInbox">
+                                <wa-icon name="envelope" slot="start"></wa-icon>
+                                <span class="peer-action-label">
+                                    Open inbox
+                                    <PeerInboxBadge :count="peersStore.pendingInboundMessages.length" inline />
+                                </span>
+                            </wa-button>
+                        </div>
+                        <!-- Separates the actions from the configuration below;
+                             only meaningful when the actions are there. -->
+                        <wa-divider v-if="hasPeerActions"></wa-divider>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Your name <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <div class="setting-input-apply-row">
+                                <wa-input
+                                    :value="peerDisplayNameInput"
+                                    @input="onPeerDisplayNameInputChange"
+                                    @keydown.enter="onPeerDisplayNameApply"
+                                    placeholder="e.g. Stephane (laptop)"
+                                    size="small"
+                                ></wa-input>
+                                <wa-button
+                                    size="small"
+                                    variant="neutral"
+                                    @click="onPeerDisplayNameApply"
+                                >
+                                    <wa-icon :name="peerDisplayNameApplyIcon" slot="start"></wa-icon>
+                                    Apply
+                                </wa-button>
+                            </div>
+                            <span class="setting-group-hint">
+                                Shown to peers in your pairing requests so they know who is asking.
+                                Empty uses your address's hostname.
+                            </span>
+                        </div>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Your address <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <div class="setting-input-apply-row">
+                                <wa-input
+                                    ref="peerBaseUrlInputRef"
+                                    :value="peerBaseUrlInput"
+                                    @input="onPeerBaseUrlInputChange"
+                                    @keydown.enter="onPeerBaseUrlApply"
+                                    placeholder="https://twicc.example.com"
+                                    size="small"
+                                ></wa-input>
+                                <wa-button
+                                    size="small"
+                                    variant="neutral"
+                                    @click="onPeerBaseUrlApply"
+                                >
+                                    <wa-icon :name="peerBaseUrlApplyIcon" slot="start"></wa-icon>
+                                    Apply
+                                </wa-button>
+                            </div>
+                            <wa-callout v-if="peerBaseUrlError" variant="danger" size="small">{{ peerBaseUrlError }}</wa-callout>
+                            <wa-callout v-if="peerBaseUrlWarning" variant="warning" size="small">{{ peerBaseUrlWarning }}</wa-callout>
+                            <wa-callout v-if="peerBaseUrlConfirmation" variant="warning" size="small">
+                                <div class="peer-address-confirmation">
+                                    <span>
+                                        Changing this address disables active Peer relationships and clears their credentials.
+                                        You must reconnect each Peer manually.
+                                    </span>
+                                    <div class="peer-address-confirmation__actions">
+                                        <wa-button size="small" variant="brand" @click="confirmPeerBaseUrlApply">Continue</wa-button>
+                                        <wa-button
+                                            size="small"
+                                            variant="neutral"
+                                            appearance="outlined"
+                                            @click="cancelPeerBaseUrlApply"
+                                        >Cancel</wa-button>
+                                    </div>
+                                </div>
+                            </wa-callout>
+                            <!-- An action, so a <button> — styled as a link, since
+                                 that is what reads as clickable in a hint-sized
+                                 line under a field. -->
+                            <button
+                                v-if="canPrefillPeerBaseUrl"
+                                type="button" class="settings-link-button"
+                                @click="prefillPeerBaseUrlFromPublic"
+                            >
+                                Use the External address from General settings
+                            </button>
+                            <span class="setting-group-hint">
+                                Your address, advertised to peers. Empty disables peer messaging.
+                                A different address from External serves peer traffic only; the same
+                                address keeps the whole app reachable there.
+                                HTTPS strongly recommended. The host must be reachable
+                                machine-to-machine: a tunnel-level access gate (e.g. Cloudflare
+                                Access asking for an email or Google account) blocks peer calls —
+                                use a truly public hostname.
+                            </span>
+                        </div>
+                    </section>
+
+                    <!-- Sessions Section -->
+                    <section v-if="activeSection === 'sessions'" class="settings-section">
+                        <h3 class="settings-section-title">Sessions</h3>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Display mode</label>
+                            <wa-select
+                                :value.prop="displayMode"
+                                @change="onDisplayModeChange"
+                                size="small"
+                            >
+                                <wa-option
+                                    v-for="option in displayModeOptions"
+                                    :key="option.value"
+                                    :value="option.value"
+                                >{{ option.label }}</wa-option>
+                            </wa-select>
+                        </div>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Diffs</label>
+                            <wa-switch
+                                :checked="showDiffs"
+                                @change="onShowDiffsChange"
+                                size="small"
+                            >Auto open edits</wa-switch>
+                            <wa-switch
+                                :checked="toolDiffWordWrap"
+                                @change="onToolDiffWordWrapChange"
+                                size="small"
+                            >Word wrap</wa-switch>
+                            <wa-switch
+                                :checked="toolDiffSideBySide"
+                                @change="onToolDiffSideBySideChange"
+                                size="small"
+                            >Side by side</wa-switch>
+                            <span class="setting-group-hint">Inactive if the screen is too narrow.</span>
+                        </div>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Message timestamps</label>
+                            <wa-switch
+                                :checked="showMessageTimestamps"
+                                @change="onShowMessageTimestampsChange"
+                                size="small"
+                            >Show time under each message block</wa-switch>
+                        </div>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Auto-unpin on archive <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <wa-switch
+                                :checked="autoUnpinOnArchive"
+                                @change="onAutoUnpinOnArchiveChange"
+                                size="small"
+                            >Enabled</wa-switch>
+                        </div>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Compact session list</label>
+                            <wa-switch
+                                :checked="compactSessionList"
+                                @change="onCompactSessionListChange"
+                                size="small"
+                            >Enabled</wa-switch>
+                        </div>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Keep the icon bar visible when the sidebar is closed</label>
+                            <wa-switch
+                                :checked="sidebarRailVisibleWhenClosed"
+                                @change="onSidebarRailVisibleWhenClosedChange"
+                                size="small"
+                            >Enabled</wa-switch>
+                        </div>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Session cache ({{ maxCachedSessions }})</label>
+                            <wa-slider
+                                :min.prop="1"
+                                :max.prop="50"
+                                :step.prop="1"
+                                :value.prop="maxCachedSessions"
+                                @input="onMaxCachedSessionsChange"
+                                size="small"
+                            ></wa-slider>
+                            <span class="setting-group-hint">Number of sessions kept in memory for instant switching.</span>
+                        </div>
+                    </section>
+
+                    <!-- Layouts Section -->
+                    <section v-if="activeSection === 'layouts'" class="settings-section">
+                        <h3 class="settings-section-title">Layouts <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Default layout for new sessions</label>
+                            <wa-select
+                                :value.prop="defaultLayoutId"
+                                @change="onDefaultLayoutChange"
+                                size="small"
+                            >
+                                <wa-option
+                                    v-for="l in selectableLayouts"
+                                    :key="l.id"
+                                    :value="l.id"
+                                    :label="l.name"
+                                >{{ l.name }}</wa-option>
+                            </wa-select>
+                            <span class="setting-group-hint">
+                                Save new layouts from a session: dock some panels, then open the layout
+                                menu (the <wa-icon name="chevron-down" class="inline-hint-icon"></wa-icon>
+                                button at the right of the tab bar) and choose “Save layout”.
+                            </span>
+                        </div>
+                        <div class="setting-group">
+                            <wa-button appearance="accent" size="small" @click="onManageLayouts">
+                                <wa-icon slot="start" name="sliders"></wa-icon>
+                                Manage layouts…
+                            </wa-button>
+                        </div>
+                    </section>
+
+                    <!-- Title Suggestion Section -->
+                    <section v-if="activeSection === 'title'" class="settings-section">
+                        <h3 class="settings-section-title">Title suggestion <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
+                        <div class="setting-group">
+                            <wa-switch
+                                :checked="titleGenerationEnabled"
+                                @change="onTitleGenerationChange"
+                                size="small"
+                            >Enabled</wa-switch>
+                            <wa-switch
+                                v-if="titleGenerationEnabled"
+                                :checked="titleAutoApply"
+                                @change="onTitleAutoApplyChange"
+                                size="small"
+                            >Automatic titles</wa-switch>
+                            <wa-radio-group
+                                label="Model"
+                                name="title-suggestion-model"
+                                size="small"
+                                :value="titleSuggestionModel"
+                                :disabled="!titleGenerationEnabled"
+                                @change="onTitleSuggestionModelChange"
+                                @click="onTitleSuggestionModelClick"
+                                @keydown="onTitleSuggestionModelKeydown"
+                            >
+                                <wa-radio :value="TITLE_SUGGESTION_MODEL.PROVIDER">
+                                    Match session provider — Haiku for Claude Code, GPT-6 Luna for Codex
+                                </wa-radio>
+                                <wa-radio
+                                    :value="TITLE_SUGGESTION_MODEL.HAIKU"
+                                    :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.HAIKU]"
+                                >
+                                    {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.HAIKU] }} for every session
+                                    <span
+                                        v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.HAIKU]"
+                                        class="radio-note"
+                                    >— {{ disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.HAIKU] }}</span>
+                                </wa-radio>
+                                <wa-radio
+                                    :value="TITLE_SUGGESTION_MODEL.LUNA"
+                                    :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
+                                >
+                                    {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.LUNA] }} for every session
+                                    <span class="radio-note">(much faster than Haiku)</span>
+                                    <span
+                                        v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
+                                        class="radio-note"
+                                    >— {{ disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA] }}</span>
+                                </wa-radio>
+                            </wa-radio-group>
+                            <span v-if="titleGenerationEnabled" class="setting-group-hint">
+                                If the selected provider cannot be used — disabled, over quota, or
+                                failing — TwiCC generates the title with the other provider, when that
+                                one is enabled.
+                                <template v-if="titleSuggestionModelIsDisplaced">
+                                    Your choice is kept, and comes back as soon as you enable its
+                                    provider again.
+                                </template>
+                            </span>
+                            <div v-if="titleGenerationEnabled" class="title-prompt-section">
+                                <label class="setting-group-label">System prompt</label>
+                                <wa-textarea
+                                    :value.prop="titleSystemPromptInput"
+                                    @input="onTitleSystemPromptChange"
+                                    size="small"
+                                    rows="7"
+                                    resize="vertical"
+                                    class="title-prompt-textarea"
+                                ></wa-textarea>
+                                <div class="title-prompt-hint">
+                                    <span>Use <code>{text}</code> as placeholder. Press Apply to save.</span>
+                                    <div class="title-prompt-actions">
+                                        <wa-button
+                                            v-if="!isDefaultPrompt"
+                                            variant="neutral"
+                                            appearance="outlined"
+                                            size="small"
+                                            @click.stop="resetTitleSystemPrompt"
+                                        >Reset to default</wa-button>
+                                        <wa-button
+                                            size="small"
+                                            variant="neutral"
+                                            @click.stop="onTitleSystemPromptApply"
+                                        >
+                                            <wa-icon :name="titleSystemPromptApplyIcon" slot="start"></wa-icon>
+                                            Apply
+                                        </wa-button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                </section>
+                    </section>
 
-                    </div>
-                    </Transition>
+                    <!-- Editor Section -->
+                    <section v-if="activeSection === 'editor'" class="settings-section">
+                        <h3 class="settings-section-title">Editor</h3>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Display</label>
+                            <wa-switch
+                                :checked="editorWordWrap"
+                                @change="onEditorWordWrapChange"
+                                size="small"
+                            >Word wrap</wa-switch>
+                            <wa-switch
+                                :checked="diffSideBySide"
+                                @change="onDiffSideBySideChange"
+                                size="small"
+                            >Diff side by side</wa-switch>
+                            <span class="setting-group-hint">Inactive if the screen is too narrow.</span>
+                        </div>
+                    </section>
+
+                    <!-- Terminal Section -->
+                    <section v-if="activeSection === 'terminal'" class="settings-section">
+                        <h3 class="settings-section-title">Terminal</h3>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Persistent sessions (tmux) <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <wa-switch
+                                :checked="terminalUseTmux"
+                                @change="onTmuxChange"
+                                size="small"
+                            >Enabled</wa-switch>
+                            <span class="setting-group-hint">Tmux sessions are destroyed when their agent session is archived.</span>
+                        </div>
+                        <div class="setting-group" v-if="terminalUseTmux">
+                            <label class="setting-group-label">Tmux config file <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <div class="usage-file-input-row">
+                                <wa-input
+                                    :value="tmuxConfigPathInput"
+                                    @input="onTmuxConfigPathInputChange"
+                                    @keydown.enter="onTmuxConfigPathApply"
+                                    placeholder="/path/to/tmux.conf (leave empty to ignore)"
+                                    size="small"
+                                    :disabled="tmuxConfigValidating"
+                                ></wa-input>
+                                <wa-button
+                                    size="small"
+                                    variant="neutral"
+                                    @click="onTmuxConfigPathApply"
+                                    :disabled="tmuxConfigValidating"
+                                >
+                                    <wa-spinner v-if="tmuxConfigValidating" slot="start"></wa-spinner>
+                                    <wa-icon v-else :name="tmuxConfigApplyIcon" slot="start"></wa-icon>
+                                    Apply
+                                </wa-button>
+                            </div>
+                            <span class="setting-group-hint">
+                                TwiCC always runs tmux on a dedicated socket per instance and forces
+                                <code>mouse off</code> after session creation — these invariants are required for
+                                frontend selection and scroll to work. Your config is loaded first (so status bar,
+                                colors, bindings apply), then the mouse option is overridden at the session level.
+                                Leave empty to ignore any config. Applies to new terminals only.
+                            </span>
+                            <wa-callout
+                                v-if="tmuxConfigValidation && !tmuxConfigValidation.valid"
+                                variant="danger"
+                                size="small"
+                                class="usage-file-validation"
+                            >{{ tmuxConfigValidation.message }}</wa-callout>
+                        </div>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Copy on select</label>
+                            <wa-switch
+                                :checked="terminalCopyOnSelect"
+                                @change="onCopyOnSelectChange"
+                                size="small"
+                            >Enabled</wa-switch>
+                            <span class="setting-group-hint">
+                                When enabled, selecting text in a terminal with the mouse copies it to
+                                the clipboard automatically (paste with
+                                <kbd>{{ isMac ? '⌘V' : 'Ctrl+V' }}</kbd>) — no need to click Copy. The
+                                selection stays visible.
+                                <template v-if="isLinux">
+                                    The text goes to the regular clipboard, <strong>not</strong> the
+                                    mouse "primary" selection (middle-click paste): browsers can't write
+                                    to the primary selection, so middle-click won't paste it.
+                                </template>
+                            </span>
+                        </div>
+                        <div class="setting-group" v-if="isMac">
+                            <label class="setting-group-label">Option key (⌥)</label>
+                            <wa-switch
+                                :checked="terminalMacOptionIsMeta"
+                                @change="onMacOptionIsMetaChange"
+                                size="small"
+                            >Use as Meta key</wa-switch>
+                            <span class="setting-group-hint">
+                                When enabled, Option acts as the Meta key for shell shortcuts
+                                (<kbd>⌥B</kbd>/<kbd>⌥F</kbd> to move word by word, <kbd>⌥.</kbd> for the last
+                                argument), but characters typed with Option — such as <code>|</code>,
+                                <code>{</code> or <code>\</code> on international keyboard layouts — can no
+                                longer be entered. Stored per device; applies to open terminals immediately.
+                            </span>
+                        </div>
+                    </section>
+
+                    <!-- Tips Section -->
+                    <TipsSettings v-if="activeSection === 'tips'" />
+
+                    <HelpSettings v-if="activeSection === 'help'" />
+
+                    <!-- Providers quotas/usage Section -->
+                    <section v-if="activeSection === 'usage'" class="settings-section">
+                        <h3 class="settings-section-title">Providers quotas/usage</h3>
+                        <div class="setting-group">
+                            <label class="setting-group-label">Show extra usage quota</label>
+                            <wa-switch
+                                :checked="extraUsageOnlyWhenNeeded"
+                                @change="onExtraUsageOnlyWhenNeededChange"
+                                size="small"
+                            >Only when needed</wa-switch>
+                        </div>
+                        <div class="setting-group">
+                            <label class="setting-group-label">When extra usage starts</label>
+                            <wa-switch
+                                :checked="notifyOnExtraUsageStart"
+                                @change="onNotifyOnExtraUsageStartChange"
+                                size="small"
+                            >Notify me</wa-switch>
+                            <span class="setting-group-hint">
+                                Alerts you when a provider starts consuming its extra usage credits again
+                                after a quiet period. See the
+                                <a href="#" @click.prevent="selectSection('notifications')">Notifications</a>
+                                tab for sound, browser and pushed-device options.
+                            </span>
+                        </div>
+                        <template v-for="(provider, idx) in usageProviders" :key="provider">
+                            <wa-divider v-if="idx === 0"></wa-divider>
+                            <div class="provider-usage-block">
+                                <h4 class="provider-usage-title">
+                                    <ProviderIcon
+                                        v-if="providerIconFor(provider)"
+                                        :provider="provider"
+                                    />
+                                    {{ getProviderLabel(provider) }}
+                                </h4>
+                            <div v-if="supportsWakeup(provider)" class="setting-group">
+                                <label class="setting-group-label">Quota wake-up* <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                                <div class="wakeup-time-row">
+                                    <wa-select
+                                        :value="getWakeupHour(provider)"
+                                        @change="onWakeupHourChange(provider, $event)"
+                                        size="small"
+                                    >
+                                        <wa-option value="">Off</wa-option>
+                                        <wa-option v-for="opt in WAKEUP_HOUR_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</wa-option>
+                                    </wa-select>
+                                    <span class="wakeup-time-colon" :class="{ 'is-off': !getWakeupHour(provider) }">:</span>
+                                    <wa-select
+                                        :value="getWakeupMinute(provider)"
+                                        @change="onWakeupMinuteChange(provider, $event)"
+                                        size="small"
+                                        :disabled="!getWakeupHour(provider)"
+                                    >
+                                        <wa-option v-for="m in WAKEUP_MINUTES" :key="m" :value="m">{{ m }}</wa-option>
+                                    </wa-select>
+                                </div>
+                            </div>
+                            <div class="setting-group">
+                                <wa-switch
+                                    :checked="getReadEnabled(provider)"
+                                    @change="onUsageFileEnabledChange(provider, $event)"
+                                    size="small"
+                                    :disabled="getDumpEnabled(provider)"
+                                >Read usage from file** <wa-icon name="cloud" class="synced-icon"></wa-icon></wa-switch>
+                                <template v-if="getReadEnabled(provider)">
+                                    <div class="usage-file-input-row">
+                                        <wa-input
+                                            :value="usageFilePathInput[provider] ?? ''"
+                                            @input="onUsageFilePathInputChange(provider, $event)"
+                                            @keydown.enter="onUsageFilePathApply(provider)"
+                                            placeholder="/path/to/usage.json"
+                                            size="small"
+                                            :disabled="!!usageFileValidating[provider]"
+                                        ></wa-input>
+                                        <wa-button
+                                            size="small"
+                                            variant="neutral"
+                                            @click="onUsageFilePathApply(provider)"
+                                            :disabled="!!usageFileValidating[provider]"
+                                        >
+                                            <wa-spinner v-if="usageFileValidating[provider]" slot="start"></wa-spinner>
+                                            <wa-icon v-else :name="readApplyIcon(provider)" slot="start"></wa-icon>
+                                            Apply
+                                        </wa-button>
+                                    </div>
+                                    <span class="setting-group-hint">Press Apply or Enter to validate and save the path.</span>
+                                    <wa-callout
+                                        v-if="usageFileValidation[provider] && !usageFileValidation[provider].valid"
+                                        variant="danger"
+                                        size="small"
+                                        class="usage-file-validation"
+                                    >{{ usageFileValidation[provider].message }}</wa-callout>
+                                </template>
+                            </div>
+                            <div class="setting-group">
+                                <wa-switch
+                                    :checked="getDumpEnabled(provider)"
+                                    @change="onUsageDumpEnabledChange(provider, $event)"
+                                    size="small"
+                                    :disabled="getReadEnabled(provider)"
+                                >Dump usage to file*** <wa-icon name="cloud" class="synced-icon"></wa-icon></wa-switch>
+                                <template v-if="getDumpEnabled(provider)">
+                                    <div class="usage-file-input-row">
+                                        <wa-input
+                                            :value="usageDumpPathInput[provider] ?? ''"
+                                            @input="onUsageDumpPathInputChange(provider, $event)"
+                                            @keydown.enter="onUsageDumpPathApply(provider)"
+                                            placeholder="/path/to/usage-dump.json"
+                                            size="small"
+                                            :disabled="!!usageDumpValidating[provider]"
+                                        ></wa-input>
+                                        <wa-button
+                                            size="small"
+                                            variant="neutral"
+                                            @click="onUsageDumpPathApply(provider)"
+                                            :disabled="!!usageDumpValidating[provider]"
+                                        >
+                                            <wa-spinner v-if="usageDumpValidating[provider]" slot="start"></wa-spinner>
+                                            <wa-icon v-else :name="dumpApplyIcon(provider)" slot="start"></wa-icon>
+                                            Apply
+                                        </wa-button>
+                                    </div>
+                                    <span class="setting-group-hint">Press Apply or Enter to validate and save the path.</span>
+                                    <wa-callout
+                                        v-if="usageDumpValidation[provider] && !usageDumpValidation[provider].valid"
+                                        variant="danger"
+                                        size="small"
+                                        class="usage-file-validation"
+                                    >{{ usageDumpValidation[provider].message }}</wa-callout>
+                                </template>
+                            </div>
+                            </div>
+                        </template>
+                        <!-- Cross-provider explanations rendered once at the bottom, so each
+                             provider block above stays compact (just toggles + path inputs).
+                             The synced-icon lives next to each provider's read/dump
+                             switches above, where the actual settings are stored. -->
+                        <wa-divider></wa-divider>
+                        <div class="setting-group usage-mode-explanation">
+                            <label class="setting-group-label">* About quota wake-up</label>
+                            <span class="setting-group-hint">
+                                A provider's 5-hour quota window starts on its first request and resets 5 hours
+                                later, so opening it earlier fits more windows into your working day. Pick a time
+                                and TwiCC sends a tiny throwaway request at that hour each day to start the window
+                                early — skipped if one is already running. It only fires while TwiCC is running at
+                                that time (no catch-up if it was off).
+                            </span>
+                        </div>
+                        <div class="setting-group usage-mode-explanation">
+                            <label class="setting-group-label">** About read mode</label>
+                            <span class="setting-group-hint">
+                                If you already maintain a JSON file with usage data outside TwiCC (typically
+                                because the provider's API is rate-limited), point to it here and TwiCC will
+                                read from this file instead of calling the API directly.
+                            </span>
+                        </div>
+                        <div class="setting-group usage-mode-explanation">
+                            <label class="setting-group-label">*** About dump mode</label>
+                            <span class="setting-group-hint">
+                                Save the raw API response to a JSON file each time TwiCC fetches usage data.
+                                Useful if you want to share the data with other tools without extra API calls.
+                            </span>
+                        </div>
+                    </section>
+
+                    <!-- Keyboard Shortcuts Section -->
+                    <section v-if="activeSection === 'shortcuts'" class="settings-section shortcuts-section">
+                        <h3 class="settings-section-title">Keyboard shortcuts</h3>
+                        <div v-for="group in shortcutGroups" :key="group.label" class="shortcut-group">
+                            <h4 class="shortcut-group-title">{{ group.label }}</h4>
+                            <div class="shortcut-list">
+                                <div v-for="(shortcut, i) in group.shortcuts" :key="i" class="shortcut-item">
+                                    <span class="shortcut-keys">
+                                        <template v-for="(key, j) in shortcut.keys" :key="j">
+                                            <span v-if="j > 0" class="shortcut-plus">+</span>
+                                            <kbd>{{ key }}</kbd>
+                                        </template>
+                                    </span>
+                                    <span class="shortcut-description">{{ shortcut.description }}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                        </div>
+                        </Transition>
+                        </div>
                     </div>
                 </div>
             </div>
-        </div>
-        <wa-divider></wa-divider>
-        <p class="settings-notice">
-            <wa-icon name="cloud" class="synced-icon"></wa-icon>
-            Sections and settings marked with a cloud icon are synced across all your devices.
-        </p>
-        <wa-divider></wa-divider>
-        <footer v-if="currentVersion" class="settings-footer">
-            <span class="settings-footer-version">
-                <BrandLogo :size="16" class="settings-footer-logo" />
-                <a href="https://github.com/twidi/twicc/" target="_blank" rel="noopener">TwiCC v{{ currentVersion }}</a><template v-if="store.isDevMode"> [dev]</template>
-                <template v-if="latestVersion">
-                    &rarr;
-                    <a :href="latestVersion.releaseUrl" target="_blank" rel="noopener">v{{ latestVersion.version }} available</a>
-                </template>
-            </span>
-            ·
-            <a href="#" class="settings-footer-changes" @click.prevent="openChangelog()">Changes</a>
-            ·
-            <a :href="SPONSOR_URL" target="_blank" rel="noopener" class="settings-footer-sponsor">
-                <span class="settings-footer-sponsor-icon"></span>
-                Sponsor
-            </a>
-            ·
-            <a
-                v-if="currentStatusDisplay"
-                ref="statusFooterRef"
-                :href="currentStatusDisplay.url"
-                target="_blank"
-                rel="noopener"
-                class="settings-footer-status"
-                :class="`settings-footer-status--${currentStatusDisplay.modifier}`"
-                :id="statusFooterId"
-            >
-                <ProviderIcon v-if="currentStatusIcon" :provider="currentStatusProvider?.provider" class="settings-footer-status-icon" />
-                <span class="status-dot"></span>
-                {{ currentStatusDisplay.label }}
-            </a>
-            <AppTooltip v-if="currentStatusDisplay" :for="statusFooterId">{{ currentStatusDisplay.tooltip }}</AppTooltip>
-            <wa-icon
-                v-if="currentStatusDisplay && hasMultipleStatusProviders"
-                :id="statusNextButtonId"
-                class="settings-footer-status-next"
-                name="repeat"
-                @click="cycleStatusProvider"
-            ></wa-icon>
-            <AppTooltip v-if="currentStatusDisplay && hasMultipleStatusProviders" :for="statusNextButtonId">Switch to the next provider</AppTooltip>
-            <wa-button
-                v-if="showLogout"
-                :id="logoutButtonId"
-                class="logout-button"
-                variant="danger"
-                appearance="plain"
-                size="small"
-                @click="handleLogout"
-            >
-                <wa-icon name="right-from-bracket"></wa-icon>
-            </wa-button>
-        </footer>
-    </wa-popover>
-    <ChangelogDialog ref="changelogDialogRef" @close="onChangelogClose" />
-    <LayoutManagerDialog ref="layoutManagerDialogRef" />
-    <ShareManagerDialog :open="showShareManager" @close="showShareManager = false" />
-    <TelemetryPayloadDialog :open="showTelemetryPayload" @close="showTelemetryPayload = false" />
+            <wa-divider></wa-divider>
+            <p class="settings-notice">
+                <wa-icon name="cloud" class="synced-icon"></wa-icon>
+                Sections and settings marked with a cloud icon are synced across all your devices.
+            </p>
+            <wa-divider></wa-divider>
+            <footer v-if="currentVersion" class="settings-footer">
+                <span class="settings-footer-version">
+                    <BrandLogo :size="16" class="settings-footer-logo" />
+                    <a href="https://github.com/twidi/twicc/" target="_blank" rel="noopener">TwiCC v{{ currentVersion }}</a><template v-if="store.isDevMode"> [dev]</template>
+                    <template v-if="latestVersion">
+                        &rarr;
+                        <a :href="latestVersion.releaseUrl" target="_blank" rel="noopener">v{{ latestVersion.version }} available</a>
+                    </template>
+                </span>
+                ·
+                <a href="#" class="settings-footer-changes" @click.prevent="openChangelog()">Changes</a>
+                ·
+                <a :href="SPONSOR_URL" target="_blank" rel="noopener" class="settings-footer-sponsor">
+                    <span class="settings-footer-sponsor-icon"></span>
+                    Sponsor
+                </a>
+                ·
+                <a
+                    v-if="currentStatusDisplay"
+                    ref="statusFooterRef"
+                    :href="currentStatusDisplay.url"
+                    target="_blank"
+                    rel="noopener"
+                    class="settings-footer-status"
+                    :class="`settings-footer-status--${currentStatusDisplay.modifier}`"
+                    :id="statusFooterId"
+                >
+                    <ProviderIcon v-if="currentStatusIcon" :provider="currentStatusProvider?.provider" class="settings-footer-status-icon" />
+                    <span class="status-dot"></span>
+                    {{ currentStatusDisplay.label }}
+                </a>
+                <AppTooltip v-if="currentStatusDisplay" :for="statusFooterId">{{ currentStatusDisplay.tooltip }}</AppTooltip>
+                <wa-icon
+                    v-if="currentStatusDisplay && hasMultipleStatusProviders"
+                    :id="statusNextButtonId"
+                    class="settings-footer-status-next"
+                    name="repeat"
+                    @click="cycleStatusProvider"
+                ></wa-icon>
+                <AppTooltip v-if="currentStatusDisplay && hasMultipleStatusProviders" :for="statusNextButtonId">Switch to the next provider</AppTooltip>
+                <wa-button
+                    v-if="showLogout"
+                    :id="logoutButtonId"
+                    class="logout-button"
+                    variant="danger"
+                    appearance="plain"
+                    size="small"
+                    @click="handleLogout"
+                >
+                    <wa-icon name="right-from-bracket"></wa-icon>
+                </wa-button>
+            </footer>
+        </wa-popover>
+        <ChangelogDialog ref="changelogDialogRef" @close="onChangelogClose" />
+        <LayoutManagerDialog ref="layoutManagerDialogRef" />
+        <ShareManagerDialog :open="showShareManager" @close="showShareManager = false" />
+        <TelemetryPayloadDialog :open="showTelemetryPayload" @close="showTelemetryPayload = false" />
+    </Teleport>
 </template>
 
 <style scoped>
 #settings-trigger::part(label) {
     display: flex;
     gap: var(--wa-space-s);
+}
+
+#settings-trigger.settings-trigger--icon-only::part(base) {
+    width: var(--rail-button-size);
+    height: var(--rail-button-size);
+    padding: 0;
+    border: 0;
+    line-height: 1;
+    font-size: var(--rail-icon-size);
+    color: var(--rail-button-color);
+    background-color: var(--rail-button-bg, transparent);
+    background-image: none;
+    scale: none;
+    transition: none;
+}
+
+@media (hover: hover) {
+    #settings-trigger.settings-trigger--icon-only:hover::part(base) {
+        background-image: linear-gradient(var(--rail-button-fill-hover), var(--rail-button-fill-hover));
+    }
+}
+
+#settings-trigger.settings-trigger--icon-only:active::part(base) {
+    background-image: linear-gradient(var(--rail-button-fill-hover), var(--rail-button-fill-hover));
+}
+
+.settings-trigger--icon-only > .settings-trigger-label {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
 }
 
 /* A quarter turn of the gear on hover. 600ms, longer than the motion tokens: a slow turn
@@ -2332,7 +2417,7 @@ function onChangelogClose() {
 }
 
 .settings-popover {
-    --max-width: 90vw;
+    --max-width: v-bind(popoverWidth);
     --arrow-size: 16px;
 }
 
@@ -2347,7 +2432,7 @@ function onChangelogClose() {
     flex-direction: column;
     overflow: hidden;
     height: min(calc(90dvh - 8rem), 50rem);
-    width: min(90vw, 700px);
+    width: min(v-bind(popoverWidth), v-bind(popoverMaxWidth));
 }
 
 .settings-layout-inner {
@@ -3057,40 +3142,4 @@ wa-popover > wa-divider {
     }
 }
 
-/* Sidebar footer without Inbox fits, in order of decreasing width:
-   1. toggle + command palette + full Settings (with the "Settings" label)
-   2. toggle + command palette + Settings compacted to its gear icon  (here)
-   3. toggle + Settings (the palette button drops out — see CommandPaletteButton)
-   So this "compact Settings" threshold must stay ABOVE the palette button's
-   own hide threshold; tune both together. (Only applies inside the `sidebar`
-   container, i.e. the footer — not the home screen's fixed Settings button.)
-   ProjectView compacts this button earlier while Inbox is visible. */
-@container sidebar (width <= 15rem) {
-    #settings-trigger {
-        &::part(base) {
-            padding: var(--wa-space-s);
-        }
-        & > span {
-            display: none;
-        }
-    }
-}
-
-/* Last stop for the peer count. Step 3 of the ladder above leaves Settings as
-   the only footer action, so it inherits the badge the Inbox button took with
-   it — one click away from the Peers section that details it. The threshold
-   MIRRORS PeerInboxButton's own hide threshold: tune the two together, or the
-   count is either shown twice or not at all.
-   A fully collapsed sidebar is a different case, already covered: the whole
-   footer is clipped to a zero-width column and only the toggle survives, so
-   ProjectView puts the badge there instead — the two never overlap.
-   Inert outside the sidebar (home screen): the container never matches. */
-.settings-trigger-badge {
-    display: none;
-}
-@container sidebar (width <= 9rem) {
-    .settings-trigger-badge {
-        display: inline-flex;
-    }
-}
 </style>
