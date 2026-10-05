@@ -1,7 +1,7 @@
 <script setup>
 // The thin bar under a node's settings row: when the node ran, relative to the whole tree. One neutral
 // brand colour for every node (never the state's); a working node fades out toward the right end of the
-// track. The geometry comes from ``computeTimeline`` (utils/orchestrationView.js).
+// track, with a 10px floor on the fill width. The geometry comes from ``computeTimeline`` (utils/orchestrationView.js).
 defineProps({
     geometry: { type: Object, required: true }, // { left, width, live } in percent
     title: { type: String, default: null },
@@ -13,7 +13,7 @@ defineProps({
         <i
             class="otime-fill"
             :class="{ 'is-live': geometry.live }"
-            :style="{ left: `${geometry.left}%`, width: `${geometry.width}%` }"
+            :style="{ left: `min(${geometry.left}%, calc(100% - 10px))`, width: `max(${geometry.width}%, 10px)` }"
         ></i>
     </div>
 </template>

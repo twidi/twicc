@@ -147,19 +147,18 @@
     display: inline-flex;
     align-items: center;
     gap: var(--wa-space-3xs);
-    padding: var(--wa-space-3xs) var(--wa-space-2xs);
-    border: 0;
-    border-radius: var(--wa-border-radius-s);
-    background: none;
+    padding: 0.24rem 0.5rem;
+    border: 1px solid var(--wa-color-brand-border-quiet);
+    border-radius: 999px;
+    background: var(--wa-color-brand-fill-quiet);
     cursor: pointer;
     font: inherit;
     font-size: var(--wa-font-size-xs);
-    color: var(--wa-color-text-quiet);
+    color: var(--wa-color-brand-on-quiet);
 }
 
 .ocard-toggle:hover {
-    background: var(--glass-item-hover);
-    color: var(--wa-color-text-normal);
+    background: var(--wa-color-brand-fill-normal);
 }
 
 /* Agent-settings summary on the left (may wrap); the project badge stays at the right of the last line. */

@@ -124,22 +124,21 @@ watch(entries, () => nextTick(measure))
     /* Web Awesome's native.css forces a form-control height and line-height on every <button>. */
     height: auto;
     line-height: 1;
-    cursor: pointer;
     display: inline-flex;
     align-items: center;
     gap: var(--wa-space-3xs);
-    padding: var(--wa-space-3xs) var(--wa-space-2xs);
-    border: 0;
-    border-radius: var(--wa-border-radius-s);
-    background: none;
+    padding: 0.24rem 0.5rem;
+    border: 1px solid var(--wa-color-brand-border-quiet);
+    border-radius: 999px;
+    background: var(--wa-color-brand-fill-quiet);
+    cursor: pointer;
     font: inherit;
     font-size: var(--wa-font-size-xs);
-    color: var(--wa-color-text-quiet);
+    color: var(--wa-color-brand-on-quiet);
 }
 
 .oann-button:hover {
-    background: var(--glass-item-hover);
-    color: var(--wa-color-text-normal);
+    background: var(--wa-color-brand-fill-normal);
 }
 
 .oann-popover {
