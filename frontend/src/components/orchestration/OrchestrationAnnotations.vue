@@ -6,7 +6,9 @@ import { computed, nextTick, onMounted, ref, useId, watch } from 'vue'
 import { useResizeObserver } from '@vueuse/core'
 import AnnotationTreeLevel from './AnnotationTreeLevel.vue'
 import { vPopoverFocusFix } from '../../directives/vPopoverFocusFix'
-import { annotationEntries, annotationValueText, buildAnnotationTree } from '../../utils/orchestrationView'
+import {
+    annotationValueText, buildAnnotationTree, flattenAnnotations, splitCommonPrefix,
+} from '../../utils/orchestrationView'
 
 const props = defineProps({
     annotations: { type: Object, required: true },
@@ -15,7 +17,10 @@ const props = defineProps({
 const uid = useId()
 const buttonId = `${uid}-ann-button`
 
-const entries = computed(() => annotationEntries(props.annotations))
+// Card tags: leaf entries, with their common key prefix shown once as a separate tag.
+const split = computed(() => splitCommonPrefix(flattenAnnotations(props.annotations)))
+const prefix = computed(() => split.value.prefix)
+const entries = computed(() => split.value.entries)
 const tree = computed(() => buildAnnotationTree(props.annotations))
 
 // How many tags fit on the line: measured on the rendered row. Hidden tags stay in the layout
@@ -32,6 +37,8 @@ function measure() {
     const limit = el.clientWidth
     let fit = 0
     for (const child of el.children) {
+        // The prefix tag always stays visible: not counted, but its width is part of the offsets below.
+        if (child.classList.contains('oann-prefix')) continue
         if (child.offsetLeft + child.offsetWidth <= limit) fit += 1
         else break
     }
@@ -40,20 +47,21 @@ function measure() {
 
 onMounted(measure)
 useResizeObserver(tagsEl, measure)
-watch(entries, () => nextTick(measure))
+watch([entries, prefix], () => nextTick(measure))
 </script>
 
 <template>
     <div class="oann">
         <div ref="tagsEl" class="oann-tags">
+            <span v-if="prefix" class="oann-tag oann-prefix">{{ prefix }}</span>
             <span
-                v-for="([key, value], index) in entries"
-                :key="key"
+                v-for="(entry, index) in entries"
+                :key="`${index}:${entry.fullKey}`"
                 class="oann-tag"
                 :class="{ 'is-hidden': index >= fitCount }"
             >
-                <span class="oann-key">{{ key }}</span>
-                <span class="oann-value">{{ annotationValueText(value) }}</span>
+                <span class="oann-key">{{ entry.key }}</span>
+                <span class="oann-value">{{ annotationValueText(entry.value) }}</span>
             </span>
         </div>
         <button :id="buttonId" type="button" class="oann-button" aria-label="Show all annotations">
@@ -101,6 +109,13 @@ watch(entries, () => nextTick(measure))
     border: 1px solid color-mix(in oklab, var(--wa-color-surface-border) 80%, transparent);
 }
 
+.oann-prefix {
+    font-weight: 500;
+    color: var(--wa-color-brand-on-quiet);
+    background: var(--wa-color-brand-fill-quiet);
+    border-color: var(--wa-color-brand-border-quiet);
+}
+
 .oann-tag.is-hidden {
     visibility: hidden;
 }
@@ -113,6 +128,7 @@ watch(entries, () => nextTick(measure))
 
 .oann-value {
     min-width: 0;
+    max-width: 10rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

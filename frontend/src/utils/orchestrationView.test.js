@@ -3,7 +3,8 @@ import test from 'node:test'
 
 import {
     agentModelLabel, annotationEntries, annotationValueText, bucketOfProcessState, buildAnnotationTree,
-    computeTimeline, countBuckets, cumulativeSeconds, findSubtree, flattenTree, isoMs, parentOf,
+    computeTimeline, countBuckets, cumulativeSeconds, findSubtree, flattenAnnotations, flattenTree, isoMs, parentOf,
+    splitCommonPrefix,
 } from './orchestrationView.js'
 
 const tree = {
@@ -177,6 +178,67 @@ test('an object value expands like dotted levels and merges with a dotted key', 
 test('arrays and empty objects stay leaves as JSON text', () => {
     const t = buildAnnotationTree({ list: [1, 2], empty: {} })
     assert.deepEqual(t.map(n => [n.name, n.values]), [['empty', ['{}']], ['list', ['[1,2]']]])
+})
+
+// ── card tags: flatten + common prefix ──────────────────────────────────────
+const keysOf = entries => entries.map(e => e.key)
+
+test('flattenAnnotations decomposes nested objects into leaf entries (2 and 3 levels, siblings)', () => {
+    const flat = flattenAnnotations({ fou: { bar1: 1, cux2: 2 }, run: { limits: { tokens: 5, calls: 3 }, id: 'x' } })
+    assert.deepEqual(flat.map(e => [e.key, e.value]), [
+        ['fou.bar1', 1], ['fou.cux2', 2], ['run.id', 'x'], ['run.limits.calls', 3], ['run.limits.tokens', 5],
+    ])
+    assert.deepEqual(flat[3].path, ['run', 'limits', 'calls'])
+})
+
+test('flattenAnnotations keeps arrays, null and empty objects as leaves', () => {
+    const flat = flattenAnnotations({ list: [1, 2], nothing: null, empty: {}, deep: { empty: {} } })
+    assert.deepEqual(flat.map(e => [e.key, e.value]), [['deep.empty', {}], ['empty', {}], ['list', [1, 2]], ['nothing', null]])
+})
+
+test('flattenAnnotations: a dotted key and a nested object give the same path', () => {
+    const flat = flattenAnnotations({ 'a.b': 1, a: { c: 2 } })
+    assert.deepEqual(flat.map(e => [e.path, e.value]), [[['a', 'b'], 1], [['a', 'c'], 2]])
+})
+
+test('flattenAnnotations does not split keys with an empty segment, top level or nested', () => {
+    const flat = flattenAnnotations({ 'a..b': 1, '.a': 2, 'a.': 3, n: { 'x..y': 4, '.z': 5 } })
+    assert.deepEqual(flat.map(e => e.path), [['.a'], ['a.'], ['a..b'], ['n', '.z'], ['n', 'x..y']])
+})
+
+test('flattenAnnotations sorts by full key and tolerates invalid input', () => {
+    assert.deepEqual(keysOf(flattenAnnotations({ b: 1, a: { z: 1, y: 1 }, 'a.x': 1 })), ['a.x', 'a.y', 'a.z', 'b'])
+    assert.deepEqual(flattenAnnotations(null), [])
+    assert.deepEqual(flattenAnnotations([1]), [])
+})
+
+test('splitCommonPrefix: prefix shared by all entries is removed from each key', () => {
+    const r = splitCommonPrefix(flattenAnnotations({ multi_review: { schema: 1, skill: 's', job: 'j' } }))
+    assert.equal(r.prefix, 'multi_review')
+    assert.deepEqual(r.entries.map(e => [e.key, e.fullKey]), [
+        ['job', 'multi_review.job'], ['schema', 'multi_review.schema'], ['skill', 'multi_review.skill'],
+    ])
+    assert.equal(splitCommonPrefix(flattenAnnotations({ fou: { bar1: 1, cux2: 2 } })).prefix, 'fou')
+})
+
+test('splitCommonPrefix: a partially shared or absent prefix gives none', () => {
+    assert.equal(splitCommonPrefix(flattenAnnotations({ 'a.x': 1, 'b.y': 2 })).prefix, null)
+    assert.equal(splitCommonPrefix(flattenAnnotations({ 'a.x': 1, 'a.y': 2, b: 3 })).prefix, null)
+})
+
+test('splitCommonPrefix: the prefix always leaves one segment to every entry', () => {
+    const single = splitCommonPrefix(flattenAnnotations({ 'team.lead': 'alice' }))
+    assert.equal(single.prefix, 'team')
+    assert.deepEqual(single.entries.map(e => [e.key, e.value]), [['lead', 'alice']])
+    assert.equal(splitCommonPrefix(flattenAnnotations({ role: 'worker' })).prefix, null)
+    const mixed = splitCommonPrefix(flattenAnnotations({ 'a.b': 1, 'a.b.c': 2 }))
+    assert.equal(mixed.prefix, 'a')
+    assert.deepEqual(keysOf(mixed.entries), ['b', 'b.c'])
+})
+
+test('splitCommonPrefix: empty input gives no entries and no prefix', () => {
+    assert.deepEqual(splitCommonPrefix([]), { prefix: null, entries: [] })
+    assert.deepEqual(splitCommonPrefix(flattenAnnotations(undefined)), { prefix: null, entries: [] })
 })
 
 // ── model label ─────────────────────────────────────────────────────────────

@@ -186,6 +186,49 @@ export function buildAnnotationTree(annotations) {
     return finish(root)
 }
 
+/**
+ * The card's tags: every nested object value is decomposed into its leaf entries, as if they were dotted
+ * annotations. Arrays, scalars, null and empty objects are leaves. A key with an empty segment is not split.
+ * Returns ``{ path: string[], key: string, value }[]`` sorted by ``key`` (plain string order).
+ */
+export function flattenAnnotations(annotations) {
+    const out = []
+    const walk = (base, key, value) => {
+        const parts = key.split('.')
+        const path = [...base, ...(parts.some(part => part === '') ? [key] : parts)]
+        if (isPlainObject(value) && Object.keys(value).length) {
+            for (const [nestedKey, nested] of Object.entries(value)) walk(path, nestedKey, nested)
+        } else {
+            out.push({ path, key: path.join('.'), value })
+        }
+    }
+    if (isPlainObject(annotations)) {
+        for (const [key, value] of Object.entries(annotations)) walk([], key, value)
+    }
+    return out.sort((a, b) => byString(a.key, b.key))
+}
+
+/**
+ * Splits the longest path-segment prefix shared by ALL entries (from ``flattenAnnotations``), capped so every
+ * entry keeps at least one segment. Returns ``{ prefix: string | null, entries: { key, fullKey, value }[] }``
+ * where ``key`` is the remaining key.
+ */
+export function splitCommonPrefix(entries) {
+    let length = 0
+    if (entries.length) {
+        const cap = Math.min(...entries.map(entry => entry.path.length)) - 1
+        while (length < cap && entries.every(entry => entry.path[length] === entries[0].path[length])) length += 1
+    }
+    return {
+        prefix: length ? entries[0].path.slice(0, length).join('.') : null,
+        entries: entries.map(entry => ({
+            key: entry.path.slice(length).join('.'),
+            fullKey: entry.key,
+            value: entry.value,
+        })),
+    }
+}
+
 // ── Subagent model (spec 5.4) ───────────────────────────────────────────────
 /**
  * Label of a subagent's model (``{ raw, family, version }``), formatted as ``SessionHeader`` formats the
