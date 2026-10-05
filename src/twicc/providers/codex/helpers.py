@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import orjson
 from django.conf import settings
 
-from twicc.core.enums import ItemKind, Provider
+from twicc.core.enums import Provider
 from twicc.pricing import FamilyPrices
 from twicc.providers.helpers import (
     AgentSettingCategory,

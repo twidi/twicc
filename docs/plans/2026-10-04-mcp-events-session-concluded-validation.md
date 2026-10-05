@@ -46,6 +46,33 @@ Fresh checks after the rebase:
 
 Task 15 remains pending. This rebase does not approve the manual release gate.
 
+## Second rebase validation — 2026-10-05
+
+Local `main` advances by seven streaming-retirement commits to
+`fbb690d5d8cf307bf20fa5b93e63acacde298afa`. All 19 branch commits replay without textual conflicts.
+`git range-diff` confirms that each replayed patch remains equivalent.
+The backup ref is `backup/mcp-events-before-stream-retirement-rebase`.
+
+Migration 0151 still depends on 0150, with one core leaf and no missing model changes.
+MCP Events do not reference the removed streaming registry or payload-enrichment hook.
+Main's durable stream identities and watcher changes remain intact.
+The Codex helper's unused `ItemKind` import, left by main's registry removal, is removed.
+
+Fresh validation:
+
+- The preceding combined backend command, plus `tests/test_codex_stream_retirement.py`, reports **1503 passed**.
+- `TWICC_DATA_DIR=$PWD uv run pytest -q tests/test_codex_stream_retirement.py tests/test_mcp_events_commands.py --tb=short`
+  reports **26 passed** after the import cleanup.
+- `npm --prefix frontend test` reports **2109 passed**, with no failures or skipped tests.
+- `TWICC_DATA_DIR=$PWD uv run python -m django makemigrations --check --dry-run --settings=twicc.settings_test`
+  reports no changes detected.
+- `TWICC_DATA_DIR=$PWD uv run python scripts/audit_stream_matching_imports.py` reports no matching-to-helper
+  dependency for either provider and no Codex canonical imports.
+- Ruff passes for all existing Python paths changed from main. `git diff --check` passes.
+- Local main is an ancestor of the rebased branch. No merge, server restart, or running-instance migration occurs.
+
+Task 15 remains pending; the manual release gate is unchanged.
+
 ## Acceptance audit findings
 
 The audit closes five deferred review items:
