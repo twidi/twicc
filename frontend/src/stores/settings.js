@@ -54,6 +54,7 @@ export const SETTINGS_SCHEMA = {
     terminalMacOptionIsMeta: false,
     terminalCopyOnSelect: false,
     compactSessionList: false,
+    sidebarRailVisibleWhenClosed: true,
     // Local to the device: cuts movement and costly effects (glass blur, filters). Local-only.
     reduceEffects: false,
     showAllArtifacts: false,
@@ -173,6 +174,7 @@ const SETTINGS_VALIDATORS = {
     diffSideBySide: (v) => typeof v === 'boolean',
     editorWordWrap: (v) => typeof v === 'boolean',
     compactSessionList: (v) => typeof v === 'boolean',
+    sidebarRailVisibleWhenClosed: (v) => typeof v === 'boolean',
     reduceEffects: (v) => typeof v === 'boolean',
     showAllArtifacts: (v) => typeof v === 'boolean',
     showMessageTimestamps: (v) => typeof v === 'boolean',
@@ -389,6 +391,7 @@ export const useSettingsStore = defineStore('settings', {
         isDiffSideBySide: (state) => state.diffSideBySide,
         isEditorWordWrap: (state) => state.editorWordWrap,
         isCompactSessionList: (state) => state.compactSessionList,
+        isSidebarRailVisibleWhenClosed: (state) => state.sidebarRailVisibleWhenClosed,
         isReduceEffects: (state) => state.reduceEffects,
         isShowAllArtifacts: (state) => state.showAllArtifacts,
         areMessageTimestampsShown: (state) => state.showMessageTimestamps,
@@ -809,6 +812,16 @@ export const useSettingsStore = defineStore('settings', {
         setCompactSessionList(enabled) {
             if (SETTINGS_VALIDATORS.compactSessionList(enabled)) {
                 this.compactSessionList = enabled
+            }
+        },
+
+        /**
+         * Set icon bar visibility when the sidebar is closed. Local-only.
+         * @param {boolean} enabled
+         */
+        setSidebarRailVisibleWhenClosed(enabled) {
+            if (SETTINGS_VALIDATORS.sidebarRailVisibleWhenClosed(enabled)) {
+                this.sidebarRailVisibleWhenClosed = enabled
             }
         },
 
@@ -1252,6 +1265,7 @@ export function initSettings() {
             diffSideBySide: store.diffSideBySide,
             editorWordWrap: store.editorWordWrap,
             compactSessionList: store.compactSessionList,
+            sidebarRailVisibleWhenClosed: store.sidebarRailVisibleWhenClosed,
             reduceEffects: store.reduceEffects,
             showAllArtifacts: store.showAllArtifacts,
             showMessageTimestamps: store.showMessageTimestamps,
