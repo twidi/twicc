@@ -321,7 +321,9 @@ def test_restart_reconciles_pending_owner_completion_window(status, goal_status,
     ]
     facts.extend(
         fact
-        for line, value in enumerate([question(), *([record("task_complete", second=2)] if completed else [])], 1)
+        for line, value in enumerate(
+            [record("task_started", second=0), question(), *([record("task_complete", second=2)] if completed else [])], 1
+        )
         for fact in protocol.extract_async_question_facts(value, line=line)
     )
     merge_question_facts(session.id, facts)
@@ -838,3 +840,137 @@ def test_restart_explicit_owner_links_override_provider_admission_intervals():
             SimpleNamespace(id="t2", started_at=base + 12),
         ],
     ) == {"g1": ["t1"], "g2": ["t2"]}
+
+
+@pytest.mark.parametrize(
+    "native_second,precise_second,explicit_group,expected",
+    [
+        (10, None, None, {"g1": [], "g2": []}),
+        (None, None, None, {"g1": [], "g2": []}),
+        (10, "10.700000", None, {"g1": [], "g2": ["t2"]}),
+        (10, "10.200000", None, {"g1": ["t2"], "g2": []}),
+        (10, "10.700000", "g1", {"g1": ["t2"], "g2": []}),
+        (10, "10.200000", "g2", {"g1": [], "g2": ["t2"]}),
+        (9, None, None, {"g1": ["t2"], "g2": []}),
+        (11, None, None, {"g1": [], "g2": ["t2"]}),
+    ],
+)
+def test_restart_fractional_admissions_resolve_each_turn_once(native_second, precise_second, explicit_group, expected):
+    from datetime import datetime
+
+    owners = [admitted_owner("g1", 0), admitted_owner("g2", 10)._replace(at="2026-10-05T09:12:10.500000Z")]
+    if explicit_group:
+        owners = [
+            owner._replace(turn_id="t2", data={**owner.data, "root_turn_id": "t2"})
+            if owner.data["group_id"] == explicit_group else owner
+            for owner in owners
+        ]
+    later_question = question(turn="t2", item="q2", second=10)
+    later_question["timestamp"] = "2026-10-05T09:12:10.700000Z"
+    records = [later_question, record("task_complete", turn="t2", second=12)]
+    if precise_second:
+        start = record("task_started", turn="t2", second=10)
+        start["timestamp"] = f"2026-10-05T09:12:{precise_second}Z"
+        records.append(start)
+    facts = {
+        fact.key: fact._asdict()
+        for fact in [
+            *owners,
+            *(fact for line, value in enumerate(records, 1)
+              for fact in protocol.extract_async_question_facts(value, line=line)),
+        ]
+    }
+    base = int(datetime.fromisoformat("2026-10-05T09:12:00+00:00").timestamp())
+    turns = [SimpleNamespace(id="t2", started_at=base + native_second if native_second is not None else None)]
+    for ordered in (facts, dict(reversed(list(facts.items())))):
+        groups = CodexAgent._async_question_recovery_groups(ordered, turns)
+        membership = [turn for group in groups.values() for turn in group]
+        assert len(membership) == len(set(membership))
+        assert groups == expected
+
+
+@pytest.mark.django_db(transaction=True)
+def test_restart_ambiguous_native_start_remains_pending_until_precise_source_start():
+    from datetime import datetime
+    from asgiref.sync import sync_to_async
+    from twicc.core.enums import Provider
+    from twicc.core.models import AsyncQuestionState, Project, Session
+    from twicc.core.services.async_questions import merge_question_facts, read_question_snapshot
+    from twicc.providers import db_writer
+
+    session = Session.objects.create(
+        id="fractional-restart", provider=Provider.CODEX, project=Project.objects.create(id="fractional-project")
+    )
+    merge_question_facts(session.id, [
+        admitted_owner("g1", 0), admitted_owner("g2", 10)._replace(at="2026-10-05T09:12:10.500000Z"),
+    ])
+    base = int(datetime.fromisoformat("2026-10-05T09:12:00+00:00").timestamp())
+    agent = recovery_agent(session, turns=[SimpleNamespace(id="t2", started_at=base + 10)])
+    later_question = question(turn="t2", item="q2", second=10)
+    later_question["timestamp"] = "2026-10-05T09:12:10.700000Z"
+    merge_question_facts(session.id, protocol.extract_async_question_facts(later_question, line=2))
+
+    async def run():
+        db_writer.start_db_writer()
+        try:
+            await agent._reconcile_async_question_owners()
+            pending = await sync_to_async(read_question_snapshot)(session.id)
+            assert pending["batches"][0]["status"] == "collecting"
+            assert agent._async_question_pending_owners is True
+            start = record("task_started", turn="t2", second=10)
+            start["timestamp"] = "2026-10-05T09:12:10.600000Z"
+            await agent._record_async_question_facts(protocol.extract_async_question_facts(start, line=1))
+            await agent._reconcile_async_question_owners()
+            return await sync_to_async(read_question_snapshot)(session.id)
+        finally:
+            await db_writer.stop_db_writer()
+
+    assert asyncio.run(run())["batches"][0]["status"] == "ready"
+    facts = AsyncQuestionState.objects.get(session=session).state["facts"]
+    assert "return:g1" not in facts
+    assert facts["return:g2"]["data"]["turn_ids"] == ["t2"]
+    assert agent._async_question_pending_owners is True
+
+
+@pytest.mark.django_db(transaction=True)
+def test_confirmed_stop_releases_ambiguous_question_without_inventing_owner():
+    from datetime import datetime
+    from asgiref.sync import sync_to_async
+    from twicc.core.enums import Provider
+    from twicc.core.models import AsyncQuestionState, Project, Session
+    from twicc.core.services.async_questions import merge_question_facts, read_question_snapshot
+    from twicc.providers import db_writer
+
+    session = Session.objects.create(
+        id="ambiguous-stop", provider=Provider.CODEX, project=Project.objects.create(id="ambiguous-stop-project")
+    )
+    later_question = question(turn="t2", item="q2", second=10)
+    later_question["timestamp"] = "2026-10-05T09:12:10.700000Z"
+    merge_question_facts(session.id, [
+        admitted_owner("g1", 0), admitted_owner("g2", 10)._replace(at="2026-10-05T09:12:10.500000Z"),
+        *protocol.extract_async_question_facts(later_question, line=1),
+    ])
+    base = int(datetime.fromisoformat("2026-10-05T09:12:00+00:00").timestamp())
+    agent = recovery_agent(session, status="active", turns=[SimpleNamespace(id="t2", started_at=base + 10)])
+
+    async def run():
+        db_writer.start_db_writer()
+        try:
+            await agent._reconcile_async_question_owners()
+            agent.kill_reason = "user"
+            await agent._transition_to_dead()
+            snapshot = await sync_to_async(read_question_snapshot)(session.id)
+            await agent._reconcile_async_question_owners(stopped=True)
+            assert await sync_to_async(read_question_snapshot)(session.id) == snapshot
+            return snapshot
+        finally:
+            await db_writer.stop_db_writer()
+
+    assert asyncio.run(run())["batches"][0]["status"] == "ready"
+    facts = AsyncQuestionState.objects.get(session=session).state["facts"]
+    assert facts["return:g1"]["data"]["turn_ids"] == []
+    assert facts["return:g2"]["data"]["turn_ids"] == []
+    returns = [fact for fact in facts.values() if fact["kind"] == "control_return"]
+    assert sum("t2" in fact["data"]["turn_ids"] for fact in returns) == 1
+    assert facts["return:recovered-stop:t2"]["data"]["turn_ids"] == ["t2"]
+    assert agent._async_question_pending_owners is False

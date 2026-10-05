@@ -23,7 +23,7 @@ import re
 import time
 import uuid
 from collections.abc import Collection
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
@@ -1131,25 +1131,38 @@ class CodexAgent(BaseAgent):
                                 data.get("successor_turn_id"), *data.get("turn_ids", [])):
                     if turn_id:
                         claimed[turn_id] = data["group_id"]
-        source_turns = [
-            (fact["turn_id"], datetime.fromisoformat(fact["at"]).timestamp())
-            for fact in facts.values() if fact["kind"] in {"question", "turn_end"} and fact.get("turn_id")
-        ]
-        history_turns = [(turn.id, getattr(turn, "started_at", None)) for turn in provider_turns]
+        # Canonical starts are precise. Native starts cover one whole second.
+        # Question/completion timestamps cannot establish when a turn began.
+        starts = {}
+        for turn in provider_turns:
+            at = getattr(turn, "started_at", None)
+            if at is not None:
+                start = datetime.fromtimestamp(at, UTC)
+                starts[turn.id] = (start, start + timedelta(seconds=1))
+        for fact in facts.values():
+            if (fact["kind"] == "history_context" and fact["data"].get("event") == "turn_start"
+                    and fact.get("turn_id")):
+                starts[fact["turn_id"]] = (datetime.fromisoformat(fact["at"]), None)
+        intervals = []
         groups = {}
         for index, owner in enumerate(owners):
             group = owner["data"]["group_id"]
-            if f"return:{group}" in facts:
+            start = datetime.fromisoformat(owner["at"])
+            end = datetime.fromisoformat(owners[index + 1]["at"]) if index + 1 < len(owners) else None
+            intervals.append((group, start, end))
+            if f"return:{group}" not in facts:
+                groups[group] = []
+        for turn_id, (earliest, latest) in starts.items():
+            if turn_id in claimed:
                 continue
-            start = datetime.fromisoformat(owner["at"]).timestamp()
-            end = datetime.fromisoformat(owners[index + 1]["at"]).timestamp() if index + 1 < len(owners) else None
-            turns = {turn_id for turn_id, owner_group in claimed.items() if owner_group == group}
-            for turn_id, at in [*source_turns, *history_turns]:
-                if claimed.get(turn_id, group) != group or at is None:
-                    continue
-                if at >= start and (end is None or at < end):
-                    turns.add(turn_id)
-            groups[group] = sorted(turns)
+            for group, start, end in intervals:
+                if earliest >= start and (end is None or (latest <= end if latest is not None else earliest < end)):
+                    claimed[turn_id] = group
+                    break
+        for turn_id, group in claimed.items():
+            if group in groups:
+                groups[group].append(turn_id)
+        groups = {group: sorted(turns) for group, turns in groups.items()}
         return groups
 
     async def _reconcile_async_question_owners(self, *, stopped: bool = False) -> None:
@@ -1184,18 +1197,33 @@ class CodexAgent(BaseAgent):
         groups = self._async_question_recovery_groups(
             facts, getattr(self, "_async_question_recovery_turns", []),
         )
+        if stopped:
+            # Confirmed session stop settles every admission. Unassigned turns
+            # receive independent return evidence, without invented ownership.
+            returned = {
+                turn_id for fact in facts.values() if fact["kind"] == "control_return"
+                for turn_id in fact["data"].get("turn_ids", [])
+            }
+            known = {
+                batch["turn_id"] for batch in state.get("batches", {}).values()
+                if batch["status"] == "collecting" and batch.get("turn_id")
+            }
+            known.update(turn.id for turn in getattr(self, "_async_question_recovery_turns", []))
+            assigned = {turn_id for turns in groups.values() for turn_id in turns}
+            for turn_id in sorted(known - assigned - returned):
+                groups[f"recovered-stop:{turn_id}"] = [turn_id]
         recovered = []
         at = datetime.now(UTC).isoformat()
         for group, turns in groups.items():
             # A history without timing or durable linkage cannot identify an
             # admitted turn. Retain that owner for later source reconciliation.
-            if not turns:
+            if not turns and not stopped:
                 continue
             recovered.append(QuestionFact(f"return:{group}", "control_return", at, None, None, None,
                                           {"group_id": group, "turn_ids": turns,
                                            "outcome": "failed" if status == "systemError" else "interrupted"}))
         await self._record_async_question_facts(recovered)
-        self._async_question_pending_owners = any(not turns for turns in groups.values())
+        self._async_question_pending_owners = not stopped and any(not turns for turns in groups.values())
 
     async def _open_turn(self, turn_input: list[InputItem]) -> AsyncTurnHandle:
         """Open a turn with current settings; leave delivery errors to the caller."""
