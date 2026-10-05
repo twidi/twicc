@@ -361,7 +361,7 @@ onUnmounted(() => {
                     <wa-button
                         v-if="hasOverflow"
                         :id="scrollBottomButtonId"
-                        class="orch-scroll-btn floating-over-text"
+                        class="orch-scroll-btn orch-scroll-btn--top floating-over-text"
                         size="small"
                         variant="neutral"
                         appearance="filled"
@@ -522,6 +522,8 @@ onUnmounted(() => {
 }
 
 .orch-content {
+    /* Anchor of the floating "scroll to bottom" button (it scrolls with the content). */
+    position: relative;
     flex: 1;
     min-height: 0;
     overflow: auto;
@@ -623,6 +625,14 @@ a.orch-parent-link:hover {
     flex: none;
     opacity: 0.6;
     transition: opacity 0.15s ease;
+}
+/* The top button ("scroll to bottom") takes no line of its own: it floats over the top-right corner of the
+   list, in the content's padding band, and scrolls away with the content. */
+.orch-scroll-btn--top {
+    position: absolute;
+    top: var(--wa-space-2xs);
+    right: var(--wa-space-2xs);
+    z-index: 2;
 }
 .orch-scroll-btn:hover {
     opacity: 1;
