@@ -40,8 +40,12 @@ import {
     deleteDraftMedia,
     getDraftMediasBySession,
     deleteAllDraftMediasForSession,
-    getAllDraftMedias
+    getAllDraftMedias,
+    getAllAsyncQuestionDrafts,
+    deleteAsyncQuestionDraft,
+    saveAsyncQuestionRecovery,
 } from '../utils/draftStorage'
+import { createAsyncQuestionActions } from '../utils/asyncQuestionState'
 import { saveInflightSend, deleteInflightSend, getAllInflightSends } from '../utils/inflightStorage'
 import { liveDraftKey, sweepPendingRequestDrafts } from '../utils/pendingRequestDraftStorage'
 import {
@@ -591,6 +595,10 @@ export const useDataStore = defineStore('data', {
             // { sessionId: { message?: string, title?: string } }
             // Persisted to IndexedDB with debounce
             draftMessages: {},
+            draftMessageEdits: {},
+            asyncQuestionSnapshots: {},
+            asyncQuestionDrafts: {},
+            asyncQuestionNotices: {},
 
             // Monotonic per-session counters bumped by appendDraftMessage.
             // A mounted composer watches its counter to resync its textarea:
@@ -1341,6 +1349,12 @@ export const useDataStore = defineStore('data', {
         getDraftMessage: (state) => (sessionId) =>
             state.localState.draftMessages[sessionId] || null,
 
+        getAsyncQuestionSnapshot: (state) => (sessionId) =>
+            state.localState.asyncQuestionSnapshots[sessionId] || null,
+
+        getAsyncQuestionDraft: (state) => (sessionId) =>
+            state.localState.asyncQuestionDrafts[sessionId] || null,
+
         // Get the append signal for a session (see draftAppendSignals)
         getDraftAppendSignal: (state) => (sessionId) =>
             state.localState.draftAppendSignals[sessionId] || 0,
@@ -1417,6 +1431,30 @@ export const useDataStore = defineStore('data', {
 
     actions: {
         ...createSendFailureActions(inflightSends),
+        ...createAsyncQuestionActions({
+            saveMessage: saveDraftMessage,
+            getAll: getAllAsyncQuestionDrafts,
+            getAllMessages: getAllDraftMessages,
+            recover: saveAsyncQuestionRecovery,
+            remove: deleteAsyncQuestionDraft,
+            fetch: apiFetch,
+            uuid: generateUUID,
+            send: async frame => {
+                const { sendWsMessage } = await import('../composables/useWebSocket')
+                return sendWsMessage(frame)
+            },
+            pendingSends: (sessionId, store) => {
+                const records = Object.fromEntries([...inflightSends].filter(([, entry]) => entry.sessionId === sessionId))
+                for (const [id, entry] of Object.entries(store.localState.failedSends[sessionId] || {})) {
+                    records[id] = { ...entry, status: entry.code === 'send_uncertain' ? 'uncertain' : 'rejected' }
+                }
+                return records
+            },
+            cancelDraftSave: sessionId => {
+                debouncedSaves.get(sessionId)?.cancel()
+                debouncedSaves.delete(sessionId)
+            },
+        }),
         ...createEphemeralActions({
             uuid: generateUUID,
             rekeySession: rekeyDraftSession,
@@ -2669,6 +2707,7 @@ export const useDataStore = defineStore('data', {
          */
         async loadSessionItems(projectId, sessionId, { isInitialLoading = false } = {}) {
             if (isLaunchedEphemeral(this.sessions[sessionId])) return
+            this.loadAsyncQuestions(projectId, sessionId).catch(error => console.warn('Failed to load async questions:', error))
             // Skip if already fetched
             if (this.localState.sessions[sessionId]?.itemsFetched) {
                 return
@@ -3692,6 +3731,7 @@ export const useDataStore = defineStore('data', {
                 code,
                 message,
                 sentAt: entry.sentAt || failedAt,
+                async_questions: entry.async_questions || entry.asyncQuestions,
             }
             failedSend.item = this._materializeFailedSendItem(failedSend)
             if (!this.localState.failedSends[sessionId]) {
@@ -4093,6 +4133,7 @@ export const useDataStore = defineStore('data', {
          */
         async loadSessionMetadata(projectId, sessionId, parentSessionId = null) {
             if (isLaunchedEphemeral(this.sessions[sessionId])) return
+            if (!parentSessionId) this.loadAsyncQuestions(projectId, sessionId).catch(error => console.warn('Failed to load async questions:', error))
             // Build URL (handle subagent case)
             const baseUrl = parentSessionId
                 ? `/api/projects/${projectId}/sessions/${parentSessionId}/subagent/${sessionId}`
@@ -5883,8 +5924,8 @@ export const useDataStore = defineStore('data', {
          */
         _getDebouncedSave(sessionId) {
             if (!debouncedSaves.has(sessionId)) {
-                debouncedSaves.set(sessionId, debounce((draft) => {
-                    saveDraftMessage(sessionId, draft).catch(err =>
+                debouncedSaves.set(sessionId, debounce(() => {
+                    this.persistComposerDraft(sessionId).catch(err =>
                         console.warn('Failed to save draft message to IndexedDB:', err)
                     )
                 }, 500))
@@ -5900,6 +5941,7 @@ export const useDataStore = defineStore('data', {
          * @param {string} message
          */
         setDraftMessage(sessionId, message) {
+            this.localState.draftMessageEdits[sessionId] = true
             if (!message) {
                 // Message is empty - clear the draft
                 if (this.localState.draftMessages[sessionId]) {
@@ -5941,7 +5983,7 @@ export const useDataStore = defineStore('data', {
                 debouncedSave.cancel()
                 debouncedSaves.delete(sessionId)
             }
-            await saveDraftMessage(sessionId, this.localState.draftMessages[sessionId]).catch(err =>
+            await this.persistComposerDraft(sessionId).catch(err =>
                 console.warn('Failed to flush draft message to IndexedDB:', err)
             )
         },
@@ -5969,6 +6011,7 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          */
         clearDraftMessage(sessionId) {
+            this.localState.draftMessageEdits[sessionId] = true
             delete this.localState.draftMessages[sessionId]
 
             // Cancel any pending debounced save
@@ -5979,22 +6022,11 @@ export const useDataStore = defineStore('data', {
             }
 
             // Delete from IndexedDB
-            deleteDraftMessage(sessionId).catch(err =>
+            const cleared = this.localState.asyncQuestionDrafts[sessionId]
+                ? this.persistComposerDraft(sessionId) : deleteDraftMessage(sessionId)
+            cleared.catch(err =>
                 console.warn('Failed to delete draft message from IndexedDB:', err)
             )
-        },
-
-        /**
-         * Load all draft messages from IndexedDB into local state.
-         * Called at app startup.
-         */
-        async hydrateDraftMessages() {
-            try {
-                const drafts = await getAllDraftMessages()
-                this.localState.draftMessages = drafts
-            } catch (err) {
-                console.warn('Failed to load draft messages from IndexedDB:', err)
-            }
         },
 
         /**

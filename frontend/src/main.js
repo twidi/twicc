@@ -326,6 +326,7 @@ if (!authStore.needsLogin) {
         dataStore.hydrateAttachments(),
         dataStore.hydrateInflightSends(),
     ])
+    await dataStore.hydrateAsyncQuestionDrafts()
 
     // Wire the global auto-apply title watcher. Module-level watchEffect that
     // survives router.replace (which would otherwise tear down a watcher held

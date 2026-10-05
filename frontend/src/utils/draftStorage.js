@@ -2,13 +2,14 @@
 // IndexedDB wrapper for draft messages, draft sessions, and draft medias persistence
 
 const DB_NAME = 'twicc'
-const DB_VERSION = 8
+const DB_VERSION = 9
 const DRAFT_MESSAGES_STORE = 'draftMessages'
 const DRAFT_SESSIONS_STORE = 'draftSessions'
 const DRAFT_MEDIAS_STORE = 'draftMedias'
 const CODE_COMMENTS_STORE = 'codeComments'
 const INFLIGHT_SENDS_STORE = 'inflightSends'
 const PENDING_REQUEST_DRAFTS_STORE = 'pendingRequestDrafts'
+const ASYNC_QUESTION_DRAFTS_STORE = 'asyncQuestionDrafts'
 
 let dbPromise = null
 
@@ -71,6 +72,9 @@ export function getDb() {
                     db.createObjectStore(PENDING_REQUEST_DRAFTS_STORE, {
                         keyPath: ['sessionId', 'requestId']
                     })
+                }
+                if (!db.objectStoreNames.contains(ASYNC_QUESTION_DRAFTS_STORE)) {
+                    db.createObjectStore(ASYNC_QUESTION_DRAFTS_STORE)
                 }
             }
         })
@@ -369,5 +373,55 @@ export async function rekeyDraftSession(oldId, newId, record) {
         tx.oncomplete = resolve
         tx.onerror = () => reject(tx.error)
         tx.onabort = () => reject(tx.error)
+    })
+}
+
+// Async question writes use transaction completion as their durable boundary.
+const plainRecord = record => JSON.parse(JSON.stringify(record))
+
+function commitTransaction(db, stores, write) {
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(stores, 'readwrite')
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error || new Error('Draft transaction failed'))
+        tx.onabort = () => reject(tx.error || new Error('Draft transaction aborted'))
+        try { write(tx) }
+        catch (error) { tx.abort(); reject(error) }
+    })
+}
+
+export async function saveAsyncQuestionDraft(sessionId, draft, openDb = getDb) {
+    const record = plainRecord(draft)
+    return commitTransaction(await openDb(), ASYNC_QUESTION_DRAFTS_STORE,
+        tx => tx.objectStore(ASYNC_QUESTION_DRAFTS_STORE).put(record, sessionId))
+}
+
+export async function deleteAsyncQuestionDraft(sessionId, openDb = getDb) {
+    return commitTransaction(await openDb(), ASYNC_QUESTION_DRAFTS_STORE,
+        tx => tx.objectStore(ASYNC_QUESTION_DRAFTS_STORE).delete(sessionId))
+}
+
+export async function getAllAsyncQuestionDrafts(openDb = getDb) {
+    const db = await openDb()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(ASYNC_QUESTION_DRAFTS_STORE, 'readonly')
+        const drafts = {}
+        const request = tx.objectStore(ASYNC_QUESTION_DRAFTS_STORE).openCursor()
+        request.onsuccess = () => {
+            const cursor = request.result
+            if (cursor) { drafts[cursor.key] = cursor.value; cursor.continue() }
+        }
+        tx.oncomplete = () => resolve(drafts)
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error || new Error('Draft read aborted'))
+    })
+}
+
+/** Commit recovered text and consumed choices together. A reload sees both or neither. */
+export async function saveAsyncQuestionRecovery(sessionId, draft, questionDraft, openDb = getDb) {
+    const messageRecord = plainRecord(draft), questionRecord = plainRecord(questionDraft)
+    return commitTransaction(await openDb(), [DRAFT_MESSAGES_STORE, ASYNC_QUESTION_DRAFTS_STORE], tx => {
+        tx.objectStore(DRAFT_MESSAGES_STORE).put(messageRecord, sessionId)
+        tx.objectStore(ASYNC_QUESTION_DRAFTS_STORE).put(questionRecord, sessionId)
     })
 }
