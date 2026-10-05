@@ -223,3 +223,14 @@ html.wa-dark .sidebar-row-list > .glide-ink {
 .sidebar-row-menu-trigger:hover {
     opacity: 1 !important;
 }
+
+/* The native scrollbar stays inside the common gutter. Firefox's thin scrollbar
+   can exceed that gutter; the measured width expands the ProjectView gutter. */
+@supports selector(::-webkit-scrollbar) {
+    .project-view-wrapper .sidebar-row-list::-webkit-scrollbar {
+        width: min(8px, var(--panel-gap));
+    }
+    .project-view-wrapper .sidebar-row-list::-webkit-scrollbar-thumb {
+        border-width: min(2px, calc(var(--panel-gap) / 4));
+    }
+}

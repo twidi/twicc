@@ -726,7 +726,7 @@ function handleMenuSelect(event) {
 /* Row look (padding, keyboard highlight, multi-select fill, the lit open row, the row
    menu): styles/sidebar-rows.css, shared with the artifacts list. */
 .session-item-wrapper {
-    padding-inline: var(--wa-space-2xs);
+    padding-inline: var(--sidebar-row-inset, var(--wa-space-2xs));
 }
 
 .session-name-row {

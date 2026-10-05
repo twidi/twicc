@@ -18,6 +18,7 @@ import { dateBucketSeparator } from '../../../utils/datePresets'
 import { useListCascade } from '../../../composables/useListCascade'
 import { useListExit } from '../../../composables/useListExit'
 import { useGlideInk } from '../../../composables/useGlideInk'
+import { useSidebarScrollbar } from '../../../composables/useSidebarScrollbar'
 import { activeRowBase, entranceOffset, revealBands, revealMargins } from '../../../utils/sidebarRows'
 import { hasScrollerPaginationProgress } from '../../../utils/scrollerLoadWindow.js'
 import VirtualScroller from '../../virtual-scroller/VirtualScroller.vue'
@@ -263,6 +264,7 @@ const rowStyle = (session) => exits.exitStyle(session) ?? cascade.itemStyle(sess
 // The visible range: the open row unmounted by the scroller hides the ink, remounted snaps.
 const inkRef = ref(null)
 const scrollerEl = computed(() => scrollerRef.value?.$el ?? null)
+useSidebarScrollbar(scrollerEl, 'sessions')
 useGlideInk({
     container: scrollerEl,
     flushTarget: inkRef,
@@ -889,7 +891,12 @@ defineExpose({
 .session-list {
     flex: 1;
     min-height: 0;
+    scrollbar-gutter: stable;
     padding-block: var(--wa-space-2xs);
+    padding-inline-start: var(--sidebar-gutter, 0px);
+    padding-inline-end: max(0px, calc(var(--sidebar-gutter, 0px) - var(--sidebar-scrollbar-width, 0px)));
+    --sidebar-row-inset: 0px;
+    --sidebar-separator-inset: 0px;
     /* The floating "New session" button covers the list's last ~3.08rem (measured: 35px +
        11.25px at a 15px root), rounded up to 3.125rem; a row under it is not visible. The
        open row's reveal keeps clear of it (styles/sidebar-rows.css, the reveal bands). */

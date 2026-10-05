@@ -57,7 +57,8 @@ defineProps({
     display: flex;
     align-items: center;
     gap: var(--wa-space-m);
-    margin: var(--wa-space-xs) var(--wa-space-m);
+    margin-block: var(--wa-space-xs);
+    margin-inline: var(--sidebar-separator-inset, var(--wa-space-m));
     user-select: none;
 }
 

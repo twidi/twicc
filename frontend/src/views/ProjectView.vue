@@ -2728,6 +2728,8 @@ function openPeerInbox() {
 
 <style scoped>
 .project-view-wrapper {
+    --sidebar-gutter: max(var(--panel-gap), var(--sidebar-sessions-scrollbar-width, 0px), var(--sidebar-artifacts-scrollbar-width, 0px));
+    --rail-width: calc(var(--rail-card-width) + var(--sidebar-gutter));
     position: relative;
     display: flex;
     height: 100dvh;
@@ -2776,6 +2778,11 @@ function openPeerInbox() {
 .project-view.sidebar-resizing::part(divider) {
     --line: var(--wa-color-brand-fill-loud);
 }
+.project-view-wrapper :deep(.sidebar-rail .panel-card) {
+    margin-block: var(--sidebar-gutter);
+    margin-inline-start: var(--sidebar-gutter);
+}
+
 .sidebar {
     --transition-duration: .3s;
     height: 100dvh;
@@ -2793,7 +2800,7 @@ function openPeerInbox() {
     display: flex;
     flex-direction: column;
     justify-content: stretch;
-    padding: var(--wa-space-s);
+    padding: var(--sidebar-gutter);
     gap: var(--wa-space-s);
     background: var(--main-header-footer-bg-color);
 }
@@ -3021,6 +3028,10 @@ wa-dropdown-item:hover .row-menu-trigger,
     --color: var(--sidebar-divider-color);
 }
 
+.sidebar > wa-divider {
+    margin-inline: var(--sidebar-gutter);
+}
+
 /* When the sidebar list (sessions or artifacts) holds at least one item, the
    list and its own section separators already provide the visual break, so the
    header→list divider is redundant: hide it and drop the header's bottom padding
@@ -3156,7 +3167,7 @@ wa-dropdown-item:hover .row-menu-trigger,
 .new-session-split-button {
     position: absolute;
     bottom: var(--wa-space-s);
-    right: var(--wa-space-s);
+    right: var(--sidebar-gutter);
     z-index: 5;
 
     /* Style the main button label */
@@ -3179,7 +3190,7 @@ wa-dropdown-item:hover .row-menu-trigger,
     display: block;
     position: absolute;
     bottom: var(--wa-space-s);
-    right: var(--wa-space-s);
+    right: var(--sidebar-gutter);
     z-index: 5;
     /* Only take the width needed by the trigger button */
     width: fit-content;
@@ -3237,7 +3248,7 @@ wa-dropdown-item:hover .row-menu-trigger,
     display: flex;
     flex-direction: column;
     /* A floating glass card (styles/glass.css), inset from the sidebar edges like the panels. */
-    margin: var(--wa-space-xs) var(--wa-space-s);
+    margin: var(--sidebar-gutter);
     padding: var(--wa-space-xs) var(--wa-space-s);
     border-radius: var(--panel-radius);
 }

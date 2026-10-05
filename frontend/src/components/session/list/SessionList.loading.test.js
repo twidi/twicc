@@ -58,6 +58,7 @@ function mount(t, { initialLoading = false, height = 140, more = true, initialSe
         '../../../composables/useListCascade': { useListCascade: () => noMotion },
         '../../../composables/useListExit': { useListExit: ({ items }) => ({ displayItems: items, exitClass() {}, exitStyle() {} }) },
         '../../../composables/useGlideInk': { useGlideInk() {} },
+        '../../../composables/useSidebarScrollbar': { useSidebarScrollbar() {} },
         '../../../utils/sidebarRows': { activeRowBase() {}, entranceOffset() {}, revealBands() {}, revealMargins() {} },
         '../../../utils/scrollerLoadWindow.js': helpers,
         '../../virtual-scroller/VirtualScroller.vue': actualScroller,

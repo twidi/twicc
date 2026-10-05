@@ -23,6 +23,7 @@ import { useSettingsStore } from '../../stores/settings'
 import { useListCascade } from '../../composables/useListCascade'
 import { useListExit } from '../../composables/useListExit'
 import { useGlideInk } from '../../composables/useGlideInk'
+import { useSidebarScrollbar } from '../../composables/useSidebarScrollbar'
 import { visibleIndexRange } from '../../utils/listCascade'
 import { computeArtifactBookmarkList } from '../../utils/sidebarArtifactBookmarks'
 import { matchQuery } from '../../utils/textFilter'
@@ -520,6 +521,7 @@ const entryStyle = (b) => exits.exitStyle(b) ?? cascade.itemStyle(b)
 // observed: a row that renders its button after the patch, or an entry above the open one
 // that changes height, re-places the ink. The cascade's scope key: a new list snaps.
 const inkRef = ref(null)
+useSidebarScrollbar(listRef, 'artifacts')
 useGlideInk({
     container: listRef,
     flushTarget: inkRef,
@@ -725,7 +727,11 @@ defineExpose({ handleKeyNavigation })
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: var(--wa-space-2xs);
+    scrollbar-gutter: stable;
+    padding-block: var(--wa-space-2xs);
+    padding-inline-start: var(--sidebar-gutter, var(--wa-space-2xs));
+    padding-inline-end: max(0px, calc(var(--sidebar-gutter, var(--wa-space-2xs)) - var(--sidebar-scrollbar-width, 0px)));
+    --sidebar-separator-inset: 0px;
     display: flex;
     flex-direction: column;
 }
