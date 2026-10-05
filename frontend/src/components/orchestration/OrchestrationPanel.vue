@@ -25,7 +25,7 @@ import { useDataStore } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
 import { agentForestCost } from '../../utils/agentTreeMetrics'
 import {
-    bucketOfProcessState, computeTimeline, countBuckets, findSubtree, flattenTree, isoMs, parentOf,
+    bucketOfProcessState, computeTimeline, cumulativeSeconds, countBuckets, findSubtree, flattenTree, isoMs, parentOf,
 } from '../../utils/orchestrationView'
 import { sessionRouteLocation } from '../../utils/sessionRoute'
 
@@ -140,11 +140,17 @@ const hasWorkingNode = computed(() => timelineItems.value.some(item => item.work
 // The header's tiles. ``null`` while there is nothing to summarise (loading, error, no data).
 const summary = computed(() => {
     const spanSeconds = timeline.value.range?.spanSeconds ?? null
+    // Every node below the current session: every subagent, or every session but the current one.
+    const cumulative = cumulativeSeconds(
+        timelineItems.value,
+        timeline.value.range?.end,
+        view.value === 'agents' ? null : props.sessionId,
+    )
     if (view.value === 'agents') {
-        return { kind: 'agents', counts: agentCounts.value, cost: agentTotalCost.value, spanSeconds }
+        return { kind: 'agents', counts: agentCounts.value, cost: agentTotalCost.value, spanSeconds, cumulativeSeconds: cumulative }
     }
     if (!subtree.value) return null
-    return { kind: 'sessions', counts: sessionCounts.value, cost: sessionsCost.value, spanSeconds }
+    return { kind: 'sessions', counts: sessionCounts.value, cost: sessionsCost.value, spanSeconds, cumulativeSeconds: cumulative }
 })
 
 // Auto-refresh gate: the poll runs while at least one node of the WHOLE payload is not ``dead`` (a live

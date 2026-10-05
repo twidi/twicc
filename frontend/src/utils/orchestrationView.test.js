@@ -3,7 +3,7 @@ import test from 'node:test'
 
 import {
     agentModelLabel, annotationEntries, annotationValueText, bucketOfProcessState, buildAnnotationTree,
-    computeTimeline, countBuckets, findSubtree, flattenTree, isoMs, parentOf,
+    computeTimeline, countBuckets, cumulativeSeconds, findSubtree, flattenTree, isoMs, parentOf,
 } from './orchestrationView.js'
 
 const tree = {
@@ -187,4 +187,41 @@ test('agentModelLabel reads family and version, as the session header does', () 
 test('agentModelLabel is null without a model, or without family or version', () => {
     assert.equal(agentModelLabel(null), null)
     assert.equal(agentModelLabel({ raw: 'gpt-x', family: null, version: null }), null)
+})
+
+// ── cumulativeSeconds ───────────────────────────────────────────────────────
+test('cumulativeSeconds sums the durations of stopped nodes', () => {
+    assert.equal(cumulativeSeconds([
+        { id: 'a', start: T(0), end: T(10), working: false },
+        { id: 'b', start: T(20), end: T(25), working: false },
+    ], T(100)), 900)
+})
+
+test('cumulativeSeconds counts a working node up to the range end', () => {
+    assert.equal(cumulativeSeconds([
+        { id: 'a', start: T(0), end: null, working: true },
+        { id: 'b', start: T(0), end: T(1), working: false },
+    ], T(10)), 660)
+})
+
+test('cumulativeSeconds skips a node with no start and the excluded id', () => {
+    assert.equal(cumulativeSeconds([
+        { id: 'a', start: null, end: T(5), working: false },
+        { id: 'cur', start: T(0), end: T(50), working: false },
+        { id: 'b', start: T(0), end: T(1), working: false },
+    ], T(100), 'cur'), 60)
+})
+
+test('cumulativeSeconds raises an end before the start to the start and sums overlaps', () => {
+    assert.equal(cumulativeSeconds([
+        { id: 'a', start: T(5), end: T(1), working: false },
+        { id: 'b', start: T(0), end: T(2), working: false },
+        { id: 'c', start: T(1), end: T(3), working: false },
+    ], T(10)), 240)
+})
+
+test('cumulativeSeconds is null when no node qualifies', () => {
+    assert.equal(cumulativeSeconds([], T(1)), null)
+    assert.equal(cumulativeSeconds([{ id: 'a', start: null, end: null, working: false }], T(1)), null)
+    assert.equal(cumulativeSeconds([{ id: 'a', start: T(0), end: T(1), working: false }], T(1), 'a'), null)
 })

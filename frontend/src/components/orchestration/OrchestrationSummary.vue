@@ -1,7 +1,8 @@
 <script setup>
 // The four summary tiles under the Orchestration header: count with a donut of the state buckets,
-// working (sessions) or stopped (subagents), total cost, span. Counts and donut are over the displayed
-// nodes (descendants only for sessions); cost and span are passed in already resolved (spec 3.2).
+// working (sessions) or stopped (subagents), total cost, span with the cumulative duration. Counts and
+// donut are over the displayed nodes (descendants only for sessions); cost, span and cumulative duration
+// are passed in already resolved (spec 3.2).
 import { computed } from 'vue'
 import CostDisplay from '../ui/CostDisplay.vue'
 import { formatDuration } from '../../utils/date'
@@ -13,6 +14,8 @@ const props = defineProps({
     cost: { type: Number, default: null },
     showCosts: { type: Boolean, default: true },
     spanSeconds: { type: Number, default: null },
+    // Sum of the durations of every node below the current session (null: none).
+    cumulativeSeconds: { type: Number, default: null },
 })
 
 const total = computed(() => BUCKET_ORDER.reduce((n, bucket) => n + props.counts[bucket], 0))
@@ -34,6 +37,7 @@ const donut = computed(() => {
 
 const countLabel = computed(() => (props.kind === 'agents' ? 'Subagents' : 'Spawned sessions'))
 const span = computed(() => (props.spanSeconds == null ? '-' : formatDuration(props.spanSeconds)))
+const cumulative = computed(() => (props.cumulativeSeconds == null ? '-' : formatDuration(props.cumulativeSeconds)))
 </script>
 
 <template>
@@ -60,6 +64,7 @@ const span = computed(() => (props.spanSeconds == null ? '-' : formatDuration(pr
         <div class="osum-tile">
             <span class="osum-label">Span</span>
             <span class="osum-value">{{ span }}</span>
+            <span class="osum-sub">Cumulative {{ cumulative }}</span>
         </div>
     </div>
 </template>
@@ -116,6 +121,12 @@ const span = computed(() => (props.spanSeconds == null ? '-' : formatDuration(pr
     font-size: var(--wa-font-size-xs);
     font-weight: 400;
     color: var(--wa-color-text-quiet);
+}
+
+.osum-sub {
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-text-quiet);
+    font-variant-numeric: tabular-nums;
 }
 
 .osum-value--working {

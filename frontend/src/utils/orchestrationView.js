@@ -105,6 +105,25 @@ export function computeTimeline(items, now) {
     return { range: { start, end, spanSeconds: span / 1000 }, geometry }
 }
 
+/**
+ * Sum, in seconds, of the durations of the nodes of ``items`` (same shape as ``computeTimeline``), except
+ * ``excludeId``. A node's duration follows the bars: nothing without a start; a working node ends at
+ * ``rangeEnd``; otherwise it ends at its end, raised to its start. Overlaps are simply summed.
+ * Null when no node qualifies.
+ */
+export function cumulativeSeconds(items, rangeEnd, excludeId = null) {
+    let total = 0
+    let counted = 0
+    for (const item of items) {
+        if (item.start == null || item.id === excludeId) continue
+        const end = item.working ? rangeEnd : Math.max(item.end ?? item.start, item.start)
+        if (end == null) continue
+        total += Math.max(end - item.start, 0)
+        counted += 1
+    }
+    return counted ? total / 1000 : null
+}
+
 // ── Annotations (spec 5.6) ──────────────────────────────────────────────────
 const byString = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
 const isPlainObject = value => value !== null && typeof value === 'object' && !Array.isArray(value)
