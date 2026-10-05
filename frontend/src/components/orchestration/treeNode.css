@@ -96,10 +96,18 @@
     min-width: 0;
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
+    /* One line, always: the title, the hidden eye, the state icon and the current tag never wrap; the
+       title alone shrinks (ellipsis), the rest keeps its size. */
+    flex-wrap: nowrap;
     gap: var(--wa-space-xs);
     font-weight: 600;
-    overflow-wrap: anywhere;
+}
+
+.ocard-title-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .orch-title-link {

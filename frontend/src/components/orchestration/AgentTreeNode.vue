@@ -136,7 +136,7 @@ const expanded = ref(true)
         <div class="ocard" :style="{ '--ocard-border': borderColor }">
             <div class="ocard-head">
                 <span class="ocard-title">
-                    <router-link :to="agentRoute" class="orch-title-link">{{ label }}</router-link>
+                    <router-link :to="agentRoute" class="orch-title-link ocard-title-text" :title="label">{{ label }}</router-link>
                     <wa-icon
                         v-if="isRunning"
                         name="robot"

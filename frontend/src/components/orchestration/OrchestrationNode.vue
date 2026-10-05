@@ -187,8 +187,8 @@ const expanded = ref(true)
         >
             <div class="ocard-head">
                 <span class="ocard-title">
-                    <router-link v-if="!isHidden" :to="sessionRoute" class="orch-title-link">{{ title }}</router-link>
-                    <span v-else>{{ title }}</span>
+                    <router-link v-if="!isHidden" :to="sessionRoute" class="orch-title-link ocard-title-text" :title="title">{{ title }}</router-link>
+                    <span v-else class="ocard-title-text" :title="title">{{ title }}</span>
                     <wa-icon
                         v-if="isHidden"
                         name="eye-slash"
