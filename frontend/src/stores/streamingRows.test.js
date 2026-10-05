@@ -9,6 +9,8 @@ import { createStreamPublicationIdentity, streamPublicationRegistry } from '../u
 import { isBufferActive } from '../utils/streamingBuffer.js'
 import { createPinia, defineStore } from 'pinia'
 import { getParsedContent, setParsedContent } from '../utils/parsedContent.js'
+import { matchesStreamingBlock as codexMatch } from '../providers/codex/streamMatching.js'
+import { matchesStreamingBlock as claudeMatch } from '../providers/claude_code/streamMatching.js'
 import { SYNTHETIC_ITEM } from '../constants.js'
 
 // Execute the actual action source. Node cannot resolve the store's extensionless imports.
@@ -20,9 +22,9 @@ function action(name) {
     assert.ok(end > start, `action ${name} boundary not found`)
     return source.slice(start, end)
 }
-const deps = { SYNTHETIC_ITEM, setParsedContent, getParsedContent, initBuffer, feedDelta, flushBuffer, destroySessionBuffers, createStreamPublicationIdentity, isBufferActive, STREAM_BLOCK_INACTIVITY_MS: 1000,
+const deps = { getProviderHelpers: provider => ({ codex: { matchesStreamingBlock: codexMatch }, claude_code: { matchesStreamingBlock: claudeMatch } })[provider], SYNTHETIC_ITEM, setParsedContent, getParsedContent, initBuffer, feedDelta, flushBuffer, destroySessionBuffers, createStreamPublicationIdentity, isBufferActive, STREAM_BLOCK_INACTIVITY_MS: 1000,
     clearBlockInactivityTimer(block) { if (block._inactivityTimer) clearTimeout(block._inactivityTimer); block._inactivityTimer = null } }
-const actions = new Function(...Object.keys(deps), `return { ${['_onBufferDrain', 'streamBlockStart', 'streamBlockDelta', 'streamBlockStop', '_retireStreamingBlocks'].map(action).join('')} }`)(...Object.values(deps))
+const actions = new Function(...Object.keys(deps), `return { ${['_findStreamingReplacement', '_onBufferDrain', 'streamBlockStart', 'streamBlockDelta', 'streamBlockStop', '_retireStreamingBlocks'].map(action).join('')} }`)(...Object.values(deps))
 let fixtureId = 0
 function makeRow(block, lineNum) {
     const row = { lineNum, syntheticKind: SYNTHETIC_ITEM.STREAMING_BLOCK.kind, publicationIdentity: block.publicationIdentity }
@@ -31,17 +33,17 @@ function makeRow(block, lineNum) {
         : { type: 'text', text: block.displayedText }] } })
     return row
 }
-function makeFixture({ blockType = 'text', stopped = false, rowCount = 2 } = {}) {
+function makeFixture({ blockType = 'text', stopped = false, rowCount = 2, provider = 'codex' } = {}) {
     const sessionId = `stream-fixture-${++fixtureId}`, blockIndex = 0
     const lineNum = SYNTHETIC_ITEM.STREAMING_BLOCK.baseLineNum - blockIndex
-    const block = { blockIndex, blockType, displayedText: '', text: '', stopped, uuid: 'uuid', publicationIdentity: createStreamPublicationIdentity(sessionId, 'message', blockIndex) }
+    const block = { blockIndex, blockType, displayedText: '', text: '', stopped, uuid: 'message', publicationIdentity: createStreamPublicationIdentity(sessionId, 'message', blockIndex) }
     const row = makeRow(block, lineNum)
     const rows = [...Array.from({ length: rowCount - 1 }, (_, i) => ({ lineNum: i + 1 })), row]
     const store = defineStore(sessionId, {
-        state: () => ({ localState: { streamingBlocks: { [sessionId]: { messageId: 'message', blocks: [block] } },
+        state: () => ({ sessions: { [sessionId]: { provider } }, processStates: {}, sessionItems: {}, localState: { streamingBlocks: { [sessionId]: { messageId: 'message', blocks: [block] } },
             sessionVisualItems: { [sessionId]: rows }, visualItemCache: { [sessionId]: new Map(rows.map(r => [r.lineNum, r])) },
             sessionExpandedGroups: {}, openDetails: {} } }),
-        actions: { ...actions,
+        actions: { ...actions, getSession(id) { return this.sessions[id] },
             setDetailOpen(id, key, open) { (this.localState.openDetails[id] ??= {})[key] = open },
             isDetailOpen(id, key) { return !!this.localState.openDetails[id]?.[key] },
             recomputeVisualItems() { throw new Error('unexpected structural rebuild') } },
@@ -236,10 +238,10 @@ function withFrames(run) {
     }
 }
 for (const [provider, thinking, name] of [
-    ['claude', false, 'retirement flushes the latest text before removing a Claude block'],
-    ['codex', true, 'retirement flushes Codex stream_uuid and transfers thinking state'],
+    ['claude_code', false, 'retirement flushes the latest text before removing a Claude block'],
+    ['codex', true, 'retirement flushes Codex durable reasoning and transfers thinking state'],
 ]) test(name, () => withFrames(({ frames, frame }) => {
-    const f = makeFixture({ blockType: thinking ? 'thinking' : 'text' }), observed = []
+    const f = makeFixture({ blockType: thinking ? 'thinking' : 'text', provider }), observed = []
     initBuffer(f.sessionId, f.blockIndex, text => {
         assert.equal(f.store.localState.streamingBlocks[f.sessionId].blocks.length, 1)
         publish(f, text); observed.push(getParsedContent(f.row).message.content[0])
@@ -250,8 +252,9 @@ for (const [provider, thinking, name] of [
     assert.ok(f.block.displayedText.length < 'complete pending text'.length)
     assert.equal(frames.size, 1)
     const item = { line_num: 42, kind: thinking ? 'reasoning' : 'assistant_message', group_head: 42 }
-    setParsedContent(item, { uuid: 'uuid', message: { id: 'message', content: [{ type: thinking ? 'thinking' : 'text' }] } })
-    if (provider === 'codex') item.stream_uuid = 'uuid'
+    setParsedContent(item, provider === 'codex'
+        ? { type: 'response_item', payload: { type: 'reasoning', id: 'message', summary: [{ type: 'summary_text', text: 'complete pending text' }] } }
+        : { uuid: 'message', message: { id: 'message', content: [{ type: 'text' }] } })
     if (thinking) {
         f.store.setDetailOpen(f.sessionId, `line:${f.lineNum}:0`, true)
         f.store.localState.sessionExpandedGroups[f.sessionId] = [f.lineNum]
@@ -344,13 +347,13 @@ test('hidden retirement removes buffer without patching retained row', () => wit
     f.store.recomputeVisualItems = () => {}
     f.store.streamBlockStart(f.sessionId, 'hidden-retirement', 0, 'thinking')
     const block = f.store.localState.streamingBlocks[f.sessionId].blocks[0]
-    block.uuid = 'final-uuid'
+    block.uuid = 'hidden-retirement'
     f.store.streamBlockDelta(f.sessionId, 'hidden-retirement', 0, 'canonical final text')
     const before = getParsedContent(f.row)
-    const item = { kind: 'reasoning', line_num: 99, stream_uuid: 'final-uuid' }
-    setParsedContent(item, { message: { content: [{ type: 'thinking', thinking: block.text }] } })
+    const item = { kind: 'reasoning', line_num: 99 }
+    setParsedContent(item, { type: 'response_item', payload: { type: 'reasoning', id: 'hidden-retirement', summary: [{ type: 'summary_text', text: block.text }] } })
     f.store._retireStreamingBlocks(f.sessionId, [item])
-    assert.equal(getParsedContent(item).message.content[0].thinking, 'canonical final text')
+    assert.equal(getParsedContent(item).payload.summary[0].text, 'canonical final text')
     assert.equal(flushBuffer(f.sessionId, 0), null)
     assert.equal(block.text, 'canonical final text')
     assert.strictEqual(getParsedContent(f.row), before)

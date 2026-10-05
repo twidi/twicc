@@ -753,12 +753,6 @@ async function loadSessionData(lastLine) {
     store.localState.sessions[sId].itemsFetched = true
     store.localState.sessions[sId].itemsLoading = true
 
-    // Drop any orphaned ended streaming blocks (typical case: a Codex
-    // canonical session whose live items_added landed while the user was
-    // on another session, so _retireStreamingBlocks never ran and the
-    // wire-only stream_uuid is gone by the time the REST fetch returns).
-    store.clearEndedStreamingBlocks(sId)
-
     try {
         // Build range for initial content.
         // Parent sessions open at the bottom → load last N items.

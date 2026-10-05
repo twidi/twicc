@@ -4159,6 +4159,7 @@ export const useDataStore = defineStore('data', {
             }
 
             this.clearOptimisticMessageIfMatched(sessionId, updatedItems)
+            this._retireStreamingBlocks(sessionId, updatedItems)
 
             // Recompute visual items in case metadata changed
             this.recomputeVisualItems(sessionId)
@@ -5112,8 +5113,15 @@ export const useDataStore = defineStore('data', {
          * then adds the new block entry.
          */
         streamBlockStart(sessionId, messageId, blockIndex, blockType) {
-            const publicationIdentity = createStreamPublicationIdentity(sessionId, messageId, blockIndex)
+            const replacement = this._findStreamingReplacement(sessionId, messageId, { blockIndex, blockType, uuid: null })
+            if (replacement) {
+                const retired = this._retireStreamingBlocks(sessionId, [replacement])
+                if (retired.length) this.recomputeVisualItems(sessionId)
+                return
+            }
             const existing = this.localState.streamingBlocks[sessionId]
+            if (existing?.messageId === messageId && existing.blocks.some(block => block.blockIndex === blockIndex)) return
+            const publicationIdentity = createStreamPublicationIdentity(sessionId, messageId, blockIndex)
             if (!existing || existing.messageId !== messageId) {
                 // New message — start fresh (destroy any old buffers).
                 // Before dropping the previous entry we close any of its
@@ -5258,8 +5266,8 @@ export const useDataStore = defineStore('data', {
          *
          * Also handles a race condition: the watcher's session_items_added may
          * arrive BEFORE this end event. In that case, _retireStreamingBlocks
-         * already ran but couldn't match (uuid was null). We scan existing
-         * session items for a retroactive match.
+         * can retire Codex blocks through their durable ID. Claude completion
+         * supplies the block UUID needed to match already-loaded content.
          */
         streamBlockEnd(sessionId, messageId, blockIndex, uuid) {
             const streaming = this.localState.streamingBlocks[sessionId]
@@ -5268,44 +5276,32 @@ export const useDataStore = defineStore('data', {
             if (!block) return
             block.uuid = uuid
 
-            // Retroactive match: the real item may already be in sessionItems
-            const items = this.sessionItems[sessionId]
-            if (!items) return
-            for (let i = items.length - 1; i >= 0; i--) {
-                const item = items[i]
-                if (item.kind !== 'assistant_message' && item.kind !== 'content_items' && item.kind !== 'reasoning') continue
-                // Provider-agnostic uuid path: when the backend stamped a
-                // ``stream_uuid`` on the wire item (Codex live-sync), that
-                // single field is sufficient — no need to parse content or
-                // match message.id. For Claude the uuid lives inside the
-                // parsed JSONL ``uuid`` field, gated by ``message.id``.
-                if (item.stream_uuid === uuid) {
-                    this._retireStreamingBlocks(sessionId, [item])
-                    this.recomputeVisualItems(sessionId)
-                    return
-                }
-                const parsed = getParsedContent(item)
-                if (!parsed) continue
-                if (parsed.message?.id !== messageId) continue
-                if (parsed.uuid === uuid) {
-                    this._retireStreamingBlocks(sessionId, [item])
-                    this.recomputeVisualItems(sessionId)
-                    return
-                }
+            const replacement = this._findStreamingReplacement(sessionId, messageId, block)
+            if (replacement) {
+                const retired = this._retireStreamingBlocks(sessionId, [replacement])
+                if (retired.length) this.recomputeVisualItems(sessionId)
             }
         },
 
         /**
-         * Try to retire streaming blocks whose real SessionItem has arrived.
-         * Called from addSessionItems after new items are placed in the array.
-         *
-         * Match strategy (in order):
-         *   1. ``item.stream_uuid`` (Codex live-sync) — the backend popped
-         *      the streaming registry and stamped the SDK ``item_id`` on
-         *      the wire payload. We retire the block whose uuid matches,
-         *      no parsed content needed.
-         *   2. Otherwise, parse the JSONL ``uuid`` and ``message.id``
-         *      (Claude path) and match those against the streaming entry.
+         * Find a persisted replacement during a stream start or end event.
+         * Content hydration makes metadata-only placeholders eligible later.
+         */
+        _findStreamingReplacement(sessionId, messageId, block) {
+            const provider = this.getSession(sessionId)?.provider ?? this.processStates[sessionId]?.provider
+            const helpers = getProviderHelpers(provider)
+            if (!helpers) return null
+            const items = this.sessionItems[sessionId] ?? []
+            for (let i = items.length - 1; i >= 0; i--) {
+                const item = items[i]
+                if (item && helpers.matchesStreamingBlock(getParsedContent(item), item.kind, messageId, block)) return item
+            }
+            return null
+        },
+
+        /**
+         * Retire blocks through the provider's durable identity after content arrives.
+         * Return line pairs before the caller recomputes the visual items.
          */
         _retireStreamingBlocks(sessionId, newItems) {
             const streaming = this.localState.streamingBlocks[sessionId]
@@ -5316,22 +5312,14 @@ export const useDataStore = defineStore('data', {
             // over to the real item before the recompute renders it).
             const retired = []
 
+            const provider = this.getSession(sessionId)?.provider ?? this.processStates[sessionId]?.provider
+            const helpers = getProviderHelpers(provider)
+            if (!helpers) return retired
+
             for (const item of newItems) {
-                if (item.kind !== 'assistant_message' && item.kind !== 'content_items' && item.kind !== 'reasoning') continue
-
-                let itemUuid = item.stream_uuid
-                let parsed = null
-                if (!itemUuid) {
-                    parsed = getParsedContent(item)
-                    if (!parsed) continue
-                    const itemMessageId = parsed.message?.id
-                    if (itemMessageId !== streaming.messageId) continue
-                    itemUuid = parsed.uuid
-                    if (!itemUuid) continue
-                }
-
-                // Find and remove the matching block
-                const idx = streaming.blocks.findIndex(b => b.uuid === itemUuid)
+                const parsed = getParsedContent(item)
+                const idx = streaming.blocks.findIndex(block =>
+                    helpers.matchesStreamingBlock(parsed, item.kind, streaming.messageId, block))
                 if (idx !== -1) {
                     const block = streaming.blocks[idx]
                     retired.push({
@@ -5341,10 +5329,6 @@ export const useDataStore = defineStore('data', {
 
                     // Transfer wa-details open state from streaming to real item
                     if (block.blockType === 'thinking') {
-                        // Lazy parse: Codex went through the stream_uuid
-                        // short-circuit and ``parsed`` may still be null. Claude
-                        // already had it loaded by the parent loop.
-                        if (!parsed) parsed = getParsedContent(item)
                         const { baseLineNum } = SYNTHETIC_ITEM.STREAMING_BLOCK
                         const streamingDetailKey = `line:${baseLineNum - block.blockIndex}:0`
                         if (this.isDetailOpen(sessionId, streamingDetailKey)) {
@@ -5409,66 +5393,6 @@ export const useDataStore = defineStore('data', {
         },
 
         /**
-         * Drop streaming blocks that already ended (``uuid`` set) but were
-         * never retired by a matching ``session_items_added`` broadcast.
-         *
-         * The drop happens when the user is on a different session while
-         * the canonical session's live items arrive: the WS handler skips
-         * ``addSessionItems`` because ``itemsFetched`` is still false on
-         * the canonical id, so ``_retireStreamingBlocks`` never runs. On
-         * Codex specifically the retirement key is the wire-only
-         * ``stream_uuid`` (not persisted), so by the time the user lands
-         * on the session and items are fetched from the REST API, no
-         * match is possible anymore and the synthetic ``streaming-block``
-         * item would survive forever alongside the real ``agent_message``.
-         *
-         * Called from ``loadSessionData`` (SessionItemsList.vue) before
-         * fetching items. Only ended blocks (``uuid !== null``) are
-         * dropped, so active streaming visible when the user lands on a
-         * session mid-turn keeps painting live deltas.
-         */
-        clearEndedStreamingBlocks(sessionId) {
-            const streaming = this.localState.streamingBlocks[sessionId]
-            if (!streaming) return
-
-            const { baseLineNum } = SYNTHETIC_ITEM.STREAMING_BLOCK
-            const expanded = this.localState.sessionExpandedGroups[sessionId]
-            const remaining = []
-            let anyCleared = false
-            for (const block of streaming.blocks) {
-                if (block.uuid !== null) {
-                    clearBlockInactivityTimer(block)
-                    flushBuffer(sessionId, block.blockIndex)
-                    // For thinking blocks: close the streaming detail key
-                    // (otherwise a stale ``true`` for the synthetic lineNum
-                    // would auto-open the next block landing at that slot)
-                    // and drop the matching expandedGroups entry (no real
-                    // item to migrate the expansion to — we never matched).
-                    if (block.blockType === 'thinking') {
-                        const streamingLineNum = baseLineNum - block.blockIndex
-                        this.setDetailOpen(sessionId, `line:${streamingLineNum}:0`, false)
-                        if (expanded && expanded.length > 0) {
-                            const idx = expanded.indexOf(streamingLineNum)
-                            if (idx !== -1) expanded.splice(idx, 1)
-                        }
-                    }
-                    anyCleared = true
-                } else {
-                    remaining.push(block)
-                }
-            }
-            if (!anyCleared) return
-
-            if (remaining.length === 0) {
-                destroySessionBuffers(sessionId)
-                delete this.localState.streamingBlocks[sessionId]
-            } else {
-                streaming.blocks = remaining
-            }
-            this.recomputeVisualItems(sessionId)
-        },
-
-        /**
          * Drop streaming blocks that never got their ``stream_block_end``
          * (``uuid`` still null) — orphans of a turn cut mid-stream (soft
          * interrupt, turn error). Nothing will ever stop or retire them.
@@ -5477,8 +5401,7 @@ export const useDataStore = defineStore('data', {
          * process_state broadcast on the WS, so at turn end a properly ended
          * block already has its uuid and is awaiting normal retirement by
          * the real item — dropping it would flash the content away on every
-         * turn end. (``clearEndedStreamingBlocks`` above handles the inverse
-         * selection, in a REST-reload context where retirement is moot.)
+         * turn end. Content hydration retires ended blocks through durable identity.
          *
          * Called from ``setProcessState`` when a session leaves
          * assistant_turn; the caller's recompute repaints the visual items.
@@ -5494,9 +5417,8 @@ export const useDataStore = defineStore('data', {
                 if (block.uuid === null) {
                     clearBlockInactivityTimer(block)
                     flushBuffer(sessionId, block.blockIndex)
-                    // Same thinking-block housekeeping as
-                    // clearEndedStreamingBlocks: close the streaming detail
-                    // key and drop the expandedGroups entry, so a stale
+                    // Close the streaming detail key and drop the
+                    // expandedGroups entry, so a stale
                     // ``true`` doesn't auto-open the next block landing at
                     // the same synthetic lineNum.
                     if (block.blockType === 'thinking') {
