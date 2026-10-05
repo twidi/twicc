@@ -6,16 +6,16 @@
 export const BUCKET_ORDER = ['working', 'awaiting', 'idle', 'stopped']
 
 // State colours of the summary tile (rows and donut arcs) and, except for ``stopped``, of the node borders:
-// a stopped node is purple in the summary but has its own neutral border (below). ``starting`` is in the
-// working bucket, so its border is blue although its icon is warning-coloured (the one place the border
-// does not follow the icon). The purple is the one of the plan permission mode (claude_code helpers).
+// a stopped node is neutral grey in the summary and has its own fainter neutral border (below). ``starting``
+// is in the working bucket, so its border is blue although its icon is warning-coloured (the one place the
+// border does not follow the icon).
 export const BUCKET_COLORS = {
     working: 'var(--wa-color-blue-60)',
     awaiting: 'var(--wa-color-warning-60)',
     idle: 'var(--wa-color-success-60)',
-    stopped: 'var(--wa-color-purple-60)',
+    stopped: 'var(--wa-color-neutral-50)',
 }
-// The card border: a stopped node is neutral at reduced opacity (not the summary's purple).
+// The card border: a stopped node is neutral at reduced opacity (fainter than the summary's grey).
 export const BUCKET_BORDER_COLORS = {
     ...BUCKET_COLORS,
     stopped: 'color-mix(in oklab, var(--wa-color-neutral-50) 40%, transparent)',

@@ -24,7 +24,7 @@ const SESSION_STATES = [
     { bucket: 'idle', icon: 'check', label: 'Idle', color: BUCKET_COLORS.idle },
     { bucket: 'stopped', icon: 'circle-stop', label: 'Stopped', color: BUCKET_COLORS.stopped },
 ]
-// A subagent is running or done (stopped, purple like a stopped session).
+// A subagent is running or done (stopped, grey like a stopped session).
 const AGENT_STATES = [
     { bucket: 'working', icon: 'robot', label: 'Running', color: BUCKET_COLORS.working },
     { bucket: 'stopped', icon: 'circle-stop', label: 'Done', color: BUCKET_COLORS.stopped },
