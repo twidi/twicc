@@ -1030,18 +1030,24 @@ class CodexAgent(BaseAgent):
 
         state = await sync_to_async(lambda: AsyncQuestionState.objects.filter(session_id=self.session_id)
                                    .values_list("state", flat=True).first())()
-        if not state or not any(
-            fact["key"].startswith("send:") and fact["data"].get("status") in {"prepared", "uncertain"}
-            for fact in state.get("facts", {}).values()
-        ):
+        submissions = [
+            fact for fact in (state or {}).get("facts", {}).values()
+            if fact["kind"] == "user_submission" and fact["key"].startswith("send:")
+        ]
+        if not any(fact["data"].get("status") in {"prepared", "uncertain"} for fact in submissions):
             return
+        client_ids = {
+            fact["data"].get("client_message_id") or fact["data"].get("request_id") or fact["key"][5:]
+            for fact in submissions
+        }
         try:
             response = await self._codex._client.thread_read(self.session_id, include_turns=True)
             facts = []
             for turn in response.thread.turns or []:
                 for item in turn.items or []:
                     raw = item.model_dump(mode="json", by_alias=True)
-                    if raw.get("clientId"):
+                    # Recovery only enriches known sends. Historical input is not a new reply.
+                    if raw.get("clientId") in client_ids:
                         fact = question_fact({"method": "item/completed", "params": {
                             "item": raw, "turnId": turn.id,
                         }}, source="sdk", at=datetime.now(UTC).isoformat())

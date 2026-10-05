@@ -1242,3 +1242,66 @@ def test_definite_rejected_request_bypasses_history_and_can_retry(harness):
     assert asyncio.run(harness.send("next", response())) is True
     harness.agent._reconcile_question_submissions.assert_not_awaited()
     assert harness.agent.send.await_count == 1
+
+
+def test_native_recovery_does_not_import_unmatched_history_as_new_human_reply(harness):
+    from openai_codex.generated.v2_all import UserMessageThreadItem
+    from twicc.providers import db_writer
+
+    service.merge_question_facts(harness.session.id, [question("q2", "t2", "2026-10-05T10:00:03Z")])
+    prepared = service.prepare_question_send(
+        harness.session.id, "next", response(), request_id="pending-native", origin="human", at="2026-10-05T10:00:04Z"
+    )
+    service.merge_question_facts(
+        harness.session.id,
+        [
+            QuestionFact("end:t2", "turn_end", "2026-10-05T10:00:05Z", "t2", None, None, {}),
+        ],
+    )
+
+    async def run():
+        db_writer.start_db_writer()
+        agent, sdk, thread, turn = runtime_agent(harness)
+        sdk._client.thread_read = AsyncMock(
+            return_value=SimpleNamespace(
+                thread=SimpleNamespace(
+                    turns=[
+                        SimpleNamespace(
+                            id="old-turn",
+                            items=[
+                                UserMessageThreadItem(
+                                    id="old-unmatched-user",
+                                    client_id="old-unmatched-client",
+                                    type="userMessage",
+                                    content=[],
+                                )
+                            ],
+                        ),
+                        SimpleNamespace(
+                            id="t3",
+                            items=[
+                                UserMessageThreadItem(
+                                    id="matching-user",
+                                    client_id="pending-native",
+                                    type="userMessage",
+                                    content=[],
+                                )
+                            ],
+                        ),
+                    ]
+                )
+            )
+        )
+        try:
+            await agent._reconcile_question_submissions()
+            thread.turn_with_policy.assert_not_awaited()
+        finally:
+            await db_writer.stop_db_writer()
+
+    asyncio.run(run())
+    state = AsyncQuestionState.objects.get(session=harness.session).state
+    assert state["batches"]["q2"]["status"] == "ready"
+    assert "user:old-unmatched-user" not in state["facts"]
+    assert state["facts"]["send:pending-native"]["data"]["status"] == "accepted"
+    assert state["facts"]["send:pending-native"]["data"]["source_item_id"] == "matching-user"
+    assert state["facts"]["send:pending-native"]["data"]["boundary"] == prepared.submission["boundary"]

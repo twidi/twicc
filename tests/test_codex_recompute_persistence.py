@@ -268,3 +268,67 @@ def test_async_questions_recompute_remaps_lines_preserves_dismissal(codex_sessio
     assert read_question_snapshot(codex_session.id)["resolutions"]["q1"] == {
         "status": "dismissed", "request_id": "dismiss-1",
     }
+
+
+@pytest.mark.django_db(transaction=True)
+def test_full_recompute_preserves_private_agent_origin_without_sender_header(codex_session):
+    """Canonical text has no sender header; the durable journal supplies origin."""
+    import asyncio
+    from pathlib import Path
+
+    from asgiref.sync import sync_to_async
+
+    from twicc.core.models import AsyncQuestionState
+    from twicc.core.services.async_questions import accept_question_send, merge_question_facts, prepare_question_send
+    from twicc.providers import db_writer
+    from twicc.providers.codex.async_questions import QuestionFact
+
+    session = codex_session
+    fixture = Path(__file__).with_name("fixtures") / "codex_agent_question_reply.jsonl"
+    records = [orjson.loads(line) for line in fixture.read_bytes().splitlines()]
+    for line, record in enumerate(records, 1):
+        SessionItem.objects.create(session=session, line_num=line, content=orjson.dumps(record).decode())
+    merge_question_facts(session.id, [
+        QuestionFact("question:recorded-question", "question", "2026-10-05T09:12:01Z", "question-turn",
+                     "recorded-question", None,
+                     {"source": "sdk", "questions": [{"index": 0, "title": "Keep the menu?", "options": ["Yes", "No"]}]}),
+        QuestionFact("end:question-turn", "turn_end", "2026-10-05T09:12:02Z", "question-turn", None, None, {}),
+    ])
+    prepared = prepare_question_send(session.id, "Continue verification.", None, request_id="private-agent-send",
+                                     origin="agent", at="2026-10-05T09:12:03Z")
+    accept_question_send(session.id, {**prepared.submission, "source_item_id": "recorded-agent-user",
+                                      "target_turn_id": "agent-reply-turn", "delivery_route": "start"})
+    before = AsyncQuestionState.objects.get(session=session).state
+    assert before["batches"]["recorded-question"]["status"] == "ready"
+    assert records[4]["payload"]["item"]["content"][0]["text"] == "Continue verification."
+
+    async def rebuild():
+        db_writer.start_db_writer()
+        try:
+            compute, result_q = get_compute(), queue.Queue()
+            await sync_to_async(compute.compute_session_metadata)(session.id, result_q, run_id=0)
+            unchanged = await sync_to_async(lambda: AsyncQuestionState.objects.get(session=session).state)()
+            assert unchanged == before  # CPU extraction cannot mutate the durable journal.
+            messages = []
+            while not result_q.empty():
+                messages.append(orjson.loads(result_q.get_nowait()))
+            complete = next(msg for msg in messages if msg["type"] == "session_complete")
+            historical_user = next(fact for fact in complete["async_question_facts"]
+                                   if fact["key"] == "user:recorded-agent-user")
+            assert historical_user["data"]["origin"] == "human"  # Source text alone cannot identify the agent.
+            assert complete["observed_last_offset"] == session.last_offset
+            result = await db_writer.run_under_db_write_lock(lambda: sync_to_async(compute.apply_session_complete)(complete))
+            assert result.outcome == "applied"
+        finally:
+            await db_writer.stop_db_writer()
+
+    asyncio.run(rebuild())
+    after = AsyncQuestionState.objects.get(session=session).state
+    submission = after["facts"]["send:private-agent-send"]["data"]
+    assert submission["origin"] == "agent"
+    assert submission["origin_source"] == "live"
+    assert submission["boundary"] == prepared.submission["boundary"]
+    assert submission["source_item_id"] == "recorded-agent-user"
+    assert submission["status"] == "accepted"
+    assert after["batches"]["recorded-question"]["status"] == "ready"
+    assert after["facts"]["question:recorded-question"]["line"] == 2

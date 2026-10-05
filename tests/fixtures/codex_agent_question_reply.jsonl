@@ -1,0 +1,6 @@
+{"timestamp":"2026-10-05T09:12:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"question-turn"}}
+{"timestamp":"2026-10-05T09:12:01Z","type":"event_msg","payload":{"type":"item_completed","turn_id":"question-turn","item":{"type":"AgentMessage","id":"recorded-question","delivery":"async","phase":"final_answer","content":[],"questions":[{"title":"Keep the menu?","options":["Yes","No"]}]}}}
+{"timestamp":"2026-10-05T09:12:02Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"question-turn"}}
+{"timestamp":"2026-10-05T09:12:03Z","type":"event_msg","payload":{"type":"task_started","turn_id":"agent-reply-turn"}}
+{"timestamp":"2026-10-05T09:12:04Z","type":"event_msg","payload":{"type":"item_completed","turn_id":"agent-reply-turn","item":{"type":"UserMessage","id":"recorded-agent-user","content":[{"type":"text","text":"Continue verification."}]}}}
+{"timestamp":"2026-10-05T09:12:05Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"agent-reply-turn"}}
