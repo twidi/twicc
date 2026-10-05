@@ -362,6 +362,8 @@ def _submissions(facts: dict) -> list[dict]:
 
 def _eligible(question: dict, ready: dict | None, submission: dict, group: str | None, names: dict) -> bool:
     boundary = submission["data"].get("boundary")
+    if boundary is not None and question["item_id"] in boundary.get("excluded_batch_ids", []):
+        return False
     if boundary is not None and question["item_id"] in boundary.get("batch_ids", []):
         return True
     if ready is None:
@@ -371,6 +373,34 @@ def _eligible(question: dict, ready: dict | None, submission: dict, group: str |
     settled = question.get("turn_id") in boundary.get("settled_turn_ids", [])
     settled = settled or any(names.get(name) == group for name in boundary.get("group_ids", []))
     return settled and _compare(question, boundary) <= 0 and _compare(ready, boundary) <= 0
+
+
+def build_question_boundary(
+    state: dict,
+    *,
+    at: str,
+    line: int | None = None,
+    batch_ids: list[str] | None = None,
+) -> dict:
+    """Capture settled source groups, including groups without known questions.
+
+    Explicit membership excludes other known ready batches. Unknown older
+    questions remain eligible through the complete settled-turn boundary.
+    """
+    facts = _ordered(list(state.get("facts", {}).values()))
+    groups, names = _group_evidence(facts)
+    readiness = _ready_boundaries(facts, groups, names)
+    boundary = {"at": at, "line": line}
+    settled = {group for group, ready in readiness.items() if _compare(ready, boundary) <= 0}
+    ready_ids = [item_id for item_id, batch in state.get("batches", {}).items() if batch["status"] == "ready"]
+    selected = ready_ids if batch_ids is None else list(batch_ids)
+    return {
+        **boundary,
+        "batch_ids": selected,
+        "excluded_batch_ids": [item_id for item_id in ready_ids if item_id not in selected],
+        "settled_turn_ids": sorted(turn for turn, group in groups.items() if group in settled),
+        "group_ids": sorted(name for name, group in names.items() if group in settled),
+    }
 
 
 def reduce_question_state(state: dict, facts: list[QuestionFact]) -> dict:

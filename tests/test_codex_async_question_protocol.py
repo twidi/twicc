@@ -9,12 +9,34 @@ import pytest
 from twicc.providers.codex.async_questions import (
     AsyncQuestion,
     QuestionFact,
+    build_question_boundary,
     format_question_answers,
     normalize_questions,
     question_fact,
     reduce_question_state,
     validate_question_answers,
 )
+
+
+def test_boundary_captures_settled_turn_without_known_question():
+    state = reduce_question_state({}, [end()])
+    assert build_question_boundary(state, at=at(4)) == {
+        "at": at(4),
+        "line": None,
+        "batch_ids": [],
+        "excluded_batch_ids": [],
+        "settled_turn_ids": ["t1"],
+        "group_ids": [],
+    }
+
+
+def test_boundary_keeps_continuation_collecting_until_interruption():
+    state = reduce_question_state({}, [owner(), end(), decision("t1", "continuation", "t2")])
+    assert build_question_boundary(state, at=at(4))["settled_turn_ids"] == []
+    state = reduce_question_state(state, [control_return(turn_ids=["t1", "t2"], outcome="interrupted", second=5)])
+    boundary = build_question_boundary(state, at=at(6))
+    assert boundary["settled_turn_ids"] == ["t1", "t2"]
+    assert boundary["group_ids"] == ["g1"]
 
 
 def at(second):
