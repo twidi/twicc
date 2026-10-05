@@ -1819,7 +1819,7 @@ function openPeerInbox() {
             ref="projectSplitRef"
             class="project-view"
             :class="{ 'sidebar-resizing': sidebarResizing }"
-            :position-in-pixels="DEFAULT_SIDEBAR_WIDTH"
+            :position-in-pixels="sidebarState.width"
             primary="start"
             snap="125px 200px 300px 400px"
             snap-threshold="30"
