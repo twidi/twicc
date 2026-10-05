@@ -3153,6 +3153,11 @@ wa-popover > wa-divider {
 }
 
 @media (width < 640px) {
+    .settings-notice,
+    .settings-footer {
+        padding-block: 4px;
+    }
+
     .settings-sections .settings-section-title {
         display: none;
     }
