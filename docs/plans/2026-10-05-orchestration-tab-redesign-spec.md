@@ -51,7 +51,7 @@ shows its model.
 ```
 
 The header spans the full width of the pane. It keeps the bottom divider the toolbar has today. At pane widths below
-480 px the tiles lay out as two columns with a smaller value font, and the header is no longer fixed: it scrolls away
+480 px the tiles lay out as two columns, and the header is no longer fixed: it scrolls away
 with the body, so a short pane keeps room for the cards.
 
 ### 3.1 Header, top row
@@ -69,7 +69,7 @@ allow this.
 ### 3.2 Header, summary tiles
 
 A row of tiles (`grid`, `repeat(auto-fit, minmax(7.5rem, 1fr))`). Each tile is a small bordered card with a small caps
-label and a large value.
+label and a value at normal text size.
 
 | Tile | Sessions view | Subagents view |
 |---|---|---|
