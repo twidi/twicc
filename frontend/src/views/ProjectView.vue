@@ -3242,6 +3242,15 @@ wa-dropdown-item:hover .row-menu-trigger,
 
 .sidebar-footer {
     flex-shrink: 0;
+    /* Only the footer paints above the opaque divider and main canvas. Its
+       gutters stay transparent to the divider's drag hit area. */
+    position: relative;
+    z-index: 3;
+    pointer-events: none;
+}
+
+.sidebar-footer > * {
+    pointer-events: auto;
 }
 
 .sidebar-footer-usage {
@@ -3713,6 +3722,12 @@ html.wa-dark .usage-burn-chip-danger {
 
 /* Desktop: checked means the sidebar is closed. */
 @media (width >= 640px) {
+    /* Keep the closed panel clipped. When open, the list keeps its own clip;
+       the opaque divider/main layers mask other ordinary sidebar overflow. */
+    .project-view-wrapper:has(.sidebar-toggle-checkbox:not(:checked)) .project-view::part(start) {
+        overflow: visible;
+    }
+
     .sidebar-toggle {
         left: calc(var(--sidebar-toggle-offset) + var(--panel-gap));
         bottom: calc(var(--sidebar-toggle-offset) + var(--panel-gap));
@@ -3760,6 +3775,10 @@ html.wa-dark .usage-burn-chip-danger {
     /* Split panel always shows content at full width, so replace grid of project view by a block, sidebar will be an overlay */
     .project-view {
         display: block;
+        &::part(start) {
+            /* The drawer owns its transform and stacking, including footer shadows. */
+            overflow: visible;
+        }
         &::part(divider) {
             display: none;
         }

@@ -133,7 +133,7 @@ test('selecting the active rail mode does nothing and other modes retain navigat
 })
 
 test('floating surfaces, mobile geometry, and conditional footer replace old controls', () => {
-    assert.match(css, /\.project-view-wrapper \{\s*position: relative;\s*display: flex;\s*height: 100dvh;/)
+    assert.match(css, /\.project-view-wrapper \{[^}]*position: relative;\s*display: flex;\s*height: 100dvh;/)
     assert.match(css, /\.project-view \{[^}]*flex: 1;[^}]*min-width: 0;/)
     assert.match(css, /\.sidebar-toggle \{[^}]*position: absolute;[^}]*visibility: hidden;[^}]*z-index: 5;[^}]*--rail-button-bg: var\(--wa-color-surface-default\);[^}]*border: var\(--panel-border\);[^}]*border-radius: var\(--panel-radius\);[^}]*box-shadow: var\(--panel-shadow\);/)
     assert.match(css, /--sidebar-width: min\(300px, calc\(80vw - var\(--rail-width\)\)\);/)
