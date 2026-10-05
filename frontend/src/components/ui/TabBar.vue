@@ -7,6 +7,9 @@
  * pass straight through. The wrapper only carries our shared defaults so the
  * compact size no longer has to be re-declared at every call site.
  *
+ * A tab that arrives after the group's `active` binding already names its panel is activated (WA only applies
+ * the binding when it changes: see `reapplyActive`).
+ *
  * Behaviour added on top, both only when the tabs overflow (WA shows its chevrons):
  *  - a vertical mouse wheel over the tab strip scrolls it horizontally (touch and
  *    horizontal trackpad already pan via the native overflow-x);
@@ -70,7 +73,7 @@ function onWheel(event) {
 // re-sorts) — fires no such scroll, leaving the tab parked off-screen. We watch the
 // slotted tab list and re-apply WA's own scrollIntoView logic. `el.active` is read
 // live at scroll time, so this only ever FOLLOWS the active tab (chosen by the call
-// site), never picks one: when a freshly-added tab is also activated, WA already
+// site), never picks one (``reapplyActive`` below only activates the tab the binding already names, when WA missed it): when a freshly-added tab is also activated, WA already
 // scrolled to it and this is a no-op.
 let listObserver = null
 let pendingFrame = 0
@@ -86,7 +89,7 @@ function reapplyActive() {
     const active = host?.active
     if (!active || typeof host.setActiveTab !== 'function') return
     const tab = [...host.querySelectorAll(':scope > wa-tab')].find((t) => t.panel === active)
-    if (!tab || tab.active) return
+    if (!tab || tab.active || tab.disabled) return
     // WA's cache of tabs and panels is refreshed by its own slotchange; make sure it already knows the new ones.
     host.syncTabsAndPanels?.()
     host.setActiveTab(tab, { emitEvents: false })
