@@ -62,78 +62,120 @@ const current = f => f.store.localState.streamingBlocks[f.sessionId]
 test.afterEach(() => destroyAllBuffers())
 for (const type of ['text', 'thinking']) {
     test(`${type}: persisted item retires before end`, () => {
-        const f = makeRetirementFixture(); start(f, type)
+        const f = makeRetirementFixture()
+        start(f, type)
         f.store.addSessionItems(f.sessionId, [item(type)])
         assert.equal(current(f), undefined)
         assert.deepEqual(f.retirements.at(-1), [{ streamingLineNum: SYNTHETIC_ITEM.STREAMING_BLOCK.baseLineNum, realLineNum: 1 }])
         assert.deepEqual(f.recomputations.at(-1).blocks, [])
     })
     test(`${type}: end waits for persisted replacement`, () => {
-        const f = makeRetirementFixture(); start(f, type)
-        f.store.streamBlockEnd(f.sessionId, 'A', 0, 'A'); assert.ok(current(f))
-        f.store.addSessionItems(f.sessionId, [item(type)]); assert.equal(current(f), undefined)
+        const f = makeRetirementFixture()
+        start(f, type)
+        f.store.streamBlockEnd(f.sessionId, 'A', 0, 'A')
+        assert.ok(current(f))
+        f.store.addSessionItems(f.sessionId, [item(type)])
+        assert.equal(current(f), undefined)
     })
     test(`${type}: persisted item before start never creates a duplicate`, () => {
-        const f = makeRetirementFixture(); f.store.addSessionItems(f.sessionId, [item(type)]); start(f, type)
-        assert.equal(current(f), undefined); assert.equal(flushBuffer(f.sessionId, 0), null)
+        const f = makeRetirementFixture()
+        f.store.addSessionItems(f.sessionId, [item(type)])
+        start(f, type)
+        assert.equal(current(f), undefined)
+        assert.equal(flushBuffer(f.sessionId, 0), null)
     })
     test(`${type}: late old start preserves newer streaming`, () => {
-        const f = makeRetirementFixture(); f.store.addSessionItems(f.sessionId, [item(type)]); start(f, type, 'B')
+        const f = makeRetirementFixture()
+        f.store.addSessionItems(f.sessionId, [item(type)])
+        start(f, type, 'B')
         f.store.streamBlockDelta(f.sessionId, 'B', 0, 'new text')
         const block = current(f).blocks[0], identity = block.publicationIdentity
-        start(f, type); assert.equal(current(f).messageId, 'B'); assert.strictEqual(current(f).blocks[0], block)
-        assert.equal(block.text, 'new text'); assert.equal(block.publicationIdentity, identity)
-        f.store.streamBlockDelta(f.sessionId, 'B', 0, ' retained'); assert.equal(flushBuffer(f.sessionId, 0), 'new text retained')
+        start(f, type)
+        assert.equal(current(f).messageId, 'B')
+        assert.strictEqual(current(f).blocks[0], block)
+        assert.equal(block.text, 'new text')
+        assert.equal(block.publicationIdentity, identity)
+        f.store.streamBlockDelta(f.sessionId, 'B', 0, ' retained')
+        assert.equal(flushBuffer(f.sessionId, 0), 'new text retained')
     })
     test(`${type}: repeated active start is idempotent`, () => {
-        const f = makeRetirementFixture(); start(f, type); const block = current(f).blocks[0]
-        f.store.streamBlockDelta(f.sessionId, 'A', 0, 'retained'); start(f, type)
-        assert.equal(current(f).blocks.length, 1); assert.strictEqual(current(f).blocks[0], block); assert.equal(flushBuffer(f.sessionId, 0), 'retained')
+        const f = makeRetirementFixture()
+        start(f, type)
+        const block = current(f).blocks[0]
+        f.store.streamBlockDelta(f.sessionId, 'A', 0, 'retained')
+        start(f, type)
+        assert.equal(current(f).blocks.length, 1)
+        assert.strictEqual(current(f).blocks[0], block)
+        assert.equal(flushBuffer(f.sessionId, 0), 'retained')
     })
     test(`${type}: content-only REST hydration retires streaming`, () => {
-        const f = makeRetirementFixture(); start(f, type); f.store.addSessionItems(f.sessionId, [{ line_num: 1 }])
-        f.store.streamBlockEnd(f.sessionId, 'A', 0, 'A'); assert.ok(current(f))
-        f.store.updateSessionItemsContent(f.sessionId, [item(type)]); assert.equal(current(f), undefined)
+        const f = makeRetirementFixture()
+        start(f, type)
+        f.store.addSessionItems(f.sessionId, [{ line_num: 1 }])
+        f.store.streamBlockEnd(f.sessionId, 'A', 0, 'A')
+        assert.ok(current(f))
+        f.store.updateSessionItemsContent(f.sessionId, [item(type)])
+        assert.equal(current(f), undefined)
         assert.deepEqual(f.recomputations.at(-1).blocks, [])
     })
 }
 test('two messages match independently and forged stream_uuid has no authority', () => {
-    const f = makeRetirementFixture(); start(f)
-    f.store.addSessionItems(f.sessionId, [{ ...item('text', 'B', 2), stream_uuid: 'A' }]); assert.ok(current(f))
-    f.store.addSessionItems(f.sessionId, [item()]); assert.equal(current(f), undefined)
-    start(f, 'text', 'B'); assert.equal(current(f), undefined)
+    const f = makeRetirementFixture()
+    start(f)
+    f.store.addSessionItems(f.sessionId, [{ ...item('text', 'B', 2), stream_uuid: 'A' }])
+    assert.ok(current(f))
+    f.store.addSessionItems(f.sessionId, [item()])
+    assert.equal(current(f), undefined)
+    start(f, 'text', 'B')
+    assert.equal(current(f), undefined)
 })
 test('sessions cannot retire each other', () => {
-    const f = makeRetirementFixture(); start(f); f.store.addSessionItems(f.otherSessionId, [item()]); assert.ok(current(f))
+    const f = makeRetirementFixture()
+    start(f)
+    f.store.addSessionItems(f.otherSessionId, [item()])
+    assert.ok(current(f))
 })
 test('range REST response retires streaming', async () => {
-    const f = makeRetirementFixture(); start(f)
-    const pending = f.store.loadSessionItemsRanges('project', f.sessionId, [1]); assert.ok(current(f))
-    f.deferred[0].resolve({ ok: true, json: async () => [item()] }); assert.equal(await pending, true)
-    assert.equal(current(f), undefined); assert.deepEqual(f.recomputations.at(-1).blocks, [])
+    const f = makeRetirementFixture()
+    start(f)
+    const pending = f.store.loadSessionItemsRanges('project', f.sessionId, [1])
+    assert.ok(current(f))
+    f.deferred[0].resolve({ ok: true, json: async () => [item()] })
+    assert.equal(await pending, true)
+    assert.equal(current(f), undefined)
+    assert.deepEqual(f.recomputations.at(-1).blocks, [])
 })
 test('failed REST preserves thinking state for retry', async () => {
-    const f = makeRetirementFixture(); start(f, 'thinking')
+    const f = makeRetirementFixture()
+    start(f, 'thinking')
     const key = `line:${SYNTHETIC_ITEM.STREAMING_BLOCK.baseLineNum}:0`
-    f.store.setDetailOpen(f.sessionId, key, true); f.store.localState.sessionExpandedGroups[f.sessionId] = [SYNTHETIC_ITEM.STREAMING_BLOCK.baseLineNum]
+    f.store.setDetailOpen(f.sessionId, key, true)
+    f.store.localState.sessionExpandedGroups[f.sessionId] = [SYNTHETIC_ITEM.STREAMING_BLOCK.baseLineNum]
     f.store.streamBlockEnd(f.sessionId, 'A', 0, 'A')
-    const oldError = console.error; console.error = () => {}
+    const oldError = console.error
+    console.error = () => {}
     try {
         for (const rejected of [false, true]) {
             const pending = f.store.loadSessionItemsRanges('p', f.sessionId, [1])
             if (rejected) f.deferred.at(-1).reject(new Error('offline'))
             else f.deferred.at(-1).resolve({ ok: false, status: 503 })
-            assert.equal(await pending, false); assert.ok(current(f)); assert.equal(f.store.isDetailOpen(f.sessionId, key), true)
+            assert.equal(await pending, false)
+            assert.ok(current(f))
+            assert.equal(f.store.isDetailOpen(f.sessionId, key), true)
             assert.deepEqual([...f.store.localState.sessionExpandedGroups[f.sessionId]], [SYNTHETIC_ITEM.STREAMING_BLOCK.baseLineNum])
         }
     } finally { console.error = oldError }
-    const pending = f.store.loadSessionItemsRanges('p', f.sessionId, [1]); f.deferred.at(-1).resolve({ ok: true, json: async () => [item('thinking')] })
-    assert.equal(await pending, true); assert.equal(current(f), undefined)
-    assert.equal(f.store.isDetailOpen(f.sessionId, 'line:1:0'), true); assert.equal(f.store.isDetailOpen(f.sessionId, key), false)
+    const pending = f.store.loadSessionItemsRanges('p', f.sessionId, [1])
+    f.deferred.at(-1).resolve({ ok: true, json: async () => [item('thinking')] })
+    assert.equal(await pending, true)
+    assert.equal(current(f), undefined)
+    assert.equal(f.store.isDetailOpen(f.sessionId, 'line:1:0'), true)
+    assert.equal(f.store.isDetailOpen(f.sessionId, key), false)
     assert.deepEqual([...f.store.localState.sessionExpandedGroups[f.sessionId]], [1])
 })
 test('thinking replacement preserves expanded state and clears stale parsed content', () => {
-    const f = makeRetirementFixture(); start(f, 'thinking')
+    const f = makeRetirementFixture()
+    start(f, 'thinking')
     const synthetic = SYNTHETIC_ITEM.STREAMING_BLOCK.baseLineNum
     f.store.setDetailOpen(f.sessionId, `line:${synthetic}:0`, true)
     f.store.localState.sessionExpandedGroups[f.sessionId] = [synthetic]
@@ -147,33 +189,81 @@ test('thinking replacement preserves expanded state and clears stale parsed cont
     assert.equal(getParsedContent(f.store.sessionItems[f.sessionId][0]).payload.summary.length, 2)
 })
 test('provider resolves from process state', () => {
-    const f = makeRetirementFixture(); delete f.store.sessions[f.sessionId]; f.store.processStates[f.sessionId] = { provider: 'codex' }
-    start(f); f.store.addSessionItems(f.sessionId, [item()]); assert.equal(current(f), undefined)
+    const f = makeRetirementFixture()
+    delete f.store.sessions[f.sessionId]
+    f.store.processStates[f.sessionId] = { provider: 'codex' }
+    start(f)
+    f.store.addSessionItems(f.sessionId, [item()])
+    assert.equal(current(f), undefined)
 })
 test('unresolved provider is harmless', () => {
-    const f = makeRetirementFixture({ provider: null }); start(f); f.store.addSessionItems(f.sessionId, [item()]); assert.ok(current(f))
-    f.store.processStates[f.sessionId] = { provider: 'codex' }; f.store.streamBlockEnd(f.sessionId, 'A', 0, 'A'); assert.equal(current(f), undefined)
+    const f = makeRetirementFixture({ provider: null })
+    start(f)
+    f.store.addSessionItems(f.sessionId, [item()])
+    assert.ok(current(f))
+    f.store.processStates[f.sessionId] = { provider: 'codex' }
+    f.store.streamBlockEnd(f.sessionId, 'A', 0, 'A')
+    assert.equal(current(f), undefined)
 })
 test('late delta stop and end cannot recreate a retired block', () => {
-    const f = makeRetirementFixture(); start(f); f.store.addSessionItems(f.sessionId, [item()]); start(f, 'text', 'B')
+    const f = makeRetirementFixture()
+    start(f)
+    f.store.addSessionItems(f.sessionId, [item()])
+    start(f, 'text', 'B')
     const block = current(f).blocks[0]
-    f.store.streamBlockDelta(f.sessionId, 'A', 0, 'old'); f.store.streamBlockStop(f.sessionId, 'A', 0); f.store.streamBlockEnd(f.sessionId, 'A', 0, 'A')
-    assert.strictEqual(current(f).blocks[0], block); assert.equal(block.text, ''); assert.equal(block.uuid, null)
+    f.store.streamBlockDelta(f.sessionId, 'A', 0, 'old')
+    f.store.streamBlockStop(f.sessionId, 'A', 0)
+    f.store.streamBlockEnd(f.sessionId, 'A', 0, 'A')
+    assert.strictEqual(current(f).blocks[0], block)
+    assert.equal(block.text, '')
+    assert.equal(block.uuid, null)
 })
 test('retirement releases timers and pending publications', () => {
-    const f = makeRetirementFixture(); start(f); f.store.streamBlockDelta(f.sessionId, 'A', 0, 'pending')
-    const block = current(f).blocks[0]; assert.ok(block._inactivityTimer)
-    f.store.addSessionItems(f.sessionId, [item()]); assert.equal(block._inactivityTimer, null); assert.equal(flushBuffer(f.sessionId, 0), null)
-    f.store._onBufferDrain(f.sessionId, 0, 'stale'); assert.equal(current(f), undefined)
+    const f = makeRetirementFixture()
+    start(f)
+    f.store.streamBlockDelta(f.sessionId, 'A', 0, 'pending')
+    const block = current(f).blocks[0]
+    assert.ok(block._inactivityTimer)
+    f.store.addSessionItems(f.sessionId, [item()])
+    assert.equal(block._inactivityTimer, null)
+    assert.equal(flushBuffer(f.sessionId, 0), null)
+    f.store._onBufferDrain(f.sessionId, 0, 'stale')
+    assert.equal(current(f), undefined)
 })
 test('claude retires only the completed matching block', () => {
-    const f = makeRetirementFixture({ provider: 'claude_code' }); start(f, 'thinking')
+    const f = makeRetirementFixture({ provider: 'claude_code' })
+    start(f, 'thinking')
     f.store.streamBlockStart(f.sessionId, 'A', 1, 'text')
     const real = { line_num: 1, kind: 'assistant_message', content: JSON.stringify({ uuid: 'completed', message: { id: 'A', content: [{ type: 'thinking' }] } }) }
-    f.store.addSessionItems(f.sessionId, [real]); assert.equal(current(f).blocks.length, 2)
-    f.store.streamBlockEnd(f.sessionId, 'A', 0, 'completed'); assert.equal(current(f).blocks.length, 1); assert.equal(current(f).blocks[0].blockIndex, 1)
+    f.store.addSessionItems(f.sessionId, [real])
+    assert.equal(current(f).blocks.length, 2)
+    f.store.streamBlockEnd(f.sessionId, 'A', 0, 'completed')
+    assert.equal(current(f).blocks.length, 1)
+    assert.equal(current(f).blocks[0].blockIndex, 1)
 })
 test('interrupted unfinished block still gets orphan cleanup', () => {
-    const f = makeRetirementFixture(); start(f, 'thinking'); f.store._dropOrphanedStreamingBlocks(f.sessionId)
-    assert.equal(current(f), undefined); assert.equal(flushBuffer(f.sessionId, 0), null)
+    const f = makeRetirementFixture()
+    start(f, 'thinking')
+    f.store._dropOrphanedStreamingBlocks(f.sessionId)
+    assert.equal(current(f), undefined)
+    assert.equal(flushBuffer(f.sessionId, 0), null)
 })
+for (const type of ['text', 'thinking']) {
+    test(`${type}: late delta stop and end preserve absent retired state`, () => {
+        const f = makeRetirementFixture()
+        start(f, type)
+        f.store.addSessionItems(f.sessionId, [item(type)])
+        const recomputations = f.recomputations.length
+        assert.equal(current(f), undefined)
+        for (const event of [
+            () => f.store.streamBlockDelta(f.sessionId, 'A', 0, 'late'),
+            () => f.store.streamBlockStop(f.sessionId, 'A', 0),
+            () => f.store.streamBlockEnd(f.sessionId, 'A', 0, 'A'),
+        ]) {
+            event()
+            assert.equal(current(f), undefined)
+            assert.equal(flushBuffer(f.sessionId, 0), null)
+            assert.equal(f.recomputations.length, recomputations)
+        }
+    })
+}

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { runStreamRetirementScenario } from './streamRetirementHarness.js'
+import { reasoningCompletion, runStreamRetirementScenario } from './streamRetirementHarness.js'
 
 function adapter(overrides = {}) {
     const calls = []
@@ -89,4 +89,61 @@ test('failure state loses retained text before Retry and fails', async () => {
     const report = await runStreamRetirementScenario(a, { blockType: 'thinking', loading: 'failed-rest-retry' })
     assert.equal(report.status, 'failed/inconclusive')
     assert.equal(a.calls.includes('retry'), false)
+})
+
+test('late A start observes and preserves current B before and after replay', async () => {
+    const a = adapter({
+        async startNewer() { a.calls.push('startNewer') },
+        async observeNewer() { a.calls.push('observeNewer'); return { messageId: 'B', text: 'Current B', bufferActive: true, sameBlock: true, samePublication: true, domText: 'Current B' } },
+        async continueNewer() { a.calls.push('continueNewer'); return 'Current B' },
+    })
+    const report = await runStreamRetirementScenario(a, { lateNewer: true })
+    assert.equal(report.status, 'passed')
+    assert.deepEqual(a.calls.slice(-5), ['observeNewer', 'lateStart', 'observeNewer', 'continueNewer', 'observeNewer'])
+    assert.equal(report.result.newerBefore.messageId, 'B')
+    assert.equal(report.result.newerAfter.bufferActive, true)
+})
+for (const field of ['messageId', 'text', 'bufferActive', 'sameBlock', 'samePublication', 'domText']) {
+    test(`late A start rejects changed B ${field}`, async () => {
+        let observed = 0
+        const a = adapter({
+            async startNewer() {}, async continueNewer() {},
+            async observeNewer() {
+                const result = { messageId: 'B', text: 'Current B', bufferActive: true, sameBlock: true, samePublication: true, domText: 'Current B' }
+                if (observed++) result[field] = false
+                return result
+            },
+        })
+        const report = await runStreamRetirementScenario(a, { lateNewer: true })
+        assert.equal(report.status, 'failed/inconclusive')
+    })
+}
+test('multipart thinking requires every visible summary part', async () => {
+    const a = adapter({ async prepare() { return { text: 'Complete fixture text.', summaryTexts: ['Complete fixture', 'text.'], realLine: 101, streamingLine: -100 } } })
+    a.final.visibleText = 'Complete fixture text.'
+    const passed = await runStreamRetirementScenario(a, { blockType: 'thinking', summaryParts: 2 })
+    assert.equal(passed.status, 'passed')
+    a.final.visibleText = 'Complete fixture'
+    const failed = await runStreamRetirementScenario(a, { blockType: 'thinking', summaryParts: 2, timeoutMs: 15 })
+    assert.equal(failed.status, 'failed/inconclusive')
+})
+
+test('reasoning completion contains distinct real summary entries', () => {
+    const payload = reasoningCompletion('A', ['First summary.', 'Second summary.'])
+    assert.equal(payload.payload.id, 'A')
+    assert.deepEqual(payload.payload.summary, [
+        { type: 'summary_text', text: 'First summary.' },
+        { type: 'summary_text', text: 'Second summary.' },
+    ])
+})
+
+test('late-start buffer continuation rejects a missing appended delta', async () => {
+    const a = adapter({
+        async startNewer() {},
+        async continueNewer() { return 'Current B appended delta' },
+        async observeNewer() { return { messageId: 'B', text: 'Current B', bufferActive: true, sameBlock: true, samePublication: true, domText: 'Current B' } },
+    })
+    const report = await runStreamRetirementScenario(a, { lateNewer: true })
+    assert.equal(report.status, 'failed/inconclusive')
+    assert.match(report.error, /buffer loses text/)
 })

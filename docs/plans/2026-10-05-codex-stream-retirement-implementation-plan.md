@@ -566,3 +566,48 @@ Build command: `cd /home/twidi/dev/twicc-poc/.worktrees/fix-codex-streaming && c
 Static import audit executes a Python relative-import graph over `frontend/src/**/*.js` and `frontend/src/**/*.vue`.
 Return-path results: Codex matching-to-helper `False`; Claude matching-to-helper `False`. Codex canonical imports: `[]`.
 Only new static edges enter these pure modules. The existing store/provider imports do not change.
+
+## Final review fix wave — 2026-10-05
+
+The final review finds no Critical or Important production defect. This wave addresses all five Minor findings.
+Independent review of this wave remains pending. Browser acceptance remains incomplete.
+
+- Separate lifecycle setup, action, and assertion statements in `streamRetirement.test.js`.
+- Add absent-state late delta/stop/end sequences for text and thinking. Each event preserves absent state and absent buffers.
+- Preserve the static audit script at `scripts/audit_stream_matching_imports.py`.
+- Add `run({ blockType: 'text', lateNewer: true })` and its thinking variant.
+  These variants retire A, start/feed B, observe B, replay A, and observe B again.
+  They compare message ID, text, block reference, publication identity, active buffer, and actual DOM text.
+  A further B delta verifies buffer continuity after replay. Reports retain the three actual observation snapshots.
+- Add `run({ blockType: 'thinking', summaryParts: 2 })`. The completion contains two distinct summary entries.
+  The scenario opens thinking and checks both visible parts after replacement.
+
+Focused command:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/fix-codex-streaming && node --test frontend/src/stores/streamRetirement.test.js frontend/tests/browser/streamRetirementFixture.test.js frontend/tests/browser/scrollerGeometryFixture.test.js
+```
+
+Result: 60 tests pass, zero failures, skips, or cancellations. Node tests validate controls and acceptance predicates.
+They do not execute the browser adapter or establish DOM acceptance.
+`node --check frontend/tests/browser/streamRetirement.js` passes.
+
+Reproducible static audit command:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/fix-codex-streaming && python scripts/audit_stream_matching_imports.py
+```
+
+Output:
+
+```text
+codex matching-to-helper: False
+claude_code matching-to-helper: False
+Codex canonical imports: []
+```
+
+The script scans static relative import/export edges in JavaScript and Vue files. It excludes dynamic and bare-package imports.
+This scoped source audit does not establish HMR behavior.
+Earlier full frontend, backend, and build results retain their recorded chronology. This wave does not rerun those unchanged checks.
+No authorized worktree frontend exists. No browser scenario or HMR experiment executes. No server starts.
+Controller delivery retains the backend restart reminder through `devctl.py`.

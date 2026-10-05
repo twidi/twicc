@@ -1,10 +1,11 @@
 // Isolated controls over the mounted production conversation. No backend writes or provider launch.
 import { nextTick, unref } from 'vue'
 import { DISPLAY_LEVEL, SYNTHETIC_ITEM } from '../../src/constants.js'
+import { isBufferActive } from '../../src/utils/streamingBuffer.js'
 import { getParsedContent } from '../../src/utils/parsedContent.js'
 import { installImportedScrollerQuarantine, runBoundedScrollerAction } from './scrollerConversationHarness.js'
 import { waitForMarkdownCondition as waitFor } from './markdownRenderingHarness.js'
-import { runStreamRetirementScenario } from './streamRetirementHarness.js'
+import { reasoningCompletion, runStreamRetirementScenario } from './streamRetirementHarness.js'
 
 const quarantine = installImportedScrollerQuarantine(document)
 const query = new URLSearchParams(location.search)
@@ -84,15 +85,17 @@ const adapter = {
         retiredPairs = []; hookPairs = []; scrollHookReads = []; heightSeeds = []
         const realLine = fixture.store.sessionItems[fixture.ids.mainId].length + 1
         const messageId = `retirement-fixture-${++sequence}`
-        const text = `Complete ${options.blockType} fixture text ${sequence}.`
+        const summaryTexts = Array.from({ length: options.summaryParts ?? 1 }, (_, index) =>
+            `Complete ${options.blockType} fixture text ${sequence}, part ${index + 1}.`)
+        const text = summaryTexts.join('\n')
         const payload = options.blockType === 'thinking'
-            ? { type: 'response_item', payload: { type: 'reasoning', id: messageId, summary: [{ type: 'summary_text', text }] } }
+            ? reasoningCompletion(messageId, summaryTexts)
             : { type: 'event_msg', payload: { type: 'item_completed', item: { type: 'AgentMessage', id: messageId, content: [{ type: 'Text', text }] } } }
         const item = { line_num: realLine, kind: options.blockType === 'thinking' ? 'reasoning' : 'assistant_message',
             display_level: DISPLAY_LEVEL.ALWAYS, group_head: options.blockType === 'thinking' ? realLine : null,
             group_tail: options.blockType === 'thinking' ? realLine : null, content: JSON.stringify(payload) }
         installHookObservation()
-        return { messageId, text, realLine, streamingLine: SYNTHETIC_ITEM.STREAMING_BLOCK.baseLineNum, item, blockType: options.blockType }
+        return { messageId, text, summaryTexts, realLine, streamingLine: SYNTHETIC_ITEM.STREAMING_BLOCK.baseLineNum, item, blockType: options.blockType }
     },
     async start(s) { fixture.start(s.blockType, fixture.ids.mainId, s.messageId) },
     async feed(s) {
@@ -128,6 +131,38 @@ const adapter = {
     async end(s) {
         fixture.store.streamBlockStop(fixture.ids.mainId, s.messageId, 0)
         fixture.store.streamBlockEnd(fixture.ids.mainId, s.messageId, 0, s.messageId)
+    },
+    async startNewer(s) {
+        const messageId = `${s.messageId}-B`
+        fixture.start(s.blockType, fixture.ids.mainId, messageId)
+        fixture.feed('Current B buffer text.', fixture.ids.mainId, messageId)
+        await fixture.settle(450)
+        await scroller().scrollToKey(s.streamingLine, { align: 'end', maxAttempts: 20 })
+        if (s.blockType === 'thinking') {
+            await waitFor(() => Boolean(details(s.streamingLine)))
+            details(s.streamingLine).show()
+        }
+        await fixture.settle(450)
+        const block = fixture.store.localState.streamingBlocks[fixture.ids.mainId]?.blocks[0]
+        check(block, 'Current B block is missing')
+        s.newer = { messageId, block, publicationIdentity: block.publicationIdentity }
+    },
+    async observeNewer(s) {
+        await fixture.settle(100)
+        const stream = fixture.store.localState.streamingBlocks[fixture.ids.mainId]
+        const block = stream?.blocks[0]
+        return { messageId: stream?.messageId, text: block?.text,
+            bufferActive: isBufferActive(fixture.ids.mainId, s.newer.messageId, 0, s.newer.publicationIdentity),
+            sameBlock: block === s.newer.block, samePublication: block?.publicationIdentity === s.newer.publicationIdentity,
+            domText: row(s.streamingLine)?.innerText ?? '' }
+    },
+    async continueNewer(s) {
+        const expectedText = `${s.newer.block.text} Continued B buffer text.`
+        fixture.feed(' Continued B buffer text.', fixture.ids.mainId, s.newer.messageId)
+        await fixture.settle(450)
+        check(fixture.store.localState.streamingBlocks[fixture.ids.mainId]?.blocks[0]?.text.endsWith(' Continued B buffer text.'),
+            'Current B buffer does not accept the next delta')
+        return expectedText
     },
     async lateStart(s) { fixture.start(s.blockType, fixture.ids.mainId, s.messageId); await fixture.settle(100) },
     async settle(ms) { await fixture.settle(ms) },
@@ -210,6 +245,14 @@ async function run(options = {}) {
 for (const blockType of ['text', 'thinking']) for (const order of ['item-before-end', 'end-before-item', 'item-before-start']) {
     const button = document.createElement('button'); button.textContent = `${blockType}: ${order}`; button.disabled = true
     button.onclick = () => run({ blockType, order }); buttons.push(button); controls.append(button)
+}
+for (const blockType of ['text', 'thinking']) {
+    const button = document.createElement('button'); button.textContent = `${blockType}: late A preserves current B`; button.disabled = true
+    button.onclick = () => run({ blockType, lateNewer: true }); buttons.push(button); controls.append(button)
+}
+{
+    const button = document.createElement('button'); button.textContent = 'thinking: multiple summary parts'; button.disabled = true
+    button.onclick = () => run({ blockType: 'thinking', summaryParts: 2 }); buttons.push(button); controls.append(button)
 }
 for (const loading of ['slow-rest', 'failed-rest-retry']) {
     const button = document.createElement('button'); button.textContent = `thinking: ${loading}`; button.disabled = true

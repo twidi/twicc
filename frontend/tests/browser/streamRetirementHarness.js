@@ -1,5 +1,10 @@
 import { runBoundedScrollerAction } from './scrollerConversationHarness.js'
 
+export function reasoningCompletion(messageId, summaryTexts) {
+    return { type: 'response_item', payload: { type: 'reasoning', id: messageId,
+        summary: summaryTexts.map(text => ({ type: 'summary_text', text })) } }
+}
+
 function check(value, message) { if (!value) throw new Error(message) }
 function acceptance(observed, scenario, options) {
     check(observed?.domObserved, 'Missing mounted conversation DOM observation')
@@ -8,7 +13,9 @@ function acceptance(observed, scenario, options) {
     check(observed.visualRows.includes(scenario.realLine), 'Persisted visual row is missing')
     check(observed.domRows.includes(scenario.realLine), 'Persisted DOM row is missing')
     check(observed.persistedText === scenario.text, 'Persisted text differs')
-    check(observed.visibleText.includes(scenario.text), 'Complete visible text is missing')
+    for (const text of scenario.summaryTexts ?? [scenario.text]) {
+        check(observed.visibleText.includes(text), 'Complete visible text is missing')
+    }
     check(observed.errors.length === 0, `Fixture errors: ${observed.errors.join('; ')}`)
     if (options.blockType === 'thinking') {
         check(observed.detailOpen && observed.domDetailOpen, 'Thinking details close during replacement')
@@ -42,6 +49,7 @@ export async function runStreamRetirementScenario(adapter, input = {}) {
         check(['live', 'slow-rest', 'failed-rest-retry'].includes(options.loading), 'Invalid loading mode')
         check(options.loading === 'live' || options.order === 'end-before-item', 'REST requires end-before-item')
         const scenario = await invoke('prepare', options)
+        if (options.summaryParts > 1) check(scenario.summaryTexts?.length === options.summaryParts, 'Multipart summary is missing')
         const retain = async (stage = 'pending') => {
             const observed = await invoke('pending', scenario, { ...options, stage })
             pendingObservations.push(observed)
@@ -81,6 +89,28 @@ export async function runStreamRetirementScenario(adapter, input = {}) {
             throw lastError ?? new Error('No observation before deadline')
         }
         const replacement = await accept()
+        if (options.lateNewer) {
+            await invoke('startNewer', scenario)
+            const newerBefore = await invoke('observeNewer', scenario)
+            const validateNewer = observed => {
+                check(observed?.messageId && observed.messageId !== scenario.messageId, 'Current B identity is missing')
+                check(observed.text && observed.domText?.includes(observed.text), 'Current B DOM text is missing')
+                check(observed.bufferActive && observed.sameBlock && observed.samePublication, 'Current B buffer continuity is missing')
+            }
+            validateNewer(newerBefore)
+            await invoke('lateStart', scenario)
+            const newerAfter = await invoke('observeNewer', scenario)
+            validateNewer(newerAfter)
+            check(newerAfter.messageId === newerBefore.messageId && newerAfter.text === newerBefore.text,
+                'Late A start changes current B identity or text')
+            const expectedContinuedText = await invoke('continueNewer', scenario)
+            const newerContinued = await invoke('observeNewer', scenario)
+            validateNewer(newerContinued)
+            check(newerContinued.messageId === newerBefore.messageId && newerContinued.text === expectedContinuedText && expectedContinuedText.startsWith(newerBefore.text),
+                'Current B buffer loses text after late A start')
+            delete scenario.newer
+            return { scenario, replacement, newerBefore, newerAfter, newerContinued }
+        }
         await invoke('lateStart', scenario)
         const lateStart = await accept()
         return { scenario, replacement, lateStart }
