@@ -1,6 +1,6 @@
 <script setup>
 // The four summary tiles under the Orchestration header: the number of nodes, one icon row per non-empty
-// state (with a donut), total cost, cumulative duration. Counts are over the displayed nodes (descendants only for
+// state (with a donut when there are several), total cost, cumulative duration. Counts are over the displayed nodes (descendants only for
 // sessions); cost and cumulative duration are passed in already resolved. Every tile is centred both ways.
 import { computed } from 'vue'
 import CostDisplay from '../ui/CostDisplay.vue'
@@ -33,7 +33,8 @@ const stateRows = computed(() => (props.kind === 'agents' ? AGENT_STATES : SESSI
     .map(state => ({ ...state, count: props.counts[state.bucket] }))
     .filter(row => row.count > 0))
 
-// Conic gradient: one arc per non-empty bucket; a neutral full ring with no node.
+// Conic gradient: one arc per non-empty bucket. The ring is only drawn with two states or more (a single state
+// would be a plain full ring, which says nothing the row does not).
 const donut = computed(() => {
     if (!total.value) return 'conic-gradient(var(--wa-color-neutral-50) 0 100%)'
     let from = 0
@@ -60,7 +61,7 @@ const cumulative = computed(() => (props.cumulativeSeconds == null ? '-' : forma
         <div class="osum-tile">
             <span class="osum-label">State</span>
             <span class="osum-states-group">
-                <span class="osum-donut" :style="{ background: donut }" aria-hidden="true"></span>
+                <span v-if="stateRows.length > 1" class="osum-donut" :style="{ background: donut }" aria-hidden="true"></span>
                 <span v-if="stateRows.length" class="osum-states">
                     <span
                         v-for="row in stateRows"
