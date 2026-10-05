@@ -14,7 +14,7 @@
 //
 // Each time bar is relative to its direct parent's span (``computeTreeGeometry``); ``now`` is refreshed on each load and
 // by a 30s timer that runs only while the tab is active and a displayed node is working.
-import { ref, computed, watch, nextTick, onMounted, onUnmounted, useId } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, useId } from 'vue'
 import { useResizeObserver } from '@vueuse/core'
 import { useRoute } from 'vue-router'
 import OrchestrationNode from './OrchestrationNode.vue'
@@ -62,6 +62,34 @@ const selectedView = ref('sessions')
 const view = computed(() => {
     if (canSwitchView.value) return selectedView.value
     return props.hasSpawnTree ? 'sessions' : 'agents'
+})
+
+// ── Lazy mounting, kept alive ───────────────────────────────────────────────
+// Rendering a long list (100+ subagents, 250 sessions) is synchronous: done in the task of the click, it
+// would keep the browser from painting the switch's new selection until every card is rendered. So a view's
+// body is mounted the first time it is selected, AFTER the paint (a light placeholder stands in meanwhile),
+// then stays mounted and is only toggled with ``v-show``: going back is instant and the fresh data patches it.
+// The view shown when the panel opens is mounted at once.
+const mountedViews = reactive({ sessions: false, agents: false })
+mountedViews[view.value] = true
+let mountToken = 0
+let unmounted = false
+// Resolves once the browser has painted the current state: the first frame runs the render that follows the
+// state change, the second runs after that frame has been presented.
+const afterPaint = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+watch(view, async (shown) => {
+    if (mountedViews[shown]) return
+    // Not a user switch (only one view exists): nothing to paint first.
+    if (!canSwitchView.value) {
+        mountedViews[shown] = true
+        return
+    }
+    const token = ++mountToken
+    await nextTick()
+    await afterPaint()
+    // Superseded by another switch, left for another view, or gone meanwhile: do not mount.
+    if (unmounted || token !== mountToken || view.value !== shown) return
+    mountedViews[shown] = true
 })
 
 const loading = ref(false)
@@ -120,6 +148,9 @@ const agentNodes = computed(() => agentTree.value.flatMap(flattenTree))
 const agentIsRunning = (id) => !!store.getProcessState(id)
 const agentCounts = computed(() => countBuckets(agentNodes.value.map(n => (agentIsRunning(n.id) ? 'working' : 'stopped'))))
 const agentTotalCost = computed(() => agentForestCost(store, agentTree.value))
+// Nothing to show yet: the ``/subagents/`` snapshot never landed and no agent is cached. Once it has, an empty
+// list means "No subagent.".
+const agentsPending = computed(() => !agentNodes.value.length && !store.areSubagentsLoaded(props.sessionId))
 
 // ── Time bars: each node relative to its direct parent ──────────────────────
 // The current session's own span anchors the first level in BOTH views: it is the first card of the sessions
@@ -134,40 +165,43 @@ const currentSessionItem = computed(() => {
         working: bucketOfProcessState(store.getProcessState(props.sessionId)?.state ?? 'dead') === 'working',
     }
 })
-const timelineItems = computed(() => {
-    if (view.value === 'agents') {
-        const items = agentNodes.value.map(n => ({
-            id: n.id,
-            start: isoMs(n.entry?.startedAt),
-            end: isoMs(n.entry?.stoppedAt ?? n.entry?.agentStoppedAt),
-            working: agentIsRunning(n.id),
-        }))
-        return currentSessionItem.value ? [currentSessionItem.value, ...items] : items
-    }
-    return sessionNodes.value.map(n => {
-        const node = nodesById.value[n.id]
-        return {
-            id: n.id,
-            start: isoMs(node?.session?.created_at),
-            end: isoMs(node?.session?.last_new_content_at),
-            working: stateBucketOf(n.id) === 'working',
-        }
-    })
+// Each view has its OWN items and geometry, independent of the selected view: both trees stay mounted, and a
+// switch must not re-patch them with the other view's bars.
+const agentItems = computed(() => {
+    const items = agentNodes.value.map(n => ({
+        id: n.id,
+        start: isoMs(n.entry?.startedAt),
+        end: isoMs(n.entry?.stoppedAt ?? n.entry?.agentStoppedAt),
+        working: agentIsRunning(n.id),
+    }))
+    return currentSessionItem.value ? [currentSessionItem.value, ...items] : items
 })
-// The global range only serves the cumulative-time tile (``rangeEnd``); the bars use ``timeline`` below.
+const sessionItems = computed(() => sessionNodes.value.map(n => {
+    const node = nodesById.value[n.id]
+    return {
+        id: n.id,
+        start: isoMs(node?.session?.created_at),
+        end: isoMs(node?.session?.last_new_content_at),
+        working: stateBucketOf(n.id) === 'working',
+    }
+}))
+const timelineItems = computed(() => (view.value === 'agents' ? agentItems.value : sessionItems.value))
+// The global range only serves the cumulative-time tile (``rangeEnd``); the bars use the per-view geometry below.
 const globalTimeline = computed(() => computeTimeline(timelineItems.value, now.value))
 // Bar geometry: root = the re-rooted subtree (sessions view) or a virtual node standing for the current
 // session (subagents view; with no item while its row is not loaded, the first level then ranges itself).
-const timeline = computed((previous) => {
-    const root = view.value === 'agents'
-        ? { id: props.sessionId, children: agentTree.value }
-        : subtree.value
-    if (!root) return { geometry: {} }
-    const itemsById = Object.fromEntries(timelineItems.value.map(item => [item.id, item]))
-    // Per-node geometry objects (and the whole result) are reused when unchanged, like the nodes.
-    const geometry = reuseUnchangedMap(previous?.geometry, computeTreeGeometry(root, itemsById, now.value))
-    return geometry === previous?.geometry ? previous : { geometry }
-})
+function geometryOf(getRoot, items) {
+    return computed((previous) => {
+        const root = getRoot()
+        if (!root) return { geometry: {} }
+        const itemsById = Object.fromEntries(items.value.map(item => [item.id, item]))
+        // Per-node geometry objects (and the whole result) are reused when unchanged, like the nodes.
+        const geometry = reuseUnchangedMap(previous?.geometry, computeTreeGeometry(root, itemsById, now.value))
+        return geometry === previous?.geometry ? previous : { geometry }
+    })
+}
+const agentsTimeline = geometryOf(() => ({ id: props.sessionId, children: agentTree.value }), agentItems)
+const sessionsTimeline = geometryOf(() => subtree.value, sessionItems)
 const hasWorkingNode = computed(() => timelineItems.value.some(item => item.working))
 
 // The header's tiles. ``null`` while there is nothing to summarise (loading, error, no data).
@@ -304,11 +338,15 @@ watch(hasAgents, (has) => {
 // ── Scroll-to-edge buttons ──────────────────────────────────────────────────
 // Shown only when the list actually scrolls. The scrolling element is ``.orch-content`` in the wide layout
 // and ``.orch-frame`` in the narrow one (below 480px the header scrolls away with the body), so both are
-// checked; the one that does not scroll just reports no overflow. The tree is observed too: in the wide
+// checked; the one that does not scroll just reports no overflow. The trees are observed too: in the wide
 // layout the content box keeps its size while the tree inside grows, so it would never notify by itself.
+// Each view has its own tree ref. A hidden view (``display: none``) contributes no height to the scrollers
+// and its observer reports a 0 size: that only triggers a harmless re-check, which reads the (visible)
+// frame and content boxes, so the result always follows the shown view.
 const frameEl = ref(null)
 const contentEl = ref(null)
-const treeEl = ref(null)
+const sessionsTreeEl = ref(null)
+const agentsTreeEl = ref(null)
 const hasOverflow = ref(false)
 const scrollBottomButtonId = useId()
 const scrollTopButtonId = useId()
@@ -318,13 +356,17 @@ function updateOverflow() {
         el => el && el.scrollHeight > el.clientHeight + 1,
     )
 }
-useResizeObserver([frameEl, contentEl, treeEl], updateOverflow)
+useResizeObserver([frameEl, contentEl, sessionsTreeEl, agentsTreeEl], updateOverflow)
 // Data changes that alter the list's height without necessarily resizing an observed box.
 watch(
-    [view, loading, error, topology, () => sessionNodes.value.length, () => agentNodes.value.length],
+    [view, () => mountedViews.sessions, () => mountedViews.agents, loading, error, topology, () => sessionNodes.value.length, () => agentNodes.value.length],
     () => nextTick(updateOverflow),
     { flush: 'post' },
 )
+// Both views share the scrollers: land on top of the newly shown list, not in the middle of the other one.
+watch(view, () => {
+    for (const el of [contentEl.value, frameEl.value]) if (el) el.scrollTop = 0
+}, { flush: 'post' })
 onMounted(() => nextTick(updateOverflow))
 
 function scrollListTo(toBottom) {
@@ -334,6 +376,7 @@ function scrollListTo(toBottom) {
 }
 
 onUnmounted(() => {
+    unmounted = true
     stopAuto()
     stopNow()
     if (inFlightController) inFlightController.abort()
@@ -402,66 +445,71 @@ onUnmounted(() => {
                     :for="scrollBottomButtonId"
                     placement="left"
                 >Scroll to bottom</AppTooltip>
-                <template v-if="view === 'agents'">
-                    <div v-if="agentNodes.length" ref="treeEl" class="orch-tree">
+                <!-- Both views stay mounted once shown (v-show); a view not mounted yet shows a placeholder. -->
+                <div v-show="view === 'agents'" class="orch-view">
+                    <div v-if="!mountedViews.agents || agentsPending" class="orch-state">
+                        <wa-spinner></wa-spinner>
+                        <span>Loading subagents…</span>
+                    </div>
+                    <div v-else-if="agentNodes.length" ref="agentsTreeEl" class="orch-tree">
                         <AgentTreeNode
                             v-for="node in agentTree"
                             :key="node.id"
                             :node="node"
                             :session-id="sessionId"
                             :project-id="projectId"
-                            :timeline="timeline"
+                            :timeline="agentsTimeline"
                         />
                     </div>
                     <div v-else class="orch-state orch-state-empty">
                         <wa-icon name="robot"></wa-icon>
                         <span>No subagent.</span>
                     </div>
-                </template>
-                <template v-else>
+                </div>
+                <div v-show="view === 'sessions'" class="orch-view">
                     <!-- Spinner until the first snapshot lands (not only while a request is in flight: the first read can start late). -->
-                    <div v-if="!topology && !error" class="orch-state">
+                    <div v-if="!mountedViews.sessions || (!topology && !error)" class="orch-state">
                         <wa-spinner></wa-spinner>
                         <span>Loading topology…</span>
                     </div>
                     <template v-else>
-                    <!-- A failed read never replaces a tree already shown: the banner sits above it. -->
-                    <wa-callout v-if="error" variant="danger" size="small">
-                        <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-                        {{ error }}
-                    </wa-callout>
-                    <template v-if="subtree">
-                        <div v-if="parentNode" class="orch-parent">
-                            <wa-icon name="arrow-turn-up" class="orch-parent-icon"></wa-icon>
-                            <span class="orch-parent-label">Spawned by</span>
-                            <router-link v-if="parentRoute" :to="parentRoute" class="orch-parent-link">{{ parentTitle }}</router-link>
-                            <template v-else>
-                                <span class="orch-parent-link">{{ parentTitle }}</span>
-                                <wa-icon name="eye-slash" label="Hidden session" title="Hidden session"></wa-icon>
-                            </template>
-                        </div>
-                        <div v-if="showHiddenNote" class="orch-note">
-                            Sessions marked <wa-icon name="eye-slash" class="orch-note-icon"></wa-icon> were created hidden by their parent and can't be opened.
-                        </div>
-                        <div ref="treeEl" class="orch-tree">
-                            <OrchestrationNode
-                                :node="subtree"
-                                :nodes-by-id="nodesById"
-                                :current-session-id="sessionId"
-                                :timeline="timeline"
-                            />
-                        </div>
-                        <div v-if="!subtree.children.length" class="orch-empty-line">
-                            <wa-icon name="diagram-project"></wa-icon>
-                            This session has not spawned any session.
+                        <!-- A failed read never replaces a tree already shown: the banner sits above it. -->
+                        <wa-callout v-if="error" variant="danger" size="small">
+                            <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+                            {{ error }}
+                        </wa-callout>
+                        <template v-if="subtree">
+                            <div v-if="parentNode" class="orch-parent">
+                                <wa-icon name="arrow-turn-up" class="orch-parent-icon"></wa-icon>
+                                <span class="orch-parent-label">Spawned by</span>
+                                <router-link v-if="parentRoute" :to="parentRoute" class="orch-parent-link">{{ parentTitle }}</router-link>
+                                <template v-else>
+                                    <span class="orch-parent-link">{{ parentTitle }}</span>
+                                    <wa-icon name="eye-slash" label="Hidden session" title="Hidden session"></wa-icon>
+                                </template>
+                            </div>
+                            <div v-if="showHiddenNote" class="orch-note">
+                                Sessions marked <wa-icon name="eye-slash" class="orch-note-icon"></wa-icon> were created hidden by their parent and can't be opened.
+                            </div>
+                            <div ref="sessionsTreeEl" class="orch-tree">
+                                <OrchestrationNode
+                                    :node="subtree"
+                                    :nodes-by-id="nodesById"
+                                    :current-session-id="sessionId"
+                                    :timeline="sessionsTimeline"
+                                />
+                            </div>
+                            <div v-if="!subtree.children.length" class="orch-empty-line">
+                                <wa-icon name="diagram-project"></wa-icon>
+                                This session has not spawned any session.
+                            </div>
+                        </template>
+                        <div v-else-if="topology" class="orch-state orch-state-empty">
+                            <wa-icon name="sitemap"></wa-icon>
+                            <span>No orchestration data.</span>
                         </div>
                     </template>
-                    <div v-else-if="topology" class="orch-state orch-state-empty">
-                        <wa-icon name="sitemap"></wa-icon>
-                        <span>No orchestration data.</span>
-                    </div>
-                    </template>
-                </template>
+                </div>
                 <Transition name="orch-scroll-fade">
                     <wa-button
                         v-if="hasOverflow"
@@ -612,6 +660,14 @@ a.orch-parent-link:hover {
     /* Inline reference to the hidden-session marker, in the flow of the text. */
     vertical-align: -0.1em;
     margin-inline: 0.1em;
+}
+
+.orch-view {
+    /* A view's wrapper keeps the content's own column layout (v-show only toggles its display). */
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-s);
+    flex: none;
 }
 
 .orch-tree {
