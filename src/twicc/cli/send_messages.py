@@ -270,6 +270,10 @@ def send_messages_cmd(
     # since the relation wording depends on each target. None for a human
     # invoking the CLI from a plain shell → no header.
     caller = resolve_current_session()
+    from twicc.mcp.identity import external_caller
+    from uuid import uuid4
+
+    send_origin = "agent" if caller is not None or external_caller.get() is not None else "human"
 
     def _prepare(resolved):
         """Per-id: build the send payload, encoding attachments for this provider."""
@@ -282,6 +286,8 @@ def send_messages_cmd(
         if not attach:
             return {
                 "session_id": resolved.session_id,
+                "_send_origin": send_origin,
+                "_send_request_id": str(uuid4()),
                 "text": recipient_text,
                 "images": [],
                 "documents": [],
@@ -314,6 +320,8 @@ def send_messages_cmd(
 
         return {
             "session_id": resolved.session_id,
+            "_send_origin": send_origin,
+            "_send_request_id": str(uuid4()),
             "text": recipient_text,
             "images": attach_result.images,
             "documents": attach_result.documents,

@@ -260,9 +260,16 @@ def test_reconciliation_skips_a_working_turn(monkeypatch):
 def test_ws_send_ack_follows_the_codex_delivery_result():
     """Spec §10: the WS ack is sent exactly when the Codex send delivered."""
     async def scenario():
+        from asgiref.sync import sync_to_async
+        from twicc.core.models import Project, Session
+
         agent = make_agent()
+        project = await sync_to_async(Project.objects.create)(id="p", directory="/tmp")
+        await sync_to_async(Session.objects.create)(id=agent.session_id, project=project, provider="codex")
+        async def write(callback):
+            return await callback()
         agent._notify_state_change = AsyncMock()
-        agent._schedule_turn = lambda text, images: None
+        agent._schedule_turn = lambda text, images, **kwargs: None
         agent.agent_settings = AgentSettings()
         agent.apply_agent_settings = AsyncMock()
         manager = CodexAgentManager.__new__(CodexAgentManager)
@@ -273,6 +280,7 @@ def test_ws_send_ack_follows_the_codex_delivery_result():
         helpers = SimpleNamespace(resolve_agent_settings=lambda s: s, enforce_agent_settings_consistency=lambda s: s)
         consumer = WSConsumer()
         consumer.send_json = AsyncMock()
+        consumer.channel_layer = SimpleNamespace(group_send=AsyncMock())
         with (
             patch("twicc.asgi.get_session_provider", new=AsyncMock(return_value="codex")),
             patch("twicc.asgi.ensure_provider_running"),
@@ -280,6 +288,7 @@ def test_ws_send_ack_follows_the_codex_delivery_result():
             patch("twicc.asgi.get_project_directory", new=AsyncMock(return_value="/tmp")),
             patch("twicc.asgi.get_agent_manager_registry", return_value=SimpleNamespace(get=lambda p: manager)),
             patch("twicc.asgi.run_under_db_write_lock", new=AsyncMock()),
+            patch("twicc.providers.db_writer.run_under_db_write_lock", new=write),
         ):
             base = {"session_id": agent.session_id, "project_id": "p", "request_id": "r1"}
             # USER_TURN with text: CodexAgent.send returns True -> ack.

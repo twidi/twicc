@@ -45,6 +45,8 @@ from openai_codex.generated.v2_all import (
     ThreadSetNameResponse,
     ThreadStartParams,
     TurnStartParams,
+    TurnSteerParams,
+    TurnSteerResponse,
 )
 from pydantic import BaseModel, ConfigDict
 
@@ -86,6 +88,22 @@ class _ThreadSettingsUpdateResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+async def steer_with_message_id(
+    handle: AsyncTurnHandle, input: RunInput, *, client_user_message_id: str,
+) -> TurnSteerResponse:
+    """Steer through native parameters without creating another subscription."""
+    await handle._codex._ensure_initialized()
+    params = TurnSteerParams(
+        thread_id=handle.thread_id, expected_turn_id=handle.id,
+        input=_to_wire_input(_normalize_run_input(input)),
+        client_user_message_id=client_user_message_id,
+    )
+    return await handle._codex._client.request(
+        "turn/steer", params.model_dump(by_alias=True, exclude_none=True, mode="json"),
+        response_model=TurnSteerResponse,
+    )
+
+
 class TwiccAsyncThread(AsyncThread):
     """``AsyncThread`` with ``turn_with_policy`` for fine-grained per-turn overrides."""
 
@@ -102,6 +120,7 @@ class TwiccAsyncThread(AsyncThread):
         effort: ReasoningEffort | None = None,
         model: str | None = None,
         service_tier: str | None = None,
+        client_user_message_id: str | None = None,
     ) -> AsyncTurnHandle:
         """Start a turn with fine-grained approval/sandbox overrides.
 
@@ -115,6 +134,7 @@ class TwiccAsyncThread(AsyncThread):
         params = TurnStartParams(
             thread_id=self.id,
             input=wire_input,
+            client_user_message_id=client_user_message_id,
             approval_policy=approval_policy,
             approvals_reviewer=approvals_reviewer,
             effort=effort,

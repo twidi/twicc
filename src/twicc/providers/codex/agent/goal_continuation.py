@@ -15,7 +15,7 @@ from openai_codex import AsyncCodex
 from openai_codex._inputs import RunInput, _normalize_run_input, _to_wire_input
 from openai_codex._goal import _GoalOperationState
 from openai_codex.errors import JsonRpcError
-from openai_codex.generated.v2_all import ThreadGoalStatus, TurnSteerResponse
+from openai_codex.generated.v2_all import ThreadGoalStatus, TurnSteerParams, TurnSteerResponse
 from openai_codex.models import Notification
 
 # Only explicit server rejections prove that retrying cannot duplicate input.
@@ -51,7 +51,7 @@ class GoalContinuation:
         # Cancelling to_thread does not stop a blocking queue.get(). Wake it.
         self.state.wake_notification_reader()
 
-    async def steer(self, turn_input: RunInput) -> TurnSteerResponse:
+    async def steer(self, turn_input: RunInput, *, client_user_message_id: str | None = None) -> TurnSteerResponse:
         deadline = asyncio.get_running_loop().time() + GOAL_STEER_WAIT_SECONDS
         rejected_turn = None
         while True:
@@ -67,6 +67,16 @@ class GoalContinuation:
                     # steer never drains it. This route already has its own
                     # consumer, so the subscription would buffer for nothing.
                     await self.codex._ensure_initialized()
+                    if client_user_message_id is not None:
+                        params = TurnSteerParams(
+                            thread_id=self.thread_id, expected_turn_id=turn_id,
+                            input=_to_wire_input(_normalize_run_input(turn_input)),
+                            client_user_message_id=client_user_message_id,
+                        )
+                        return await self.codex._client.request(
+                            "turn/steer", params.model_dump(by_alias=True, exclude_none=True, mode="json"),
+                            response_model=TurnSteerResponse,
+                        )
                     return await self.codex._client.turn_steer(
                         self.thread_id,
                         turn_id,

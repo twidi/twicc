@@ -1162,6 +1162,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 )
                 return
 
+        if "async_questions" in content and (not exists or provider != Provider.CODEX):
+            await send_error("Question answers require an existing Codex session", code="async_questions_invalid")
+            return
+
         try:
             ensure_provider_running(provider)
         except ProviderDisabledError as e:
@@ -1241,7 +1245,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
                 # If no text/attachments and no process is running, we're done:
                 # settings are saved to DB and broadcast, nothing to send.
-                has_content = bool(text) or bool(images) or bool(documents)
+                has_content = bool(text) or bool(images) or bool(documents) or (
+                    provider == Provider.CODEX and isinstance(content.get("async_questions"), dict)
+                    and bool(content["async_questions"].get("answers"))
+                )
                 has_process = manager.get_agent_info(session_id) is not None
                 if not has_content and not has_process:
                     return
@@ -1259,6 +1266,8 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                     session_id, project_id, cwd, text,
                     settings=effective_agent_settings,
                     images=images, documents=documents,
+                    **({"async_questions": content.get("async_questions"), "request_id": request_id,
+                        "send_origin": "human"} if provider == Provider.CODEX else {}),
                 )
             else:
                 # New session: delegate to the shared service so the WS path

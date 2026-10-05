@@ -19,7 +19,9 @@ import contextlib
 import logging
 import os
 import time
+from datetime import UTC, datetime
 from typing import Any, ClassVar
+from uuid import uuid4
 
 from asgiref.sync import sync_to_async
 from openai_codex.generated.v2_all import ApprovalsReviewer, ConfigReadResponse, SandboxMode
@@ -212,31 +214,137 @@ class CodexAgentManager(BaseAgentManager):
         return gate_for(session_id)
 
     async def send_to_session(
-        self,
-        session_id: str,
-        project_id: str,
-        cwd: str,
-        text: str,
-        settings: AgentSettings,
-        *,
-        images: list[dict] | None = None,
-        documents: list[dict] | None = None,
+        self, session_id: str, project_id: str, cwd: str, text: str, settings: AgentSettings,
+        *, images: list[dict] | None = None, documents: list[dict] | None = None,
+        async_questions: dict | None = None, request_id: str | None = None, send_origin: str = "internal",
     ) -> bool:
-        """Serialize every existing-session send with rollout migration."""
-
+        """Serialize admission, delivery and acceptance with rollout migration."""
         self._check_ephemeral_readonly(session_id)
         async with gate_for(session_id):
             return await self._send_to_session_under_gate(
-                session_id,
-                project_id,
-                cwd,
-                text,
-                settings,
-                images=images,
-                documents=documents,
+                session_id, project_id, cwd, text, settings, images=images, documents=documents,
+                async_questions=async_questions, request_id=request_id, send_origin=send_origin,
             )
 
+    async def dismiss_async_question(self, session_id: str, item_id: str, *, request_id: str) -> dict:
+        """Dismiss under the same gate as send admission and SDK delivery."""
+        from twicc.core.services.async_questions import dismiss_question_batch
+        from twicc.providers.db_writer import run_under_db_write_lock
+
+        async with gate_for(session_id):
+            try:
+                return await run_under_db_write_lock(lambda: sync_to_async(dismiss_question_batch)(
+                    session_id, item_id, request_id=request_id,
+                ))
+            except ValueError as exc:
+                raise SendDeliveryError(str(exc), code=str(exc)) from exc
+
     async def _send_to_session_under_gate(
+        self, session_id: str, project_id: str, cwd: str, text: str, settings: AgentSettings,
+        *, images: list[dict] | None = None, documents: list[dict] | None = None,
+        async_questions: dict | None = None, request_id: str | None = None, send_origin: str = "internal",
+    ) -> bool:
+        """Prepare durable intent before calling the ordinary send implementation."""
+        from twicc.core.services.async_questions import accept_question_send, prepare_question_send
+        from twicc.providers.db_writer import run_under_db_write_lock
+
+        command = parse_hardcoded_command(text)
+        if command is not None:
+            if async_questions is not None and (
+                not isinstance(async_questions, dict) or async_questions.get("answers")
+            ):
+                raise SendDeliveryError("Question answers cannot accompany a command", code="async_questions_command")
+            return await self._deliver_to_session_under_gate(
+                session_id, project_id, cwd, text, settings, images=images, documents=documents,
+            )
+        has_answers = isinstance(async_questions, dict) and bool(async_questions.get("answers"))
+        if not text and not images and not documents and not has_answers:
+            if async_questions is not None:
+                # Validate structured empty submissions without recording a boundary.
+                from twicc.core.services.async_questions import read_question_snapshot
+                from ..async_questions import validate_question_answers
+                try:
+                    validate_question_answers(await sync_to_async(read_question_snapshot)(session_id), async_questions)
+                except ValueError as exc:
+                    raise SendDeliveryError(str(exc), code=str(exc)) from exc
+            return await self._deliver_to_session_under_gate(
+                session_id, project_id, cwd, text, settings, images=images, documents=documents,
+            )
+        from twicc.core.models import AsyncQuestionState
+        previous = await sync_to_async(lambda: (
+            AsyncQuestionState.objects.filter(session_id=session_id).values_list("state", flat=True).first() or {}
+        ).get("facts", {}).get(f"send:{request_id}"))() if request_id else None
+        if previous is not None and previous["data"].get("status") in {"prepared", "uncertain"}:
+            await self._reconcile_question_send_under_gate(session_id, project_id, cwd, settings)
+        try:
+            prepared = await run_under_db_write_lock(lambda: sync_to_async(prepare_question_send)(
+                session_id, text, async_questions, request_id=request_id or str(uuid4()),
+                origin=send_origin, at=datetime.now(UTC).isoformat(),
+            ))
+        except ValueError as exc:
+            raise SendDeliveryError(str(exc), code=str(exc)) from exc
+        submission = prepared.submission
+        # Existing prepared intent can have reached the provider before a crash.
+        if submission["status"] == "accepted":
+            return True
+        if previous is not None and submission["status"] in {"prepared", "uncertain"}:
+            raise SendDeliveryError("Delivery remains unresolved", code="send_uncertain")
+        try:
+            delivered = await self._deliver_to_session_under_gate(
+                session_id, project_id, cwd, prepared.text, settings,
+                images=images, documents=documents, submission=submission,
+            )
+            if submission.get("_delivery_future") is not None:
+                delivered = await submission["_delivery_future"]
+            if not submission.get("scheduled"):
+                await run_under_db_write_lock(lambda: sync_to_async(accept_question_send)(
+                    session_id, {**submission, "status": "accepted" if delivered else "rejected"},
+                ))
+            return delivered
+        except BaseException as exc:
+            from .agent import question_send_failure_status
+
+            if isinstance(exc, asyncio.CancelledError) and submission.get("_delivery_task") is not None:
+                submission["_delivery_task"].cancel()
+                await asyncio.gather(submission["_delivery_task"], return_exceptions=True)
+            status = "uncertain" if submission.get("provider_delivered") else question_send_failure_status(exc)
+            try:
+                await run_under_db_write_lock(lambda: sync_to_async(accept_question_send)(
+                    session_id, {**submission, "status": status},
+                ))
+            except Exception:
+                logger.exception("Cannot persist Codex delivery outcome for %s", session_id)
+                status = "uncertain"
+            if status == "uncertain" and not isinstance(exc, asyncio.CancelledError):
+                raise SendDeliveryError("Message delivery remains unresolved; do not retry", code="send_uncertain") from exc
+            raise
+
+    async def _reconcile_question_send_under_gate(
+        self, session_id: str, project_id: str, cwd: str, settings: AgentSettings,
+    ) -> None:
+        """Read native delivery identity without starting or registering a turn."""
+        temporary = None
+        try:
+            async with self._lock:
+                agent = self._agents.get(session_id)
+                if agent is None or agent.state == AgentState.DEAD:
+                    temporary = await self._create_agent(
+                        session_id, project_id, cwd, resume=True, settings=settings,
+                    )
+                    agent = temporary
+            reconcile = getattr(agent, "_reconcile_question_submissions", None)
+            if reconcile is not None:
+                await reconcile()
+        except Exception:
+            logger.warning("Cannot reconcile Codex send for %s", session_id, exc_info=True)
+        finally:
+            if temporary is not None:
+                try:
+                    await temporary._codex.close()
+                except Exception:
+                    logger.warning("Cannot close Codex send reconciliation client for %s", session_id, exc_info=True)
+
+    async def _deliver_to_session_under_gate(
         self,
         session_id: str,
         project_id: str,
@@ -246,6 +354,7 @@ class CodexAgentManager(BaseAgentManager):
         *,
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
+        submission: dict | None = None,
     ) -> bool:
         """Send a message to an existing session.
 
@@ -326,7 +435,7 @@ class CodexAgentManager(BaseAgentManager):
                         old_settings.fast_mode, settings.fast_mode,
                     )
                     await agent.apply_agent_settings(settings)
-                    return await agent.send(text, images=images)
+                    return await agent.send(text, images=images, **({"submission": submission} if submission else {}))
 
                 elif agent.state == AgentState.ASSISTANT_TURN:
                     if not text and not images:
@@ -353,7 +462,7 @@ class CodexAgentManager(BaseAgentManager):
                         old_settings.fast_mode, settings.fast_mode,
                     )
                     await agent.apply_agent_settings(settings)
-                    return await agent.send(text, images=images)
+                    return await agent.send(text, images=images, **({"submission": submission} if submission else {}))
 
                 else:
                     raise SendDeliveryError(
@@ -368,7 +477,7 @@ class CodexAgentManager(BaseAgentManager):
 
             await self._start_agent(
                 session_id, project_id, cwd, text, resume=True,
-                settings=settings, images=images,
+                settings=settings, images=images, **({"submission": submission} if submission else {}),
             )
             return True
 
