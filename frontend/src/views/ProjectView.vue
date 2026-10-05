@@ -2432,7 +2432,7 @@ function openPeerInbox() {
 
             <wa-divider v-if="hasSidebarFooter"></wa-divider>
 
-            <div v-if="hasSidebarFooter" class="sidebar-footer">
+            <div v-if="hasSidebarFooter" v-show="sidebarOpen" class="sidebar-footer">
                 <div v-if="quotaHasUsage && quotaComputed" ref="usageBlockRef" class="sidebar-footer-usage glass-surface">
                     <div class="usage-header">
                         <div

@@ -146,7 +146,7 @@ test('floating surfaces, mobile geometry, and conditional footer replace old con
     const toggleRules = [...css.matchAll(/\.sidebar-toggle \{([^}]*)}/g)].map(match => match[1])
     for (const rule of toggleRules) assert.doesNotMatch(rule, /transition|transform|translate/)
     assert.match(script, /const hasSidebarFooter = computed\(\(\) => !!\(\(quotaHasUsage.value && quotaComputed.value\) \|\| unauthenticatedProviders.value.length\)\)/)
-    assert.match(source, /<wa-divider v-if="hasSidebarFooter"><\/wa-divider>\s*<div v-if="hasSidebarFooter" class="sidebar-footer">/)
+    assert.match(source, /<wa-divider v-if="hasSidebarFooter"><\/wa-divider>\s*<div v-if="hasSidebarFooter" v-show="sidebarOpen" class="sidebar-footer">/)
     assert.match(source, /'sidebar--no-footer': !hasSidebarFooter/)
     assert.match(css, /\.sidebar--no-footer \{\s*padding-bottom: var\(--panel-gap\);/)
     assert.match(css, /@container sidebar \(width <= 50px\) \{[\s\S]*?\.sidebar-header \{\s*visibility: hidden;/)
@@ -213,6 +213,39 @@ ${entryWatcher}
         collapseByDrag: () => runInNewContext('const panel = { positionInPixels: 30 }; handleSplitReposition({ target: panel, currentTarget: panel })', context),
         stop: () => scope.stop() }
 }
+
+test('the whole footer follows desktop and mobile toggles without changing its mount condition', async () => {
+    const { parse } = await import('@vue/compiler-sfc')
+    const { descriptor } = parse(source)
+    const findFooter = nodes => {
+        for (const node of nodes) {
+            if (node.type !== 1) continue
+            if (node.props.some(prop => prop.name === 'class' && prop.value?.content === 'sidebar-footer')) return node
+            const found = findFooter(node.children ?? [])
+            if (found) return found
+        }
+    }
+    const footer = findFooter(descriptor.template.ast.children)
+    assert.ok(footer, 'the quota and authentication footer exists')
+    const show = footer.props.find(prop => prop.type === 7 && prop.name === 'show')
+    const mount = footer.props.find(prop => prop.type === 7 && prop.name === 'if')
+    assert.ok(show, 'closing the sidebar must hide the entire footer')
+    assert.equal(mount?.exp?.content, 'hasSidebarFooter', 'closing preserves the mounted footer and usageBlockRef')
+    for (const mobile of [false, true]) {
+        const h = sidebarHarness({ mobile, open: true, artifacts: true, bookmarkId: 'saved' })
+        const visible = () => runInNewContext(show.exp.content, { sidebarOpen: h.sidebarOpen.value, checked: h.checked.value })
+        assert.equal(visible(), true, 'the open sidebar shows the footer')
+        h.checkbox.checked = !mobile
+        h.toggle()
+        await nextTick()
+        assert.equal(visible(), false, 'closing hides the footer while the rail remains visible')
+        h.checkbox.checked = mobile
+        h.toggle()
+        await nextTick()
+        assert.equal(visible(), true, 'reopening restores the same footer')
+        h.stop()
+    }
+})
 
 test('artifact entry opens only unselected destinations after route and checkbox updates', async () => {
     for (const mobile of [false, true]) for (const open of [false, true]) for (const bookmarkId of [undefined, 'saved-bookmark']) {
