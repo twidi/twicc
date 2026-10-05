@@ -122,7 +122,7 @@ See the [`CHANGELOG.md`](CHANGELOG.md) for the full release history.
   - **Tasks** — the session's task/todo list, when it has one
   - **Plan** — the plan-like documents the session touched, read-only
   - **Artifacts** — the rendered artifacts the agent produced
-  - **Orchestration** — the tree of sessions this one spawned or was spawned by
+  - **Orchestration** — the sessions this one spawned (with a link to the session that spawned it) and its subagents
   - **Workflows** — Claude Code workflow runs, live as they execute
   - **Browser** — an embedded web browser
 - **Color scheme**: light, dark, or following the system

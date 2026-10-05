@@ -66,7 +66,7 @@ Conventional keys (free, not enforced):
 
 A parent tags a child at spawn; a session updates its own tags as it goes. Values stay short and single-line — annotations are metadata, not a message channel.
 
-The same map is available visually in the TwiCC UI: any session that belongs to a spawn tree shows a read-only **Orchestration** tab, rendering the whole tree rooted at its top-level ancestor — each node's title, live status, own and cumulative cost, annotations, and timing — to follow the orchestration at a glance without opening each session.
+The same map is available visually in the TwiCC UI: any session that belongs to a spawn tree shows a read-only **Orchestration** tab: the sessions it spawned (each a card with its title, live state, agent settings, own and cumulative cost, annotations and timing), a link to the session that spawned it, and its subagents — to follow the orchestration at a glance without opening each session.
 
 ## Scratch files: private & shared
 
