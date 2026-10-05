@@ -448,3 +448,121 @@ The review covers execution details, spec coverage, test validity, and repositor
 - Round 2 verifies all four corrections against the repository and finds no blocking defects or optional comments.
 
 The plan is ready for explicitly authorized execution. No product implementation occurs during this review.
+
+
+## Completion evidence — 2026-10-05
+
+Tasks 1–4 are committed and independently reviewed. Task 5 records verification; controller delivery and final review remain pending.
+
+### Implementation commits
+
+- `3a72613a` — `refactor(streaming): define provider replacement matching`.
+- `1ed854f2` — `fix(streaming): retire persisted items through durable identity`.
+- `ac9f333e` — `test(streaming): exercise durable replacement in conversation fixtures`.
+- `e98912c6` — `refactor(codex): remove the streaming identity fifo bridge`.
+
+The reviewed contract adjustment adds only the geometry fixture action dependency adaptation to Task 3.
+`scrollerGeometryFixture.test.js` supplies the retirement dependency for extracted `updateSessionItemsContent()`.
+This fixture has no streaming state. The adjustment does not change production behavior.
+
+### Automated verification
+
+Commands execute from `/home/twidi/dev/twicc-poc/.worktrees/fix-codex-streaming`.
+
+- `git diff --check`: exit 0, no output.
+- `git diff 805708af..e98912c6 --check`: exit 0, no output.
+- `cd frontend && npm run build`: exit 0. Vite 7.3.1 builds all five targets.
+  Main: 5507 modules, 38.74s. Shim: 18 modules, 444ms. Shell: 95 modules, 1.71s.
+  Companion: 4 modules, 464ms. Share: 4714 modules, 27.87s.
+  Vite reports its chunk-size warning for bundles above 500 kB. No build error occurs.
+  Raw log: `/home/twidi/.twicc/scratch/01a10b8d-e1da-7521-83fe-ea498f79febb/task-5-build.log`.
+- Task 1 pure matching: 10/10 pass.
+- Task 2 production-action, rows, buffer, publication tests: 56/56 pass.
+- Task 3 `cd frontend && npm test`: 1950/1950 pass before final self-review additions.
+- Task 3 final `node --test tests/browser/streamRetirementFixture.test.js tests/browser/scrollerGeometryFixture.test.js`: 25/25 pass.
+- Full frontend output includes the existing Node `MockTimers` ExperimentalWarning at `/tmp/task-3-frontend-tests.log:2812`.
+- Task 4 focused backend contracts: 118/118 pass. Final corrected reasoning fixture: 5/5 pass.
+
+The final targeted runs cover later fixture changes. Task 5 does not repeat passing suites.
+Task 4 commands preserve source and database isolation without syncing the shared environment:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/fix-codex-streaming && TWICC_DATA_DIR=$PWD PYTHONPATH=$PWD/src UV_PROJECT_ENVIRONMENT=/home/twidi/dev/twicc-poc/.venv uv run --no-sync pytest tests/test_codex_stream_retirement.py tests/test_ephemeral_providers.py tests/test_agent_hidden_broadcast_gate.py tests/test_watcher_slice_fairness.py tests/test_codex_canonical.py -q
+cd /home/twidi/dev/twicc-poc/.worktrees/fix-codex-streaming && TWICC_DATA_DIR=$PWD PYTHONPATH=$PWD/src UV_PROJECT_ENVIRONMENT=/home/twidi/dev/twicc-poc/.venv uv run --no-sync pytest tests/test_codex_stream_retirement.py -q
+```
+
+### Static dependency inspection
+
+Inspect relative static imports in frontend JavaScript and Vue source. Check return paths for both new helper-to-matching edges.
+Codex matching imports only `canonical.js`; canonical has no imports. Claude matching has no imports.
+Neither matching module reaches its provider helper or a store. These additions introduce no static dependency cycle.
+Provider adapters delegate directly. The base helper returns false. Static inspection does not prove runtime delegation or HMR behavior.
+
+### Exact specification acceptance audit
+
+T1–T4 refer to each task's report and independent review under `.superpowers/sdd/2026-10-05-codex-stream-retirement-implementation-plan/`.
+Node production-action coverage and browser fixture implementation are separate evidence. Fixture implementation is not a browser pass.
+
+| Input or sequence | Required result | Evidence and limits |
+|---|---|---|
+| Start, deltas, persisted item, end | Retire on persisted-item arrival; late end is harmless | T2 order tests, text/thinking |
+| Start, deltas, end, persisted item | Keep content until persisted-item arrival, then retire | T2 order tests, text/thinking |
+| Persisted item, start, deltas, end | Do not publish a duplicate streaming row | T2 pre-start tests, text/thinking |
+| Persisted item arrives through REST | Same retirement as WebSocket | T2 range/content REST tests |
+| Items arrive before initial fetch | Later REST load leaves one persisted version | T3 fixture initial-fetch route; rendered result unverified |
+| Ended thinking block, session switch, slow REST | Keep the block and its open state until replacement | T2 retained-state test; T3 switch/slow REST fixture; DOM unverified |
+| Failed REST fetch, then retry | No premature removal; successful replacement transfers preserved state | T2 failure/retry state test; T3 actual Retry fixture; DOM unverified |
+| Two consecutive messages | Match each identifier; no FIFO displacement | T2 independent consecutive IDs test |
+| Repeated start, stop, or end | No duplicate block or repeated cleanup | T2 active/late repeated start and event guards |
+| Delayed old-message event | Current message and its buffer remain unchanged | T2 old delta/stop/end preservation test |
+| A completes, B starts, repeated start for A | Do not recreate A or replace B | T2 late old start tests, text/thinking |
+| Missing, empty, or malformed identifier | No false retirement and no exception | T1 malformed-ID matcher tests |
+| Populated block UUID differs from `messageId` | No retirement through an inconsistent identity | T1 conflicting UUID matcher tests |
+| Correct identifier with wrong kind or block type | No retirement | T1 kind/type matcher tests |
+| Canonical `Reasoning` debug duplicate | No retirement of the visible thinking block | T1 canonical duplicate matcher test |
+| Reasoning with several summary parts | Replace the one streamed thinking block | T2 two-summary reasoning replacement; T4 summary event test |
+| Same identifier in another session | No cross-session retirement | T2 session isolation test |
+| Open thinking details and expanded group | Existing state transfer remains correct | T2 detail/group transfer test; T3 opened-details fixture; DOM unverified |
+| Pending buffer callback after retirement | No stale row publication | T2 timer/publication cleanup plus existing streamingRows cancellation tests |
+| Claude message with several content blocks | Only the matching completed block retires | T1 Claude matcher tests; T2 completed-block isolation |
+| Interrupted block without completion | Existing orphan cleanup remains effective | T2 interrupted orphan cleanup test |
+
+### Five Review Focus cases
+
+| Case | Evidence and limits |
+|---|---|
+| 1. Metadata becomes available after streaming starts | T2 unresolved-provider and process-state-provider tests preserve the block, then match after resolution. Runtime helper delegation unverified. |
+| 2. Content hydrates after its end event | T2 full-range REST and content-only hydration tests use production actions. T3 observes both real routes in its fixture; browser execution unverified. |
+| 3. Completed old-message start arrives during a new message | T2 text/thinking late-start tests preserve current block and buffer. |
+| 4. REST fails while thinking details are open | T2 failure/retry state transfer passes. T3 requires real Retry and retained detail/group state. Open DOM details unverified. |
+| 5. Delayed buffer publication runs after retirement | T2 retirement releases timers/publications; streamingRows covers pending cancellation and newer publication guards. Browser stale-row observation unverified. |
+
+### Browser and delivery limits
+
+No worktree frontend server is available. Main Vite at `localhost:5173` rejects worktree `@fs` requests with HTTP 403.
+No browser acceptance executes. No browser artifact or live-turn pass exists.
+The fixture imports the production conversation through `invisibleStreaming.js`, which mounts actual `SessionItemsList.vue`.
+It does not use `streamingRows.js` as rendered evidence. Its Node harness tests establish harness behavior only.
+
+Unverified cases:
+
+- Actual DOM text/thinking replacement before and after end, including loaded-before-start and repeated starts.
+- Actual open thinking details and expanded-group transfer with several summary parts.
+- Bottom scroll continuity and reading-above anchor continuity, measured-height transfer, and temporary height floor.
+- Session switch, unfetched items, slow REST, failed REST, and real Retry with retained content/open details.
+- Runtime provider-helper delegation through the mounted store and real conversation.
+- HMR edit/restore of a task-owned matching line without a full page reload.
+
+Later browser validation must open `/tests/browser/streamRetirement.html` on a frontend serving this worktree.
+Run text/thinking controlled orders at bottom and reading-above. Run slow and failed REST/retry for ended open thinking.
+Capture actual results through `window.streamRetirementFixture.exportEvidence()`.
+Identity tests pass; no automated stale-row, lost-state, or replacement failure remains. Browser acceptance remains incomplete.
+
+Controller delivery must remind the user to restart the running backend through `devctl.py`.
+Task 5 performs no installation, migration, server operation, changelog change, delivery, or integration.
+
+Build command: `cd /home/twidi/dev/twicc-poc/.worktrees/fix-codex-streaming && cd frontend && npm run build > /home/twidi/.twicc/scratch/01a10b8d-e1da-7521-83fe-ea498f79febb/task-5-build.log 2>&1`.
+
+Static import audit executes a Python relative-import graph over `frontend/src/**/*.js` and `frontend/src/**/*.vue`.
+Return-path results: Codex matching-to-helper `False`; Claude matching-to-helper `False`. Codex canonical imports: `[]`.
+Only new static edges enter these pure modules. The existing store/provider imports do not change.
