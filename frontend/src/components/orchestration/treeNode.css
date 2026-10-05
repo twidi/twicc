@@ -12,18 +12,20 @@
     --orch-inset: 0.8rem;
     --orch-elbow-w: 1rem;
     --orch-pad: var(--wa-space-2xs);
-    /* Card top padding + half of the title line. */
-    --orch-elbow-y: calc(var(--orch-pad) + var(--wa-space-xs) + 0.75rem);
+    /* A child's top padding (the single gap above it) + card top padding + half of the title line. */
+    --orch-elbow-y: calc(2 * var(--orch-pad) + var(--wa-space-xs) + 0.75rem);
     position: relative;
-    padding-block: var(--orch-pad);
 }
 
 .onode-kids {
     margin-left: var(--orch-inset);
 }
 
+/* The child's top padding is the one gap above it, whether it follows its parent card or a sibling's subtree.
+   Its vertical line spans the whole box, padding included, so it still touches the parent card. */
 .onode-kids > .onode {
     padding-left: var(--orch-elbow-w);
+    padding-top: calc(2 * var(--orch-pad));
 }
 
 .onode-kids > .onode::before {
@@ -160,13 +162,27 @@
     color: var(--wa-color-text-normal);
 }
 
+/* Agent-settings summary on the left (may wrap); the project badge stays at the right of the last line. */
 .ocard-settings {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
+    align-items: flex-end;
+    justify-content: space-between;
     gap: var(--wa-space-3xs) var(--wa-space-s);
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
+}
+
+.ocard-settings-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.ocard-settings > .project-badge-slot {
+    flex: 0 1 auto;
+    display: flex;
+    justify-content: flex-end;
+    min-width: 0;
+    max-width: 60%;
 }
 
 /* Dates, duration, turns and context on the left; the cost stays at the right, on the last line, at every width. */

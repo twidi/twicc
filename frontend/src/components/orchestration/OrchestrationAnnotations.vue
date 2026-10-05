@@ -79,7 +79,8 @@ watch(entries, () => nextTick(measure))
 
 .oann-tags {
     position: relative;
-    flex: 1;
+    /* As wide as its tags, up to the available width: the button follows the last displayed tag. */
+    flex: 0 1 auto;
     min-width: 0;
     display: flex;
     flex-wrap: nowrap;
@@ -127,17 +128,18 @@ watch(entries, () => nextTick(measure))
     display: inline-flex;
     align-items: center;
     gap: var(--wa-space-3xs);
-    padding: 0.24rem 0.5rem;
-    border-radius: 999px;
+    padding: var(--wa-space-3xs) var(--wa-space-2xs);
+    border: 0;
+    border-radius: var(--wa-border-radius-s);
+    background: none;
     font: inherit;
     font-size: var(--wa-font-size-xs);
-    color: var(--wa-color-brand-on-quiet);
-    background: var(--wa-color-brand-fill-quiet);
-    border: 1px solid var(--wa-color-brand-border-quiet);
+    color: var(--wa-color-text-quiet);
 }
 
 .oann-button:hover {
-    background: var(--wa-color-brand-fill-normal);
+    background: var(--glass-item-hover);
+    color: var(--wa-color-text-normal);
 }
 
 .oann-popover {

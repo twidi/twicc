@@ -214,14 +214,18 @@ const expanded = ref(true)
                     :aria-label="expanded ? 'Collapse' : 'Expand'"
                     @click="expanded = !expanded"
                 >
-                    <span v-if="!expanded">{{ descendantCount }}</span>
+                    <span>{{ descendantCount }}</span>
                     <wa-icon :name="expanded ? 'chevron-down' : 'chevron-right'"></wa-icon>
                 </button>
             </div>
 
             <div class="ocard-settings">
-                <AgentSettingsSummaryView :provider="provider" :parts="summaryParts" :mark-forced="false" />
-                <ProjectBadge v-if="projectId" :project-id="projectId" :use-directory-for-unnamed="true" />
+                <span class="ocard-settings-main">
+                    <AgentSettingsSummaryView :provider="provider" :parts="summaryParts" :mark-forced="false" />
+                </span>
+                <span v-if="projectId" class="project-badge-slot">
+                    <ProjectBadge :project-id="projectId" :use-directory-for-unnamed="true" />
+                </span>
             </div>
 
             <OrchestrationTimeBar v-if="geometry" :geometry="geometry" :title="barTitle" />
@@ -277,10 +281,3 @@ const expanded = ref(true)
 </template>
 
 <style scoped src="./treeNode.css"></style>
-
-<style scoped>
-/* The agent-settings summary reads italic and quiet, as it did on the loose node. */
-.ocard-settings :deep(.agent-settings-summary) {
-    font-style: italic;
-}
-</style>

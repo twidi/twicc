@@ -76,7 +76,7 @@ const span = computed(() => (props.spanSeconds == null ? '-' : formatDuration(pr
     flex-direction: column;
     gap: var(--wa-space-3xs);
     min-width: 0;
-    padding: var(--wa-space-xs) var(--wa-space-s);
+    padding: var(--wa-space-2xs) var(--wa-space-xs);
     border-radius: var(--wa-border-radius-m);
     border: 1px solid var(--wa-color-surface-border);
     background: color-mix(in oklab, var(--wa-color-surface-raised) 55%, transparent);
@@ -85,7 +85,7 @@ const span = computed(() => (props.spanSeconds == null ? '-' : formatDuration(pr
 .osum-tile--donut {
     flex-direction: row;
     align-items: center;
-    gap: var(--wa-space-s);
+    gap: var(--wa-space-xs);
 }
 
 .osum-body {
@@ -106,9 +106,9 @@ const span = computed(() => (props.spanSeconds == null ? '-' : formatDuration(pr
     display: flex;
     align-items: baseline;
     gap: var(--wa-space-xs);
-    font-size: var(--wa-font-size-xl);
+    font-size: var(--wa-font-size-m);
     font-weight: 650;
-    line-height: 1.1;
+    line-height: 1.2;
     font-variant-numeric: tabular-nums;
 }
 
@@ -124,8 +124,8 @@ const span = computed(() => (props.spanSeconds == null ? '-' : formatDuration(pr
 
 .osum-donut {
     flex: none;
-    width: 2.4rem;
-    height: 2.4rem;
+    width: 1.6rem;
+    height: 1.6rem;
     border-radius: 50%;
     display: grid;
     place-items: center;
@@ -140,14 +140,10 @@ const span = computed(() => (props.spanSeconds == null ? '-' : formatDuration(pr
     background: var(--surface-solid);
 }
 
-/* Narrow pane: two columns and a smaller value, so the header stays short. */
+/* Narrow pane: two columns, so the header stays short. */
 @container orch (max-width: 480px) {
     .osum {
         grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .osum-value {
-        font-size: var(--wa-font-size-l);
     }
 }
 </style>

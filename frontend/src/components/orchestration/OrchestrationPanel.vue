@@ -463,6 +463,10 @@ a.orch-parent-link:hover {
 }
 
 .orch-tree {
+    display: flex;
+    flex-direction: column;
+    /* Top-level roots: same gap as between sibling cards (2 * --orch-pad). */
+    gap: calc(2 * var(--wa-space-2xs));
     line-height: 1.5;
 }
 

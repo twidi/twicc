@@ -154,7 +154,7 @@ const expanded = ref(true)
                     :aria-label="expanded ? 'Collapse' : 'Expand'"
                     @click="expanded = !expanded"
                 >
-                    <span v-if="!expanded">{{ descendantCount }}</span>
+                    <span>{{ descendantCount }}</span>
                     <wa-icon :name="expanded ? 'chevron-down' : 'chevron-right'"></wa-icon>
                 </button>
             </div>
@@ -223,7 +223,6 @@ const expanded = ref(true)
     display: inline-flex;
     align-items: center;
     gap: var(--wa-space-2xs);
-    font-style: italic;
     text-transform: capitalize;
 }
 </style>
