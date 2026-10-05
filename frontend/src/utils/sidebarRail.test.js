@@ -100,3 +100,11 @@ test('orders top items before bottom items and keeps toggle last', () => {
     ])
     assert.deepEqual(resolveRailItems(state, []), [])
 })
+
+test('session search is visible only in Sessions, with either sidebar state', () => {
+    for (const mode of ['sessions', 'artifacts']) for (const sidebarOpen of [false, true]) {
+        const items = resolveRailItems({ ...state, mode, sidebarOpen })
+        assert.equal(items.some(item => item.id === 'search'), mode === 'sessions')
+        assert.equal(items.some(item => item.id === 'palette'), true)
+    }
+})

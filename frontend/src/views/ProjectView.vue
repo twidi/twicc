@@ -1423,16 +1423,14 @@ const sidebarState = loadSidebarState()
 // Check if we're on mobile (for initial sidebar state)
 const isMobile = () => window.matchMedia(`(width < ${MOBILE_BREAKPOINT}px)`).matches
 
-// Initial checkbox state:
-// - On mobile: checked = open, so check when no session
-// - On desktop: checked = closed, so check if sidebar was closed (inverted logic)
+// Initialize once. The checked ref owns the checkbox after mount.
+// Mobile: checked means open. Desktop: checked means closed.
 const initialSidebarChecked = computed(() => {
     if (typeof window === 'undefined') return false
-    if (isMobile()) {
-        return !sessionId.value
-    }
-    // Desktop: checkbox checked means closed, so invert the stored "open" state
-    return !sidebarState.open
+    const open = isArtifactsMode.value
+        ? (!route.params.bookmarkId || sidebarState.open)
+        : (isMobile() ? !sessionId.value : sidebarState.open)
+    return isMobile() ? open : !open
 })
 
 // Derive the effective open state from the checkbox and viewport.
@@ -1442,7 +1440,15 @@ const railCollapsed = computed(() => !sidebarOpen.value && !settingsStore.isSide
 const floatingToggleEl = shallowRef(null)
 const hasSidebarFooter = computed(() => !!((quotaHasUsage.value && quotaComputed.value) || unauthenticatedProviders.value.length))
 
-watch(initialSidebarChecked, syncSidebarState, { flush: 'post' })
+// Open the sidebar on entry to an unselected Artifacts route from any navigation source.
+// Run after the checkbox patch; selected restores and in-mode route changes retain state.
+watch(isArtifactsMode, (artifacts, wasArtifacts) => {
+    if (!artifacts || wasArtifacts || route.params.bookmarkId) return
+    const checkbox = document.getElementById('sidebar-toggle-state')
+    if (!checkbox) return
+    checkbox.checked = isMobile()
+    handleSidebarToggle()
+}, { flush: 'post' })
 watch(railCollapsed, (collapsed) => {
     document.body.classList.toggle('sidebar-toggle-floating', collapsed)
 }, { immediate: true })
@@ -1528,16 +1534,11 @@ watch(
     }
 )
 
-// On mobile, close sidebar when session changes
-watch(sessionId, (newSessionId) => {
-    if (!newSessionId) return
-    // Only on mobile
-    if (!isMobile()) return
-
+// On mobile, session selection closes the drawer; the Sessions root opens it.
+watch([sessionId, isArtifactsMode], ([newSessionId]) => {
+    if (!isMobile() || isArtifactsMode.value) return
     const checkbox = document.getElementById('sidebar-toggle-state')
-    if (checkbox) {
-        checkbox.checked = false
-    }
+    if (checkbox) checkbox.checked = !newSessionId
     syncSidebarState()
 })
 
@@ -1792,7 +1793,7 @@ function openPeerInbox() {
          :class="{ 'project-view-wrapper--peer': peerSystemConfigured }"
          :data-rail-when-closed="settingsStore.isSidebarRailVisibleWhenClosed ? 'visible' : 'hidden'">
         <!-- Hidden checkbox for pure CSS sidebar toggle -->
-        <input type="checkbox" id="sidebar-toggle-state" class="sidebar-toggle-checkbox" :checked="initialSidebarChecked" @change="handleSidebarToggle"/>
+        <input type="checkbox" id="sidebar-toggle-state" class="sidebar-toggle-checkbox" :checked="checked" @change="handleSidebarToggle"/>
 
         <SidebarRail
             :mode="isArtifactsMode ? 'artifacts' : 'sessions'"

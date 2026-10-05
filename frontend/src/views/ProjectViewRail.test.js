@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, existsSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
+import { computed, ref, reactive, watch, nextTick, effectScope } from 'vue'
 
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8')
 const source = read('./ProjectView.vue')
@@ -53,7 +54,8 @@ test('effective state and CSS expose exactly one reopen control across the break
 
 test('checkbox mutations synchronize actual state and body clearance lifecycle', () => {
     assert.equal((script.match(/`\(width < \$\{MOBILE_BREAKPOINT\}px\)`/g) ?? []).length, 2)
-    assert.match(script, /watch\(initialSidebarChecked, syncSidebarState, \{ flush: 'post' \}\)/)
+    assert.ok(source.includes(':checked="checked"'))
+    assert.doesNotMatch(script, /watch\(initialSidebarChecked/)
     const sync = body('syncSidebarState')
     assert.match(sync, /if \(checkbox\) checked.value = checkbox.checked/)
     let actual = { checked: true }
@@ -68,7 +70,7 @@ test('checkbox mutations synchronize actual state and body clearance lifecycle',
     assert.doesNotMatch(body('resetSidebarToDefault'), /saveSidebarState\(\{ open: true/)
     assert.equal((body('handleSplitReposition').match(/syncSidebarState\(\)/g) ?? []).length, 2)
     assert.match(body('handleSidebarToggle'), /syncSidebarState\(\)/)
-    assert.match(script, /checkbox.checked = false\s*}\s*syncSidebarState\(\)/)
+    assert.match(script, /checkbox.checked = !newSessionId\s*syncSidebarState\(\)/)
     assert.match(script, /watch\(railCollapsed, \(collapsed\) => \{\s*document.body.classList.toggle\('sidebar-toggle-floating', collapsed\)\s*}, \{ immediate: true \}\)/)
     assert.match(script, /onBeforeUnmount\(\(\) => \{\s*document.body.classList.remove\('sidebar-toggle-floating'\)/)
     assert.match(script, /lastKnownPosition = sidebarState.open \? sidebarState.width : 0[\s\S]*?syncSidebarState\(\)/)
@@ -163,4 +165,145 @@ test('project view SFC compiles script, template, and styles', async () => {
     assert.deepEqual(compileTemplate({ source: descriptor.template.content, filename: 'ProjectView.vue', id,
         compilerOptions: { bindingMetadata: compiled.bindings } }).errors, [])
     for (const style of descriptor.styles) assert.deepEqual(compileStyle({ source: style.content, filename: 'ProjectView.vue', id, scoped: style.scoped }).errors, [])
+})
+
+// Execute the production state and watchers with Vue's real scheduler.
+function sidebarHarness({ mobile, open, artifacts = false, bookmarkId }) {
+    const scope = effectScope()
+    const route = reactive({ params: { sessionId: artifacts ? undefined : 'session', bookmarkId } })
+    const isArtifactsMode = ref(artifacts)
+    const narrow = ref(mobile)
+    const checkbox = { checked: false }
+    const saved = []
+    const context = {
+        computed, ref, watch, route, isArtifactsMode,
+        sessionId: computed(() => route.params.sessionId),
+        isNarrowViewport: narrow,
+        sidebarState: { open, width: 320 },
+        isMobile: () => narrow.value,
+        window: {}, document: { getElementById: () => checkbox },
+        settingsStore: { isSidebarRailVisibleWhenClosed: true },
+        quotaHasUsage: ref(false), quotaComputed: ref(null), unauthenticatedProviders: ref([]),
+        shallowRef: ref, saveSidebarState: state => saved.push(state),
+    }
+    const state = script.slice(script.indexOf('const initialSidebarChecked ='), script.indexOf('watch(initialSidebarChecked') >= 0
+        ? script.indexOf('watch(initialSidebarChecked') : script.indexOf('// Open the sidebar on entry'))
+    const mobileWatcher = script.slice(script.indexOf('// On mobile, session selection'), script.indexOf('// Reset sidebar to default width'))
+    const entryStart = script.indexOf('// Open the sidebar on entry')
+    const entryWatcher = entryStart < 0 ? '' : script.slice(entryStart, script.indexOf('watch(railCollapsed', entryStart))
+    let result
+    scope.run(() => {
+        result = runInNewContext(`${state}
+let lastKnownPosition = 0;
+${body('syncSidebarState')}
+${body('handleSidebarToggle')}
+${mobileWatcher}
+${entryWatcher}
+;({ checked, sidebarOpen })`, context)
+        checkbox.checked = result.checked.value
+        // Simulate the checkbox property patch before post-flush route effects.
+        watch(result.checked, value => { checkbox.checked = value })
+    })
+    return { ...result, route, isArtifactsMode, narrow, checkbox, saved, stop: () => scope.stop() }
+}
+
+test('artifact entry opens only unselected destinations after route and checkbox updates', async () => {
+    for (const mobile of [false, true]) for (const open of [false, true]) for (const bookmarkId of [undefined, 'saved-bookmark']) {
+        const h = sidebarHarness({ mobile, open, bookmarkId: undefined })
+        h.checkbox.checked = mobile ? open : !open
+        h.checked.value = h.checkbox.checked
+        h.route.params.sessionId = undefined
+        h.route.params.bookmarkId = bookmarkId
+        h.isArtifactsMode.value = true
+        await nextTick()
+        assert.equal(h.sidebarOpen.value, bookmarkId ? open : true, JSON.stringify({ mobile, open, bookmarkId }))
+        assert.equal(h.checkbox.checked, mobile ? h.sidebarOpen.value : !h.sidebarOpen.value)
+        if (!mobile && !bookmarkId) assert.equal(h.saved.at(-1).open, true)
+        h.stop()
+    }
+})
+
+test('artifact selection, deselection, and viewport changes do not force the sidebar open', async () => {
+    for (const mobile of [false, true]) {
+        const h = sidebarHarness({ mobile, open: false, artifacts: true, bookmarkId: 'saved-bookmark' })
+        assert.equal(h.sidebarOpen.value, false, 'selected artifact mount respects stored open state')
+        h.route.params.bookmarkId = undefined
+        await nextTick()
+        assert.equal(h.sidebarOpen.value, false, 'deselection is not mode entry')
+        h.route.params.bookmarkId = 'other-bookmark'
+        await nextTick()
+        assert.equal(h.sidebarOpen.value, false)
+        // Preserve existing inverted checkbox semantics across viewport changes.
+        h.narrow.value = !mobile
+        await nextTick()
+        assert.equal(h.checked.value, h.checkbox.checked)
+        assert.equal(h.sidebarOpen.value, true, 'existing checkbox inversion changes effective open state')
+        assert.equal(h.saved.length, 0, 'resize does not run entry effects')
+        h.stop()
+    }
+})
+
+test('bare artifact mount opens the sidebar and repeated mode entry opens it again', async () => {
+    for (const mobile of [false, true]) {
+        const h = sidebarHarness({ mobile, open: false, artifacts: true })
+        assert.equal(h.sidebarOpen.value, true)
+        h.isArtifactsMode.value = false
+        h.route.params.sessionId = 'session'
+        await nextTick()
+        h.checked.value = !mobile
+        await nextTick()
+        h.route.params.sessionId = undefined
+        h.isArtifactsMode.value = true
+        await nextTick()
+        assert.equal(h.sidebarOpen.value, true)
+        h.stop()
+    }
+})
+
+test('returning to mobile Sessions closes selected sessions and opens the Sessions root', async () => {
+    for (const sessionId of [undefined, 'selected-session']) {
+        const h = sidebarHarness({ mobile: true, open: false, artifacts: true, bookmarkId: 'saved' })
+        h.route.params.sessionId = sessionId
+        h.route.params.bookmarkId = undefined
+        h.isArtifactsMode.value = false
+        await nextTick()
+        assert.equal(h.sidebarOpen.value, !sessionId)
+        h.route.params.sessionId = 'next-session'
+        await nextTick()
+        assert.equal(h.sidebarOpen.value, false)
+        h.route.params.sessionId = undefined
+        await nextTick()
+        assert.equal(h.sidebarOpen.value, true)
+        h.stop()
+    }
+})
+
+test('shared route memory restores the selected artifact and exact Sessions route', async () => {
+    const scope = effectScope()
+    const route = reactive({ name: 'project-session', fullPath: '/project/session/files', params: { projectId: 'project', sessionId: 'session' }, query: { tab: 'files' } })
+    const isArtifactsMode = computed(() => route.name === 'project-artifacts')
+    const lastSessionsLocation = ref(null)
+    const lastArtifactsLocation = ref(null)
+    const pushed = []
+    const context = { watch, route, isArtifactsMode, lastSessionsLocation, lastArtifactsLocation,
+        router: { push: location => pushed.push(location) },
+        switchToArtifacts: () => assert.fail('remembered artifact route must win'),
+        switchToSessions: () => assert.fail('remembered session route must win') }
+    const start = script.indexOf('watch(() => route.fullPath, () => {')
+    const memory = script.slice(start, script.indexOf('// Track the open bookmark', start))
+    scope.run(() => runInNewContext(memory, context))
+    const sessions = JSON.parse(JSON.stringify(lastSessionsLocation.value))
+    route.name = 'project-artifacts'
+    route.params = { projectId: 'project', bookmarkId: 'remembered' }
+    route.query = { filter: 'html' }
+    route.fullPath = '/project/artifacts/remembered?filter=html'
+    await nextTick()
+    const artifacts = JSON.parse(JSON.stringify(lastArtifactsLocation.value))
+    runInNewContext(`${body('toggleSidebarView')}; toggleSidebarView()`, context)
+    assert.deepEqual(JSON.parse(JSON.stringify(pushed.pop())), sessions)
+    Object.assign(route, sessions, { fullPath: '/project/session/files' })
+    await nextTick()
+    runInNewContext(`${body('toggleSidebarView')}; toggleSidebarView()`, context)
+    assert.deepEqual(JSON.parse(JSON.stringify(pushed.pop())), artifacts)
+    scope.stop()
 })

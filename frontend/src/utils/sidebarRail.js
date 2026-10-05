@@ -9,6 +9,7 @@ export const RAIL_ITEM_DEFINITIONS = [
     { id: 'artifacts', icon: ARTIFACT_ICON, label: 'Artifacts', group: 'top' },
     {
         id: 'search',
+        requires: state => state.mode === 'sessions',
         icon: 'magnifying-glass',
         label: state => state.isMac ? 'Full-text search (⌘⇧F)' : 'Full-text search (Ctrl+Shift+F)',
         group: 'top',
