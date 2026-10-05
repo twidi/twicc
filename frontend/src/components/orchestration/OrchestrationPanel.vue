@@ -471,10 +471,14 @@ onUnmounted(() => {
 }
 
 .orch-parent-icon {
+    flex: none;
     color: var(--wa-color-brand-60);
 }
 
 .orch-parent-label {
+    /* The label never wraps: only the parent's title shrinks (ellipsis). */
+    flex: none;
+    white-space: nowrap;
     color: var(--wa-color-text-quiet);
 }
 
