@@ -8,7 +8,7 @@
 // (the `project` vs `projects` prefix, the current project filter, the active
 // workspace) and change only the session id (plus an optional subagent suffix).
 
-import { buildSessionBaseRouteName, buildSubagentRouteName } from './granularRoutes'
+import { buildSessionBaseRouteName, buildSubagentRouteName, buildTabRouteName } from './granularRoutes.js'
 
 /**
  * Build the router location for a session, honouring the current route context.
@@ -25,7 +25,7 @@ import { buildSessionBaseRouteName, buildSubagentRouteName } from './granularRou
  *
  * @param {{ id: string, project_id: string }} target - the session to open
  * @param {import('vue-router').RouteLocationNormalized} route - the current route
- * @param {{ subagentId?: string }} [options] - append a subagent suffix
+ * @param {{ subagentId?: string, tab?: string }} [options] - append a subagent suffix, or point to a tool tab of the session (e.g. 'orchestration')
  * @returns {import('vue-router').RouteLocationRaw}
  */
 export function sessionRouteLocation(target, route, options = {}) {
@@ -33,9 +33,11 @@ export function sessionRouteLocation(target, route, options = {}) {
     const projectId = isAllProjects
         ? target.project_id
         : (route.params.projectId || target.project_id)
-    const name = options.subagentId
-        ? buildSubagentRouteName(isAllProjects)
-        : buildSessionBaseRouteName(isAllProjects)
+    const name = options.tab
+        ? buildTabRouteName({ isAllProjectsMode: isAllProjects, isSessionRoute: true, tab: options.tab })
+        : options.subagentId
+            ? buildSubagentRouteName(isAllProjects)
+            : buildSessionBaseRouteName(isAllProjects)
     const params = { projectId, sessionId: target.id }
     if (options.subagentId) params.subagentId = options.subagentId
     const location = { name, params }
