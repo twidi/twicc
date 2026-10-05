@@ -76,7 +76,12 @@ let mountToken = 0
 let unmounted = false
 // Resolves once the browser has painted the current state: the first frame runs the render that follows the
 // state change, the second runs after that frame has been presented.
-const afterPaint = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+const pendingFrames = new Set()
+const frame = (callback) => {
+    const id = requestAnimationFrame((time) => { pendingFrames.delete(id); callback(time) })
+    pendingFrames.add(id)
+}
+const afterPaint = () => new Promise(resolve => frame(() => frame(resolve)))
 watch(view, async (shown) => {
     if (mountedViews[shown]) return
     // Not a user switch (only one view exists): nothing to paint first.
@@ -363,9 +368,19 @@ watch(
     () => nextTick(updateOverflow),
     { flush: 'post' },
 )
-// Both views share the scrollers: land on top of the newly shown list, not in the middle of the other one.
-watch(view, () => {
-    for (const el of [contentEl.value, frameEl.value]) if (el) el.scrollTop = 0
+// Both views share the scrollers, so each view remembers its own scroll position: the position of the view
+// being left is saved before the switch renders, and the newly shown view gets back its own (the top the
+// first time).
+const scrollMemory = { sessions: { content: 0, frame: 0 }, agents: { content: 0, frame: 0 } }
+watch(view, (_shown, left) => {
+    if (!left || !scrollMemory[left]) return
+    scrollMemory[left].content = contentEl.value?.scrollTop ?? 0
+    scrollMemory[left].frame = frameEl.value?.scrollTop ?? 0
+}, { flush: 'pre' })
+watch(view, (shown) => {
+    const saved = scrollMemory[shown] ?? { content: 0, frame: 0 }
+    if (contentEl.value) contentEl.value.scrollTop = saved.content
+    if (frameEl.value) frameEl.value.scrollTop = saved.frame
 }, { flush: 'post' })
 onMounted(() => nextTick(updateOverflow))
 
@@ -377,6 +392,8 @@ function scrollListTo(toBottom) {
 
 onUnmounted(() => {
     unmounted = true
+    for (const id of pendingFrames) cancelAnimationFrame(id)
+    pendingFrames.clear()
     stopAuto()
     stopNow()
     if (inFlightController) inFlightController.abort()
