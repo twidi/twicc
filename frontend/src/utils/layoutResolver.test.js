@@ -78,13 +78,23 @@ const SCENARIOS = [
         check: (d) => d.mode === 'widescreen' && d.regions.some((r) => r.kind === 'bottom' && r.x > 0),
     },
     {
-        name: 'Mobile width → pure tabs (single center region)',
+        name: 'Width at 480 px → pure tabs (single center region)',
         input: {
             tabs: [T.chat, T.files, T.git, T.terminal],
             assignment: { files: 'left-top', git: 'right-top', terminal: 'bottom-left' },
             viewport: { w: 480, h: 900 }, activeSide: 'left', collapsed: [],
         },
         check: (d) => d.mode === 'tabs' && d.regions.length === 1 && d.regions[0].slots[0].tabs.length === 4,
+    },
+    {
+        name: 'Width above 480 px → docks remain available',
+        input: {
+            tabs: [T.chat, T.files, T.git, T.terminal],
+            assignment: { files: 'left-top', git: 'right-top', terminal: 'bottom-left' },
+            viewport: { w: 481, h: 900 }, activeSide: 'left', collapsed: [],
+        },
+        check: (d) => d.mode !== 'tabs' && gutterOn(d, 'left') && gutterOn(d, 'right')
+            && kindShown(d, 'bottom'),
     },
     {
         name: 'Two sides, medium width → mutual exclusion (left active, right gutter)',

@@ -129,7 +129,7 @@ renderDescription = {
 ## Config (DEFAULT_CONFIG) — single tuning point
 
 Structural (decide STRUCTURE): `centerMinW 460, centerMinH 220, sideMinW 280,
-sideMergeBelowH 300, bottomMinH 150, bottomMergeBelowW 560, bottomComfortW 560, mobileMaxW 520`.
+sideMergeBelowH 300, bottomMinH 150, bottomMergeBelowW 560, bottomComfortW 560, mobileMaxW 480`.
 Resize clamps (how far you can DRAG): `centerResizeMinW 300, centerResizeMinH 150,
 sideResizeMinW 150, bottomResizeMinH 150, siblingMaxFrac 0.8`.
 Default ratios (user-draggable): `leftColFrac 0.22, rightColFrac 0.22, bottomFrac 0.30,

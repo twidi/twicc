@@ -97,7 +97,7 @@ test('overlay rect: inset from the rail and from the escape strip', () => {
 test('maximized and tabs mode: one full region, no inner edge', () => {
     const max = layout({ files: 'right-top' }, { w: 1600, h: 900 }, { maximized: ['center'] })
     assert.deepEqual(innerEdges(max.regions[0], max.viewport), NO_INSETS)
-    const tabs = layout({ files: 'right-top' }, { w: 500, h: 900 })
+    const tabs = layout({ files: 'right-top' }, { w: 480, h: 900 })
     assert.equal(tabs.mode, 'tabs')
     assert.deepEqual(innerEdges(tabs.regions[0], tabs.viewport), NO_INSETS)
 })
