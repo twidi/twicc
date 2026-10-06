@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - **Session scrolling** — Reading earlier messages no longer makes the view jump or return to the bottom.
+- **Codex responses** — Messages and thinking no longer appear twice after a response finishes.
 
 ## [1.95.0] - 2026-10-03
 
