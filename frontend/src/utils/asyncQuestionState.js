@@ -3,6 +3,20 @@ import { reconcileSend, retainsAsyncQuestionSend, consumeAsyncQuestionSend, rest
 const clone = value => JSON.parse(JSON.stringify(value))
 const emptyDraft = () => ({ choices: {}, sourceBatches: {}, recoveredIds: [], pendingDismissals: {} })
 
+/**
+ * Put staged attachment refs back in the composer, then run `action`. When `action` throws, forget
+ * (never release) the records this call restored and rethrow: the refs stay with their durable holder.
+ */
+async function restoreRefsWith(owner, sessionId, attachments, action) {
+    const restored = attachments?.length ? await owner.restoreDraftAttachmentRefs?.(sessionId, attachments) : null
+    try { return await action() }
+    catch (error) {
+        const ids = (restored || []).map(record => record.id)
+        if (ids.length) await owner.forgetAttachments?.(sessionId, { ids }).catch(() => {})
+        throw error
+    }
+}
+
 /** Production Pinia actions with injectable storage and network boundaries. */
 export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages, recover, fetch, send, uuid, pendingSends, cancelDraftSave, remove, stageSend, markDispatched, restoreStaged }) {
     const preparingSends = new Map()
@@ -72,7 +86,7 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
             await this.reconcileAsyncQuestionDraft(sessionId)
         },
 
-        async sendAsyncQuestionMessage(sessionId, projectId, requestId, payload, outgoing, { retryRequestId = null } = {}) {
+        async sendAsyncQuestionMessage(sessionId, projectId, requestId, payload, outgoing, { retryRequestId = null, onStaged = null } = {}) {
             if (!preparingSends.has(requestId) && !this.reserveAsyncQuestionSend(sessionId, requestId, outgoing)) return false
             const preparation = preparingSends.get(requestId)
             if (preparation.sessionId !== sessionId) return false
@@ -98,6 +112,9 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
                     }
                     this.registerOutgoingSend(sessionId, projectId, requestId, { ...snapshot, prePersisted: true })
                     preparingSends.delete(requestId)
+                    // The send is durable: the caller can forget what it consumed now, before any
+                    // dispatch await. A throw here never turns a committed staging into a failure.
+                    try { onStaged?.() } catch (error) { console.warn('Question send staging hook failed:', error) }
                     if (retryRequestId) this.removeFailedSend(sessionId, retryRequestId, { preserveSnapshot: true })
                 })
             } catch (error) {
@@ -112,7 +129,10 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
             let dispatched = false
             try { dispatched = await send(payload) } catch { /* A socket throw means the frame did not leave. */ }
             if (!dispatched) {
-                await this.restoreAsyncQuestionSnapshot(sessionId, requestId, snapshot, { forceChoices: true })
+                // The refs come back with the text: the composer forgot them at staging, and a
+                // Retry never had them. Already-held refs are skipped.
+                await restoreRefsWith(this, sessionId, snapshot.attachments,
+                    () => this.restoreAsyncQuestionSnapshot(sessionId, requestId, snapshot, { forceChoices: true }))
                 this.cancelStagedOutgoingSend?.(sessionId, requestId)
                 this.releaseAsyncQuestionSendLock(sessionId, requestId)
                 await this.reconcileAsyncQuestionDraft(sessionId)
@@ -149,9 +169,11 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
             if (!entry || entry.code === 'send_uncertain') return false
             // Staged refs come back as draft records first (same id and bucket,
             // already-held ones skipped): the refs belong to the draft again and
-            // are never released here. A throw leaves the failed send untouched.
-            if (entry.attachments?.length) await this.restoreDraftAttachmentRefs?.(sessionId, entry.attachments)
-            await this.restoreAsyncQuestionSnapshot(sessionId, requestId, entry)
+            // are never released here. A throw leaves the failed send untouched AND
+            // forgets (never releases) the records just restored, so the refs are
+            // never held by the failed send and the composer at once.
+            await restoreRefsWith(this, sessionId, entry.attachments,
+                () => this.restoreAsyncQuestionSnapshot(sessionId, requestId, entry))
             // Legacy medias restored as rows are turned into staged records.
             if (entry.medias?.length && this._migrateLegacyMedias) {
                 const rows = entry.medias.map(media => ({ ...media, sessionId }))

@@ -1704,7 +1704,8 @@ async function handleSend() {
     // Keep the reservation's identity through staging and dispatch.
     payload.request_id = requestId
 
-    // Only after a successful dispatch: snapshot the send (refs and metadata)
+    // Plain path: only after a successful dispatch. Question path: once the staging commits
+    // (`onStaged`; a failed dispatch restores them). Snapshot the send (refs and metadata)
     // + optimistic bubble + optimistic starting state, THEN forget exactly the
     // sent records locally (the server owns their entries now; an attachment
     // added after this send stays). A failed dispatch keeps the draft: the
@@ -1721,13 +1722,17 @@ async function handleSend() {
         try {
             success = await store.sendAsyncQuestionMessage(props.sessionId, props.projectId, requestId, payload, {
                 ...outgoing, attachments: sentAttachments, medias: [],
+            }, {
+                // Forgotten as soon as the staging commits (like the plain path's synchronous
+                // forget): a second Send or a reload in the dispatch window cannot re-send them.
+                // A staging failure never reaches this hook; a dispatch failure restores them.
+                onStaged: () => { if (records.length) forgetSent(records.map(record => record.id)) },
             })
         } catch (error) {
             console.warn('Failed to save the question send:', error?.name || 'Error')
             toast.error('Failed to save the question send. Your message remains available for recovery.')
             return
         }
-        if (success && records.length) forgetSent(records.map(record => record.id))
     } else {
         success = sendComposerMessage({
             payload,

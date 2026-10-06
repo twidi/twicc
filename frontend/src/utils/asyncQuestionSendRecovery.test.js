@@ -327,7 +327,7 @@ it('production composer sends answer-only after a staged hybrid change and keeps
         localState: { attachmentRuntime: {} }, setStagedHybrid() {}, getPendingAsyncQuestionIds: () => [], getAttachmentPreviewUrl: () => null,
         reserveAsyncQuestionSend: () => true,
         applyCreationSendMode() {},
-        async sendAsyncQuestionMessage(s, p, id, payload, send) {
+        async sendAsyncQuestionMessage(s, p, id, payload, send, options) {
             frames.push(payload)
             assert.equal(payload.text, '')
             assert.equal(send.text, questions.formatAsyncQuestionMessage(send.sourceBatches, send.asyncQuestions.answers, ''))
@@ -337,7 +337,9 @@ it('production composer sends answer-only after a staged hybrid change and keeps
             assert.equal(payload.images, undefined)
             assert.equal(payload.documents, undefined)
             assert.deepEqual(send.attachments.map(item => item.id), ['original'])
-            assert.deepEqual(forgotten, [], 'Nothing is forgotten before the dispatch succeeds')
+            assert.deepEqual(forgotten, [], 'Nothing is forgotten before the staging commits')
+            options.onStaged()
+            assert.deepEqual(forgotten, [['original']], 'The sent chips are forgotten as soon as the staging commits')
             messageText.value = 'New typing'
             records.push(record('new'))
             return true
@@ -441,14 +443,14 @@ it('an explicit stale rejection disables Retry before a fresh lifecycle snapshot
     assert.deepEqual(recovered.questionDraft.choices, {})
 })
 
-function delayedComposer() {
+function delayedComposer({ sendWsMessage, ...overrides } = {}) {
     // No preparation step is left in the composer (attachments are refs, nothing is resized): the
     // asynchronous window after the reservation is the durable staging commit, gated here.
     const wait = deferred(), errors = [], records = [record('original')], forgotten = []
     const h = production({ stageSend: async (id, entry, draft, q) => {
         await wait.promise
         h.disk.sends[id] = structuredClone(entry); h.disk.draft = structuredClone(draft); h.disk.questions = structuredClone(q)
-    } })
+    }, ...overrides })
     const ref = value => ({ value })
     const computed = fn => ({ get value() { return fn() } })
     const messageText = computed(() => h.state.localState.draftMessages.s?.message || '')
@@ -456,9 +458,12 @@ function delayedComposer() {
     const start = source.indexOf('async function handleSend()'), end = source.indexOf('\n/**', start)
     Object.assign(h.state, createSendFailureActions(h.pending, { deleteInflight: async id => { delete h.disk.sends[id] } }))
     Object.assign(h.state, {
-        applyCreationSendMode() {}, getAttachmentPreviewUrl: () => null,
+        applyCreationSendMode() {}, getAttachmentPreviewUrl: () => null, clearDraftMessage() {},
         getDraftMessage: () => h.state.localState.draftMessages.s,
-        forgetAttachments: async (s, { ids }) => { forgotten.push(...ids) },
+        forgetAttachments: async (s, { ids }) => {
+            forgotten.push(...ids)
+            for (const id of ids) { const at = records.findIndex(item => item.id === id); if (at >= 0) records.splice(at, 1) }
+        },
     })
     const deps = { props: { sessionId: 's', projectId: 'p', sendingLocked: false },
         messageText: { get value() { return messageText.value }, set value(value) { h.state.localState.draftMessages.s = { message: value } } },
@@ -469,7 +474,7 @@ function delayedComposer() {
         prepareAsyncQuestionSend: questions.prepareAsyncQuestionSend, store: h.state, session: ref({ provider: 'codex' }),
         isContextMaxForced: ref(false), attachmentCount: ref(1), settings: { providerStore: ref({ defaultModel: 'model' }) },
         generateUUID: () => 'prepared', ...attachmentDeps(records),
-        sendWsMessage: () => assert.fail('Question sends use the staged action'), textareaRef: ref(null),
+        sendWsMessage: sendWsMessage || (() => assert.fail('Question sends use the staged action')), textareaRef: ref(null),
         toast: { error: message => errors.push(message), warning: message => assert.fail(message) },
     }
     const widget = readFileSync(new URL('../components/message/AsyncQuestions.vue', import.meta.url), 'utf8')
@@ -801,4 +806,82 @@ it('an uncertain failed send keeps its refs: Delete and Edit are refused', () =>
         store: { removeFailedSend: () => assert.fail('Uncertain'), releaseAttachments: () => assert.fail('Uncertain') },
     }
     new Function(...Object.keys(deps), `${source.slice(start, end + 3)}; return discard`)(...Object.values(deps))()
+})
+
+// ── Review fixes: refs survive a failed dispatch, a failed Edit and the dispatch window ──────────
+
+const refsHolder = h => {
+    const held = []
+    h.state.restoreDraftAttachmentRefs = async (sessionId, attachments) => {
+        const fresh = attachments.filter(item => !held.some(record => record.id === item.id)).map(item => ({ ...item, sessionId }))
+        held.push(...fresh)
+        return fresh
+    }
+    return held
+}
+
+it('a failed dispatch puts the staged refs back in the draft (answers and files, socket down)', async () => {
+    const h = production({ send: async () => false })
+    const held = refsHolder(h)
+    h.state.releaseAttachments = () => assert.fail('A failed dispatch never releases its refs')
+    const send = withAttachments()
+    assert.equal(await dispatch(h, 'local', send), false)
+    assert.deepEqual(held.map(record => record.id), ['a1', 'a2'])
+    assert.equal(h.state.localState.draftMessages.s.message, '  Extra text  ')
+    assert.deepEqual(h.disk.sends, {})
+})
+
+it('a failed Retry dispatch keeps the refs in the draft although the failed entry is already gone', async () => {
+    const h = production({ send: async () => false })
+    const held = refsHolder(h)
+    const failed = { ...withAttachments(), requestId: 'failed', code: 'send_failed', sessionId: 's' }
+    h.state.localState.failedSends.s = { failed }
+    h.disk.sends.failed = structuredClone(failed)
+    const retry = withAttachments()
+    assert.equal(await h.state.sendAsyncQuestionMessage('s', 'p', 'retry', { request_id: 'retry', text: retry.rawText, async_questions: retry.asyncQuestions },
+        { ...retry, medias: [] }, { retryRequestId: 'failed' }), false)
+    assert.equal(h.state.getFailedSend('s', 'failed'), undefined)
+    assert.deepEqual(held.map(record => record.id), ['a1', 'a2'])
+})
+
+it('Edit whose snapshot restore throws forgets the restored records and leaves the failed send untouched', async () => {
+    const h = production({ restoreStaged: async () => { throw new Error('IndexedDB write failed') } })
+    const held = refsHolder(h), forgotten = []
+    h.state.forgetAttachments = async (sessionId, { ids }) => { forgotten.push(ids); for (const id of ids) held.splice(held.findIndex(r => r.id === id), 1) }
+    h.state.releaseAttachments = () => assert.fail('Edit never releases the refs')
+    const entry = { ...withAttachments(), requestId: 'failed', code: 'send_failed', sessionId: 's' }
+    h.state.localState.failedSends.s = { failed: entry }
+    h.disk.sends.failed = structuredClone(entry)
+    await assert.rejects(h.state.editAsyncQuestionFailure('s', 'failed'), /IndexedDB write failed/)
+    assert.deepEqual(forgotten, [['a1', 'a2']])
+    assert.deepEqual(held, [], 'The draft holds no restored chip')
+    assert.ok(h.state.getFailedSend('s', 'failed'))
+    assert.ok(h.disk.sends.failed)
+})
+
+it('a second Send in the dispatch window does not re-send the staged refs', async () => {
+    const gate = deferred()
+    const plain = []
+    const h = delayedComposer({ send: async frame => { await gate.promise; h.frames.push(frame); return true },
+        sendWsMessage: payload => { plain.push(payload); return true } })
+    const first = h.send()
+    h.wait.resolve()
+    await tick(); await tick()
+    assert.deepEqual(h.forgotten, ['original'], 'Forgotten at the staging commit, before the dispatch resolves')
+    assert.equal(h.records.length, 0)
+    await h.send()
+    gate.resolve()
+    await first
+    const refsSent = [...h.frames, ...plain].filter(frame => frame.attachments?.some(item => item.id === 'original'))
+    assert.equal(refsSent.length, 1)
+})
+
+it('a dispatch failure restores the chips forgotten at staging', async () => {
+    const h = delayedComposer({ send: async () => false })
+    const held = refsHolder(h)
+    const sending = h.send()
+    h.wait.resolve()
+    await sending
+    assert.deepEqual(h.forgotten, ['original'])
+    assert.deepEqual(held.map(record => record.id), ['original'])
 })
