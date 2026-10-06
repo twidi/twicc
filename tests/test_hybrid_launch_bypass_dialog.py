@@ -1,9 +1,10 @@
-"""The hybrid CLI's own "Bypass Permissions mode" confirmation is skipped when the user chose that mode in TwiCC.
+"""The hybrid CLI's own "Bypass Permissions mode" confirmation is skipped: bypass is chosen in TwiCC, not in the CLI.
 
 TwiCC drives the CLI in tmux, so the CLI's one-time dialog would leave the session stuck in "starting" until
-the starting timeout stops it. The setting is given with the inline `--settings` JSON of the launch (scoped to
-the session, nothing is written to the user's own settings), and only when the session itself starts in
-bypassPermissions.
+the starting timeout stops it. It also appeared with another permission mode as soon as the opt-in flag
+`--allow-dangerously-skip-permissions` was given. The setting is therefore passed in the inline `--settings`
+JSON of the launch (scoped to the session, nothing is written to the user's own settings) whenever that opt-in
+flag is. Untrusted projects withhold the opt-in and keep the CLI's default.
 """
 
 import orjson
@@ -59,13 +60,13 @@ def test_a_session_started_in_bypass_permissions_skips_the_cli_dialog():
 
 
 @pytest.mark.parametrize("mode", ["default", "acceptEdits", "plan"])
-def test_other_modes_keep_the_cli_default(mode):
+def test_the_opt_in_flag_always_comes_with_the_skip_setting(mode):
+    """The CLI dialog also showed up with another permission mode: the opt-in flag alone triggered it."""
     argv = argv_for(mode)
 
     assert argv[argv.index("--permission-mode") + 1] == mode
-    assert KEY not in settings_of(argv)
-    # The opt-in that makes bypass reachable from the mode cycle is unchanged for a trusted project.
     assert "--allow-dangerously-skip-permissions" in argv
+    assert settings_of(argv)[KEY] is True
 
 
 def test_an_untrusted_project_never_skips_the_dialog():

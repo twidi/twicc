@@ -47,11 +47,13 @@ def build_hooks_settings(session_id: str, fast_mode: bool, *, skip_bypass_dialog
 
     With ``skip_bypass_dialog`` the CLI's one-time "Bypass Permissions mode"
     confirmation is not shown (``skipDangerousModePermissionPrompt``, honoured
-    from ``--settings``): the user already picked that mode in TwiCC, and
-    TwiCC drives the CLI, so asking again would only leave the session stuck
-    in "starting" on the dialog until the starting timeout stops it. Given on
-    the command line, the setting stays scoped to this session: nothing is
-    written to the user's own ``settings.json``.
+    from ``--settings``): bypassPermissions is chosen in TwiCC, which drives the
+    CLI, so asking again would only leave the session stuck in "starting" on
+    the dialog until the starting timeout stops it (observed: the dialog also
+    appears with another permission mode as soon as
+    ``--allow-dangerously-skip-permissions`` is given).
+    Given on the command line, the setting stays scoped to this session:
+    nothing is written to the user's own ``settings.json``.
 
     Schema validated empirically on CLI 2.1.170 (2026-06-11 design probe).
     The hook is pure shell — it drops its stdin JSON into the watched
@@ -161,16 +163,14 @@ def build_argv(
     argv += ["--chrome"] if settings.claude_in_chrome else ["--no-chrome"]
     if settings.question_widget is False:
         argv += ["--disallowedTools", "AskUserQuestion"]
-    # The mode the session starts in is the user's own choice in TwiCC (clamped
-    # above in untrusted projects, where bypassPermissions cannot be selected),
-    # so the CLI's extra confirmation of that same choice is skipped.
+    # Whenever bypassPermissions is on offer (the opt-in flag above, whatever the
+    # mode the session starts in: the CLI was observed to show its confirmation
+    # with the flag alone), the user chooses it in TwiCC, not in the CLI: the
+    # CLI's extra confirmation of that same choice is skipped. Untrusted projects
+    # withhold the opt-in, so they keep the CLI's default.
     argv += [
         "--settings",
-        build_hooks_settings(
-            session_id,
-            bool(settings.fast_mode),
-            skip_bypass_dialog=permission_mode == "bypassPermissions",
-        ),
+        build_hooks_settings(session_id, bool(settings.fast_mode), skip_bypass_dialog=not untrusted),
     ]
     argv += ["--plugin-dir", str(get_plugin_dir())]
     # TwiCC's own MCP server (/mcp): pass the per-session config as a FILE path
