@@ -259,11 +259,13 @@ export async function getAllDraftSessions() {
  * @returns {Promise<void>}
  */
 export async function saveDraftMedia(media) {
+    // IndexedDB cannot clone Vue reactive proxies from restored send snapshots.
+    const record = plainRecord(media)
     const db = await getDb()
     return new Promise((resolve, reject) => {
         const tx = db.transaction(DRAFT_MEDIAS_STORE, 'readwrite')
         const store = tx.objectStore(DRAFT_MEDIAS_STORE)
-        const request = store.put(media)
+        const request = store.put(record)
         request.onsuccess = () => resolve()
         request.onerror = () => reject(request.error)
     })
