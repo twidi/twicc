@@ -30,7 +30,6 @@ from twicc.paths import get_hybrid_hooks_dir, get_session_hybrid_dir
 from twicc.providers.claude_code.bin import resolve_bundled_binary
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
 
-
 # How long the CLI lets the PermissionRequest hook live — i.e. how long the
 # GUI-answer channel stays open for one prompt (the hook IS the channel: it
 # polls for the answer file until the CLI reaps it). Mirror of TwiCC's own
@@ -39,6 +38,23 @@ from twicc.providers.helpers import AgentSettings, get_provider_helpers
 # under Node's setTimeout ceiling of 2^31-1 ms (~24.8 days) — values above it
 # overflow. Ceiling probed empirically (2026-06-12, plan Task 2).
 HYBRID_HOOK_TIMEOUT_SECONDS = 14 * 24 * 3600
+
+
+def chrome_onboarding_completed() -> bool:
+    """True when the CLI's one-time "Claude in Chrome" intro dialog was already answered.
+
+    The flag lives in the CLI's global config (not a settings key, so `--settings` cannot carry it) and the
+    user's own config is never written. Without it `--chrome` opens a dialog that no one answers in a tmux
+    session, so the session would stay in "starting" until the starting timeout. Read-only; a missing or
+    unreadable file counts as not completed. The caller withholds Chrome from the session while it is not.
+    """
+    from twicc.provider_homes import claude_global_config_path
+
+    try:
+        completed = orjson.loads(claude_global_config_path().read_bytes()).get("hasCompletedClaudeInChromeOnboarding")
+    except (OSError, ValueError, AttributeError):
+        completed = False
+    return completed is True
 
 
 def build_hooks_settings(session_id: str, fast_mode: bool, *, skip_bypass_dialog: bool = False) -> str:

@@ -46,7 +46,7 @@ from twicc.providers.claude_code.agent.permissions import (
 )
 
 from . import tmux as hybrid_tmux
-from .launch import HYBRID_HOOK_TIMEOUT_SECONDS, build_argv, write_addendum_file
+from .launch import HYBRID_HOOK_TIMEOUT_SECONDS, build_argv, chrome_onboarding_completed, write_addendum_file
 from .responses import (
     DUMMY_REAP_STATUS,
     drop_path_for,
@@ -258,6 +258,9 @@ class HybridClaudeAgent(BaseAgent):
         if clamped_mode != self.agent_settings.permission_mode:
             self.agent_settings = self.agent_settings._replace(permission_mode=clamped_mode)
 
+        if self.agent_settings.claude_in_chrome and not await asyncio.to_thread(chrome_onboarding_completed):
+            await self._withhold_chrome()
+
         addendum = await sync_to_async(self._read_system_prompt_addendum)()
         addendum_path = await asyncio.to_thread(
             write_addendum_file, self.session_id, addendum,
@@ -339,6 +342,36 @@ class HybridClaudeAgent(BaseAgent):
                 self.kill_reason = "startup-failed"
                 await asyncio.to_thread(hybrid_tmux.kill_session, self.session_id)
                 await self._transition_to_dead()
+
+    async def _withhold_chrome(self) -> None:
+        """Launch without Chrome and record it: the session's ``claude_in_chrome`` becomes False in the DB.
+
+        The CLI's one-time Chrome intro dialog is not completed in its global config, and nobody answers
+        it in a tmux session (the launch would stay in "starting" until the starting timeout).
+        """
+        logger.info(
+            "Claude in Chrome onboarding not completed in the CLI: hybrid session %s launches without Chrome",
+            self.session_id,
+        )
+        self.agent_settings = self.agent_settings._replace(claude_in_chrome=False)
+
+        from channels.layers import get_channel_layer
+
+        from twicc.core.models import Session
+        from twicc.core.serializers import serialize_session
+        from twicc.core.services.session_update import persist_session_settings
+        from twicc.providers.db_writer import run_under_db_write_lock
+
+        await run_under_db_write_lock(
+            lambda: sync_to_async(persist_session_settings)(self.session_id, {"claude_in_chrome": False})
+        )
+        session = await sync_to_async(Session.objects.select_related("project").filter(id=self.session_id).first)()
+        channel_layer = get_channel_layer()
+        if session is not None and channel_layer is not None and not session.hidden:
+            await channel_layer.group_send(
+                "updates",
+                {"type": "broadcast", "data": {"type": "session_updated", "session": serialize_session(session)}},
+            )
 
     async def _notify_delivered(self) -> None:
         """Call the one-shot ``on_delivered`` callback; its failure is only logged."""
