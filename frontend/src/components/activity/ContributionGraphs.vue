@@ -306,15 +306,9 @@ useStartupPolling(fetchDailyActivity)
     --glass-sticky-bg: color-mix(in oklab, var(--surface-solid) 60%, transparent);
 }
 
-/* Without the blur (reduced effects / transparency, or no support) the translucent layer would let the
+/* Without the blur (reduced transparency, or "Reduce effects" below) the translucent layer would let the
    stats show through unreadable: the card's opaque colour, as before the glass. */
 @media (prefers-reduced-transparency: reduce) {
-    .provider-filter {
-        --glass-sticky-bg: transparent;
-        background: var(--panel-solid);
-    }
-}
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     .provider-filter {
         --glass-sticky-bg: transparent;
         background: var(--panel-solid);
