@@ -894,7 +894,7 @@ defineExpose({
     scrollbar-gutter: stable;
     padding-block: var(--wa-space-2xs);
     padding-inline-start: var(--sidebar-gutter, 0px);
-    padding-inline-end: max(0px, calc(var(--sidebar-gutter, 0px) - var(--sidebar-scrollbar-width, 0px)));
+    padding-inline-end: 0; /* the scrollbar sits at the sidebar's right edge */
     --sidebar-row-inset: 0px;
     --sidebar-separator-inset: 0px;
     /* The floating "New session" button covers the list's last ~3.08rem (measured: 35px +

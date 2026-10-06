@@ -2422,7 +2422,10 @@ function openPeerInbox() {
 
 <style scoped>
 .project-view-wrapper {
-    --sidebar-gutter: max(var(--panel-gap), var(--sidebar-sessions-scrollbar-width, 0px), var(--sidebar-artifacts-scrollbar-width, 0px));
+    /* The reference gap: rail to sidebar on the left, divider (panel-gap) to the content on the right.
+       The sidebar has no right padding: header, footer and the lists' scrollbars end at its right edge. */
+    --sidebar-gutter: var(--panel-gap);
+    --sidebar-scrollbar-reserve: max(var(--sidebar-sessions-scrollbar-width, 0px), var(--sidebar-artifacts-scrollbar-width, 0px));
     --rail-width: calc(var(--rail-card-width) + var(--sidebar-gutter));
     position: relative;
     display: flex;
@@ -2495,6 +2498,7 @@ function openPeerInbox() {
     flex-direction: column;
     justify-content: stretch;
     padding: var(--sidebar-gutter);
+    padding-inline-end: 0;
     gap: var(--wa-space-s);
     background: var(--main-header-footer-bg-color);
 }
@@ -2716,7 +2720,7 @@ wa-dropdown-item:hover .row-menu-trigger,
 }
 
 .sidebar > wa-divider {
-    margin-inline: var(--sidebar-gutter);
+    margin-inline: var(--sidebar-gutter) 0;
 }
 
 /* When the sidebar list (sessions or artifacts) holds at least one item, the
@@ -2845,7 +2849,8 @@ wa-dropdown-item:hover .row-menu-trigger,
 .new-session-split-button {
     position: absolute;
     bottom: var(--wa-space-s);
-    right: var(--sidebar-gutter);
+    /* Aligned with the rows (which stop before the scrollbar), not over the scrollbar. */
+    right: var(--sidebar-scrollbar-reserve);
     z-index: 5;
 
     /* Style the main button label */
@@ -2862,7 +2867,8 @@ wa-dropdown-item:hover .row-menu-trigger,
     display: block;
     position: absolute;
     bottom: var(--wa-space-s);
-    right: var(--sidebar-gutter);
+    /* Aligned with the rows (which stop before the scrollbar), not over the scrollbar. */
+    right: var(--sidebar-scrollbar-reserve);
     z-index: 5;
     /* Only take the width needed by the trigger button */
     width: fit-content;
@@ -2924,6 +2930,7 @@ wa-dropdown-item:hover .row-menu-trigger,
     flex-direction: column;
     /* A floating glass card (styles/glass.css), inset from the sidebar edges like the panels. */
     margin: var(--sidebar-gutter);
+    margin-inline-end: 0;
     padding: var(--wa-space-xs) var(--wa-space-s);
     border-radius: var(--panel-radius);
     box-shadow: var(--panel-shadow);

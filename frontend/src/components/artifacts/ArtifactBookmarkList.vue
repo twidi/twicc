@@ -730,7 +730,7 @@ defineExpose({ handleKeyNavigation })
     scrollbar-gutter: stable;
     padding-block: var(--wa-space-2xs);
     padding-inline-start: var(--sidebar-gutter, var(--wa-space-2xs));
-    padding-inline-end: max(0px, calc(var(--sidebar-gutter, var(--wa-space-2xs)) - var(--sidebar-scrollbar-width, 0px)));
+    padding-inline-end: 0; /* the scrollbar sits at the sidebar's right edge */
     --sidebar-separator-inset: 0px;
     display: flex;
     flex-direction: column;
