@@ -1014,6 +1014,12 @@ export function useWebSocket() {
     const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
     const { status, send, open, close } = useVueWebSocket(`${wsProtocol}//${location.host}/ws/`, {
         immediate: false,
+        // VueUse closes the socket for good on `beforeunload`. That event also
+        // fires when the user cancels a "Leave site?" prompt (an upload is
+        // running): the page stays, with no socket and no reconnection, so no
+        // upload completion ever reaches it. The browser closes the socket
+        // itself when the page really unloads.
+        autoClose: false,
         autoReconnect: {
             // Don't reconnect if the last close was an auth failure.
             // For all other cases, always retry (equivalent to Infinity).
