@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Navigation rail** — Keep navigation and active sessions within reach, even with the sidebar closed. Quickly open recent projects and workspaces or start a new session.
 - **Automatic title updates** — Session titles now follow the conversation’s main subjects. Titles you save stay unchanged. The title generation prompt is completely rewritten. If you use a custom prompt, rebuild it from the new default.
+- **Codex “async” questions** — Codex can now ask questions without pausing its work. Answer them alongside your next message.
 - **Orchestration activity** — The Orchestration tab shows at a glance when its sessions or subagents are working.
 - **Task progress** — The Tasks tab shows how many tasks are done out of the total, and a green check once all are done.
 - **MCP Events** — External MCP clients, including ChatGPT Work, can now react when a TwiCC session replies or needs your input (via the `session.concluded` event).
