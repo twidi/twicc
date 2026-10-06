@@ -307,6 +307,95 @@ def test_claude_hybrid_all_file_block_parses_without_the_inline_header():
     assert record["twicc_attachments"]["entries"] == expected_entries(*ALL_FILE)
 
 
+def cli_paste_wrapper(inner: str, paste_id: str = "f79f") -> str:
+    """The shape the bundled CLI (2.1.286) stores for a whole multi-line paste: the closing tag repeats the id."""
+    return f'\n\n<pasted_content id="{paste_id}">\n{inner}\n</pasted_content id="{paste_id}">\n'
+
+
+def test_hybrid_string_wrapped_by_the_cli_paste_tag_is_extracted_and_unwrapped():
+    """Observed on a real hybrid session: the manifest is not at the end of the stored string."""
+    compute = ClaudeCodeSessionCompute()
+    entries = (
+        entry(1, "shot.png", "image", 1, 1, "inline"),
+        entry(2, "notes.txt", "text", 1, 1, "file", "notes.txt"),
+    )
+    record = claude_user(cli_paste_wrapper(f"Look at this\n\n{hybrid_block(CLAUDE_SID, *entries)}"))
+
+    transform(compute, record, session_id=CLAUDE_SID)
+
+    assert record["message"]["content"] == "Look at this"
+    assert record["twicc_attachments"] == {"owner": CLAUDE_SID, "entries": expected_entries(*entries)}
+
+
+def test_wrapped_hybrid_string_without_text_becomes_an_empty_user_message():
+    compute = ClaudeCodeSessionCompute()
+    entries = (entry(1, "shot.png", "image", 1, 1, "inline"),)
+    record = claude_user(cli_paste_wrapper(hybrid_block(CLAUDE_SID, *entries)))
+
+    transform(compute, record, session_id=CLAUDE_SID)
+
+    assert record["message"]["content"] == ""
+    assert record["twicc_attachments"]["owner"] == CLAUDE_SID
+    assert compute.compute_item_kind(record) == ItemKind.USER_MESSAGE
+
+
+def test_wrapped_all_file_hybrid_block_is_extracted():
+    compute = ClaudeCodeSessionCompute()
+    record = claude_user(cli_paste_wrapper(f"Here\n\n{hybrid_block(CLAUDE_SID, *ALL_FILE)}", "a1b2"))
+
+    transform(compute, record, session_id=CLAUDE_SID)
+
+    assert record["message"]["content"] == "Here"
+    assert record["twicc_attachments"]["entries"] == expected_entries(*ALL_FILE)
+
+
+def test_a_wrapper_without_the_paste_id_is_also_unwrapped():
+    compute = ClaudeCodeSessionCompute()
+    record = claude_user(f"<pasted_content>\nHere\n\n{hybrid_block(CLAUDE_SID, *ALL_FILE)}\n</pasted_content>")
+
+    transform(compute, record, session_id=CLAUDE_SID)
+
+    assert record["message"]["content"] == "Here"
+    assert "twicc_attachments" in record
+
+
+def test_a_paste_wrapper_goes_even_without_any_manifest():
+    """For TwiCC the message is the pasted text, attachments or not (the wrapper is the CLI's bookkeeping)."""
+    compute = ClaudeCodeSessionCompute()
+    record = claude_user(cli_paste_wrapper("line one\nline two"))
+
+    transform(compute, record, session_id=CLAUDE_SID)
+
+    assert record["message"]["content"] == "line one\nline two"
+    assert "twicc_attachments" not in record
+
+
+def test_wrapped_block_with_a_wrong_owner_loses_the_wrapper_but_keeps_the_text():
+    """No metadata is extracted (the block is not ours), but the wrapper is still the CLI's, not the user's."""
+    compute = ClaudeCodeSessionCompute()
+    entries = (entry(1, "shot.png", "image", 1, 1, "inline"),)
+    inner = f"hi\n\n{hybrid_block(OTHER_SID, *entries)}"
+    record = claude_user(cli_paste_wrapper(inner))
+
+    transform(compute, record, session_id=CLAUDE_SID)
+
+    assert record["message"]["content"] == inner
+    assert "twicc_attachments" not in record
+
+
+def test_text_outside_the_paste_wrapper_is_not_unwrapped():
+    """Only a wrapper that is the whole string counts: typed text around it means a different message."""
+    compute = ClaudeCodeSessionCompute()
+    entries = (entry(1, "shot.png", "image", 1, 1, "inline"),)
+    content = f"typed before {cli_paste_wrapper(hybrid_block(CLAUDE_SID, *entries))}"
+    record = claude_user(content)
+
+    transform(compute, record, session_id=CLAUDE_SID)
+
+    assert record["message"]["content"] == content
+    assert "twicc_attachments" not in record
+
+
 def test_hybrid_owner_comes_from_the_reference_when_no_file_line():
     entries = (entry(1, "shot.png", "image", 1, 1, "inline"),)
     message = {"content": f"x\n\n{hybrid_block(FORK_PARENT, *entries)}"}

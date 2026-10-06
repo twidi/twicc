@@ -49,6 +49,7 @@ from twicc.context_injection import (
     extract_attachments_block,
     slots_carry_attachments_block,
     strip_context_blocks_in_place,
+    unwrap_cli_paste_in_slots,
 )
 from twicc.core.services.attachments.types import UserTextSlot
 from twicc.core.agent_runs import RunStateExclude, StopStepResult, interaction_payloads, run_stop_step
@@ -1078,23 +1079,27 @@ class BaseSessionCompute:
     ) -> bool:
         """Move a validated ``<twicc:attachments>`` block into ``twicc_attachments``.
 
-        Only the provider's user-message slots are inspected. An existing key is
+        First, the hybrid string slots lose the CLI's paste wrapper
+        (:func:`unwrap_cli_paste_in_slots`), attachments or not. Only the
+        provider's user-message slots are inspected. An existing key is
         never replaced nor removed: a recompute runs on the already-cleaned
         stored copy. Owners are resolved only when a slot carries the tag, so a
         record without it never pays for a lookup. Returns ``True`` when the
         item changed.
         """
-        if ATTACHMENTS_KEY in parsed_json:
-            return False
         slots = self.user_text_slots(parsed_json)
-        if not slots or not slots_carry_attachments_block(slots):
+        if not slots:
             return False
+        # The CLI's paste wrapper goes whether or not the message carries attachments.
+        unwrapped = unwrap_cli_paste_in_slots(slots)
+        if ATTACHMENTS_KEY in parsed_json or not slots_carry_attachments_block(slots):
+            return unwrapped
         self._prepare_attachment_owners(session_id=session_id, in_memory_items=in_memory_items)
         result = extract_attachments_block(
             slots, self.attachment_owners(parsed_json, session_id=session_id), session_id=session_id,
         )
         if result is None:
-            return False
+            return unwrapped
         parsed_json[ATTACHMENTS_KEY] = result
         return True
 

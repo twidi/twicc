@@ -198,6 +198,11 @@ _ATTACHMENTS_BLOCK_RE = re.compile(
 # JSONL with different data dirs.
 _HYBRID_REFERENCE_RE = re.compile(r"/hybrid/([^/]+)/att_[0-9a-f]{12}(?:\.[A-Za-z0-9]+)?$")
 _FILE_DIRECTORY_RE = re.compile(r"/artifacts/([^/]+)/attachments/$")
+# The wrapper the bundled Claude CLI puts around a whole multi-line paste (the whole
+# string, apart from surrounding whitespace; the id is optional and repeated on the closing tag).
+_PASTE_WRAPPER_RE = re.compile(
+    r'\A\s*<pasted_content(?: id="[^"]*")?>\n(.*)\n</pasted_content(?: id="[^"]*")?>\s*\Z', re.DOTALL,
+)
 # The bundled Claude CLI replaces, in place, an image it cannot process by a
 # text block starting with this.
 _IMAGE_PLACEHOLDER_PREFIX = "[Image could not be processed:"
@@ -267,6 +272,30 @@ def _locate_in_array(slot: UserTextSlot) -> _LocatedBlock | None:
                 return _LocatedBlock(slot, entry_text, index, index, None)
         return None
     return None
+
+
+def unwrap_cli_paste_in_slots(slots: tuple[UserTextSlot, ...]) -> bool:
+    """Drop the CLI's paste wrapper from the hybrid string slots, in place. ``True`` when one changed.
+
+    TwiCC pastes a hybrid message in one go and the bundled CLI stores a multi-line paste as
+    ``\\n\\n<pasted_content id="…">\\n<pasted text>\\n</pasted_content id="…">\\n`` (observed on
+    2.1.286, the closing tag repeats the id). That wrapper is the CLI's own bookkeeping: for
+    TwiCC the message is the pasted text, with or without attachments. Only a wrapper that is
+    the whole string, apart from surrounding whitespace, is removed (typed text around it means
+    a different message).
+    """
+    changed = False
+    for slot in slots:
+        if slot.format != _HYBRID_FORMAT:
+            continue
+        value = slot.parent.get(slot.key)
+        if not isinstance(value, str):
+            continue
+        match = _PASTE_WRAPPER_RE.match(value)
+        if match:
+            slot.parent[slot.key] = match.group(1)
+            changed = True
+    return changed
 
 
 def _locate_in_string(slot: UserTextSlot) -> _LocatedBlock | None:
