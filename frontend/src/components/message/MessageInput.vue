@@ -1998,7 +1998,8 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
 
 <template>
     <div class="message-input" ref="rootRef" :class="{ collapsed, 'message-input--has-panel-above': hasPanelAbove,
-        'message-input--has-questions': readyAsyncQuestionCount > 0 && !hideAsyncQuestions }">
+        'message-input--has-questions': readyAsyncQuestionCount > 0 && !hideAsyncQuestions,
+        'message-input--has-question-block': (readyAsyncQuestionCount > 0 || hasCollectingAsyncQuestions) && !hideAsyncQuestions }">
         <!-- Collapsed bar: single line shown in place of the whole composer.
              Clickable anywhere to restore; the explicit button is the visual cue.
              Keeps the .message-input-collapsed-bar class so the collapsed-state
@@ -2436,16 +2437,35 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
    the hybrid terminal block and/or the goal bar — a hairline separates the composer from it
    (each of those panels itself sits under its own wa-divider). Mirrors the
    collapsed-state border so the separator is present whether the composer is a
-   bar or expanded. Ready questions inside the composer use the same top border. */
+   bar or expanded. Ready or pending questions inside the composer use the same top border. */
 .message-input.message-input--has-panel-above,
-.message-input.message-input--has-questions {
+.message-input.message-input--has-question-block {
     border-top: var(--divider-size) solid var(--wa-color-surface-border);
 }
 /* Breathing room below the separator when the composer is expanded under the
-   panel or showing ready questions. (Collapsed, the bar owns its own padding.) */
+   panel or showing ready or pending questions. (Collapsed, the bar owns its own padding.) */
 .message-input.message-input--has-panel-above:not(.collapsed),
-.message-input.message-input--has-questions:not(.collapsed) {
+.message-input.message-input--has-question-block:not(.collapsed) {
     padding-top: var(--wa-space-s);
+}
+
+/* Reserve the shadow reach inside the footer, whose overflow clips outer shadows. */
+.message-input--has-question-block:not(.collapsed) {
+    margin-top: var(--depth-card-reach);
+}
+/* Mirror the downward card shadow above the question block. Clip the pseudo-element
+   to that edge, outside the questions scroller and without shadowing the textarea. */
+.message-input--has-question-block:not(.collapsed)::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    box-shadow: var(--depth-card);
+    clip-path: inset(100% 0 calc(-1 * var(--depth-card-reach)) 0);
+    transform: scaleY(-1);
+}
+:global(:root.reduce-effects .message-input--has-question-block::before) {
+    display: none;
 }
 
 .collapse-toggle-btn {
@@ -2474,6 +2494,9 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
 
 .message-input--has-questions > wa-textarea::part(textarea) {
     max-height: 20dvh;
+}
+.async-question-pending {
+    font-style: italic;
 }
 .async-question-pending,
 .async-question-notice {
