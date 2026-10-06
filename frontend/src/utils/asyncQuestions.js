@@ -59,12 +59,18 @@ export function formatAsyncQuestionMessage(batches, answers, text) {
     for (const batch of orderedBatches(batches)) {
         for (const question of [...batch.questions].sort((a, b) => a.index - b.index)) {
             const value = selected.get(JSON.stringify([batch.item_id, question.index]))
-            if (value !== undefined) sections.push(`Question: ${question.title}\nAnswer: ${value}`)
+            if (value !== undefined) sections.push(`**Question:** ${question.title}\n\n**Answer:** ${value}`)
         }
     }
     if (!sections.length) return text
-    const message = `Answers to your questions:\n\n${sections.join('\n\n')}`
-    return hasText(text) ? `${message}\n\nAdditional message:\n${text}` : message
+    const body = sections.join('\n\n')
+    // Match the code-comment generator; scan Markdown line endings without changing content.
+    const runs = body.replace(/\r\n?/g, '\n').matchAll(/(?:^|\n) {0,3}(:{3,})/g)
+    let max = 2
+    for (const match of runs) max = Math.max(max, match[1].length)
+    const marker = ':'.repeat(max + 1)
+    const message = `${marker} Answers to your questions\n\n${body}\n\n${marker}`
+    return hasText(text) ? `${message}\n\n${text}` : message
 }
 
 /** `choices` is the complete persisted question-draft record, not its choices map. */

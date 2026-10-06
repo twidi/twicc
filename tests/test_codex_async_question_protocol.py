@@ -523,10 +523,10 @@ def test_formatter_matches_spec_and_orders_answers_by_source():
         {"item_id": "q1", "index": 2, "kind": "option", "value": "Yes, retain the menu."},
     ]
     assert format_question_answers(batches, answers, "Limit the tooltip width to 24rem.") == (
-        "Answers to your questions:\n\n"
-        "Question: Should the tooltip retain the session action menu?\nAnswer: Yes, retain the menu.\n\n"
-        "Question: Quelle limite ?\nAnswer: 24rem, merci.\n\n"
-        "Additional message:\nLimit the tooltip width to 24rem."
+        "::: Answers to your questions\n\n"
+        "**Question:** Should the tooltip retain the session action menu?\n\n**Answer:** Yes, retain the menu.\n\n"
+        "**Question:** Quelle limite ?\n\n**Answer:** 24rem, merci.\n\n"
+        ":::\n\nLimit the tooltip width to 24rem."
     )
 
 
@@ -538,13 +538,36 @@ def test_formatter_matches_spec_and_orders_answers_by_source():
         (
             [{"item_id": "q1", "index": 2, "kind": "option", "value": "Yes"}],
             "",
-            "Answers to your questions:\n\nQuestion: Keep the menu?\nAnswer: Yes",
+            "::: Answers to your questions\n\n**Question:** Keep the menu?\n\n**Answer:** Yes\n\n:::",
         ),
         ([{"item_id": "q1", "index": 4, "kind": "other", "value": " "}], "Text", "Text"),
     ],
 )
 def test_formatter_omits_empty_sections(answers, text, expected):
     assert format_question_answers(ready_snapshot()["batches"], answers, text) == expected
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"])
+def test_formatter_preserves_content_and_uses_a_safe_colon_marker(newline):
+    title = f"Choose?{newline}:::{newline}Keep this question"
+    value = f"  First{newline}   :::::  {newline}Last  "
+    batches = [{"item_id": "q1", "questions": [{"index": 2, "title": title}]}]
+    answers = [{"item_id": "q1", "index": 2, "value": value}]
+    assert format_question_answers(batches, answers, "  Free text\n:::::::  ") == (
+        f":::::: Answers to your questions\n\n**Question:** {title}\n\n**Answer:** {value}"
+        "\n\n::::::\n\n  Free text\n:::::::  "
+    )
+
+
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029"])
+def test_formatter_does_not_treat_unicode_separators_as_markdown_line_endings(separator):
+    title = f"Choose?{separator}:::::"
+    value = f"First{separator}:::"
+    batches = [{"item_id": "q1", "questions": [{"index": 2, "title": title}]}]
+    answers = [{"item_id": "q1", "index": 2, "value": value}]
+    assert format_question_answers(batches, answers, "") == (
+        f"::: Answers to your questions\n\n**Question:** {title}\n\n**Answer:** {value}\n\n:::"
+    )
 
 
 def test_repeated_pending_decision_does_not_erase_continuation_link():

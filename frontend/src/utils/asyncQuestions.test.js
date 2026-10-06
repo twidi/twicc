@@ -17,30 +17,49 @@ describe('async question pure transforms', () => {
         assert.equal(questions.formatAsyncQuestionMessage([batch()], [
             { item_id: 'q1', index: 4, kind: 'other', value: '  Details\nnext  ' },
             { item_id: 'q1', index: 2, kind: 'option', value: 'Oui' },
-        ], 'Keep text.\n'), 'Answers to your questions:\n\nQuestion: Quelle action ?\nAnswer: Oui\n\nQuestion: Details?\nAnswer:   Details\nnext  \n\nAdditional message:\nKeep text.\n')
+        ], 'Keep text.\n'), '::: Answers to your questions\n\n**Question:** Quelle action ?\n\n**Answer:** Oui\n\n**Question:** Details?\n\n**Answer:**   Details\nnext  \n\n:::\n\nKeep text.\n')
         assert.equal(questions.formatAsyncQuestionMessage([batch()], [{ item_id: 'q1', index: 4, value: '  ' }], ' raw '), ' raw ')
+    })
+    it('preserves content and uses a safe colon marker for Markdown line endings', () => {
+        for (const newline of ['\n', '\r\n', '\r']) {
+            const title = `Choose?${newline}:::${newline}Keep this question`
+            const value = `  First${newline}   :::::  ${newline}Last  `
+            const source = [{ item_id: 'q1', questions: [{ index: 2, title }] }]
+            assert.equal(questions.formatAsyncQuestionMessage(source, [{ item_id: 'q1', index: 2, value }],
+                '  Free text\n:::::::  '),
+                `:::::: Answers to your questions\n\n**Question:** ${title}\n\n**Answer:** ${value}\n\n::::::\n\n  Free text\n:::::::  `)
+        }
+    })
+    it('does not treat Unicode separators as Markdown line endings', () => {
+        for (const separator of ['\u2028', '\u2029']) {
+            const title = `Choose?${separator}:::::`
+            const value = `First${separator}:::`
+            const source = [{ item_id: 'q1', questions: [{ index: 2, title }] }]
+            assert.equal(questions.formatAsyncQuestionMessage(source, [{ item_id: 'q1', index: 2, value }], ''),
+                `::: Answers to your questions\n\n**Question:** ${title}\n\n**Answer:** ${value}\n\n:::`)
+        }
     })
     it('orders canonical source lines before timestamps and anchors unlined batches', () => {
         const a = { ...batch('a'), line: 2, at: '2026-10-05T12:00:00Z' }
         const b = { ...batch('b'), line: 1, at: '2026-10-05T13:00:00Z' }
         const c = { ...batch('c'), line: null, at: '2026-10-05T12:30:00Z' }
         const output = questions.formatAsyncQuestionMessage([a, b, c], ['a', 'b', 'c'].map(item_id => ({ item_id, index: 2, value: item_id })), '')
-        assert.ok(output.indexOf('Answer: c') < output.indexOf('Answer: b'))
-        assert.ok(output.indexOf('Answer: b') < output.indexOf('Answer: a'))
+        assert.ok(output.indexOf('**Answer:** c') < output.indexOf('**Answer:** b'))
+        assert.ok(output.indexOf('**Answer:** b') < output.indexOf('**Answer:** a'))
     })
     it('matches Python whitespace and microsecond ordering', () => {
         assert.equal(questions.formatAsyncQuestionMessage([batch()], [{ item_id: 'q1', index: 2, value: '\u0085' }], 'text'), 'text')
         assert.equal(questions.formatAsyncQuestionMessage([batch()], [{ item_id: 'q1', index: 2, value: '\uFEFF' }], '\u0085'),
-            'Answers to your questions:\n\nQuestion: Quelle action ?\nAnswer: \uFEFF')
+            '::: Answers to your questions\n\n**Question:** Quelle action ?\n\n**Answer:** \uFEFF\n\n:::')
         const a = { ...batch('a'), line: null, at: '2026-10-05T09:12:06.000002Z' }
         const b = { ...batch('b'), line: null, at: '2026-10-05T09:12:06.000001Z' }
         const output = questions.formatAsyncQuestionMessage([a, b], ['a', 'b'].map(item_id => ({ item_id, index: 2, value: item_id })), '')
-        assert.ok(output.indexOf('Answer: b') < output.indexOf('Answer: a'))
+        assert.ok(output.indexOf('**Answer:** b') < output.indexOf('**Answer:** a'))
     })
     it('recovers Other text once without changing existing draft text or attachments', () => {
         const draft = { message: 'Keep the original draft.', mediaIds: ['image'] }
         const first = questions.recoverResolvedAnswers({ draft, choices: record(), snapshot: resolved() })
-        assert.ok(first.draft.message.includes('Answer: My own answer'))
+        assert.ok(first.draft.message.includes('**Answer:** My own answer'))
         assert.ok(first.draft.message.endsWith(draft.message))
         assert.deepEqual(first.draft.mediaIds, ['image'])
         assert.deepEqual(first.recoveredIds, ['q1'])
@@ -53,7 +72,7 @@ describe('async question pure transforms', () => {
         const choices = record()
         choices.choices.q1 = { 4: { kind: 'other', value: 'Retained answer' } }
         const result = questions.recoverResolvedAnswers({ draft: {}, choices, snapshot: resolved('dismissed') })
-        assert.ok(result.draft.message.includes('Question: Details?\nAnswer: Retained answer'))
+        assert.ok(result.draft.message.includes('**Question:** Details?\n\n**Answer:** Retained answer'))
     })
     it('consumes matching local dismissals and sends without external text', () => {
         for (const status of ['dismissed', 'sent']) {
@@ -70,7 +89,7 @@ describe('async question pure transforms', () => {
         const result = questions.recoverResolvedAnswers({ draft: { message: 'Keep' }, choices: record(),
             snapshot: resolved('sent', 'legacy'),
             pendingSends: { legacy: { async_questions: { batch_ids: ['q1'] }, status: 'accepted' } } })
-        assert.match(result.draft.message, /Answer: My own answer/)
+        assert.match(result.draft.message, /\*\*Answer:\*\* My own answer/)
         assert.ok(result.draft.message.endsWith('Keep'))
         assert.deepEqual(result.choices.choices, {})
     })

@@ -172,7 +172,7 @@ usePendingRequestSubmitShortcut((event) => {
 </script>
 
 <template>
-    <div class="plan-implementation-body">
+    <div v-scroll-shadow class="plan-implementation-body">
         <div class="plan-section">
             <span class="summary-label">Implement this plan?</span>
             <span class="plan-hint">

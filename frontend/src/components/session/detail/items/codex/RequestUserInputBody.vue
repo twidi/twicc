@@ -159,7 +159,9 @@ usePendingRequestDraft({
 
 <template>
     <div class="request-user-input-body">
+        <!-- Only blocking fields scroll. Async fields use their outer host scroller. -->
         <QuestionFields
+            v-scroll-shadow
             ref="fieldsRef"
             v-model="fieldAnswers"
             :questions="fieldQuestions"

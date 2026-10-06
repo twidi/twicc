@@ -217,7 +217,7 @@ watch(() => props.pendingRequest?.request_id, (newId, oldId) => {
         motion's wrapper (its height animates).
     -->
     <wa-divider></wa-divider>
-    <div ref="rootRef" class="pending-request-form" :class="{ maximized: isMaximized, minimized: isMinimized }">
+    <div v-scroll-shadow ref="rootRef" class="pending-request-form" :class="{ maximized: isMaximized, minimized: isMinimized }">
         <!-- Minimized: a single-line bar identical in look/behaviour to the message
              input's collapsed bar (clickable anywhere + chevron to restore), shown
              in place of the normal header's window controls. Independent of the

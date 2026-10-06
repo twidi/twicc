@@ -39,7 +39,7 @@ function updateChoices(batch, choices) {
 </script>
 
 <template>
-    <div class="async-questions">
+    <div v-scroll-shadow class="async-questions">
         <div v-for="batch in batches" :key="batch.item_id" class="async-question-batch">
             <QuestionFields
                 :questions="fields(batch)"

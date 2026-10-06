@@ -68,7 +68,7 @@ usePendingRequestSubmitShortcut((event) => {
 </script>
 
 <template>
-    <div class="auto-review-denial-body">
+    <div v-scroll-shadow class="auto-review-denial-body">
         <div class="denial-section">
             <div class="denial-summary">
                 <span class="summary-label">Auto-review denied this action</span>

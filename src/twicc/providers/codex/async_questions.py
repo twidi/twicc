@@ -8,6 +8,7 @@ so compute processes can return them without writing session state.
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from datetime import datetime
 from functools import cmp_to_key
@@ -679,10 +680,15 @@ def format_question_answers(batches: list[dict], answers: list[dict], text: str)
         for question in sorted(batch["questions"], key=lambda entry: entry["index"]):
             value = selected.get((batch["item_id"], question["index"]))
             if value is not None:
-                sections.append(f"Question: {question['title']}\nAnswer: {value}")
+                sections.append(f"**Question:** {question['title']}\n\n**Answer:** {value}")
     if not sections:
         return text
-    message = "Answers to your questions:\n\n" + "\n\n".join(sections)
+    body = "\n\n".join(sections)
+    # Match the code-comment generator: use more colons than any body line starts with.
+    # Normalize line endings only for scanning, as Markdown does before parsing.
+    runs = re.findall(r"^ {0,3}(:{3,})", body.replace("\r\n", "\n").replace("\r", "\n"), re.MULTILINE)
+    marker = ":" * (max((len(run) for run in runs), default=2) + 1)
+    message = f"{marker} Answers to your questions\n\n{body}\n\n{marker}"
     if text.strip():
-        message += f"\n\nAdditional message:\n{text}"
+        message += f"\n\n{text}"
     return message

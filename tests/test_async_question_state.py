@@ -150,7 +150,7 @@ def test_prepare_formats_answers_without_retiring(session):
     )
     assert (
         prepared.text
-        == "Answers to your questions:\n\nQuestion: Keep the menu?\nAnswer: Yes\n\nAdditional message:\nHello"
+        == "::: Answers to your questions\n\n**Question:** Keep the menu?\n\n**Answer:** Yes\n\n:::\n\nHello"
     )
     assert prepared.submission["status"] == "prepared"
     assert prepared.submission["client_message_id"] == "send-1"

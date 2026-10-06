@@ -16,7 +16,7 @@ it('snapshots raw text, selected answers and every ready batch once', () => {
     const send = outgoing()
     assert.equal(send.rawText, '  Extra text  ')
     assert.deepEqual(send.asyncQuestions.batch_ids, ['q1', 'unanswered'])
-    assert.equal(send.text, 'Answers to your questions:\n\nQuestion: Choose?\nAnswer: Original answer\n\nAdditional message:\n  Extra text  ')
+    assert.equal(send.text, '::: Answers to your questions\n\n**Question:** Choose?\n\n**Answer:** Original answer\n\n:::\n\n  Extra text  ')
     assert.equal(questions.asyncQuestionRetryState(send, { ...ready(), revision: 99 }).canRetry, true)
     assert.equal(questions.asyncQuestionRetryState(send, ready()).text, send.rawText)
 })
@@ -531,7 +531,7 @@ for (const order of ['ack', 'snapshot', 'reload-before-ack', 'reload-after-ack']
         assert.match(text, /Newly answered/)
         assert.ok(text.endsWith('New draft text'))
         assert.doesNotMatch(text, /Original answer/)
-        assert.equal(text.split('Answers to your questions:').length - 1, 1)
+        assert.equal(text.split('Answers to your questions').length - 1, 1)
         assert.deepEqual(h.state.localState.asyncQuestionDrafts.s.choices, {})
     })
 }

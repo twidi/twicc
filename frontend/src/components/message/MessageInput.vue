@@ -771,7 +771,7 @@ const collapsedLabel = computed(() => {
     if (readyAsyncQuestionCount.value > 0) {
         parts.push(`${readyAsyncQuestionCount.value} question${readyAsyncQuestionCount.value === 1 ? '' : 's'} ready`)
     }
-    if (hasCollectingAsyncQuestions.value) parts.push('Questions pending')
+    if (hasCollectingAsyncQuestions.value) parts.push('Questions pending...')
     if (parts.length) return `${parts.join(' · ')} · ${collapsedMessageLabel.value}`
     return collapsedMessageLabel.value
 })
@@ -2070,8 +2070,19 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
                 {{ commentsWithContentCount === 1 ? 'Clear comment' : 'Clear comments' }}
             </wa-button>
         </div>
-        <div v-if="hasCollectingAsyncQuestions && !hideAsyncQuestions" class="async-question-pending" role="status">
-            Questions pending
+        <div
+            v-if="(readyAsyncQuestionCount > 0 || hasCollectingAsyncQuestions) && !hideAsyncQuestions"
+            class="async-question-header"
+        >
+            <wa-icon name="circle-question" class="async-question-header-icon"></wa-icon>
+            <span v-if="readyAsyncQuestionCount > 0" class="async-question-header-description">
+                {{ readyAsyncQuestionCount === 1
+                    ? 'Along with your next message, you can answer the following question.'
+                    : 'Along with your next message, you can answer the following questions.' }}
+            </span>
+            <span v-if="hasCollectingAsyncQuestions" class="async-question-pending" role="status">
+                Questions pending...
+            </span>
         </div>
         <div v-if="asyncQuestionNotice" class="async-question-notice" role="status">{{ asyncQuestionNotice }}</div>
         <AsyncQuestions
@@ -2449,25 +2460,6 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
     padding-top: var(--wa-space-s);
 }
 
-/* Reserve the shadow reach inside the footer, whose overflow clips outer shadows. */
-.message-input--has-question-block:not(.collapsed) {
-    margin-top: var(--depth-card-reach);
-}
-/* Mirror the downward card shadow above the question block. Clip the pseudo-element
-   to that edge, outside the questions scroller and without shadowing the textarea. */
-.message-input--has-question-block:not(.collapsed)::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    box-shadow: var(--depth-card);
-    clip-path: inset(100% 0 calc(-1 * var(--depth-card-reach)) 0);
-    transform: scaleY(-1);
-}
-:global(:root.reduce-effects .message-input--has-question-block::before) {
-    display: none;
-}
-
 .collapse-toggle-btn {
     position: absolute;
     top: 10px;
@@ -2495,7 +2487,29 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
 .message-input--has-questions > wa-textarea::part(textarea) {
     max-height: 20dvh;
 }
+.async-question-header {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--wa-space-xs);
+    font-size: var(--wa-font-size-s);
+    font-weight: 600;
+    color: var(--wa-color-brand-60);
+}
+.async-question-header-icon {
+    flex-shrink: 0;
+}
+.async-question-header:has(.async-question-pending) {
+    margin-bottom: var(--wa-space-xs);
+}
+.async-question-header-description {
+    flex: 1;
+    min-width: 0;
+    font-weight: var(--wa-font-weight-normal);
+    color: var(--wa-color-text-quiet);
+}
 .async-question-pending {
+    font-weight: var(--wa-font-weight-normal);
     font-style: italic;
 }
 .async-question-pending,

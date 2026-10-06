@@ -199,8 +199,8 @@ def test_recorded_questions_hydrate_and_send_partial_answers_text_and_attachment
     original = list(SessionItem.objects.filter(session=harness.session).order_by("line_num")
                     .values_list("content", flat=True))
     image = {"source": {"type": "base64", "media_type": "image/png", "data": "YWJj"}}
-    expected = ("Answers to your questions:\n\nQuestion: " + OBSERVED[0][1] + "\nAnswer: " + OBSERVED[0][2][0]
-                + "\n\nAdditional message:\nLimit the tooltip width to 24rem.")
+    expected = ("::: Answers to your questions\n\n**Question:** " + OBSERVED[0][1] + "\n\n**Answer:** " + OBSERVED[0][2][0]
+                + "\n\n:::\n\nLimit the tooltip width to 24rem.")
     monkeypatch.setattr(asgi, "ensure_provider_running", lambda *_: None)
     monkeypatch.setattr(asgi, "get_project_directory", AsyncMock(return_value=harness.session.project.directory))
     monkeypatch.setattr(asgi, "get_agent_manager_registry", lambda: SimpleNamespace(get=lambda *_: harness.manager))
@@ -385,7 +385,7 @@ def test_uncertain_combined_send_recovers_native_acceptance_without_reformatting
     stored = deepcopy(AsyncQuestionState.objects.get(session=harness.session).state["facts"]["send:send-1"])
     assert stored["data"]["status"] == "uncertain"
     final_text = harness.thread.turn_with_policy.await_args.args[0][0].text
-    assert final_text.count("Answers to your questions:") == 1
+    assert final_text.count("Answers to your questions") == 1
     harness.ingest([source_user(final_text, request_id="send-1")])
     assert harness.run(lambda: harness.send("Keep draft text", response))
     assert harness.thread.turn_with_policy.await_count == 1
@@ -437,7 +437,7 @@ def test_definite_sdk_rejection_preserves_ready_batches_and_submission_boundary(
     data = AsyncQuestionState.objects.get(session=harness.session).state["facts"]["send:send-1"]["data"]
     assert data["status"] == "rejected"
     assert data["boundary"]["batch_ids"] == [OBSERVED[0][0]]
-    assert data["text"].endswith("Additional message:\nKeep draft text")
+    assert data["text"].endswith("\n\n:::\n\nKeep draft text")
 
 
 @pytest.mark.parametrize("mode", ["answers", "text", "attachment"])
@@ -453,7 +453,7 @@ def test_optional_answers_use_the_normal_send_path_and_retire_ready_batches(harn
     if mode == "text":
         assert inputs[0].text == "A natural answer"
     elif mode == "answers":
-        assert inputs[0].text == f"Answers to your questions:\n\nQuestion: {OBSERVED[0][1]}\nAnswer: {OBSERVED[0][2][0]}"
+        assert inputs[0].text == f"::: Answers to your questions\n\n**Question:** {OBSERVED[0][1]}\n\n**Answer:** {OBSERVED[0][2][0]}\n\n:::"
     else:
         assert len(inputs) == 1
         assert inputs[0].url == "data:image/png;base64,YWJj"

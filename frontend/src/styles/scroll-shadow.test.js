@@ -71,3 +71,39 @@ test('6. wired in main.js: stylesheet, install, directive', () => {
     assert.ok(main.includes('installScrollEdges()'))
     assert.ok(main.includes("app.directive('scroll-shadow', vScrollShadow)"))
 })
+
+test('7. request shadows attach to the outer cards and every provider-owned scrolling element', () => {
+    const scrollers = [
+        ['message/AsyncQuestions.vue', 'async-questions'],
+        ['message/PendingRequestForm.vue', 'pending-request-form'],
+        ['session/detail/items/claude_code/PendingRequestBody.vue', 'pending-request-details'],
+        ['session/detail/items/claude_code/PendingRequestBody.vue', 'questions-container'],
+        ['session/detail/items/codex/PendingRequestBody.vue', 'codex-pending-body'],
+        ['session/detail/items/codex/AutoReviewDenialBody.vue', 'auto-review-denial-body'],
+        ['session/detail/items/codex/McpToolCallApprovalBody.vue', 'mcp-approval-body'],
+        ['session/detail/items/codex/PlanImplementationBody.vue', 'plan-implementation-body'],
+        ['session/detail/items/shared/ElicitationFormBody.vue', 'elicitation-form-body'],
+        ['session/detail/items/shared/ElicitationUrlBody.vue', 'elicitation-url-body'],
+    ]
+    for (const [path, className] of scrollers) {
+        const source = read(`../components/${path}`)
+        assert.match(source, new RegExp(`<div\\b[^>]*\\bv-scroll-shadow\\b[^>]*class="${className}"`), path)
+        // Each target owns a scroll box. Fragment roots and the minimized bar are not targets.
+        assert.match(source, new RegExp(`\\.${className} \\{[^}]*overflow-y: auto;`), path)
+        assert.doesNotMatch(source, new RegExp(`\\.${className}[^,{]*::(?:before|after)\\b`), path)
+    }
+    const shell = read('../components/message/PendingRequestForm.vue')
+    assert.doesNotMatch(shell, /<(?:CollapsedBar|component)\b[^>]*\bv-scroll-shadow\b/)
+})
+
+test('8. shared QuestionFields get shadows only when the blocking host owns their scroll box', () => {
+    const blocking = read('../components/session/detail/items/codex/RequestUserInputBody.vue')
+    assert.match(blocking, /<QuestionFields\b[^>]*\bv-scroll-shadow\b/)
+    const fields = read('../components/message/QuestionFields.vue')
+    assert.match(fields, /<div class="questions-container">/)
+    assert.match(fields, /\.questions-container \{[^}]*overflow-y: auto;/)
+    assert.doesNotMatch(fields, /v-scroll-shadow/)
+    const async = read('../components/message/AsyncQuestions.vue')
+    assert.doesNotMatch(async, /<QuestionFields\b[^>]*\bv-scroll-shadow\b/)
+    assert.match(async, /\.async-question-batch :deep\(\.questions-container\) \{[^}]*overflow-y: visible;/)
+})

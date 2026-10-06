@@ -82,7 +82,7 @@ function recovery() {
     db.transactions.length = 0
     const entry = {
         sessionId: 's', requestId: 'failed', code: 'async_questions_not_admitted', rawText: '  Extra text  ',
-        text: 'Answers to your questions:\n\nQuestion: Choose?\nAnswer: Alpha\n\nAdditional message:\n  Extra text  ',
+        text: '::: Answers to your questions\n\n**Question:** Choose?\n\n**Answer:** Alpha\n\n:::\n\n  Extra text  ',
         questionDraft: captured, asyncQuestions: { batch_ids: ['q1'], answers: [{ item_id: 'q1', question_index: 0, answer: 'Alpha' }] },
         medias: [png],
     }

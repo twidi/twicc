@@ -103,7 +103,7 @@ def test_answer_only_is_a_real_message(harness):
     assert asyncio.run(harness.send(payload=response())) is True
     assert (
         harness.agent.send.await_args.args[0]
-        == "Answers to your questions:\n\nQuestion: Open the session?\nAnswer: Yes"
+        == "::: Answers to your questions\n\n**Question:** Open the session?\n\n**Answer:** Yes\n\n:::"
     )
     assert snapshot(harness)["resolutions"]["q1"]["status"] == "sent"
 
@@ -112,7 +112,7 @@ def test_combined_send_retains_source_language_and_attachment(harness):
     image = {"source": {"data": "abc"}}
     asyncio.run(harness.send("Gardez ceci.", response("Non"), images=[image]))
     assert harness.agent.send.await_count == 1
-    assert harness.agent.send.await_args.args[0].endswith("Answer: Non\n\nAdditional message:\nGardez ceci.")
+    assert harness.agent.send.await_args.args[0].endswith("**Answer:** Non\n\n:::\n\nGardez ceci.")
     assert harness.agent.send.await_args.kwargs["images"] == [image]
 
 
@@ -908,7 +908,7 @@ def test_definite_retry_preserves_boundary_and_does_not_format_twice(harness):
     harness.agent.send.return_value = True
     assert asyncio.run(harness.send(before["text"], response())) is True
     assert harness.agent.send.await_args.args[0] == before["text"]
-    assert before["text"].count("Answers to your questions:") == 1
+    assert before["text"].count("Answers to your questions") == 1
     after = AsyncQuestionState.objects.get(session=harness.session).state["facts"]["send:send-1"]["data"]
     assert after["boundary"] == before["boundary"]
     assert after["status"] == "accepted"
@@ -1062,7 +1062,7 @@ def test_real_agent_sends_one_combined_text_with_images(harness, monkeypatch):
             assert items[0].url == "data:image/png;base64,YWJj"
             assert (
                 items[1].text
-                == "Answers to your questions:\n\nQuestion: Open the session?\nAnswer: Non\n\nAdditional message:\nGardez ceci."
+                == "::: Answers to your questions\n\n**Question:** Open the session?\n\n**Answer:** Non\n\n:::\n\nGardez ceci."
             )
         finally:
             if agent._turn_task:
