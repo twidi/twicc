@@ -1113,6 +1113,7 @@ export class CodexToolHelpers extends BaseToolHelpers {
         // role of Claude Code's ``TodoWrite``, so users see the same
         // header word across providers.
         if (name === 'update_plan') return 'Todo'
+        if (name === 'request_user_input_async') return 'Request user input'
         // ``clock.sleep`` (namespaced function call, name ``clock__sleep``):
         // the "Clock" namespace adds nothing, so the title is just "Sleep"
         // plus the requested duration, so the card reads without being opened.
