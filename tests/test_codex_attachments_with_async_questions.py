@@ -238,6 +238,38 @@ def test_a_retry_of_the_same_request_never_folds_the_answers_twice(harness):
 
 
 @pytest.mark.django_db(transaction=True)
+def test_a_stale_rejection_after_the_commit_then_a_retry_under_a_new_request_id_sends_once(harness, released, monkeypatch):
+    stale = {**ANSWERS, "batch_ids": ["gone"], "answers": [{**ANSWERS["answers"][0], "item_id": "gone"}]}
+    # The attachments are committed with the raw text at entry; the question guard then refuses the send.
+    with pytest.raises(SendDeliveryError) as refused:
+        asyncio.run(harness.send("Keep this.", stale, request_id="send-1"))
+    assert refused.value.code == "async_questions_stale"
+    assert harness.commits == ["Keep this."]
+    harness.agent.send.assert_not_awaited()
+    assert released == []
+
+    # The same refs are usable again under a NEW request id: committed again (same-session tombstones),
+    # answers folded exactly once.
+    assert asyncio.run(harness.send("Keep this.", ANSWERS, request_id="send-2")) is True
+    assert harness.commits == ["Keep this.", "Keep this."]
+    harness.agent.send.assert_awaited_once()
+    text = harness.agent.send.await_args.args[0]
+    content = harness.agent.send.await_args.kwargs["content"]
+    assert text == f"{ANSWER_TEXT}\n\nKeep this."
+    assert content.user_text == text
+    assert text.count("Answers to your questions") == 1
+    assert harness.agent.send.await_args.kwargs["submission"]["request_id"] == "send-2"
+    assert service.read_question_snapshot(harness.session.id)["resolutions"]["q1"]["status"] == "sent"
+    assert released == []
+
+    # The pending context is folded exactly once into the final turn input.
+    events: list = []
+    items = _items(_make_agent(monkeypatch, events, pending="<ctx>"), text, content)
+    assert items[-1].text == f"<ctx>{text}"
+    assert [event for event in events if event[0] == "pending"] == [("pending", content.user_text)]
+
+
+@pytest.mark.django_db(transaction=True)
 def test_answers_with_a_command_and_attachments_are_refused_before_any_delivery(harness):
     harness.manager._dispatch_hardcoded_command = AsyncMock()
     with pytest.raises(SendDeliveryError):
