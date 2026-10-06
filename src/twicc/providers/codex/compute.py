@@ -4702,6 +4702,11 @@ class CodexSessionCompute(BaseSessionCompute):
             return canonical_result_item(parsed_json) is not None
         return False
 
+    def extract_async_question_facts(self, parsed: dict, *, line: int) -> list:
+        from .async_questions import extract_async_question_facts
+
+        return extract_async_question_facts(parsed, line=line)
+
     def extract_history_facts(
         self, parsed: dict, *, line_num: int, history: HistoryFactContext,
     ) -> list[HistoryFact]:

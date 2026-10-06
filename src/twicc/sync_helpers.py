@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
@@ -110,7 +111,7 @@ def check_file_has_content(file_path: Path) -> bool:
 
 
 def read_session_items_from_file(
-    session: Session, file_path: Path
+    session: Session, file_path: Path, on_error: Callable[[OSError], None] | None = None,
 ) -> SessionItemsToInsert | None:
     """
     Read new lines from a JSONL file and return what should be inserted.
@@ -125,6 +126,8 @@ def read_session_items_from_file(
     since last sync). Exception: an unchanged file whose session is still
     flagged ``stale`` yields an empty result (no items) instead of ``None``,
     so the caller can enqueue a stale-clearing ``UpdateSessionPayload``.
+    ``on_error`` reports skipped stat/read failures without changing the
+    return value. An unchanged file does not call it.
     """
     # EAFP, not LBYL: stat()/open() are attempted directly and any OSError
     # (typically FileNotFoundError from the file vanishing between a scan
@@ -132,7 +135,9 @@ def read_session_items_from_file(
     # exists() check would only reintroduce a TOCTOU race.
     try:
         stat = file_path.stat()
-    except OSError:
+    except OSError as error:
+        if on_error is not None:
+            on_error(error)
         return None
     file_mtime = stat.st_mtime
 
@@ -173,7 +178,9 @@ def read_session_items_from_file(
             f.seek(session.last_offset)
             raw = f.read()
             last_offset = f.tell()
-    except OSError:
+    except OSError as error:
+        if on_error is not None:
+            on_error(error)
         return None
 
     try:

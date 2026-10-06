@@ -1,4 +1,6 @@
 /** Browser-owned one-shot entries. This module never reads server session rows. */
+import { retainsAsyncQuestionSend } from './asyncQuestions.js'
+
 export const isLaunchedEphemeral = session => session?.ephemeral === true && !session.draft
 
 export function ephemeralFields(session) {
@@ -35,8 +37,58 @@ export function summarizeEphemeralAttachments(items = []) {
 }
 
 /** Send failure consumption is shared with Pinia, including persistent snapshot disposal. */
-export function createSendFailureActions(inflightSends) {
+export function createSendFailureActions(inflightSends, { deleteInflight } = {}) {
     return {
+        forgetAsyncQuestionSends(sessionId) {
+            for (const [id, entry] of inflightSends) {
+                if (entry.sessionId === sessionId && retainsAsyncQuestionSend(entry)) inflightSends.delete(id)
+            }
+            for (const [id, entry] of Object.entries(this.localState.failedSends[sessionId] || {})) {
+                if (retainsAsyncQuestionSend(entry)) delete this.localState.failedSends[sessionId][id]
+            }
+            if (this.localState.failedSends[sessionId] && !Object.keys(this.localState.failedSends[sessionId]).length) {
+                delete this.localState.failedSends[sessionId]
+            }
+            this.recomputeVisualItems?.(sessionId)
+        },
+        markInflightSendAccepted(sessionId, requestId) {
+            let entry = inflightSends.get(requestId)
+            if (!entry) {
+                const failed = this.localState.failedSends[sessionId]?.[requestId]
+                if (failed) {
+                    entry = { ...failed, sessionId }
+                    inflightSends.set(requestId, entry)
+                    this.removeFailedSend(sessionId, requestId, { preserveSnapshot: true })
+                }
+            }
+            if (entry) { entry.status = 'accepted'; entry.acceptancePending = true }
+        },
+        _dropInflightSend(requestId, { acceptancePersisted = false } = {}) {
+            const entry = inflightSends.get(requestId)
+            if (retainsAsyncQuestionSend(entry) && !acceptancePersisted) return false
+            inflightSends.delete(requestId)
+            if (entry) this.releaseAsyncQuestionSendLock?.(entry.sessionId, requestId)
+            Promise.resolve(deleteInflight(requestId)).catch(error => console.warn('Failed to delete in-flight send snapshot:', error))
+            return true
+        },
+        confirmInflightSend(sessionId, requestId, options) {
+            if (!this._dropInflightSend(requestId, options)) return
+            if (sessionId) this.removeFailedSend(sessionId, requestId)
+        },
+        shouldAuditInflightSend(requestId) {
+            const entry = inflightSends.get(requestId)
+            return !!entry && !retainsAsyncQuestionSend(entry) && entry.status !== 'accepted'
+        },
+        failPendingSendsForSession(sessionId, info) {
+            let any = false
+            for (const [id, entry] of inflightSends) {
+                if (entry.sessionId !== sessionId || entry.status === 'accepted' || retainsAsyncQuestionSend(entry)) continue
+                inflightSends.delete(id)
+                this._applySendFailure(id, entry, info)
+                any = true
+            }
+            return any
+        },
         dropDiscardedSendFailure(requestId, entry) {
             if (!this.isEphemeralDiscarded(entry.sessionId)
                 && !(entry.ephemeral && !this.sessions[this.localState.draftAliases[entry.sessionId] || entry.sessionId])) return false
@@ -46,6 +98,7 @@ export function createSendFailureActions(inflightSends) {
         failInflightSend(requestId, info) {
             const entry = inflightSends.get(requestId)
             if (!entry) return false
+            if (entry.status === 'accepted') return true
             inflightSends.delete(requestId)
             if (!this.dropDiscardedSendFailure(requestId, entry)) this._applySendFailure(requestId, entry, info)
             return true

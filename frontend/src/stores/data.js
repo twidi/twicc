@@ -48,7 +48,15 @@ import {
     deleteDraftAttachmentsBySession,
     getAllDraftAttachments,
     getDraftAttachmentsBySession,
+    getAllAsyncQuestionDrafts,
+    deleteAsyncQuestionRecovery,
+    saveAsyncQuestionRecovery,
+    stageAsyncQuestionSend,
+    markAsyncQuestionSendDispatched,
+    restoreStagedAsyncQuestionSend,
 } from '../utils/draftStorage'
+import { createAsyncQuestionActions } from '../utils/asyncQuestionState'
+import { retainsAsyncQuestionSend } from '../utils/asyncQuestions'
 import { saveInflightSend, deleteInflightSend, getAllInflightSends } from '../utils/inflightStorage'
 import { liveDraftKey, sweepPendingRequestDrafts } from '../utils/pendingRequestDraftStorage'
 import { mediasToSdkFormat } from '../utils/fileUtils'
@@ -665,6 +673,11 @@ export const useDataStore = defineStore('data', {
             // { sessionId: { message?: string, title?: string } }
             // Persisted to IndexedDB with debounce
             draftMessages: {},
+            draftMessageEdits: {},
+            asyncQuestionSnapshots: {},
+            asyncQuestionDrafts: {},
+            asyncQuestionNotices: {},
+            asyncQuestionSendLocks: {},
 
             // Monotonic per-session counters bumped by appendDraftMessage.
             // A mounted composer watches its counter to resync its textarea:
@@ -1429,6 +1442,12 @@ export const useDataStore = defineStore('data', {
         getDraftMessage: (state) => (sessionId) =>
             state.localState.draftMessages[sessionId] || null,
 
+        getAsyncQuestionSnapshot: (state) => (sessionId) =>
+            state.localState.asyncQuestionSnapshots[sessionId] || null,
+
+        getAsyncQuestionDraft: (state) => (sessionId) =>
+            state.localState.asyncQuestionDrafts[sessionId] || null,
+
         // Get the append signal for a session (see draftAppendSignals)
         getDraftAppendSignal: (state) => (sessionId) =>
             state.localState.draftAppendSignals[sessionId] || 0,
@@ -1513,7 +1532,34 @@ export const useDataStore = defineStore('data', {
     },
 
     actions: {
-        ...createSendFailureActions(inflightSends),
+        ...createSendFailureActions(inflightSends, { deleteInflight: deleteInflightSend }),
+        ...createAsyncQuestionActions({
+            saveMessage: saveDraftMessage,
+            getAll: getAllAsyncQuestionDrafts,
+            getAllMessages: getAllDraftMessages,
+            recover: saveAsyncQuestionRecovery,
+            stageSend: stageAsyncQuestionSend,
+            markDispatched: markAsyncQuestionSendDispatched,
+            restoreStaged: restoreStagedAsyncQuestionSend,
+            remove: deleteAsyncQuestionRecovery,
+            fetch: apiFetch,
+            uuid: generateUUID,
+            send: async frame => {
+                const { sendWsMessage } = await import('../composables/useWebSocket')
+                return sendWsMessage(frame, { buffer: !frame.async_questions })
+            },
+            pendingSends: (sessionId, store) => {
+                const records = Object.fromEntries([...inflightSends].filter(([, entry]) => entry.sessionId === sessionId))
+                for (const [id, entry] of Object.entries(store.localState.failedSends[sessionId] || {})) {
+                    records[id] = { ...entry, status: entry.code === 'send_uncertain' ? 'uncertain' : 'rejected' }
+                }
+                return records
+            },
+            cancelDraftSave: sessionId => {
+                debouncedSaves.get(sessionId)?.cancel()
+                debouncedSaves.delete(sessionId)
+            },
+        }),
         ...createEphemeralActions({
             uuid: generateUUID,
             rekeySession: rekeyDraftSession,
@@ -1759,6 +1805,7 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          */
         removeSession(sessionId) {
+            this.reconcileAsyncQuestionExistence([sessionId]).catch(error => console.warn('Failed to check removed session:', error))
             this.unloadSession(sessionId)
             if (dropsProcessStateOnRemoval(this.processStates, sessionId)) {
                 this._dropProcessState(sessionId)
@@ -2792,6 +2839,7 @@ export const useDataStore = defineStore('data', {
          */
         async loadSessionItems(projectId, sessionId, { isInitialLoading = false } = {}) {
             if (isLaunchedEphemeral(this.sessions[sessionId])) return
+            this.loadAsyncQuestions(projectId, sessionId).catch(error => console.warn('Failed to load async questions:', error))
             // Skip if already fetched
             if (this.localState.sessions[sessionId]?.itemsFetched) {
                 return
@@ -3621,6 +3669,14 @@ export const useDataStore = defineStore('data', {
 
         // Send-failure recovery actions (see registerInflightSend for the flow)
 
+        /** Undo an undispatched send after its atomic draft restore commits. */
+        cancelStagedOutgoingSend(sessionId, requestId) {
+            const entry = inflightSends.get(requestId)
+            if (entry?.optimisticShown) this.clearOptimisticMessage(sessionId)
+            if (entry?.startingSet && this.processStates[sessionId]?.state === PROCESS_STATE.STARTING) delete this.processStates[sessionId]
+            inflightSends.delete(requestId) // The restore transaction already deletes its durable record.
+        },
+
         /**
          * Snapshot an outgoing send so it can be restored if the backend
          * cannot deliver it to the agent.
@@ -3635,25 +3691,17 @@ export const useDataStore = defineStore('data', {
          * @param {string} requestId
          * @param {Object} snapshot - { sessionId, text, attachments, medias, optimisticShown, startingSet, noLineExpected }
          */
-        registerInflightSend(requestId, snapshot) {
+        registerInflightSend(requestId, snapshot, { prePersisted = false } = {}) {
             const now = Date.now()
             for (const [id, entry] of inflightSends) {
                 if (now - entry.sentAt > INFLIGHT_SEND_TTL_MS) this._dropInflightSend(id)
             }
-            const entry = { ...snapshot, sentAt: now }
+            const entry = { ...snapshot, sentAt: snapshot.sentAt || now }
             inflightSends.set(requestId, entry)
             // Write-through to IndexedDB so the snapshot survives a killed
             // or frozen tab (the audit rediscovers it at the next boot).
-            saveInflightSend(requestId, entry).catch(err =>
+            if (!prePersisted) saveInflightSend(requestId, entry).catch(err =>
                 console.warn('Failed to persist in-flight send snapshot:', err)
-            )
-        },
-
-        /** Drop a snapshot from both the registry and IndexedDB. */
-        _dropInflightSend(requestId) {
-            inflightSends.delete(requestId)
-            deleteInflightSend(requestId).catch(err =>
-                console.warn('Failed to delete in-flight send snapshot:', err)
             )
         },
 
@@ -3674,7 +3722,9 @@ export const useDataStore = defineStore('data', {
          *   format (legacy Retry), images/documents in SDK format (for the
          *   optimistic bubble)
          */
-        registerOutgoingSend(sessionId, projectId, requestId, { text, attachments, medias, images, documents }) {
+        registerOutgoingSend(sessionId, projectId, requestId, {
+            text, attachments, medias, images, documents, prePersisted = false, ...questionSend
+        }) {
             const ephemeralSend = this.promoteEphemeralSession(sessionId, { text, attachments, medias })
             const state = this.processStates[sessionId]?.state
             const optimisticShown = state !== PROCESS_STATE.ASSISTANT_TURN
@@ -3691,6 +3741,7 @@ export const useDataStore = defineStore('data', {
             // Send order kept (never re-sorted by position); no preview URL.
             const sentAttachments = snapshotAttachments(attachments || [])
             this.registerInflightSend(requestId, {
+                ...questionSend,
                 sessionId,
                 text,
                 ...(sentAttachments.length ? { attachments: sentAttachments } : {}),
@@ -3699,7 +3750,7 @@ export const useDataStore = defineStore('data', {
                 startingSet,
                 noLineExpected,
                 ephemeral: ephemeralSend,
-            })
+            }, { prePersisted })
             if (optimisticShown) {
                 const sdkAttachments = (images?.length || documents?.length)
                     ? { images, documents }
@@ -3745,7 +3796,7 @@ export const useDataStore = defineStore('data', {
             if (hasFailed) {
                 for (const entry of Object.values(failed)) {
                     const key = inflightSendMatchKey(entry)
-                    if (key && keys.has(key)) this.removeFailedSend(sessionId, entry.requestId)
+                    if (key && keys.has(key) && !retainsAsyncQuestionSend(entry)) this.removeFailedSend(sessionId, entry.requestId)
                 }
             }
         },
@@ -3757,40 +3808,6 @@ export const useDataStore = defineStore('data', {
          * @param {Object} info - { code, message } from the error frame
          * @returns {boolean} true when a snapshot was found and handled
          */
-
-        /**
-         * Positive delivery acknowledgement from the backend (``send_ack``
-         * frame): the message reached the agent. Drop the snapshot, and heal
-         * any failed bubble a lost or premature failure signal produced for
-         * it (the ack is authoritative — it proves delivery). This is the
-         * only confirmation for messages Claude Code accepts mid-turn, which
-         * never get their own user_message line.
-         * @param {string} sessionId
-         * @param {string} requestId
-         */
-        confirmInflightSend(sessionId, requestId) {
-            this._dropInflightSend(requestId)
-            if (sessionId) this.removeFailedSend(sessionId, requestId)
-        },
-
-        /**
-         * Late-failure path: the agent died after accepting the send but
-         * possibly before processing it. Every unresolved snapshot of the
-         * session becomes a failed bubble.
-         * @param {string} sessionId
-         * @param {Object} info - { code, message }
-         * @returns {boolean} true when an unresolved snapshot existed
-         */
-        failPendingSendsForSession(sessionId, info) {
-            let any = false
-            for (const [id, entry] of inflightSends) {
-                if (entry.sessionId !== sessionId) continue
-                inflightSends.delete(id)
-                this._applySendFailure(id, entry, info)
-                any = true
-            }
-            return any
-        },
 
         // Turn a failed in-flight send into a "failed message" bubble shown
         // in situ in the conversation flow (messaging pattern), with
@@ -3814,6 +3831,8 @@ export const useDataStore = defineStore('data', {
                 delete this.processStates[sessionId]
             }
             const code = info.code || 'send_failed'
+            if (code !== 'send_uncertain') this.releaseAsyncQuestionSendLock(sessionId, requestId)
+            else this.lockAsyncQuestionSend(sessionId, requestId, entry.asyncQuestions || entry.async_questions)
             const message = info.message || 'The message could not be delivered.'
             const failedAt = info.failedAt || Date.now()
             const failedSend = {
@@ -3826,6 +3845,11 @@ export const useDataStore = defineStore('data', {
                 code,
                 message,
                 sentAt: entry.sentAt || failedAt,
+                asyncQuestions: entry.async_questions || entry.asyncQuestions,
+                rawText: entry.rawText,
+                sourceBatches: entry.sourceBatches,
+                questionDraft: entry.questionDraft,
+                projectId: entry.projectId,
             }
             failedSend.item = this._materializeFailedSendItem(failedSend)
             if (!this.localState.failedSends[sessionId]) {
@@ -3871,6 +3895,7 @@ export const useDataStore = defineStore('data', {
             parsed.syntheticKind = syntheticKind
             parsed.failedSend = {
                 requestId: failedSend.requestId,
+                text: failedSend.text,
                 code: failedSend.code,
                 message: failedSend.message,
                 mediasDropped: failedSend.mediasDropped,
@@ -3886,14 +3911,14 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          * @param {string} requestId
          */
-        removeFailedSend(sessionId, requestId) {
+        removeFailedSend(sessionId, requestId, { preserveSnapshot = false } = {}) {
             const failed = this.localState.failedSends[sessionId]
             if (!failed?.[requestId]) return
             delete failed[requestId]
             if (!Object.keys(failed).length) {
                 delete this.localState.failedSends[sessionId]
             }
-            deleteInflightSend(requestId).catch(err =>
+            if (!preserveSnapshot) deleteInflightSend(requestId).catch(err =>
                 console.warn('Failed to delete in-flight send snapshot:', err)
             )
             this.recomputeVisualItems(sessionId)
@@ -3937,18 +3962,25 @@ export const useDataStore = defineStore('data', {
                     continue
                 }
                 // An attachments-only send (staged refs, no text) is kept.
+                const retainsQuestions = retainsAsyncQuestionSend(entry)
                 const empty = !entry?.text && !entry?.medias?.length && !entry?.attachments?.length
-                if (!entry?.sessionId || empty || now - (entry.sentAt || 0) > INFLIGHT_SEND_TTL_MS) {
+                if (!entry?.sessionId || (!retainsQuestions && empty)
+                    || (!retainsQuestions && now - (entry.sentAt || 0) > INFLIGHT_SEND_TTL_MS)) {
                     deleteInflightSend(requestId).catch(() => {})
                     continue
                 }
-                if (entry.failed) {
+                if (retainsAsyncQuestionSend(entry)) this.lockAsyncQuestionSend?.(entry.sessionId, requestId, entry.asyncQuestions || entry.async_questions)
+                if (entry.failed && (['staged', 'dispatched'].includes(entry.status) || !(retainsAsyncQuestionSend(entry) && entry.failed.code === 'send_uncertain'))) {
                     // The failure (and its precise reason) was already known
                     // before the reload — re-materialize the bubble directly,
                     // no audit needed.
                     if (!this.localState.failedSends[entry.sessionId]?.[requestId]) {
                         this._applySendFailure(requestId, entry, entry.failed)
                     }
+                    continue
+                }
+                if (retainsAsyncQuestionSend(entry) && ['staged', 'dispatched'].includes(entry.status)) {
+                    this._applySendFailure(requestId, entry, { code: 'send_uncertain', message: 'Delivery is not confirmed. Waiting for source evidence.' })
                     continue
                 }
                 if (!inflightSends.has(requestId)) inflightSends.set(requestId, entry)
@@ -3985,6 +4017,7 @@ export const useDataStore = defineStore('data', {
             const candidates = []
             for (const [id, entry] of inflightSends) {
                 if (entry.sessionId !== sessionId) continue
+                if (!this.shouldAuditInflightSend(id)) continue
                 // No user_message line will ever confirm these (Claude Code
                 // mid-turn); only the backend send_ack does. Absence here is
                 // not evidence of failure — never declare them undelivered.
@@ -4023,7 +4056,7 @@ export const useDataStore = defineStore('data', {
                 + 'it may never have reached the agent (interrupted connection?).'
             for (const id of candidates) {
                 const entry = inflightSends.get(id)
-                if (!entry) continue // resolved by a fetched line or a concurrent audit
+                if (!entry || !this.shouldAuditInflightSend(id)) continue // resolved or accepted during the content fetch
                 inflightSends.delete(id)
                 this._applySendFailure(id, entry, { code: 'delivery_unconfirmed', message })
             }
@@ -4048,7 +4081,7 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          * @param {Array<Object>} medias - original draft-format media objects
          */
-        async restoreDraftAttachments(sessionId, medias) {
+        async restoreDraftAttachments(sessionId, medias, { strict = false } = {}) {
             if (!medias?.length) return
             if (!this.localState.attachments[sessionId]) {
                 this.localState.attachments[sessionId] = new Map()
@@ -4060,10 +4093,17 @@ export const useDataStore = defineStore('data', {
                 try {
                     await saveDraftMedia(media)
                 } catch (err) {
+                    if (strict) throw err
                     console.warn('Failed to re-save restored draft media:', err)
                 }
                 map.set(media.id, media)
                 if (!draft.mediaIds.includes(media.id)) draft.mediaIds.push(media.id)
+            }
+            if (this.localState.asyncQuestionDrafts[sessionId]) {
+                const current = this.localState.draftMessages[sessionId] ||= {}
+                current.mediaIds = [...new Set([...(current.mediaIds || []), ...medias.map(media => media.id)])]
+                await this.persistComposerDraft(sessionId)
+                return
             }
             await saveDraftMessage(sessionId, draft).catch(err =>
                 console.warn('Failed to save restored draft message:', err)
@@ -4234,6 +4274,7 @@ export const useDataStore = defineStore('data', {
          */
         async loadSessionMetadata(projectId, sessionId, parentSessionId = null) {
             if (isLaunchedEphemeral(this.sessions[sessionId])) return
+            if (!parentSessionId) this.loadAsyncQuestions(projectId, sessionId).catch(error => console.warn('Failed to load async questions:', error))
             // Build URL (handle subagent case)
             const baseUrl = parentSessionId
                 ? `/api/projects/${projectId}/sessions/${parentSessionId}/subagent/${sessionId}`
@@ -6024,8 +6065,8 @@ export const useDataStore = defineStore('data', {
          */
         _getDebouncedSave(sessionId) {
             if (!debouncedSaves.has(sessionId)) {
-                debouncedSaves.set(sessionId, debounce((draft) => {
-                    saveDraftMessage(sessionId, draft).catch(err =>
+                debouncedSaves.set(sessionId, debounce(() => {
+                    this.persistComposerDraft(sessionId).catch(err =>
                         console.warn('Failed to save draft message to IndexedDB:', err)
                     )
                 }, 500))
@@ -6041,6 +6082,7 @@ export const useDataStore = defineStore('data', {
          * @param {string} message
          */
         setDraftMessage(sessionId, message) {
+            this.localState.draftMessageEdits[sessionId] = true
             if (!message) {
                 // Message is empty - clear the draft
                 if (this.localState.draftMessages[sessionId]) {
@@ -6082,7 +6124,7 @@ export const useDataStore = defineStore('data', {
                 debouncedSave.cancel()
                 debouncedSaves.delete(sessionId)
             }
-            await saveDraftMessage(sessionId, this.localState.draftMessages[sessionId]).catch(err =>
+            await this.persistComposerDraft(sessionId).catch(err =>
                 console.warn('Failed to flush draft message to IndexedDB:', err)
             )
         },
@@ -6110,6 +6152,7 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          */
         clearDraftMessage(sessionId) {
+            this.localState.draftMessageEdits[sessionId] = true
             delete this.localState.draftMessages[sessionId]
 
             // Cancel any pending debounced save
@@ -6120,22 +6163,11 @@ export const useDataStore = defineStore('data', {
             }
 
             // Delete from IndexedDB
-            deleteDraftMessage(sessionId).catch(err =>
+            const cleared = this.localState.asyncQuestionDrafts[sessionId]
+                ? this.persistComposerDraft(sessionId) : deleteDraftMessage(sessionId)
+            cleared.catch(err =>
                 console.warn('Failed to delete draft message from IndexedDB:', err)
             )
-        },
-
-        /**
-         * Load all draft messages from IndexedDB into local state.
-         * Called at app startup.
-         */
-        async hydrateDraftMessages() {
-            try {
-                const drafts = await getAllDraftMessages()
-                this.localState.draftMessages = drafts
-            } catch (err) {
-                console.warn('Failed to load draft messages from IndexedDB:', err)
-            }
         },
 
         /**
@@ -6586,6 +6618,13 @@ export const useDataStore = defineStore('data', {
             this.localState.attachments[sessionId]?.delete(mediaId)
             clearLegacyFailure(this.localState.legacyFailedIds, mediaId)
 
+            // Question sends share the atomic composer queue; preserve concurrent typing.
+            if (this.localState.asyncQuestionDrafts[sessionId]) {
+                const current = this.localState.draftMessages[sessionId]
+                if (current?.mediaIds) current.mediaIds = current.mediaIds.filter(id => id !== mediaId)
+                await this.persistComposerDraft(sessionId)
+                return
+            }
             // Update draft message to remove media ID
             const draft = await getDraftMessage(sessionId)
             if (draft?.mediaIds) {

@@ -298,7 +298,7 @@ usePendingRequestDraft({
 </script>
 
 <template>
-    <div class="elicitation-form-body">
+    <div v-scroll-shadow class="elicitation-form-body">
         <div class="elicit-section">
             <div class="elicit-summary">
                 <span class="elicit-summary-label">MCP form</span>

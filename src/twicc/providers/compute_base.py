@@ -1157,6 +1157,10 @@ class BaseSessionCompute:
         """
         raise NotImplementedError
 
+    def extract_async_question_facts(self, parsed: dict, *, line: int) -> list:
+        """Return source evidence only; the serialized writer owns persistence."""
+        return []
+
     def extract_history_facts(
         self, parsed: dict, *, line_num: int, history: HistoryFactContext,
     ) -> list[HistoryFact]:
@@ -2811,6 +2815,7 @@ class BaseSessionCompute:
             }))
             return
 
+        async_question_facts = []
         queryset = SessionItem.objects.filter(session=session).order_by('line_num')
 
         state = GroupState()
@@ -3003,6 +3008,8 @@ class BaseSessionCompute:
             # Provider rewrites + the generic context-tag strip, both applied
             # in place; see :meth:`transform_inline`. Returns the new content
             # when either fired, else ``None``.
+            if session.type == SessionType.SESSION and not session.parent_session_id:
+                async_question_facts.extend(self.extract_async_question_facts(parsed, line=item.line_num))
             new_content = self.transform_inline(
                 parsed, session_id=session_id, line_num=item.line_num,
             )
@@ -3432,6 +3439,7 @@ class BaseSessionCompute:
             'observed_last_offset': session.last_offset,
             'source_item_count': source_item_count,
             'history_facts': [fact._asdict() for fact in history.facts],
+            'async_question_facts': [fact._asdict() for fact in async_question_facts],
             'item_updates': all_item_updates,
             'item_fields': [
                 'display_level', 'group_head', 'group_tail', 'kind', 'message_id',
@@ -3818,6 +3826,12 @@ class BaseSessionCompute:
         # pre-apply chunks do not advance the compute version.
         replace_history_facts(session_id, [HistoryFact(**fact) for fact in msg['history_facts']])
 
+        if msg.get("async_question_facts"):
+            from twicc.core.services.async_questions import merge_question_facts
+            from twicc.providers.codex.async_questions import QuestionFact
+
+            merge_question_facts(session_id, [QuestionFact(**fact) for fact in msg["async_question_facts"]])
+
         # 5. Update session fields (always includes compute_version)
         session_fields = msg.get('session_fields', {})
         if session_fields:
@@ -4007,6 +4021,7 @@ class BaseSessionCompute:
         # Create SessionItem objects for bulk insert
         items_to_create: list[tuple[SessionItem, dict]] = []
         current_line_num = session.last_line
+        async_question_facts = []
 
         # Track title updates (session_id -> title)
         placeholder_titles: dict[str, str] = {}
@@ -4109,6 +4124,8 @@ class BaseSessionCompute:
 
             # Provider rewrites + the generic context-tag strip, both applied
             # in place; see :meth:`transform_inline`.
+            if session.type == SessionType.SESSION and not session.parent_session_id:
+                async_question_facts.extend(self.extract_async_question_facts(parsed, line=current_line_num))
             new_content = self.transform_inline(
                 parsed,
                 session_id=session.id,
@@ -4280,6 +4297,10 @@ class BaseSessionCompute:
         items_only = [item for item, _ in items_to_create]
         SessionItem.objects.bulk_create(items_only, ignore_conflicts=True, batch_size=50)
         append_history_facts(session.id, history.facts)
+        if async_question_facts:
+            from twicc.core.services.async_questions import merge_question_facts
+
+            merge_question_facts(session.id, async_question_facts)
 
         # Track line_nums of new and updated items
         new_line_nums: set[int] = {item.line_num for item in items_only}

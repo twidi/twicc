@@ -8,6 +8,8 @@
 import { computed, inject, ref } from 'vue'
 import { useDataStore } from '../../../../stores/data'
 import { sendWsMessage } from '../../../../composables/useWebSocket'
+import { asyncQuestionRetryState } from '../../../../utils/asyncQuestions.js'
+import { toast } from '../../../../composables/useToast'
 import { generateUUID } from '../../../../utils/crypto'
 import { mediasToSdkFormat, resizeMediasForSend } from '../../../../utils/fileUtils'
 import { snapshotAttachmentRefs } from '../../../../utils/composerAttachments'
@@ -32,6 +34,8 @@ const props = defineProps({
 const store = useDataStore()
 const insertTextAtCursor = inject('insertTextAtCursor', null)
 
+const retryState = computed(() => asyncQuestionRetryState(getEntry() || {}, store.getAsyncQuestionSnapshot(props.sessionId)))
+const uncertain = computed(() => getEntry()?.code === 'send_uncertain')
 const failedSend = computed(() => props.content?.failedSend || null)
 
 // A hybrid send rejected because the CLI composer was busy (a TUI dialog was
@@ -93,85 +97,114 @@ function getEntry() {
  */
 async function retry() {
     const entry = getEntry()
-    if (!entry) return
-    const session = store.getSession(props.sessionId)
-    const requestId = generateUUID()
-    const refs = snapshotAttachmentRefs(entry)
-    // Same send-time resize as the composer for legacy medias. The model is
-    // the one the payload below re-sends: the session's stored model, else
-    // the provider's default.
-    const medias = refs.length ? [] : await resizeMediasForSend(
-        entry.medias || [],
-        getProviderHelpers(session?.provider),
-        session?.selected_model ?? getProviderStore(session?.provider)?.defaultModel,
-    )
-    // A concurrent Retry / Edit / Delete may have consumed the entry meanwhile.
-    if (getEntry() !== entry) return
-    const { images, documents } = mediasToSdkFormat(medias)
-    const payload = {
-        type: 'send_message',
-        session_id: props.sessionId,
-        project_id: props.projectId,
-        provider: session?.provider,
-        text: entry.text,
-        permission_mode: session?.permission_mode ?? null,
-        selected_model: session?.selected_model ?? null,
-        effort: session?.effort ?? null,
-        thinking_enabled: session?.thinking_enabled ?? null,
-        claude_in_chrome: session?.claude_in_chrome ?? null,
-        fast_mode: session?.fast_mode ?? null,
-        context_max: session?.context_max ?? null,
-        request_id: requestId,
+    if (!entry || !retryState.value.canRetry) return
+    try {
+        const session = store.getSession(props.sessionId)
+        const requestId = generateUUID()
+        const refs = snapshotAttachmentRefs(entry)
+        // Same send-time resize as the composer for legacy medias. The model is
+        // the one the payload below re-sends: the session's stored model, else
+        // the provider's default.
+        const medias = refs.length ? [] : await resizeMediasForSend(
+            entry.medias || [],
+            getProviderHelpers(session?.provider),
+            session?.selected_model ?? getProviderStore(session?.provider)?.defaultModel,
+        )
+        // A concurrent Retry / Edit / Delete may have consumed the entry meanwhile.
+        if (getEntry() !== entry || !retryState.value.canRetry) return
+        const { images, documents } = mediasToSdkFormat(medias)
+        const payload = {
+            type: 'send_message',
+            session_id: props.sessionId,
+            project_id: props.projectId,
+            provider: session?.provider,
+            text: retryState.value.text,
+            permission_mode: session?.permission_mode ?? null,
+            selected_model: session?.selected_model ?? null,
+            effort: session?.effort ?? null,
+            thinking_enabled: session?.thinking_enabled ?? null,
+            claude_in_chrome: session?.claude_in_chrome ?? null,
+            fast_mode: session?.fast_mode ?? null,
+            context_max: session?.context_max ?? null,
+            request_id: requestId,
+        }
+        if (retryState.value.asyncQuestions) payload.async_questions = retryState.value.asyncQuestions
+        if (refs.length) payload.attachments = refs
+        if (images.length) payload.images = images
+        if (documents.length) payload.documents = documents
+        store.applyCreationSendMode(payload)
+        // The staged refs travel with the new send (their snapshot keeps them);
+        // nothing is released: the server reuses its promotion tombstones.
+        if (payload.async_questions) {
+            await store.sendAsyncQuestionMessage(props.sessionId, props.projectId, requestId, payload, {
+                ...entry,
+                asyncQuestions: payload.async_questions,
+                attachments: entry.attachments || [],
+                medias: refs.length ? [] : (entry.medias || []),
+                images,
+                documents,
+            }, { retryRequestId: entry.requestId })
+            return
+        }
+        // WebSocket down: keep the failed bubble, the user can retry later
+        if (!sendWsMessage(payload)) return
+        store.registerOutgoingSend(props.sessionId, props.projectId, requestId, {
+            text: entry.text,
+            attachments: entry.attachments || [],
+            medias: refs.length ? [] : (entry.medias || []),
+            images,
+            documents,
+        })
+        store.removeFailedSend(props.sessionId, entry.requestId)
+    } catch {
+        toast.error('Failed to save the retry. Your message remains available for recovery.')
     }
-    if (refs.length) payload.attachments = refs
-    if (images.length) payload.images = images
-    if (documents.length) payload.documents = documents
-    store.applyCreationSendMode(payload)
-    // WebSocket down: keep the failed bubble, the user can retry later
-    if (!sendWsMessage(payload)) return
-    store.registerOutgoingSend(props.sessionId, props.projectId, requestId, {
-        text: entry.text,
-        attachments: entry.attachments || [],
-        medias: refs.length ? [] : (entry.medias || []),
-        images,
-        documents,
-    })
-    store.removeFailedSend(props.sessionId, entry.requestId)
 }
 
 /** Put the message back into the composer for rework, then drop the bubble. */
 async function edit() {
     const entry = getEntry()
-    if (!entry || !insertTextAtCursor) return
-    insertTextAtCursor(entry.text)
-    // insertTextAtCursor only focuses when the composer is already expanded; a
-    // collapsed composer just gets the text appended to its draft and stays put
-    // (so reading + commenting never pops it open). But Edit is an explicit "I
-    // want to rework this now", so open + focus the composer. Mirror the "Expand
-    // Message Input" command: dispatch twicc:expand-composer on the collapsed
-    // composer — MessageInput expands it, reduces any pending request, and
-    // focuses the textarea itself. (Not focusChatPrimary, which would steer focus
-    // to a pending request instead of the composer.)
-    document
-        .querySelector('.message-input.collapsed')
-        ?.dispatchEvent(new CustomEvent('twicc:expand-composer'))
-    // Staged refs come back as draft records (same id and bucket, appended
-    // after the composer's attachments); legacy medias go through the legacy
-    // migration (spec 2026-10-03 §9.5, §9.6), appended the same way. Only
-    // forgets the snapshot: the refs now belong to the draft.
-    if (entry.attachments?.length) {
-        await store.restoreDraftAttachmentRefs(props.sessionId, entry.attachments)
-    } else if (entry.medias?.length) {
-        await store.restoreLegacyDraftMedias(props.sessionId, entry.medias)
+    if (!entry || !insertTextAtCursor || uncertain.value) return
+    try {
+        if (entry.asyncQuestions || entry.async_questions) {
+            // Restores the draft text, the answers and the staged refs (never released).
+            if (!await store.editAsyncQuestionFailure(props.sessionId, entry.requestId)) return
+        } else {
+            insertTextAtCursor(entry.text)
+        }
+        // insertTextAtCursor only focuses when the composer is already expanded; a
+        // collapsed composer just gets the text appended to its draft and stays put
+        // (so reading + commenting never pops it open). But Edit is an explicit "I
+        // want to rework this now", so open + focus the composer. Mirror the "Expand
+        // Message Input" command: dispatch twicc:expand-composer on the collapsed
+        // composer — MessageInput expands it, reduces any pending request, and
+        // focuses the textarea itself. (Not focusChatPrimary, which would steer focus
+        // to a pending request instead of the composer.)
+        document
+            .querySelector('.message-input.collapsed')
+            ?.dispatchEvent(new CustomEvent('twicc:expand-composer'))
+        if (!(entry.asyncQuestions || entry.async_questions)) {
+            // Staged refs come back as draft records (same id and bucket, appended
+            // after the composer's attachments); legacy medias go through the legacy
+            // migration (spec 2026-10-03 §9.5, §9.6), appended the same way. Only
+            // forgets the snapshot: the refs now belong to the draft.
+            if (entry.attachments?.length) {
+                await store.restoreDraftAttachmentRefs(props.sessionId, entry.attachments)
+            } else if (entry.medias?.length) {
+                await store.restoreLegacyDraftMedias(props.sessionId, entry.medias)
+            }
+            store.removeFailedSend(props.sessionId, entry.requestId)
+        }
+    } catch {
+        toast.error('Failed to restore the message. Your message remains available for recovery.')
     }
-    store.removeFailedSend(props.sessionId, entry.requestId)
 }
 
 /** Delete the failed message: its staged refs are released (spec §6.1.4). */
 function discard() {
     if (actionInProgress.value) return
     const entry = getEntry()
-    if (!entry) return
+    if (!entry || uncertain.value) return
     const refs = snapshotAttachmentRefs(entry)
     store.removeFailedSend(props.sessionId, entry.requestId)
     if (refs.length) store.releaseAttachments(refs)
@@ -202,7 +235,7 @@ function discard() {
                     size="small"
                     variant="danger"
                     appearance="outlined"
-                    :disabled="nothingLeftToSend || actionInProgress"
+                    :disabled="nothingLeftToSend || actionInProgress || !retryState.canRetry"
                     @click="guarded(retry)"
                 >
                     <wa-icon slot="start" name="rotate-right"></wa-icon>
@@ -213,13 +246,13 @@ function discard() {
                     size="small"
                     variant="neutral"
                     appearance="outlined"
-                    :disabled="nothingLeftToSend || actionInProgress"
+                    :disabled="nothingLeftToSend || actionInProgress || uncertain"
                     @click="guarded(edit)"
                 >
                     <wa-icon slot="start" name="pen"></wa-icon>
                     Edit
                 </wa-button>
-                <wa-button size="small" variant="neutral" appearance="plain" :disabled="actionInProgress" @click="discard">
+                <wa-button size="small" variant="neutral" appearance="plain" :disabled="actionInProgress || uncertain" @click="discard">
                     Delete
                 </wa-button>
             </div>

@@ -101,6 +101,12 @@ def _make_agent(monkeypatch: pytest.MonkeyPatch, events: list | None = None, *, 
     def no_goal(*args, **kwargs):
         raise AssertionError("Codex has no goal instruction")
 
+    # The durable async-question lifecycle is not under test here (it has its own suites).
+    for name in (
+        "_ensure_async_question_session", "_reconcile_question_submissions", "_reconcile_async_question_owners",
+        "_admit_async_question_owner", "_link_async_question_turn", "_record_async_question_facts",
+    ):
+        monkeypatch.setattr(agent, name, AsyncMock())
     monkeypatch.setattr(agent, "_reconcile_context", reconcile)
     monkeypatch.setattr(agent_module, "apply_pending_context", apply_pending)
     monkeypatch.setattr("twicc.context_injection.apply_goal_instruction", no_goal)
@@ -329,12 +335,15 @@ class FakeLiveAgent:
         self.state = state
         self.agent_settings = AgentSettings()
         self.sent: list = []
+        self.submissions: list = []
 
     async def apply_agent_settings(self, settings) -> None:
         self.events.append("apply_agent_settings")
 
     async def send(self, text, **kwargs) -> bool:
         self.events.append("send")
+        # The durable question admission of every send is not under test here.
+        self.submissions.append(kwargs.pop("submission", None))
         self.sent.append((text, kwargs))
         return True
 
@@ -362,6 +371,22 @@ def commit_spy(monkeypatch):
         assert prepared_arg is prepared
         calls.discarded += 1
 
+    # Every existing-session send goes through the durable question admission: faked here
+    # (it has its own suites and needs a database), so these tests keep their exact scope.
+    from twicc.core.services import async_questions as question_service
+    from twicc.providers import db_writer
+
+    def prepare_send(session_id, text, response, *, request_id, origin, at):
+        return question_service.PreparedQuestionSend(text, {
+            "request_id": request_id, "status": "prepared", "client_message_id": request_id,
+        })
+
+    async def write(callback):
+        return await callback()
+
+    monkeypatch.setattr(question_service, "prepare_question_send", prepare_send)
+    monkeypatch.setattr(question_service, "accept_question_send", lambda session_id, submission: None)
+    monkeypatch.setattr(db_writer, "run_under_db_write_lock", write)
     monkeypatch.setattr(committer, "prepare_attachments", prepare)
     monkeypatch.setattr(committer, "finish_attachments", finish)
     monkeypatch.setattr(committer, "discard_prepared", discard)

@@ -58,6 +58,7 @@ from typing import Any, NamedTuple
 import orjson
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
+from django.db import transaction
 
 from twicc.core.enums import Provider
 from twicc.providers.db_writer import run_under_db_write_lock
@@ -148,6 +149,21 @@ async def _lookup_session_for_update(
     return session, project, provider, None
 
 
+@transaction.atomic
+def persist_session_settings(session_id: str, updates: dict) -> None:
+    """Write settings and order widget snapshots under the DB writer lease."""
+    from twicc.core.models import Session
+
+    previous = None
+    if "question_widget" in updates:
+        previous = Session.objects.filter(id=session_id).values("provider", "question_widget").first()
+    Session.objects.filter(id=session_id).update(**updates)
+    if previous is not None and previous["provider"] == Provider.CODEX:
+        from twicc.core.services.async_questions import refresh_question_widget_snapshot
+
+        refresh_question_widget_snapshot(session_id, previous_enabled=previous["question_widget"] is not False)
+
+
 async def update_session_settings_from_payload(payload: dict) -> UpdateSessionResult:
     """Apply a partial or full settings update to an existing session.
 
@@ -224,10 +240,10 @@ async def update_session_settings_from_payload(payload: dict) -> UpdateSessionRe
 
     # --- DB write under the write lock ---------------------------------
     # Mirrors the path taken by ``WSConsumer._handle_send_message`` for the
-    # settings-only update: aupdate under the lock; reload + broadcast
+    # settings-only update: persist under the lock; reload + broadcast
     # outside the lock so other writers don't queue behind the broadcast.
     await run_under_db_write_lock(
-        lambda: Session.objects.filter(id=session_id).aupdate(**updates)
+        lambda: sync_to_async(persist_session_settings)(session_id, updates)
     )
 
     updated_session = await sync_to_async(

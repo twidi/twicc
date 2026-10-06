@@ -9,51 +9,13 @@
 // whose error frame was lost along with the WebSocket: the audit in the data
 // store re-checks them against the session's items at opening time.
 
-import { getDb, INFLIGHT_SENDS_STORE } from './draftStorage.js'
-
-// Above this combined legacy attachment payload (chars of encoded data), the
-// snapshot is persisted without its medias (``mediasDropped: true``): after
-// a reload only the text can be restored. Legacy drafts allow up to 32 MB of
-// attachments — blindly writing that on EVERY send would bloat IndexedDB
-// for a rarely-needed safety net. Composer attachments (``attachments``) are
-// staged refs with metadata only: no bytes, so no cap.
-const MEDIA_PERSIST_LIMIT = 8 * 1024 * 1024
+import { getDb, INFLIGHT_SENDS_STORE, inflightSnapshotRecord } from './draftStorage.js'
 
 /**
- * The stored form of an in-flight send snapshot. Medias and attachment
- * metadata are copied to plain objects (the store hands out Vue reactive
- * proxies, which the structured-clone algorithm rejects).
- *
- * - `attachments` ({bucket, id, name, size, mimeType, kind}): composer sends,
- *   kept whole (spec 2026-10-03 §9.5);
- * - `medias`: legacy sends (Retry of an older snapshot), capped as before.
- *
- * @param {Object} snapshot
- * @returns {Object}
+ * The stored form of an in-flight send snapshot (see
+ * `inflightSnapshotRecord` in draftStorage.js, the single implementation).
  */
-export function toStoredInflightSend(snapshot) {
-    const stored = { ...snapshot }
-    if (Array.isArray(snapshot.attachments)) {
-        stored.attachments = snapshot.attachments.map(attachment => ({
-            bucket: attachment.bucket,
-            id: attachment.id,
-            name: attachment.name,
-            size: attachment.size,
-            mimeType: attachment.mimeType,
-            kind: attachment.kind,
-        }))
-    }
-    const medias = (snapshot.medias || []).map(media => ({ ...media }))
-    const mediaBytes = medias.reduce((sum, media) => sum + (media.data?.length || 0), 0)
-    // ``mediaCount`` survives the drop: a message made only of attachments has
-    // no text, and the count is what identifies it when the store matches a
-    // rediscovered snapshot against the session's user_message lines.
-    if (mediaBytes > MEDIA_PERSIST_LIMIT) {
-        return { ...stored, medias: [], mediasDropped: true, mediaCount: medias.length }
-    }
-    // A re-saved snapshot whose medias were already dropped keeps its count.
-    return { ...stored, medias, mediaCount: medias.length || snapshot.mediaCount || 0 }
-}
+export const toStoredInflightSend = inflightSnapshotRecord
 
 /**
  * Persist an in-flight send snapshot (see `toStoredInflightSend`).

@@ -90,7 +90,7 @@ usePendingRequestSubmitShortcut((e) => {
 </script>
 
 <template>
-    <div class="mcp-approval-body">
+    <div v-scroll-shadow class="mcp-approval-body">
         <div class="codex-pending-section">
             <div class="codex-pending-summary">
                 <span class="codex-summary-label">MCP tool call</span>

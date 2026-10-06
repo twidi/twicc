@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from openai_codex import TextInput
@@ -284,3 +284,44 @@ def test_thread_settings_update_requires_a_setting() -> None:
             await thread.update_settings_with_policy()
 
     asyncio.run(scenario())
+
+
+def test_turn_start_forwards_native_client_message_id():
+    async def run():
+        codex = _mock_codex()
+        codex._client.turn_start.return_value = SimpleNamespace(turn=SimpleNamespace(id="turn"))
+        codex._client._subscribe_turn_notifications = Mock()
+        thread = TwiccAsyncThread(codex, "thread")
+        await thread.turn_with_policy([TextInput("hello")], client_user_message_id="submission-1")
+        return codex._client.turn_start.await_args.kwargs["params"]
+    assert asyncio.run(run()).client_user_message_id == "submission-1"
+
+
+def test_native_steer_wrapper_uses_generated_params():
+    from twicc.providers.codex import sdk_wrappers
+    async def run():
+        codex = _mock_codex()
+        handle = SimpleNamespace(_codex=codex, thread_id="thread", id="turn")
+        await sdk_wrappers.steer_with_message_id(handle, [TextInput("hello")], client_user_message_id="submission-1")
+        return codex._client.request.await_args
+    call = asyncio.run(run())
+    assert call.args[0] == "turn/steer"
+    assert call.args[1]["clientUserMessageId"] == "submission-1"
+    assert call.args[1]["expectedTurnId"] == "turn"
+
+
+def test_goal_steer_forwards_native_client_message_id():
+    from twicc.providers.codex.agent.goal_continuation import GoalContinuation
+    async def run():
+        codex = _mock_codex()
+        route = GoalContinuation.__new__(GoalContinuation)
+        route.codex = codex
+        route.thread_id = "thread"
+        route.closed = False
+        route.state = SimpleNamespace(current_turn=lambda: "goal-turn")
+        await route.steer([TextInput("hello")], client_user_message_id="submission-1")
+        return codex._client.request.await_args
+    call = asyncio.run(run())
+    assert call.args[0] == "turn/steer"
+    assert call.args[1]["clientUserMessageId"] == "submission-1"
+    assert call.args[1]["expectedTurnId"] == "goal-turn"

@@ -334,6 +334,8 @@ if (!authStore.needsLogin) {
         dataStore.hydrateInflightSends(),
     ])
     removeDraftStorageBlockedNotice()
+    await dataStore.hydrateAsyncQuestionDrafts()
+    dataStore.refreshActiveAsyncQuestions().catch(error => console.warn('Failed to recover question sends:', error))
     // First heartbeat of the staged composer attachments, once the draft
     // records AND the send snapshots are loaded (not awaited).
     dataStore.touchHeldAttachments().catch(err => console.warn('Attachment heartbeat failed:', err))

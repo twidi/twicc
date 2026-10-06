@@ -787,6 +787,13 @@ class ArtifactBookmark(models.Model):
         ]
 
 
+class AsyncQuestionState(models.Model):
+    """Durable source facts and question decisions for one Codex session."""
+
+    session = models.OneToOneField(Session, on_delete=models.CASCADE, related_name="async_question_state")
+    state = models.JSONField(default=dict)
+
+
 class SessionItem(models.Model):
     """A session item corresponds to a single line in a JSONL file"""
 

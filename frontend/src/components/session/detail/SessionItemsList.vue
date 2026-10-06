@@ -178,6 +178,16 @@ function onHybridTerminalState(state) {
 
 // Session data
 const session = computed(() => store.getSession(props.sessionId))
+// Question hydration is independent of transcript pages and compute status.
+watch([() => props.sessionId, () => props.viewActive, sessionActive,
+    () => session.value?.provider, () => session.value?.draft], () => {
+    if (!props.viewActive || !sessionActive.value || props.parentSessionId
+        || session.value?.provider !== 'codex' || session.value?.type === 'subagent'
+        || session.value?.draft || isLaunchedEphemeral(session.value)) return
+    store.loadAsyncQuestions(props.projectId, props.sessionId).catch(() => {
+        toast.error('Failed to load pending questions.')
+    })
+}, { immediate: true })
 const isEphemeral = computed(() => isLaunchedEphemeral(session.value))
 watch(isEphemeral, (active) => { if (active) showSessionSearch.value = false })
 const ephemeralNotice = computed(() => {
@@ -2527,6 +2537,7 @@ defineExpose({
                     :sending-locked="composerSendingLock.locked"
                     :sending-locked-reason="composerSendingLock.reason"
                     :sending-locked-presentation="composerSendingLock.presentation"
+                    :hide-async-questions="hasAnswerablePendingRequest"
                     :has-panel-above="hasAnswerablePendingRequest || hybridTerminalVisible || !!currentGoal"
                     :terminal-visible="hybridTerminalVisible"
                     :terminal-attention="hybridTerminalAttention"

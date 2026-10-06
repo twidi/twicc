@@ -102,7 +102,6 @@ test('5. opaque layers inside a card paint --panel-solid, not the transparent to
         ['../components/files/FilePane.vue', '.file-pane-preview--fullscreen'],
         ['../components/files/FileTreePanel.vue', '.file-tree-panel--mobile > .file-tree-panel-content'],
         ['../components/session/list/SessionSearchBar.vue', '.session-search-bar'],
-        ['../components/activity/ContributionGraphs.vue', '.provider-filter'],
     ]
     for (const [file, selector] of LAYERS) {
         const src = strip(read(file))
@@ -112,6 +111,21 @@ test('5. opaque layers inside a card paint --panel-solid, not the transparent to
         const body = style.slice(at, style.indexOf('}', at))
         assert.ok(/background(?:-color)?: var\(--panel-solid\);/.test(body), `${file} ${selector}: paints --panel-solid`)
         assert.ok(!/background(?:-color)?: var\(--wa-color-surface-default/.test(body), `${file} ${selector}: no transparent token`)
+    }
+})
+
+// The stats provider filter is a neutral glass sticky bar: its no-blur modes paint the card's flat colour.
+test('5b. the provider filter is neutral glass, opaque --panel-solid without the blur', () => {
+    const src = strip(read('../components/activity/ContributionGraphs.vue'))
+    const style = src.slice(src.indexOf('<style'))
+    assert.ok(/<template>[\s\S]*class="provider-filter glass-sticky"/.test(src), 'glass-sticky layer')
+    assert.ok(/--glass-sticky-bg: color-mix\(in oklab, var\(--surface-solid\) 60%, transparent\);/.test(style), 'neutral 60%')
+    for (const selector of ['@media (prefers-reduced-transparency: reduce) {\n    .provider-filter', ':root.reduce-effects .provider-filter']) {
+        const at = style.indexOf(selector)
+        assert.ok(at >= 0, selector)
+        const body = style.slice(at, style.indexOf('}', at))
+        assert.ok(body.includes('--glass-sticky-bg: transparent;'), `${selector}: no glass layer`)
+        assert.ok(/background: var\(--panel-solid\);/.test(body), `${selector}: paints --panel-solid`)
     }
 })
 

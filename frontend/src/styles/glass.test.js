@@ -229,7 +229,7 @@ function templateOf(sfc) {
 const GLASS_CLASSES = ['glass-surface', 'glass-sticky', 'glass-veil']
 const GLASS_FILES = ['CommandPickerPopup', 'MessageHistoryPickerPopup', 'FilePickerPopup', 'DirectoryPickerPopup',
     'SessionSwitcher', 'TextSelectionComment', 'HoverInfoPanel', 'UsageGraphDialog', 'ContributionSparklines',
-    'SharedSubagentView', 'ProjectView', 'CommandPalette', 'SettingsPopover', 'SessionHeader', 'ProjectDetailHeader', 'ShareSessionApp']
+    'SharedSubagentView', 'ProjectView', 'CommandPalette', 'SettingsPopover', 'SessionHeader', 'ProjectDetailHeader', 'ShareSessionApp', 'ContributionGraphs']
 
 test('4. glass classes stay away from pane containers', () => {
     for (const name of ['main-content', 'session-layout', 'center-slot', 'dock-region', 'layout-overlay',
@@ -254,8 +254,8 @@ test('4. glass classes stay away from pane containers', () => {
             }
         }
         if (component === 'ProjectView') {
-            // The one glass surface is the sidebar's quota card; no sticky layer.
-            assert.equal(tokens.filter((t) => t === 'glass-surface').length, 1)
+            // No glass surface (the quota card is a panel-card, like the rail); no sticky layer.
+            assert.equal(tokens.filter((t) => t === 'glass-surface').length, 0)
             assert.equal(tokens.filter((t) => t === 'glass-sticky').length, 0)
             const veils = tags.filter((t) => classTokens(t.attrs).includes('glass-veil'))
             assert.equal(veils.length, 1, 'ProjectView: glass-veil exactly once')

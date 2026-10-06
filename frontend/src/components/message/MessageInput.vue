@@ -23,6 +23,8 @@ import {
     attachmentChipItem,
     composerAttachmentsReady,
     sendComposerMessage,
+    setAttachmentPayloadFields,
+    snapshotAttachments,
 } from '../../utils/composerAttachments'
 import { toast } from '../../composables/useToast'
 import { useCodeCommentsStore, formatAllComments } from '../../stores/codeComments'
@@ -39,6 +41,8 @@ import AgentSettingsSummary from './AgentSettingsSummary.vue'
 import AgentSettingsPopover from './AgentSettingsPopover.vue'
 import CollapsedBar from './CollapsedBar.vue'
 import HybridModeExplainer from './HybridModeExplainer.vue'
+import AsyncQuestions from './AsyncQuestions.vue'
+import { classifyAsyncQuestionSend, prepareAsyncQuestionSend } from '../../utils/asyncQuestions.js'
 import { useMessageSnippetsStore } from '../../stores/messageSnippets'
 import { useWorkspacesStore } from '../../stores/workspaces'
 import { getUnavailablePlaceholders, resolveSnippetText } from '../../utils/snippetPlaceholders'
@@ -71,6 +75,8 @@ const props = defineProps({
         default: 'paused',
         validator: value => ['paused', 'disabled'].includes(value)
     },
+    // Blocking requests own the footer fields. Keep optional choices in the store.
+    hideAsyncQuestions: { type: Boolean, default: false },
     // When true, another panel (a pending request, the hybrid terminal block
     // and/or the goal bar) is rendered above the composer in the footer —
     // regardless of that panel's own expanded/collapsed state. Drives the top
@@ -140,6 +146,41 @@ const session = computed(() => store.getSession(props.sessionId))
 const isDraft = computed(() => session.value?.draft === true)
 const providerLabel = computed(() => getProviderLabel(session.value?.provider))
 const providerIcon = computed(() => getProviderIcon(session.value?.provider))
+const asyncQuestionSnapshot = computed(() => session.value?.provider === 'codex'
+    && session.value?.type !== 'subagent' && !session.value?.parent_session_id && !isDraft.value
+    ? store.getAsyncQuestionSnapshot(props.sessionId) : null)
+const asyncQuestionDraft = computed(() => store.getAsyncQuestionDraft(props.sessionId))
+const asyncQuestionWidgetEnabled = computed(() => asyncQuestionSnapshot.value
+    && asyncQuestionSnapshot.value.widget_enabled !== false)
+const readyAsyncQuestionBatches = computed(() => asyncQuestionWidgetEnabled.value
+    ? asyncQuestionSnapshot.value.batches.filter(batch => batch.status === 'ready') : [])
+const readyAsyncQuestionCount = computed(() => readyAsyncQuestionBatches.value
+    .reduce((count, batch) => count + batch.questions.length, 0))
+const hasCollectingAsyncQuestions = computed(() => asyncQuestionWidgetEnabled.value
+    && asyncQuestionSnapshot.value.batches.some(batch => batch.status === 'collecting'))
+const asyncQuestionAnswers = computed(() => readyAsyncQuestionBatches.value
+    .filter(batch => !store.getPendingAsyncQuestionIds(props.sessionId).includes(batch.item_id)).flatMap(batch =>
+    batch.questions.flatMap(question => {
+        const answer = asyncQuestionDraft.value?.choices?.[batch.item_id]?.[question.index]
+        return answer ? [{ ...answer, item_id: batch.item_id, index: question.index }] : []
+    })))
+const asyncQuestionNotice = computed(() => store.localState.asyncQuestionNotices[props.sessionId])
+
+async function dismissAsyncQuestion(itemId) {
+    try {
+        await store.dismissAsyncQuestion(props.projectId, props.sessionId, itemId)
+    } catch {
+        toast.error('Failed to dismiss questions. Your answers remain in your draft.')
+    }
+}
+
+function onAsyncQuestionKeydown(event) {
+    if (!(event.metaKey || event.ctrlKey) || event.key !== 'Enter') return
+    if (!event.composedPath().some(element => ['WA-TEXTAREA', 'WA-INPUT'].includes(element.tagName))) return
+    event.preventDefault()
+    event.stopPropagation()
+    handleSend()
+}
 
 const ephemeralDialogRef = ref(null)
 const ephemeralConfirmRef = ref(null)
@@ -484,9 +525,17 @@ const hasUnappliedChanges = computed(() =>
 )
 // Attachments count as a message, so they keep the button on "Send" even when
 // settings are staged (the send applies them on the way, like a text message).
-const isSettingsOnlyButton = computed(() =>
-    hasUnappliedChanges.value && !messageText.value.trim() && !canSendAttachmentsOnly.value
-)
+const isComposerCommand = computed(() => messageText.value.trim().startsWith('/')
+    && (getProviderHelpers(session.value?.provider)?.getBuiltInCommands('/') || [])
+        .some(command => command.name === messageText.value.trim().slice(1).trim().split(/\s+/u)[0]))
+const asyncQuestionSendClassification = computed(() => classifyAsyncQuestionSend({
+    text: messageText.value,
+    answers: asyncQuestionAnswers.value,
+    attachments: canSendAttachmentsOnly.value ? [...legacyAttachments.value, ...composerRecords.value] : [],
+    settingsOnly: hasUnappliedChanges.value,
+    command: isComposerCommand.value,
+}))
+const isSettingsOnlyButton = computed(() => asyncQuestionSendClassification.value.settingsOnly)
 // A message that carries attachments waits until every chip is ready. A
 // settings-only update carries none, so it is never blocked.
 const attachmentsBlockSend = computed(() =>
@@ -728,6 +777,15 @@ function adjustTextareaHeight() {
 // single line is — and whether anything is waiting in it. We deliberately do NOT
 // preview the text; we only signal that a message has been started.
 const collapsedLabel = computed(() => {
+    const parts = []
+    if (readyAsyncQuestionCount.value > 0) {
+        parts.push(`${readyAsyncQuestionCount.value} question${readyAsyncQuestionCount.value === 1 ? '' : 's'} ready`)
+    }
+    if (hasCollectingAsyncQuestions.value) parts.push('Questions pending...')
+    if (parts.length) return `${parts.join(' · ')} · ${collapsedMessageLabel.value}`
+    return collapsedMessageLabel.value
+})
+const collapsedMessageLabel = computed(() => {
     const hasText = messageText.value.trim().length > 0
     const count = attachmentCount.value
     const filesPart = count > 0 ? `${count} file${count > 1 ? 's' : ''} attached` : ''
@@ -1533,17 +1591,22 @@ async function handleSend() {
     // Sending is locked while a pending request shares the footer: the composer
     // is for *preparing* only. Guards both the click and the keyboard shortcut.
     if (props.sendingLocked) return
-    const text = messageText.value.trim()
+    const rawText = messageText.value
+    const text = rawText.trim()
+    const classification = asyncQuestionSendClassification.value
+    if (classification.commandBlocked) {
+        toast.warning('Use a normal message or clear your question answers before sending a command.')
+        return
+    }
     // Attachments alone make a real message, so they take precedence over the
     // settings-only interpretation of an empty composer.
     const attachmentsOnly = !text && canSendAttachmentsOnly.value
     // A staged hybrid switch is an unapplied change too — committed below.
     const hasStagedHybrid = isHybridStaged.value
-    const isSettingsOnlyUpdate = !text && !attachmentsOnly
-        && (hasSettingsChanged.value || hasStagedHybrid)
+    const isSettingsOnlyUpdate = classification.settingsOnly
 
     // Need text, attachments, a settings change, or a staged hybrid switch
-    if ((!text && !attachmentsOnly && !isSettingsOnlyUpdate) || isDisabled.value) return
+    if (!classification.canSend || isDisabled.value) return
     // A message with attachments waits for every upload (D6): never queued.
     if (!isSettingsOnlyUpdate && !attachmentsReady.value) return
 
@@ -1583,8 +1646,18 @@ async function handleSend() {
     if (hasStagedHybrid) {
         sendWsMessage({ type: 'set_session_hybrid', session_id: props.sessionId })
         store.setStagedHybrid(props.sessionId, false)
-        if (!text && !attachmentsOnly) return
+        if (!text && !attachmentsOnly && !classification.hasAnswers) return
     }
+
+    const outgoing = prepareAsyncQuestionSend({
+        snapshot: isSettingsOnlyUpdate || isComposerCommand.value
+            ? null : asyncQuestionSnapshot.value,
+        questionDraft: asyncQuestionDraft.value || {}, rawText,
+        pendingQuestionIds: store.getPendingAsyncQuestionIds(props.sessionId),
+    })
+    const questionSend = !!outgoing.asyncQuestions
+    const requestId = generateUUID()
+    if (questionSend && !store.reserveAsyncQuestionSend(props.sessionId, requestId, outgoing)) return
 
     // Build the message payload
     // For context_max: when the auto-force-to-1M rule is active we send 1M
@@ -1595,7 +1668,7 @@ async function handleSend() {
         session_id: props.sessionId,
         project_id: props.projectId,
         provider: session.value?.provider,
-        text: text,
+        text: questionSend ? rawText : text,
         // Settings: null = use global default, explicit value = forced for this session
         permission_mode: selectedPermissionMode.value,
         selected_model: selectedModel.value,
@@ -1607,6 +1680,8 @@ async function handleSend() {
             ? store.getEffectiveContextMax(props.sessionId, selectedModel.value ?? settings.providerStore.value?.defaultModel)
             : selectedContextMax.value,
     }
+
+    if (questionSend) payload.async_questions = outgoing.asyncQuestions
 
     // For draft sessions with a title, include it
     if (isDraft.value && session.value?.title) {
@@ -1621,30 +1696,53 @@ async function handleSend() {
         emit('needs-title')
     }
 
-    // Correlation id echoed by the backend in every reply frame, so an error
-    // can be matched back to this exact send (recovery flow).
-    const requestId = generateUUID()
+    // Staged attachments ride as ordered refs, never as legacy images or
+    // documents (mutually exclusive on the frame, spec §8). The refs are read
+    // above, after the trust dialog.
+    setAttachmentPayloadFields(payload, records)
+
+    // Keep the reservation's identity through staging and dispatch.
     payload.request_id = requestId
 
-    // Only after a successful socket send: snapshot the send (refs and
-    // metadata) + optimistic bubble + optimistic starting state, THEN forget
-    // exactly the sent records locally (the server owns their entries now;
-    // an attachment added after this send stays). A failed socket send keeps
-    // the draft. Legacy medias never reach this point (attachmentsReady).
-    const success = sendComposerMessage({
-        payload,
-        records,
-        send: sendWsMessage,
-        previewUrlFor: id => store.getAttachmentPreviewUrl(id),
-        register: isSettingsOnlyUpdate ? null : attachments => {
-            store.registerOutgoingSend(props.sessionId, props.projectId, requestId, {
-                text,
-                attachments,
+    // Only after a successful dispatch: snapshot the send (refs and metadata)
+    // + optimistic bubble + optimistic starting state, THEN forget exactly the
+    // sent records locally (the server owns their entries now; an attachment
+    // added after this send stays). A failed dispatch keeps the draft: the
+    // text, the answers and every attachment record. Legacy medias never reach
+    // this point (attachmentsReady).
+    const forgetSent = ids => store.forgetAttachments(props.sessionId, { ids }).catch(err =>
+        console.warn('Failed to forget sent attachments:', err))
+    const sentAttachments = snapshotAttachments(records).map(attachment => ({
+        ...attachment,
+        previewUrl: store.getAttachmentPreviewUrl(attachment.id) || null,
+    }))
+    let success
+    if (questionSend) {
+        try {
+            success = await store.sendAsyncQuestionMessage(props.sessionId, props.projectId, requestId, payload, {
+                ...outgoing, attachments: sentAttachments, medias: [],
             })
-        },
-        forget: ids => store.forgetAttachments(props.sessionId, { ids }).catch(err =>
-            console.warn('Failed to forget sent attachments:', err)),
-    })
+        } catch (error) {
+            console.warn('Failed to save the question send:', error?.name || 'Error')
+            toast.error('Failed to save the question send. Your message remains available for recovery.')
+            return
+        }
+        if (success && records.length) forgetSent(records.map(record => record.id))
+    } else {
+        success = sendComposerMessage({
+            payload,
+            records,
+            send: sendWsMessage,
+            previewUrlFor: id => store.getAttachmentPreviewUrl(id),
+            register: isSettingsOnlyUpdate ? null : attachments => {
+                store.registerOutgoingSend(props.sessionId, props.projectId, requestId, {
+                    text,
+                    attachments,
+                })
+            },
+            forget: forgetSent,
+        })
+    }
 
     if (success) {
         // Sync active values to match what was just sent to the backend.
@@ -1661,7 +1759,7 @@ async function handleSend() {
         if (isSettingsOnlyUpdate) return
 
         // Clear draft message from store (and IndexedDB)
-        store.clearDraftMessage(props.sessionId)
+        if (!questionSend) store.clearDraftMessage(props.sessionId)
 
         // Clear draft session from IndexedDB only (if this was a draft session)
         // Keep in store so session stays visible until backend confirms with session_updated
@@ -1673,16 +1771,16 @@ async function handleSend() {
         // Force-clear the Web Component's value property directly: Vue may skip
         // re-pushing "" via :value.prop if it already pushed "" on a previous send
         // (Vue's template binding deduplicates identical prop values).
-        messageText.value = ''
+        messageText.value = questionSend ? (store.getDraftMessage(props.sessionId)?.message || '') : ''
         if (textareaRef.value) {
             // Force-clear both the Web Component property and its internal <textarea>.
             // Setting wa.value alone may be ignored by the Lit setter's dedup check
             // (if _value is already ""), and even when accepted, the Lit re-render
             // with live() can be skipped if Vue's binding already pushed the same value.
             // Directly clearing the inner textarea ensures the DOM is always updated.
-            textareaRef.value.value = ''
+            textareaRef.value.value = messageText.value
             const inner = textareaRef.value.shadowRoot?.querySelector('textarea')
-            if (inner) inner.value = ''
+            if (inner) inner.value = messageText.value
             await nextTick()
             adjustTextareaHeight()
         }
@@ -1913,7 +2011,9 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
 </script>
 
 <template>
-    <div class="message-input" ref="rootRef" :class="{ collapsed, 'message-input--has-panel-above': hasPanelAbove }">
+    <div class="message-input" ref="rootRef" :class="{ collapsed, 'message-input--has-panel-above': hasPanelAbove,
+        'message-input--has-questions': readyAsyncQuestionCount > 0 && !hideAsyncQuestions,
+        'message-input--has-question-block': (readyAsyncQuestionCount > 0 || hasCollectingAsyncQuestions) && !hideAsyncQuestions }">
         <!-- Collapsed bar: single line shown in place of the whole composer.
              Clickable anywhere to restore; the explicit button is the visual cue.
              Keeps the .message-input-collapsed-bar class so the collapsed-state
@@ -1984,6 +2084,28 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
                 {{ commentsWithContentCount === 1 ? 'Clear comment' : 'Clear comments' }}
             </wa-button>
         </div>
+        <div
+            v-if="(readyAsyncQuestionCount > 0 || hasCollectingAsyncQuestions) && !hideAsyncQuestions"
+            class="async-question-header"
+        >
+            <wa-icon name="circle-question" class="async-question-header-icon"></wa-icon>
+            <span v-if="readyAsyncQuestionCount > 0" class="async-question-header-description">
+                {{ readyAsyncQuestionCount === 1
+                    ? 'Along with your next message, you can answer the following question.'
+                    : 'Along with your next message, you can answer the following questions.' }}
+            </span>
+            <span v-if="hasCollectingAsyncQuestions" class="async-question-pending" role="status">
+                Questions pending...
+            </span>
+        </div>
+        <div v-if="asyncQuestionNotice" class="async-question-notice" role="status">{{ asyncQuestionNotice }}</div>
+        <AsyncQuestions
+            v-if="readyAsyncQuestionCount > 0 && !hideAsyncQuestions"
+            :session-id="sessionId"
+            :snapshot="asyncQuestionSnapshot"
+            @dismiss="dismissAsyncQuestion"
+            @keydown="onAsyncQuestionKeydown"
+        />
         <wa-textarea
             ref="textareaRef"
             :id="textareaAnchorId"
@@ -1996,6 +2118,10 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
             @paste="onPaste"
             @focus="adjustTextareaHeight"
         ></wa-textarea>
+
+        <div v-if="asyncQuestionSendClassification.commandBlocked" class="async-question-notice" role="status">
+            Use a normal message or clear your question answers before sending a command.
+        </div>
 
         <!-- Popups teleported out of the flex container -->
         <Teleport to="body">
@@ -2223,7 +2349,7 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
                     v-if="!sendingLocked || sendingLockedPresentation === 'disabled'"
                     :id="sendingLocked ? sendingLockedId : undefined"
                     variant="brand"
-                    :disabled="sendingLocked || isDisabled || attachmentsBlockSend || (!messageText.trim() && !canSendAttachmentsOnly && !hasUnappliedChanges)"
+                    :disabled="sendingLocked || isDisabled || attachmentsBlockSend || !asyncQuestionSendClassification.canSend"
                     @click="handleSend"
                     size="small"
                     class="send-button"
@@ -2333,13 +2459,15 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
    the hybrid terminal block and/or the goal bar — a hairline separates the composer from it
    (each of those panels itself sits under its own wa-divider). Mirrors the
    collapsed-state border so the separator is present whether the composer is a
-   bar or expanded. */
-.message-input.message-input--has-panel-above {
+   bar or expanded. Ready or pending questions inside the composer use the same top border. */
+.message-input.message-input--has-panel-above,
+.message-input.message-input--has-question-block {
     border-top: var(--divider-size) solid var(--wa-color-surface-border);
 }
 /* Breathing room below the separator when the composer is expanded under the
-   panel. (Collapsed, the bar owns its own padding.) */
-.message-input.message-input--has-panel-above:not(.collapsed) {
+   panel or showing ready or pending questions. (Collapsed, the bar owns its own padding.) */
+.message-input.message-input--has-panel-above:not(.collapsed),
+.message-input.message-input--has-question-block:not(.collapsed) {
     padding-top: var(--wa-space-s);
 }
 
@@ -2365,6 +2493,40 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
     max-height: 40dvh;
     /* Allow scrolling when content exceeds max-height */
     overflow-y: auto;
+}
+
+.message-input--has-questions > wa-textarea::part(textarea) {
+    max-height: 20dvh;
+}
+.async-question-header {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--wa-space-xs);
+    font-size: var(--wa-font-size-s);
+    font-weight: 600;
+    color: var(--wa-color-brand-60);
+}
+.async-question-header-icon {
+    flex-shrink: 0;
+}
+.async-question-header:has(.async-question-pending) {
+    margin-bottom: var(--wa-space-xs);
+}
+.async-question-header-description {
+    flex: 1;
+    min-width: 0;
+    font-weight: var(--wa-font-weight-normal);
+    color: var(--wa-color-text-quiet);
+}
+.async-question-pending {
+    font-weight: var(--wa-font-weight-normal);
+    font-style: italic;
+}
+.async-question-pending,
+.async-question-notice {
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
 }
 
 /* The composer stands out (level 2) instead of the recessed look of other fields. The

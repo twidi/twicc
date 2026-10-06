@@ -973,6 +973,9 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         elif msg_type == "send_message":
             await self._handle_send_message(content)
 
+        elif msg_type == "codex_dismiss_async_question":
+            await self._provider_handlers[Provider.CODEX].dispatch("dismiss_async_question", content)
+
         elif msg_type == "kill_process":
             await self._handle_kill_process(content)
 
@@ -1127,6 +1130,18 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             if request_id := content.get("request_id"):
                 frame["request_id"] = request_id
             logger.warning("send_message for %s rejected: %s", session_id, exc)
+            await self.send_json(frame)
+            return
+        # Question answers: shape only too (their content is validated in the lane,
+        # against the durable snapshot). Same error family, same request id.
+        if content.get("async_questions") is not None and not isinstance(content["async_questions"], dict):
+            frame = {
+                "type": "error", "code": "async_questions_invalid",
+                "message": "async_questions must be an object", "session_id": session_id,
+            }
+            if request_id := content.get("request_id"):
+                frame["request_id"] = request_id
+            logger.warning("send_message for %s rejected: async_questions is not an object", session_id)
             await self.send_json(frame)
             return
         _spawn_detached(
@@ -1284,6 +1299,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 )
                 return
 
+        if "async_questions" in content and (not exists or provider != Provider.CODEX):
+            await send_error("Question answers require an existing Codex session", code="async_questions_invalid")
+            return
+
         try:
             ensure_provider_running(provider)
         except ProviderDisabledError as e:
@@ -1342,10 +1361,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 # Values are null (use global default) or explicit (forced).
                 from twicc.core.models import Session
                 from twicc.core.serializers import serialize_session
+                from twicc.core.services.session_update import persist_session_settings
+
                 await run_under_db_write_lock(
-                    lambda: Session.objects.filter(id=session_id).aupdate(
-                        **agent_settings._asdict()
-                    )
+                    lambda: sync_to_async(persist_session_settings)(session_id, agent_settings._asdict())
                 )
                 # Broadcast session update so all clients see the new settings
                 session_obj = await sync_to_async(Session.objects.filter(id=session_id).first)()
@@ -1363,7 +1382,13 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
                 # If no text/attachments and no process is running, we're done:
                 # settings are saved to DB and broadcast, nothing to send.
-                has_content = bool(text) or bool(images) or bool(documents) or bool(attachment_refs)
+                has_content = (
+                    bool(text) or bool(images) or bool(documents) or bool(attachment_refs)
+                    or (
+                        provider == Provider.CODEX and isinstance(content.get("async_questions"), dict)
+                        and bool(content["async_questions"].get("answers"))
+                    )
+                )
                 has_process = manager.get_agent_info(session_id) is not None
                 if not has_content and not has_process:
                     return
@@ -1391,6 +1416,8 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                     settings=effective_agent_settings,
                     images=images, documents=documents,
                     **plan_kwargs,
+                    **({"async_questions": content.get("async_questions"), "request_id": request_id,
+                        "send_origin": "human"} if provider == Provider.CODEX else {}),
                 )
             else:
                 # New session: delegate to the shared service so the WS path

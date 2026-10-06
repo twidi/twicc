@@ -68,6 +68,7 @@ def fixture():
     agent._broadcast_stream_event = AsyncMock()
     agent._notify_state_change = AsyncMock()
     agent._handle_error = AsyncMock()
+    agent._record_async_question_facts = AsyncMock()
     agent._try_arm_subagent_hold = AsyncMock(return_value=False)
     return agent, thread, deliveries
 
@@ -162,7 +163,7 @@ def test_replacement_stream_survives_previous_consumer_cleanup():
     async def run():
         agent, thread, deliveries = fixture()
         old = agent._current_turn
-        old.events = [SimpleNamespace(method="turn/completed", payload=SimpleNamespace(thread_id="session"))]
+        old.events = [SimpleNamespace(method="turn/completed", payload=SimpleNamespace(thread_id="session", turn=SimpleNamespace(id="old")))]
         agent._active_tools["old-tool"] = {"name": "exec_command", "input": {}}
         logging_patch = patch("twicc.providers.codex.agent.agent.log_stream_event")
         logging_patch.start()

@@ -1059,6 +1059,78 @@ async def _resolve_session_or_404(session_id, project_id, parent_session_id):
     return session
 
 
+def _question_recovery_ids(request, key):
+    """Bound owner-only recovery probes before any database or provider work."""
+    try:
+        data = orjson.loads(request.body)
+    except (orjson.JSONDecodeError, ValueError):
+        return None
+    ids = data.get(key) if isinstance(data, dict) else None
+    if not isinstance(ids, list) or not 1 <= len(ids) <= 100:
+        return None
+    if any(not isinstance(value, str) or not value.strip() or len(value) > 128 for value in ids):
+        return None
+    return list(dict.fromkeys(ids))
+
+
+async def async_question_session_existence(request):
+    """Return existence only, including hidden sessions, for local draft cleanup."""
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    session_ids = _question_recovery_ids(request, "session_ids")
+    if session_ids is None:
+        return JsonResponse({"error": "Invalid session_ids"}, status=400)
+    from twicc.orchestrator import get_orchestrator_registry
+    from twicc.providers.state import get_enabled_providers
+
+    sync_ready = False
+    if Provider.CODEX in get_enabled_providers():
+        try:
+            orchestrator = get_orchestrator_registry().get(Provider.CODEX)
+            sync_ready = orchestrator.initial_sync_done.is_set() and orchestrator.initial_sync_succeeded
+        except (KeyError, AttributeError):
+            pass
+    present = {session_id async for session_id in Session.objects.filter(id__in=session_ids).values_list("id", flat=True)}
+    return JsonResponse({"sessions": {
+        session_id: "present" if session_id in present else "deleted" if sync_ready else "unknown"
+        for session_id in session_ids
+    }})
+
+
+async def reconcile_session_async_questions(request, project_id, session_id):
+    """Owner recovery reads native identity and fences unadmitted requests."""
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    session = await _resolve_session_or_404(session_id, project_id, None)
+    if session.provider != Provider.CODEX or session.type != SessionType.SESSION:
+        raise Http404("Session not found")
+    request_ids = _question_recovery_ids(request, "request_ids")
+    if request_ids is None:
+        return JsonResponse({"error": "Invalid request_ids"}, status=400)
+    from twicc.providers.helpers import AgentSettings
+
+    project = await Project.objects.aget(id=project_id)
+    manager = get_agent_manager_registry().get(Provider.CODEX)
+    settings = get_provider_helpers(Provider.CODEX).resolve_agent_settings(
+        AgentSettings.from_session(session)
+    )
+    return JsonResponse(await manager.reconcile_question_sends(
+        session_id, project_id, project.directory, settings, request_ids,
+    ))
+
+
+async def session_async_questions(request, project_id, session_id):
+    """Read main-session questions independently of transcript pagination."""
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+    session = await _resolve_session_or_404(session_id, project_id, None)
+    if session.type != SessionType.SESSION:
+        raise Http404("Session not found")
+    from twicc.core.services.async_questions import read_question_snapshot
+
+    return JsonResponse(await sync_to_async(read_question_snapshot)(session.id))
+
+
 async def session_detail(request, project_id, session_id, parent_session_id=None):
     """GET/PATCH /api/projects/<id>/sessions/<session_id>/ - Detail or rename session.
 

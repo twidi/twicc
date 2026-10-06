@@ -55,6 +55,7 @@ def agent_fixture():
     agent._notify_state_change = AsyncMock()
     agent._try_arm_subagent_hold = AsyncMock(return_value=False)
     agent._handle_stream_event = AsyncMock()
+    agent._record_async_question_facts = AsyncMock()
     return agent, router, client
 
 

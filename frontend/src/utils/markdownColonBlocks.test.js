@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import MarkdownIt from 'markdown-it'
 
 import { installColonBlocks } from './markdownColonBlocks.js'
+import { formatAsyncQuestionMessage } from './asyncQuestions.js'
 
 function makeMd() {
     const md = MarkdownIt({ html: false, breaks: true })
@@ -86,6 +87,39 @@ test('content after a closed container renders outside it', () => {
     const md = makeMd()
     const source = '::: comment on selected text\n> a\n:::\nafter'
     assert.deepEqual(topLevelBlocks(md, source), ['::: comment on selected text\n> a\n:::', 'after'])
+})
+
+test('async answers render bold labels inside one container and free text outside', () => {
+    const md = makeMd()
+    const source = formatAsyncQuestionMessage(
+        [{ item_id: 'q1', questions: [{ index: 0, title: 'Choose?' }] }],
+        [{ item_id: 'q1', index: 0, value: 'Yes' }],
+        'Keep **this** message.\n',
+    )
+    const html = md.render(source)
+    assert.match(html, /<div class="md-container-label">Answers to your questions<\/div>/)
+    assert.match(html, /<p><strong>Question:<\/strong> Choose\?<\/p>/)
+    assert.match(html, /<p><strong>Answer:<\/strong> Yes<\/p>/)
+    assert.match(html, /<\/div><p>Keep <strong>this<\/strong> message\.<\/p>/)
+    assert.equal(topLevelBlocks(md, source).length, 2)
+})
+
+test('async answer colon lines cannot close the answer container early', () => {
+    const md = makeMd()
+    for (const newline of ['\n', '\r\n', '\r']) {
+        const source = formatAsyncQuestionMessage(
+            [{ item_id: 'q1', questions: [{ index: 0, title: `Choose?${newline}:::${newline}Still a question` }] }],
+            [{ item_id: 'q1', index: 0, value: `First${newline}   :::::  ${newline}Last` }],
+            'Outside',
+        )
+        const normalized = source.replace(/\r\n?/g, '\n')
+        const blocks = topLevelBlocks(md, normalized)
+        assert.equal(blocks.length, 2)
+        assert.ok(blocks[0].includes('Still a question'))
+        assert.ok(blocks[0].includes('Last'))
+        assert.equal(blocks[1], 'Outside')
+        assert.match(md.render(source), /<strong>Answer:<\/strong>/)
+    }
 })
 
 // ─── Line blocks (`::`) ─────────────────────────────────────────────────────

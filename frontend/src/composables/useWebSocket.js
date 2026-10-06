@@ -252,13 +252,16 @@ export const versionMismatchDetected = ref(false)
  * Send a JSON message through the WebSocket connection.
  * Returns false if not connected.
  * @param {object} data - The data to send (will be JSON-stringified)
+ * @param {object} options - Set buffer:false to require immediate socket dispatch.
  * @returns {boolean} - True if message was sent, false if not connected
  */
-export function sendWsMessage(data) {
+export function sendWsMessage(data, { buffer = true } = {}) {
     if (!__hmrState.wsSendFn) {
         console.warn('WebSocket not initialized, cannot send message')
         return false
     }
+    // Structured sends must roll back when disconnected, never enter the reconnect buffer.
+    if (!buffer) return __hmrState.wsSendFn(JSON.stringify(data), false)
     __hmrState.wsSendFn(JSON.stringify(data))
     return true
 }
@@ -986,7 +989,12 @@ export function useWebSocket() {
     // can flush/mark the right session on tab focus/blur transitions.
     watch(
         () => route.params.sessionId,
-        (id) => { __hmrState.currentRouteSessionId = id || null },
+        (id) => {
+            __hmrState.currentRouteSessionId = id || null
+            if (id && route.params.projectId) {
+                store.loadAsyncQuestions(store.sessions[id]?.project_id || route.params.projectId, id).catch(error => console.warn('Failed to load async questions:', error))
+            }
+        },
         { immediate: true },
     )
 
@@ -1868,6 +1876,9 @@ export function useWebSocket() {
                 break
             case 'startup_progress':
                 store.setStartupProgress(msg.provider, msg.phase, msg.current, msg.total, msg.completed, msg.detail)
+                if (msg.provider === 'codex' && msg.phase === 'initial_sync' && msg.completed) {
+                    store.reconcileAsyncQuestionExistence().catch(error => console.warn('Failed to check question draft sessions:', error))
+                }
                 break
             case 'update_available':
                 store.setLatestVersion(msg.latest_version, msg.release_url)
@@ -1880,15 +1891,17 @@ export function useWebSocket() {
                 // This is the only delivery confirmation for messages Claude
                 // Code accepts mid-turn — they never get a user_message line.
                 if (msg.request_id) {
-                    store.confirmInflightSend(msg.session_id, msg.request_id)
+                    store.acknowledgeInflightSend(msg.session_id, msg.request_id).catch(error => console.warn('Failed to persist accepted async question send:', error))
                 }
                 break
             }
             case 'error': {
+                if (msg.request_id) store.failAsyncQuestionDismissal(msg.request_id).catch(error => console.warn('Failed to reconcile async question dismissal:', error))
                 // A send_message failure matching an in-flight send: the store
                 // drops the optimistic ghosts and surfaces the composer callout
                 // (with draft restoration) — no toast needed on top.
                 if (msg.request_id && store.failInflightSend(msg.request_id, msg)) {
+                    store.reconcileAsyncQuestionDraft(msg.session_id).catch(error => console.warn('Failed to reconcile async question send:', error))
                     break
                 }
                 if (msg.code === 'provider_disabled') {
@@ -1901,6 +1914,12 @@ export function useWebSocket() {
                 }
                 break
             }
+            case 'async_questions_updated':
+                store.applyAsyncQuestionSnapshot(msg.session_id, msg.snapshot).catch(error => console.warn('Failed to persist async questions:', error))
+                break
+            case 'async_question_dismissed':
+                store.handleAsyncQuestionDismissed(msg).catch(error => console.warn('Failed to persist async question dismissal:', error))
+                break
             default: {
                 // Provider-prefixed message? ``<provider>:<action>`` is delegated
                 // to the provider's WS handler. Generic dispatcher is unaware of
@@ -1946,6 +1965,7 @@ export function useWebSocket() {
             const isReconnection = wasConnected
             console.log(`WebSocket ${isReconnection ? 'reconnected' : 'connected'}, starting reconciliation...`)
             onReconnected(currentProjectId, currentSessionId, isReconnection)
+            store.refreshActiveAsyncQuestions()
             // Uploads: reconcile with the server list, then restart the
             // network-paused uploads (spec §6.3, §6.5). Every connection, the
             // first one included. Lazy import (no useWebSocket ↔ store cycle).

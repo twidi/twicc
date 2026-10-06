@@ -395,6 +395,24 @@ export function attachmentPayloadFields(records) {
 }
 
 /**
+ * Set the attachment fields of a `send_message` frame in place: with
+ * attachments, the ordered refs and never the legacy `images` / `documents`
+ * (mutually exclusive, §8). Without attachments, the frame is left as is.
+ *
+ * @param {object} payload
+ * @param {object[]} records - the composer records, in send order
+ * @returns {object} the same payload
+ */
+export function setAttachmentPayloadFields(payload, records) {
+    if (records?.length) {
+        delete payload.images
+        delete payload.documents
+        Object.assign(payload, attachmentPayloadFields(records))
+    }
+    return payload
+}
+
+/**
  * Send one composer message (§9.4). With attachments, the frame carries their
  * ordered refs and never the legacy `images` / `documents` fields (mutually
  * exclusive, §8). Only after a successful socket send: `register` receives
@@ -414,11 +432,7 @@ export function attachmentPayloadFields(records) {
  */
 export function sendComposerMessage({ payload, records, send, register = null, forget, previewUrlFor = () => null }) {
     const sent = [...(records || [])]
-    if (sent.length) {
-        delete payload.images
-        delete payload.documents
-        Object.assign(payload, attachmentPayloadFields(sent))
-    }
+    setAttachmentPayloadFields(payload, sent)
     if (!send(payload)) return false
     if (register) {
         register(snapshotAttachments(sent).map(attachment => ({

@@ -93,6 +93,7 @@ def test_initial_sync_does_not_enqueue_new_guardian(provider_home) -> None:
     stats = sync_all(sync_queue)
 
     assert stats["sessions_created"] == 0
+    assert stats["inventory_complete"] == 1
     assert sync_queue.empty()
 
 

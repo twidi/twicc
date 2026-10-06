@@ -127,6 +127,7 @@ const elementChildren = (node) => node.children.filter((c) => c.type === 1)
 const SHEET = 'option-cards.css'
 const CLAUDE = '../components/session/detail/items/claude_code/PendingRequestBody.vue'
 const CODEX = '../components/session/detail/items/codex/RequestUserInputBody.vue'
+const FIELDS = '../components/message/QuestionFields.vue'
 const sheetRules = () => parseAll(read(SHEET))
 
 // The rules of §4.2 and §4.3, in source order: [enclosing at-rule or null, selectors, body].
@@ -356,17 +357,22 @@ test('7. Claude body: the indicator follows question.multiSelect (§4.1)', () =>
     })
 })
 
-test('8. Codex body: always a radio, a literal class (§4.1)', () => {
-    assertCardMarkup(CODEX, { class: 'option-indicator option-indicator--radio', 'aria-hidden': 'true' })
+test('8. shared Codex fields: always a radio, a literal class (§4.1)', () => {
+    assert.ok(elements(templateRoots(read(CODEX))).some(node => node.tag === 'QuestionFields'), 'Codex uses the shared fields')
+    assertCardMarkup(FIELDS, { class: 'option-indicator option-indicator--radio', 'aria-hidden': 'true' })
 })
 
-test('9. no scoped copy of the card rules left; .option-description stays where it was (§4.2)', () => {
-    for (const file of [CLAUDE, CODEX]) {
+test('9. no scoped copy of the card rules left; .option-description stays with the fields (§4.2)', () => {
+    for (const file of [CLAUDE, CODEX, FIELDS]) {
         const style = styleOf(read(file))
         const rules = parseAll(style)
         for (const r of rules) {
             assert.ok(!/\.(question-options|option-card|option-label|option-indicator)\b/.test(r.head), `${file}: scoped copy "${r.head}"`)
         }
+        // The false "10% lighter" comment went with its rule; the old hover clause is replaced.
+        assert.ok(!style.includes('10% lighter'), `${file}: stale hover comment`)
+        assert.ok(!style.includes('keeps its selected colors'), `${file}: stale two-layer comment`)
+        if (file === CODEX) continue // The host delegates description markup and style to QuestionFields.
         const description = rule(rules, ['.option-description'], topLevel)
         assert.deepEqual(description.list, [
             ['display', 'block'],
@@ -374,9 +380,6 @@ test('9. no scoped copy of the card rules left; .option-description stays where 
             ['color', 'var(--wa-color-text-quiet)'],
             ['line-height', '1.3'],
         ], `${file}: .option-description`)
-        // The false "10% lighter" comment went with its rule; the old hover clause is replaced.
-        assert.ok(!style.includes('10% lighter'), `${file}: stale hover comment`)
-        assert.ok(!style.includes('keeps its selected colors'), `${file}: stale two-layer comment`)
     }
     const sheet = read(SHEET)
     assert.ok(!sheet.includes('10% lighter') && !sheet.includes('keeps its selected colors'), 'no stale comment in the sheet')
@@ -408,13 +411,13 @@ test('10. the stale comments moved with their rules (§6)', () => {
     const claude = commentAbove(styleOf(read(CLAUDE)), 'wa-button.auto-focused:focus-within::part(base)', CLAUDE)
     assert.match(claude, /delegate focus/, 'Claude: the wa-button / wa-textarea reasoning stays')
     assert.ok(!/\.option-card|option-card\)|plain tabindex/.test(claude), 'Claude: the option-card part moved')
-    const codex = commentAbove(styleOf(read(CODEX)), 'wa-textarea.auto-focused:focus-within::part(base)', CODEX)
+    const codex = commentAbove(styleOf(read(FIELDS)), 'wa-textarea.auto-focused:focus-within::part(base)', FIELDS)
     assert.match(codex, /lone text input/, 'Codex: the options-less text input comment stays above its rule')
     assert.ok(!/\.option-card|first option card/.test(codex), 'Codex: the option-card part moved')
 })
 
 test('11. both bodies still compile: template and scoped style', () => {
-    for (const [file, name] of [[CLAUDE, 'PendingRequestBody.vue'], [CODEX, 'RequestUserInputBody.vue']]) {
+    for (const [file, name] of [[CLAUDE, 'PendingRequestBody.vue'], [CODEX, 'RequestUserInputBody.vue'], [FIELDS, 'QuestionFields.vue']]) {
         const sfc = read(file)
         const { descriptor, errors } = parse(sfc, { filename: name })
         assert.deepEqual(errors, [], `${file}: parse`)

@@ -99,8 +99,12 @@ window.fetch = async (input, options = {}) => {
     const entry = { path, method, substitute: null }
     requests.push(entry)
     if (method !== 'GET') throw new Error(`Fixture rejects mutation: ${method} ${path}`)
-    const match = path.match(/^\/api\/projects\/invisible-stream-fixture-project\/sessions\/(invisible-stream-fixture-(?:main|other|agent))\/(subagents|tool-states|workflow-links)\/$/)
+    const match = path.match(/^\/api\/projects\/invisible-stream-fixture-project\/sessions\/(invisible-stream-fixture-(?:main|other|agent))\/(subagents|tool-states|workflow-links|async-questions)\/$/)
     if (match && ids.has(match[1])) {
+        if (match[2] === 'async-questions') {
+            entry.substitute = 'Seeded synthetic session has no async questions'
+            return Response.json({ version: 1, revision: 0, widget_enabled: true, batches: [], resolutions: {} })
+        }
         entry.substitute = 'Seeded synthetic session has no server tool or agent links'
         return Response.json(match[2] === 'tool-states' ? {} : [])
     }

@@ -995,7 +995,7 @@ usePendingRequestDraft({
 
     <template v-else-if="requestType === 'tool_approval'">
         <!-- Tool details -->
-        <div class="pending-request-details">
+        <div v-scroll-shadow class="pending-request-details">
             <div class="tool-name-badge">
                 <wa-badge variant="neutral">{{ toolNameDisplay }}</wa-badge>
             </div>
@@ -1175,7 +1175,7 @@ usePendingRequestDraft({
 
     <template v-else-if="requestType === 'ask_user_question'">
         <!-- Questions -->
-        <div class="questions-container">
+        <div v-scroll-shadow class="questions-container">
             <div
                 v-for="(question, qIndex) in questions"
                 :key="qIndex"

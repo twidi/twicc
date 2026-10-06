@@ -8,6 +8,7 @@ import { createStreamPublicationIdentity } from '../utils/streamPublicationRegis
 import { matchesStreamingBlock as codexMatch } from '../providers/codex/streamMatching.js'
 import { matchesStreamingBlock as claudeMatch } from '../providers/claude_code/streamMatching.js'
 import { SYNTHETIC_ITEM } from '../constants.js'
+import { createAsyncQuestionActions } from '../utils/asyncQuestionState.js'
 const source = readFileSync(new URL('./data.js', import.meta.url), 'utf8')
 function action(name) {
     const starts = [`        ${name}(`, `        async ${name}(`].map(prefix => source.indexOf(prefix)).filter(index => index >= 0)
@@ -265,5 +266,42 @@ for (const type of ['text', 'thinking']) {
             assert.equal(flushBuffer(f.sessionId, 0), null)
             assert.equal(f.recomputations.length, recomputations)
         }
+    })
+}
+
+for (const order of ['snapshot-first', 'transcript-first']) {
+    test(`async source retirement and ready snapshot remain independent: ${order}`, async () => {
+        const f = makeRetirementFixture()
+        const state = f.store.localState
+        Object.assign(state, { asyncQuestionSnapshots: {}, asyncQuestionDrafts: {},
+            asyncQuestionNotices: {}, draftMessages: {}, draftAppendSignals: {} })
+        Object.assign(f.store, createAsyncQuestionActions({
+            recover: async () => {}, pendingSends: () => ({}), cancelDraftSave: () => {},
+        }))
+        const batch = { item_id: 'A', status: 'ready', questions: [{ index: 0, title: 'Keep the menu?', options: ['Yes'] }] }
+        const snapshot = { revision: 1, widget_enabled: true, batches: [batch], resolutions: {} }
+        const persisted = item()
+        const parsed = getParsedContent(persisted)
+        Object.assign(parsed.payload.item, { delivery: 'async', phase: 'final_answer', questions: batch.questions })
+        // Preserve the canonical payload through normal content hydration.
+        persisted.content = JSON.stringify(parsed)
+        clearParsedContent(persisted)
+        f.store.processStates[f.sessionId] = { provider: 'codex', state: 'assistant_turn', pending_requests: [] }
+        const beforeProcess = JSON.parse(JSON.stringify(f.store.processStates[f.sessionId]))
+        start(f)
+        f.store.streamBlockDelta(f.sessionId, 'A', 0, 'Keep the menu?')
+        if (order === 'snapshot-first') await f.store.applyAsyncQuestionSnapshot(f.sessionId, snapshot)
+        f.store.addSessionItems(f.sessionId, [persisted])
+        assert.equal(current(f), undefined)
+        assert.equal(f.store.sessionItems[f.sessionId].length, 1)
+        if (order === 'transcript-first') {
+            assert.equal(state.asyncQuestionSnapshots[f.sessionId], undefined)
+            await f.store.applyAsyncQuestionSnapshot(f.sessionId, snapshot)
+        }
+        assert.deepEqual(state.asyncQuestionSnapshots[f.sessionId].batches, [batch])
+        assert.deepEqual(f.store.processStates[f.sessionId], beforeProcess)
+        f.store.streamBlockEnd(f.sessionId, 'A', 0, 'A')
+        assert.equal(current(f), undefined)
+        assert.deepEqual(state.asyncQuestionSnapshots[f.sessionId].resolutions, {})
     })
 }

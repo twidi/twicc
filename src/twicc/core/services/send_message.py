@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 from typing import NamedTuple
+from uuid import uuid4
 
 from asgiref.sync import sync_to_async
 
@@ -74,7 +75,8 @@ async def send_message_to_session_from_payload(payload: dict) -> SendMessageResu
       resolve the pending dialog in the UI first.
     """
     session_id = payload.get("session_id")
-    text = (payload.get("text") or "").strip()
+    raw_text = payload.get("text") or ""
+    text = raw_text.strip()
     images = payload.get("images") or []
     documents = payload.get("documents") or []
 
@@ -86,7 +88,9 @@ async def send_message_to_session_from_payload(payload: dict) -> SendMessageResu
         )])
     if not session_id:
         errors.append(SendMessageError("session_id", "missing", "session_id is required"))
-    if not text and not images and not documents:
+    if not text and not images and not documents and not (
+        isinstance(payload.get("async_questions"), dict) and payload["async_questions"].get("answers")
+    ):
         errors.append(SendMessageError(
             "text", "empty_text", "text is required (unless the message carries attachments)",
         ))
@@ -132,6 +136,14 @@ async def send_message_to_session_from_payload(payload: dict) -> SendMessageResu
             SendMessageError("session_id", "unknown_provider",
                              f"Session {session_id!r} has unknown provider "
                              f"{session.provider!r}"),
+        ])
+
+    if provider == Provider.CODEX:
+        text = raw_text
+
+    if "async_questions" in payload and provider != Provider.CODEX:
+        return SendMessageResult(False, None, None, None, [
+            SendMessageError("async_questions", "async_questions_invalid", "Question answers require a Codex session"),
         ])
 
     try:
@@ -181,13 +193,21 @@ async def send_message_to_session_from_payload(payload: dict) -> SendMessageResu
     from twicc.agent.registry import get_agent_manager_registry
     manager = get_agent_manager_registry().get(provider)
     try:
-        await manager.send_to_session(
+        delivered = await manager.send_to_session(
             session_id, session.project_id, project.directory, text,
             settings=effective, images=images, documents=documents,
+            **({"async_questions": payload.get("async_questions"),
+                "request_id": payload.get("_send_request_id") or str(uuid4()),
+                "send_origin": payload.get("_send_origin", "internal")} if provider == Provider.CODEX else {}),
         )
     except RuntimeError as e:
         return SendMessageResult(False, None, None, None, [
-            SendMessageError("session", "manager_busy", str(e)),
+            SendMessageError("session", getattr(e, "code", None) or "manager_busy", str(e)),
+        ])
+
+    if delivered is False:
+        return SendMessageResult(False, None, None, None, [
+            SendMessageError("session", "send_failed", "The message was not accepted for delivery"),
         ])
 
     # Read **after** the agent has taken the message, and server-side: it is

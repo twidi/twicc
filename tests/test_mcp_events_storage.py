@@ -78,7 +78,6 @@ def test_owner_snapshot_does_not_expose_subscription_secrets(subscription):
 def test_migration_preserves_title_state_and_sets_existing_session_epoch_zero():
     executor = MigrationExecutor(connection)
     target = [("core", "0151_mcp_event_subscriptions")]
-    assert executor.loader.graph.leaf_nodes("core") == target
     previous = executor.loader.graph.node_map[target[0]].parents
     assert {node.key for node in previous} == {("core", "0150_session_automatic_titles")}
     source = [node.key for node in previous]

@@ -87,7 +87,7 @@ usePendingRequestSubmitShortcut((e) => {
 </script>
 
 <template>
-    <div class="elicitation-url-body">
+    <div v-scroll-shadow class="elicitation-url-body">
         <div class="elicit-section">
             <div class="elicit-summary">
                 <span class="elicit-summary-label">MCP URL request</span>

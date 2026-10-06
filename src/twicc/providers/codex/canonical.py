@@ -106,7 +106,8 @@ def agent_message_phase(record: dict) -> str | None:
 
     Codex tags every assistant message it completes with the role it plays
     in the turn: ``"commentary"`` for the ones it emits between tool calls,
-    ``"final_answer"`` for the one that closes the turn.
+    ``"final_answer"`` for its final-answer role. Async questions also carry
+    ``"final_answer"`` while the turn continues; delivery must be checked separately.
 
     ``None`` covers three cases the caller must not distinguish: the record
     is not an ``AgentMessage``, it predates the field, or TwiCC built the

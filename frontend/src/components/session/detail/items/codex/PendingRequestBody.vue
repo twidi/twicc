@@ -257,7 +257,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <div class="codex-pending-body">
+    <div v-scroll-shadow class="codex-pending-body">
         <component
             :is="selfContainedBody"
             v-if="selfContainedBody"

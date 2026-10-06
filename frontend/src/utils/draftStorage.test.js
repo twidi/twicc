@@ -152,20 +152,49 @@ async function openReady(storage, fake) {
 
 // ── Schema ───────────────────────────────────────────────────────────────────
 
-test('version 9 adds draftAttachments (keyPath id, non-unique sessionId index) and keeps the v8 stores', async () => {
+test('version 11 adds draftAttachments (keyPath id, non-unique sessionId index) and asyncQuestionDrafts, and keeps the v8 stores', async () => {
     const fake = installFake({ existingVersion: 8, existingStores: VERSION_8_STORES })
     const keptMedias = fake.stores.get('draftMedias')
     const keptComments = fake.stores.get('codeComments')
     const storage = await freshStorage()
     await openReady(storage, fake)
-    assert.equal(fake.opens[0].request.version, 9)
+    assert.equal(fake.opens[0].request.version, 11)
     const store = fake.stores.get('draftAttachments')
     assert.ok(store)
     assert.equal(store.keyPath, 'id')
     assert.deepEqual(store.indexes.get('sessionId'), { keyPath: 'sessionId', unique: false })
+    const questions = fake.stores.get('asyncQuestionDrafts')
+    assert.ok(questions)
+    assert.equal(questions.keyPath, null)
     // Stores of earlier versions are not recreated (their rows survive).
     assert.equal(fake.stores.get('draftMedias'), keptMedias)
     assert.equal(fake.stores.get('codeComments'), keptComments)
+})
+
+// The two lineages each created a v9 (and main a v10): one upgrade must add exactly
+// the store each lacks, whatever the version it comes from.
+for (const [label, existingVersion, extra, kept, added] of [
+    ['v9 with draftAttachments only (attachments lineage)', 9, [['draftAttachments', { keyPath: 'id' }]], 'draftAttachments', 'asyncQuestionDrafts'],
+    ['v9 with asyncQuestionDrafts only (questions lineage)', 9, [['asyncQuestionDrafts']], 'asyncQuestionDrafts', 'draftAttachments'],
+    ['v10 with asyncQuestionDrafts only', 10, [['asyncQuestionDrafts']], 'asyncQuestionDrafts', 'draftAttachments'],
+]) {
+    test(`upgrade from ${label} creates the missing store and keeps the other`, async () => {
+        const fake = installFake({ existingVersion, existingStores: [...VERSION_8_STORES, ...extra] })
+        const existing = fake.stores.get(kept)
+        const storage = await freshStorage()
+        await openReady(storage, fake)
+        assert.equal(fake.opens[0].request.version, 11)
+        assert.equal(fake.stores.get(kept), existing, 'the store already there is not recreated')
+        assert.ok(fake.stores.get(added))
+        if (added === 'draftAttachments') {
+            assert.deepEqual(fake.stores.get('draftAttachments').indexes.get('sessionId'), { keyPath: 'sessionId', unique: false })
+        }
+    })
+}
+
+test('the merged schema version is above both lineages', async () => {
+    const source = (await import('node:fs')).readFileSync(new URL('./draftStorage.js', import.meta.url), 'utf8')
+    assert.ok(Number(source.match(/const DB_VERSION = (\d+)/)[1]) > 10)
 })
 
 // ── CRUD ─────────────────────────────────────────────────────────────────────

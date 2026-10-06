@@ -3,7 +3,9 @@
 // draft attachment records persistence
 
 const DB_NAME = 'twicc'
-const DB_VERSION = 9
+// v9 (draftAttachments) and v10 (asyncQuestionDrafts) were created
+// independently; v11 is above both and creates whichever store is missing.
+const DB_VERSION = 11
 const DRAFT_MESSAGES_STORE = 'draftMessages'
 const DRAFT_SESSIONS_STORE = 'draftSessions'
 const DRAFT_MEDIAS_STORE = 'draftMedias'
@@ -11,6 +13,7 @@ const CODE_COMMENTS_STORE = 'codeComments'
 const INFLIGHT_SENDS_STORE = 'inflightSends'
 const PENDING_REQUEST_DRAFTS_STORE = 'pendingRequestDrafts'
 const DRAFT_ATTACHMENTS_STORE = 'draftAttachments'
+const ASYNC_QUESTION_DRAFTS_STORE = 'asyncQuestionDrafts'
 
 let dbPromise = null
 
@@ -127,6 +130,12 @@ export function getDb() {
                 if (!db.objectStoreNames.contains(DRAFT_ATTACHMENTS_STORE)) {
                     const store = db.createObjectStore(DRAFT_ATTACHMENTS_STORE, { keyPath: 'id' })
                     store.createIndex('sessionId', 'sessionId', { unique: false })
+                }
+                // Create asyncQuestionDrafts store if not exists (v10). Checked
+                // independently of draftAttachments: a v9 database from either
+                // lineage lacks exactly one of the two stores.
+                if (!db.objectStoreNames.contains(ASYNC_QUESTION_DRAFTS_STORE)) {
+                    db.createObjectStore(ASYNC_QUESTION_DRAFTS_STORE)
                 }
             }
         })
@@ -312,11 +321,13 @@ export async function getAllDraftSessions() {
  * @returns {Promise<void>}
  */
 export async function saveDraftMedia(media) {
+    // IndexedDB cannot clone Vue reactive proxies from restored send snapshots.
+    const record = plainRecord(media)
     const db = await getDb()
     return new Promise((resolve, reject) => {
         const tx = db.transaction(DRAFT_MEDIAS_STORE, 'readwrite')
         const store = tx.objectStore(DRAFT_MEDIAS_STORE)
-        const request = store.put(media)
+        const request = store.put(record)
         request.onsuccess = () => resolve()
         request.onerror = () => reject(request.error)
     })
@@ -543,5 +554,143 @@ export async function rekeyDraftSession(oldId, newId, record) {
         tx.oncomplete = resolve
         tx.onerror = () => reject(tx.error)
         tx.onabort = () => reject(tx.error)
+    })
+}
+
+// Async question writes use transaction completion as their durable boundary.
+const plainRecord = record => JSON.parse(JSON.stringify(record))
+
+function commitTransaction(db, stores, write) {
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(stores, 'readwrite')
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error || new Error('Draft transaction failed'))
+        tx.onabort = () => reject(tx.error || new Error('Draft transaction aborted'))
+        try { write(tx) }
+        catch (error) { tx.abort(); reject(error) }
+    })
+}
+
+export async function saveAsyncQuestionDraft(sessionId, draft, openDb = getDb) {
+    const record = plainRecord(draft)
+    return commitTransaction(await openDb(), ASYNC_QUESTION_DRAFTS_STORE,
+        tx => tx.objectStore(ASYNC_QUESTION_DRAFTS_STORE).put(record, sessionId))
+}
+
+export async function deleteAsyncQuestionDraft(sessionId, openDb = getDb) {
+    return commitTransaction(await openDb(), ASYNC_QUESTION_DRAFTS_STORE,
+        tx => tx.objectStore(ASYNC_QUESTION_DRAFTS_STORE).delete(sessionId))
+}
+
+/** Remove deleted-session question drafts and recovery snapshots in one commit. */
+export async function deleteAsyncQuestionRecovery(sessionId, openDb = getDb) {
+    return commitTransaction(await openDb(), [ASYNC_QUESTION_DRAFTS_STORE, INFLIGHT_SENDS_STORE], tx => {
+        tx.objectStore(ASYNC_QUESTION_DRAFTS_STORE).delete(sessionId)
+        const request = tx.objectStore(INFLIGHT_SENDS_STORE).openCursor()
+        request.onsuccess = () => {
+            const cursor = request.result
+            if (!cursor) return
+            if (cursor.value.sessionId === sessionId && (cursor.value.asyncQuestions || cursor.value.async_questions)) cursor.delete()
+            cursor.continue()
+        }
+    })
+}
+
+export async function getAllAsyncQuestionDrafts(openDb = getDb) {
+    const db = await openDb()
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(ASYNC_QUESTION_DRAFTS_STORE, 'readonly')
+        const drafts = {}
+        const request = tx.objectStore(ASYNC_QUESTION_DRAFTS_STORE).openCursor()
+        request.onsuccess = () => {
+            const cursor = request.result
+            if (cursor) { drafts[cursor.key] = cursor.value; cursor.continue() }
+        }
+        tx.oncomplete = () => resolve(drafts)
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error || new Error('Draft read aborted'))
+    })
+}
+
+/** Commit recovered text and consumed choices together. A reload sees both or neither. */
+export async function saveAsyncQuestionRecovery(sessionId, draft, questionDraft, openDb = getDb) {
+    const messageRecord = plainRecord(draft), questionRecord = plainRecord(questionDraft)
+    return commitTransaction(await openDb(), [DRAFT_MESSAGES_STORE, ASYNC_QUESTION_DRAFTS_STORE], tx => {
+        tx.objectStore(DRAFT_MESSAGES_STORE).put(messageRecord, sessionId)
+        tx.objectStore(ASYNC_QUESTION_DRAFTS_STORE).put(questionRecord, sessionId)
+    })
+}
+
+/**
+ * The stored form of an in-flight send snapshot, shared by every persistence
+ * route (plain saves and the multi-store question-send commits).
+ *
+ * - `attachments` ({bucket, id, name, size, mimeType, kind}): composer sends,
+ *   staged refs with metadata only (no bytes), kept whole (spec 2026-10-03 §9.5);
+ * - `medias`: legacy sends (Retry of an older snapshot), capped at 8 MiB of
+ *   encoded data, above which they are dropped (`mediasDropped: true`) and only
+ *   the text can be restored after a reload;
+ * - `images` / `documents` (processed payload copies) never bypass that cap.
+ *
+ * The record is a plain structured-clone-safe copy (the store hands out Vue
+ * reactive proxies). `mediaCount` survives the drop: a message made only of
+ * attachments has no text, and the count identifies it when the store matches
+ * a rediscovered snapshot against the session's user_message lines.
+ *
+ * @param {Object} snapshot
+ * @returns {Object}
+ */
+export function inflightSnapshotRecord(snapshot) {
+    const record = plainRecord(snapshot)
+    delete record.images
+    delete record.documents
+    if (Array.isArray(record.attachments)) {
+        record.attachments = record.attachments.map(attachment => ({
+            bucket: attachment.bucket,
+            id: attachment.id,
+            name: attachment.name,
+            size: attachment.size,
+            mimeType: attachment.mimeType,
+            kind: attachment.kind,
+        }))
+    }
+    const medias = record.medias || []
+    // A re-saved snapshot whose medias were already dropped keeps its count.
+    const mediaCount = medias.length || record.mediaCount || 0
+    return medias.reduce((sum, media) => sum + (media.data?.length || 0), 0) > 8 * 1024 * 1024
+        ? { ...record, medias: [], mediaCount: medias.length || mediaCount, mediasDropped: true }
+        : { ...record, medias, mediaCount }
+}
+
+/** Persist the outgoing snapshot and consume its active draft in one commit. */
+export async function stageAsyncQuestionSend(requestId, snapshot, nextDraft, nextQuestionDraft, openDb = getDb) {
+    const record = inflightSnapshotRecord({ ...snapshot, status: 'staged' })
+    const draft = plainRecord(nextDraft), questions = plainRecord(nextQuestionDraft)
+    return commitTransaction(await openDb(), [DRAFT_MESSAGES_STORE, ASYNC_QUESTION_DRAFTS_STORE, INFLIGHT_SENDS_STORE], tx => {
+        tx.objectStore(INFLIGHT_SENDS_STORE).put(record, requestId)
+        if (snapshot.retryRequestId) tx.objectStore(INFLIGHT_SENDS_STORE).delete(snapshot.retryRequestId)
+        tx.objectStore(DRAFT_MESSAGES_STORE).put(draft, snapshot.sessionId)
+        tx.objectStore(ASYNC_QUESTION_DRAFTS_STORE).put(questions, snapshot.sessionId)
+    })
+}
+
+/** Read-modify-write: an acknowledgement can delete the snapshot before this runs. */
+export async function markAsyncQuestionSendDispatched(requestId, openDb = getDb) {
+    return commitTransaction(await openDb(), INFLIGHT_SENDS_STORE, tx => {
+        const store = tx.objectStore(INFLIGHT_SENDS_STORE)
+        const request = store.get(requestId)
+        request.onsuccess = () => {
+            if (request.result?.status === 'staged' && !request.result.failed) store.put({ ...request.result, status: 'dispatched' }, requestId)
+        }
+    })
+}
+
+/** Restore before deleting the staged identity. Aborts leave the snapshot available. */
+export async function restoreStagedAsyncQuestionSend(requestId, sessionId, draft, questionDraft, openDb = getDb) {
+    const message = plainRecord(draft), questions = plainRecord(questionDraft)
+    return commitTransaction(await openDb(), [DRAFT_MESSAGES_STORE, ASYNC_QUESTION_DRAFTS_STORE, INFLIGHT_SENDS_STORE], tx => {
+        tx.objectStore(DRAFT_MESSAGES_STORE).put(message, sessionId)
+        tx.objectStore(ASYNC_QUESTION_DRAFTS_STORE).put(questions, sessionId)
+        tx.objectStore(INFLIGHT_SENDS_STORE).delete(requestId)
     })
 }
