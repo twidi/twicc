@@ -227,6 +227,8 @@ function createHarness(options = {}) {
         randomHex: n => `c${(hex++).toString(16)}`.padStart(n, '0'),
         objectUrls: options.objectUrls,
         previewUrlsInUse: options.previewUrlsInUse,
+        setTimeout: clock.setTimeout,
+        clearTimeout: clock.clearTimeout,
     })
     return {
         clock, log, requests, server, tusUploads, toasts, controller, rows, legacyRows, records, runtime, actions,
@@ -726,6 +728,67 @@ test('tab ownership after a reload: an upload of this tab without its File is st
     assert.equal(h.state(R1.id), 'failed')
 })
 
+// ── Status polling of server-mirrored uploads ────────────────────────────────
+
+test('a mirrored upload is polled: uploading, then ready, with no WebSocket event', async () => {
+    const h = hydrateHarness([R1])
+    h.server.statuses.set(`s1/${R1.id}`, { state: 'uploading', client_id: `${OTHER_TAB}:00000000000000a1`, offset: 1 })
+    await h.actions.reconcileAttachmentStatuses({ hydrate: true })
+    assert.equal(h.state(R1.id), 'uploading')
+    assert.equal(h.statusCalls().length, 1)
+    h.server.statuses.set(`s1/${R1.id}`, { state: 'ready' })
+    await h.clock.advance(2_500)
+    assert.equal(h.statusCalls().length, 2)
+    assert.equal(h.state(R1.id), 'ready')
+    // Nothing mirrored any more: the polling stops.
+    await h.clock.advance(60_000)
+    assert.equal(h.statusCalls().length, 2)
+})
+
+test('the polling backs off while the upload stays mirrored, up to 10 s', async () => {
+    const h = hydrateHarness([R1])
+    h.server.statuses.set(`s1/${R1.id}`, { state: 'uploading', client_id: `${OTHER_TAB}:00000000000000a2`, offset: 1 })
+    await h.actions.reconcileAttachmentStatuses({ hydrate: true })
+    await h.clock.advance(100_000)
+    const calls = h.statusCalls().length
+    assert.ok(calls > 6 && calls < 20, `unexpected polling count ${calls}`)
+    // The chip finally ends: the answers follow the new attempt.
+    h.server.statuses.set(`s1/${R1.id}`, { state: 'missing' })
+    await h.clock.advance(11_000)
+    assert.equal(h.state(R1.id), 'missing')
+})
+
+test('no polling for a chip with a live local upload', async () => {
+    const h = createHarness()
+    const live = await h.add()
+    assert.equal(h.state(live.id), 'uploading')
+    await h.actions.reconcileAttachmentStatuses()
+    await h.clock.advance(60_000)
+    assert.equal(h.statusCalls().length, 0)
+})
+
+test('a removed chip stops being polled', async () => {
+    const h = hydrateHarness([R1])
+    h.server.statuses.set(`s1/${R1.id}`, { state: 'uploading', client_id: `${OTHER_TAB}:00000000000000a3`, offset: 1 })
+    await h.actions.reconcileAttachmentStatuses({ hydrate: true })
+    await h.actions.releaseAttachments([{ bucket: 's1', id: R1.id }])
+    const before = h.statusCalls().length
+    await h.clock.advance(60_000)
+    assert.equal(h.statusCalls().length, before)
+})
+
+test('a failed status request keeps polling a mirrored chip', async () => {
+    const h = hydrateHarness([R1])
+    const original = h.server.status
+    h.server.status = () => respond(500, { error: 'boom' })
+    await h.actions.reconcileAttachmentStatuses({ hydrate: true })
+    assert.equal(h.state(R1.id), 'uploading')
+    h.server.status = original
+    h.server.statuses.set(`s1/${R1.id}`, { state: 'ready' })
+    await h.clock.advance(2_500)
+    assert.equal(h.state(R1.id), 'ready')
+})
+
 test('the completion of an upload seen through status/ makes the chip ready', async () => {
     const h = hydrateHarness([R1])
     const foreignClientId = `${OTHER_TAB}:0000000000000002`
@@ -972,6 +1035,19 @@ test('sendComposerMessage: a text-only send keeps its payload; a failed socket s
         register: a => calls.push(['register', a]),
         forget: ids => calls.push(['forget', ids]),
     }), false)
+    assert.deepEqual(calls, [])
+})
+
+test('sendComposerMessage: a socket send that throws is a failed dispatch (false, nothing registered or forgotten)', () => {
+    const calls = []
+    const ok = sendComposerMessage({
+        payload: { type: 'send_message', text: 'hi' },
+        records: [{ id: 'x', bucket: 's', position: 0 }],
+        send: () => { throw new Error('InvalidStateError') },
+        register: a => calls.push(['register', a]),
+        forget: ids => calls.push(['forget', ids]),
+    })
+    assert.equal(ok, false)
     assert.deepEqual(calls, [])
 })
 

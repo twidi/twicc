@@ -1747,6 +1747,9 @@ async function handleSend() {
             },
             forget: forgetSent,
         })
+        // The frame did not leave (socket closed or failing): the text and the attachments are
+        // still in the composer. The question path restores its own draft on a failed dispatch.
+        if (!success) toast.error('Message not sent: the connection is unavailable. Your message is still in the composer.')
     }
 
     if (success) {

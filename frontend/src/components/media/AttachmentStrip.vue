@@ -98,12 +98,20 @@ function openArtifact(request) {
                 </span>
                 <span class="strip-name">{{ entry.item.name }}</span>
             </span>
-            <AppTooltip :for="entry.anchorId">{{ entry.item.name }}</AppTooltip>
+            <AppTooltip :for="entry.anchorId"><span class="strip-tooltip-name">{{ entry.item.name }}</span></AppTooltip>
         </li>
     </ol>
 </template>
 
 <style scoped>
+/* A long file name wraps inside the tooltip instead of running past the viewport. */
+.strip-tooltip-name {
+    display: block;
+    max-width: min(24rem, 80vw);
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
 /* One tile size for every attachment. The colours come from custom properties so the
    container decides: a user bubble that is a filled surface (light theme) sets them
    in SessionItem.vue; anywhere else the neutral defaults below apply. */

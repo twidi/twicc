@@ -261,9 +261,15 @@ export function sendWsMessage(data, { buffer = true } = {}) {
         return false
     }
     // Structured sends must roll back when disconnected, never enter the reconnect buffer.
-    if (!buffer) return __hmrState.wsSendFn(JSON.stringify(data), false)
-    __hmrState.wsSendFn(JSON.stringify(data))
-    return true
+    // A socket that throws did not send the frame: report it like a closed one.
+    try {
+        if (!buffer) return __hmrState.wsSendFn(JSON.stringify(data), false)
+        __hmrState.wsSendFn(JSON.stringify(data))
+        return true
+    } catch (error) {
+        console.warn('WebSocket send failed:', error)
+        return false
+    }
 }
 
 /**

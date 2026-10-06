@@ -199,6 +199,16 @@ test('the merged schema version is above both lineages', async () => {
 
 // ── CRUD ─────────────────────────────────────────────────────────────────────
 
+test('saveDraftMessage stores a reactive proxy draft (structured clone rejects proxies)', async () => {
+    const fake = installFake()
+    const storage = await freshStorage()
+    await openReady(storage, fake)
+    assert.throws(() => structuredClone(new Proxy({}, {})), { name: 'DataCloneError' })
+    const draft = new Proxy({ message: 'typed text', mediaIds: ['a'] }, {})
+    await storage.saveDraftMessage('s1', draft)
+    assert.deepEqual(await storage.getDraftMessage('s1'), { message: 'typed text', mediaIds: ['a'] })
+})
+
 test('draft attachment records: save, read all, read by session, delete', async () => {
     const fake = installFake()
     const storage = await freshStorage()

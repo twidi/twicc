@@ -155,11 +155,13 @@ export function getDb() {
  * @returns {Promise<void>}
  */
 export async function saveDraftMessage(sessionId, draft) {
+    // Callers hand over store state (Vue reactive proxies), which structured clone rejects.
+    const record = plainRecord(draft)
     const db = await getDb()
     return new Promise((resolve, reject) => {
         const tx = db.transaction(DRAFT_MESSAGES_STORE, 'readwrite')
         const store = tx.objectStore(DRAFT_MESSAGES_STORE)
-        const request = store.put(draft, sessionId)
+        const request = store.put(record, sessionId)
         request.onsuccess = () => resolve()
         request.onerror = () => reject(request.error)
     })

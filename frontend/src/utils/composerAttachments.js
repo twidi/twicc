@@ -433,7 +433,10 @@ export function setAttachmentPayloadFields(payload, records) {
 export function sendComposerMessage({ payload, records, send, register = null, forget, previewUrlFor = () => null }) {
     const sent = [...(records || [])]
     setAttachmentPayloadFields(payload, sent)
-    if (!send(payload)) return false
+    // A socket that throws did not send the frame: same outcome as a refusal.
+    let dispatched = false
+    try { dispatched = send(payload) } catch { /* nothing left the socket */ }
+    if (!dispatched) return false
     if (register) {
         register(snapshotAttachments(sent).map(attachment => ({
             ...attachment,
@@ -709,6 +712,8 @@ function plainRecord(record) {
  * @param {() => Iterable<string>} [deps.previewUrlsInUse] - reactive: the
  *     preview URLs other users still show (optimistic bubbles). A URL is
  *     revoked once its record is gone and no such user holds it.
+ * @param {Function} [deps.setTimeout] - timer of the status polling (default: global)
+ * @param {Function} [deps.clearTimeout]
  */
 export function createComposerAttachments(deps) {
     const { records, runtime, storage, uploads, uuid, randomHex } = deps
@@ -719,6 +724,8 @@ export function createComposerAttachments(deps) {
         revoke: url => URL.revokeObjectURL(url),
     }
     const previewUrlsInUse = deps.previewUrlsInUse || (() => [])
+    const setTimer = deps.setTimeout || ((fn, ms) => globalThis.setTimeout(fn, ms))
+    const clearTimer = deps.clearTimeout || (id => globalThis.clearTimeout(id))
 
     /** The session that owns a composer id: its canonical id once bound. */
     function resolveOwner(sessionId) {
@@ -1203,7 +1210,7 @@ export function createComposerAttachments(deps) {
         return reconcileRecords(allRecords(), { hydrate })
     }
 
-    async function reconcileRecords(list, { hydrate }) {
+    async function reconcileRecordsOnce(list, { hydrate }) {
         const targets = []
         for (const record of list) {
             if (hasLiveLocalUpload(record.id) || migrating.has(record.id)) continue
@@ -1232,13 +1239,53 @@ export function createComposerAttachments(deps) {
         syncUploadStates()
     }
 
+    async function reconcileRecords(list, options) {
+        try {
+            await reconcileRecordsOnce(list, options)
+        } finally {
+            ensureStatusPolling()
+        }
+    }
+
+    // Status polling (§9.2): a chip mirroring a server-side upload that this
+    // tab does not run learns its end only from a broadcast completion, which
+    // can precede this page's WebSocket (reload while the server finalizes).
+    // So `status/` is asked again, with a growing delay, until no such chip is left.
+    const POLL_FIRST_MS = 2_000
+    const POLL_MAX_MS = 10_000
+    let pollTimer = null
+    let pollDelay = POLL_FIRST_MS
+
+    function mirroredRecords() {
+        return allRecords().filter(record =>
+            runtime[record.id]?.state === ATTACHMENT_STATE.UPLOADING
+            && !hasLiveLocalUpload(record.id)
+            && !migrating.has(record.id))
+    }
+
+    function ensureStatusPolling() {
+        if (pollTimer !== null) return
+        if (!mirroredRecords().length) {
+            pollDelay = POLL_FIRST_MS
+            return
+        }
+        pollTimer = setTimer(async () => {
+            pollTimer = null
+            const list = mirroredRecords()
+            pollDelay = Math.min(POLL_MAX_MS, Math.round(pollDelay * 1.5))
+            if (list.length) await reconcileRecords(list, { hydrate: false })
+            else ensureStatusPolling()
+        }, pollDelay)
+    }
+
     /** Chip state and current attempt of one record from its `status/` item (§9.2). */
     function applyStatusAnswer(record, status, previous) {
         const id = record.id
         const rt = runtime[id] || createRuntime(id)
         const { state } = mapAttachmentStatus(status, previous)
         const clientId = status.state === 'uploading' && typeof status.client_id === 'string' ? status.client_id : null
-        attempts.set(id, { clientId, pending: false, seen: false })
+        const sameAttempt = !!clientId && attempts.get(id)?.clientId === clientId
+        attempts.set(id, { clientId, pending: false, seen: sameAttempt && attempts.get(id).seen })
         rt.clientId = clientId
         rt.uploadKey = null
         rt.pauseReason = null
@@ -1437,6 +1484,8 @@ export function createComposerAttachments(deps) {
 
     /** Stop every watcher and revoke every object URL still held (HMR, teardown). */
     function dispose() {
+        if (pollTimer !== null) clearTimer(pollTimer)
+        pollTimer = null
         stopWatch()
         stopCompleted()
         stopPreviewWatch()
