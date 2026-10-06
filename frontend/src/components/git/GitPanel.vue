@@ -517,6 +517,8 @@ const filePaneRef = ref(null)
 
 /** Selected file relative path from the FileTreePanel. */
 const selectedFile = computed(() => fileTreePanelRef.value?.selectedFile ?? null)
+// Mobile: the file selector covers the whole pane while open, so nothing may sit over it.
+const treeOverlayOpen = computed(() => isMobile.value && !!fileTreePanelRef.value?.fileTreeOpen)
 
 // On a tab-activation focus request from the layout (focusRequest bumped by SessionView), focus the
 // panel's primary content: the diff viewer when a file's diff is shown (so keyboard nav keeps reading
@@ -1612,7 +1614,7 @@ onMounted(() => {
 
             <!-- Content area (position: relative so overlay can cover it) -->
             <div class="git-panel-content">
-                <div v-if="routeIssueMessage && !gitLogOpen" class="pane-callout-overlay">
+                <div v-if="routeIssueMessage && !gitLogOpen && !treeOverlayOpen" class="pane-callout-overlay">
                     <wa-callout
                         variant="warning"
                        

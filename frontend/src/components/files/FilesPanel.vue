@@ -1125,7 +1125,7 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
              preview owns one (pane-local z-index can't beat the FrameHost layer);
              renders in place otherwise. -->
         <Teleport :to="filePaneFrameOverlayEl" :disabled="!filePaneFrameOverlayEl">
-            <div v-if="routeIssueMessage" class="pane-callout-overlay">
+            <div v-if="routeIssueMessage && !treeOverlayOpen" class="pane-callout-overlay">
                 <wa-callout
                     variant="warning"
                    
