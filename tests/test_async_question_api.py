@@ -1,6 +1,9 @@
 """Authenticated hydration and committed question updates for every browser."""
 
 import asyncio
+import builtins
+import glob
+import os
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -414,8 +417,12 @@ def test_request_reconciliation_rejects_wrong_project(authenticated_client, sess
     wrong = question_url(session).replace(session.project_id, "wrong-project") + "reconcile/"
     assert authenticated_client.post(wrong, {"request_ids": ["request"]}, content_type="application/json").status_code == 404
 
-@pytest.mark.parametrize("producer_fails,failed_payloads", [(False, 0), (True, 0), (False, 1)])
-def test_existence_cleanup_waits_for_successful_producer_and_writer_drain(monkeypatch, producer_fails, failed_payloads):
+@pytest.mark.parametrize("producer_fails,failed_payloads,inventory_complete", [
+    (False, 0, 1), (True, 0, 1), (False, 1, 1), (False, 0, 0), (False, 0, None),
+])
+def test_existence_cleanup_waits_for_successful_producer_and_writer_drain(
+    monkeypatch, producer_fails, failed_payloads, inventory_complete,
+):
     from twicc.providers.codex import orchestrator as module
 
     async def run():
@@ -426,6 +433,7 @@ def test_existence_cleanup_waits_for_successful_producer_and_writer_drain(monkey
         def produce(*args, **kwargs):
             if producer_fails:
                 raise RuntimeError("Producer failed")
+            return {"inventory_complete": inventory_complete} if inventory_complete is not None else {}
 
         async def put(message, stop):
             nonlocal marker
@@ -445,7 +453,7 @@ def test_existence_cleanup_waits_for_successful_producer_and_writer_drain(monkey
         marker.done_future.set_result(failed_payloads)
         await task
         assert orch.initial_sync_done.is_set()
-        assert orch.initial_sync_succeeded is (not producer_fails and failed_payloads == 0)
+        assert orch.initial_sync_succeeded is (not producer_fails and failed_payloads == 0 and inventory_complete == 1)
 
     asyncio.run(run())
 
@@ -455,3 +463,189 @@ def test_disabled_provider_never_proves_absence(authenticated_client, monkeypatc
     response = authenticated_client.post("/api/async-questions/existence/", {"session_ids": ["missing"]},
                                          content_type="application/json")
     assert response.json() == {"sessions": {"missing": "unknown"}}
+
+
+@pytest.mark.parametrize("failure", [
+    "unreadable", "invalid_json", "empty", "missing_id", "enumeration", "root_enumeration",
+    "file_stat", "root_stat", "content_read", "payload_read", "orphan",
+])
+def test_real_incomplete_inventory_preserves_missing_drafts_after_clean_writer_drain(
+    authenticated_client, monkeypatch, tmp_path, failure,
+):
+    from twicc.providers.codex import initial_sync
+
+    sessions_dir = tmp_path / "sessions"
+    day = sessions_dir / "2026" / "10" / "06"
+    day.mkdir(parents=True)
+    path = day / "rollout-retained-session.jsonl"
+    path.write_bytes(b'{"type":"session_meta","payload":{"id":"retained-session","cwd":"/tmp"}}\n')
+    if failure == "invalid_json":
+        path.write_bytes(b"{unfinished\n")
+    elif failure == "empty":
+        path.write_bytes(b"")
+    elif failure == "missing_id":
+        path.write_bytes(b'{"type":"session_meta","payload":{"cwd":"/tmp"}}\n')
+    elif failure in ("unreadable", "content_read", "payload_read"):
+        original_open = builtins.open
+        reads = 0
+
+        def read_error(file, *args, **kwargs):
+            nonlocal reads
+            if file == path:
+                reads += 1
+                if reads >= {"unreadable": 1, "content_read": 2, "payload_read": 3}[failure]:
+                    raise PermissionError("rollout read denied")
+            return original_open(file, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", read_error)
+    elif failure in ("enumeration", "root_enumeration"):
+        original_scandir = os.scandir
+        blocked_directory = day if failure == "enumeration" else sessions_dir
+
+        def scan_error(directory):
+            if os.fspath(directory) == str(blocked_directory):
+                raise PermissionError("rollout inventory denied")
+            return original_scandir(directory)
+
+        monkeypatch.setattr(os, "scandir", scan_error)
+        # Python's glob captures os.scandir at import time; exercise that boundary too.
+        monkeypatch.setattr(glob._StringGlobber, "scandir", staticmethod(scan_error))
+    elif failure in ("file_stat", "root_stat"):
+        original_stat = type(path).stat
+        blocked_path = path if failure == "file_stat" else sessions_dir
+
+        def stat_error(file, *args, **kwargs):
+            if file == blocked_path:
+                raise PermissionError("rollout stat denied")
+            return original_stat(file, *args, **kwargs)
+
+        monkeypatch.setattr(type(path), "stat", stat_error)
+    elif failure == "orphan":
+        path.write_bytes(
+            b'{"type":"session_meta","payload":{"id":"retained-session","cwd":"/tmp",'
+            b'"source":{"subagent":{"thread_spawn":{"parent_thread_id":"missing-parent"}}}}}\n'
+        )
+    monkeypatch.setattr(initial_sync, "codex_sessions_dir", lambda: sessions_dir)
+    assert not Session.objects.exists()
+
+    orch, drain_results = run_real_inventory(monkeypatch)
+
+    assert drain_results == [0]
+    assert orch.initial_sync_done.is_set()
+    result = authenticated_client.post("/api/async-questions/existence/", {
+        "session_ids": ["retained-session"],
+    }, content_type="application/json")
+    assert result.status_code == 200
+    # The browser's retained-draft cleanup acts only on deleted evidence.
+    assert result.json() == {"sessions": {"retained-session": "unknown"}}
+    assert not orch.initial_sync_succeeded
+
+
+def run_real_inventory(monkeypatch):
+    """Run the real producer, orchestrator, writer and completion marker."""
+    from twicc.providers import db_writer
+    from twicc.providers.codex import orchestrator
+
+    drain_results = []
+    original_put = db_writer.put_thread_message
+
+    async def observe_marker(message, stop):
+        admitted = await original_put(message, stop)
+        message.done_future.add_done_callback(lambda future: drain_results.append(future.result()))
+        return admitted
+
+    monkeypatch.setattr(db_writer, "put_thread_message", observe_marker)
+    monkeypatch.setattr(orchestrator, "broadcast_startup_progress", AsyncMock())
+    orch = orchestrator.CodexOrchestrator()
+    monkeypatch.setattr("twicc.providers.state.get_enabled_providers", lambda: {Provider.CODEX})
+    monkeypatch.setattr("twicc.orchestrator.get_orchestrator_registry", lambda: SimpleNamespace(get=lambda _: orch))
+    run_with_writer(orch._initial_sync_task)
+    return orch, drain_results
+
+
+@pytest.mark.parametrize("inventory", ["missing_directory", "empty", "healthy", "partial"])
+def test_real_complete_inventory_authorizes_only_missing_ids(
+    authenticated_client, monkeypatch, tmp_path, inventory,
+):
+    from twicc.providers.codex import initial_sync
+
+    sessions_dir = tmp_path / "sessions"
+    if inventory != "missing_directory":
+        sessions_dir.mkdir()
+    if inventory in ("healthy", "partial"):
+        (sessions_dir / "rollout-present.jsonl").write_bytes(
+            b'{"type":"session_meta","payload":{"id":"present-session","cwd":"/tmp"}}\n'
+        )
+    if inventory == "partial":
+        (sessions_dir / "rollout-invalid.jsonl").write_bytes(b"{unfinished\n")
+    monkeypatch.setattr(initial_sync, "codex_sessions_dir", lambda: sessions_dir)
+    orch, drain_results = run_real_inventory(monkeypatch)
+    assert drain_results == [0]
+    assert orch.initial_sync_succeeded is (inventory != "partial")
+    assert orch.initial_sync_done.is_set()
+    if inventory in ("healthy", "partial"):
+        Session.objects.filter(id="present-session").update(hidden=True)
+    result = authenticated_client.post("/api/async-questions/existence/", {
+        "session_ids": ["present-session", "missing-session"],
+    }, content_type="application/json")
+    assert result.json() == {"sessions": {
+        "present-session": "present" if inventory in ("healthy", "partial") else "deleted",
+        "missing-session": "unknown" if inventory == "partial" else "deleted",
+    }}
+
+
+@pytest.mark.parametrize("failure", [None, "metadata_read", "metadata_parse", "content_read"])
+def test_real_existing_inventory_distinguishes_unchanged_from_failed_reads(
+    authenticated_client, monkeypatch, tmp_path, failure,
+):
+    from twicc.providers.codex import initial_sync
+
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    path = sessions_dir / "rollout-existing.jsonl"
+    path.write_bytes(b'{"type":"session_meta","payload":{"id":"existing-session","cwd":"/tmp"}}\n')
+    Session.objects.create(
+        id="existing-session", project=Project.objects.create(id="existing-project", directory="/tmp"),
+        provider=Provider.CODEX, file_path=path.name, hidden=True,
+        compute_version=None if failure in ("metadata_read", "metadata_parse") else 1,
+        mtime=path.stat().st_mtime if failure is None else 0,
+        last_offset=path.stat().st_size if failure is None else 0,
+    )
+    if failure == "metadata_parse":
+        path.write_bytes(b"{unfinished\n")
+    elif failure:
+        original_open = builtins.open
+        reads = 0
+
+        def read_error(file, *args, **kwargs):
+            nonlocal reads
+            if file == path:
+                reads += 1
+                if failure == "content_read" or reads == 1:
+                    raise PermissionError("existing rollout read denied")
+            return original_open(file, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", read_error)
+    monkeypatch.setattr(initial_sync, "codex_sessions_dir", lambda: sessions_dir)
+    orch, drain_results = run_real_inventory(monkeypatch)
+    assert drain_results == [0]
+    result = authenticated_client.post("/api/async-questions/existence/", {
+        "session_ids": ["existing-session", "missing-session"],
+    }, content_type="application/json")
+    assert result.json() == {"sessions": {
+        "existing-session": "present", "missing-session": "unknown" if failure else "deleted",
+    }}
+    assert orch.initial_sync_succeeded is (failure is None)
+
+
+def test_interrupted_real_inventory_never_proves_absence(monkeypatch, tmp_path):
+    import queue
+    import threading
+
+    from twicc.providers.codex import initial_sync
+
+    monkeypatch.setattr(initial_sync, "codex_sessions_dir", lambda: tmp_path)
+    stop = threading.Event()
+    stop.set()
+    stats = initial_sync.sync_all(queue.Queue(), stop_event=stop)
+    assert stats["inventory_complete"] == 0

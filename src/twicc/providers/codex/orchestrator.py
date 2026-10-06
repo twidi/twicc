@@ -395,8 +395,9 @@ class CodexOrchestrator(BaseOrchestrator):
         # CancelledError (this coroutine cancelled) still propagates;
         # shutdown() then pushes its own drain marker.
         sync_error: Exception | None = None
+        sync_stats: dict[str, int] = {}
         try:
-            await asyncio.shield(self._sync_thread_future)
+            sync_stats = await asyncio.shield(self._sync_thread_future)
         except Exception as exc:
             sync_error = exc
 
@@ -431,7 +432,9 @@ class CodexOrchestrator(BaseOrchestrator):
                 provider_value, failed_payloads,
             )
 
-        self.initial_sync_succeeded = failed_payloads == 0
+        # A clean writer drain does not prove that the producer saw every
+        # rollout. Skipped reads/enumeration must preserve absent drafts.
+        self.initial_sync_succeeded = failed_payloads == 0 and sync_stats.get("inventory_complete") == 1
 
         await broadcast_startup_progress(
             "initial_sync", total_sessions, total_sessions,

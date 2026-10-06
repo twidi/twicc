@@ -14,7 +14,9 @@ the DB writer via ``CreateSessionPayload`` / ``UpdateSessionPayload`` /
 from __future__ import annotations
 
 import logging
+import os
 import queue
+import stat
 import threading
 import time
 from pathlib import Path
@@ -142,7 +144,7 @@ def extract_session_meta(file_path: Path) -> SessionMeta | None:
     )
 
 
-def _is_ignored_existing_session(session: Session, file_path: Path) -> bool:
+def _is_ignored_existing_session(session: Session, file_path: Path, stats: dict[str, int]) -> bool:
     """Confirm that a legacy DB row is an internal Guardian rollout.
 
     New Guardian files are rejected from their first-line metadata before a
@@ -153,25 +155,47 @@ def _is_ignored_existing_session(session: Session, file_path: Path) -> bool:
     if session.model != _AUTO_REVIEW_MODEL and session.compute_version is not None:
         return False
     meta = extract_session_meta(file_path)
+    if meta is None:
+        stats["inventory_complete"] = 0
     return meta is not None and meta.ignored
 
 
-def scan_session_files() -> list[Path]:
+def scan_session_files(on_error: Callable[[OSError], None] | None = None) -> list[Path]:
     """
     Walk the Codex sessions dir recursively and return every Codex session file.
 
     Codex stores files under ``YYYY/MM/DD/rollout-*.jsonl``. Returns an
     empty list if the directory doesn't exist yet (fresh install).
+    Report enumeration/stat failures through ``on_error`` without aborting
+    ingestion. Unlike ``Path.rglob``, the walk reports skipped directories.
     """
     sessions_dir = codex_sessions_dir()
-    if not sessions_dir.exists():
+
+    def report_error(error: OSError) -> None:
+        logger.warning("Codex inventory cannot read %s: %s", error.filename, error)
+        if on_error is not None:
+            on_error(error)
+
+    try:
+        sessions_dir.stat()
+    except FileNotFoundError:
+        return []
+    except OSError as error:
+        report_error(error)
         return []
 
-    return [
-        path
-        for path in sessions_dir.rglob("rollout-*.jsonl")
-        if path.is_file() and is_session_file(path)
-    ]
+    files = []
+    for directory, _, names in os.walk(sessions_dir, onerror=report_error):
+        for name in names:
+            path = Path(directory) / name
+            if not is_session_file(path):
+                continue
+            try:
+                if stat.S_ISREG(path.stat().st_mode):
+                    files.append(path)
+            except OSError as error:
+                report_error(error)
+    return files
 
 
 class _NewEntry(NamedTuple):
@@ -297,6 +321,7 @@ def _sync_subagents(
             # Defensive: the first line parsed (extract_session_meta), but
             # the rest of the file might be empty after a failed write.
             if not check_file_has_content(entry.file_path):
+                stats["inventory_complete"] = 0
                 done += 1
                 if on_session_progress:
                     on_session_progress(entry.session_id, done, total)
@@ -316,6 +341,7 @@ def _sync_subagents(
                 entry._replace(parent_session_id=root_id), path_to_project_id(entry.cwd), True, stats
             )
             if payload is None:
+                stats["inventory_complete"] = 0
                 done += 1
                 if on_session_progress:
                     on_session_progress(entry.session_id, done, total)
@@ -329,6 +355,8 @@ def _sync_subagents(
             progressed = True
 
         if not progressed:
+            if next_remaining:
+                stats["inventory_complete"] = 0
             for entry in next_remaining:
                 logger.warning(
                     "  Skipping orphan Codex subagent %s: parent %s not found "
@@ -370,7 +398,11 @@ def sync_project(
     stats = {
         "sessions_created": 0,
         "items_added": 0,
+        "inventory_complete": 1,
     }
+
+    def read_error(error: OSError) -> None:
+        stats["inventory_complete"] = 0
 
     try:
         project = Project.objects.get(id=project_id)
@@ -404,7 +436,7 @@ def sync_project(
             )
             return stats
 
-        to_insert = read_session_items_from_file(entry.session, entry.file_path)
+        to_insert = read_session_items_from_file(entry.session, entry.file_path, on_error=read_error)
         if to_insert is not None:
             stats["items_added"] += to_insert.actually_new_count
             sync_queue.put(UpdateSessionPayload(
@@ -440,12 +472,14 @@ def sync_project(
         # is parseable, but the rest of the file might be empty after a
         # failed write — skip without pushing.
         if not check_file_has_content(entry.file_path):
+            stats["inventory_complete"] = 0
             if on_session_progress:
                 on_session_progress(entry.session_id, idx, total_sessions)
             continue
 
         payload = _build_create_payload(entry, project_id, False, stats)
         if payload is None:
+            stats["inventory_complete"] = 0
             if on_session_progress:
                 on_session_progress(entry.session_id, idx, total_sessions)
             continue
@@ -519,6 +553,9 @@ def sync_all(
     Every project's top-level sessions are pushed first; subagents are then
     resolved in one global pass (:func:`_sync_subagents`), so a subagent
     whose parent lives in another project is still linked correctly.
+    ``inventory_complete`` is 1 only when all discoverable rollouts are
+    represented or intentionally ignored. A skipped read or enumeration
+    sets it to 0; callers must not infer deletion from absent DB rows then.
     """
     sync_start = time.monotonic()
 
@@ -531,14 +568,27 @@ def sync_all(
         "sessions_created": 0,
         "sessions_stale": 0,
         "items_added": 0,
+        "inventory_complete": 1,
     }
 
     sessions_dir = codex_sessions_dir()
-    if not sessions_dir.exists():
-        logger.info(f"Codex sessions dir not found: {sessions_dir}")
+
+    # Preserve the fresh-install path: no directory means no stale sweep.
+    try:
+        sessions_dir.stat()
+    except FileNotFoundError:
+        stats["inventory_complete"] = int(stop_event is None or not stop_event.is_set())
+        logger.info("Codex sessions dir not found: %s", sessions_dir)
+        return stats
+    except OSError as error:
+        stats["inventory_complete"] = 0
+        logger.warning("Codex inventory cannot read %s: %s", sessions_dir, error)
         return stats
 
-    disk_files = scan_session_files()
+    def inventory_error(error: OSError) -> None:
+        stats["inventory_complete"] = 0
+
+    disk_files = scan_session_files(on_error=inventory_error)
     disk_files_by_relative_path = {
         str(p.relative_to(sessions_dir)): p for p in disk_files
     }
@@ -562,7 +612,7 @@ def sync_all(
         rel_path
         for rel_path, session in db_sessions_by_path.items()
         if (file_path := disk_files_by_relative_path.get(rel_path)) is not None
-        and _is_ignored_existing_session(session, file_path)
+        and _is_ignored_existing_session(session, file_path, stats)
     }
     if ignored_existing_paths:
         sync_queue.put(DeleteSessionsPayload(
@@ -586,7 +636,10 @@ def sync_all(
             )
         else:
             meta = extract_session_meta(file_path)
-            if meta is None or meta.ignored:
+            if meta is None:
+                stats["inventory_complete"] = 0
+                continue
+            if meta.ignored:
                 continue
             project_id = path_to_project_id(meta.cwd)
             new_by_project.setdefault(project_id, []).append(
@@ -638,6 +691,7 @@ def sync_all(
         stats["projects_created"] += project_stats.get("project_created", 0)
         stats["sessions_created"] += project_stats["sessions_created"]
         stats["items_added"] += project_stats["items_added"]
+        stats["inventory_complete"] &= project_stats["inventory_complete"]
 
         if on_project_done:
             on_project_done(project_id, project_stats)
@@ -684,6 +738,7 @@ def sync_all(
 
     elapsed = time.monotonic() - sync_start
     if interrupted:
+        stats["inventory_complete"] = 0
         logger.info(
             f"⚠ Codex sync interrupted after {elapsed:.1f}s — "
             f"{stats['sessions_created']} sessions created, "
