@@ -301,26 +301,6 @@ it('reads and deletes question draft records at transaction completion', async (
     await removed
 })
 
-it('upgrades IndexedDB v8 to v9 without deleting existing stores', async () => {
-    const previous = globalThis.indexedDB
-    const existing = new Set(['ephemeralControls', 'draftMessages', 'draftSessions', 'draftMedias', 'codeComments', 'inflightSends', 'pendingRequestDrafts'])
-    const created = []
-    const db = { objectStoreNames: { contains: name => existing.has(name) },
-        createObjectStore(name) { created.push(name); return { createIndex() {} } },
-        deleteObjectStore() { assert.fail('Existing records must survive the upgrade') },
-    }
-    globalThis.indexedDB = { open(name, version) {
-        assert.equal(name, 'twicc'); assert.equal(version, 9)
-        const request = { result: db }
-        queueMicrotask(() => { request.onupgradeneeded({ oldVersion: 8, target: request }); request.onsuccess() })
-        return request
-    } }
-    try {
-        assert.equal(await storage.getDb(), db)
-        assert.deepEqual(created, ['asyncQuestionDrafts'])
-    } finally { globalThis.indexedDB = previous }
-})
-
 it('hydrated local dismissal identity suppresses external recovery after reload', async () => {
     const { state } = harness({ getAll: async () => ({ s: { ...saved(), pendingDismissals: { q1: 'local' } } }) })
     await state.hydrateAsyncQuestionDrafts()

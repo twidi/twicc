@@ -209,6 +209,25 @@ it('widget-disabled async host hides batches and keeps stored answers', () => {
     assert.equal(view.record().choices['batch-b'][2].value, 'Keep this')
 })
 
+it('failed answer persistence reports the error type without exposing the answer or error message', async () => {
+    const warnings = [], errors = []
+    const store = {
+        getAsyncQuestionDraft: () => ({}),
+        getPendingAsyncQuestionIds: () => [],
+        setAsyncQuestionDraft: async () => { throw new DOMException('Private diagnostic content', 'NotFoundError') },
+    }
+    const setup = new Function('defineProps', 'defineEmits', 'computed', 'useDataStore', 'toast', 'console', `
+        ${setupSource('../components/message/AsyncQuestions.vue')}
+        return updateChoices
+    `)
+    const updateChoices = setup(() => ({ sessionId: 's', snapshot: { batches: [] } }), () => () => {},
+        computed, () => store, { error: message => errors.push(message) }, { warn: (...args) => warnings.push(args) })
+    updateChoices({ item_id: 'q1' }, { 0: { kind: 'other', value: 'Private answer' } })
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(warnings, [['Failed to save question answers:', 'NotFoundError']])
+    assert.equal(errors.length, 1)
+})
+
 it('composer blocks actual slash commands with answers and permits ordinary slash-prefixed text', () => {
     const source = readFileSync(new URL('../components/message/MessageInput.vue', import.meta.url), 'utf8')
     const start = source.indexOf('const isComposerCommand = computed(')

@@ -31,7 +31,8 @@ function updateChoices(batch, choices) {
         sourceBatches: { ...draft.value?.sourceBatches, [batch.item_id]: batch },
         recoveredIds: draft.value?.recoveredIds || [],
     }
-    store.setAsyncQuestionDraft(props.sessionId, record).catch(() => {
+    store.setAsyncQuestionDraft(props.sessionId, record).catch(error => {
+        console.warn('Failed to save question answers:', error?.name || 'Error')
         toast.error('Failed to save question answers. Your answers remain in this browser.')
     })
 }

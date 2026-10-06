@@ -2,7 +2,7 @@
 // IndexedDB wrapper for draft messages, draft sessions, and draft medias persistence
 
 const DB_NAME = 'twicc'
-const DB_VERSION = 9
+const DB_VERSION = 10
 const DRAFT_MESSAGES_STORE = 'draftMessages'
 const DRAFT_SESSIONS_STORE = 'draftSessions'
 const DRAFT_MEDIAS_STORE = 'draftMedias'
@@ -73,6 +73,7 @@ export function getDb() {
                         keyPath: ['sessionId', 'requestId']
                     })
                 }
+                // v10 also upgrades alternate v9 schemas that lack question drafts.
                 if (!db.objectStoreNames.contains(ASYNC_QUESTION_DRAFTS_STORE)) {
                     db.createObjectStore(ASYNC_QUESTION_DRAFTS_STORE)
                 }

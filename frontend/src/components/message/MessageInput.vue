@@ -1708,7 +1708,8 @@ async function handleSend() {
             success = await store.sendAsyncQuestionMessage(props.sessionId, props.projectId, requestId, payload, {
                 ...outgoing, medias: sentMedias, images: payload.images, documents: payload.documents,
             })
-        } catch {
+        } catch (error) {
+            console.warn('Failed to save the question send:', error?.name || 'Error')
             toast.error('Failed to save the question send. Your message remains available for recovery.')
             return
         }
@@ -2435,13 +2436,15 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
    the hybrid terminal block and/or the goal bar — a hairline separates the composer from it
    (each of those panels itself sits under its own wa-divider). Mirrors the
    collapsed-state border so the separator is present whether the composer is a
-   bar or expanded. */
-.message-input.message-input--has-panel-above {
+   bar or expanded. Ready questions inside the composer use the same top border. */
+.message-input.message-input--has-panel-above,
+.message-input.message-input--has-questions {
     border-top: var(--divider-size) solid var(--wa-color-surface-border);
 }
 /* Breathing room below the separator when the composer is expanded under the
-   panel. (Collapsed, the bar owns its own padding.) */
-.message-input.message-input--has-panel-above:not(.collapsed) {
+   panel or showing ready questions. (Collapsed, the bar owns its own padding.) */
+.message-input.message-input--has-panel-above:not(.collapsed),
+.message-input.message-input--has-questions:not(.collapsed) {
     padding-top: var(--wa-space-s);
 }
 
