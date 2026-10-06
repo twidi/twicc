@@ -135,6 +135,41 @@ def test_occupied_destination_is_never_overwritten(root):  # noqa: F811
     assert marker["final_name"] == "notes (1).txt"
 
 
+def test_the_same_file_name_in_later_messages_gets_the_next_free_name(root):  # noqa: F811
+    """Three separate sends of a `toto.mp4` in one session: each one keeps its own bytes, under the
+    next free name, and the manifest of each message names the file on disk (not the original)."""
+    directory = attachments_dir("s1")
+    manifests = []
+    for number, content in enumerate((b"first", b"second", b"third")):
+        ref, entry, _source = stage(root, name="toto.mp4", content=content)
+        manifests.append(commit(plan_of((ref, "video", None)), "s1").manifest.entries[0])
+        assert promoted_marker(entry)["original_name"] == "toto.mp4"
+        assert promoted_marker(entry)["final_name"] == ("toto.mp4" if number == 0 else f"toto ({number}).mp4")
+
+    assert [entry.artifact_name for entry in manifests] == ["toto.mp4", "toto (1).mp4", "toto (2).mp4"]
+    assert [entry.name for entry in manifests] == ["toto.mp4"] * 3
+    assert (directory / "toto.mp4").read_bytes() == b"first"
+    assert (directory / "toto (1).mp4").read_bytes() == b"second"
+    assert (directory / "toto (2).mp4").read_bytes() == b"third"
+    assert sorted(path.name for path in directory.iterdir()) == ["toto (1).mp4", "toto (2).mp4", "toto.mp4"]
+
+
+def test_two_files_with_the_same_name_in_one_message_get_distinct_names(root):  # noqa: F811
+    """Two `toto.mp4` in the same message: the numbering follows the add order, and each file
+    keeps its own bytes."""
+    first, _entry_a, _source_a = stage(root, name="toto.mp4", content=b"first")
+    second, _entry_b, _source_b = stage(root, name="toto.mp4", content=b"second")
+
+    content = commit(plan_of((first, "video", None), (second, "video", None)), "s1")
+
+    assert [(entry.n, entry.name, entry.artifact_name) for entry in content.manifest.entries] == [
+        (1, "toto.mp4", "toto.mp4"),
+        (2, "toto.mp4", "toto (1).mp4"),
+    ]
+    assert (attachments_dir("s1") / "toto.mp4").read_bytes() == b"first"
+    assert (attachments_dir("s1") / "toto (1).mp4").read_bytes() == b"second"
+
+
 def test_concurrent_claim_moves_to_next_candidate(root, monkeypatch):  # noqa: F811
     ref, _entry, _source = stage(root)
     prepared = prepare_attachments(plan_of((ref, "text", None)), session_id="s1")
