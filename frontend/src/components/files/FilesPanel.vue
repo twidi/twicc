@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onActivated, onDeactivated, onBeforeUnmount } from 'vue'
 import { apiFetch } from '../../utils/api'
-import { useContainerBreakpoint } from '../../composables/useContainerBreakpoint'
+import { useFileBrowserLayout } from '../../composables/useFileBrowserLayout'
 import { usePanelContentFocus } from '../../composables/usePanelContentFocus'
 import FileTreePanel from './FileTreePanel.vue'
 import FilePane from './FilePane.vue'
@@ -153,9 +153,7 @@ const props = defineProps({
 // not a viewport media query — so it reacts to the width it is actually given: its dock region
 // when docked, the center slot otherwise, or the surrounding content area outside the layout.
 
-const { isBelowBreakpoint: isMobile } = useContainerBreakpoint({
-    breakpoint: 800,
-})
+const { isMobile } = useFileBrowserLayout()
 
 // ─── Code comments ───────────────────────────────────────────────────────────
 

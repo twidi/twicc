@@ -2,7 +2,7 @@
 import { ref, computed, watch, nextTick, provide, onMounted, onUnmounted, onActivated, onDeactivated, useId } from 'vue'
 import { apiFetch } from '../../utils/api'
 import { useSettingsStore } from '../../stores/settings'
-import { useContainerBreakpoint } from '../../composables/useContainerBreakpoint'
+import { useFileBrowserLayout } from '../../composables/useFileBrowserLayout'
 import {
     GitLog,
     GitLogGraphHTMLGrid,
@@ -258,9 +258,7 @@ function onGitDirDropdownSelect(event) {
 // not a viewport media query — so it reacts to the width it is actually given: its dock region
 // when docked, the center slot otherwise, or the surrounding content area outside the layout.
 
-const { isBelowBreakpoint: isMobile } = useContainerBreakpoint({
-    breakpoint: 800,
-})
+const { isMobile } = useFileBrowserLayout()
 
 // ---------------------------------------------------------------------------
 // API prefix (project-level for drafts, session-level otherwise)
