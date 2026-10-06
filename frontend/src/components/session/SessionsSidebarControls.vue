@@ -141,7 +141,9 @@ defineExpose({ focus })
 
 .session-search {
     flex: 1;
-    min-width: 3.5rem;
+    /* Enough for the icon alone: a larger minimum overflows the row (and gets cut by the divider)
+       once the sidebar is narrower than the options button + this field. */
+    min-width: 2.5rem;
     max-width: 100%;
     &:hover {
         z-index: 10;

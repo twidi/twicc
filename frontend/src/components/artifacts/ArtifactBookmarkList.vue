@@ -728,7 +728,12 @@ defineExpose({ handleKeyNavigation })
     min-height: 0;
     overflow-y: auto;
     scrollbar-gutter: stable;
-    padding-block: var(--wa-space-2xs);
+    /* Rows fade out at the top and bottom edges instead of being cut: always on, not tied to the
+       scroll position. The padding equals the fade, so nothing is faded at rest. */
+    --sidebar-list-fade: var(--wa-space-xs);
+    padding-block: var(--sidebar-list-fade);
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--sidebar-list-fade), #000 calc(100% - var(--sidebar-list-fade)), transparent);
+    mask-image: linear-gradient(to bottom, transparent, #000 var(--sidebar-list-fade), #000 calc(100% - var(--sidebar-list-fade)), transparent);
     padding-inline-start: var(--sidebar-gutter, var(--wa-space-2xs));
     padding-inline-end: 0; /* the scrollbar sits at the sidebar's right edge */
     --sidebar-separator-inset: 0px;

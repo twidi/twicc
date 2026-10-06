@@ -2073,7 +2073,8 @@ function openPeerInbox() {
                         @click="onNewSessionButtonClick"
                     >
                         <wa-icon name="plus"></wa-icon>
-                        <span>New session</span>
+                        <span class="new-session-label-full">New session</span>
+                        <span class="new-session-label-short">Session</span>
                     </wa-button>
 
                     <!-- Dropdown arrow: choose a different project -->
@@ -2118,7 +2119,8 @@ function openPeerInbox() {
                         >
                             <wa-icon slot="end" name="chevron-up"></wa-icon>
                             <wa-icon name="plus"></wa-icon>
-                            <span>New session</span>
+                            <span class="new-session-label-full">New session</span>
+                            <span class="new-session-label-short">Session</span>
                         </wa-button>
                     </template>
                 </NewSessionProjectPicker>
@@ -2128,7 +2130,7 @@ function openPeerInbox() {
             <wa-divider v-if="hasSidebarFooter"></wa-divider>
 
             <div v-if="hasSidebarFooter" v-show="sidebarOpen" class="sidebar-footer">
-                <div v-if="quotaHasUsage && quotaComputed" ref="usageBlockRef" class="sidebar-footer-usage glass-surface">
+                <div v-if="quotaHasUsage && quotaComputed" ref="usageBlockRef" class="sidebar-footer-usage panel-card">
                     <div class="usage-header">
                         <div
                             id="usage-provider-group"
@@ -2882,7 +2884,25 @@ wa-dropdown-item:hover .row-menu-trigger,
 }
 
 
-@container sidebar (width <= 13rem) {
+/* The button label shrinks in two steps as the sidebar narrows: "New session", then "Session",
+   then the icon alone. The thresholds are the sidebar's width (the size container). Split button
+   at 16px (measured): 175px / 143px, i.e. 10.94rem / 8.94rem. The thresholds are
+   that plus the 0.5rem left gutter and the scrollbar (7px measured, wider on some platforms),
+   minus 0.5rem: at the limit the button may nibble into the gutter, never the sidebar's edge. */
+.new-session-label-short {
+    display: none;
+}
+
+@container sidebar (width <= 12rem) {
+    .new-session-label-full {
+        display: none;
+    }
+    .new-session-label-short {
+        display: inline;
+    }
+}
+
+@container sidebar (width <= 10rem) {
     /* Split button in narrow sidebar */
     .new-session-split-button {
         & > wa-button {
@@ -2928,12 +2948,11 @@ wa-dropdown-item:hover .row-menu-trigger,
 .sidebar-footer-usage {
     display: flex;
     flex-direction: column;
-    /* A floating glass card (styles/glass.css), inset from the sidebar edges like the panels. */
+    /* A floating panel card (styles/surfaces.css, same as the rail), inset from the sidebar edges like the panels. */
     margin: var(--sidebar-gutter);
+    margin-block-start: 0; /* the list's content runs right up to the card's border */
     margin-inline-end: 0;
     padding: var(--wa-space-xs) var(--wa-space-s);
-    border-radius: var(--panel-radius);
-    box-shadow: var(--panel-shadow);
 }
 
 /* The card floats on its own: the separators that framed the old flat block go. */
