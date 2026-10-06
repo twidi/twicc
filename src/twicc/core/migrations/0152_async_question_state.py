@@ -6,7 +6,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("core", "0150_session_automatic_titles"),
+        ("core", "0151_mcp_event_subscriptions"),
     ]
 
     operations = [

@@ -41,6 +41,7 @@ from .canonical import (
     agent_message_text,
     canonical_call_id,
     canonical_result_item,
+    completed_item,
     user_message_text,
 )
 from .pricing import extract_model_info
@@ -64,8 +65,8 @@ _TYPE_RESPONSE_ITEM = "response_item"
 _TYPE_EVENT_MSG = "event_msg"
 _RESPONSE_TOOL_RESULT_PAYLOAD_TYPES = frozenset({"function_call_output", "custom_tool_call_output"})
 
-# The two ``AgentMessage.phase`` values Codex emits: the message that closes
-# a turn, and everything it says between tool calls. Both are matched
+# The two ``AgentMessage.phase`` values Codex emits: the final answer role
+# and commentary between tool calls. Async delivery never closes a turn. Both are matched
 # explicitly so a third value Codex might add reports "unknown" instead of
 # silently joining one camp — same rule as Claude's ``stop_reason`` sets.
 _FINAL_ANSWER_PHASE = "final_answer"
@@ -740,6 +741,9 @@ class CodexHelpers(BaseProviderHelpers):
     def is_final_assistant_message(self, parsed: dict) -> bool | None:
         # One ``AgentMessage`` item = one JSONL line = one message, and the
         # item carries its own role in the turn. No lookahead needed.
+        item = completed_item(parsed)
+        if item is not None and item.get("type") == "AgentMessage" and item.get("delivery") == "async":
+            return False
         phase = agent_message_phase(parsed)
         if phase == _FINAL_ANSWER_PHASE:
             return True

@@ -572,3 +572,19 @@ def test_browser_request_reconciliation_never_redelivers(harness, monkeypatch, d
             harness.manager._agents[harness.session.id] = harness.agent
         assert harness.run(lambda: harness.send("Keep text", payload, request_id="fresh-retry"))
         assert harness.thread.turn_with_policy.await_count == 1
+
+
+def test_sdk_async_completion_keeps_question_identity_and_native_stream_end(harness):
+    harness.run(lambda: harness.agent._handle_stream_event(sdk_question()))
+    snapshot = harness.hydrate()
+    assert [(batch["item_id"], batch["status"]) for batch in snapshot["batches"]] == [(OBSERVED[0][0], "collecting")]
+    events = [call.args[0] for call in harness.agent._broadcast_stream_event.call_args_list]
+    assert [event["type"] for event in events] == ["stream_block_stop", "stream_block_end"]
+    assert events[-1]["message_id"] == events[-1]["uuid"] == OBSERVED[0][0]
+    harness.ingest([canonical_question()])
+    snapshot = harness.hydrate()
+    assert len(snapshot["batches"]) == 1
+    assert snapshot["batches"][0]["line"] == 1
+    content = orjson.loads(SessionItem.objects.get(session=harness.session, line_num=1).content)
+    assert content["payload"]["item"]["id"] == events[-1]["uuid"]
+    assert content["payload"]["item"]["delivery"] == "async"
