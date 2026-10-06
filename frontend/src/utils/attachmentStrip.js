@@ -33,6 +33,22 @@ const KIND_ICONS = Object.freeze({
     other: 'file',
 })
 
+// The basename TwiCC gives the copy it writes for the hybrid CLI (same shape as the backend).
+const HYBRID_REFERENCE = /^att_[0-9a-f]{12}(?:\.[A-Za-z0-9]+)?$/
+
+/**
+ * Endpoint serving the image the CLI recorded for a hybrid inline entry (its own
+ * `attachment` record after the user line, never loaded by the client).
+ *
+ * @param {{projectId: string, sessionId: string, lineNum: number, reference: string}} target
+ * @returns {string|null} null for malformed input
+ */
+export function hybridAttachmentImageUrl({ projectId, sessionId, lineNum, reference } = {}) {
+    if (!projectId || !sessionId || !Number.isInteger(lineNum) || lineNum < 1) return null
+    if (typeof reference !== 'string' || !HYBRID_REFERENCE.test(reference)) return null
+    return `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/items/${lineNum}/attachments/${reference}`
+}
+
 /** The icon name of a display kind (manifest kinds). */
 export function attachmentKindIcon(kind) {
     return KIND_ICONS[kind] || KIND_ICONS.other
@@ -116,17 +132,19 @@ function manifestEntries(metadata) {
  * Entries keep the manifest order. Inline entries take the native media
  * blocks in order (one per inline entry; documents and failed-image
  * placeholders take their own slot): an image gets its block as thumbnail,
- * any other inline entry is a chip. Hybrid inline entries are chips (the CLI
- * stores the `@`-mentioned files in separate records). File entries are chips
+ * any other inline entry is a chip. A hybrid inline image gets its thumbnail
+ * from `imageUrl(reference)` (the CLI stores the `@`-mentioned files in separate
+ * records the client does not load); without a resolver, or a `reference`
+ * (messages ingested before it existed), it stays a chip. File entries are chips
  * that open `attachments/<artifact_name>` in the owner's artifacts — never in
  * share mode.
  *
  * @param {{owner?: string, entries?: Array}|null} metadata - `twicc_attachments`
  * @param {Array<object>} nativeBlocks - the media slots, in content order
- * @param {{hybrid?: boolean, share?: boolean}} [options]
+ * @param {{hybrid?: boolean, share?: boolean, imageUrl?: ((reference: string) => string|null)|null}} [options]
  * @returns {StripItem[]}
  */
-export function buildAttachmentStrip(metadata, nativeBlocks, { hybrid = false, share = false } = {}) {
+export function buildAttachmentStrip(metadata, nativeBlocks, { hybrid = false, share = false, imageUrl = null } = {}) {
     const entries = manifestEntries(metadata)
     if (!entries) return []
     const owner = typeof metadata.owner === 'string' && metadata.owner ? metadata.owner : null
@@ -147,7 +165,13 @@ export function buildAttachmentStrip(metadata, nativeBlocks, { hybrid = false, s
             item.canOpenArtifact = !share && !!owner && !!artifactName
             return item
         }
-        if (hybrid) return item
+        if (hybrid) {
+            if (item.kind === 'image' && typeof imageUrl === 'function' && typeof entry?.reference === 'string') {
+                const src = imageUrl(entry.reference)
+                if (src) item.src = src
+            }
+            return item
+        }
         const block = blocks[inlineIndex++]
         const src = item.kind === 'image' ? nativeImageSrc(block) : null
         if (src) item.src = src
@@ -199,14 +223,14 @@ function blankTextIndices(blocks) {
  * @param {object|null} parsed - the parsed item
  * @param {Array<object>} blocks - its content entries (a hybrid string is
  *   passed as one text entry)
- * @param {{hybrid?: boolean, share?: boolean}} [options]
+ * @param {{hybrid?: boolean, share?: boolean, imageUrl?: ((reference: string) => string|null)|null}} [options]
  * @returns {{strip: StripItem[]|null, hiddenIndices: number[]}}
  */
-export function messageAttachmentLayout(parsed, blocks, { hybrid = false, share = false } = {}) {
+export function messageAttachmentLayout(parsed, blocks, { hybrid = false, share = false, imageUrl = null } = {}) {
     const entries = manifestEntries(parsed?.twicc_attachments)
     if (entries?.length) {
         const consumed = hybrid ? [] : leadingMediaSlots(blocks).slice(0, inlineEntryCount(entries))
-        const strip = buildAttachmentStrip(parsed.twicc_attachments, consumed.map(slot => slot.block), { hybrid, share })
+        const strip = buildAttachmentStrip(parsed.twicc_attachments, consumed.map(slot => slot.block), { hybrid, share, imageUrl })
         const hidden = new Set([...consumed.map(slot => slot.index), ...blankTextIndices(blocks)])
         return { strip, hiddenIndices: [...hidden].sort((a, b) => a - b) }
     }

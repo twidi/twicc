@@ -1,6 +1,7 @@
 """API views and SPA catch-all for serving the frontend."""
 
 import asyncio
+import base64
 import hashlib
 import logging
 import os
@@ -1545,6 +1546,66 @@ async def session_items(request, project_id, session_id, parent_session_id=None)
     items = await sync_to_async(list)(session.items.filter(q_filter))
     data = [serialize_session_item(item) for item in items]
     return JsonResponse(data, safe=False)
+
+
+# Hybrid attachment images: the basename TwiCC gives the copies it writes for the CLI
+# (``twicc_attachments.entries[].reference``), and the raster types served back.
+_HYBRID_ATTACHMENT_REFERENCE_RE = re.compile(r"att_[0-9a-f]{12}(?:\.[A-Za-z0-9]+)?")
+_HYBRID_ATTACHMENT_IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
+# How far after the user line the CLI's ``attachment`` records are searched.
+_HYBRID_ATTACHMENT_WINDOW = 500
+
+
+def _hybrid_attachment_image(session, line_num, reference):
+    """``(media_type, bytes)`` of the image the CLI recorded for ``reference`` after ``line_num``, or None."""
+    candidates = session.items.filter(
+        line_num__gt=line_num,
+        line_num__lte=line_num + _HYBRID_ATTACHMENT_WINDOW,
+        content__contains=f'/{reference}"',
+    ).order_by("line_num")[:5]
+    for item in candidates:
+        try:
+            record = orjson.loads(item.content)
+        except orjson.JSONDecodeError:
+            continue
+        attachment = record.get("attachment") if isinstance(record, dict) else None
+        if not isinstance(attachment, dict) or attachment.get("type") != "file":
+            continue
+        filename = attachment.get("filename")
+        content = attachment.get("content")
+        file_info = content.get("file") if isinstance(content, dict) and content.get("type") == "image" else None
+        if not isinstance(filename, str) or not filename.endswith(f"/{reference}") or not isinstance(file_info, dict):
+            continue
+        media_type, data = file_info.get("type"), file_info.get("base64")
+        if media_type not in _HYBRID_ATTACHMENT_IMAGE_TYPES or not isinstance(data, str):
+            continue
+        try:
+            return media_type, base64.b64decode(data, validate=True)
+        except ValueError:
+            continue
+    return None
+
+
+async def hybrid_attachment_image(request, project_id, session_id, line_num, reference):
+    """GET /api/projects/<id>/sessions/<session_id>/items/<line_num>/attachments/<reference>
+
+    The image behind a hybrid user message's inline attachment: the CLI reads the
+    ``@``-referenced copy and writes its bytes in a separate ``attachment`` record
+    after the user line. That record is DEBUG_ONLY (never loaded by the client), so
+    the thumbnail comes from here. ``reference`` is the manifest entry's basename.
+    """
+    session = await _resolve_session_or_404(session_id, project_id, None)
+    if not _HYBRID_ATTACHMENT_REFERENCE_RE.fullmatch(reference):
+        raise Http404("Attachment not found")
+    found = await sync_to_async(_hybrid_attachment_image)(session, line_num, reference)
+    if found is None:
+        raise Http404("Attachment not found")
+    media_type, data = found
+    response = HttpResponse(data, content_type=media_type)
+    response["X-Content-Type-Options"] = "nosniff"
+    # The record is append-only: the bytes for a given line and reference never change.
+    response["Cache-Control"] = "private, max-age=31536000, immutable"
+    return response
 
 
 async def session_items_metadata(request, project_id, session_id, parent_session_id=None):

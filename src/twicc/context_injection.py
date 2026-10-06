@@ -196,7 +196,7 @@ _ATTACHMENTS_BLOCK_RE = re.compile(
 )
 # Suffixes only: a worktree and the main instance ingest the same provider
 # JSONL with different data dirs.
-_HYBRID_REFERENCE_RE = re.compile(r"/hybrid/([^/]+)/att_[0-9a-f]{12}(?:\.[A-Za-z0-9]+)?$")
+_HYBRID_REFERENCE_RE = re.compile(r"/hybrid/([^/]+)/(att_[0-9a-f]{12}(?:\.[A-Za-z0-9]+)?)$")
 _FILE_DIRECTORY_RE = re.compile(r"/artifacts/([^/]+)/attachments/$")
 # The wrapper the bundled Claude CLI puts around a whole multi-line paste (the whole
 # string, apart from surrounding whitespace; the id is optional and repeated on the closing tag).
@@ -359,13 +359,20 @@ def extract_attachments_block(
         path for entry, path in zip(manifest.entries, manifest.hybrid_paths) if entry.mode == "inline"
     ]
     hybrid_owner = None
+    # Basename of each inline entry's ``@`` reference, by entry index (hybrid only):
+    # the client uses it to find the CLI's own record of that file. Never a path.
+    references: dict[int, str] = {}
     if located.slot.format == _HYBRID_FORMAT:
         # Every inline line needs an accepted ``@`` reference; an all-file
         # block has none and parses without the hybrid header.
-        for path in inline_paths:
-            owner = _accepted_owner(_HYBRID_REFERENCE_RE.search(path) if path else None, accepted_owners)
+        for index, (entry, path) in enumerate(zip(manifest.entries, manifest.hybrid_paths)):
+            if entry.mode != "inline":
+                continue
+            match = _HYBRID_REFERENCE_RE.search(path) if path else None
+            owner = _accepted_owner(match, accepted_owners)
             if owner is None:
                 return None
+            references[index] = match.group(2)
             hybrid_owner = hybrid_owner or owner
     else:
         if manifest.hybrid or len(inline_paths) != located.media_count:
@@ -383,7 +390,10 @@ def extract_attachments_block(
         located.slot.parent[located.slot.key] = located.remaining
     return {
         "owner": directory_owner or hybrid_owner or session_id,
-        "entries": [entry._asdict() for entry in manifest.entries],
+        "entries": [
+            {**entry._asdict(), "reference": references[index]} if index in references else entry._asdict()
+            for index, entry in enumerate(manifest.entries)
+        ],
     }
 
 

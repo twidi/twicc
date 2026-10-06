@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs'
 import {
     ATTACHMENT_SHARE_MODE,
     artifactNavigationTarget,
+    hybridAttachmentImageUrl,
     attachmentCountForMessage,
     attachmentKindIcon,
     attachmentMatchKey,
@@ -121,6 +122,50 @@ test('hybrid inline entries are chips with no native thumbnail dependency', () =
     assert.equal(strip[0].src, undefined)
     assert.equal(strip[0].mode, 'inline')
     assert.equal(strip[1].canOpenArtifact, true)
+})
+
+test('hybrid image entries with a reference get a thumbnail from the resolver; others stay chips', () => {
+    const metadata = {
+        owner: 's',
+        entries: [
+            { ...entry(1, 'shot.png', 'image', 'inline'), reference: 'att_3bd7fe5bf701.png' },
+            { ...entry(2, 'old.png', 'image', 'inline') },
+            { ...entry(3, 'doc.pdf', 'PDF', 'inline'), reference: 'att_1e508b01c568.pdf' },
+            { ...entry(4, 'log.txt', 'text', 'file') },
+        ],
+    }
+    const asked = []
+    const imageUrl = (reference) => { asked.push(reference); return `/img/${reference}` }
+    const strip = buildAttachmentStrip(metadata, [], { hybrid: true, imageUrl })
+    assert.equal(strip[0].src, '/img/att_3bd7fe5bf701.png')
+    assert.equal(strip[1].src, undefined, 'no reference (ingested before the feature): icon tile')
+    assert.equal(strip[2].src, undefined, 'only images get a thumbnail')
+    assert.equal(strip[3].src, undefined)
+    assert.deepEqual(asked, ['att_3bd7fe5bf701.png'])
+    assert.equal(buildAttachmentStrip(metadata, [], { hybrid: true })[0].src, undefined, 'no resolver (share): icon tile')
+    assert.equal(buildAttachmentStrip(metadata, [], { hybrid: true, imageUrl: () => null })[0].src, undefined)
+    for (const item of strip) assert.ok(!('reference' in item), 'the reference is not part of the strip item')
+})
+
+test('messageAttachmentLayout forwards the resolver to hybrid strips only', () => {
+    const metadata = { owner: 's', entries: [{ ...entry(1, 'shot.png', 'image', 'inline'), reference: 'att_3bd7fe5bf701.png' }] }
+    const imageUrl = (reference) => `/img/${reference}`
+    const hybrid = messageAttachmentLayout({ twicc_attachments: metadata }, [{ type: 'text', text: 'hi' }], { hybrid: true, imageUrl })
+    assert.equal(hybrid.strip[0].src, '/img/att_3bd7fe5bf701.png')
+    const native = messageAttachmentLayout({ twicc_attachments: metadata }, [claudeImage('QUFB')], { imageUrl })
+    assert.equal(native.strip[0].src, firstNativeImage, 'a native block wins outside hybrid')
+})
+
+test('hybridAttachmentImageUrl builds the item endpoint and refuses malformed input', () => {
+    const base = { projectId: '-p-q', sessionId: 'abc', lineNum: 45, reference: 'att_3bd7fe5bf701.png' }
+    assert.equal(hybridAttachmentImageUrl(base), '/api/projects/-p-q/sessions/abc/items/45/attachments/att_3bd7fe5bf701.png')
+    assert.equal(hybridAttachmentImageUrl({ ...base, reference: 'att_3bd7fe5bf701' }), '/api/projects/-p-q/sessions/abc/items/45/attachments/att_3bd7fe5bf701')
+    for (const reference of ['../x.png', '/etc/passwd', 'att_zz.png', 'notes.txt', '', null, undefined]) {
+        assert.equal(hybridAttachmentImageUrl({ ...base, reference }), null, String(reference))
+    }
+    for (const patch of [{ projectId: '' }, { sessionId: null }, { lineNum: 0 }, { lineNum: 'x' }]) {
+        assert.equal(hybridAttachmentImageUrl({ ...base, ...patch }), null)
+    }
 })
 
 test('a strip stores no filesystem path', () => {
@@ -374,6 +419,8 @@ test('wiring: renderers use the shared layout, share mode is explicit, item cont
 
     assert.match(claudeMessage, /messageAttachmentLayout\(/)
     assert.match(claudeMessage, /<AttachmentStrip/)
+    assert.match(claudeMessage, /hybridAttachmentImageUrl\(/)
+    assert.doesNotMatch(shareList, /hybridAttachmentImageUrl/, 'a share has no such endpoint: icon tiles')
     assert.match(contentList, /hiddenIndices/)
     assert.match(codexMessage, /messageAttachmentLayout\(/)
     assert.match(codexUser, /<AttachmentStrip/)

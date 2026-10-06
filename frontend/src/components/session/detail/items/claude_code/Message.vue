@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { SYNTHETIC_ITEM } from '../../../../../constants'
 import { useDataStore } from '../../../../../stores/data'
 import { emptyAssistantMessageMarkdown, showEmptyAssistantNotice } from '../../../../../utils/emptyMessage'
-import { messageAttachmentLayout } from '../../../../../utils/attachmentStrip'
+import { hybridAttachmentImageUrl, messageAttachmentLayout } from '../../../../../utils/attachmentStrip'
 import { useAttachmentStripContext } from '../../../../../composables/useAttachmentStripContext'
 import AttachmentStrip from '../../../../media/AttachmentStrip.vue'
 import ContentList from './ContentList.vue'
@@ -105,11 +105,20 @@ const dataStore = useDataStore()
 // entries are chips. Without either, `strip` is null and the legacy rendering
 // stays.
 const { share: attachmentShareMode, openArtifact } = useAttachmentStripContext(() => props.sessionId)
+// A hybrid inline image has no native block: its thumbnail is served from the
+// CLI's own record of the file (not available in a share: icon tile).
+const hybridImageUrl = (reference) => hybridAttachmentImageUrl({
+    projectId: props.projectId,
+    sessionId: props.sessionId,
+    lineNum: props.lineNum,
+    reference,
+})
 const attachmentLayout = computed(() => {
     if (props.role !== 'user') return { strip: null, hiddenIndices: [] }
     return messageAttachmentLayout(props.data, contentItems.value, {
         hybrid: typeof props.data?.message?.content === 'string',
         share: attachmentShareMode,
+        imageUrl: attachmentShareMode || props.parentSessionId ? null : hybridImageUrl,
     })
 })
 

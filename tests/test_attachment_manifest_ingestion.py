@@ -94,6 +94,14 @@ def expected_entries(*entries: ManifestEntry) -> list[dict]:
     return [e._asdict() for e in entries]
 
 
+def expected_hybrid_entries(*entries: ManifestEntry) -> list[dict]:
+    """Hybrid entries: each inline one also keeps the basename of its ``@`` reference (``hybrid_block`` defaults)."""
+    return [
+        {**e._asdict(), "reference": f"att_{index:012x}.png"} if e.mode == "inline" else e._asdict()
+        for index, e in enumerate(entries)
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Real record shapes
 # ---------------------------------------------------------------------------
@@ -281,7 +289,7 @@ def test_claude_hybrid_string_with_text_strips_the_trailing_block():
     transform(compute, record, session_id=CLAUDE_SID)
 
     assert record["message"]["content"] == "Look at this"
-    assert record["twicc_attachments"] == {"owner": CLAUDE_SID, "entries": expected_entries(*entries)}
+    assert record["twicc_attachments"] == {"owner": CLAUDE_SID, "entries": expected_hybrid_entries(*entries)}
 
 
 def test_claude_hybrid_string_without_text_becomes_an_empty_user_message():
@@ -324,7 +332,7 @@ def test_hybrid_string_wrapped_by_the_cli_paste_tag_is_extracted_and_unwrapped()
     transform(compute, record, session_id=CLAUDE_SID)
 
     assert record["message"]["content"] == "Look at this"
-    assert record["twicc_attachments"] == {"owner": CLAUDE_SID, "entries": expected_entries(*entries)}
+    assert record["twicc_attachments"] == {"owner": CLAUDE_SID, "entries": expected_hybrid_entries(*entries)}
 
 
 def test_wrapped_hybrid_string_without_text_becomes_an_empty_user_message():
@@ -404,7 +412,17 @@ def test_hybrid_owner_comes_from_the_reference_when_no_file_line():
         (UserTextSlot(message, "content", "hybrid"),), {CODEX_SID, FORK_PARENT}, session_id=CODEX_SID,
     )
 
-    assert result == {"owner": FORK_PARENT, "entries": expected_entries(*entries)}
+    assert result == {"owner": FORK_PARENT, "entries": expected_hybrid_entries(*entries)}
+
+
+def test_hybrid_reference_keeps_the_basename_only():
+    entries = (entry(1, "shot.png", "image", 1, 1, "inline"), entry(2, "scan", "image", 2, 2, "inline"))
+    paths = (hybrid_path(CLAUDE_SID, "aaaaaaaaaaaa"), hybrid_path(CLAUDE_SID, "bbbbbbbbbbbb", ""))
+    message = {"content": f"x\n\n{hybrid_block(CLAUDE_SID, *entries, paths=paths)}"}
+
+    result = extract_attachments_block((UserTextSlot(message, "content", "hybrid"),), {CLAUDE_SID}, session_id=CLAUDE_SID)
+
+    assert [e["reference"] for e in result["entries"]] == ["att_aaaaaaaaaaaa.png", "att_bbbbbbbbbbbb"]
 
 
 def test_file_directory_owner_wins_over_the_hybrid_reference_owner():
