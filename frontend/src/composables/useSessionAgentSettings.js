@@ -592,15 +592,19 @@ export function useSessionAgentSettings(sessionIdSource) {
     }, { immediate: true })
 
     // React when session data arrives from backend (e.g. after save or watcher
-    // creates the row). Update active values to track DB; don't overwrite the
-    // user's selection while a process is active.
+    // creates the row). Update active values to track DB. While a process is
+    // active, only overwrite the selection when the user has no pending edit
+    // (selected still equals active): otherwise a backend-driven change (e.g. the
+    // permission mode picked on a tool approval) would leave a stale selection
+    // that the next send writes back over it.
     for (const field of SESSION_SETTING_FIELDS) {
         watch(
             () => store.getSession(sessionId.value)?.[field],
             (newValue) => {
                 if (newValue === undefined) return
+                const hasPendingEdit = SELECTED_REFS[field].value !== ACTIVE_REFS[field].value
                 ACTIVE_REFS[field].value = newValue
-                if (!processIsActive.value) {
+                if (!processIsActive.value || !hasPendingEdit) {
                     SELECTED_REFS[field].value = newValue
                 }
             }
