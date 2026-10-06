@@ -41,9 +41,17 @@ from twicc.providers.helpers import AgentSettings, get_provider_helpers
 HYBRID_HOOK_TIMEOUT_SECONDS = 14 * 24 * 3600
 
 
-def build_hooks_settings(session_id: str, fast_mode: bool) -> str:
+def build_hooks_settings(session_id: str, fast_mode: bool, *, skip_bypass_dialog: bool = False) -> str:
     """Inline ``--settings`` JSON: fastMode + forced file checkpointing + the
     single ``PermissionRequest`` hook.
+
+    With ``skip_bypass_dialog`` the CLI's one-time "Bypass Permissions mode"
+    confirmation is not shown (``skipDangerousModePermissionPrompt``, honoured
+    from ``--settings``): the user already picked that mode in TwiCC, and
+    TwiCC drives the CLI, so asking again would only leave the session stuck
+    in "starting" on the dialog until the starting timeout stops it. Given on
+    the command line, the setting stays scoped to this session: nothing is
+    written to the user's own ``settings.json``.
 
     Schema validated empirically on CLI 2.1.170 (2026-06-11 design probe).
     The hook is pure shell — it drops its stdin JSON into the watched
@@ -88,6 +96,8 @@ def build_hooks_settings(session_id: str, fast_mode: bool) -> str:
             }],
         },
     }
+    if skip_bypass_dialog:
+        settings["skipDangerousModePermissionPrompt"] = True
     return orjson.dumps(settings).decode()
 
 
@@ -151,7 +161,17 @@ def build_argv(
     argv += ["--chrome"] if settings.claude_in_chrome else ["--no-chrome"]
     if settings.question_widget is False:
         argv += ["--disallowedTools", "AskUserQuestion"]
-    argv += ["--settings", build_hooks_settings(session_id, bool(settings.fast_mode))]
+    # The mode the session starts in is the user's own choice in TwiCC (clamped
+    # above in untrusted projects, where bypassPermissions cannot be selected),
+    # so the CLI's extra confirmation of that same choice is skipped.
+    argv += [
+        "--settings",
+        build_hooks_settings(
+            session_id,
+            bool(settings.fast_mode),
+            skip_bypass_dialog=permission_mode == "bypassPermissions",
+        ),
+    ]
     argv += ["--plugin-dir", str(get_plugin_dir())]
     # TwiCC's own MCP server (/mcp): pass the per-session config as a FILE path
     # (never inline JSON — the bearer token would show in ``ps``). No
