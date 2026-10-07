@@ -41,6 +41,7 @@ import AsyncQuestions from './AsyncQuestions.vue'
 import { classifyAsyncQuestionSend, prepareAsyncQuestionSend } from '../../utils/asyncQuestions.js'
 import { useMessageSnippetsStore } from '../../stores/messageSnippets'
 import { useWorkspacesStore } from '../../stores/workspaces'
+import { mapGroupedEntries } from '../../utils/snippetGroups'
 import { getUnavailablePlaceholders, resolveSnippetText } from '../../utils/snippetPlaceholders'
 
 const props = defineProps({
@@ -1924,7 +1925,7 @@ const snippetsForProject = computed(() => {
     const raw = snippetListProjectId.value ? messageSnippetsStore.getSnippetsForProject(snippetListProjectId.value, snippetWorkspaceIds.value) : []
     const ctx = placeholderContext.value
 
-    return raw.map(snippet => {
+    return mapGroupedEntries(raw, snippet => {
         const placeholders = snippet.placeholders || []
         if (placeholders.length === 0) return snippet
         const unavailable = getUnavailablePlaceholders(placeholders, ctx)
@@ -2150,6 +2151,7 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
         <!-- Message snippets bar -->
         <MessageSnippetsBar
             :snippets="snippetsForProject"
+            :context="[sessionId, projectId, session?.provider, route.query.workspace, collapsed]"
             :show-history-button="!isDraft"
             :activation-chars="commandActivationChars"
             :can-open-command="messageText.length === 0"

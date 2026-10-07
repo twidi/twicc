@@ -28,7 +28,7 @@ export function getScrollStep(y, top, bottom) {
     return 0
 }
 
-function scrollParents(element, view) {
+export function getReorderScrollParents(element, view) {
     const parents = []
     // Follow slots into wa-dialog's shadow DOM: its body owns the scrolling.
     for (let node = element; node; node = node.assignedSlot || node.parentElement || node.getRootNode()?.host) {
@@ -56,7 +56,7 @@ export function startListReorder(event, handle, onDrop, onActive = () => {}) {
     const texts = rows.map((item) => item.textContent)
     const startListTop = list.getBoundingClientRect().top
     const grabOffset = event.clientY - rects[from].top
-    const parents = scrollParents(list, view)
+    const parents = getReorderScrollParents(list, view)
     let y = event.clientY
     let x = event.clientX
     let target = from

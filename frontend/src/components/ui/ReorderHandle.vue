@@ -5,6 +5,8 @@ import { startListReorder } from '../../utils/listReorder'
 const props = defineProps({
     index: { type: Number, required: true },
     count: { type: Number, required: true },
+    drag: { type: Function, default: null },
+    disabled: { type: Boolean, default: undefined },
 })
 const emit = defineEmits(['reorder'])
 const active = ref(false)
@@ -19,7 +21,7 @@ function reorder(from, to) {
 
 function pointerdown(event) {
     cancel()
-    cancel = startListReorder(event, event.currentTarget, reorder, (value) => { active.value = value })
+    cancel = (props.drag || startListReorder)(event, event.currentTarget, props.drag ? (...args) => emit('reorder', ...args) : reorder, (value) => { active.value = value })
 }
 
 function keydown(event) {
@@ -49,7 +51,7 @@ onBeforeUnmount(() => cancel())
             type="button"
             class="reorder-handle"
             :class="{ active }"
-            :disabled="count < 2"
+            :disabled="disabled ?? count < 2"
             :aria-label="`Reorder item ${index + 1} of ${count}. Drag or use Up, Down, Home, and End keys.`"
             title="Drag to reorder"
             @pointerdown="pointerdown"
@@ -70,6 +72,7 @@ onBeforeUnmount(() => cancel())
     width: 32px;
     min-height: 36px;
     padding: 0;
+    font-size: var(--wa-font-size-m);
     border: none;
     border-radius: var(--wa-border-radius-s);
     background: transparent;
@@ -80,6 +83,7 @@ onBeforeUnmount(() => cancel())
     -webkit-user-select: none;
     -webkit-touch-callout: none;
 }
+.reorder-handle wa-icon { margin: 0; }
 .reorder-handle:hover:not(:disabled) { color: var(--wa-color-text-base); background: var(--wa-color-surface-alt); }
 .reorder-handle.active { cursor: grabbing; color: var(--wa-color-text-base); }
 .reorder-handle:disabled { opacity: 0.25; cursor: default; }

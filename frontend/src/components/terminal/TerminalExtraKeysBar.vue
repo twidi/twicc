@@ -3,10 +3,12 @@ import { ref, computed, watch } from 'vue'
 import { formatCombo } from '../../utils/terminalComboNotation'
 import { useDataStore } from '../../stores/data'
 import { useWorkspacesStore } from '../../stores/workspaces'
+import GroupedSnippetEntries from '../ui/GroupedSnippetEntries.vue'
 import AppTooltip from '../ui/AppTooltip.vue'
 import ProjectMark from '../project/ProjectMark.vue'
 
 const props = defineProps({
+    context: { default: null },
     activeModifiers: { type: Object, required: true },
     lockedModifiers: { type: Object, required: true },
     isTouchDevice: { type: Boolean, default: false },
@@ -84,12 +86,21 @@ const tabIds = computed(() => {
     return ['snippets']
 })
 
+const groupedCombos = ref(null)
+const groupedSnippets = ref(null)
+function closeGroups() {
+    groupedCombos.value?.close()
+    groupedSnippets.value?.close()
+}
+
 const activeTab = ref(null)
 watch(tabIds, (ids) => {
     if (!ids.includes(activeTab.value)) {
         activeTab.value = ids[0]
     }
 }, { immediate: true })
+
+watch(activeTab, closeGroups)
 
 // ── Double-tap detection for modifiers ──────────────────────────────
 const lastModifierTap = {}
@@ -135,11 +146,22 @@ function handlePasteClick() {
 // ── Combo and snippet handling ──────────────────────────────────────
 function handleComboPointerDown(event, combo) {
     event.preventDefault()
+    closeGroups()
     emit('combo-press', combo)
+}
+
+// Keyboard activation produces a click with detail 0 and no pointerdown.
+function handleComboClick(event, combo) {
+    if (event.detail === 0) handleComboPointerDown(event, combo)
+}
+
+function handleSnippetClick(event, snippet) {
+    if (event.detail === 0) handleSnippetPointerDown(event, snippet)
 }
 
 function handleSnippetPointerDown(event, snippet) {
     event.preventDefault()
+    closeGroups()
     if (snippet._disabled) {
         emit('snippet-disabled-press', snippet)
         return
@@ -150,6 +172,7 @@ function handleSnippetPointerDown(event, snippet) {
 function handleSnippetSendTo(event, snippet) {
     const value = event.detail?.item?.value
     if (!value) return
+    closeGroups()
     if (value === 'edit') {
         emit('snippet-edit-send', snippet)
         return
@@ -238,14 +261,23 @@ function keyClasses(keyDef) {
             <!-- Custom tab -->
             <template v-else-if="activeTab === 'custom'">
                 <template v-if="combos.length > 0">
-                    <button
-                        v-for="(combo, i) in combos"
-                        :key="'combo-' + i"
-                        class="extra-key"
-                        @pointerdown="handleComboPointerDown($event, combo)"
-                    >
-                        {{ formatCombo(combo) }}
-                    </button>
+                    <GroupedSnippetEntries ref="groupedCombos" :entries="combos" :context="context">
+                        <template #group="{ entry, triggerId, expanded }">
+                            <button :id="triggerId" class="extra-key" :aria-expanded="expanded" aria-haspopup="dialog" @pointerdown.prevent>
+                                {{ entry.label }}
+                                <wa-icon name="chevron-up"></wa-icon>
+                            </button>
+                        </template>
+                        <template #default="{ entry: combo }">
+                            <button
+                                class="extra-key"
+                                @pointerdown="handleComboPointerDown($event, combo)"
+                                @click="handleComboClick($event, combo)"
+                            >
+                                {{ formatCombo(combo) }}
+                            </button>
+                        </template>
+                    </GroupedSnippetEntries>
                 </template>
                 <span v-else class="empty-tab-text">No custom combos</span>
                 <button
@@ -259,69 +291,90 @@ function keyClasses(keyDef) {
             <!-- Snippets tab -->
             <template v-else-if="activeTab === 'snippets'">
                 <template v-if="snippets.length > 0">
-                    <template v-for="(snippet, i) in snippets" :key="'snippet-' + i">
-                        <div class="snippet-group">
-                            <button
-                                :id="snippet._disabled ? `disabled-snippet-${i}` : undefined"
-                                class="extra-key snippet-main"
-                                :class="{ 'snippet-disabled': snippet._disabled }"
-                                @pointerdown="handleSnippetPointerDown($event, snippet)"
-                            >
-                                <template v-if="snippetScopeInfo(snippet)?.type === 'project'">
-                                    <ProjectMark
-                                        class="snippet-scope-mark"
-                                        :icon-url="dataStore.resolvedProjectIcons[snippetScopeInfo(snippet).projectId] || null"
-                                        :color="snippetScopeInfo(snippet).color"
-                                    />
-                                </template>
-                                <template v-else-if="snippetScopeInfo(snippet)?.type === 'workspace'">
-                                    <wa-icon
-                                        name="layer-group"
-                                        class="snippet-scope-icon"
-                                        :style="snippetScopeInfo(snippet).color ? { color: snippetScopeInfo(snippet).color } : null"
-                                    ></wa-icon>
-                                </template>
-                                {{ snippet.label }}
-                                <wa-icon v-if="snippet.openInNewTab" name="arrow-up-right-from-square" class="snippet-new-tab-icon"></wa-icon>
+                    <GroupedSnippetEntries ref="groupedSnippets" :entries="snippets" :context="context">
+                        <template #group="{ entry, triggerId, expanded }">
+                            <button :id="triggerId" class="extra-key" :aria-expanded="expanded" aria-haspopup="dialog" @pointerdown.prevent>
+                                <ProjectMark
+                                    v-if="snippetScopeInfo(entry)?.type === 'project'"
+                                    class="snippet-scope-mark"
+                                    :icon-url="dataStore.resolvedProjectIcons[snippetScopeInfo(entry).projectId] || null"
+                                    :color="snippetScopeInfo(entry).color"
+                                />
+                                <wa-icon
+                                    v-else-if="snippetScopeInfo(entry)?.type === 'workspace'"
+                                    name="layer-group"
+                                    class="snippet-scope-icon"
+                                    :style="snippetScopeInfo(entry).color ? { color: snippetScopeInfo(entry).color } : null"
+                                ></wa-icon>
+                                {{ entry.label }}
+                                <wa-icon name="chevron-up"></wa-icon>
                             </button>
-                            <wa-dropdown
-                                placement="top-start"
-                                @wa-select="(e) => handleSnippetSendTo(e, snippet)"
-                            >
+                        </template>
+                        <template #default="{ entry: snippet, itemId }">
+                            <div class="snippet-group">
                                 <button
-                                    slot="trigger"
-                                    class="extra-key snippet-arrow"
+                                    :id="snippet._disabled ? `disabled-snippet-${itemId}` : undefined"
+                                    class="extra-key snippet-main"
                                     :class="{ 'snippet-disabled': snippet._disabled }"
-                                    @pointerdown.prevent
+                                    @pointerdown="handleSnippetPointerDown($event, snippet)"
+                                    @click="handleSnippetClick($event, snippet)"
                                 >
-                                    <wa-icon name="chevron-up"></wa-icon>
+                                    <template v-if="snippetScopeInfo(snippet)?.type === 'project'">
+                                        <ProjectMark
+                                            class="snippet-scope-mark"
+                                            :icon-url="dataStore.resolvedProjectIcons[snippetScopeInfo(snippet).projectId] || null"
+                                            :color="snippetScopeInfo(snippet).color"
+                                        />
+                                    </template>
+                                    <template v-else-if="snippetScopeInfo(snippet)?.type === 'workspace'">
+                                        <wa-icon
+                                            name="layer-group"
+                                            class="snippet-scope-icon"
+                                            :style="snippetScopeInfo(snippet).color ? { color: snippetScopeInfo(snippet).color } : null"
+                                        ></wa-icon>
+                                    </template>
+                                    {{ snippet.label }}
+                                    <wa-icon v-if="snippet.openInNewTab" name="arrow-up-right-from-square" class="snippet-new-tab-icon"></wa-icon>
                                 </button>
-                                <template v-if="!snippet._disabled">
-                                    <wa-dropdown-item disabled class="dropdown-label">Send to tab</wa-dropdown-item>
-                                    <wa-dropdown-item
-                                        v-for="term in terminals"
-                                        :key="term.index"
-                                        :value="String(term.index)"
+                                <wa-dropdown
+                                    placement="top-start"
+                                    @wa-select="(e) => handleSnippetSendTo(e, snippet)"
+                                >
+                                    <button
+                                        slot="trigger"
+                                        class="extra-key snippet-arrow"
+                                        :class="{ 'snippet-disabled': snippet._disabled }"
+                                        @pointerdown.prevent
                                     >
-                                        {{ term.label }}<template v-if="term.index === activeTerminalIndex"> (current)</template>
+                                        <wa-icon name="chevron-up"></wa-icon>
+                                    </button>
+                                    <template v-if="!snippet._disabled">
+                                        <wa-dropdown-item disabled class="dropdown-label">Send to tab</wa-dropdown-item>
+                                        <wa-dropdown-item
+                                            v-for="term in terminals"
+                                            :key="term.index"
+                                            :value="String(term.index)"
+                                        >
+                                            {{ term.label }}<template v-if="term.index === activeTerminalIndex"> (current)</template>
+                                        </wa-dropdown-item>
+                                        <wa-divider></wa-divider>
+                                        <wa-dropdown-item value="new">
+                                            <wa-icon slot="icon" name="plus"></wa-icon>
+                                            New tab
+                                        </wa-dropdown-item>
+                                        <wa-divider></wa-divider>
+                                    </template>
+                                    <wa-dropdown-item value="edit">
+                                        <wa-icon slot="icon" name="pen-to-square"></wa-icon>
+                                        Edit before sending
                                     </wa-dropdown-item>
-                                    <wa-divider></wa-divider>
-                                    <wa-dropdown-item value="new">
-                                        <wa-icon slot="icon" name="plus"></wa-icon>
-                                        New tab
-                                    </wa-dropdown-item>
-                                    <wa-divider></wa-divider>
-                                </template>
-                                <wa-dropdown-item value="edit">
-                                    <wa-icon slot="icon" name="pen-to-square"></wa-icon>
-                                    Edit before sending
-                                </wa-dropdown-item>
-                            </wa-dropdown>
-                        </div>
-                        <AppTooltip v-if="snippet._disabled" :for="`disabled-snippet-${i}`">
-                            {{ snippet._disabledReason }}
-                        </AppTooltip>
-                    </template>
+                                </wa-dropdown>
+                            </div>
+                            <AppTooltip v-if="snippet._disabled" :for="`disabled-snippet-${itemId}`">
+                                {{ snippet._disabledReason }}
+                            </AppTooltip>
+                        </template>
+                    </GroupedSnippetEntries>
                 </template>
                 <span v-else class="empty-tab-text">No snippets</span>
                 <button
