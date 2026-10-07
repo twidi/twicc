@@ -41,6 +41,7 @@ from openai_codex.generated.v2_all import (
     SandboxPolicy,
     ThreadApproveGuardianDeniedActionResponse,
     ThreadGoal,
+    ThreadGoalMutationOrigin,
     ThreadResumeParams,
     ThreadSetNameResponse,
     ThreadStartParams,
@@ -60,6 +61,14 @@ def service_tier_from_fast_mode(fast_mode: bool | None) -> str | None:
     if fast_mode is None:
         return None
     return CODEX_FAST_SERVICE_TIER if fast_mode else CODEX_STANDARD_SERVICE_TIER
+
+
+# Provenance of every goal mutation TwiCC sends. Both callers (``/goal <objective>``
+# and ``/goal clear``) run from an explicit user command. Codex records a
+# user-origin edit in the model history as a user instruction; a request without
+# ``origin`` does not count as user authorization. Never add an automatic path
+# that reuses this value: it would forge user authorization.
+_GOAL_ORIGIN_USER = ThreadGoalMutationOrigin.user.value
 
 
 class _ThreadGoalEnvelope(BaseModel):
@@ -237,7 +246,8 @@ class TwiccAsyncThread(AsyncThread):
     async def goal_set(self, objective: str) -> ThreadGoal | None:
         """Create or edit this thread's goal via ``thread/goal/set``.
 
-        Sends only ``objective`` (+ ``threadId``): on a thread with no goal
+        Sends only ``objective`` (+ ``threadId``) and ``origin: "user"``
+        (the ``/goal`` command is a user action; see ``_GOAL_ORIGIN_USER``): on a thread with no goal
         this creates one (``status=active``, no budget, counters at 0); on an
         existing goal it edits the objective in place, keeping status, budget
         and counters. Budget and status are deliberately never sent — TwiCC's
@@ -246,7 +256,7 @@ class TwiccAsyncThread(AsyncThread):
         await self._codex._ensure_initialized()
         response = await self._codex._client.request(
             "thread/goal/set",
-            {"threadId": self.id, "objective": objective},
+            {"threadId": self.id, "objective": objective, "origin": _GOAL_ORIGIN_USER},
             response_model=_ThreadGoalEnvelope,
         )
         return response.goal
@@ -260,7 +270,7 @@ class TwiccAsyncThread(AsyncThread):
         await self._codex._ensure_initialized()
         response = await self._codex._client.request(
             "thread/goal/clear",
-            {"threadId": self.id},
+            {"threadId": self.id, "origin": _GOAL_ORIGIN_USER},
             response_model=_ThreadGoalClearResponse,
         )
         return response.cleared

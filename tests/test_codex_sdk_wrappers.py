@@ -16,6 +16,8 @@ from openai_codex.generated.v2_all import (
     SandboxMode,
     SandboxPolicy,
     Settings,
+    ThreadGoalClearParams,
+    ThreadGoalSetParams,
     WorkspaceWriteSandboxPolicy,
 )
 
@@ -183,6 +185,54 @@ def test_approve_guardian_denied_action_uses_native_rpc() -> None:
         "thread/approveGuardianDeniedAction",
         {"threadId": "thread-id", "event": event},
     )
+
+
+def test_goal_set_sends_user_origin_with_objective() -> None:
+    async def scenario() -> TwiccAsyncCodex:
+        codex = _mock_codex()
+        codex._client.request.return_value = SimpleNamespace(goal=None)
+        thread = TwiccAsyncThread(codex, "thread-id")
+        await thread.goal_set("ship it")
+        return codex
+
+    codex = asyncio.run(scenario())
+    call = codex._client.request.await_args
+    assert call.args[:2] == (
+        "thread/goal/set",
+        {"threadId": "thread-id", "objective": "ship it", "origin": "user"},
+    )
+    # The wire payload must be valid for the generated request model.
+    params = ThreadGoalSetParams.model_validate(call.args[1])
+    assert params.origin.value == "user"
+
+
+def test_goal_clear_sends_user_origin() -> None:
+    async def scenario() -> tuple[TwiccAsyncCodex, bool]:
+        codex = _mock_codex()
+        codex._client.request.return_value = SimpleNamespace(cleared=True)
+        thread = TwiccAsyncThread(codex, "thread-id")
+        return codex, await thread.goal_clear()
+
+    codex, cleared = asyncio.run(scenario())
+    call = codex._client.request.await_args
+    assert cleared is True
+    assert call.args[:2] == (
+        "thread/goal/clear",
+        {"threadId": "thread-id", "origin": "user"},
+    )
+    params = ThreadGoalClearParams.model_validate(call.args[1])
+    assert params.origin.value == "user"
+
+
+def test_goal_get_sends_no_origin() -> None:
+    async def scenario() -> TwiccAsyncCodex:
+        codex = _mock_codex()
+        codex._client.request.return_value = SimpleNamespace(goal=None)
+        await TwiccAsyncThread(codex, "thread-id").goal_get()
+        return codex
+
+    codex = asyncio.run(scenario())
+    assert codex._client.request.await_args.args[:2] == ("thread/goal/get", {"threadId": "thread-id"})
 
 
 def test_thread_settings_update_uses_native_rpc() -> None:
