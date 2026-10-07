@@ -105,7 +105,7 @@ FULL_HELP = (
     "Return the full session payload — every field of the session payload — "
     "instead of the default reduced projection, which drops the per-session "
     "payloads, the redundant timestamps, the cost breakdown, slug, browser_url "
-    "and compute_version_up_to_date. Mutually exclusive with --slim."
+    "and compute_version_up_to_date."
 )
 
 
@@ -123,7 +123,7 @@ _TOPOLOGY_FULL_LEAD = (
 
 TOPOLOGY_FULL_HELP = (
     f"{_TOPOLOGY_FULL_LEAD}, and its `process` block is "
-    "`{state, background_work_in_progress}` alone. Mutually exclusive with --slim."
+    "`{state, background_work_in_progress}` alone."
 )
 
 SESSIONS_GET_IDS_HELP = (

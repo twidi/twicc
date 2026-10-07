@@ -78,10 +78,10 @@ def test_the_subcommand_keeps_its_own_flag(rows):
     assert "layout" in first_row(result.result)
 
 
-def test_both_flags_are_refused(rows):
+def test_slim_is_a_no_op_with_full(rows):
     result = invoke(["session", "sc-root", "--slim", "--full"])
-    assert result.exit_code == 2
-    assert "--slim and --full are mutually exclusive" in result.error
+    assert result.exit_code == 0, result.error
+    assert result.result == invoke(["session", "sc-root", "--full"]).result
 
 
 def test_the_mcp_argv_is_the_bare_call(rows):

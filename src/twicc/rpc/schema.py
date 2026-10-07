@@ -19,6 +19,7 @@ class ParamSpec(NamedTuple):
     opt: str | None                 # primary option string, e.g. "--limit"
     secondary_opt: str | None       # off-form, e.g. "--no-thinking"
     help: str
+    hidden: bool = False            # accepted compatibility option, omitted from discovery
 
 
 _TYPE_MAP = {"integer": "integer", "float": "number", "boolean": "boolean"}
@@ -34,7 +35,12 @@ def _base_type(param: click.Parameter) -> tuple[str, tuple[str, ...] | None]:
 def param_spec(param: click.Parameter) -> ParamSpec | None:
     """Translate one Click parameter, or None if it should be skipped."""
     # Skip eager/meta params (--version, --help, --install-completion, ...).
-    if getattr(param, "hidden", False) or getattr(param, "is_eager", False):
+    hidden = bool(getattr(param, "hidden", False))
+    if getattr(param, "is_eager", False):
+        return None
+    # Only these retired flags remain part of the API contract. Other hidden
+    # CLI options stay local-only.
+    if hidden and param.name not in {"slim", "paginated"}:
         return None
     if param.name in {"version", "help"}:
         return None
@@ -70,14 +76,17 @@ def param_spec(param: click.Parameter) -> ParamSpec | None:
         opt=opt,
         secondary_opt=secondary,
         help=(getattr(param, "help", "") or ""),
+        hidden=hidden,
     )
 
 
-def json_schema_for(params: list[ParamSpec]) -> dict:
+def json_schema_for(params: list[ParamSpec], *, include_hidden: bool = False) -> dict:
     """Build a JSON Schema object for a request body from its ParamSpecs."""
     props: dict = {}
     required: list[str] = []
     for p in params:
+        if p.hidden and not include_hidden:
+            continue
         if p.json_type == "array":
             schema: dict = {"type": "array", "items": {"type": "string"}}
         elif p.json_type == "enum":

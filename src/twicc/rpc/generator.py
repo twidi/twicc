@@ -29,6 +29,11 @@ class CommandSpec(NamedTuple):
     json_schema: dict
     summary: str
 
+    @property
+    def validation_schema(self) -> dict:
+        """Accept retired options without listing them in discovery schemas."""
+        return json_schema_for(self.params, include_hidden=True)
+
 
 def _split_params(cmd: click.Command) -> tuple[list[ParamSpec], list[ParamSpec]]:
     args: list[ParamSpec] = []

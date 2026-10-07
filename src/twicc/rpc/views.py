@@ -76,13 +76,17 @@ def _validate_body(spec, body) -> tuple[bool, dict | None]:
     """Lightweight in-house validation (presence + unknown fields)."""
     if not isinstance(body, dict):
         return False, {"error": "Body must be a JSON object."}
-    props = spec.json_schema["properties"]
+    schema = spec.validation_schema
+    props = schema["properties"]
     unknown = sorted(k for k in body if k not in props)
     if unknown:
         return False, {"error": f"Unknown field(s): {', '.join(unknown)}"}
-    missing = [r for r in spec.json_schema.get("required", []) if r not in body]
+    missing = [r for r in schema.get("required", []) if r not in body]
     if missing:
         return False, {"error": f"Missing required field(s): {', '.join(missing)}"}
+    for param in spec.params:
+        if param.hidden and param.name in body and not isinstance(body[param.name], bool):
+            return False, {"error": f"Field {param.name} must be a boolean."}
     return True, None
 
 

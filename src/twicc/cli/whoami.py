@@ -23,10 +23,6 @@ def whoami_cmd(
     From a plain terminal, this command exits 1 with a clear message —
     by design, ``whoami`` is only meaningful inside an active session.
     """
-    # First: the refusal wins outside a session.
-    if slim and full:
-        emit_error("Error: --slim and --full are mutually exclusive.", code=2)
-
     # Lazy imports to keep --help fast (no Django setup until we need it).
     import django
 

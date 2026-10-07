@@ -230,7 +230,8 @@ def validate_batch(
                 continue
             invalid = False
             required_occurrences = {}
-            for error in _validator(tool_name, orjson.dumps(spec.json_schema)).iter_errors(args):
+            schema = spec.validation_schema
+            for error in _validator(tool_name, orjson.dumps(schema)).iter_errors(args):
                 invalid = True
                 required_index = 0
                 if error.validator == "required":
@@ -241,7 +242,7 @@ def validate_batch(
                     required_occurrences[location] = required_index + 1
                 yield diagnostic(
                     "invalid_arguments",
-                    path=_pointer(error, spec.json_schema, base, required_index=required_index),
+                    path=_pointer(error, schema, base, required_index=required_index),
                     message=_VALIDATOR_MESSAGES.get(error.validator, _MESSAGES["invalid_arguments"]),
                 )
             if invalid:

@@ -346,9 +346,6 @@ def _sessions_default(
     if include_hidden and only_hidden:
         emit_error("Error: --include-hidden and --only-hidden are mutually exclusive.", code=2)
 
-    if slim and full:
-        emit_error("Error: --slim and --full are mutually exclusive.", code=2)
-
     if sum(x is not None for x in (spawned_by, spawn_tree, descendants, siblings)) > 1:
         emit_error(
             "Error: --spawned-by, --spawn-tree, --descendants and --siblings are mutually exclusive.",
@@ -654,8 +651,6 @@ def _sessions_get(
     paginated: bool = typer.Option(False, "--paginated", hidden=True),
 ) -> None:
     """Look up sessions by id (placeholder for missing, includes subagents)."""
-    if slim and full:
-        emit_error("Error: --slim and --full are mutually exclusive.", code=2)
 
     from twicc.cli.sessions_get import main as sessions_get_main
 
@@ -688,8 +683,6 @@ def _session_default(
             f"`{ctx.invoked_subcommand}`.",
             code=2,
         )
-    if slim and full:
-        emit_error("Error: --slim and --full are mutually exclusive.", code=2)
     if ctx.invoked_subcommand == "wait-reply" and session_id == "self" and not ctx.meta.get(HELP_REQUESTED):
         # The caller is mid-turn while this runs: its own answer cannot come
         # before the deadline, so the wait could only ever end on `timeout`.
@@ -1054,8 +1047,6 @@ def agents(
     paginated: bool = typer.Option(False, "--paginated", hidden=True),
 ) -> None:
     """List subagents of a session as JSON."""
-    if slim and full:
-        emit_error("Error: --slim and --full are mutually exclusive.", code=2)
 
     from twicc.cli.session import agents as session_agents
 
@@ -1481,8 +1472,6 @@ def topology(
     ),
 ) -> None:
     """Show the spawned-session tree containing a session as JSON."""
-    if slim and full:
-        emit_error("Error: --slim and --full are mutually exclusive.", code=2)
 
     from twicc.cli.topology import main as topology_main
 

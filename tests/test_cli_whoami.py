@@ -69,11 +69,17 @@ def test_full_is_session_self_in_full(me, capsysbinary):
     assert err == ""
 
 
-def test_both_flags_exit_2_outside_a_session(db, monkeypatch):
+def test_slim_is_a_no_op_with_full(me, capsysbinary):
+    data, err = run(capsysbinary, slim=True, full=True)
+    assert data == session_self(capsysbinary, full=True)
+    assert err == ""
+
+
+def test_both_flags_exit_1_outside_a_session(db, monkeypatch):
     monkeypatch.setattr("twicc.cli._drop_request.whoami.resolve_current_session", lambda: None)
     with pytest.raises(typer.Exit) as exc:
         whoami_cmd(slim=True, full=True)
-    assert exc.value.exit_code == 2
+    assert exc.value.exit_code == 1
 
 
 def test_outside_a_session_exits_1(db, monkeypatch):

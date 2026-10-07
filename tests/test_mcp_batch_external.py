@@ -231,6 +231,36 @@ def assert_batch_output(result, schema):
 
 
 @pytest.mark.django_db(transaction=True)
+def test_external_retired_listing_flags_are_hidden_and_accepted(http_config):
+    from twicc.mcp.endpoint import mcp_lifespan
+
+    async def scenario():
+        async with mcp_lifespan(), external_client() as client:
+            headers = await authenticated_headers(client)
+            catalog = await rpc(client, headers, "tools/list", {})
+            tool = next(tool for tool in catalog["tools"] if tool["name"] == "sessions")
+            assert "slim" not in tool["inputSchema"]["properties"]
+            assert "paginated" not in tool["inputSchema"]["properties"]
+            assert "--slim" not in orjson.dumps(tool).decode()
+            plain = await rpc(client, headers, "tools/call", {"name": "sessions", "arguments": {}})
+            for value in (True, False):
+                result = await rpc(client, headers, "tools/call", {
+                    "name": "sessions", "arguments": {"slim": value, "paginated": value},
+                })
+                assert not result.get("isError"), result
+                assert result["structuredContent"]["exit_code"] == 0
+                assert result["structuredContent"] == plain["structuredContent"]
+            result = await call_batch(client, headers, name="batch_read", calls=[{
+                "id": "legacy", "name": "sessions", "arguments": {"slim": True, "paginated": True},
+            }])
+            assert result["structuredContent"]["ok"] is True, result
+
+    import orjson
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.django_db(transaction=True)
 def test_authenticated_batch_grant_and_exact_provenance(http_config, monkeypatch):
     from twicc.core.models import McpOperation
     from twicc.mcp import server

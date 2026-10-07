@@ -37,6 +37,6 @@ def prepare_tool(name: str, arguments: dict, *, registry: dict[str, CommandSpec]
     spec = registry.get(name)
     if spec is None:
         raise UnknownToolError(name)
-    jsonschema.validate(instance=arguments, schema=spec.json_schema)
+    jsonschema.validate(instance=arguments, schema=spec.validation_schema)
     check_caller_arguments(name, arguments, external=external)
     return PreparedTool(name, spec, deepcopy(arguments))

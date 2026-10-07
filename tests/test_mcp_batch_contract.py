@@ -106,7 +106,7 @@ def test_safe_diagnostics_and_cap():
         "properties": {f"field{i}": {"type": "integer"} for i in range(110)},
         "additionalProperties": {"type": "integer"},
     }
-    registry = {"custom": SimpleNamespace(path="custom", json_schema=schema)}
+    registry = {"custom": SimpleNamespace(path="custom", json_schema=schema, validation_schema=schema)}
     args = {f"field{i}": secret for i in range(110)} | {secret: secret}
     payload = validate({"calls": [call(name="custom", arguments=args)]}, registry=registry).rejection
     assert len(payload["errors"]) == 100
@@ -117,7 +117,7 @@ def test_safe_diagnostics_and_cap():
 
 def test_unknown_property_path_stays_at_safe_ancestor():
     schema = {"type": "object", "properties": {"data": {"type": "object", "additionalProperties": {"type": "integer"}}}}
-    registry = {"custom": SimpleNamespace(path="custom", json_schema=schema)}
+    registry = {"custom": SimpleNamespace(path="custom", json_schema=schema, validation_schema=schema)}
     payload = validate(
         {"calls": [call(name="custom", arguments={"data": {"secret": "secret"}})]}, registry=registry
     ).rejection
@@ -203,7 +203,7 @@ def test_child_schema_dialect_defaults_and_copy():
         },
         "additionalProperties": True,
     }
-    registry = {"custom": SimpleNamespace(path="custom", json_schema=schema)}
+    registry = {"custom": SimpleNamespace(path="custom", json_schema=schema, validation_schema=schema)}
     args = {"count": 1, "items": ["first"], "extra": True}
     prepared = validate({"calls": [call(name="custom", arguments=args)]}, registry=registry).prepared
     args["items"].append("second")
@@ -214,7 +214,7 @@ def test_child_schema_dialect_defaults_and_copy():
 def test_schema_paths_escape_and_fall_back():
     long = "x" * 600
     schema = {"type": "object", "properties": {"a~/b": {"type": "integer"}, long: {"type": "integer"}}}
-    registry = {"custom": SimpleNamespace(path="custom", json_schema=schema)}
+    registry = {"custom": SimpleNamespace(path="custom", json_schema=schema, validation_schema=schema)}
     errors = validate(
         {"calls": [call(name="custom", arguments={"a~/b": "bad", long: "bad"})]}, registry=registry
     ).rejection["errors"]
@@ -223,7 +223,7 @@ def test_schema_paths_escape_and_fall_back():
 
 def test_exact_error_limit_is_not_truncated():
     schema = {"type": "object", "properties": {f"field{i}": {"type": "integer"} for i in range(100)}}
-    registry = {"custom": SimpleNamespace(path="custom", json_schema=schema)}
+    registry = {"custom": SimpleNamespace(path="custom", json_schema=schema, validation_schema=schema)}
     payload = validate(
         {"calls": [call(name="custom", arguments={key: "bad" for key in schema["properties"]})]}, registry=registry
     ).rejection

@@ -107,6 +107,20 @@ def test_initialize_list_call_roundtrip():
             payload = r.json()["result"]
             assert payload["structuredContent"]["exit_code"] == 0
 
+            for flags in ({}, {"slim": True, "paginated": True}, {"slim": False, "paginated": False}):
+                r = await client.post(
+                    "/mcp", json=_rpc("tools/call", {"name": "sessions", "arguments": flags}), headers=headers,
+                )
+                result = r.json()["result"]
+                assert not result.get("isError"), result
+                envelope = result["structuredContent"]
+                assert envelope["exit_code"] == 0
+                assert envelope["result"]["pagination"]["limit"] == 20
+                if not flags:
+                    plain = envelope
+                else:
+                    assert envelope == plain
+
     asyncio.run(scenario())
 
 
