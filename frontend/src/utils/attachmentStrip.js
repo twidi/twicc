@@ -179,6 +179,130 @@ export function buildAttachmentStrip(metadata, nativeBlocks, { hybrid = false, s
     })
 }
 
+// Extensions of the default attachment name, by media type (the subset of
+// Python's `mimetypes.guess_extension` the backend default name gets for the
+// media types a message can carry).
+const MEDIA_TYPE_EXTENSIONS = Object.freeze({
+    'image/png': '.png',
+    'image/jpeg': '.jpg',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+    'image/bmp': '.bmp',
+    'image/svg+xml': '.svg',
+    'application/pdf': '.pdf',
+    'text/plain': '.txt',
+    'text/markdown': '.md',
+    'text/csv': '.csv',
+    'text/html': '.html',
+    'application/json': '.json',
+})
+
+/**
+ * The name of an attachment that has none: `attachment-<n>` plus the
+ * extension of its media type (`.bin` when unknown). Same rule as the
+ * backend `default_name` (core/services/attachments/inline.py).
+ *
+ * @param {string|null|undefined} mediaType
+ * @param {number} n - 1-based position of the attachment
+ * @returns {string}
+ */
+export function defaultAttachmentName(mediaType, n) {
+    const base = typeof mediaType === 'string' ? mediaType.split(';')[0].trim().toLowerCase() : ''
+    return `attachment-${n}${MEDIA_TYPE_EXTENSIONS[base] || '.bin'}`
+}
+
+/** The media type of a `data:` URL, or null for any other source. */
+function dataUrlMediaType(src) {
+    if (typeof src !== 'string') return null
+    const match = /^data:([^;,]+)[;,]/i.exec(src)
+    return match ? match[1].toLowerCase() : null
+}
+
+// The native content entries a message without manifest shows in its strip:
+// Claude `image` / `document` blocks, Codex canonical `image` / `local_image`
+// entries.
+const NATIVE_STRIP_BLOCK_TYPES = new Set(['image', 'document', 'local_image'])
+
+/** True when a native content entry is an attachment of the strip of a message without manifest. */
+export function isNativeStripMedia(block) {
+    return !!block && typeof block === 'object' && NATIVE_STRIP_BLOCK_TYPES.has(block.type)
+}
+
+/**
+ * The kind and media type of a Claude `document` block, from its source: a
+ * `text` (or `content`) source is plain text, a `url` source is a PDF (the
+ * only document type the API fetches by URL), a `base64` source has its own
+ * media type.
+ */
+function nativeDocumentMedia(source) {
+    const sourceType = source?.type
+    if (sourceType === 'text' || sourceType === 'content') {
+        const mediaType = typeof source.media_type === 'string' && source.media_type.toLowerCase().startsWith('text/')
+            ? source.media_type
+            : 'text/plain'
+        return { kind: 'text', mediaType }
+    }
+    if (sourceType === 'url') return { kind: 'PDF', mediaType: 'application/pdf' }
+    if (sourceType === 'base64' && typeof source.media_type === 'string') {
+        const mediaType = source.media_type.split(';')[0].trim().toLowerCase()
+        if (mediaType === 'application/pdf') return { kind: 'PDF', mediaType }
+        if (mediaType.startsWith('text/')) return { kind: 'text', mediaType }
+        return { kind: 'other', mediaType }
+    }
+    return { kind: 'other', mediaType: null }
+}
+
+/** The last segment of a local path (either separator), or null. */
+function pathBasename(path) {
+    if (typeof path !== 'string') return null
+    const name = path.split(/[\\/]/).pop().trim()
+    return name || null
+}
+
+/**
+ * The strip of the native media of a message without attachment manifest
+ * (older messages, CLI / MCP sends): one item per `isNativeStripMedia` entry
+ * of `blocks`, in content order; any other entry is skipped.
+ *
+ * - An image gets its browser-loadable source as thumbnail (`nativeImageSrc`);
+ *   without one (a Codex `local_image` path on the agent's machine, a URL
+ *   source) it is an icon tile.
+ * - A document is a PDF / text / other icon tile, never a thumbnail.
+ * - Name: the document `title`, the `local_image` file name, else the default
+ *   name of its position among the attachments (`attachment-<n>.<ext>`).
+ * - No item links to the Artifacts tab: these are not artifacts.
+ *
+ * @param {Array<object>|null} blocks - the message content entries
+ * @returns {StripItem[]}
+ */
+export function nativeMediaStripItems(blocks) {
+    if (!Array.isArray(blocks)) return []
+    return blocks.filter(isNativeStripMedia).map((block, index) => {
+        let kind = 'image'
+        let mediaType = null
+        let src = null
+        let ownName = null
+        if (block.type === 'document') {
+            ({ kind, mediaType } = nativeDocumentMedia(block.source))
+            ownName = typeof block.title === 'string' && block.title.trim() ? block.title : null
+        } else if (block.type === 'local_image') {
+            ownName = pathBasename(block.path)
+        } else {
+            src = nativeImageSrc(block)
+            mediaType = block.source?.type === 'base64' ? block.source.media_type || 'image/png' : dataUrlMediaType(src)
+        }
+        const item = {
+            id: `native-${index}`,
+            name: ownName || defaultAttachmentName(mediaType, index + 1),
+            kind,
+            mode: null,
+            canOpenArtifact: false,
+        }
+        if (src) item.src = src
+        return item
+    })
+}
+
 /**
  * The strip of an optimistic or failed-send bubble (§9.4): names and kinds in
  * send order, a thumbnail only from a local `blob:` URL (never from the
@@ -214,11 +338,11 @@ function blankTextIndices(blocks) {
  *
  * - With `twicc_attachments`: the strip, and the indices of the content
  *   entries it replaces (the native media slots bound to inline entries, so no
- *   separate image group or document placeholder) plus blank text entries (an
+ *   second image strip or document placeholder) plus blank text entries (an
  *   all-file message without text shows the strip alone).
  * - With optimistic/failed `attachmentItems`: their strip, blank text hidden.
- * - Otherwise `{strip: null, hiddenIndices: []}`: the current (legacy)
- *   rendering stays.
+ * - Otherwise `{strip: null, hiddenIndices: []}`: the provider renders the
+ *   native media itself (a strip from `nativeMediaStripItems`).
  *
  * @param {object|null} parsed - the parsed item
  * @param {Array<object>} blocks - its content entries (a hybrid string is

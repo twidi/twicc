@@ -34,7 +34,7 @@ import {
     peerContentAllowsDelivery,
     peerDeliveryTargetState,
     peerEntryToFile,
-    peerEntryToMediaItem,
+    peerEntryToStripItem,
     shouldConfirmPeerAttachments,
     shouldConfirmPeerMarkdown,
 } from '../../utils/peerMessageContent'
@@ -62,7 +62,7 @@ import {
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../utils/workspaceIds'
 import { ensureProjectTrust } from '../../composables/useTrustGate'
 import { useProjectMark } from '../../composables/useProjectMark'
-import MediaThumbnailGroup from '../media/MediaThumbnailGroup.vue'
+import AttachmentStrip from '../media/AttachmentStrip.vue'
 import ProjectBadge from '../project/ProjectBadge.vue'
 import ProjectMark from '../project/ProjectMark.vue'
 import ProjectSelectOptions from '../project/ProjectSelectOptions.vue'
@@ -346,11 +346,14 @@ function openLocalSession() {
     router.push(sessionRouteLocation(target, route))
 }
 
-const mediaItems = computed(() => {
+// The attachments of the message, as the same strip as a user bubble of the
+// history: image thumbnails (preview with prev/next) and kind-icon tiles. No
+// tile links: the files are not artifacts.
+const attachmentStripItems = computed(() => {
     if (attachmentsState.value !== 'ready') return []
     const entries = detail.value?.payload?.attachments
     if (!Array.isArray(entries)) return []
-    return entries.map(peerEntryToMediaItem).filter(Boolean)
+    return entries.map(peerEntryToStripItem).filter(Boolean)
 })
 
 const workspacesStore = useWorkspacesStore()
@@ -1294,9 +1297,9 @@ function onHide(event) {
 
             <!-- Attachments -->
             <template v-if="attachmentCount && !detail.purged">
-                <MediaThumbnailGroup
-                    v-if="attachmentsState === 'ready' && mediaItems.length"
-                    :items="mediaItems"
+                <AttachmentStrip
+                    v-if="attachmentsState === 'ready' && attachmentStripItems.length"
+                    :items="attachmentStripItems"
                 />
                 <div v-else class="pr-attachments-state">
                     <template v-if="attachmentsState === 'loading' || attachmentsState === 'unknown'">

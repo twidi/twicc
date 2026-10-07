@@ -1,5 +1,5 @@
-import { attachmentKindIcon } from './attachmentStrip.js'
-import { formatAttachmentSize, getDisplayKind } from './composerAttachments.js'
+import { defaultAttachmentName } from './attachmentStrip.js'
+import { getDisplayKind } from './composerAttachments.js'
 
 const MARKDOWN_CONFIRM_BYTES = 64 * 1024
 const ATTACHMENTS_CONFIRM_BYTES = 1024 * 1024
@@ -54,11 +54,6 @@ function attachmentEntries(payload) {
     return Array.isArray(payload?.attachments) ? payload.attachments : []
 }
 
-function base64DecodedSize(data) {
-    const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0
-    return Math.max(0, Math.floor(data.length / 4) * 3 - padding)
-}
-
 /**
  * A `File` from one peer attachment entry `{name, media_type, data}`, for the
  * composer's attachment pipeline: its real name and media type. Null for an
@@ -75,35 +70,31 @@ export function peerEntryToFile(entry) {
 }
 
 /**
- * One review-dialog preview row for `MediaThumbnailGroup`, like a ready composer
- * chip: an image thumbnail for an `image/*` entry, the kind icon for the others.
+ * One attachment of a received message, as an item of the review dialog's
+ * `AttachmentStrip`: an image thumbnail for an `image/*` entry, the kind icon
+ * for the others. Never a link: the file is not an artifact. An entry without
+ * name gets the default name of its position. Null for an entry without data.
  *
  * @param {{name: string, media_type: string, data: string}} entry
  * @param {number} index - position of the entry in the message
- * @returns {object|null}
+ * @returns {import('./attachmentStrip.js').StripItem|null}
  */
-export function peerEntryToMediaItem(entry, index) {
+export function peerEntryToStripItem(entry, index) {
     if (typeof entry?.data !== 'string') return null
-    const name = typeof entry.name === 'string' && entry.name ? entry.name : `attachment-${index + 1}`
     const mediaType = typeof entry.media_type === 'string' ? entry.media_type : ''
+    const name = typeof entry.name === 'string' && entry.name ? entry.name : defaultAttachmentName(mediaType, index + 1)
     const kind = getDisplayKind({ name, type: mediaType })
-    const size = base64DecodedSize(entry.data)
-    const image = kind === 'image' && mediaType.toLowerCase().startsWith('image/')
-    return {
+    const item = {
         id: `peer-attachment-${index}`,
         name,
-        size,
-        sizeLabel: formatAttachmentSize(size),
         kind,
-        state: 'ready',
-        progress: 100,
-        retryable: false,
-        statusText: '',
-        icon: attachmentKindIcon(kind),
-        type: image ? 'image' : kind === 'PDF' ? 'pdf' : 'other',
-        src: image ? `data:${mediaType};base64,${entry.data}` : null,
-        textUrl: null,
+        mode: null,
+        canOpenArtifact: false,
     }
+    if (kind === 'image' && mediaType.toLowerCase().startsWith('image/')) {
+        item.src = `data:${mediaType};base64,${entry.data}`
+    }
+    return item
 }
 
 export async function addPeerAttachmentsToDraft(payload, entryToFile, addAttachment) {

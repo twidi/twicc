@@ -12,11 +12,14 @@ import {
     attachmentKindIcon,
     attachmentMatchKey,
     buildAttachmentStrip,
+    defaultAttachmentName,
     inflightAttachmentCount,
     leadingMediaSlots,
+    isNativeStripMedia,
     matchableUserMessage,
     messageAttachmentLayout,
     nativeImageSrc,
+    nativeMediaStripItems,
     optimisticAttachmentStrip,
     queuedAttachmentDisplay,
     stripItemArtifactRequest,
@@ -404,6 +407,106 @@ test('kind icons cover every manifest kind', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Messages without manifest: legacy media → strip items
+// ---------------------------------------------------------------------------
+
+test('default attachment names follow the backend rule: attachment-<n> plus the media type extension', () => {
+    assert.equal(defaultAttachmentName('image/png', 1), 'attachment-1.png')
+    assert.equal(defaultAttachmentName('image/jpeg', 2), 'attachment-2.jpg')
+    assert.equal(defaultAttachmentName('IMAGE/WEBP; q=1', 3), 'attachment-3.webp')
+    assert.equal(defaultAttachmentName('application/pdf', 4), 'attachment-4.pdf')
+    assert.equal(defaultAttachmentName('text/plain', 5), 'attachment-5.txt')
+    assert.equal(defaultAttachmentName('application/x-unknown', 6), 'attachment-6.bin')
+    assert.equal(defaultAttachmentName('', 7), 'attachment-7.bin')
+    assert.equal(defaultAttachmentName(null, 8), 'attachment-8.bin')
+})
+
+test('Claude images and documents become one strip in content order; text and tools are skipped', () => {
+    const untitledPdf = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'UERG' } }
+    const untitledText = { type: 'document', source: { type: 'text', media_type: 'text/plain', data: 'hello' } }
+    const blocks = [
+        { type: 'text', text: 'see attached' },
+        claudeImage('QUFB'),
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'QkJC' } },
+        pdfBlock,
+        { type: 'tool_use', id: 't', name: 'Read', input: {} },
+        untitledText,
+        untitledPdf,
+        textDocBlock,
+    ]
+    const items = nativeMediaStripItems(blocks)
+    assert.deepEqual(items, [
+        { id: 'native-0', name: 'attachment-1.png', kind: 'image', mode: null, canOpenArtifact: false, src: firstNativeImage },
+        { id: 'native-1', name: 'attachment-2.jpg', kind: 'image', mode: null, canOpenArtifact: false, src: 'data:image/jpeg;base64,QkJC' },
+        { id: 'native-2', name: 'spec.pdf', kind: 'PDF', mode: null, canOpenArtifact: false },
+        { id: 'native-3', name: 'attachment-4.txt', kind: 'text', mode: null, canOpenArtifact: false },
+        { id: 'native-4', name: 'attachment-5.pdf', kind: 'PDF', mode: null, canOpenArtifact: false },
+        { id: 'native-5', name: 'notes.txt', kind: 'text', mode: null, canOpenArtifact: false },
+    ])
+    assert.equal(items.every(item => stripItemArtifactRequest(item) === null), true, 'never a link to the Artifacts tab')
+    assert.deepEqual(blocks.map(isNativeStripMedia), [false, true, true, true, false, true, true, true])
+})
+
+test('the real legacy message shape: 3 images then 2 untitled text documents', () => {
+    const textDoc = data => ({ type: 'document', source: { type: 'text', media_type: 'text/plain', data } })
+    const blocks = [{ type: 'text', text: 'hi' }, claudeImage('QUFB'), claudeImage('QkJC'), claudeImage('Q0ND'), textDoc('a'), textDoc('b')]
+    assert.deepEqual(nativeMediaStripItems(blocks).map(item => [item.name, item.kind, Object.hasOwn(item, 'src')]), [
+        ['attachment-1.png', 'image', true],
+        ['attachment-2.png', 'image', true],
+        ['attachment-3.png', 'image', true],
+        ['attachment-4.txt', 'text', false],
+        ['attachment-5.txt', 'text', false],
+    ])
+})
+
+test('document kinds follow the source: url is PDF, content is text, other media types are generic tiles', () => {
+    const items = nativeMediaStripItems([
+        { type: 'document', source: { type: 'url', url: 'https://example.com/a.pdf' } },
+        { type: 'document', source: { type: 'content', content: [{ type: 'text', text: 'x' }] } },
+        { type: 'document', source: { type: 'base64', media_type: 'text/markdown', data: 'IyBh' } },
+        { type: 'document', source: { type: 'base64', media_type: 'application/zip', data: 'UEs=' } },
+        { type: 'document', source: { type: 'file', file_id: 'f' } },
+        { type: 'document', title: '   ', source: { type: 'text', media_type: 'text/csv', data: 'a,b' } },
+    ])
+    assert.deepEqual(items.map(item => [item.name, item.kind]), [
+        ['attachment-1.pdf', 'PDF'],
+        ['attachment-2.txt', 'text'],
+        ['attachment-3.md', 'text'],
+        ['attachment-4.bin', 'other'],
+        ['attachment-5.bin', 'other'],
+        ['attachment-6.csv', 'text'],
+    ])
+    assert.equal(items.some(item => Object.hasOwn(item, 'src')), false, 'a document never gets a thumbnail')
+})
+
+test('Codex entries: image URLs are thumbnails, local_image paths are named icon tiles', () => {
+    const items = nativeMediaStripItems([
+        { type: 'text', text: 'look' },
+        { type: 'image', image_url: secondNativeImage },
+        { type: 'local_image', path: '/home/me/shots/screen 1.png' },
+        { type: 'image', image_url: 'https://example.com/shot' },
+        { type: 'local_image', path: 'C:\\Users\\me\\pic.jpg' },
+        { type: 'local_image', path: '' },
+    ])
+    assert.deepEqual(items.map(item => [item.name, item.kind, item.src ?? null]), [
+        ['attachment-1.png', 'image', secondNativeImage],
+        ['screen 1.png', 'image', null],
+        ['attachment-3.bin', 'image', 'https://example.com/shot'],
+        ['pic.jpg', 'image', null],
+        ['attachment-5.bin', 'image', null],
+    ])
+})
+
+test('native media: malformed input gives no item, ids stay unique and positional', () => {
+    assert.deepEqual(nativeMediaStripItems(null), [])
+    assert.deepEqual(nativeMediaStripItems([null, 'x', { type: 'text', text: 'a' }]), [])
+    const items = nativeMediaStripItems([null, claudeImage('QUFB'), { type: 'image', source: { type: 'base64', media_type: 'image/png' } }])
+    assert.deepEqual(items.map(item => item.id), ['native-0', 'native-1'])
+    assert.equal(Object.hasOwn(items[1], 'src'), false, 'an image without loadable source is an icon tile')
+    assert.equal(items[1].name, 'attachment-2.png')
+})
+
+// ---------------------------------------------------------------------------
 // Wiring contracts (thin components over the pure functions above)
 // ---------------------------------------------------------------------------
 
@@ -422,8 +525,16 @@ test('wiring: renderers use the shared layout, share mode is explicit, item cont
     assert.match(claudeMessage, /hybridAttachmentImageUrl\(/)
     assert.doesNotMatch(shareList, /hybridAttachmentImageUrl/, 'a share has no such endpoint: icon tiles')
     assert.match(contentList, /hiddenIndices/)
+    assert.match(contentList, /nativeMediaStripItems\(/)
+    assert.doesNotMatch(contentList, /DocumentContent|sdkBlockToMediaItem/, 'documents render in the strip, not as a placeholder')
+    assert.match(contentList, /<AttachmentStrip/)
     assert.match(codexMessage, /messageAttachmentLayout\(/)
     assert.match(codexUser, /<AttachmentStrip/)
+    assert.match(codexUser, /nativeMediaStripItems\(/)
+    assert.match(codexMessage, /:content="nativeContent"/)
+    for (const file of [contentList, codexUser]) {
+        assert.doesNotMatch(file, /MediaThumbnailGroup/, 'read-only history media render through the strip')
+    }
     assert.match(unknown, /queuedAttachmentDisplay\(/)
     assert.match(unknown, /<JsonHumanView/, 'the generic fallback stays')
     assert.match(shareList, /provide\(ATTACHMENT_SHARE_MODE, true\)/)

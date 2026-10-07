@@ -7,7 +7,6 @@ import { interAgentTaskMarkdown } from '../../../../../providers/codex/interAgen
 import {
     agentMessageText,
     userMessageContent,
-    userMessageImages,
     userMessageText,
 } from '../../../../../providers/codex/canonical'
 import { messageAttachmentLayout } from '../../../../../utils/attachmentStrip'
@@ -128,28 +127,26 @@ const interAgentTask = computed(() =>
     props.kind === 'user_message' ? interAgentTaskMarkdown(props.data) : null
 )
 
-// Attached images on a user_message line. TwiCC sends them as ``image``
-// content entries carrying full ``data:image/...;base64,...`` URLs, in
-// source order. ``local_image`` entries (a path on the agent's machine,
-// written by the native CLI) have no URL the browser could load, so they
-// only count as attachments (see ``userMessageAttachmentCount``) and are
-// not rendered here.
+// The content entries of a user_message line without attachment manifest
+// (older messages, CLI / MCP sends), whose media ``UserMessage`` renders as an
+// attachment strip, in source order: ``image`` entries (TwiCC sends full
+// ``data:image/...;base64,...`` URLs) become thumbnails, ``local_image``
+// entries (a path on the agent's machine, written by the native CLI, with no
+// URL the browser could load) become image tiles named after their file.
 //
 // With an attachment manifest (``twicc_attachments``, or the optimistic /
 // failed bubble's ``attachmentItems``), the ordered strip shows every
 // attachment instead (spec 2026-10-03 §10.2): its inline entries take the
-// leading image entries in order, so no separate thumbnail group is rendered.
+// leading image entries in order, so no separate image strip is rendered.
 const { share: attachmentShareMode, openArtifact } = useAttachmentStripContext(() => props.sessionId)
 const attachmentStrip = computed(() => {
     if (props.kind !== 'user_message') return null
     return messageAttachmentLayout(props.data, userMessageContent(props.data), { share: attachmentShareMode }).strip
 })
 
-const images = computed(() => {
+const nativeContent = computed(() => {
     if (props.kind !== 'user_message' || attachmentStrip.value) return []
-    return userMessageImages(props.data)
-        .filter(image => image.type === 'image')
-        .map(image => image.value)
+    return userMessageContent(props.data)
 })
 </script>
 
@@ -174,7 +171,7 @@ const images = computed(() => {
     <UserMessage
         v-else-if="kind === 'user_message'"
         :text="interAgentTask ?? text"
-        :images="images"
+        :content="nativeContent"
         :attachments="attachmentStrip"
         @open-artifact="openArtifact"
     />

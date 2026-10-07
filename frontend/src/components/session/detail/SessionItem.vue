@@ -552,6 +552,7 @@ function toggleJsonView() {
     --strip-tile-bg: color-mix(in oklab, var(--wa-color-brand-60) 20%, var(--user-card-solid));
     --strip-tile-border: color-mix(in oklab, var(--wa-color-brand-60) 45%, transparent);
     --strip-icon-color: var(--wa-color-text-normal);
+    --strip-tile-accent: var(--wa-color-text-normal);
 }
 /* Light only: a solid lit bubble, the accent itself (a little lighter at the top) with white text: the
    only filled surface of the chat. Its other content (quotes, code, links) is not adapted yet. */
@@ -571,12 +572,14 @@ html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] .messa
 }
 /* The attachment strip (AttachmentStrip.vue) sits in the message but outside its markdown: the
    same white-on-accent colours, read through its custom properties. Names inherit the white text;
-   an openable file reads as a link (white, underlined) and each tile is the frosted white of inline code. */
+   an openable file reads as a link (white, underlined), each tile is the frosted white of inline code,
+   and its hover border and focus ring are white. */
 html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] {
     --strip-link-color: #fff;
     --strip-icon-color: #fff;
     --strip-tile-bg: oklch(1 0 0 / 0.2);
     --strip-tile-border: oklch(1 0 0 / 0.45);
+    --strip-tile-accent: #fff;
 }
 /* What sits directly on the filled bubble (not in a quote, a container, a `::` line or a code
    block, which are light cards with their own colours): links, inline code, rules and tables read in white. */

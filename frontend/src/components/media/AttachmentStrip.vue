@@ -190,19 +190,21 @@ function openArtifact(request) {
     height: var(--strip-tile-size);
     box-sizing: border-box;
     border-radius: var(--wa-border-radius-s);
-    border: 1px solid var(--strip-tile-border, var(--wa-color-border-neutral-tertiary));
-    background: var(--strip-tile-bg, var(--wa-color-surface-secondary));
+    border: 1px solid var(--strip-tile-border, var(--wa-color-surface-border));
+    background: var(--strip-tile-bg, var(--wa-color-surface-lowered));
     overflow: hidden;
 }
 
+/* Hover border and focus ring: the accent of the container (`--strip-tile-accent`, set on a
+   user bubble, where the brand colour would not stand out), else the app's brand and focus colours. */
 .strip-tile-button:hover,
 .strip-file-button:hover .strip-tile {
-    border-color: var(--wa-color-border-primary);
+    border-color: var(--strip-tile-accent, var(--wa-color-brand-border-loud));
 }
 
 .strip-tile-button:focus-visible,
 .strip-file-button:focus-visible {
-    outline: 2px solid var(--wa-color-border-primary);
+    outline: 2px solid var(--strip-tile-accent, var(--wa-color-focus));
     outline-offset: 2px;
     border-radius: var(--wa-border-radius-s);
 }
