@@ -11,6 +11,7 @@ Date: 2026-10-07. Branch: `attach-any-files` (base of this record: `99390d6a`).
 | Manual matrix, local rows (CLI, `--remote`, hybrid, internal MCP) | Run on the worktree instance (backend `:3501`, Vite `:5174`) with real Claude and Codex. 8 PASS. |
 | Manual matrix, peer rows 10–11 (two instances on this branch) | Run on 2026-10-07 between this instance and a second worktree instance. 2 PASS (§2.6). |
 | Manual matrix, external MCP and older-peer rows (9, 12–14) | **NOT RUN.** They need a setup that only the user can make (§2.3). |
+| Manual matrix, main-instance rows 12–19 | Attempted on 2026-10-07 against the main instance (`:3500`). Row 19 PASS. Rows 12–18 **BLOCKED**: the pairing is refused in both directions (§2.7). |
 
 ## 1. Automated results
 
@@ -57,11 +58,16 @@ Every command below ran as `cd /home/twidi/dev/twicc-poc/.worktrees/attach-any-f
 | 9 | External MCP: named data URI | Only with an external MCP client connected to this instance | exit 0; tile `hello world.txt`; the McpOperation audit row has no `attach` | Not run: no external MCP client can reach this instance. `mcpBaseUrl` is not set in its synced settings, so the external MCP host route is off. The `McpConnection` rows in its database are copies from the main instance database. | NOT RUN — no external MCP client connected; covered by the automated tests (`tests/test_mcp_attach.py`). |
 | 10 | Peers, Git patch → Codex and hybrid | Second instance on this branch, paired; `peer-send` `fix.patch`; deliver to `<CODEX_SID>`, redeliver to `<HYBRID_SID>` | review dialog lists `fix.patch`; delivered message carries `fix.patch` as a file in both sessions | Run on 2026-10-07 with new target sessions (§2.6): exit 0; review lists `fix.patch` (19 B); tile `fix.patch` and artifact `attachments/fix.patch` (byte-identical) in the Codex session and in the hybrid session. | PASS |
 | 11 | Peers, 49 MB then 51 MB | `peer-send` `fortynine.bin`, then `fiftyone.bin` | 49 MB: exit 0 within 468 s; 51 MB: exit 1 `attachments_too_large` with the URL hint, nothing staged | Run on 2026-10-07 (§2.6): 49 MB exit 0 in 16 s, stored on the receiver with 51380224 bytes; 51 MB exit 1 in 3.4 s, `attachments_too_large` with the URL hint, no new `composer-attachments/` entry. | PASS |
-| 12 | Older peer, small file | Pair with an instance on `main`; `peer-send` with `notes.txt` | exit 3 `send_failed`, "may be too old to receive attachments"; a text-only send still succeeds | — | NOT RUN — needs the user: pairing with an instance on `main` (§2.3). |
+| 12 | Older peer, small file | Pair with an instance on `main`; `peer-send` with `notes.txt` | exit 3 `send_failed`, "may be too old to receive attachments"; a text-only send still succeeds | — | NOT RUN — needs the user: pairing with an instance on `main` (§2.3). The attempt with the main instance is blocked (§2.7). |
 | 13 | Older peer, 40 MB | `peer-send` with `forty.bin` | exit 3, "refused the message size. An older instance also refuses any attachment." | — | NOT RUN — needs the user (§2.3). |
 | 14 | Older peer, 35 MB | `peer-send` with `thirtyfive.bin` | exit 3, the 400 text | — | NOT RUN — needs the user (§2.3). |
+| 15 | Old sender → new receiver, text only | From the main instance: `peer-send <A> …` without `--attach` | A stores the message; it is in A's inbox | — | BLOCKED — no pairing between this instance and the main instance (§2.7). |
+| 16 | Old sender → new receiver, PNG + PDF + text | From the main instance: `peer-send <A> … --attach shot.png --attach spec.pdf --attach notes.txt` | A accepts it; stored row has `attachments` (no `images`/`documents`) with default names `attachment-<n>.<ext>`; the review dialog lists 3 files | — | BLOCKED (§2.7). |
+| 17 | Row 16 message delivered to Codex, then to Claude | Deliver on A to a Codex session, then redeliver to a Claude session | Codex: image native, PDF and text in `attachments/`; Claude: all three native | — | BLOCKED (§2.7). |
+| 18 | Old sender, Git patch → Codex | From the main instance: `peer-send <A> … --attach fix.patch`; deliver on A to a Codex session | `fix.patch` is a file in `attachments/`; the agent reads it | — | BLOCKED (§2.7). |
+| 19 | Migration on real data (read-only) | Peer inbox of this instance: old rows copied from the main instance database | Text shown; attachment count, sizes and default names correct; purged rows say so; no error in `backend.log` | All 42 copied rows have the same text, status, resolution and session link as on the main instance. The 4 old rows with attachments (ids 13, 18, 25, 27) have `attachments_meta` rows `{name, media_type, bytes}` with default names (`attachment-1.png` … `attachment-5.png`, `attachment-1.txt`) and the same sizes and order as the old `kind` rows. No row keeps `images`, `documents` or a `kind` key. The UI shows the texts, "5 attachment(s) — bytes purged." (id 13) and "Its 1 attachment(s) were purged — a new delivery carries the text only." (id 18). No error in `backend.log`. | PASS |
 
-Totals: **10 PASS, 0 FAIL, 4 NOT RUN** (rows 10–11 added on 2026-10-07, §2.6).
+Totals: **11 PASS, 0 FAIL, 4 NOT RUN (9, 12–14), 4 BLOCKED (15–18)** (rows 10–11 added on 2026-10-07, §2.6; rows 15–19 added on 2026-10-07, §2.7).
 
 Extra observations from the run:
 
@@ -138,6 +144,34 @@ Every B command ran as `cd /home/twidi/dev/twicc-poc/.worktrees/feature-attach-a
 **Observation (outside the phase 2 scope).** The first send from B waited 55 s between the drop-request pickup (12:56:57) and the POST on A (12:57:52). In the same window, B's `backend.log` shows `Slow sync operation=executor_run elapsed_ms=86934.3` from its initial sync. Later sends, after the sync, took 16 s for 49 MB.
 
 **Cleanup.** Test files in `/tmp/phase2-qa/` deleted (the empty folder stays: it is the project folder of the test sessions). `attachments/` of the two new sessions emptied. No session deleted. Instance B, its worktree, the pairing, both Cloudflare hostnames and the pending messages stay in place for the user.
+
+### 2.7 Rows 12–19 (main instance), 2026-10-07
+
+**Setup.**
+
+- Instance A: this worktree (backend `3501`, Vite `5174`, peer address `https://twicc-peer-a.twidi.com`, peer name "QA peer A").
+- Main instance: `/home/twidi/dev/twicc-poc` on `main` (`6723c8a0`, not merged with this branch; `_PAYLOAD_KEYS = {"text", "images", "documents"}`, request cap 48 MiB), backend `3500`, data dir `~/.twicc`, peer address `https://twicc-peer.twidi.com`. Both tunnels answer `{"error": "unknown_token"}` on an unauthenticated `POST /peer/messages/`.
+
+**Pairing — BLOCKED in both directions.** The database of this instance is a copy of the main instance database. It holds the main instance's own peer "Self" (`peer_45a03880`, `active`), whose address is `https://twicc-peer.twidi.com`: the main instance's peer address. A peer address is unique per instance (`_peers_matching_origin`, `src/twicc/core/services/peer_mutation.py:102`).
+
+- A → main: Settings → Peers → Add a peer, "QA main", `https://twicc-peer.twidi.com` → "A peer with this address already exists." (`create_peer_and_request`, `peer_mutation.py:219-221`). No request leaves A.
+- main → A: Settings → Peers → Add a peer, "QA attach-any-files", `https://twicc-peer-a.twidi.com` → "The remote instance already has a Peer relationship for this address." A's `backend.log`: `POST /peer/handshake/request/ HTTP/1.1" 409` at 15:18:19 (`already_related`, `register_incoming_request`, `peer_mutation.py:807`). The main instance deleted its pending row: its peer list is unchanged (David, Dimitri, Self, Test instance).
+
+This is not a bug of this branch: the collision comes from the copied database. "Self" was not touched. "Revoke" on it would notify the main instance with the shared token and revoke the main instance's own "Self" relationship. Rows 12–18 need one of these, decided by the user:
+
+1. Remove the copy of "Self" from this instance's database only (a local delete, no outbound call), then pair again.
+2. Pair this instance with another instance that runs `main` with an empty database, on its own peer address.
+
+**Row 19 — PASS (read-only).** Nothing was delivered, refused, replied to or marked done. The rows were opened in the peer inbox only (the review dialog sends GET requests only).
+
+- Database comparison (both opened read-only with `sqlite3 …?mode=ro`): the main instance has 42 peer messages, this instance 46 (the 42 copies + 4 rows of §2.6). For the 42 copies, `payload.text`, `status`, `resolved_at`, `delivered_to_session_id`, `project_id`, `purged_at` and the attachment count are identical. No row of this instance keeps an `images` or `documents` key, and no `attachments_meta` row keeps a `kind` key.
+- The old rows with attachments are all purged: ids 13 (David, outbound, 5 PNG), 18 (Test instance, inbound, 1 text file), 25 and 27 (David, outbound, 1 PNG each). On the main instance their meta rows are `{kind, media_type, bytes}` without a name. On this instance: `GET /api/peer-messages/<id>/?include_attachments=0` returns `{name, media_type, bytes}` rows with `attachment-1.png` … `attachment-5.png` (307001, 290343, 294980, 299977, 261041 bytes), `attachment-1.txt` (1680000 bytes, `text/plain`), `attachment-1.png` (122464 and 124355 bytes): same sizes, same order. `GET /api/peer-messages/18/attachments/` returns `{"attachments": []}`.
+- UI (peer inbox on `:5174`): 46 rows; the four rows show "5 (purged)" and "1 (purged)". Id 13: the full Markdown text and "5 attachment(s) — bytes purged.". Id 18: the text and "Its 1 attachment(s) were purged — a new delivery carries the text only." Same texts as on `main` (`PeerMessageReviewDialog.vue`).
+- `backend.log`: no `ERROR`, `CRITICAL` or traceback during the run. Migration `core.0153_peer_message_attachments` ran at 11:23:46 (§2.1) without error.
+
+**Browser note.** The Chrome tabs of this run were hidden (`document.visibilityState === "hidden"`): Web Awesome dialogs only opened after a page script finished the frozen Web Animations, and page timers were throttled. No effect on the results.
+
+**Cleanup.** No test file was created and no session was created for this run. The pairing does not exist, so no message was sent in either direction. No session, peer or message was deleted.
 
 ## 3. Accepted limitations
 
