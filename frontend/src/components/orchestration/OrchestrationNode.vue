@@ -34,6 +34,8 @@ const props = defineProps({
     currentSessionId: { type: String, default: null },
     // { geometry: { [id]: { left, width, live } } } from computeTimeline.
     timeline: { type: Object, default: () => ({ geometry: {} }) },
+    // Shared clock from the panel, in milliseconds.
+    now: { type: Number, required: true },
 })
 
 // Process-state vocabulary from the topology payload. ``dead`` shows NO icon (a stopped session is the
@@ -130,13 +132,12 @@ function fmtDate(iso) {
 const startLabel = computed(() => fmtDate(nodeData.value?.session?.created_at))
 // A working node ends "now"; otherwise the last assistant message synced is the "finished" proxy.
 const endLabel = computed(() => (isWorking.value ? 'now' : fmtDate(nodeData.value?.session?.last_new_content_at)))
-// No duration while working, nor without a positive span.
+// Working nodes use the panel's shared clock; only positive spans have a duration.
 const durationLabel = computed(() => {
-    if (isWorking.value) return null
     const c = nodeData.value?.session?.created_at
-    const f = nodeData.value?.session?.last_new_content_at
-    if (!c || !f) return null
-    const sec = (Date.parse(f) - Date.parse(c)) / 1000
+    const f = isWorking.value ? props.now : Date.parse(nodeData.value?.session?.last_new_content_at)
+    if (!c) return null
+    const sec = (f - Date.parse(c)) / 1000
     return sec > 0 ? formatDuration(sec) : null
 })
 const turnsLabel = computed(() => nodeData.value?.session?.user_message_count ?? null)
@@ -276,6 +277,7 @@ const expanded = ref(true)
                 :nodes-by-id="nodesById"
                 :current-session-id="currentSessionId"
                 :timeline="timeline"
+                :now="now"
             />
         </div>
     </div>

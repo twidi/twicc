@@ -100,7 +100,7 @@ watch(view, async (shown) => {
 const loading = ref(false)
 const error = ref(null)
 const topology = ref(null)
-// Reference clock of the working nodes' bars (ms).
+// Shared clock for working nodes' bars and durations (ms).
 const now = ref(Date.now())
 
 const AUTO_REFRESH_INTERVAL = 15000
@@ -476,6 +476,7 @@ onUnmounted(() => {
                             :session-id="sessionId"
                             :project-id="projectId"
                             :timeline="agentsTimeline"
+                            :now="now"
                         />
                     </div>
                     <div v-else class="orch-state orch-state-empty">
@@ -514,6 +515,7 @@ onUnmounted(() => {
                                     :nodes-by-id="nodesById"
                                     :current-session-id="sessionId"
                                     :timeline="sessionsTimeline"
+                                    :now="now"
                                 />
                             </div>
                             <div v-if="!subtree.children.length" class="orch-empty-line">

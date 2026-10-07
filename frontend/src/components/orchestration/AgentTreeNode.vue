@@ -38,6 +38,8 @@ const props = defineProps({
     projectId: { type: String, required: true },
     // { geometry: { [id]: { left, width, live } } } from computeTimeline.
     timeline: { type: Object, default: () => ({ geometry: {} }) },
+    // Shared clock from the panel, in milliseconds.
+    now: { type: Number, required: true },
 })
 
 const entry = computed(() => props.node.entry)
@@ -111,15 +113,15 @@ function fmtDate(iso) {
 }
 
 // The launch is the spawning tool_use's timestamp; the end is the persisted completion when there is one,
-// else the agent's own last idle boundary. A running agent ends "now" and shows no duration.
+// else the agent's own last idle boundary. A running agent ends at the panel's shared clock.
 const finishedAt = computed(() => entry.value?.stoppedAt ?? entry.value?.agentStoppedAt ?? null)
 const startLabel = computed(() => fmtDate(entry.value?.startedAt))
 const endLabel = computed(() => (isRunning.value ? 'now' : fmtDate(finishedAt.value)))
 const durationLabel = computed(() => {
     const from = entry.value?.startedAt
-    const to = finishedAt.value
-    if (!from || !to || isRunning.value) return null
-    const sec = (Date.parse(to) - Date.parse(from)) / 1000
+    const to = isRunning.value ? props.now : Date.parse(finishedAt.value)
+    if (!from) return null
+    const sec = (to - Date.parse(from)) / 1000
     return sec > 0 ? formatDuration(sec) : null
 })
 
@@ -211,6 +213,7 @@ const expanded = ref(true)
                 :session-id="sessionId"
                 :project-id="projectId"
                 :timeline="timeline"
+                :now="now"
             />
         </div>
     </div>
