@@ -26,15 +26,15 @@ import { SESSION_TIME_FORMAT } from '../../constants'
 import { formatDate } from '../../utils/date'
 import { apiFetch } from '../../utils/api'
 import { renderMarkdown } from '../../utils/markdown'
-import { sdkBlockToMediaItem } from '../../utils/fileUtils'
 import {
     addPeerAttachmentsToDraft,
     formatPeerContentBytes,
     mergePeerAttachments,
     peerAttachmentBytes,
-    peerBlockToFile,
     peerContentAllowsDelivery,
     peerDeliveryTargetState,
+    peerEntryToFile,
+    peerEntryToMediaItem,
     shouldConfirmPeerAttachments,
     shouldConfirmPeerMarkdown,
 } from '../../utils/peerMessageContent'
@@ -101,7 +101,7 @@ const loadError = ref('')
 const renderedText = ref('')      // renderMarkdown is async — never bind the promise
 const markdownState = ref('loading')      // loading | confirm | rendering | declined | ready | error
 const attachmentsState = ref('unknown')  // unknown | confirm | loading | declined | ready | error
-const loadedAttachments = ref({ images: [], documents: [] })
+const loadedAttachments = ref({ attachments: [] })
 const note = ref('')
 const actionError = ref('')
 const busy = ref(false)
@@ -348,11 +348,9 @@ function openLocalSession() {
 
 const mediaItems = computed(() => {
     if (attachmentsState.value !== 'ready') return []
-    const payload = detail.value?.payload
-    if (!payload) return []
-    return [...(payload.images || []), ...(payload.documents || [])]
-        .map(sdkBlockToMediaItem)
-        .filter(Boolean)
+    const entries = detail.value?.payload?.attachments
+    if (!Array.isArray(entries)) return []
+    return entries.map(peerEntryToMediaItem).filter(Boolean)
 })
 
 const workspacesStore = useWorkspacesStore()
@@ -641,7 +639,7 @@ function summaryShell(summary) {
     if (!summary) return null
     return {
         ...summary,
-        payload: { text: '', images: [], documents: [] },
+        payload: { text: '', attachments: [] },
     }
 }
 
@@ -816,7 +814,7 @@ watch(() => [props.open, props.messageId], async ([open, messageId]) => {
     const generation = ++openGeneration
     if (!open || messageId == null) return
     const summary = summaryForMessage(messageId)
-    loadedAttachments.value = { images: [], documents: [] }
+    loadedAttachments.value = { attachments: [] }
     detail.value = summaryShell(summary)
     detailReady.value = false
     loadError.value = ''
@@ -1033,16 +1031,16 @@ async function markDelivered(sessionId) {
 }
 
 /** Add the peer attachments to a composer's draft, one by one, in message
- *  order, through the composer attachment pipeline: every block becomes a
- *  File, whatever the target provider (the server decides at send how each
- *  file is sent, spec 2026-10-03 §9.7). Returns the records actually added so a failed
- *  delivery can release exactly those — an existing composer may already hold
- *  user attachments that must survive a rollback. */
+ *  order, through the composer attachment pipeline: every entry becomes a
+ *  File with its real name, whatever the target provider (the server decides
+ *  at send how each file is sent). Returns the records actually added so a
+ *  failed delivery can release exactly those — an existing composer may
+ *  already hold user attachments that must survive a rollback. */
 async function addPeerAttachments(sessionId) {
     const added = []
     const error = await addPeerAttachmentsToDraft(
         detail.value?.payload,
-        peerBlockToFile,
+        peerEntryToFile,
         async (file) => { added.push(await dataStore.addAttachment(sessionId, file)) },
     )
     return { added, error }

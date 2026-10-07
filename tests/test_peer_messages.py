@@ -111,11 +111,15 @@ def _image_block(data=b"png-bytes"):
     }
 
 
+def _entry(data=b"png-bytes", name="shot.png", media_type="image/png"):
+    return {"name": name, "media_type": media_type, "data": base64.b64encode(data).decode("ascii")}
+
+
 def _wire_body(**overrides):
     body = {
         "message_id": "pm_" + "a" * 16,
         "title": "Recap of the day",
-        "payload": {"text": "hello from alice", "images": [], "documents": []},
+        "payload": {"text": "hello from alice"},
         "origin": {"sent_at": "2026-07-24T12:00:00+00:00"},
     }
     body.update(overrides)
@@ -223,21 +227,6 @@ def test_receive_accepts_valid_padded_base64(client, transactional_db, peer_host
     assert message.attachments_meta[0]["bytes"] == 1
 
 
-@pytest.mark.parametrize(("size", "expected_status"), [(4, 202), (5, 400)])
-def test_receive_attachment_per_file_boundaries(
-        client, transactional_db, peer_host, monkeypatch, size, expected_status):
-    monkeypatch.setattr(peer_messages, "PEER_ATTACHMENT_MAX_BYTES_PER_FILE", 4)
-    peer = _active_peer()
-    body = _wire_body(payload={
-        "text": "x", "images": [_image_block(b"x" * size)], "documents": [],
-    })
-
-    res = _post(client, "/peer/messages/", body, bearer=peer.token_ours)
-
-    assert res.status_code == expected_status
-    assert PeerMessage.objects.count() == (1 if expected_status == 202 else 0)
-
-
 @pytest.mark.parametrize(("sizes", "expected_status"), [((3, 3), 202), ((3, 4), 400)])
 def test_receive_attachment_total_boundaries(
         client, transactional_db, peer_host, monkeypatch, sizes, expected_status):
@@ -255,30 +244,6 @@ def test_receive_attachment_total_boundaries(
     assert PeerMessage.objects.count() == (1 if expected_status == 202 else 0)
 
 
-@pytest.mark.parametrize(("count", "expected_status"), [(100, 202), (101, 400)])
-def test_receive_attachment_count_boundaries(
-        client, transactional_db, peer_host, count, expected_status):
-    peer = _active_peer()
-    body = _wire_body(payload={
-        "text": "x",
-        "images": [_image_block(b"x") for _ in range(count)],
-        "documents": [],
-    })
-
-    res = _post(client, "/peer/messages/", body, bearer=peer.token_ours)
-
-    assert res.status_code == expected_status
-    assert PeerMessage.objects.count() == (1 if expected_status == 202 else 0)
-
-
-def test_receive_oversized_attachment_rejected(client, transactional_db, peer_host, monkeypatch):
-    monkeypatch.setattr(peer_messages, "PEER_ATTACHMENT_MAX_BYTES_PER_FILE", 4)
-    peer = _active_peer()
-    body = _wire_body(payload={"text": "x", "images": [_image_block(b"12345678")], "documents": []})
-    res = _post(client, "/peer/messages/", body, bearer=peer.token_ours)
-    assert res.status_code == 400
-
-
 def test_receive_stores_pending_row(client, transactional_db, peer_host, broadcasts):
     peer = _active_peer()
     body = _wire_body(payload={"text": "hello", "images": [_image_block()], "documents": []})
@@ -290,8 +255,8 @@ def test_receive_stores_pending_row(client, transactional_db, peer_host, broadca
     assert message.status == PeerMessageStatus.PENDING
     assert message.title == "Recap of the day"
     assert message.payload["text"] == "hello"
-    assert message.attachments_meta[0]["kind"] == "image"
-    assert message.attachments_meta[0]["media_type"] == "image/png"
+    assert message.attachments_meta == [{"name": "attachment-1.png", "media_type": "image/png", "bytes": 9}]
+    assert message.payload["attachments"] == [_entry(name="attachment-1.png")]
     # The instant plus the authorship are the whole of the wire provenance
     # (decisions of 2026-08-10 and 2026-09-01). No `author` on the wire means
     # the historical reading: agent-written.
@@ -534,7 +499,7 @@ def _out_message(peer, **kw):
     defaults = {
         "peer": peer, "direction": PeerMessageDirection.OUT, "message_id": message_id,
         "thread_id": message_id,
-        "payload": {"text": "hi", "images": [], "documents": []},
+        "payload": {"text": "hi"},
         "origin": {"sent_at": "2026-07-24T12:00:00+00:00"},
         "status": PeerMessageStatus.PENDING,
     }
@@ -591,17 +556,9 @@ def test_status_callback_rechecks_peer_after_waiting_for_write_lock(
 # ── send_peer_message_from_payload ──────────────────────────────────────────
 
 def _patch_post_message(monkeypatch, status=202, *, network_error=False, calls=None):
-    async def _fake(base_url, *, bearer, message_id, title, reply_to, payload, origin):
+    async def _fake(base_url, *, bearer, body):
         if calls is not None:
-            calls.append({
-                "base_url": base_url,
-                "bearer": bearer,
-                "message_id": message_id,
-                "title": title,
-                "reply_to": reply_to,
-                "payload": payload,
-                "origin": origin,
-            })
+            calls.append({"base_url": base_url, "bearer": bearer, **orjson.loads(body)})
         if network_error:
             raise outbound.PeerOutboundError("ConnectError")
         return status, {}
@@ -917,41 +874,16 @@ def test_send_network_error(transactional_db, peer_host, monkeypatch):
     assert peer.state == PeerState.ACTIVE  # network errors do NOT break the peer
 
 
-def test_outbound_post_message_builds_exact_threading_wire(monkeypatch):
-    calls = []
-
-    async def _fake_post(base_url, path, json_body, *, bearer):
-        calls.append({
-            "base_url": base_url,
-            "path": path,
-            "json_body": json_body,
-            "bearer": bearer,
-        })
-        return 202, {}
-
-    monkeypatch.setattr("twicc.peer.outbound._post", _fake_post)
+def test_outbound_message_body_builds_exact_threading_wire():
     origin = {"sent_at": "2026-07-24T12:00:00+00:00"}
-    payload = {"text": "body", "images": [], "documents": []}
-
+    payload = {"text": "body"}
     for reply_to in ("", "A_-z"):
-        status, response = _run(outbound.post_message(
-            "https://alice.example.com",
-            bearer="their-token",
-            message_id="message-id",
-            title="Subject",
-            reply_to=reply_to,
-            payload=payload,
-            origin=origin,
+        wire = orjson.loads(outbound.build_message_body(
+            message_id="message-id", title="Subject", reply_to=reply_to, payload=payload, origin=origin,
         ))
-        assert (status, response) == (202, {})
-
-    assert [call["path"] for call in calls] == ["/peer/messages/", "/peer/messages/"]
-    assert [call["json_body"]["reply_to"] for call in calls] == ["", "A_-z"]
-    for call in calls:
-        assert call["base_url"] == "https://alice.example.com"
-        assert call["bearer"] == "their-token"
-        assert "thread_id" not in call["json_body"]
-        assert call["json_body"]["origin"] == {"sent_at": "2026-07-24T12:00:00+00:00"}
+        assert wire == {"message_id": "message-id", "title": "Subject", "reply_to": reply_to,
+                        "payload": payload, "origin": origin}
+        assert "thread_id" not in wire
 
 
 @pytest.mark.parametrize(
@@ -1128,7 +1060,7 @@ def _in_message(peer, **kw):
         "peer": peer, "direction": PeerMessageDirection.IN, "message_id": message_id,
         "thread_id": message_id,
         "title": "The *subject*",
-        "payload": {"text": "the message body", "images": [], "documents": []},
+        "payload": {"text": "the message body"},
         "origin": {"sent_at": "2026-07-24T12:00:00+00:00"},
         "status": PeerMessageStatus.PENDING,
     }
@@ -1352,7 +1284,7 @@ def test_legacy_unsafe_id_is_omitted_but_delivery_still_succeeds(
         peer,
         message_id=legacy_id,
         thread_id=legacy_id,
-        payload={"text": "legacy body", "images": [_image_block()], "documents": []},
+        payload={"text": "legacy body", "attachments": [_entry()]},
     )
     _, session = _make_target_session()
 
@@ -1365,7 +1297,7 @@ def test_legacy_unsafe_id_is_omitted_but_delivery_still_succeeds(
     assert "**Message id:**" not in envelope
     message.refresh_from_db()
     assert message.status == PeerMessageStatus.DELIVERED
-    assert message.payload["images"]
+    assert message.payload["attachments"]
     assert status_callbacks == []
 
 
@@ -1735,7 +1667,7 @@ def test_owner_message_list_searches_title_and_complete_text(client, transaction
         peer,
         message_id="owner-search-title",
         title="Release planning",
-        payload={"text": "ordinary body", "images": [], "documents": []},
+        payload={"text": "ordinary body"},
     )
     body_match = _in_message(
         peer,
@@ -1743,15 +1675,14 @@ def test_owner_message_list_searches_title_and_complete_text(client, transaction
         title="Ordinary title",
         payload={
             "text": "x" * 350 + " deep archive phrase",
-            "images": [_image_block(b"attachment-search-sentinel")],
-            "documents": [],
+            "attachments": [_entry(b"attachment-search-sentinel")],
         },
     )
     split_only = _in_message(
         peer,
         message_id="owner-search-split",
         title="alpha",
-        payload={"text": "beta", "images": [], "documents": []},
+        payload={"text": "beta"},
     )
 
     title_hit = _run(client.get("/api/peer-messages/", {"q": "release plan"}))
@@ -1822,7 +1753,7 @@ def test_owner_message_list_keeps_all_matching_pending_and_caps_history(client, 
             message_id=f"owner-search-history-{index}",
             thread_id=f"owner-search-history-{index}",
             title="Cap match history",
-            payload={"text": "capmatch", "images": [], "documents": []},
+            payload={"text": "capmatch"},
             origin={"sent_at": "2026-07-24T12:00:00+00:00"},
             status=PeerMessageStatus.DELIVERED,
             resolved_at=djtz.now(),
@@ -1857,7 +1788,7 @@ def test_owner_message_summary_reports_utf8_text_size(client, transactional_db):
     message = _in_message(
         peer,
         message_id="owner-sized-text",
-        payload={"text": "éx", "images": [], "documents": []},
+        payload={"text": "éx"},
     )
 
     response = _run(client.get("/api/peer-messages/"))
@@ -1872,11 +1803,11 @@ def test_owner_message_summary_reports_utf8_text_size(client, transactional_db):
 def test_owner_message_light_detail_keeps_full_text_without_attachment_bytes(
         client, transactional_db):
     peer = _active_peer()
-    image = _image_block(b"attachment-sentinel")
+    image = _entry(b"attachment-sentinel")
     message = _in_message(
         peer,
         message_id="owner-light-detail",
-        payload={"text": "full **message**", "images": [image], "documents": []},
+        payload={"text": "full **message**", "attachments": [image]},
     )
 
     response = _run(client.get(
@@ -1885,37 +1816,26 @@ def test_owner_message_light_detail_keeps_full_text_without_attachment_bytes(
 
     assert response.status_code == 200
     row = orjson.loads(response.content)
-    assert row["payload"] == {
-        "text": "full **message**",
-        "images": [],
-        "documents": [],
-    }
+    assert row["payload"] == {"text": "full **message**", "attachments": []}
     assert row["text_bytes"] == len(b"full **message**")
-    assert image["source"]["data"].encode() not in response.content
+    assert image["data"].encode() not in response.content
 
 
-def test_owner_message_attachments_endpoint_returns_only_attachment_blocks(
+def test_owner_message_attachments_endpoint_returns_only_attachment_entries(
         client, transactional_db):
     peer = _active_peer()
-    image = _image_block(b"image")
-    document = {
-        "type": "document",
-        "title": "note.txt",
-        "source": {"type": "text", "media_type": "text/plain", "data": "document"},
-    }
+    image = _entry(b"image")
+    document = _entry(b"document", name="note.txt", media_type="text/plain")
     message = _in_message(
         peer,
         message_id="owner-attachments",
-        payload={"text": "must stay out", "images": [image], "documents": [document]},
+        payload={"text": "must stay out", "attachments": [image, document]},
     )
 
     response = _run(client.get(f"/api/peer-messages/{message.pk}/attachments/"))
 
     assert response.status_code == 200
-    assert orjson.loads(response.content) == {
-        "images": [image],
-        "documents": [document],
-    }
+    assert orjson.loads(response.content) == {"attachments": [image, document]}
     assert b"must stay out" not in response.content
 
 
@@ -2223,7 +2143,7 @@ def test_purge_expired_attachment_bytes(transactional_db):
     peer = _active_peer()
     now = djtz.now()
     old = now - timedelta(days=8)
-    payload = {"text": "keep me", "images": [_image_block()], "documents": []}
+    payload = {"text": "keep me", "attachments": [_entry()]}
     parent = _out_message(peer, message_id="pm_parent", thread_id="pm_parent")
     resolved_old = _in_message(
         peer, message_id="pm_old", payload=payload,
@@ -2232,7 +2152,7 @@ def test_purge_expired_attachment_bytes(transactional_db):
         reply_to_message=parent,
         thread_id=parent.thread_id,
     )
-    resolved_old.attachments_meta = [{"kind": "image", "media_type": "image/png", "bytes": 9}]
+    resolved_old.attachments_meta = [{"name": "shot.png", "media_type": "image/png", "bytes": 9}]
     resolved_old.save(update_fields=["attachments_meta"])
     resolved_recent = _in_message(
         peer, message_id="pm_recent", payload=dict(payload),
@@ -2241,7 +2161,7 @@ def test_purge_expired_attachment_bytes(transactional_db):
     still_pending = _in_message(peer, message_id="pm_pend", payload=dict(payload))
     text_only_old = _in_message(
         peer, message_id="pm_textonly",
-        payload={"text": "no attachments", "images": [], "documents": []},
+        payload={"text": "no attachments"},
         status=PeerMessageStatus.REFUSED, resolved_at=old,
     )
 
@@ -2249,7 +2169,7 @@ def test_purge_expired_attachment_bytes(transactional_db):
     assert purged == 1
 
     resolved_old.refresh_from_db()
-    assert resolved_old.payload["images"] == [] and resolved_old.payload["documents"] == []
+    assert resolved_old.payload == {"text": "keep me"}
     assert resolved_old.payload["text"] == "keep me"  # text kept
     assert resolved_old.attachments_meta[0]["media_type"] == "image/png"  # meta kept
     assert resolved_old.purged_at is not None
@@ -2260,7 +2180,7 @@ def test_purge_expired_attachment_bytes(transactional_db):
     for untouched in (resolved_recent, still_pending, text_only_old):
         untouched.refresh_from_db()
         assert untouched.purged_at is None
-    assert resolved_recent.payload["images"]  # bytes still there
+    assert resolved_recent.payload["attachments"]  # bytes still there
 
 
 def test_envelope_sanitizes_the_peer_alias(transactional_db, status_callbacks):
@@ -2621,7 +2541,6 @@ def test_delivery_envelope_quotes_every_line_of_the_message(transactional_db, st
     peer = _active_peer()
     message = _in_message(peer, payload={
         "text": "first\n\n```py\nx = 1\n```\n:::\nlast",
-        "images": [], "documents": [],
     })
     _, session = _make_target_session()
     success, envelope, errors = _run(peer_messages.mark_delivered(message, session_id=session.id))
@@ -2658,7 +2577,7 @@ def test_delivery_envelope_note_container_marker_outgrows_the_note(transactional
 
 def test_delivery_envelope_without_text_has_no_quote(transactional_db, status_callbacks):
     peer = _active_peer()
-    message = _in_message(peer, payload={"text": "", "images": [_image_block()], "documents": []})
+    message = _in_message(peer, payload={"text": "", "attachments": [_entry()]})
     _, session = _make_target_session()
     success, envelope, errors = _run(peer_messages.mark_delivered(message, session_id=session.id))
     assert success and errors == []

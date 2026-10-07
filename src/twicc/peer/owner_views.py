@@ -7,9 +7,12 @@ pick an arbitrary URL to exfiltrate to.
 
 from __future__ import annotations
 
+import asyncio
+
 import orjson
 from asgiref.sync import sync_to_async
-from django.http import Http404, HttpResponseNotAllowed, JsonResponse
+from django.db import close_old_connections
+from django.http import Http404, HttpResponse, HttpResponseNotAllowed, JsonResponse
 
 from twicc.core.serializers import serialize_peer, serialize_peer_message
 from twicc.core.services import peer_messages, peer_mutation
@@ -38,17 +41,47 @@ async def _load_peer(peer_id):
 
 
 async def _load_message(pk):
-    from twicc.core.models import PeerMessage
-
+    """A summary row: ``payload`` deferred, text annotated (phase 2 design §4.8.4)."""
     message = await sync_to_async(
-        lambda: PeerMessage.objects
-        .select_related("peer", "origin_session", "delivered_to_session", "reply_to_message")
-        .prefetch_related("replies")
-        .filter(pk=pk).first()
+        lambda: peer_messages.peer_message_summary_queryset().filter(pk=pk).first()
     )()
     if message is None:
         raise Http404("Peer message not found")
     return message
+
+
+def _full_detail_body(pk) -> bytes | None:
+    """The detail with its attachment bytes, loaded and serialized off the event loop (up to ~67 MB)."""
+    from twicc.core.models import PeerMessage
+
+    close_old_connections()
+    try:
+        message = peer_messages.peer_message_full_queryset().filter(pk=pk).first()
+        if message is None:
+            return None
+        effective_project = peer_messages.peer_message_projects_map(
+            PeerMessage.objects.filter(peer_id=message.peer_id),
+        ).get(message.pk)
+        return orjson.dumps(serialize_peer_message(
+            message, include_payload=True, include_attachments=True, effective_project=effective_project,
+        ))
+    finally:
+        close_old_connections()
+
+
+def _attachments_body(pk) -> bytes | None:
+    """``{"attachments": [...]}`` of a message, loaded and serialized off the event loop."""
+    from twicc.core.models import PeerMessage
+
+    close_old_connections()
+    try:
+        rows = list(PeerMessage.objects.filter(pk=pk).values_list("payload", flat=True)[:1])
+    finally:
+        close_old_connections()
+    if not rows:
+        return None
+    payload = rows[0] if isinstance(rows[0], dict) else {}
+    return orjson.dumps({"attachments": payload.get("attachments") or []})
 
 
 async def peers_list(request):
@@ -182,7 +215,7 @@ async def peer_message_send(request):
     resolves nothing. The send is not rolled back when the resolution fails
     (it already left); the outcome is reported alongside.
     """
-    from twicc.core.models import PeerMessage, PeerMessageDirection, PeerMessageStatus
+    from twicc.core.models import PeerMessageDirection, PeerMessageStatus
 
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -217,9 +250,7 @@ async def peer_message_send(request):
         # row `send` threaded on, re-read here scoped to the peer the reply
         # went to.
         parent = await sync_to_async(
-            lambda: PeerMessage.objects
-            .select_related("peer", "origin_session", "delivered_to_session", "reply_to_message")
-            .prefetch_related("replies")
+            lambda: peer_messages.peer_message_summary_queryset()
             .filter(peer_id=result.peer_id, direction=PeerMessageDirection.IN, message_id=reply_to)
             .first()
         )()
@@ -312,17 +343,14 @@ async def peer_messages_list(request):
                     history_has_more = True
 
             ordered_ids = pending_ids + history_ids
-            selected = PeerMessage.objects.select_related(
-                "origin_session", "delivered_to_session", "reply_to_message",
-            ).prefetch_related("replies").filter(pk__in=ordered_ids)
+            selected = peer_messages.peer_message_summary_queryset().filter(pk__in=ordered_ids)
             by_id = {message.pk: message for message in selected}
             return [by_id[pk] for pk in ordered_ids], history_has_more, projects
 
         # `replies` feeds the "answered by" line: one extra query for the
-        # whole list, never one per row.
-        rows = rows.select_related(
-            "origin_session", "delivered_to_session", "reply_to_message",
-        ).prefetch_related("replies")
+        # whole list, never one per row. The payload stays deferred: a summary
+        # reads only the annotated text.
+        rows = peer_messages.peer_message_summary_queryset(rows)
         pending = list(rows.filter(
             direction=PeerMessageDirection.IN, status=PeerMessageStatus.PENDING,
         ))
@@ -387,6 +415,11 @@ async def peer_message_detail(request, pk):
 
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
+    if request.GET.get("include_attachments") != "0":
+        body = await asyncio.to_thread(_full_detail_body, pk)
+        if body is None:
+            raise Http404("Peer message not found")
+        return HttpResponse(body, content_type="application/json")
     message = await _load_message(pk)
     # The effective project may be inherited from the rest of the thread:
     # resolved over the peer's rows, which hold the whole thread.
@@ -396,23 +429,18 @@ async def peer_message_detail(request, pk):
         ).get(message.pk)
     )()
     return JsonResponse(serialize_peer_message(
-        message,
-        include_payload=True,
-        include_attachments=request.GET.get("include_attachments") != "0",
-        effective_project=effective_project,
+        message, include_payload=True, include_attachments=False, effective_project=effective_project,
     ))
 
 
 async def peer_message_attachments(request, pk):
-    """GET /api/peer-messages/<pk>/attachments/ — attachment blocks without message text."""
+    """GET /api/peer-messages/<pk>/attachments/ — ``{"attachments": [{name, media_type, data}]}``."""
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
-    message = await _load_message(pk)
-    payload = message.payload or {}
-    return JsonResponse({
-        "images": payload.get("images") or [],
-        "documents": payload.get("documents") or [],
-    })
+    body = await asyncio.to_thread(_attachments_body, pk)
+    if body is None:
+        raise Http404("Peer message not found")
+    return HttpResponse(body, content_type="application/json")
 
 
 async def peer_message_deliver(request, pk):

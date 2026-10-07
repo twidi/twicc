@@ -42,7 +42,7 @@ def test_the_body_cap_is_the_inline_request_cap():
     assert mcp_server.MAX_REQUEST_BODY_BYTES == inline.INLINE_MAX_REQUEST_BYTES == 72 * 1024 * 1024
 
 
-@pytest.mark.parametrize("name", ["send_message", "send_messages", "create_session"])
+@pytest.mark.parametrize("name", ["send_message", "send_messages", "create_session", "peer_send"])
 def test_attach_stays_an_array_of_strings_with_the_limit_in_its_description(name):
     tool = next(tool for tool in iter_mcp_tools() if tool.name == name)
     attach = tool.input_schema["properties"]["attach"]
@@ -50,6 +50,12 @@ def test_attach_stays_an_array_of_strings_with_the_limit_in_its_description(name
     assert "50 MB" in attach["description"]
     assert "images" not in tool.input_schema["properties"]
     assert "documents" not in tool.input_schema["properties"]
+
+
+def test_the_peer_send_description_advises_one_large_send_per_call():
+    tool = next(tool for tool in iter_mcp_tools() if tool.name == "peer_send")
+    assert "one" in tool.description and "tool call" in tool.description
+    assert "travels inline" in tool.input_schema["properties"]["attach"]["description"]
 
 
 def test_the_instructions_name_the_forms_and_the_limit():

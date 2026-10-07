@@ -5,7 +5,8 @@ import {
     formatPeerContentBytes,
     mergePeerAttachments,
     peerAttachmentBytes,
-    peerBlockToFile,
+    peerEntryToFile,
+    peerEntryToMediaItem,
     peerContentAllowsDelivery,
     peerDeliveryTargetState,
     shouldConfirmPeerAttachments,
@@ -38,26 +39,17 @@ test('formats content sizes with binary units', () => {
     assert.equal(formatPeerContentBytes(5 * 1024 * 1024), '5.0 MiB')
 })
 
-test('merges attachment blocks without mutating the lightweight detail', () => {
-    const detail = {
-        id: 1,
-        payload: { text: 'message', images: [], documents: [] },
-    }
-    const attachments = {
-        images: [{ type: 'image' }],
-        documents: [{ type: 'document' }],
-    }
+test('merges the attachment entries without mutating the lightweight detail', () => {
+    const detail = { id: 1, payload: { text: 'message', attachments: [] } }
+    const attachments = { attachments: [{ name: 'a.txt', media_type: 'text/plain', data: 'YQ==' }] }
 
     const merged = mergePeerAttachments(detail, attachments)
 
     assert.notStrictEqual(merged, detail)
     assert.notStrictEqual(merged.payload, detail.payload)
-    assert.deepEqual(merged.payload, {
-        text: 'message',
-        images: attachments.images,
-        documents: attachments.documents,
-    })
-    assert.deepEqual(detail.payload, { text: 'message', images: [], documents: [] })
+    assert.deepEqual(merged.payload, { text: 'message', attachments: attachments.attachments })
+    assert.deepEqual(detail.payload, { text: 'message', attachments: [] })
+    assert.deepEqual(mergePeerAttachments(detail, {}).payload.attachments, [])
 })
 
 test('allows delivery only after detail, markdown, and attachments are ready', () => {
@@ -102,55 +94,59 @@ test('derives the delivery target state from the target and the content readines
     assert.deepEqual(peerDeliveryTargetState({ provider: 'codex' }, true), { disabled: false, error: '' })
 })
 
-test('peerBlockToFile converts every block kind to a File, keeping its name and type', async () => {
-    const text = peerBlockToFile({ type: 'document', title: 'notes.md', source: { type: 'text', media_type: 'text/plain', data: 'hé' } }, 0)
-    assert.ok(text instanceof File)
-    assert.equal(text.name, 'notes.md')
-    assert.equal(text.type, 'text/plain')
-    assert.equal(await text.text(), 'hé')
-    const untitled = peerBlockToFile({ type: 'document', source: { type: 'text', data: 'x' } }, 2)
-    assert.equal(untitled.name, 'peer-attachment-3.txt')
-
-    const pdf = peerBlockToFile({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERi0=' } }, 0)
-    assert.equal(pdf.name, 'peer-attachment-1.pdf')
-    assert.equal(pdf.type, 'application/pdf')
-    assert.equal(await pdf.text(), '%PDF-')
-    const video = peerBlockToFile({ type: 'document', title: 'clip.mp4', source: { type: 'base64', media_type: 'video/mp4', data: 'AAAA' } }, 1)
-    assert.equal(video.name, 'clip.mp4')
-    assert.equal(video.type, 'video/mp4')
-    const image = peerBlockToFile({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw==' } }, 4)
-    assert.equal(image.name, 'peer-attachment-5.png')
-    assert.equal(peerBlockToFile({ type: 'image', source: { type: 'url', url: 'https://x' } }, 0), null)
+test('peerEntryToFile keeps the real name and media type', async () => {
+    const patch = peerEntryToFile({ name: 'fix.patch', media_type: 'text/x-diff', data: 'ZGlmZg==' })
+    assert.ok(patch instanceof File)
+    assert.equal(patch.name, 'fix.patch')
+    assert.equal(patch.type, 'text/x-diff')
+    assert.equal(await patch.text(), 'diff')
+    const empty = peerEntryToFile({ name: 'empty.bin', media_type: '', data: '' })
+    assert.equal(empty.size, 0)
+    assert.equal(empty.type, 'application/octet-stream')
+    assert.equal(peerEntryToFile({ name: 'x', media_type: 'text/plain' }), null)
+    assert.equal(peerEntryToFile({ name: '', media_type: 'text/plain', data: 'YQ==' }), null)
 })
 
-test('reports a draft attachment failure instead of hiding it', async () => {
+test('the preview shows a thumbnail for images and the kind icon for the others', () => {
+    const image = peerEntryToMediaItem({ name: 'shot.png', media_type: 'image/png', data: 'iVBORw==' }, 0)
+    assert.equal(image.type, 'image')
+    assert.equal(image.src, 'data:image/png;base64,iVBORw==')
+    assert.equal(image.state, 'ready')
+    assert.equal(image.kind, 'image')
+    const pdf = peerEntryToMediaItem({ name: 'spec.pdf', media_type: 'application/pdf', data: 'JVBERi0=' }, 1)
+    assert.equal(pdf.type, 'pdf')
+    assert.equal(pdf.src, null)
+    assert.equal(pdf.icon, 'file-pdf')
+    assert.equal(pdf.size, 5)
+    const video = peerEntryToMediaItem({ name: 'clip.mp4', media_type: 'video/mp4', data: 'AAAA' }, 2)
+    assert.equal(video.type, 'other')
+    assert.equal(video.icon, 'file-video')
+    assert.notEqual(image.id, pdf.id)
+    assert.equal(peerEntryToMediaItem({ name: 'x' }, 3), null)
+})
+
+test('adds the entries to the draft in order and reports a failure instead of hiding it', async () => {
     const { addPeerAttachmentsToDraft } = await import('./peerMessageContent.js')
-    assert.equal(typeof addPeerAttachmentsToDraft, 'function')
-    const payload = {
-        images: [{ id: 'image' }],
-        documents: [{ id: 'document' }],
-    }
+    const payload = { attachments: [{ name: 'one.txt' }, { name: 'two.png' }, { name: 'three.mp4' }] }
     const attempted = []
 
     const error = await addPeerAttachmentsToDraft(
         payload,
-        block => ({ name: block.id }),
+        entry => ({ name: entry.name }),
         async file => {
             attempted.push(file.name)
-            if (file.name === 'document') throw new Error('IndexedDB failed')
+            if (file.name === 'two.png') throw new Error('IndexedDB failed')
         },
     )
 
-    assert.deepEqual(attempted, ['image', 'document'])
+    assert.deepEqual(attempted, ['one.txt', 'two.png'])
     assert.equal(
         error,
         'TwiCC could not add all attachments to the draft. The Peer message is still available for delivery to another session.',
     )
-
-    const success = await addPeerAttachmentsToDraft(
-        payload,
-        block => ({ name: block.id }),
-        async () => {},
-    )
-    assert.equal(success, '')
+    const added = []
+    assert.equal(await addPeerAttachmentsToDraft(payload, entry => ({ name: entry.name }), async f => { added.push(f.name) }), '')
+    assert.deepEqual(added, ['one.txt', 'two.png', 'three.mp4'])
+    assert.equal(await addPeerAttachmentsToDraft({ attachments: [{ name: 'x' }] }, () => null, async () => {}),
+        'TwiCC could not add all attachments to the draft. The Peer message is still available for delivery to another session.')
 })

@@ -2,6 +2,7 @@
 
 import asyncio
 
+import orjson
 import pytest
 from django.db.models.query import QuerySet
 
@@ -63,7 +64,7 @@ def test_peer_message_found_and_not_found():
     PeerMessage.objects.create(
         peer=peer, direction=PeerMessageDirection.OUT, message_id="pm_cli1",
         thread_id="pm_cli1",
-        payload={"text": "hello", "images": [], "documents": []},
+        payload={"text": "hello"},
         origin={"sent_at": "2026-07-24T12:00:00+00:00"},
         status=PeerMessageStatus.PENDING,
     )
@@ -86,7 +87,7 @@ def test_peer_message_resolved_reply_uses_one_query(django_assert_num_queries):
         message_id="cli-parent",
         thread_id="cli-parent",
         title="CLI parent",
-        payload={"text": "parent", "images": [], "documents": []},
+        payload={"text": "parent"},
         status=PeerMessageStatus.DELIVERED,
     )
     child = PeerMessage.objects.create(
@@ -96,7 +97,7 @@ def test_peer_message_resolved_reply_uses_one_query(django_assert_num_queries):
         reply_to=parent.message_id,
         reply_to_message=parent,
         thread_id=parent.thread_id,
-        payload={"text": "child", "images": [], "documents": []},
+        payload={"text": "child"},
         status=PeerMessageStatus.PENDING,
     )
 
@@ -186,7 +187,7 @@ def test_peer_send_reply_to_rejects_unknown_and_cross_peer_ids(monkeypatch):
         direction=PeerMessageDirection.IN,
         message_id="other-message",
         thread_id="other-message",
-        payload={"text": "other", "images": [], "documents": []},
+        payload={"text": "other"},
         status=PeerMessageStatus.PENDING,
     )
     monkeypatch.setattr(transport, "ensure_server_available", lambda: None)
@@ -203,12 +204,13 @@ def test_peer_send_end_to_end_in_process(monkeypatch):
     peer = _active_peer()
     calls = []
 
-    async def _fake_post(base_url, *, bearer, message_id, title, reply_to, payload, origin):
+    async def _fake_post(base_url, *, bearer, body):
+        wire = orjson.loads(body)
         calls.append({
             "bearer": bearer,
-            "message_id": message_id,
-            "title": title,
-            "reply_to": reply_to,
+            "message_id": wire["message_id"],
+            "title": wire["title"],
+            "reply_to": wire["reply_to"],
         })
         return 202, {}
 
@@ -242,8 +244,8 @@ def test_peer_send_omitted_or_empty_reply_to_creates_root(monkeypatch, cli_args)
     peer = _active_peer()
     calls = []
 
-    async def _fake_post(base_url, *, bearer, message_id, title, reply_to, payload, origin):
-        calls.append(reply_to)
+    async def _fake_post(base_url, *, bearer, body):
+        calls.append(orjson.loads(body)["reply_to"])
         return 202, {}
 
     monkeypatch.setattr("twicc.peer.outbound.post_message", _fake_post)
@@ -281,13 +283,13 @@ def test_peer_send_conforming_reply_to_reaches_transport_unchanged(
         direction=PeerMessageDirection.IN,
         message_id=reply_to,
         thread_id="root",
-        payload={"text": "parent", "images": [], "documents": []},
+        payload={"text": "parent"},
         status=PeerMessageStatus.REFUSED,
     )
     calls = []
 
-    async def _fake_post(base_url, *, bearer, message_id, title, reply_to, payload, origin):
-        calls.append(reply_to)
+    async def _fake_post(base_url, *, bearer, body):
+        calls.append(orjson.loads(body)["reply_to"])
         return 202, {}
 
     monkeypatch.setattr("twicc.peer.outbound.post_message", _fake_post)
@@ -318,7 +320,7 @@ def test_peer_send_accepts_failed_outbound_parent(monkeypatch):
         direction=PeerMessageDirection.OUT,
         message_id="failed-parent",
         thread_id="failed-parent",
-        payload={"text": "parent", "images": [], "documents": []},
+        payload={"text": "parent"},
         status=PeerMessageStatus.FAILED,
     )
 
@@ -352,7 +354,7 @@ def test_peer_message_cli_outputs_all_threading_fields():
         message_id="parent",
         thread_id="parent",
         title="Parent",
-        payload={"text": "parent", "images": [], "documents": []},
+        payload={"text": "parent"},
         status=PeerMessageStatus.DELIVERED,
     )
     child = PeerMessage.objects.create(
@@ -362,7 +364,7 @@ def test_peer_message_cli_outputs_all_threading_fields():
         reply_to="parent",
         reply_to_message=parent,
         thread_id="parent",
-        payload={"text": "child", "images": [], "documents": []},
+        payload={"text": "child"},
         status=PeerMessageStatus.PENDING,
     )
 

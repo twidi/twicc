@@ -43,7 +43,7 @@ def test_initial_peer_message_snapshot_serializes_resolved_reply_without_async_l
         message_id="parent",
         thread_id="parent",
         title="Parent",
-        payload={"text": "one", "images": [], "documents": []},
+        payload={"text": "one"},
         origin_session=session,
         status=PeerMessageStatus.DELIVERED,
     )
@@ -55,7 +55,7 @@ def test_initial_peer_message_snapshot_serializes_resolved_reply_without_async_l
         reply_to_message=parent,
         thread_id="parent",
         title="Child",
-        payload={"text": "two", "images": [], "documents": []},
+        payload={"text": "two"},
         status=PeerMessageStatus.PENDING,
     )
     revoked_peer = Peer.objects.create(
@@ -67,9 +67,20 @@ def test_initial_peer_message_snapshot_serializes_resolved_reply_without_async_l
         message_id="revoked-child",
         thread_id="revoked-child",
         title="Hidden revoked message",
-        payload={"text": "hidden", "images": [], "documents": []},
+        payload={"text": "hidden"},
         status=PeerMessageStatus.PENDING,
     )
+
+    from twicc.core import serializers
+
+    deferred = []
+    real_serialize = serializers.serialize_peer_message
+
+    def spy(message, *args, **kwargs):
+        deferred.append(("payload" in message.get_deferred_fields(), hasattr(message, "payload_text")))
+        return real_serialize(message, *args, **kwargs)
+
+    monkeypatch.setattr(serializers, "serialize_peer_message", spy)
 
     class Registry:
         def set_broadcast_callback(self, callback):
@@ -104,3 +115,4 @@ def test_initial_peer_message_snapshot_serializes_resolved_reply_without_async_l
         await comm.disconnect()
 
     _run(scenario())
+    assert deferred and all(entry == (True, True) for entry in deferred)

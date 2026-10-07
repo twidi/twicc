@@ -189,7 +189,12 @@ _KIND_HANDLERS: dict[str, tuple[str, str, str]] = {
     ),
     "peer:send": (
         "twicc.core.services.peer_messages",
-        "send_peer_message_from_payload",
+        "send_peer_message_from_drop_payload",
+        "sent",
+    ),
+    "peer:send_attachments": (
+        "twicc.core.services.peer_messages",
+        "send_peer_attachments_from_drop_payload",
         "sent",
     ),
 }

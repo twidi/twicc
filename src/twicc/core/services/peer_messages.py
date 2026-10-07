@@ -1,7 +1,11 @@
 """Peer message send / receive / deliver / refuse / status (design §5–§7).
 
-Send path: the ``peer:send`` drop-request kind (CLI ``twicc peer-send`` → RPC →
-MCP) lands in :func:`send_peer_message_from_payload`. Receive path: the inbound
+Send path: the ``peer:send`` (text only) and ``peer:send_attachments`` (with
+staged files) drop-request kinds (CLI ``twicc peer-send`` → RPC → MCP) land in
+:func:`send_peer_message_from_drop_payload` /
+:func:`send_peer_attachments_from_drop_payload`, then
+:func:`send_peer_message_from_payload`; the owner REST composer calls the
+latter directly. Receive path: the inbound
 ``/peer/messages/`` endpoint stores the row ``pending`` — nothing touches any
 agent until the human delivers it (the prompt-injection boundary).
 
@@ -17,6 +21,7 @@ import asyncio
 import base64
 import binascii
 import logging
+import mimetypes
 import re
 from datetime import datetime, UTC
 from typing import NamedTuple
@@ -24,21 +29,23 @@ from typing import NamedTuple
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 
+from twicc.core.services.attachments import inline
 from twicc.core.services.peer_mutation import PeerError, mark_peer_broken
 from twicc.core.services.peer_tokens import mint_message_id, peer_credentials_are_active
 from twicc.providers.db_writer import run_under_db_write_lock
 
 logger = logging.getLogger(__name__)
 
-PEER_ATTACHMENT_MAX_BYTES_PER_FILE = 5 * 1024 * 1024
-PEER_ATTACHMENT_MAX_TOTAL_BYTES = 32 * 1024 * 1024
-PEER_ATTACHMENT_MAX_FILES = 100
-# The three size/count caps match both providers' ATTACHMENT_SUPPORT
-# (providers/*/helpers.py); mime/document acceptance differs per provider
-# (codex has documents: False) — the peer wire payload reuses the common
-# SDK block shape with claude_code's wider acceptance.
+# Total decoded bytes of the attachments of one peer message (D5, §4.8.1).
+PEER_ATTACHMENT_MAX_TOTAL_BYTES = inline.INLINE_MAX_BYTES
 
-_PAYLOAD_KEYS = frozenset({"text", "images", "documents"})
+# ``images`` and ``documents`` only exist to accept an older sender (D16).
+_PAYLOAD_KEYS = frozenset({"text", "attachments", "images", "documents"})
+_LEGACY_PAYLOAD_KEYS = ("images", "documents")
+_ENTRY_KEYS = frozenset({"name", "media_type", "data"})
+
+ERROR_INVALID_MESSAGE_ID = "invalid_message_id"
+ERROR_MESSAGE_TOO_LARGE = "message_too_large"
 
 # The required subject every send carries (decision of 2026-08-11): the
 # receiving human triages on it, so it is a hard cap the sender must meet —
@@ -108,7 +115,7 @@ def _resolve_reply_to_message(peer, direction: str, reply_to: str):
         if direction == PeerMessageDirection.IN
         else PeerMessageDirection.IN
     )
-    candidates = PeerMessage.objects.filter(peer=peer, message_id=reply_to)
+    candidates = PeerMessage.objects.filter(peer=peer, message_id=reply_to).defer("payload")
     return candidates.filter(direction=opposite).first() or candidates.first()
 
 
@@ -357,6 +364,48 @@ def _now() -> datetime:
     return datetime.now(tz=UTC)
 
 
+def _trimmed_replies():
+    from django.db.models import Prefetch
+
+    from twicc.core.models import PeerMessage
+
+    # What the "answered by" line reads: never the payload of a reply.
+    return Prefetch("replies", queryset=PeerMessage.objects.only("pk", "reply_to_message", "created_at", "origin"))
+
+
+def peer_message_summary_queryset(queryset=None):
+    """Rows for a summary, without building any payload object (phase 2 design §4.8.4).
+
+    A stored payload can hold about 67 MB of base64; a summary reads only its text. ``payload``
+    and the parent's ``payload`` are deferred and the text is annotated as ``payload_text``
+    (read by ``serializers.peer_message_text``). A reader of these rows never touches
+    ``message.payload``: a lazy load raises in an async context.
+    """
+    from django.db.models.fields.json import KT
+
+    from twicc.core.models import PeerMessage
+
+    rows = queryset if queryset is not None else PeerMessage.objects.all()
+    return (
+        rows.select_related("peer", "origin_session", "delivered_to_session", "reply_to_message")
+        .defer("payload", "reply_to_message__payload")
+        .annotate(payload_text=KT("payload__text"))
+        .prefetch_related(_trimmed_replies())
+    )
+
+
+def peer_message_full_queryset():
+    """Rows with their full payload: only the detail with bytes reads it."""
+    from twicc.core.models import PeerMessage
+
+    return (
+        PeerMessage.objects
+        .select_related("peer", "origin_session", "delivered_to_session", "reply_to_message")
+        .defer("reply_to_message__payload")
+        .prefetch_related(_trimmed_replies())
+    )
+
+
 # ── Broadcasts ──────────────────────────────────────────────────────────────
 
 async def _broadcast(data: dict) -> None:
@@ -379,12 +428,7 @@ async def _serialize_for_broadcast(message) -> dict:
     from twicc.core.serializers import serialize_peer_message
 
     def _load():
-        fresh = (
-            PeerMessage.objects
-            .select_related("peer", "origin_session", "delivered_to_session", "reply_to_message")
-            .prefetch_related("replies")
-            .filter(pk=message.pk).first()
-        )
+        fresh = peer_message_summary_queryset().filter(pk=message.pk).first()
         # The effective project may come from the rest of the thread:
         # resolved here, in sync context, over the peer's rows.
         projects = peer_message_projects_map(PeerMessage.objects.filter(peer_id=message.peer_id))
@@ -413,98 +457,169 @@ async def broadcast_peer_message_updated(message) -> None:
 
 # ── Payload helpers ─────────────────────────────────────────────────────────
 
-def _block_decoded_size(block: dict) -> int:
-    """Exact byte size after inbound validation accepted the SDK block."""
-    source = block.get("source") or {}
-    data = source.get("data") or ""
-    if not isinstance(data, str):
-        return 0
-    if source.get("type") == "base64":
-        padding = len(data) - len(data.rstrip("="))
-        return (len(data) // 4) * 3 - padding
-    return len(data.encode("utf-8"))
+class InboundPayload(NamedTuple):
+    """A validated inbound payload, ready to store: ``{text, attachments?}`` and its summary rows."""
+    payload: dict
+    attachments_meta: list
 
 
-def _block_name(block: dict) -> str | None:
-    name = block.get("title") or block.get("name")
-    return name if isinstance(name, str) and name else None
-
-
-def _attachments_meta(payload: dict) -> list:
-    """Summary rows surviving the byte purge: [{kind, media_type, bytes, name?}]."""
-    meta = []
-    for kind, key in (("image", "images"), ("document", "documents")):
-        for block in payload.get(key) or []:
-            source = block.get("source") or {}
-            entry = {
-                "kind": kind,
-                "media_type": source.get("media_type") or "",
-                "bytes": _block_decoded_size(block),
-            }
-            name = _block_name(block)
-            if name:
-                entry["name"] = name
-            meta.append(entry)
-    return meta
-
-
-def _validated_block_size(block) -> int | None:
+def _legacy_block_ok(block) -> bool:
+    """The SDK block shape of an older sender: ``source.type`` ``base64`` or ``text``, non-empty data."""
     if not isinstance(block, dict):
-        return None
+        return False
     source = block.get("source")
-    if not isinstance(source, dict):
-        return None
-    source_type = source.get("type")
-    if source_type not in ("base64", "text"):
-        return None
+    if not isinstance(source, dict) or source.get("type") not in ("base64", "text"):
+        return False
     data = source.get("data")
-    if not isinstance(data, str) or not data:
-        return None
-    if source_type == "text":
-        return len(data.encode("utf-8"))
-
-    max_encoded_length = 4 * ((PEER_ATTACHMENT_MAX_BYTES_PER_FILE + 2) // 3)
-    if len(data) > max_encoded_length:
-        return PEER_ATTACHMENT_MAX_BYTES_PER_FILE + 1
-    try:
-        return len(base64.b64decode(data, validate=True))
-    except (binascii.Error, ValueError):
-        return None
+    return isinstance(data, str) and bool(data)
 
 
-def _validate_inbound_payload(payload) -> list[PeerError]:
-    errors: list[PeerError] = []
+def _entry_ok(entry) -> bool:
+    return (
+        isinstance(entry, dict)
+        and set(entry) == _ENTRY_KEYS
+        and isinstance(entry["name"], str) and bool(entry["name"])
+        and isinstance(entry["media_type"], str)
+        and isinstance(entry["data"], str)
+    )
+
+
+def _raw_entries(payload: dict) -> tuple[list[dict], PeerError | None]:
+    """The wire entries of *payload*: its ``attachments``, or its converted legacy blocks (D16)."""
+    if "attachments" in payload:
+        if any(key in payload for key in _LEGACY_PAYLOAD_KEYS):
+            return [], PeerError("payload", "invalid_attachments",
+                                 "attachments cannot be combined with images or documents")
+        entries = payload["attachments"]
+        if not isinstance(entries, list):
+            return [], PeerError("attachments", "invalid", "attachments must be a list")
+        if not all(_entry_ok(entry) for entry in entries):
+            return [], PeerError("attachments", "invalid_entry", "malformed attachment entry")
+        return entries, None
+    blocks: dict[str, list] = {}
+    for key in _LEGACY_PAYLOAD_KEYS:
+        value = payload.get(key, [])
+        if value is None:
+            value = []
+        if not isinstance(value, list):
+            return [], PeerError(key, "invalid", f"{key} must be a list")
+        if not all(_legacy_block_ok(block) for block in value):
+            return [], PeerError(key, "invalid_block", f"malformed attachment block in {key}")
+        blocks[key] = value
+    return inline.entries_from_legacy_blocks(blocks["images"], blocks["documents"]), None
+
+
+def prepare_inbound_payload(payload) -> tuple[InboundPayload | None, list[PeerError]]:
+    """Validate and normalize an inbound wire payload (phase 2 design §4.8.2).
+
+    Blocking (base64 validation of up to 50 MB): run it in a worker thread. Only ``text``,
+    ``attachments`` and the legacy ``images`` / ``documents`` keys are known. The decoded
+    sizes are added up before any decoding; the names and media types are sanitized once,
+    here, because they are stored forever in ``attachments_meta``.
+    """
+    from twicc.core.services.attachments.staging import AttachmentError, name_max_bytes, normalize_filename
+
     if not isinstance(payload, dict):
-        return [PeerError("payload", "invalid", "payload must be an object")]
+        return None, [PeerError("payload", "invalid", "payload must be an object")]
+    errors: list[PeerError] = []
     unknown = set(payload) - _PAYLOAD_KEYS
     if unknown:
         errors.append(PeerError("payload", "unknown_keys", f"unknown payload keys: {sorted(unknown)}"))
     text = payload.get("text")
     if not isinstance(text, str) or not text.strip():
         errors.append(PeerError("text", "empty_text", "text is required"))
-    total_bytes = 0
-    total_files = 0
-    for key in ("images", "documents"):
-        blocks = payload.get(key, [])
-        if blocks is None:
-            blocks = []
-        if not isinstance(blocks, list):
-            errors.append(PeerError(key, "invalid", f"{key} must be a list"))
-            continue
-        for block in blocks:
-            size = _validated_block_size(block)
-            if size is None:
-                errors.append(PeerError(key, "invalid_block", f"malformed attachment block in {key}"))
-                continue
-            total_files += 1
-            total_bytes += size
-            if size > PEER_ATTACHMENT_MAX_BYTES_PER_FILE:
-                errors.append(PeerError(key, "file_too_large", "attachment exceeds the per-file size cap"))
-    if total_files > PEER_ATTACHMENT_MAX_FILES:
-        errors.append(PeerError("payload", "too_many_files", "too many attachments"))
-    if total_bytes > PEER_ATTACHMENT_MAX_TOTAL_BYTES:
-        errors.append(PeerError("payload", "total_too_large", "attachments exceed the total size cap"))
-    return errors
+    entries, entries_error = _raw_entries(payload)
+    if entries_error is not None:
+        errors.append(entries_error)
+    if errors:
+        return None, errors
+
+    budget = inline.InlineBudget(inline.PEER_TOO_LARGE_HINT, limit=PEER_ATTACHMENT_MAX_TOTAL_BYTES)
+    sizes: list[int] = []
+    try:
+        for entry in entries:
+            size = inline.decoded_size(entry["data"])
+            budget.add(size)
+            sizes.append(size)
+    except AttachmentError as exc:
+        code = "total_too_large" if exc.code == inline.ERROR_TOO_LARGE else "invalid_entry"
+        return None, [PeerError("attachments", code, str(exc))]
+    for entry in entries:
+        try:
+            base64.b64decode(entry["data"], validate=True)
+        except (binascii.Error, ValueError):
+            return None, [PeerError("attachments", "invalid_entry", "attachment data is not valid base64")]
+
+    max_bytes = name_max_bytes()
+    clean_entries = [
+        {
+            "name": normalize_filename(entry["name"], max_bytes),
+            "media_type": inline.sanitize_media_type(entry["media_type"]),
+            "data": entry["data"],
+        }
+        for entry in entries
+    ]
+    clean: dict = {"text": text}
+    if clean_entries:
+        clean["attachments"] = clean_entries
+    meta = [
+        {"name": entry["name"], "media_type": entry["media_type"], "bytes": size}
+        for entry, size in zip(clean_entries, sizes, strict=True)
+    ]
+    return InboundPayload(clean, meta), []
+
+
+def _encode_staged_attachments(refs) -> tuple[list[dict], list[dict]]:
+    """Wire entries and summary rows of staged files, in order (blocking: a worker thread).
+
+    The total of the staged sizes is checked before any byte is read (§4.8.3 step 2).
+    """
+    from twicc.core.services.attachments.staging import (
+        ERROR_MISSING,
+        AttachmentError,
+        content_location,
+        load_entry,
+    )
+
+    entries = [load_entry(ref) for ref in refs]
+    total = sum(entry.size for entry in entries)
+    if total > PEER_ATTACHMENT_MAX_TOTAL_BYTES:
+        raise AttachmentError(inline.ERROR_TOO_LARGE, inline.too_large_message(
+            total, PEER_ATTACHMENT_MAX_TOTAL_BYTES, inline.PEER_TOO_LARGE_HINT,
+        ))
+    wire: list[dict] = []
+    meta: list[dict] = []
+    for entry in entries:
+        try:
+            data = content_location(entry).read_bytes()
+        except OSError as exc:
+            raise AttachmentError(ERROR_MISSING, "Attachment not found") from exc
+        media_type = mimetypes.guess_type(entry.filename)[0] or inline.OCTET_STREAM
+        wire.append({"name": entry.filename, "media_type": media_type,
+                     "data": base64.b64encode(data).decode("ascii")})
+        meta.append({"name": entry.filename, "media_type": media_type, "bytes": len(data)})
+    return wire, meta
+
+
+_REJECTED_WITH_ATTACHMENTS = (
+    "The remote instance rejected the message. It may be too old to receive attachments."
+)
+_TOO_LARGE = "The remote instance, or a proxy in front of it, refused the message size."
+_TOO_LARGE_WITH_ATTACHMENTS = _TOO_LARGE + " An older instance also refuses any attachment."
+
+
+def _rejection_text(http_status: int | None, response_body: dict, *, has_attachments: bool) -> str:
+    """The error text of a refused send, chosen on the HTTP status (§4.8.3 step 7).
+
+    A proxy or a tunnel can answer 413 without a JSON body, so the body code is not reliable.
+    """
+    from twicc.peer import outbound
+
+    if http_status == 413:
+        return _TOO_LARGE_WITH_ATTACHMENTS if has_attachments else _TOO_LARGE
+    if http_status == 400 and has_attachments:
+        return _REJECTED_WITH_ATTACHMENTS
+    return outbound.response_error_message(response_body, "The remote instance rejected the message.")
 
 
 # ── Send (outbound) ─────────────────────────────────────────────────────────
@@ -512,31 +627,45 @@ def _validate_inbound_payload(payload) -> list[PeerError]:
 async def send_peer_message_from_payload(
     payload: dict, *, author: str = PEER_MESSAGE_AUTHOR_AGENT,
 ) -> PeerSendResult:
-    """Drop-request handler for ``kind="peer:send"``.
+    """Send a peer message (the drop wrappers below, and the owner REST composer).
 
     Payload: ``{peer: <peer_id or exact local name>, title, reply_to?, text,
-    images, documents, origin_session_id?, project_id?}``. Attachments are
-    already validated/encoded by the CLI. ``project_id`` is the owner's
-    hand-attached project for a message no session sends (the compose
-    dialog); it must exist, and is ignored at read time when an origin
-    session is set.
+    attachments?, message_id?, origin_session_id?, project_id?}``. ``attachments``
+    are staged refs ``[{bucket, id}, ...]``, released by the drop wrappers.
+    ``message_id`` is the id the CLI minted, so every output of a submitted send
+    names the message; without it (the owner composer, an older CLI) the service mints one.
+    ``project_id`` is the owner's hand-attached project for a message no session
+    sends (the compose dialog); it must exist, and is ignored at read time when an
+    origin session is set.
 
     ``author`` is a keyword-only code path, deliberately NOT read from the
     payload: the drop-request/RPC surface always sends the default
     ``"agent"``, and only the owner REST composer passes ``"human"``.
     """
     from twicc.core.models import Peer, PeerMessage, PeerMessageDirection, PeerMessageStatus, Project, Session
+    from twicc.core.services.attachments import planner as attachment_planner
+    from twicc.core.services.attachments.staging import AttachmentError
     from twicc.peer import outbound
 
     peer_ref = (payload.get("peer") or "").strip()
     title, title_error = validate_title(payload.get("title"))
     reply_to, reply_to_error = validate_reply_to(payload.get("reply_to"))
     text = (payload.get("text") or "").strip()
-    images = payload.get("images") or []
-    documents = payload.get("documents") or []
     project_id = (payload.get("project_id") or "").strip() or None
+    requested_id = payload.get("message_id")
 
     errors: list[PeerError] = []
+    try:
+        refs = attachment_planner.validate_attachment_frame(payload)
+    except AttachmentError as exc:
+        refs = ()
+        errors.append(PeerError("attachments", exc.code, str(exc)))
+    if requested_id is not None and (
+        not isinstance(requested_id, str) or PEER_MESSAGE_ID_PATTERN.fullmatch(requested_id) is None
+    ):
+        errors.append(PeerError(
+            "message_id", ERROR_INVALID_MESSAGE_ID, "message_id must be a valid peer message id",
+        ))
     if not peer_ref:
         errors.append(PeerError("peer", "missing", "peer is required"))
     if title_error is not None:
@@ -573,13 +702,24 @@ async def send_peer_message_from_payload(
             "No message with this id exists for the selected peer.",
         )], {})
 
-    message_id = mint_message_id()
+    message_id = requested_id or mint_message_id()
     origin_session = None
     origin_session_id = payload.get("origin_session_id")
     if origin_session_id:
         origin_session = await sync_to_async(
             lambda: Session.objects.filter(id=origin_session_id).first()
         )()
+
+    # The staged files, read and encoded off the event loop (§4.8.3 steps 2-3).
+    attachments: list[dict] = []
+    attachments_meta: list[dict] = []
+    if refs:
+        try:
+            attachments, attachments_meta = await asyncio.to_thread(_encode_staged_attachments, refs)
+        except AttachmentError as exc:
+            code, message_text, _names = attachment_planner.describe_attachment_error(exc)
+            return PeerSendResult(False, None, peer.id, [PeerError("attachments", code, message_text)], {})
+
     # Timezone-aware UTC ISO-8601: the receiver renders it in the inbox and in
     # the delivery envelope.
     sent_at = _now().isoformat()
@@ -593,7 +733,22 @@ async def send_peer_message_from_payload(
     # session is kept as the `origin_session` FK, whose title is read live at
     # serialization — that is what the inbox displays.
     origin = {"sent_at": sent_at, "author": author}
-    wire_payload = {"text": text, "images": images, "documents": documents}
+    # Without files the payload is ``{"text": ...}``: an older receiver still accepts it.
+    wire_payload: dict = {"text": text}
+    if attachments:
+        wire_payload["attachments"] = attachments
+    body = await asyncio.to_thread(
+        outbound.build_message_body,
+        message_id=message_id, title=title, reply_to=reply_to, payload=wire_payload, origin=origin,
+    )
+    # The text has no cap of its own and the entry names are not bounded: the decoded limit
+    # alone does not bound the body (§4.8.3 step 4).
+    if len(body) > inline.INLINE_MAX_REQUEST_BYTES:
+        return PeerSendResult(False, None, peer.id, [PeerError(
+            "attachments", ERROR_MESSAGE_TOO_LARGE,
+            f"The message (text and attachments) is {inline.format_mb(len(body))} once encoded; "
+            f"the limit is {inline.format_mb(inline.INLINE_MAX_REQUEST_BYTES)}. {inline.PEER_TOO_LARGE_HINT}",
+        )], {})
 
     message = PeerMessage(
         peer=peer,
@@ -604,7 +759,7 @@ async def send_peer_message_from_payload(
         thread_id=reply_to_message.thread_id if reply_to_message is not None else message_id,
         title=title,
         payload=wire_payload,
-        attachments_meta=_attachments_meta(wire_payload),
+        attachments_meta=attachments_meta,
         origin=origin,
         origin_session=origin_session,
         project_id=project_id,
@@ -617,6 +772,11 @@ async def send_peer_message_from_payload(
             return None, PeerError("peer", "not_found", "Peer no longer exists.")
         if peer_error := _peer_send_error(fresh_peer):
             return fresh_peer, peer_error
+        # Defensive: a reused id ends here, never with an IntegrityError.
+        if PeerMessage.objects.filter(peer=fresh_peer, message_id=message_id).exists():
+            return fresh_peer, PeerError(
+                "message_id", ERROR_INVALID_MESSAGE_ID, "This message id is already used for this peer.",
+            )
         message.peer = fresh_peer
         message.save(force_insert=True)
         return fresh_peer, None
@@ -638,13 +798,11 @@ async def send_peer_message_from_payload(
             fresh_peer.paired_local_base_url,
         ) == credential_snapshot
 
-    body = {}
+    response_body: dict = {}
     detail = ""
     try:
-        http_status, body = await outbound.post_message(
-            peer.base_url, bearer=peer.token_theirs,
-            message_id=message_id, title=title, reply_to=reply_to,
-            payload=wire_payload, origin=origin,
+        http_status, response_body = await outbound.post_message(
+            peer.base_url, bearer=peer.token_theirs, body=body,
         )
     except outbound.PeerOutboundError as exc:
         http_status, detail = None, str(exc)
@@ -687,9 +845,7 @@ async def send_peer_message_from_payload(
             "Ask your user to check the relationship in Settings › Peers.",
         )], {})
 
-    error_detail = detail or outbound.response_error_message(
-        body, "The remote instance rejected the message.",
-    )
+    error_detail = detail or _rejection_text(http_status, response_body, has_attachments=bool(attachments))
     error_code = "unreachable" if http_status is None else "send_failed"
 
     def _fail():
@@ -706,6 +862,48 @@ async def send_peer_message_from_payload(
             if http_status is None else error_detail
         ),
     )], {})
+
+
+def _attachments_rejected(message: str) -> PeerSendResult:
+    return PeerSendResult(False, None, None, [PeerError("attachments", "invalid_attachments", message)], {})
+
+
+async def send_peer_message_from_drop_payload(payload: dict) -> PeerSendResult:
+    """Drop-request handler for ``kind="peer:send"``: a message without files.
+
+    Refs travel only in ``peer:send_attachments``: refs here are a bug, refused. Whatever
+    the outcome, the refs of the payload are released (§4.5.3).
+    """
+    from twicc.core.services.attachments import drop as attachment_drop
+    from twicc.core.services.attachments import lifecycle as attachment_lifecycle
+
+    refs = attachment_drop.refs_to_release(payload)
+    try:
+        if attachment_drop.has_legacy_fields(payload):
+            return _attachments_rejected(attachment_drop.LEGACY_FIELDS_MESSAGE)
+        if payload.get("attachments"):
+            return _attachments_rejected("attachments travel only in a peer:send_attachments request")
+        return await send_peer_message_from_payload(payload)
+    finally:
+        attachment_lifecycle.delivery_release(refs)()
+
+
+async def send_peer_attachments_from_drop_payload(payload: dict) -> PeerSendResult:
+    """Drop-request handler for ``kind="peer:send_attachments"``: a message with staged files.
+
+    A kind of its own, so an older backend refuses it instead of sending the text without the
+    files. The refs are released on every outcome, the early validation returns included.
+    """
+    from twicc.core.services.attachments import drop as attachment_drop
+    from twicc.core.services.attachments import lifecycle as attachment_lifecycle
+
+    refs = attachment_drop.refs_to_release(payload)
+    try:
+        if attachment_drop.has_legacy_fields(payload):
+            return _attachments_rejected(attachment_drop.LEGACY_FIELDS_MESSAGE)
+        return await send_peer_message_from_payload(payload)
+    finally:
+        attachment_lifecycle.delivery_release(refs)()
 
 
 # ── Receive (inbound endpoint) ──────────────────────────────────────────────
@@ -731,7 +929,8 @@ async def receive_peer_message(peer, body: dict) -> tuple[int, dict]:
     if title_error is not None:
         return 400, {"error": "invalid_payload"}
     payload = body.get("payload")
-    if _validate_inbound_payload(payload):
+    prepared, payload_errors = await asyncio.to_thread(prepare_inbound_payload, payload)
+    if payload_errors:
         return 400, {"error": "invalid_payload"}
     origin = body.get("origin")
     if origin is None:
@@ -750,19 +949,14 @@ async def receive_peer_message(peer, body: dict) -> tuple[int, dict]:
     if author not in PEER_MESSAGE_AUTHORS:
         author = PEER_MESSAGE_AUTHOR_AGENT
 
-    clean_payload = {
-        "text": payload.get("text"),
-        "images": payload.get("images") or [],
-        "documents": payload.get("documents") or [],
-    }
     message = PeerMessage(
         peer=peer,
         direction=PeerMessageDirection.IN,
         message_id=message_id,
         reply_to=reply_to,
         title=title,
-        payload=clean_payload,
-        attachments_meta=_attachments_meta(clean_payload),
+        payload=prepared.payload,
+        attachments_meta=prepared.attachments_meta,
         origin={"sent_at": sent_at, "author": author},
         status=PeerMessageStatus.PENDING,
     )
@@ -777,7 +971,7 @@ async def receive_peer_message(peer, body: dict) -> tuple[int, dict]:
         # second insert would 500 on the unique constraint.
         existing = PeerMessage.objects.filter(
             peer=peer, direction=PeerMessageDirection.IN, message_id=message_id,
-        ).first()
+        ).only("pk", "status").first()
         if existing is not None:
             return True, existing.status
         reply_to_message = _resolve_reply_to_message(
@@ -821,7 +1015,7 @@ async def apply_status_callback(peer, message_id: str, status) -> tuple[int, dic
             peer=fresh_peer,
             direction=PeerMessageDirection.OUT,
             message_id=message_id,
-        ).first()
+        ).defer("payload").first()
         if message is None:
             return "missing", None
         if message.resolved_at is not None:
@@ -928,9 +1122,10 @@ def build_delivery_envelope(peer, message, note: str) -> str:
     """
     from twicc.cli._drop_request.sender_header import inline_md
     from twicc.core.models import PeerMessageDirection
+    from twicc.core.serializers import peer_message_text
 
     origin = message.origin or {}
-    text = ((message.payload or {}).get("text", "") or "").rstrip("\n")
+    text = peer_message_text(message).rstrip("\n")
     peer_name = inline_md(peer.name) or "an unnamed peer"
 
     facts: list[str] = []
@@ -1051,14 +1246,7 @@ def _resolution_lock(pk: int) -> asyncio.Lock:
 
 
 async def _fresh_message(pk: int):
-    from twicc.core.models import PeerMessage
-
-    return await sync_to_async(
-        lambda: PeerMessage.objects
-        .select_related("peer", "origin_session", "delivered_to_session", "reply_to_message")
-        .prefetch_related("replies")
-        .filter(pk=pk).first()
-    )()
+    return await sync_to_async(lambda: peer_message_summary_queryset().filter(pk=pk).first())()
 
 
 async def _mark_delivered(message, *, session_id: str, note: str) -> None:

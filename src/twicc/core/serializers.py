@@ -594,10 +594,21 @@ def peer_message_own_project(message):
     return EffectiveContext(None, None)
 
 
+def peer_message_text(message) -> str:
+    """The text of a peer message.
+
+    A summary row carries it as the ``payload_text`` annotation and its ``payload`` is deferred
+    (``peer_messages.peer_message_summary_queryset``): ``payload`` is never touched then.
+    """
+    if hasattr(message, "payload_text"):
+        return message.payload_text or ""
+    return (message.payload or {}).get("text", "") or ""
+
+
 def serialize_peer_message(message, *, include_payload=False, include_attachments=True, effective_project=None):
-    """Peer-message serializer. Summary form by default — base64 blobs must never
-    transit the channel layer; only the REST detail endpoint passes
-    ``include_payload=True``.
+    """Peer-message serializer. Summary form by default: base64 entries must never
+    transit the channel layer, and a summary row has its payload deferred. Only
+    the REST detail endpoint passes ``include_payload=True``.
 
     ``effective_project`` is the ``EffectiveContext`` resolved through the
     thread (``peer_messages.peer_message_projects_map``); callers that have
@@ -632,7 +643,7 @@ def serialize_peer_message(message, *, include_payload=False, include_attachment
             if reply_to_message.direction == PeerMessageDirection.OUT
             else reply_to_message.delivered_to_session_id
         )
-    text = (message.payload or {}).get("text", "") or ""
+    text = peer_message_text(message)
     # Who answered this message, if anyone: the authorship of its most recent
     # reply. Read from the prefetched reverse relation — `.all()` iterated in
     # Python, never `.filter()`/`.latest()`, which would query per row.
@@ -693,10 +704,9 @@ def serialize_peer_message(message, *, include_payload=False, include_attachment
         "purged": message.purged_at is not None,
     }
     if include_payload:
-        payload = message.payload or {}
-        data["payload"] = payload if include_attachments else {
+        # Only a full row (``peer_message_full_queryset``) reaches the bytes branch.
+        data["payload"] = (message.payload or {}) if include_attachments else {
             "text": text,
-            "images": [],
-            "documents": [],
+            "attachments": [],
         }
     return data

@@ -15,6 +15,7 @@ configuration is ever added.
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import time
 
@@ -23,11 +24,11 @@ from asgiref.sync import sync_to_async
 from django.http import HttpResponseNotAllowed, JsonResponse
 
 from twicc.core.services import peer_mutation
+from twicc.core.services.attachments.inline import INLINE_MAX_REQUEST_BYTES
 from twicc.core.services.peer_tokens import aresolve_peer, peer_base_url, peer_credentials_are_active
 
-# 32 MB binary ≈ 43 MB base64 + JSON headroom (attachment caps mirror the
-# provider ATTACHMENT_SUPPORT limits).
-PEER_MESSAGE_MAX_REQUEST_BYTES = 48 * 1024 * 1024
+# Up to 50 MB of attachments, base64-encoded, plus the JSON: the inline request cap (D12).
+PEER_MESSAGE_MAX_REQUEST_BYTES = INLINE_MAX_REQUEST_BYTES
 # Every other /peer/ view carries tiny JSON bodies.
 SMALL_BODY_MAX_BYTES = 64 * 1024
 
@@ -253,6 +254,24 @@ async def handshake_accept(request):
     return JsonResponse(resp, status=status)
 
 
+def _read_message_body(request) -> tuple[dict | None, JsonResponse | None]:
+    """Read and parse the message body; blocking (up to 72 MB): run in a worker thread.
+
+    ``request.read()``, NOT ``request.body``: Django's DATA_UPLOAD_MAX_MEMORY_SIZE check fires
+    only in the ``body`` property; the per-view cap is enforced here instead.
+    """
+    body = request.read(PEER_MESSAGE_MAX_REQUEST_BYTES + 1)
+    if len(body) > PEER_MESSAGE_MAX_REQUEST_BYTES:
+        return None, JsonResponse({"error": "too_large"}, status=413)
+    try:
+        data = orjson.loads(body)
+    except orjson.JSONDecodeError:
+        return None, JsonResponse({"error": "invalid_payload"}, status=400)
+    if not isinstance(data, dict):
+        return None, JsonResponse({"error": "invalid_payload"}, status=400)
+    return data, None
+
+
 async def message_receive(request):
     """POST /peer/messages/ — the message itself. 202 = stored pending."""
     from twicc.core.services import peer_messages
@@ -270,19 +289,9 @@ async def message_receive(request):
         return JsonResponse({"error": "too_large"}, status=413)
     if length > PEER_MESSAGE_MAX_REQUEST_BYTES:
         return JsonResponse({"error": "too_large"}, status=413)
-    # request.read(), NOT request.body: Django's DATA_UPLOAD_MAX_MEMORY_SIZE
-    # check fires only in the ``body`` property; the ASGI handler has already
-    # buffered the stream, so reading directly deliberately bypasses the global
-    # 2.5 MB cap for this one endpoint (per-view cap enforced here instead).
-    body = request.read(PEER_MESSAGE_MAX_REQUEST_BYTES + 1)
-    if len(body) > PEER_MESSAGE_MAX_REQUEST_BYTES:
-        return JsonResponse({"error": "too_large"}, status=413)
-    try:
-        data = orjson.loads(body)
-    except orjson.JSONDecodeError:
-        return JsonResponse({"error": "invalid_payload"}, status=400)
-    if not isinstance(data, dict):
-        return JsonResponse({"error": "invalid_payload"}, status=400)
+    data, error_response = await asyncio.to_thread(_read_message_body, request)
+    if error_response is not None:
+        return error_response
     status, resp = await peer_messages.receive_peer_message(peer, data)
     return JsonResponse(resp, status=status)
 

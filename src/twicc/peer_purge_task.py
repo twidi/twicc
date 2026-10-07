@@ -48,24 +48,29 @@ def _apply_purge_peer_attachments_job(job: _PurgePeerAttachmentsJob) -> int:
 
 
 def purge_expired_attachment_bytes(now: datetime | None = None) -> int:
-    """Drop attachment bytes from messages resolved before the retention window.
+    """Drop the attachment bytes of messages resolved before the retention window.
 
-    Keeps ``text`` and ``attachments_meta`` (names/sizes survive), stamps
-    ``purged_at``. Returns the number of rows purged.
+    Removes the ``attachments`` key (an absent key means no attachment for every
+    reader), keeps ``text`` and ``attachments_meta`` (names and sizes survive), and
+    stamps ``purged_at``. Only rows with the key are candidates, so a text-only or an
+    already purged row is never selected again. The rows are loaded one at a time:
+    each can hold about 67 MB of base64. Returns the number of rows purged.
     """
     from twicc.core.models import PeerMessage
 
     now = now or datetime.now(tz=UTC)
     cutoff = now - PEER_ATTACHMENT_RETENTION
+    candidates = list(
+        PeerMessage.objects
+        .filter(resolved_at__lt=cutoff, purged_at__isnull=True, payload__has_key="attachments")
+        .values_list("pk", flat=True)
+    )
     purged = 0
-    candidates = PeerMessage.objects.filter(resolved_at__lt=cutoff, purged_at__isnull=True)
-    for message in candidates:
-        payload = message.payload or {}
-        if not payload.get("images") and not payload.get("documents"):
+    for pk in candidates:
+        message = PeerMessage.objects.filter(pk=pk).only("pk", "payload", "purged_at").first()
+        if message is None or not isinstance(message.payload, dict) or "attachments" not in message.payload:
             continue
-        payload["images"] = []
-        payload["documents"] = []
-        message.payload = payload
+        message.payload = {key: value for key, value in message.payload.items() if key != "attachments"}
         message.purged_at = now
         message.save(update_fields=["payload", "purged_at"])
         purged += 1

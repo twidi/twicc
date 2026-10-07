@@ -784,15 +784,15 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         if self._should_send("peer_messages_updated"):
             from twicc.core.models import PeerMessage, PeerMessageDirection, PeerMessageStatus, PeerState
             from twicc.core.serializers import serialize_peer_message
-            from twicc.core.services.peer_messages import peer_message_projects_map
+            from twicc.core.services.peer_messages import peer_message_projects_map, peer_message_summary_queryset
 
             def _peer_messages_snapshot():
                 # The serializer reads each message's local session titles: one
                 # JOIN, not one query per row. `replies` (the "answered by"
                 # line) is one extra query for the whole snapshot.
-                rows = PeerMessage.objects.select_related(
-                    "origin_session", "delivered_to_session", "reply_to_message",
-                ).prefetch_related("replies").exclude(peer__state=PeerState.REVOKED)
+                rows = peer_message_summary_queryset(
+                    PeerMessage.objects.exclude(peer__state=PeerState.REVOKED),
+                )
                 pending = list(rows.filter(
                     direction=PeerMessageDirection.IN, status=PeerMessageStatus.PENDING,
                 ))
