@@ -1,5 +1,6 @@
 <script setup>
 // TerminalCombosDialog.vue - Dialog for managing custom key combos
+import ReorderHandle from '../ui/ReorderHandle.vue'
 import { ref, computed, nextTick, useId } from 'vue'
 import { useTerminalConfigStore } from '../../stores/terminalConfig'
 import { formatCombo, formatComboNotation } from '../../utils/terminalComboNotation'
@@ -272,29 +273,18 @@ defineExpose({ open, close })
                 No custom combos yet. Add one to get started.
             </div>
 
-            <div v-else class="combo-list">
+            <div v-else class="combo-list" data-reorder-list>
                 <div
                     v-for="(combo, index) in terminalConfigStore.combos"
                     :key="index"
-                    class="combo-row"
+                    class="combo-row" data-reorder-row
                 >
-                    <!-- Reorder arrows -->
-                    <div class="reorder-arrows">
-                        <button
-                            class="reorder-btn"
-                            :class="{ disabled: index === 0 }"
-                            :disabled="index === 0"
-                            @click="terminalConfigStore.reorderCombo(index, index - 1)"
-                            title="Move up"
-                        ><wa-icon name="chevron-up" /></button>
-                        <button
-                            class="reorder-btn"
-                            :class="{ disabled: index === terminalConfigStore.combos.length - 1 }"
-                            :disabled="index === terminalConfigStore.combos.length - 1"
-                            @click="terminalConfigStore.reorderCombo(index, index + 1)"
-                            title="Move down"
-                        ><wa-icon name="chevron-down" /></button>
-                    </div>
+                    <!-- Drag handle -->
+                    <ReorderHandle
+                        :index="index"
+                        :count="terminalConfigStore.combos.length"
+                        @reorder="(from, to) => terminalConfigStore.reorderCombo(from, to)"
+                    />
 
                     <!-- Display text -->
                     <div class="combo-display">
@@ -479,33 +469,6 @@ defineExpose({ open, close })
     gap: var(--wa-space-s);
     background: var(--wa-color-surface-alt);
     border-radius: var(--wa-border-radius-m);
-}
-
-/* ── Reorder arrows ───────────────────────────────────────────────── */
-.reorder-arrows {
-    display: flex;
-    gap: var(--wa-space-2xs);
-    flex-shrink: 0;
-}
-
-.reorder-btn {
-    background: none;
-    border: none;
-    color: var(--wa-color-text-quiet);
-    font-size: var(--wa-font-size-xs);
-    padding: var(--wa-space-2xs);
-    cursor: pointer;
-    transition: color 0.15s, background-color 0.15s;
-}
-
-.reorder-btn:hover:not(.disabled) {
-    color: var(--wa-color-text-base);
-    background: var(--wa-color-surface-alt);
-}
-
-.reorder-btn.disabled {
-    opacity: 0.25;
-    cursor: default;
 }
 
 /* ── Combo display ────────────────────────────────────────────────── */

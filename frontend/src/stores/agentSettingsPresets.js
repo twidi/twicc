@@ -117,10 +117,9 @@ export const useAgentSettingsPresetsStore = defineStore('agentSettingsPresets', 
         _send(provider)
     }
 
-    function reorder(provider, index, direction) {
+    function reorder(provider, index, target) {
         const list = getPresets(provider)
-        const target = index + direction
-        if (target < 0 || target >= list.length) return
+        if (index === target || index < 0 || index >= list.length || target < 0 || target >= list.length) return
         const [moved] = list.splice(index, 1)
         list.splice(target, 0, moved)
         _send(provider)

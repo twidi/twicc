@@ -1,5 +1,6 @@
 <script setup>
 // TerminalSnippetsDialog.vue - Dialog for managing text snippets with scope grouping
+import ReorderHandle from '../ui/ReorderHandle.vue'
 import { ref, computed, nextTick, useId } from 'vue'
 import { useRoute } from 'vue-router'
 import { useTerminalConfigStore } from '../../stores/terminalConfig'
@@ -385,29 +386,18 @@ defineExpose({ open, close })
                 </div>
 
                 <!-- Snippets in this group -->
-                <div class="snippet-list">
+                <div class="snippet-list" data-reorder-list>
                     <div
                         v-for="(snippet, index) in group.snippets"
                         :key="index"
-                        class="snippet-row"
+                        class="snippet-row" data-reorder-row
                     >
-                        <!-- Reorder arrows -->
-                        <div class="reorder-arrows">
-                            <button
-                                class="reorder-btn"
-                                :class="{ disabled: index === 0 }"
-                                :disabled="index === 0"
-                                @click="terminalConfigStore.reorderSnippet(group.scope, index, index - 1)"
-                                title="Move up"
-                            ><wa-icon name="chevron-up" /></button>
-                            <button
-                                class="reorder-btn"
-                                :class="{ disabled: index === group.snippets.length - 1 }"
-                                :disabled="index === group.snippets.length - 1"
-                                @click="terminalConfigStore.reorderSnippet(group.scope, index, index + 1)"
-                                title="Move down"
-                            ><wa-icon name="chevron-down" /></button>
-                        </div>
+                        <!-- Drag handle -->
+                        <ReorderHandle
+                            :index="index"
+                            :count="group.snippets.length"
+                            @reorder="(from, to) => terminalConfigStore.reorderSnippet(group.scope, from, to)"
+                        />
 
                         <!-- Display text -->
                         <div class="snippet-display">
@@ -681,33 +671,6 @@ defineExpose({ open, close })
     gap: var(--wa-space-s);
     background: var(--wa-color-surface-alt);
     border-radius: var(--wa-border-radius-m);
-}
-
-/* ── Reorder arrows ───────────────────────────────────────────────── */
-.reorder-arrows {
-    display: flex;
-    gap: var(--wa-space-2xs);
-    flex-shrink: 0;
-}
-
-.reorder-btn {
-    background: none;
-    border: none;
-    color: var(--wa-color-text-quiet);
-    font-size: var(--wa-font-size-xs);
-    padding: var(--wa-space-2xs);
-    cursor: pointer;
-    transition: color 0.15s, background-color 0.15s;
-}
-
-.reorder-btn:hover:not(.disabled) {
-    color: var(--wa-color-text-base);
-    background: var(--wa-color-surface-alt);
-}
-
-.reorder-btn.disabled {
-    opacity: 0.25;
-    cursor: default;
 }
 
 /* ── Snippet display ──────────────────────────────────────────────── */

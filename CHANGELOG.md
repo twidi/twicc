@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Orchestration tab** — The Orchestration tab gets a brand new look.
 - **Artifacts tab always available** — The tab now shows for every session, even before it has any artifact. Right-click "Session artifacts" to create a file or folder, or upload files.
+- **List ordering** — Drag a handle to reorder lists (composer snippets, projects in a workspace, ...), on desktop or mobile.
 
 ### Fixed
 

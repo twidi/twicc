@@ -1,4 +1,5 @@
 <script setup>
+import ReorderHandle from '../ui/ReorderHandle.vue'
 // Editable list of saved Browser-pane URL entries ({ url, label?, default? }),
 // shared by ProjectEditDialog and WorkspaceManageDialog. The component keeps
 // its own editable rows (seeded from the `entries` prop); the owner dialog
@@ -32,8 +33,7 @@ function removeRow(index) {
     rows.value.splice(index, 1)
 }
 
-function moveRow(index, delta) {
-    const target = index + delta
+function moveRow(index, target) {
     if (target < 0 || target >= rows.value.length) return
     const [row] = rows.value.splice(index, 1)
     rows.value.splice(target, 0, row)
@@ -72,8 +72,9 @@ defineExpose({ getEntries, reset })
 </script>
 
 <template>
-    <div class="browser-url-list">
-        <div v-for="(row, index) in rows" :key="index" class="browser-url-row">
+    <div class="browser-url-list" data-reorder-list>
+        <div v-for="(row, index) in rows" :key="index" class="browser-url-row" data-reorder-row>
+            <ReorderHandle :index="index" :count="rows.length" @reorder="moveRow" />
             <input
                 type="radio"
                 class="browser-url-default"
@@ -100,12 +101,6 @@ defineExpose({ getEntries, reset })
                 @input="row.label = $event.target.value"
             />
             <span class="browser-url-actions">
-                <button type="button" class="browser-url-action" title="Move up" :disabled="index === 0" @click="moveRow(index, -1)">
-                    <wa-icon name="chevron-up"></wa-icon>
-                </button>
-                <button type="button" class="browser-url-action" title="Move down" :disabled="index === rows.length - 1" @click="moveRow(index, 1)">
-                    <wa-icon name="chevron-down"></wa-icon>
-                </button>
                 <button type="button" class="browser-url-action browser-url-action--danger" title="Remove" @click="removeRow(index)">
                     <wa-icon name="trash"></wa-icon>
                 </button>
