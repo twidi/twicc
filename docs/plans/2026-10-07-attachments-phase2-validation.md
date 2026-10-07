@@ -10,8 +10,8 @@ Date: 2026-10-07. Branch: `attach-any-files` (base of this record: `99390d6a`).
 | Automated tests and build | Run. All pass (§1). |
 | Manual matrix, local rows (CLI, `--remote`, hybrid, internal MCP) | Run on the worktree instance (backend `:3501`, Vite `:5174`) with real Claude and Codex. 8 PASS. |
 | Manual matrix, peer rows 10–11 (two instances on this branch) | Run on 2026-10-07 between this instance and a second worktree instance. 2 PASS (§2.6). |
-| Manual matrix, external MCP and older-peer rows (9, 12–14) | **NOT RUN.** They need a setup that only the user can make (§2.3). |
-| Manual matrix, main-instance rows 12–19 | Attempted on 2026-10-07 against the main instance (`:3500`). Row 19 PASS. Rows 12–18 **BLOCKED**: the pairing is refused in both directions (§2.7). |
+| Manual matrix, external MCP row (9) | **NOT RUN.** It needs a setup that only the user can make (§2.3). |
+| Manual matrix, main-instance rows 12–19 | Row 19 PASS on 2026-10-07 (§2.7). Rows 12–18 PASS on 2026-10-07, after the removal of the copied peers from this instance's database and a new pairing with the main instance (§2.8). |
 
 ## 1. Automated results
 
@@ -58,16 +58,16 @@ Every command below ran as `cd /home/twidi/dev/twicc-poc/.worktrees/attach-any-f
 | 9 | External MCP: named data URI | Only with an external MCP client connected to this instance | exit 0; tile `hello world.txt`; the McpOperation audit row has no `attach` | Not run: no external MCP client can reach this instance. `mcpBaseUrl` is not set in its synced settings, so the external MCP host route is off. The `McpConnection` rows in its database are copies from the main instance database. | NOT RUN — no external MCP client connected; covered by the automated tests (`tests/test_mcp_attach.py`). |
 | 10 | Peers, Git patch → Codex and hybrid | Second instance on this branch, paired; `peer-send` `fix.patch`; deliver to `<CODEX_SID>`, redeliver to `<HYBRID_SID>` | review dialog lists `fix.patch`; delivered message carries `fix.patch` as a file in both sessions | Run on 2026-10-07 with new target sessions (§2.6): exit 0; review lists `fix.patch` (19 B); tile `fix.patch` and artifact `attachments/fix.patch` (byte-identical) in the Codex session and in the hybrid session. | PASS |
 | 11 | Peers, 49 MB then 51 MB | `peer-send` `fortynine.bin`, then `fiftyone.bin` | 49 MB: exit 0 within 468 s; 51 MB: exit 1 `attachments_too_large` with the URL hint, nothing staged | Run on 2026-10-07 (§2.6): 49 MB exit 0 in 16 s, stored on the receiver with 51380224 bytes; 51 MB exit 1 in 3.4 s, `attachments_too_large` with the URL hint, no new `composer-attachments/` entry. | PASS |
-| 12 | Older peer, small file | Pair with an instance on `main`; `peer-send` with `notes.txt` | exit 3 `send_failed`, "may be too old to receive attachments"; a text-only send still succeeds | — | NOT RUN — needs the user: pairing with an instance on `main` (§2.3). The attempt with the main instance is blocked (§2.7). |
-| 13 | Older peer, 40 MB | `peer-send` with `forty.bin` | exit 3, "refused the message size. An older instance also refuses any attachment." | — | NOT RUN — needs the user (§2.3). |
-| 14 | Older peer, 35 MB | `peer-send` with `thirtyfive.bin` | exit 3, the 400 text | — | NOT RUN — needs the user (§2.3). |
-| 15 | Old sender → new receiver, text only | From the main instance: `peer-send <A> …` without `--attach` | A stores the message; it is in A's inbox | — | BLOCKED — no pairing between this instance and the main instance (§2.7). |
-| 16 | Old sender → new receiver, PNG + PDF + text | From the main instance: `peer-send <A> … --attach shot.png --attach spec.pdf --attach notes.txt` | A accepts it; stored row has `attachments` (no `images`/`documents`) with default names `attachment-<n>.<ext>`; the review dialog lists 3 files | — | BLOCKED (§2.7). |
-| 17 | Row 16 message delivered to Codex, then to Claude | Deliver on A to a Codex session, then redeliver to a Claude session | Codex: image native, PDF and text in `attachments/`; Claude: all three native | — | BLOCKED (§2.7). |
-| 18 | Old sender, Git patch → Codex | From the main instance: `peer-send <A> … --attach fix.patch`; deliver on A to a Codex session | `fix.patch` is a file in `attachments/`; the agent reads it | — | BLOCKED (§2.7). |
+| 12 | Older peer, small file | Pair with an instance on `main`; `peer-send` with `notes.txt` | exit 3 `send_failed`, "may be too old to receive attachments"; a text-only send still succeeds | Exit 3 in 1.9 s, code `send_failed`, "The remote instance rejected the message. It may be too old to receive attachments." The main instance answered `400`. The same send without `--attach`: exit 0 in 2.0 s, `pm_f59a3b371aa1627f`, in the main instance's inbox (§2.8). | PASS |
+| 13 | Older peer, 40 MB | `peer-send` with `forty.bin` | exit 3, "refused the message size. An older instance also refuses any attachment." | Exit 3 in 8.6 s, `send_failed`, "The remote instance, or a proxy in front of it, refused the message size. An older instance also refuses any attachment." The main instance answered `413` (§2.8). | PASS |
+| 14 | Older peer, 35 MB | `peer-send` with `thirtyfive.bin` | exit 3, the 400 text | Exit 3 in 7.7 s, `send_failed`, the 400 text. The main instance answered `400` (§2.8). | PASS |
+| 15 | Old sender → new receiver, text only | From the main instance: `peer-send <A> …` without `--attach` | A stores the message; it is in A's inbox | Exit 0 in 2.3 s, `pm_db430a2cae1270d8`. A stores it `pending` with the payload key `text` only; the peer inbox lists "Row 15 text only" (§2.8). | PASS |
+| 16 | Old sender → new receiver, PNG + PDF + text | From the main instance: `peer-send <A> … --attach shot.png --attach spec.pdf --attach notes.txt` | A accepts it; stored row has `attachments` (no `images`/`documents`) with default names `attachment-<n>.<ext>`; the review dialog lists 3 files | Exit 0 in 2.0 s, `pm_c979085c35c9e424`. Payload keys `attachments`, `text`: `attachment-1.png` (525 B), `attachment-2.pdf` (2503 B), `attachment-3.txt` (22 B). The review dialog lists the same 3 files (§2.8). | PASS |
+| 17 | Row 16 message delivered to Codex, then to Claude | Deliver on A to a Codex session, then redeliver to a Claude session | Codex: image native, PDF and text in `attachments/`; Claude: all three native | Codex: entries `attachment-1.png` `mode` inline, `attachment-2.pdf` and `attachment-3.txt` `mode` file, both byte-identical in `attachments/`. Claude: all three entries `mode` inline, blocks `image`, `document`, `text`; no `attachments/` folder. Both agents described the three files (§2.8). | PASS |
+| 18 | Old sender, Git patch → Codex | From the main instance: `peer-send <A> … --attach fix.patch`; deliver on A to a Codex session | `fix.patch` is a file in `attachments/`; the agent reads it | Exit 0 in 2.0 s, `pm_3802744be3445bda`. The old sender sends no file name, so A names it `attachment-1.txt` (`text/plain`, 19 B; D16 default rule). Delivered to Codex: entry `mode` file, `attachments/attachment-1.txt` byte-identical to `fix.patch`; Codex answered `diff --git a/x b/x` (§2.8). | PASS |
 | 19 | Migration on real data (read-only) | Peer inbox of this instance: old rows copied from the main instance database | Text shown; attachment count, sizes and default names correct; purged rows say so; no error in `backend.log` | All 42 copied rows have the same text, status, resolution and session link as on the main instance. The 4 old rows with attachments (ids 13, 18, 25, 27) have `attachments_meta` rows `{name, media_type, bytes}` with default names (`attachment-1.png` … `attachment-5.png`, `attachment-1.txt`) and the same sizes and order as the old `kind` rows. No row keeps `images`, `documents` or a `kind` key. The UI shows the texts, "5 attachment(s) — bytes purged." (id 13) and "Its 1 attachment(s) were purged — a new delivery carries the text only." (id 18). No error in `backend.log`. | PASS |
 
-Totals: **11 PASS, 0 FAIL, 4 NOT RUN (9, 12–14), 4 BLOCKED (15–18)** (rows 10–11 added on 2026-10-07, §2.6; rows 15–19 added on 2026-10-07, §2.7).
+Totals: **18 PASS, 0 FAIL, 1 NOT RUN (9), 0 BLOCKED** (rows 10–11 added on 2026-10-07, §2.6; rows 15–19 added on 2026-10-07, §2.7; rows 12–18 run on 2026-10-07, §2.8).
 
 Extra observations from the run:
 
@@ -172,6 +172,62 @@ This is not a bug of this branch: the collision comes from the copied database. 
 **Browser note.** The Chrome tabs of this run were hidden (`document.visibilityState === "hidden"`): Web Awesome dialogs only opened after a page script finished the frozen Web Animations, and page timers were throttled. No effect on the results.
 
 **Cleanup.** No test file was created and no session was created for this run. The pairing does not exist, so no message was sent in either direction. No session, peer or message was deleted.
+
+### 2.8 Rows 12–18 run (main instance), 2026-10-07
+
+**Step 0 — copied peers removed from this instance's database (user decision, option 1 of §2.7).** The user authorized the deletion of any peer and any peer message in this instance's database only. The database is a disposable copy of the main instance database.
+
+- `devctl.py stop back`, port `3501` free at once.
+- Django shell with `TWICC_DATA_DIR=$PWD`. The resolved database was `/home/twidi/dev/twicc-poc/.worktrees/attach-any-files/db/data.sqlite`, and `twicc` imported from this worktree.
+- Only one model references `Peer`: `PeerMessage.peer` (`on_delete=PROTECT`). `PeerMessage.reply_to_message` is a `SET_NULL` self-FK.
+- Before: 5 peers, 46 messages. Deleted with the ORM only, in one transaction, no service and no outbound call: the 42 `PeerMessage` rows of 4 peers, then the 4 peers — `peer_c9366841` "David" (27 messages), `peer_8d3f1625` "Dimitri" (6), `peer_45a03880` "Self" (2), `peer_f52c0602` "Test instance" (7). After: 1 peer (`peer_354986b8` "QA peer B", `active`) with its 4 messages of §2.6.
+- Why not "Revoke": a revoke notifies the remote instance with the shared token and would revoke the user's real relationship on that instance.
+- `devctl.py start back`: `Uvicorn running on http://0.0.0.0:3501` at 15:28:02.
+- The rows 13, 18, 25 and 27 used by row 19 (§2.7) were among the deleted rows. Row 19 keeps its 2026-10-07 result.
+
+**Pairing.** Through the browser session of each UI, with the REST calls of Settings → Peers (`PeersManagerDialog.vue`): the dialogs of the hidden Chrome tabs did not open reliably.
+
+- Main instance: `POST /api/peers/` with name "QA attach-any-files" and `https://twicc-peer-a.twidi.com` → `201`, `peer_7e8e6311`, `pending_sent`.
+- This instance: `peer_26886ff2` `pending_received` (remote name "Twidi", address `https://twicc-peer.twidi.com`) with its verification code.
+- Main instance: `POST /api/peers/peer_7e8e6311/verify/` with the code → `200`.
+- This instance: `POST /api/peers/peer_26886ff2/accept/` with name "QA main" → `200`, `active`.
+- `twicc peers`: main knows this instance as `peer_7e8e6311` "QA attach-any-files"; this instance knows main as `peer_26886ff2` "QA main". Both `active`.
+
+**Files** in `/tmp/phase2-qa/`: `notes.txt` (22 B), `fix.patch` (19 B, `printf 'diff --git a/x b/x\n'`), `forty.bin` (40 MiB random), `thirtyfive.bin` (35 MiB random), `shot.png` (64×64 PNG, 525 B) and `spec.pdf` (one page, 2503 B, starts with `%PDF-`), both made with Pillow.
+
+**Sessions** created on this instance (project `/tmp/phase2-qa`, `twicc create-session`): "QA main rows codex" `01a1168f-ceed-7873-8e8b-8eb8921bf2b1` (Codex) and "QA main rows claude" `6e9dd9ef-0bb1-4e80-aed0-64263dfa7947` (Claude, SDK).
+
+**This instance → main (rows 12–14).** `cd /home/twidi/dev/twicc-poc/.worktrees/attach-any-files && TWICC_DATA_DIR=$PWD uv run twicc peer-send peer_26886ff2 '<title>' '<text>' --attach /tmp/phase2-qa/<file>`. The main instance `backend.log` shows each `POST /peer/messages/`.
+
+| Row | Attach | Exit | Time | Output | Main answer |
+|---|---|---|---|---|---|
+| 12 | `notes.txt` | 3 | 1.9 s | `rejected`, `send_failed`, "The remote instance rejected the message. It may be too old to receive attachments.", `message_id` `pm_aea9cccd77655a48`, `peer_id` `peer_26886ff2` | `400` |
+| 12 | none | 0 | 2.0 s | `sent`, `pm_f59a3b371aa1627f`, `peer_status` `pending` | `202` |
+| 13 | `forty.bin` | 3 | 8.6 s | `send_failed`, "The remote instance, or a proxy in front of it, refused the message size. An older instance also refuses any attachment.", `pm_9aac0e3a2819b1c8` | `413` |
+| 14 | `thirtyfive.bin` | 3 | 7.7 s | `send_failed`, the 400 text, `pm_9be6c79355522aea` | `400` |
+
+- The three refused rows are `failed` on this instance, with the error text and their `attachments_meta`.
+- The text-only message is in the main instance's inbox (`GET /api/peer-messages/?peer_id=peer_7e8e6311`: `direction` `in`, `pending`, `attachments_meta` `[]`).
+
+**Main → this instance (rows 15, 16, 18).** `cd /home/twidi/dev/twicc-poc && uv run twicc peer-send peer_7e8e6311 …` (main code, default data dir).
+
+- Row 15, text only: exit 0 in 2.3 s, `pm_db430a2cae1270d8`. Stored `pending`, payload keys `text` only. The peer inbox lists "Row 15 text only".
+- Row 16, `--attach shot.png --attach spec.pdf --attach notes.txt`: exit 0 in 2.0 s, `pm_c979085c35c9e424`. Stored payload keys `attachments`, `text` (no `images`, no `documents`): `attachment-1.png` `image/png` 525 B, `attachment-2.pdf` `application/pdf` 2503 B, `attachment-3.txt` `text/plain` 22 B; `attachments_meta` has the same three rows. The review dialog lists `attachment-1.png` (525 B), `attachment-2.pdf` (2.4 KB), `attachment-3.txt` (22 B).
+- Row 18, `--attach fix.patch`: exit 0 in 2.0 s, `pm_3802744be3445bda`. The old sender sends a document block without a file name and with `text/plain`, so this instance stores `attachment-1.txt` (`text/plain`, 19 B). This is the D16 default rule; the matrix expectation "`fix.patch`" applies to a new sender only.
+
+**Row 17 — deliveries of `pm_c979085c35c9e424`.** Peer inbox → review → "Deliver to an existing session" → "Create draft message", then Send in the composer.
+
+- "QA main rows codex": the composer held three ready chips. Stored user line: `attachment-1.png` `kind` image `mode` inline; `attachment-2.pdf` and `attachment-3.txt` `mode` file. `attachments/` held `attachment-2.pdf` and `attachment-3.txt`, both byte-identical to `spec.pdf` and `notes.txt` (`cmp`). UI: three tiles. Codex described the red "QA" image, the "Phase 2 QA PDF" page and the text file.
+- Redelivery ("This message was already delivered; delivering it again is allowed") to "QA main rows claude": stored user line with the three entries `mode` inline, content blocks `image`, `document` (base64) and `text`. No `attachments/` folder was created. UI: three tiles. Claude described the three files.
+- The main instance reports `pm_c979085c35c9e424` as `delivered`.
+
+**Row 18 — delivery of `pm_3802744be3445bda`** to "QA main rows codex": one ready chip `attachment-1.txt`. Stored user line: entry `attachment-1.txt`, `kind` text, `mode` file. `attachments/attachment-1.txt` is byte-identical to `fix.patch`. Codex read it and answered `diff --git a/x b/x`. The main instance reports the message as `delivered`.
+
+**Checks.** This instance's `backend.log` has no `ERROR`, `CRITICAL` or traceback between 15:28 and the end of the run.
+
+**Browser note.** Same hidden-tab limits as §2.7: Web Animations and `requestAnimationFrame` were frozen. The review dialog's session picker waits for a paint ("Preparing session selection…"); a screenshot of the tab released it. The dialog's controls were driven by page scripts on the same components.
+
+**Cleanup.** Test files in `/tmp/phase2-qa/` deleted (the empty folder stays: it is the project folder of the test sessions). `attachments/` of "QA main rows codex" emptied; "QA main rows claude" has none. No session deleted. The new pairing (`peer_7e8e6311` on main, `peer_26886ff2` here) and the test messages stay in place, in both inboxes. Rows 12 (text only) and 15 stay `pending` in the receiving inboxes.
 
 ## 3. Accepted limitations
 
