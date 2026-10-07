@@ -32,7 +32,7 @@ function fixture(t, isTouchDevice = true) {
     let unmount
     const { descriptor } = parse(source)
     const script = descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
-    const api = runInNewContext(`${script}\n;({setSessionTooltip, sessionPointerDown, sessionPointerEnter, sessionClick, sessionTooltipTrigger, setEntryTooltip, entryPointerDown, scopeClick, scopeSelected})`, {
+    const api = runInNewContext(`${script}\n;({setSessionTooltip, sessionPointerDown, sessionPointerEnter, sessionClick, sessionTooltipTrigger, setEntryTooltip, entryPointerDown, scopeClick, scopeSelected, handleEntryTooltipHide})`, {
         document, Map, createRailSessionLongPress,
         ref: value => ({ value }), computed: fn => ({ get value() { return fn() } }),
         defineProps: () => ({ mode: 'sessions', sidebarOpen: false }), defineEmits: () => () => {},
@@ -44,8 +44,9 @@ function fixture(t, isTouchDevice = true) {
         onTooltipDismissal: callback => { globalDismiss = callback; return () => { globalDismiss = null } },
         onBeforeUnmount: callback => { unmount = callback }, watch: (_, callback) => watchers.push(callback),
     })
-    const tooltip = { trigger: api.sessionTooltipTrigger.value, shown: 0, hidden: 0,
-        show() { this.shown++ }, hide() { this.hidden++ }, setTrigger(value) { this.trigger = value },
+    const tooltip = { trigger: api.sessionTooltipTrigger.value, shown: 0, hidden: 0, open: false,
+        show() { this.open = true; this.shown++ }, hide() { this.open = false; this.hidden++ },
+        isOpen() { return this.open }, setTrigger(value) { this.trigger = value },
         hasTrigger(value) { return this.trigger.split(' ').includes(value) } }
     tooltip.focus = runInNewContext(`(function() { ${focusBody} })`).bind(tooltip)
     api.setSessionTooltip('one', tooltip)
@@ -129,4 +130,56 @@ test('scope selected state does not mark recent entries on unrelated session rou
     const f = fixture(t)
     assert.equal(f.api.scopeSelected('project', 'one'), false)
     assert.equal(f.api.scopeSelected('workspace', 'one'), false)
+})
+
+for (const kind of ['session', 'project', 'workspace']) {
+    test(`${kind} touch holds toggle the preview without navigation and close after three seconds`, t => {
+        const f = fixture(t)
+        if (kind !== 'session') f.api.setEntryTooltip(`${kind}:one`, f.tooltip)
+        const press = () => f.api.entryPointerDown(`${kind}:one`, { pointerType: 'touch', pointerId: 1,
+            isPrimary: true, button: 0, currentTarget: { isConnected: true }, clientX: 0, clientY: 0 })
+        const click = () => {
+            const event = { detail: 1, preventDefault() {}, stopPropagation() {} }
+            if (kind === 'session') f.api.sessionClick({ id: 'one' }, event)
+            else f.api.scopeClick(kind, 'one', event)
+        }
+        press(); t.mock.timers.tick(450); click()
+        assert.equal(f.tooltip.open, true)
+        press(); t.mock.timers.tick(450); click()
+        assert.equal(f.tooltip.open, false, 'another hold closes the visible preview')
+        assert.deepEqual(f.pushed, [])
+        press(); t.mock.timers.tick(450); click()
+        t.mock.timers.tick(2999); assert.equal(f.tooltip.open, true)
+        t.mock.timers.tick(1); assert.equal(f.tooltip.open, false, 'touch preview expires')
+        assert.deepEqual(f.pushed, [])
+    })
+}
+
+test('switching from a touch preview to desktop mouse input removes automatic dismissal', t => {
+    const f = fixture(t, false)
+    f.down('touch'); t.mock.timers.tick(450)
+    f.api.sessionPointerEnter({ pointerType: 'mouse' })
+    f.tooltip.focus()
+    t.mock.timers.tick(3000)
+    assert.equal(f.tooltip.open, true)
+    assert.equal(f.tooltip.hidden, 0)
+})
+
+test('native dismissal clears the timeout without a second hide', t => {
+    const f = fixture(t)
+    f.down('touch'); t.mock.timers.tick(450)
+    f.tooltip.hide()
+    const element = {}
+    f.api.handleEntryTooltipHide('session:one', { target: element, currentTarget: element })
+    t.mock.timers.tick(3000)
+    assert.equal(f.tooltip.hidden, 1)
+})
+
+test('a nested tooltip hide does not cancel the rail preview timeout', t => {
+    const f = fixture(t)
+    f.down('touch'); t.mock.timers.tick(450)
+    f.api.handleEntryTooltipHide('session:one', { target: {}, currentTarget: {} })
+    t.mock.timers.tick(3000)
+    assert.equal(f.tooltip.hidden, 1)
+    assert.equal(f.tooltip.open, false)
 })

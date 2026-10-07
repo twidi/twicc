@@ -12,8 +12,9 @@ function fixture(trigger = 'manual', runtime = null) {
     element.trigger = trigger
     element.anchor = {}
     element.hiddenCount = 0
-    element.show = () => element.dispatchEvent(new Event('wa-show'))
+    element.show = () => { element.open = true; element.dispatchEvent(new Event('wa-show')) }
     element.hide = () => {
+        element.open = false
         element.hiddenCount++
         element.dispatchEvent(new Event('wa-after-hide'))
     }
@@ -22,7 +23,7 @@ function fixture(trigger = 'manual', runtime = null) {
     const { descriptor } = parse(source)
     const script = descriptor.script.content.replace(/export function /g, 'function ')
     const setup = descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
-    const createApi = runtime?.createApi || runInNewContext(`${script}\n(function() { ${setup}\n;return {tooltipEl, hideAllTooltips, onTooltipDismissal, show, hide, setTrigger} })`, {
+    const createApi = runtime?.createApi || runInNewContext(`${script}\n(function() { ${setup}\n;return {tooltipEl, hideAllTooltips, onTooltipDismissal, show, hide, setTrigger, isOpen: typeof isOpen === 'function' ? isOpen : undefined} })`, {
         // Native lifecycle serialization has its own integration tests.
         document, clearTimeout, Set, serializeTooltipTransitions: () => {},
         defineProps: () => ({ force: true, interactive: true }), defineExpose: () => {},
@@ -97,4 +98,15 @@ test('interactive previews share mutual exclusion across component instances', (
     first.api.show()
     assert.equal(second.element.hiddenCount, 1)
     first.cleanup(); second.cleanup()
+})
+
+test('the public visibility query follows the requested native open state', () => {
+    const f = fixture()
+    assert.equal(typeof f.api.isOpen, 'function')
+    assert.equal(f.api.isOpen(), false)
+    f.api.show(); assert.equal(f.api.isOpen(), true)
+    f.api.hide(); assert.equal(f.api.isOpen(), false)
+    f.api.tooltipEl.value = null
+    assert.equal(f.api.isOpen(), false)
+    f.cleanup()
 })

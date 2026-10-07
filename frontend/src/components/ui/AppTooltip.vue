@@ -113,13 +113,17 @@ function hide() {
     return tooltipEl.value?.hide()
 }
 
+function isOpen() {
+    return !!tooltipEl.value?.open
+}
+
 // Update synchronously before the browser sends focus or compatibility mouse events.
 function setTrigger(trigger) {
     clearPendingTimer(tooltipEl.value)
     if (tooltipEl.value) tooltipEl.value.trigger = trigger
 }
 
-defineExpose({ show, hide, setTrigger })
+defineExpose({ show, hide, isOpen, setTrigger })
 
 /**
  * wa-tooltip never cancels a pending hide when the pointer enters the tooltip:

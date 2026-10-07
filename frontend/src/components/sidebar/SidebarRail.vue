@@ -55,7 +55,11 @@ const sessionTooltipTrigger = computed(() => settingsStore.isTouchDevice || touc
 const longPress = createRailSessionLongPress({
     document,
     show: id => sessionTooltips.get(id)?.show(),
-    hide: () => { for (const tooltip of sessionTooltips.values()) tooltip.hide() },
+    isOpen: id => sessionTooltips.get(id)?.isOpen() ?? false,
+    hide: id => {
+        if (id !== undefined) sessionTooltips.get(id)?.hide()
+        else for (const tooltip of sessionTooltips.values()) tooltip.hide()
+    },
 })
 const stopDismissalWatch = onTooltipDismissal(longPress.cancel)
 
@@ -71,6 +75,10 @@ function setEntryTooltip(id, tooltip) {
     }
 }
 
+function handleEntryTooltipHide(id, event) {
+    if (event.target === event.currentTarget) longPress.clearAutoHide(id)
+}
+
 function sessionPointerDown(session, event) {
     entryPointerDown(`session:${session.id}`, event)
 }
@@ -84,6 +92,7 @@ function entryPointerDown(id, event) {
 
 function sessionPointerEnter(event) {
     if (event.pointerType !== 'mouse' || settingsStore.isTouchDevice) return
+    longPress.clearAutoHide()
     touchInput.value = false
     for (const tooltip of sessionTooltips.values()) tooltip.setTrigger('hover focus')
 }
@@ -177,6 +186,7 @@ function activate(item) {
                         :for="`sidebar-rail-session-${row.session.id}`"
                         :ref="tooltip => setSessionTooltip(row.session.id, tooltip)"
                         :trigger="sessionTooltipTrigger"
+                        @wa-hide="handleEntryTooltipHide(`session:${row.session.id}`, $event)"
                         force interactive hoist placement="right" lazy class="rail-session-tooltip"
                     >
                         <div class="rail-session-preview">
@@ -199,6 +209,7 @@ function activate(item) {
                     </button>
                     <AppTooltip :for="`sidebar-rail-project-${project.id}`"
                         :ref="tooltip => setEntryTooltip(`project:${project.id}`, tooltip)" :trigger="sessionTooltipTrigger"
+                        @wa-hide="handleEntryTooltipHide(`project:${project.id}`, $event)"
                         force interactive hoist placement="right" lazy class="rail-scope-tooltip">
                         <div class="rail-scope-preview">
                             <ProjectBadge :project-id="project.id" flag-missing-directory />
@@ -216,6 +227,7 @@ function activate(item) {
                     </button>
                     <AppTooltip :for="`sidebar-rail-workspace-${workspace.id}`"
                         :ref="tooltip => setEntryTooltip(`workspace:${workspace.id}`, tooltip)" :trigger="sessionTooltipTrigger"
+                        @wa-hide="handleEntryTooltipHide(`workspace:${workspace.id}`, $event)"
                         force interactive hoist placement="right" lazy class="rail-scope-tooltip">
                         <div class="rail-scope-preview">
                             <wa-icon name="layer-group" :style="{ color: workspace.color || undefined }" />

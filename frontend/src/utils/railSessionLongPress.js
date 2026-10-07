@@ -1,9 +1,20 @@
-/** Touch previews for rail session buttons. Native pointer scrolling stays enabled. */
-export function createRailSessionLongPress({ document, show, hide }) {
+const AUTO_HIDE_DELAY_MS = 3000
+
+/** Touch previews for rail entries. Native pointer scrolling stays enabled. */
+export function createRailSessionLongPress({ document, show, hide, isOpen }) {
     let pending = null
     let timer = null
     let suppressedClick = null
     let disposed = false
+    let autoHideTimer = null
+    let autoHideId = null
+
+    function clearAutoHide(id) {
+        if (id !== undefined && id !== autoHideId) return
+        clearTimeout(autoHideTimer)
+        autoHideTimer = null
+        autoHideId = null
+    }
 
     function clearPending() {
         clearTimeout(timer)
@@ -13,6 +24,7 @@ export function createRailSessionLongPress({ document, show, hide }) {
 
     function cancel() {
         clearPending()
+        clearAutoHide()
         hide()
     }
 
@@ -21,7 +33,10 @@ export function createRailSessionLongPress({ document, show, hide }) {
         clearPending()
         // A new deliberate press cannot be the previous hold's synthetic click.
         suppressedClick = null
-        if (event.pointerType !== 'touch') return
+        if (event.pointerType !== 'touch') {
+            clearAutoHide()
+            return
+        }
         pending = { id, source: event.currentTarget, pointerId: event.pointerId,
             x: event.clientX, y: event.clientY }
         timer = setTimeout(() => {
@@ -29,7 +44,17 @@ export function createRailSessionLongPress({ document, show, hide }) {
             clearPending()
             if (!press?.source.isConnected) return
             suppressedClick = press.id
+            clearAutoHide()
+            if (isOpen(press.id)) {
+                hide(press.id)
+                return
+            }
             show(press.id)
+            autoHideId = press.id
+            autoHideTimer = setTimeout(() => {
+                clearAutoHide()
+                hide(press.id)
+            }, AUTO_HIDE_DELAY_MS)
         }, 450)
     }
 
@@ -67,5 +92,5 @@ export function createRailSessionLongPress({ document, show, hide }) {
         for (const [type, listener] of listeners) document.removeEventListener(type, listener, { capture: true })
     }
 
-    return { start, consumeClick, cancel, dispose }
+    return { start, consumeClick, cancel, dispose, clearAutoHide }
 }
