@@ -1,7 +1,7 @@
 ---
 name: twicc-send-messages
 description: Send the SAME message (and optional attachments) to several TwiCC sessions, selected by id and/or --spawned-by/--descendants/--siblings/--annotation. Use to broadcast a steering instruction, status request, or correction to a batch (e.g. every worker in an orchestration), or for a worker to message peers with --siblings self.
-argument-hint: '[SESSION_ID...] [--message <text>] [--spawned-by X|--descendants X|--siblings X] [--annotation ...] [--attach PATH...]'
+argument-hint: '[SESSION_ID...] [--message <text>] [--spawned-by X|--descendants X|--siblings X] [--annotation ...] [--attach VALUE...]'
 ---
 
 # TwiCC Send Messages
@@ -32,7 +32,7 @@ Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never 
 ## Usage
 
 ```bash
-$TWICC send-messages [SESSION_ID...] [--message <TEXT>] [--attach PATH...] [--spawned-by X|--descendants X|--siblings X] [--annotation ...] [--wait-reply [--wait-first] [--wait-timeout N] [--no-reply-text] [--wait-background]]
+$TWICC send-messages [SESSION_ID...] [--message <TEXT>] [--attach VALUE...] [--spawned-by X|--descendants X|--siblings X] [--annotation ...] [--wait-reply [--wait-first] [--wait-timeout N] [--no-reply-text] [--wait-background]]
 ```
 
 Selection is identical to `update-sessions` (skill: `twicc-update-sessions`): a positional `SESSION_ID...` list merged (union, explicit first) with the scope filters. `self` means the current session.
@@ -40,7 +40,7 @@ Selection is identical to `update-sessions` (skill: `twicc-update-sessions`): a 
 - `SESSION_ID...` — recipients; optional if a filiation scope is given.
 - `--message TEXT` — message text, or a path to a UTF-8 file whose content is the message. **Required unless at least one `--attach` is given**: a message made only of attachments is valid. Same text for every recipient. Over `--remote` the file is read locally; prefix an absolute path with `remote:` to read it on the remote server instead. `@@/abs/path` (or `@@{/path with spaces}`) include markers are replaced by that file's content — see `--no-expand`.
 - `--no-expand` — disable `@@` include expansion. By default an `@@/abs/path`, `@@~/path` or `@@{/path with spaces}` marker in the message (or in the file it is read from) is replaced by that file's UTF-8 content, recursively (5 levels max). Inside a file, `@@./path` and `@@../path` resolve against that file's own directory (never the cwd), so only the entry point needs an absolute path; in inline text they are an error. A missing file expands to nothing — a marker alone on its line takes the whole line with it, so includes are optional; a directory, unreadable or non-UTF-8 file is an error; `@@@@` escapes a literal `@@`; the final text is capped at 500 KB. Over `--remote`, markers resolve on the client; use `@@remote:/abs/path` for a file on the remote server.
-- `--attach PATH` (repeatable) — attach a file to every message. **Validated per session against its provider** (Claude Code: PNG/JPEG/GIF/WebP/PDF/text up to 5 MB; Codex: images only), so a file one provider rejects yields a per-id `validation_error` while the others still receive it. Local path or a `data:<mime>;base64,...` URI for remote/API callers. Over `--remote`, prefix an absolute path with `remote:` to read it on the remote server instead.
+- `--attach VALUE` (repeatable) — attach a file of any type to every message; one copy is staged per recipient, and no provider refuses a file. `VALUE` is a local path, a base64 data URI `data:<mime>;name=<percent-encoded file name>;base64,<data>` (`name=` optional), or, over `--remote`, `remote:<absolute path>` for a file on the remote server. Inline data (data URIs, and local files sent over `--remote`) is limited to 50 MB in total per command; a file read from disk has no limit. On a local command line, Linux caps one argument at 128 KiB, so pass a larger local file by its path, not as a data URI. For a larger file, put it on a file storage service and pass its URL in the message text, or pass a path the server reads: `remote:<absolute path>` over `--remote`, an absolute server path over MCP.
 - `--spawned-by <ID|self>` / `--descendants <ID|self>` — also target children / proper descendants. `parent` is **not** supported (use `send-message parent`). Mutually exclusive.
 - `--siblings <ID|self>` — also target the siblings of the given session: the *other* sessions spawned by the same parent, **reference always excluded**. `self` broadcasts to your peers (the canonical worker → worker channel). `parent` is **not** supported. Mutually exclusive with `--spawned-by` / `--descendants`. Note `--spawned-by parent` (the same set but including yourself) is **not** available here, so `--siblings self` is the way to reach your peers from this command.
 - `--annotation KEY[OP]VALUE` — narrow the filiation scope by annotation; repeatable, AND-combined; requires a filiation scope; does not filter explicit ids. Same syntax as `twicc sessions --annotation` (skill: `twicc-sessions`).
@@ -69,9 +69,11 @@ So there is no need to check the recipients' states before sending.
 
 Argument-level problems fail the whole command (exit 1, plain-text on stderr): empty/unreadable `--message`, neither `--message` nor `--attach`, bad `--timeout`, two of `--spawned-by`/`--descendants`/`--siblings` together, `parent` scope (on `--spawned-by`/`--descendants`, or any value on `--siblings`), `--annotation` without a filiation scope, neither ids nor scope.
 
+A bad `--attach` value fails the whole command too, before any recipient, as one JSON `validation_error` (exit 1): `not_a_file`, `relative_path`, `remote_requires_remote`, `invalid_data_uri`, or `attachments_too_large` (more than 50 MB of inline data; the message says what to do instead: a file storage service URL in the text, or a path the server reads).
+
 Local (exit 1), before anything is sent: `requires_wait_reply` (a wait modifier without `--wait-reply`) and `invalid_value` (`--wait-timeout` not > 0).
 
-Per-session problems never fail the batch — reported in `results[<id>]` with `status` `validation_error` (local lookup: `session_not_found`, `is_subagent`, `session_stale`, `project_no_directory`; or an attachment its provider rejects) or `rejected` (server: `awaiting_user_input` — the session has a pending UI dialog a CLI message can't unblock; `manager_busy` — transient, retry; `provider_disabled`). Same vocabulary as `twicc-send-message`.
+Per-session problems never fail the batch — reported in `results[<id>]` with `status` `validation_error` (local lookup: `session_not_found`, `is_subagent`, `session_stale`, `project_no_directory`; or `attachment_stage_failed`, the copy of the files for that recipient failed) or `rejected` (server: `awaiting_user_input` — the session has a pending UI dialog a CLI message can't unblock; `manager_busy` — transient, retry; `provider_disabled`; `attachment_missing` / `attachment_not_ready` / `attachment_commit_failed` — send again; `attachments_with_command` — files cannot ride a command; `invalid_attachments` — older `twicc` CLI; update it). Same vocabulary as `twicc-send-message`. A per-id `timeout` (or exit `7` over `--remote`) does not prove the send failed: read that session before sending again.
 
 ## Output format
 
@@ -96,6 +98,7 @@ Per-id `status`: `sent`, `rejected`, `failed`, `timeout`, or `validation_error`.
 - `1` — local argument error
 - `2` — TwiCC server not running, or bad CLI usage (unknown option, missing argument; the error message tells them apart)
 - `6` — resolved set was non-empty but no message was sent
+- `7` — `--remote` only: transport failure (unreachable, rejected token, timeout); the messages may still get delivered.
 
 ## Examples
 

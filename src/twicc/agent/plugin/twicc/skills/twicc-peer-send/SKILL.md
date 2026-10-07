@@ -42,8 +42,12 @@ $TWICC peer-send [OPTIONS] '<PEER>' '<TITLE>' '<PROMPT>'
 ### Options
 
 - `--reply-to MESSAGE_ID` — answer a message of this peer; copy the id from the "Message id" line of the delivered peer message. The id is case-sensitive and can name an inbound or outbound message in any status.
-- `--attach PATH` (repeatable) — attach a file: PNG, JPEG, GIF, WebP, PDF, text/plain; 5 MB per file, 100 files / 32 MB per batch. Local path or base64 data URI.
-- `--timeout SECONDS` — seconds to wait for the server's response (default 30).
+- `--attach VALUE` (repeatable) — attach a file of any type: a local path, a base64 data URI `data:<mime>;name=<percent-encoded file name>;base64,<data>` (`name=` optional), or, over `--remote`, `remote:<absolute path>`. The receiver gets each file with its name, in order. Every file travels inline to the peer, paths included, so all files together are limited to 50 MB in total per message. On a local command line, Linux caps one argument at 128 KiB, so pass a larger local file by its path, not as a data URI. For a larger file, put it on a file storage service and pass its URL in the message text.
+- `--timeout SECONDS` — seconds to wait for the server's response: 30 by default, 468 when the message carries files (a 50 MB send can take about 5 minutes).
+
+### Sending files
+
+Prefer the MCP `peer_send` tool, with one message with large files per tool call: a tool call times out after 10 minutes. From a shell, give the call a timeout above 8 minutes.
 
 ## Errors
 
@@ -55,21 +59,31 @@ $TWICC peer-send [OPTIONS] '<PEER>' '<TITLE>' '<PROMPT>'
 - Invalid title — empty, or over 100 characters (`empty_title` / `title_too_long`); rewrite it shorter, it is never truncated for you.
 - `invalid_reply_to` — the reply id does not match the peer-message identifier grammar.
 - `unknown_reply_to` — no message with this id exists for the selected peer.
+- `not_a_file` / `relative_path` / `remote_requires_remote` / `invalid_data_uri` — a bad `--attach` value.
+- `attachments_too_large` — more than 50 MB of files in total; put a larger file on a file storage service and pass its URL in the message text.
+- `attachment_stage_failed` — the copy of a file failed (disk full, permission).
 
 ### Server (exit 3)
 
 - `not_found` / `peer_broken` / `not_active` — same conditions, re-checked server-side.
 - `invalid_reply_to` / `unknown_reply_to` — the reply id is malformed or does not exist for this peer, re-checked server-side.
-- `unreachable` — the peer instance could not be reached over the network.
-- `send_failed` — the peer answered with an error.
+- `attachments_too_large` / `message_too_large` — the files (50 MB) or the whole encoded message (72 MB) are too large; put a larger file on a file storage service and pass its URL in the message text.
+- `invalid_message_id` — the message id is malformed or already used for this peer.
+- `attachment_missing` / `attachment_not_ready` — a staged file vanished; send again.
+- `invalid_attachments` — the request came from an older `twicc` CLI; update it.
+- `unreachable` — the peer instance could not be reached, or did not answer in time; a large message may still have been stored.
+- `send_failed` — the peer answered with an error. An older peer refuses files: its user must update TwiCC.
 
 Every server-side failure surfaces as `rejected` (exit 3); the distinction is in the error `code`.
+
+**Exit 5, exit 4, and exit 3 with `unreachable` or `send_failed` do not prove that the message was not sent.** Every output of a submitted send (exit 0, 3, 4, 5) carries the `message_id`: run `$TWICC peer-message <message_id>` before you send again. If the TwiCC backend restarts during a send, the message stays `pending`, and that status does not prove the send completed. Exit 7 (`--remote`), or a CLI killed by its shell, gives no id: check the Peers outbox in the TwiCC UI, or report to your user; never send again blindly.
 
 ## Output format
 
 ```json
 {"status": "sent", "message_id": "pm_1a2b3c4d5e6f7a8b", "peer_id": "peer_a1b2c3d4", "peer_status": "pending", "request_uuid": "..."}
-{"status": "rejected", "errors": [{"field": "peer", "code": "peer_broken", "message": "..."}], "request_uuid": "..."}
+{"status": "rejected", "errors": [{"field": "peer", "code": "unreachable", "message": "..."}], "request_uuid": "...", "message_id": "pm_1a2b3c4d5e6f7a8b", "peer_id": "peer_a1b2c3d4"}
+{"status": "timeout", "received_seen": true, "message": "...", "request_uuid": "...", "message_id": "pm_1a2b3c4d5e6f7a8b", "peer_id": "peer_a1b2c3d4"}
 ```
 
 `peer_status` is the remote delivery state: it stays `pending` until the remote user delivers the message to an agent (`delivered`), deals with it themselves (`done`), or refuses it (`refused`).
@@ -82,12 +96,14 @@ Every server-side failure surfaces as `rejected` (exit 3); the distinction is in
 - `3` — Server rejected
 - `4` — Server error
 - `5` — Timeout
+- `7` — `--remote` only: transport failure; the message may still have been sent (see above).
 
 ## Examples
 
 ```bash
 $TWICC peer-send David 'TwiCC: /peer API landed' 'Recap from Stephane'\''s instance, project TwiCC: the /peer API landed today; endpoints are documented in docs/plans/. Nothing needed on your side yet.'
 $TWICC peer-send peer_a1b2c3d4 --attach /tmp/front-screenshot.png 'Layout bug screenshot' 'Screenshot of the layout bug we discussed — top bar overlaps at <1200px.'
+$TWICC peer-send David --attach /home/twidi/fix.patch 'Patch for the login bug' 'The attached patch fixes the login redirect; apply it with git am.'
 $TWICC peer-send David --reply-to pm_1a2b3c4d5e6f7a8b 'Follow-up on the API recap' 'One correction to the recap: the endpoint now returns 202.'
 # → {"status":"sent","message_id":"pm_...","peer_id":"peer_a1b2c3d4","peer_status":"pending",...}
 ```

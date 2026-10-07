@@ -32,6 +32,15 @@ An external client is not a TwiCC session. It cannot use `whoami`, `self`, or
 where the tool needs a session. Session-relative operations require that
 context; they cannot infer it from the external connection.
 
+### Attachments
+
+An external client attaches a file of its own machine with a base64 data URI in
+`attach`: `data:<mime>;name=<percent-encoded file name>;base64,<data>`. `name=`
+keeps the file name. Inline data is limited to 50 MiB per command. For a larger
+file, put it on a file storage service and pass its URL in the message text, or
+pass an absolute path to a file that is already on the TwiCC host. A peer message
+sends every file inline, so only the URL works there.
+
 ### Before connecting
 
 Start TwiCC with a password. External MCP cannot be enabled without one.
@@ -222,7 +231,7 @@ Nested batches are not supported.
 A batch accepts up to 20 commands. Both MCP connections share a limit of four
 active batches and eight active batch commands across the instance. Extra batches
 receive `server_busy`. Individual tools remain outside this batch admission limit.
-The complete request retains the existing 48 MiB limit, including attachments.
+The complete request is limited to 72 MiB, including attachments; each command accepts at most 50 MiB of inline attachment data (see Attachments above for a larger file).
 Command responses over 384 KiB are explicitly omitted. The combined tool result,
 including text and structured data, stays below 16 MiB. Clients can have smaller limits.
 

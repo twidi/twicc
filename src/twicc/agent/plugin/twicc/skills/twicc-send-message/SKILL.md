@@ -40,9 +40,9 @@ $TWICC send-message [OPTIONS] '<SESSION_ID|parent>' ['<PROMPT>']
 
 ### Options
 
-- `--attach PATH` (repeatable) — attach a file. Accepted types (sniffed by magic bytes): Claude Code: PNG, JPEG, GIF, WebP, PDF, text/plain; Codex: images only. Per-file cap: 5 MB. Per-batch cap: 100 files, 32 MB. Images are auto-resized to the provider/model's long-edge cap. Over `--remote`, prefix an absolute path with `remote:` to read it on the remote server instead.
+- `--attach VALUE` (repeatable) — attach a file of any type. `VALUE` is a local path, a base64 data URI `data:<mime>;name=<percent-encoded file name>;base64,<data>` (`name=` is optional; without it the file is named `attachment-<n>.<ext>`), or, over `--remote`, `remote:<absolute path>` for a file on the remote server. TwiCC decides per file how the agent gets it: natively (images; PDF and text on Claude Code) or as a file in the session's `attachments/` artifacts folder. Inline data (data URIs, and local files sent over `--remote`) is limited to 50 MB in total per command; a file read from disk has no limit. On a local command line, Linux caps one argument at 128 KiB, so pass a larger local file by its path, not as a data URI. For a larger file, put it on a file storage service and pass its URL in the message text, or pass a path the server reads: `remote:<absolute path>` over `--remote`, an absolute server path over MCP.
 - `--no-expand` — disable `@@` include expansion. By default an `@@/abs/path`, `@@~/path` or `@@{/path with spaces}` marker in the message (or in the file it is read from) is replaced by that file's UTF-8 content, recursively (5 levels max). Inside a file, `@@./path` and `@@../path` resolve against that file's own directory (never the cwd), so only the entry point needs an absolute path; in inline text they are an error. A missing file expands to nothing — a marker alone on its line takes the whole line with it, so includes are optional; a directory, unreadable or non-UTF-8 file is an error; `@@@@` escapes a literal `@@`; the final text is capped at 500 KB. Over `--remote`, markers resolve on the client; use `@@remote:/abs/path` for a file on the remote server.
-- `--timeout SECONDS` — seconds to wait for the server's response (default 30). If the CLI times out, the message may still get delivered.
+- `--timeout SECONDS` — seconds to wait for the server's response (default 30). A send waits in the session's queue behind any send in progress. If the CLI times out (exit `5`, or exit `7` over `--remote`), the message may still get delivered: read the session (`$TWICC session <ID> messages --tail 1`) before sending again.
 - `--wait-reply` — keep going after delivery, until the session answers. See **Following up** below.
 - `--wait-timeout N` — caps that wait, whatever ends it. Default **300 s**, which is the ceiling MCP callers are asked to respect — and an MCP client may itself give up on a tool silent that long, so over MCP pass a shorter value and come back rather than riding the default to its end. There is no way to disable it. Requires `--wait-reply`.
 - `--no-reply-text` — report that the answer arrived without returning its text. Requires `--wait-reply`.
@@ -74,6 +74,9 @@ The message is delivered immediately. The recipient picks it up based on its cur
 - `missing_prompt` — no `PROMPT` and no `--attach`: the message would be empty.
 - `requires_wait_reply` — `--wait-timeout`, `--no-reply-text` or `--wait-background` passed without `--wait-reply`.
 - `invalid_value` — `--wait-timeout` is not > 0.
+- `not_a_file` / `relative_path` / `remote_requires_remote` / `invalid_data_uri` — a bad `--attach` value: a missing file or a directory, a relative path over MCP or the RPC, `remote:` without `--remote`, a malformed data URI.
+- `attachments_too_large` — more than 50 MB of inline data; the message says what to do instead.
+- `attachment_stage_failed` — the copy of a file failed (disk full, permission).
 
 ### Server (exit 3)
 
@@ -84,6 +87,9 @@ The message is delivered immediately. The recipient picks it up based on its cur
 - `session_stale`
 - `project_no_directory`
 - `manager_busy` — transient; retry.
+- `attachment_missing` / `attachment_not_ready` / `attachment_commit_failed` — a file could not be delivered; send again.
+- `attachments_with_command` — files cannot ride a command: a message starting with `/` or `!` to a hybrid session, or a Codex built-in command.
+- `invalid_attachments` — the request came from an older `twicc` CLI; update it.
 
 ## Output format
 
@@ -105,6 +111,7 @@ The message is delivered immediately. The recipient picks it up based on its cur
 - `3` — Server rejected
 - `4` — Server error
 - `5` — Timeout
+- `7` — `--remote` only: transport failure (unreachable, rejected token, timeout); the message may still get delivered.
 
 ## Examples
 

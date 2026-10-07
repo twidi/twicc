@@ -43,7 +43,7 @@ $TWICC create-session [OPTIONS] '<PROMPT>'
   - A missing file expands to nothing — a marker alone on its line takes the whole line with it, so includes are optional. A directory, unreadable or non-UTF-8 file is an error.
   - `@@@@` escapes a literal `@@`. The final text is capped at 500 KB.
   - Over `--remote`, markers resolve on the client; use `@@remote:/abs/path` for a file on the remote server.
-- `--timeout SECONDS` — seconds to wait for the server's response (default 30). If the CLI times out, the session may still get created.
+- `--timeout SECONDS` — seconds to wait for the server's response (default 30). If the CLI times out (exit `5`, or exit `7` over `--remote`), the session may still get created: check `$TWICC sessions --limit 5` before creating it again.
 
 ## Output format
 
@@ -66,6 +66,7 @@ The `reply` block comes only with `--wait-reply` (file: `wait-reply.md`). A `cre
 - `3` — server rejected
 - `4` — server error
 - `5` — timeout
+- `7` — `--remote` only: transport failure (unreachable, rejected token, timeout); the session may still get created.
 
 ## Errors
 

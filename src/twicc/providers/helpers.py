@@ -97,14 +97,14 @@ class IndexableMessage(NamedTuple):
 
 
 class AttachmentPolicy(NamedTuple):
-    """Native delivery policy of web composer attachments, per provider.
+    """Native delivery policy of attachments, per provider, for every entry point.
 
     Kinds use the planner's literal strings (``image``, ``PDF``, ``text``, …). Every
     other kind, and a native kind over its limit, is delivered as a file. Quotas are
     per message: native items (images, PDFs and texts together), and a volume budget
     measured as base64 length for binary data and UTF-8 length for text. A ``None``
-    byte limit means no limit. The legacy ``ATTACHMENT_SUPPORT`` keeps governing the
-    CLI / MCP / peer attachment paths.
+    byte limit means no limit. Every entry point plans with it (web composer, CLI, RPC,
+    MCP); a peer message is planned by the receiving composer at delivery.
     Design: docs/plans/2026-10-03-composer-attachments-any-file-design.md §6.3.
     """
     native_kinds: frozenset[str]
@@ -764,7 +764,7 @@ class BaseProviderHelpers:
         raise NotImplementedError
 
     def get_attachment_policy(self) -> AttachmentPolicy:
-        """Return the native-delivery policy of web composer attachments for this provider."""
+        """Return the native-delivery policy of attachments for this provider."""
         raise NotImplementedError
 
     def get_effective_image_dimension(

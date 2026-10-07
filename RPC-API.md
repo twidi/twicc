@@ -77,15 +77,23 @@ its id instead of its path.)
 
 ### Attachments: absolute server path or base64 data URI
 
-`--attach` accepts either an absolute path to a file **on the server**, or an
-inline base64 data URI when the file only exists on the client:
+`attach` (the CLI's `--attach`) accepts any file type, as either an absolute path to
+a file **on the server**, or an inline base64 data URI when the file only exists on
+the client:
 
 ```
-data:<media-type>;base64,<base64-payload>
+data:<media-type>;name=<percent-encoded file name>;base64,<base64-payload>
 ```
 
-Only the `;base64,` form is supported. This is what lets a remote caller attach
-a file that isn't present on the server's filesystem.
+`name=` is optional and keeps the file name; without it the file is named
+`attachment-<n>.<ext>`. Only the `base64` form is supported.
+
+Inline data (the data URIs of one call) is limited to **50 MB** in total, and the
+request body to **72 MB**; a larger body gets `413`. A file read from a server path
+has no limit. For a larger file, put it on a file storage service and pass its URL
+in the message text, or copy it to the server and pass its absolute path.
+`peer-send` sends every file inline to the peer, server paths included: its 50 MB
+covers all its files.
 
 ### Blocking waits can be cut short — mind the timeouts
 
@@ -101,6 +109,13 @@ wait. Over HTTP this means:
   wait that would otherwise have succeeded;
 - any **intermediate proxy** (or the remote server itself) can drop a connection it
   considers idle before `--wait-timeout` is reached, interrupting the wait.
+
+A send (`send-message`, `send-messages`, `create-session`, `peer-send`) holds the
+response until its final status, up to its `--timeout`: it may wait in the
+session's queue behind another send, and a `peer-send` with files waits up to
+468 s by default. A client-side timeout (exit `7` for `--remote`) or an exit `5`
+does not prove that the send failed: check the session (for `peer-send`, the
+Peers outbox in the UI) before sending again.
 
 Keep `--wait-timeout` modest and resume from the returned cursor, or raise the
 relevant client/proxy idle limits.
@@ -134,8 +149,10 @@ response) prints `twicc: remote error…` to stderr and exits with a reserved co
 Remote-specific behavior (the same limitations as above, from the client side):
 
 - **`--attach <local file>`** is read on the client and inlined as a base64
-  `data:` URI, so a local — even relative — path works without the file existing
-  on the server.
+  `data:` URI with `name=<file name>`, so a local — even relative — path works
+  without the file existing on the server. More than 50 MB of inline data, or a
+  body above 72 MB, is refused before any HTTP call (exit `2`); the error says
+  what to do instead (see "Attachments" above).
 - **`remote:` scheme** — the inverse of inlining: to point at a file that already
   lives on the **server**, prefix an **absolute** server path with `remote:` (e.g.
   `remote:/srv/data/audit.md`). The forwarder strips the scheme and sends the bare
