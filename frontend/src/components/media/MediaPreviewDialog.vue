@@ -1,7 +1,7 @@
 <script setup>
-// MediaPreviewDialog.vue - Full-size preview dialog for media items (images, text, PDF).
+// MediaPreviewDialog.vue - Full-size preview dialog for images, with pan/zoom.
 // Supports prev/next navigation via arrow keys and buttons.
-// Accepts a normalized MediaItem[] format shared by both draft attachments and conversation messages.
+// Items: `{ type: 'image', src, name?, link? }` (see composables/useMediaPreview.js).
 import { ref, computed, watch, onBeforeUnmount, useId } from 'vue'
 import AppTooltip from '../ui/AppTooltip.vue'
 import { usePanZoom } from '../../composables/usePanZoom'
@@ -10,14 +10,10 @@ const props = defineProps({
     items: {
         type: Array,
         default: () => []
-    },
-    removable: {
-        type: Boolean,
-        default: false
     }
 })
 
-const emit = defineEmits(['remove', 'close'])
+const emit = defineEmits(['close'])
 
 const dialogRef = ref(null)
 const currentIndex = ref(0)
@@ -46,13 +42,7 @@ const dialogTitle = computed(() => {
     const item = currentItem.value
     if (!item) return 'Preview'
 
-    let name = item.name
-    if (!name) {
-        if (item.type === 'image') name = 'Image'
-        else if (item.type === 'pdf') name = 'PDF'
-        else if (item.type === 'txt') name = 'Text'
-        else name = 'Preview'
-    }
+    const name = item.name || (item.type === 'image' ? 'Image' : 'Preview')
 
     if (hasNavigation.value) {
         return `${name} (${currentIndex.value + 1}/${props.items.length})`
@@ -79,32 +69,6 @@ function next() {
 }
 
 /**
- * Remove the current item.
- * Emits 'remove' with the current index so the parent can handle deletion.
- * If this was the last item, close the dialog.
- * If we were at the end, move back one position.
- */
-function removeCurrent() {
-    if (!props.removable || props.items.length === 0) return
-
-    const index = currentIndex.value
-
-    // If this is the last remaining item, close the dialog
-    if (props.items.length === 1) {
-        emit('remove', index)
-        close()
-        return
-    }
-
-    // If we're at the last position, move back so we don't overshoot
-    if (currentIndex.value >= props.items.length - 1) {
-        currentIndex.value = props.items.length - 2
-    }
-
-    emit('remove', index)
-}
-
-/**
  * Handle keyboard navigation.
  */
 function onKeyDown(event) {
@@ -120,11 +84,6 @@ function onKeyDown(event) {
     } else if (event.key === 'End') {
         event.preventDefault()
         currentIndex.value = props.items.length - 1
-    } else if (event.key === 'Delete' || event.key === 'Backspace') {
-        if (props.removable) {
-            event.preventDefault()
-            removeCurrent()
-        }
     }
 }
 
@@ -156,7 +115,9 @@ function close() {
  * Cleans up the document-level keydown listener and notifies the parent so
  * external state (e.g. the useMediaPreview singleton) can sync.
  */
-function onWaHide() {
+function onWaHide(event) {
+    // A nested tooltip's own wa-hide bubbles up to here: not a dialog close.
+    if (event && event.target !== dialogRef.value) return
     document.removeEventListener('keydown', onKeyDown)
     emit('close')
 }
@@ -222,21 +183,6 @@ defineExpose({ open, close })
                 />
             </div>
 
-            <!-- Text preview -->
-            <pre
-                v-else-if="currentItem?.type === 'txt' && currentItem.textContent"
-                class="preview-text"
-            >{{ currentItem.textContent }}</pre>
-
-            <!-- PDF placeholder -->
-            <div
-                v-else-if="currentItem?.type === 'pdf'"
-                class="preview-placeholder"
-            >
-                <wa-icon name="file-pdf" style="font-size: 3rem;"></wa-icon>
-                <span>PDF preview not yet supported</span>
-            </div>
-
             <!-- Next button -->
             <button
                 v-if="hasNavigation"
@@ -263,27 +209,13 @@ defineExpose({ open, close })
             <wa-icon name="arrow-up-right-from-square" slot="start"></wa-icon>
             Open link
         </wa-button>
-
-        <!-- Remove button in footer -->
-        <wa-button
-            v-if="removable"
-            slot="footer"
-            variant="danger"
-            appearance="outlined"
-            size="small"
-            @click="removeCurrent"
-        >
-            <wa-icon name="trash" slot="start"></wa-icon>
-            Remove
-        </wa-button>
     </wa-dialog>
 </template>
 
 <style scoped>
 /*
  * Dialog sizing strategy:
- * - For text/PDF previews the panel uses fit-content so it wraps tightly
- *   around the content.
+ * - Without an image (no item yet) the panel uses fit-content.
  * - For images (.is-image) the preview-content becomes a large, fixed "stage"
  *   sized to a generous fraction of the viewport, decoupled from the image's
  *   natural size. This is what makes zoom usable on small images: a tiny image
@@ -347,30 +279,6 @@ defineExpose({ open, close })
     max-height: 100%;
     object-fit: contain;
     touch-action: none;
-}
-
-.preview-text {
-    margin: 0;
-    padding: var(--wa-space-m);
-    font-family: var(--wa-font-family-code);
-    font-size: var(--wa-font-size-s);
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    background: var(--wa-color-surface-secondary);
-    min-width: 300px;
-    max-width: calc(90vw - 2rem);
-    max-height: calc(90dvh - 100px);
-    overflow: auto;
-}
-
-.preview-placeholder {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--wa-space-m);
-    padding: var(--wa-space-xl);
-    color: var(--wa-color-text-quiet);
-    font-style: italic;
 }
 
 /* Navigation buttons - overlaid on content edges */

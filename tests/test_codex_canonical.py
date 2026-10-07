@@ -306,3 +306,51 @@ def test_compute_strips_message_text_content():
     analysis = compute.analyze_content(record, session_id="thread-1", tool_use_map={})
     assert analysis.has_visible_content is True
     assert analysis.text_content == "hello"
+
+
+def _file_entry(n: int, name: str) -> dict:
+    return {"n": n, "name": name, "kind": "video", "rank": 1, "of": 1, "mode": "file", "artifact_name": name}
+
+
+def test_extracted_attachments_make_a_text_less_user_message_visible():
+    record = _completed({"type": "UserMessage", "id": "u1", "content": []})
+    record["twicc_attachments"] = {"owner": "thread-1", "entries": [_file_entry(1, "movie.mp4")]}
+
+    assert user_message_text(record) is None
+    assert user_message_is_visible(record) is True
+    assert user_message_attachment_count(record) == 1
+    assert CodexSessionCompute().compute_item_kind(record) == ItemKind.USER_MESSAGE
+
+
+def test_extracted_attachments_count_every_manifest_entry_not_only_images():
+    record = _completed({
+        "type": "UserMessage",
+        "id": "u1",
+        "content": [{"type": "image", "image_url": "data:image/png;base64,AA"}, {"type": "text", "text": "hi"}],
+    })
+    record["twicc_attachments"] = {
+        "owner": "thread-1",
+        "entries": [
+            {"n": 1, "name": "a.png", "kind": "image", "rank": 1, "of": 1, "mode": "inline", "artifact_name": None},
+            _file_entry(2, "movie.mp4"),
+        ],
+    }
+
+    assert user_message_text(record) == "hi"
+    assert user_message_attachment_count(record) == 2
+
+
+def test_empty_extracted_attachments_do_not_make_a_message_visible():
+    record = _completed({"type": "UserMessage", "id": "u1", "content": []})
+    record["twicc_attachments"] = {"owner": "thread-1", "entries": []}
+
+    assert user_message_is_visible(record) is False
+    assert user_message_attachment_count(record) == 0
+
+
+def test_extracted_attachments_on_another_record_count_nothing():
+    record = _completed({"type": "AgentMessage", "id": "a1", "content": []})
+    record["twicc_attachments"] = {"owner": "thread-1", "entries": [_file_entry(1, "movie.mp4")]}
+
+    assert user_message_is_visible(record) is False
+    assert user_message_attachment_count(record) == 0

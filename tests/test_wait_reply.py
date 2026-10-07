@@ -982,7 +982,7 @@ def test_the_remote_read_timeout_outlasts_the_wait():
     waiting = read_timeout(timeout=30, wait_reply=True, wait_timeout=None)
     explicit = read_timeout(timeout=30, wait_reply=True, wait_timeout=900)
 
-    assert plain == _remote._DEFAULT_TIMEOUT
+    assert plain == 30 + _remote._WAIT_TIMEOUT_MARGIN
     assert waiting > _remote._DEFAULT_WAIT_TIMEOUT
     assert explicit > 900
 
@@ -1083,7 +1083,7 @@ def _run_send_message(monkeypatch, status_data: dict, *,
     """Drive ``send_message_cmd --wait-reply`` over a stubbed transport.
 
     Everything the command does before the send is real (prompt resolution,
-    attachment validation, the settings lookup on the row); only the two
+    the ``--attach`` resolution) except the stubbed session lookup; only the two
     process boundaries are cut — the drop-request round trip, and the wait
     loop, which is replaced by a probe returning the arguments it received.
     """

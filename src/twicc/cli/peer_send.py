@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import typer
 
+from twicc.cli._drop_request.help_strings import PEER_ATTACH_HELP, PEER_TIMEOUT_HELP
+
+# The wait of a message without files; a message with files waits PEER_SEND_TIMEOUT_WITH_FILES.
+PEER_SEND_DEFAULT_TIMEOUT = 30
+
 
 def peer_send_cmd(
     peer: str = typer.Argument(
@@ -34,25 +39,8 @@ def peer_send_cmd(
             "header of a delivered peer message."
         ),
     ),
-    attach: list[str] = typer.Option(
-        [],
-        "--attach",
-        help=(
-            "Path to a file to attach (repeatable): PNG/JPEG/GIF/WebP/PDF/"
-            "text/plain up to 5 MB each, max 100 files, 32 MB total. Each "
-            "value is either a local file path OR a base64 data URI "
-            "(data:<mime>;base64,<data>)."
-        ),
-    ),
-    timeout: int = typer.Option(
-        30,
-        "--timeout",
-        help=(
-            "Seconds to wait for the server's final status before giving up. "
-            "The request is not cancelled; the message may still be sent on "
-            "the server side."
-        ),
-    ),
+    attach: list[str] = typer.Option([], "--attach", help=PEER_ATTACH_HELP),
+    timeout: int | None = typer.Option(None, "--timeout", help=PEER_TIMEOUT_HELP),
 ) -> None:
     """Send a titled message to a peer TwiCC instance.
 
@@ -61,6 +49,10 @@ def peer_send_cmd(
     approval: the returned peer_status stays "pending" until they deliver it
     to an agent, mark it done (dealt with themselves), or refuse it. Re-check
     later with "twicc peer-message <MESSAGE_ID>".
+
+    Files travel inline to the peer: send one message with large files per
+    tool call. A 50 MB send can take minutes, and a tool call times out after
+    10 minutes.
     """
     # Lazy imports to keep --help fast (no Django setup until we need it).
     import os
@@ -68,21 +60,17 @@ def peer_send_cmd(
     import django
     django.setup()
 
-    from twicc.cli._drop_request import transport
-    from twicc.cli._drop_request.attachments import (
-        AttachmentResizeError,
-        validate_and_encode,
-    )
+    from twicc.cli._drop_request import attach_sources, transport
     from twicc.cli._drop_request.discovery import ServerDownError
-    from twicc.cli._drop_request.output import emit_final, emit_validation_errors
+    from twicc.cli._drop_request.output import build_final, emit_validation_errors
     from twicc.cli._drop_request.prompt import PromptError, resolve_prompt
     from twicc.cli._drop_request.validation import ValidationError
     from twicc.cli._drop_request.whoami import resolve_current_session
-    from twicc.cli._output import emit_error
+    from twicc.cli._output import emit_error, emit_json
     from twicc.core.models import Peer, PeerMessage, PeerState
+    from twicc.core.services.attachments.inline import PEER_SEND_TIMEOUT_WITH_FILES, PEER_TOO_LARGE_HINT
     from twicc.core.services.peer_messages import validate_reply_to, validate_title
-    from twicc.core.services.peer_tokens import peer_credentials_are_active
-    from twicc.providers.helpers import get_provider_helpers
+    from twicc.core.services.peer_tokens import mint_message_id, peer_credentials_are_active
 
     try:
         transport.ensure_server_available()
@@ -146,49 +134,54 @@ def peer_send_cmd(
         emit_validation_errors([ValidationError("PROMPT", "invalid_prompt", str(e))])
         raise typer.Exit(1)
 
-    # Attachment validation: peer-send has no target session/provider — the
-    # peer wire format reuses the provider-common SDK block shape, and the
-    # size/count caps are identical across providers, so claude_code's helpers
-    # (the wider mime/document acceptance) stand in. ``helpers_obj`` must be
-    # the ClaudeCodeHelpers INSTANCE (validate_and_encode calls its
-    # get_effective_image_dimension method); model=None resolves to the
-    # default image dimension.
-    helpers_obj = get_provider_helpers("claude_code")
-    support = helpers_obj.get_attachment_support()
-
-    errors: list[ValidationError] = []
-    try:
-        attach_result = validate_and_encode(attach or [], support, helpers_obj, None)
-    except AttachmentResizeError as e:
-        emit_validation_errors([ValidationError(f"--attach {e.path}", "resize_failed", e.message)])
-        raise typer.Exit(1)
-    for err in attach_result.errors:
-        errors.append(ValidationError(f"--attach {err.file}", err.code, err.message))
-    if errors:
-        emit_validation_errors(errors)
+    # Every file travels inline on the peer wire, paths included: all count toward the
+    # 50 MB limit, checked before anything is copied.
+    sources, attach_errors = attach_sources.resolve(attach or [], hint=PEER_TOO_LARGE_HINT, count_paths=True)
+    if attach_errors:
+        emit_validation_errors(attach_errors)
         raise typer.Exit(1)
 
-    # Origin: best-effort identity of the calling session — the MCP dispatcher
-    # sets the forced_session_id ContextVar on every tool call, and a real CLI
-    # subprocess resolves via PID ancestry. Without it the wire session_title
-    # is simply null.
+    # Minted here, so every output of a submitted send can name the message, a timeout included.
+    message_id = mint_message_id()
     payload = {
         "peer": peer_row.id,
         "title": clean_title,
         "reply_to": clean_reply_to,
         "text": text,
-        "images": attach_result.images,
-        "documents": attach_result.documents,
+        "message_id": message_id,
     }
+    # Origin: best-effort identity of the calling session — the MCP dispatcher
+    # sets the forced_session_id ContextVar on every tool call, and a real CLI
+    # subprocess resolves via PID ancestry.
     current_session = resolve_current_session()
     if current_session is not None:
         payload["origin_session_id"] = current_session.id
 
-    sub = transport.submit(payload, kind="peer:send")
+    kind = "peer:send"
+    if sources:
+        refs, stage_errors = attach_sources.stage(sources, bucket=attach_sources.new_request_bucket())
+        if stage_errors:
+            emit_validation_errors(stage_errors)
+            raise typer.Exit(1)
+        payload["attachments"] = attach_sources.as_payload(refs)
+        # A kind of its own: an older backend refuses it instead of sending the text alone.
+        kind = "peer:send_attachments"
+    if timeout is None:
+        timeout = PEER_SEND_TIMEOUT_WITH_FILES if sources else PEER_SEND_DEFAULT_TIMEOUT
+
+    sub = transport.submit(payload, kind=kind)
     outcome = transport.wait(sub, timeout_seconds=timeout)
     sub.cleanup()
 
-    emit_final(outcome, request_uuid=sub.request_uuid, timeout=timeout)
+    final = build_final(outcome, request_uuid=sub.request_uuid, timeout=timeout)
+    # A ``sent`` status names the stored id (an older backend mints its own for a text-only
+    # send). Every other outcome names the id minted here, so the caller can check it with
+    # ``peer-message`` before sending again.
+    if not final.get("message_id"):
+        final["message_id"] = message_id
+    if not final.get("peer_id"):
+        final["peer_id"] = peer_row.id
+    emit_json(final)
 
     if outcome.status == "sent":
         raise typer.Exit(0)

@@ -5,7 +5,7 @@ Hide the session, turn off question widgets, mute its notifications, annotate it
 ## Usage
 
 ```bash
-$TWICC create-session [--hidden] [--question-widget|--no-question-widget] [--mute-on-user-turn] [--annotation KEY=VALUE]... [--annotations-file PATH] [--attach PATH]... '<PROMPT>'
+$TWICC create-session [--hidden] [--question-widget|--no-question-widget] [--mute-on-user-turn] [--annotation KEY=VALUE]... [--annotations-file PATH] [--attach VALUE]... '<PROMPT>'
 ```
 
 ### `--mute-on-user-turn`
@@ -46,7 +46,7 @@ Use these modes for pure "analyst" workers (read code, return a synthesis as tex
 
 ### Attachments
 
-- `--attach PATH` (repeatable). Accepted types (sniffed by magic bytes): Claude Code PNG, JPEG, GIF, WebP, PDF, text/plain; Codex images only. Per-file cap: 5 MB. Per-batch cap: 100 files, 32 MB. Images are auto-resized to the provider/model's long-edge cap. Over `--remote`, prefix an absolute path with `remote:` to read it on the remote server instead.
+- `--attach VALUE` (repeatable) — a file of any type: a local path, a base64 data URI `data:<mime>;name=<percent-encoded file name>;base64,<data>` (`name=` optional), or, over `--remote`, `remote:<absolute path>` for a file on the remote server. TwiCC decides per file how the agent gets it: natively (images; PDF and text on Claude Code) or as a file in the session's `attachments/` artifacts folder. Inline data (data URIs, and local files sent over `--remote`) is limited to 50 MB in total per command; a file read from disk has no limit. On a local command line, Linux caps one argument at 128 KiB, so pass a larger local file by its path, not as a data URI. For a larger file, put it on a file storage service and pass its URL in the prompt, or pass a path the server reads: `remote:<absolute path>` over `--remote`, an absolute server path over MCP.
 
 ## Errors
 
@@ -58,10 +58,16 @@ Local (exit 1):
 - `annotation_path_conflict` — an annotation path conflicts with an existing scalar or object.
 - `annotation_non_scalar` — use `--annotations-file` for list or object values.
 - `invalid_annotations_file` — file missing, invalid JSON, or root value is not an object.
+- `not_a_file` / `relative_path` / `remote_requires_remote` / `invalid_data_uri` — a bad `--attach` value.
+- `attachments_too_large` — more than 50 MB of inline data; the message says what to do instead. Over `--remote`, the forwarder refuses it before any call: exit `2`, plain text on stderr, no JSON and no code.
+- `attachment_stage_failed` — the copy of a file failed (disk full, permission).
 
 Server (exit 3):
 
 - `invalid_annotations` — annotations must be a JSON object.
+- `attachment_missing` / `attachment_not_ready` / `attachment_commit_failed` — a file could not be delivered; create the session again.
+- `attachments_with_command` — files cannot ride a Codex built-in command.
+- `invalid_attachments` — the request came from an older `twicc` CLI; update it.
 
 ## Examples
 

@@ -3,12 +3,11 @@ import { computed } from 'vue'
 import { useDataStore } from '../../../../../stores/data'
 import { useCodeCommentsStore } from '../../../../../stores/codeComments'
 import { DISPLAY_MODE } from '../../../../../constants'
-import { sdkBlockToMediaItem } from '../../../../../utils/fileUtils'
+import { isNativeStripMedia, nativeMediaStripItems } from '../../../../../utils/attachmentStrip'
 import { getInternalCollapsibleGroups, getPrefixSuffixBoundaries, isVisibleItem } from '../../../../../utils/contentVisibility'
 import GroupToggle from '../../GroupToggle.vue'
 import TextContent from '../TextContent.vue'
-import MediaThumbnailGroup from '../../../../media/MediaThumbnailGroup.vue'
-import DocumentContent from './DocumentContent.vue'
+import AttachmentStrip from '../../../../media/AttachmentStrip.vue'
 import ToolUseContent from '../ToolUseContent.vue'
 import ThinkingContent from './ThinkingContent.vue'
 import UnknownEntry from '../UnknownEntry.vue'
@@ -74,6 +73,13 @@ const props = defineProps({
     suffixExpanded: {
         type: Boolean,
         default: false
+    },
+    // Indices of entries rendered elsewhere: the native media blocks an
+    // attachment strip already shows (they are not repeated in this list's
+    // own strip), and blank text of an attachments-only message.
+    hiddenIndices: {
+        type: Array,
+        default: () => []
     }
 })
 
@@ -217,26 +223,28 @@ const visibleItems = computed(() => {
 })
 
 // =============================================================================
-// Media grouping: collect all image items into a single thumbnail group
+// Attachments: collect every image and document entry into a single strip
 // =============================================================================
 
-// Collect all image items from the content array (for grouping into thumbnails)
-const allImageItems = computed(() => {
+// The image and document entries not shown by the message's manifest strip (a
+// message without manifest, or more native media than its inline entries),
+// each with its index in the content array.
+const hiddenIndexSet = computed(() => new Set(props.hiddenIndices))
+
+const allMediaEntries = computed(() => {
     return props.items
         .map((item, index) => ({ item, index }))
-        .filter(({ item }) => item.type === 'image')
+        .filter(({ item, index }) => isNativeStripMedia(item) && !hiddenIndexSet.value.has(index))
 })
 
-// Convert image items to normalized MediaItem format for MediaThumbnailGroup
-const mediaGroupData = computed(() => {
-    return allImageItems.value
-        .map(({ item }) => sdkBlockToMediaItem(item))
-        .filter(mediaItem => mediaItem !== null)
-})
+// Their attachment strip items, in content order: image thumbnails (preview)
+// and PDF / text tiles; names from the document title, else the default name
+// of their position; no artifact link.
+const mediaStripItems = computed(() => nativeMediaStripItems(allMediaEntries.value.map(({ item }) => item)))
 
-// Index of the first image in the items array (render thumbnail group at this position)
-const firstImageIndex = computed(() => {
-    return allImageItems.value.length > 0 ? allImageItems.value[0].index : -1
+// Index of the first image or document in the items array (the strip renders at this position)
+const firstMediaIndex = computed(() => {
+    return allMediaEntries.value.length > 0 ? allMediaEntries.value[0].index : -1
 })
 
 function toggleInternalGroup(startIndex) {
@@ -277,26 +285,20 @@ const parentRangeCommentsCount = computed(() => {
         />
 
         <!-- Content element -->
-        <template v-if="entry.show">
+        <template v-if="entry.show && !hiddenIndexSet.has(entry.index)">
             <TextContent
                 v-if="entry.item.type === 'text'"
                 :text="entry.item.text"
                 :role="role"
             />
-            <!-- First image: render all images as a grouped thumbnail strip -->
-            <MediaThumbnailGroup
-                v-else-if="entry.item.type === 'image' && entry.index === firstImageIndex"
-                :items="mediaGroupData"
+            <!-- First image or document: render every one of them as one attachment strip -->
+            <AttachmentStrip
+                v-else-if="entry.index === firstMediaIndex"
+                :items="mediaStripItems"
             />
-            <!-- Subsequent images: already rendered in the group above, skip -->
-            <template v-else-if="entry.item.type === 'image'">
+            <!-- Subsequent images and documents: already rendered in the strip above, skip -->
+            <template v-else-if="isNativeStripMedia(entry.item)">
             </template>
-            <DocumentContent
-                v-else-if="entry.item.type === 'document'"
-                :source="entry.item.source"
-                :title="entry.item.title"
-                :role="role"
-            />
             <ToolUseContent
                 v-else-if="entry.item.type === 'tool_use'"
                 :name="entry.item.name"

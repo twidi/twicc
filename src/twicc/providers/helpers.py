@@ -32,13 +32,6 @@ from twicc.pricing import FamilyPrices, TokenUsage
 logger = logging.getLogger(__name__)
 
 
-# Shared long-edge cap (in pixels) for outgoing images. Matches
-# ``MAX_IMAGE_DIMENSION`` in ``frontend/src/utils/fileUtils.js`` — Opus 4.7's
-# native resolution and the default cap for every provider that doesn't
-# override :meth:`BaseProviderHelpers.get_effective_image_dimension`.
-MAX_IMAGE_DIMENSION = 2576
-
-
 class AgentSettingCategory(StrEnum):
     """When a per-agent setting can be applied to a running process.
 
@@ -94,6 +87,33 @@ class IndexableMessage(NamedTuple):
     # TwiCC-synthesized items). See
     # :meth:`BaseProviderHelpers.is_final_assistant_message`.
     is_final: bool | None = None
+
+
+class AttachmentPolicy(NamedTuple):
+    """Native delivery policy of attachments, per provider, for every entry point.
+
+    Kinds use the planner's literal strings (``image``, ``PDF``, ``text``, …). Every
+    other kind, and a native kind over its limit, is delivered as a file. Quotas are
+    per message: native items (images, PDFs and texts together), and a volume budget
+    measured as base64 length for binary data and UTF-8 length for text. A ``None``
+    byte limit means no limit. Every entry point plans with it (web composer, CLI, RPC,
+    MCP); a peer message is planned by the receiving composer at delivery.
+    Design: docs/plans/2026-10-03-composer-attachments-any-file-design.md §6.3.
+    """
+    native_kinds: frozenset[str]
+    # Native kinds when the message goes to a hybrid (TUI) agent.
+    hybrid_native_kinds: frozenset[str]
+    pdf_native_max_bytes: int | None
+    text_native_max_bytes: int | None
+    max_native_items: int
+    # Native item quota when the target runs with a 1M context.
+    max_native_items_1m: int
+    volume_budget: int
+    volume_budget_third_party: int
+    # Images above this long edge are resized before being sent.
+    image_long_edge: int
+    per_image_base64_limit: int | None
+    per_image_base64_limit_third_party: int | None
 
 
 class AgentSettings(NamedTuple):
@@ -721,34 +741,9 @@ class BaseProviderHelpers:
             result.setdefault(field, {})[value] = supported
         return result
 
-    def get_attachment_support(self) -> dict:
-        """Return the attachment capabilities of this provider.
-
-        Returned dict shape:
-            {
-                "images": bool,
-                "documents": bool,
-                "accepted_mime_types": list[str],
-                "max_bytes_per_file": int,
-                "max_files_per_message": int,
-                "max_total_bytes": int,
-            }
-        """
+    def get_attachment_policy(self) -> AttachmentPolicy:
+        """Return the native-delivery policy of attachments for this provider."""
         raise NotImplementedError
-
-    def get_effective_image_dimension(
-        self, model: str | None, num_images: int
-    ) -> int:
-        """Return the long-edge dimension cap (in px) for outgoing images.
-
-        The CLI applies a single resize per image to this cap before
-        base64-encoding. The default implementation caps at the shared
-        :data:`MAX_IMAGE_DIMENSION` so every provider gets a sane "no
-        bigger than X" rule. Providers with model-specific caps (e.g.
-        Claude Code: 1568 for older models, 2000 with >20 images)
-        override this method.
-        """
-        return MAX_IMAGE_DIMENSION
 
     def get_user_messages(
         self,
@@ -1132,7 +1127,6 @@ class BaseProviderHelpers:
             },
             "agent_settings_choices": self.get_agent_settings_choices(),
             "agent_settings_aliases": self.get_agent_settings_aliases(),
-            "attachment_support": self.get_attachment_support(),
             "model_registry": self.serialize_model_registry(),
         }
 

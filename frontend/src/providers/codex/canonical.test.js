@@ -9,6 +9,7 @@ import {
     imageGeneration,
     mcpToolCallItem,
     userMessageAttachmentCount,
+    userMessageContent,
     userMessageImages,
     userMessageText,
 } from './canonical.js'
@@ -102,4 +103,32 @@ test('optimistic user messages use the canonical UserMessage shape', () => {
             },
         },
     })
+})
+
+test('userMessageContent returns the UserMessage entries in order for the attachment strip', async () => {
+    const { messageAttachmentLayout } = await import('../../utils/attachmentStrip.js')
+    const data = completed({
+        type: 'UserMessage',
+        id: 'u1',
+        content: [
+            { type: 'image', image_url: 'data:image/png;base64,QUFB' },
+            { type: 'image', image_url: 'data:image/png;base64,QkJC' },
+            { type: 'text', text: 'look', text_elements: [] },
+        ],
+    })
+    data.twicc_attachments = {
+        owner: 'thread-1',
+        entries: [
+            { n: 1, name: 'one.png', kind: 'image', rank: 1, of: 2, mode: 'inline', artifact_name: null },
+            { n: 2, name: 'movie.mp4', kind: 'video', rank: 1, of: 1, mode: 'file', artifact_name: 'movie.mp4' },
+            { n: 3, name: 'two.png', kind: 'image', rank: 2, of: 2, mode: 'inline', artifact_name: null },
+        ],
+    }
+    assert.deepEqual(userMessageContent(data).map(entry => entry.type), ['image', 'image', 'text'])
+    assert.deepEqual(userMessageContent(completed({ type: 'AgentMessage', content: [] })), [])
+    const { strip, hiddenIndices } = messageAttachmentLayout(data, userMessageContent(data))
+    assert.deepEqual(strip.map(item => item.name), ['one.png', 'movie.mp4', 'two.png'])
+    assert.equal(strip[2].src, 'data:image/png;base64,QkJC')
+    assert.deepEqual(hiddenIndices, [0, 1])
+    assert.equal(userMessageText(data), 'look')
 })

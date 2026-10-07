@@ -127,6 +127,8 @@ function implementInNewSession() {
         request_id: requestId,
     })
     if (!sent) {
+        // Default deletion: a draft created here, never abandoned by the
+        // user — its attachments (none) are only forgotten, never released.
         dataStore.deleteDraftSession(draftId)
         toast.error('Not connected — please retry in a moment')
         return

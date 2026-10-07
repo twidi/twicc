@@ -9,24 +9,23 @@
 // whose error frame was lost along with the WebSocket: the audit in the data
 // store re-checks them against the session's items at opening time.
 
-import { getDb, INFLIGHT_SENDS_STORE, inflightSnapshotRecord } from './draftStorage'
+import { getDb, INFLIGHT_SENDS_STORE, inflightSnapshotRecord } from './draftStorage.js'
 
-// Above this combined attachment payload (chars of encoded data), the
-// snapshot is persisted without its medias (``mediasDropped: true``): after
-// a reload only the text can be restored. Drafts allow up to 32 MB of
-// attachments — blindly writing that on EVERY send would bloat IndexedDB
-// for a rarely-needed safety net.
 /**
- * Persist an in-flight send snapshot.
- * Medias are deep-copied to plain objects (the store hands out Vue reactive
- * proxies, which the structured-clone algorithm rejects).
+ * The stored form of an in-flight send snapshot (see
+ * `inflightSnapshotRecord` in draftStorage.js, the single implementation).
+ */
+export const toStoredInflightSend = inflightSnapshotRecord
+
+/**
+ * Persist an in-flight send snapshot (see `toStoredInflightSend`).
  * @param {string} requestId
- * @param {Object} snapshot - { sessionId, text, medias, optimisticShown, startingSet, sentAt }
+ * @param {Object} snapshot - { sessionId, text, attachments, medias, optimisticShown, startingSet, sentAt }
  * @returns {Promise<void>}
  */
 export async function saveInflightSend(requestId, snapshot) {
     const db = await getDb()
-    const toStore = inflightSnapshotRecord(snapshot)
+    const toStore = toStoredInflightSend(snapshot)
     return new Promise((resolve, reject) => {
         const tx = db.transaction(INFLIGHT_SENDS_STORE, 'readwrite')
         const request = tx.objectStore(INFLIGHT_SENDS_STORE).put(toStore, requestId)

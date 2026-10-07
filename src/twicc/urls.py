@@ -3,6 +3,7 @@ from django.urls import path, re_path
 from . import views
 from .artifacts.proxy import artifact_proxy
 from .browser_probe import browser_frame_check
+from .core.services.attachments import views as composer_attachment_views
 from .auth import views as auth_views
 from .rpc import views as rpc_views
 from .share import artifact_views as share_artifact_views
@@ -50,6 +51,14 @@ urlpatterns = [
     path("api/uploads/", upload_views.uploads_root),
     # tus transfer of one upload: HEAD (offset), PATCH (append), DELETE (cancel).
     path("api/uploads/<str:upload_id>/", upload_views.upload_detail),
+    # Composer attachments staging store: status, heartbeat, content (no trailing slash), release.
+    path("api/composer-attachments/status/", composer_attachment_views.attachments_status),
+    path("api/composer-attachments/touch/", composer_attachment_views.attachments_touch),
+    path(
+        "api/composer-attachments/<str:bucket>/<str:attachment_id>/content",
+        composer_attachment_views.attachment_content,
+    ),
+    path("api/composer-attachments/<str:bucket>/<str:attachment_id>/", composer_attachment_views.attachment_detail),
     path("api/home-directory/", views.home_directory),
     path("api/artifact-bookmarks/", views.artifact_bookmark_list),
     path("api/artifact-bookmarks/<int:bookmark_id>/", views.artifact_bookmark_detail),
@@ -92,6 +101,7 @@ urlpatterns = [
     path("api/projects/<str:project_id>/sessions/<str:session_id>/items/", views.session_items),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/items/metadata/", views.session_items_metadata),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/items/<int:line_num>/tool-results/<str:tool_id>/", views.tool_results),
+    path("api/projects/<str:project_id>/sessions/<str:session_id>/items/<int:line_num>/attachments/<str:reference>", views.hybrid_attachment_image),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/subagents/", views.subagents_state),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/tool-states/", views.tool_states),
     path("api/projects/<str:project_id>/sessions/<str:session_id>/topology/", views.session_topology),

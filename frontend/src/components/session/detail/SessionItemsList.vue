@@ -1726,10 +1726,10 @@ async function onDrop(event) {
 }
 
 /**
- * Process a single dropped file. Validation against the active provider's
- * attachment capabilities (MIME, max bytes) happens inside
- * ``store.addAttachment``; any failure surfaces here as a thrown ``Error``
- * with a user-friendly message that we toast.
+ * Attach a single dropped file, whatever its type or size (spec 2026-10-03
+ * §9.1): ``store.addAttachment`` stages its upload and the composer shows its
+ * chip. Only a local failure (the draft storage write) surfaces here as a
+ * thrown ``Error``, which we toast.
  */
 async function processDroppedFile(file) {
     try {

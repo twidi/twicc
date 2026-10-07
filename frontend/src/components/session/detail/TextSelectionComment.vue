@@ -507,8 +507,8 @@ defineExpose({ isExpanded: expanded })
     gap: var(--wa-space-s);
 }
 
-/* Thumbnail matches the composer's attachment thumbnails (see
-   MediaThumbnailGroup): square, rounded, cover-fit, click to enlarge. */
+/* Thumbnail matches the attachment tiles (see AttachmentStrip):
+   square, rounded, cover-fit, click to enlarge. */
 .tsc-shot-thumb {
     width: 96px;
     height: 96px;

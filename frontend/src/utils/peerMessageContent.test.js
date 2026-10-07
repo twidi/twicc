@@ -1,11 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
 import {
-    firstCompatiblePeerProvider,
     formatPeerContentBytes,
     mergePeerAttachments,
     peerAttachmentBytes,
+    peerEntryToFile,
+    peerEntryToStripItem,
     peerContentAllowsDelivery,
     peerDeliveryTargetState,
     shouldConfirmPeerAttachments,
@@ -38,26 +40,17 @@ test('formats content sizes with binary units', () => {
     assert.equal(formatPeerContentBytes(5 * 1024 * 1024), '5.0 MiB')
 })
 
-test('merges attachment blocks without mutating the lightweight detail', () => {
-    const detail = {
-        id: 1,
-        payload: { text: 'message', images: [], documents: [] },
-    }
-    const attachments = {
-        images: [{ type: 'image' }],
-        documents: [{ type: 'document' }],
-    }
+test('merges the attachment entries without mutating the lightweight detail', () => {
+    const detail = { id: 1, payload: { text: 'message', attachments: [] } }
+    const attachments = { attachments: [{ name: 'a.txt', media_type: 'text/plain', data: 'YQ==' }] }
 
     const merged = mergePeerAttachments(detail, attachments)
 
     assert.notStrictEqual(merged, detail)
     assert.notStrictEqual(merged.payload, detail.payload)
-    assert.deepEqual(merged.payload, {
-        text: 'message',
-        images: attachments.images,
-        documents: attachments.documents,
-    })
-    assert.deepEqual(detail.payload, { text: 'message', images: [], documents: [] })
+    assert.deepEqual(merged.payload, { text: 'message', attachments: attachments.attachments })
+    assert.deepEqual(detail.payload, { text: 'message', attachments: [] })
+    assert.deepEqual(mergePeerAttachments(detail, {}).payload.attachments, [])
 })
 
 test('allows delivery only after detail, markdown, and attachments are ready', () => {
@@ -80,161 +73,105 @@ test('allows delivery only after detail, markdown, and attachments are ready', (
     }
 })
 
-test('blocks a target provider that cannot receive every peer attachment', async () => {
-    const { peerAttachmentCompatibilityError } = await import('./peerMessageContent.js')
-    assert.equal(typeof peerAttachmentCompatibilityError, 'function')
-    const payload = {
-        images: [{ source: { type: 'base64', media_type: 'image/png', data: 'aW1hZ2U=' } }],
-        documents: [{ source: { type: 'text', media_type: 'text/plain', data: 'note' } }],
+test('every peer attachment is accepted: no provider is rejected for its attachment types', async () => {
+    const content = await import('./peerMessageContent.js')
+    for (const name of ['peerAttachmentCompatibilityError', 'firstCompatiblePeerProvider', 'firstCompatiblePeerProviderForMetadata']) {
+        assert.equal(Object.hasOwn(content, name), false, name)
     }
-
-    assert.equal(
-        peerAttachmentCompatibilityError(
-            payload,
-            { acceptedMimeTypes: ['image/png'] },
-            'Codex',
-        ),
-        'Codex cannot receive all attachments in this message. Choose a session using a compatible provider.',
-    )
-    assert.equal(
-        peerAttachmentCompatibilityError(
-            payload,
-            { acceptedMimeTypes: ['image/png', 'text/plain'] },
-            'Claude Code',
-        ),
-        '',
-    )
-    assert.equal(
-        peerAttachmentCompatibilityError(
-            { images: [], documents: [] },
-            { acceptedMimeTypes: [] },
-            'Codex',
-        ),
-        '',
-    )
 })
 
-test('derives disabled delivery state and feedback from the selected target', () => {
-    const payload = {
-        images: [],
-        documents: [{ source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERi0=' } }],
-    }
-
+test('derives the delivery target state from the target and the content readiness only', () => {
+    assert.deepEqual(peerDeliveryTargetState(null, true), { disabled: true, error: '' })
     assert.deepEqual(
-        peerDeliveryTargetState(payload, null, true),
+        peerDeliveryTargetState(null, true, 'No active provider is available.'),
+        { disabled: true, error: 'No active provider is available.' },
+    )
+    assert.deepEqual(
+        peerDeliveryTargetState(null, false, 'No active provider is available.'),
         { disabled: true, error: '' },
     )
-    assert.deepEqual(
-        peerDeliveryTargetState(
-            payload,
-            null,
-            true,
-            'No active provider can receive all attachments in this message.',
-        ),
-        {
-            disabled: true,
-            error: 'No active provider can receive all attachments in this message.',
-        },
-    )
-    assert.deepEqual(
-        peerDeliveryTargetState(
-            payload,
-            {
-                capabilities: { acceptedMimeTypes: ['image/png'] },
-                providerLabel: 'Codex',
-            },
-            true,
-        ),
-        {
-            disabled: true,
-            error: 'Codex cannot receive all attachments in this message. Choose a session using a compatible provider.',
-        },
-    )
-    assert.deepEqual(
-        peerDeliveryTargetState(
-            payload,
-            {
-                capabilities: { acceptedMimeTypes: ['application/pdf'] },
-                providerLabel: 'Claude Code',
-            },
-            false,
-        ),
-        { disabled: true, error: '' },
-    )
-    assert.deepEqual(
-        peerDeliveryTargetState(
-            payload,
-            {
-                capabilities: { acceptedMimeTypes: ['application/pdf'] },
-                providerLabel: 'Claude Code',
-            },
-            true,
-        ),
-        { disabled: false, error: '' },
-    )
+    assert.deepEqual(peerDeliveryTargetState({ provider: 'codex' }, false), { disabled: true, error: '' })
+    // A PDF, a text and a video go to Codex as well: the server decides at send.
+    assert.deepEqual(peerDeliveryTargetState({ provider: 'codex' }, true), { disabled: false, error: '' })
 })
 
-test('selects the first provider that accepts every attachment', () => {
-    const payload = {
-        images: [],
-        documents: [{ source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERi0=' } }],
+test('peerEntryToFile keeps the real name and media type', async () => {
+    const patch = peerEntryToFile({ name: 'fix.patch', media_type: 'text/x-diff', data: 'ZGlmZg==' })
+    assert.ok(patch instanceof File)
+    assert.equal(patch.name, 'fix.patch')
+    assert.equal(patch.type, 'text/x-diff')
+    assert.equal(await patch.text(), 'diff')
+    const empty = peerEntryToFile({ name: 'empty.bin', media_type: '', data: '' })
+    assert.equal(empty.size, 0)
+    assert.equal(empty.type, 'application/octet-stream')
+    assert.equal(peerEntryToFile({ name: 'x', media_type: 'text/plain' }), null)
+    assert.equal(peerEntryToFile({ name: '', media_type: 'text/plain', data: 'YQ==' }), null)
+})
+
+test('the review strip shows a thumbnail for images and an unlinked kind tile for the others', async () => {
+    const { stripItemArtifactRequest } = await import('./attachmentStrip.js')
+    const image = peerEntryToStripItem({ name: 'shot.png', media_type: 'image/png', data: 'iVBORw==' }, 0)
+    assert.deepEqual(image, {
+        id: 'peer-attachment-0',
+        name: 'shot.png',
+        kind: 'image',
+        mode: null,
+        canOpenArtifact: false,
+        src: 'data:image/png;base64,iVBORw==',
+    })
+    const pdf = peerEntryToStripItem({ name: 'spec.pdf', media_type: 'application/pdf', data: 'JVBERi0=' }, 1)
+    assert.equal(pdf.kind, 'PDF')
+    assert.equal('src' in pdf, false)
+    const text = peerEntryToStripItem({ name: 'notes.txt', media_type: 'text/plain', data: 'aGk=' }, 2)
+    assert.equal(text.kind, 'text')
+    const video = peerEntryToStripItem({ name: 'clip.mp4', media_type: 'video/mp4', data: 'AAAA' }, 3)
+    assert.equal(video.kind, 'video')
+    assert.equal('src' in video, false)
+    const svg = peerEntryToStripItem({ name: 'logo.svg', media_type: 'image/svg+xml', data: 'PHN2Zz4=' }, 4)
+    assert.equal(svg.kind, 'text', 'SVG is text: no raster thumbnail')
+    assert.equal('src' in svg, false)
+    assert.equal(new Set([image, pdf, text, video, svg].map(item => item.id)).size, 5)
+    for (const item of [image, pdf, text, video, svg]) {
+        assert.equal(stripItemArtifactRequest(item), null, 'a peer file is never a link')
     }
-    const providers = [
-        { provider: 'codex', capabilities: { acceptedMimeTypes: ['image/png'] } },
-        { provider: 'claude_code', capabilities: { acceptedMimeTypes: ['image/png', 'application/pdf'] } },
-        { provider: 'future', capabilities: { acceptedMimeTypes: ['application/pdf'] } },
-    ]
-
-    assert.equal(firstCompatiblePeerProvider(payload, providers), 'claude_code')
-    assert.equal(firstCompatiblePeerProvider(payload, providers.slice(0, 1)), null)
+    assert.equal(peerEntryToStripItem({ name: 'x' }, 5), null)
 })
 
-test('selects a compatible provider from attachment metadata before loading bytes', async () => {
-    const { firstCompatiblePeerProviderForMetadata } = await import('./peerMessageContent.js')
-    assert.equal(typeof firstCompatiblePeerProviderForMetadata, 'function')
-    const metadata = [
-        { kind: 'document', media_type: 'application/pdf', bytes: 1234 },
-    ]
-    const providers = [
-        { provider: 'codex', capabilities: { acceptedMimeTypes: ['image/png'] } },
-        { provider: 'claude_code', capabilities: { acceptedMimeTypes: ['application/pdf'] } },
-    ]
-
-    assert.equal(
-        firstCompatiblePeerProviderForMetadata(metadata, providers),
-        'claude_code',
-    )
-    assert.equal(firstCompatiblePeerProviderForMetadata(metadata, []), null)
+test('a peer entry without name gets the default attachment name of its position', () => {
+    assert.equal(peerEntryToStripItem({ media_type: 'image/png', data: 'iVBORw==' }, 0).name, 'attachment-1.png')
+    assert.equal(peerEntryToStripItem({ name: '', media_type: 'application/pdf', data: 'JVBERi0=' }, 2).name, 'attachment-3.pdf')
+    assert.equal(peerEntryToStripItem({ data: 'AAAA' }, 3).name, 'attachment-4.bin')
 })
 
-test('reports a draft attachment failure instead of hiding it', async () => {
+test('wiring: the review dialog renders the attachments through the shared strip', () => {
+    const dialog = readFileSync(new URL('../components/peer/PeerMessageReviewDialog.vue', import.meta.url), 'utf8')
+    assert.match(dialog, /<AttachmentStrip/)
+    assert.match(dialog, /peerEntryToStripItem/)
+    assert.doesNotMatch(dialog, /MediaThumbnailGroup/)
+})
+
+test('adds the entries to the draft in order and reports a failure instead of hiding it', async () => {
     const { addPeerAttachmentsToDraft } = await import('./peerMessageContent.js')
-    assert.equal(typeof addPeerAttachmentsToDraft, 'function')
-    const payload = {
-        images: [{ id: 'image' }],
-        documents: [{ id: 'document' }],
-    }
+    const payload = { attachments: [{ name: 'one.txt' }, { name: 'two.png' }, { name: 'three.mp4' }] }
     const attempted = []
 
     const error = await addPeerAttachmentsToDraft(
         payload,
-        block => ({ name: block.id }),
+        entry => ({ name: entry.name }),
         async file => {
             attempted.push(file.name)
-            if (file.name === 'document') throw new Error('IndexedDB failed')
+            if (file.name === 'two.png') throw new Error('IndexedDB failed')
         },
     )
 
-    assert.deepEqual(attempted, ['image', 'document'])
+    assert.deepEqual(attempted, ['one.txt', 'two.png'])
     assert.equal(
         error,
         'TwiCC could not add all attachments to the draft. The Peer message is still available for delivery to another session.',
     )
-
-    const success = await addPeerAttachmentsToDraft(
-        payload,
-        block => ({ name: block.id }),
-        async () => {},
-    )
-    assert.equal(success, '')
+    const added = []
+    assert.equal(await addPeerAttachmentsToDraft(payload, entry => ({ name: entry.name }), async f => { added.push(f.name) }), '')
+    assert.deepEqual(added, ['one.txt', 'two.png', 'three.mp4'])
+    assert.equal(await addPeerAttachmentsToDraft({ attachments: [{ name: 'x' }] }, () => null, async () => {}),
+        'TwiCC could not add all attachments to the draft. The Peer message is still available for delivery to another session.')
 })

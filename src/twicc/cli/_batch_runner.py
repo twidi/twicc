@@ -68,7 +68,7 @@ def run_batch(
     ``prepare(resolved)`` returns either the per-id drop payload (a dict that
     must include ``session_id``), a flat ``list`` of ``ValidationError`` when
     this session can't accept the request (e.g. a ``settings`` value invalid for
-    its provider, or an attachment its provider rejects) — in that case the id
+    its provider, or a staging failure of its attachments) — in that case the id
     gets a per-id ``validation_error`` and no drop — or ``None`` when there is
     nothing to apply for this session (every touched setting is a no-op for its
     provider, e.g. ``--thinking`` on Codex) — that id gets a per-id ``noop``
@@ -211,7 +211,7 @@ def run_batch(
             continue
         if isinstance(outcome, list):
             # Per-id validation errors (e.g. settings invalid for this provider,
-            # or an attachment its provider rejects).
+            # or a staging failure of its attachments).
             results[sid] = {
                 "status": "validation_error",
                 "errors": [e._asdict() for e in outcome],

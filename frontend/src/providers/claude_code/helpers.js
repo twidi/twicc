@@ -6,16 +6,6 @@ import { CONTEXT_MAX, EFFORT, PERMISSION_MODE, UNTRUSTED_PERMISSION_MODES } from
 import { useClaudeCodeStore } from './store'
 import { getTwiccLaunchPrefix } from '../../utils/twiccLaunch'
 import { startupSettingsDeferredText } from '../../utils/backgroundWork'
-import {
-    SUPPORTED_DOCUMENT_TYPES,
-    SUPPORTED_IMAGE_TYPES,
-    SUPPORTED_TEXT_TYPES,
-} from '../../utils/fileUtils'
-
-// Claude API per-file ceiling (5 MB) — applies before resize. Beyond this
-// the server rejects the request, so the frontend enforces it client-side
-// to fail fast on the toast surface instead of waiting for an SDK error.
-const CLAUDE_MAX_FILE_BYTES = 5 * 1024 * 1024
 
 // Claude CLI's built-in commands (invoked with ``/``). Hardcoded here because
 // the CLI never exposes the list programmatically; entries are sourced from
@@ -741,31 +731,6 @@ export class ClaudeCodeHelpers extends BaseProviderHelpers {
                 )),
             },
         ]
-    }
-
-    /**
-     * Claude Code supports images, PDF, and plain-text uploads via the
-     * SDK's content-block protocol. Images are resized at upload time to
-     * the shared ``MAX_IMAGE_DIMENSION`` (2576 px, Opus 4.7's native
-     * resolution — the most generous supported by any model we target),
-     * not to Sonnet/Haiku's tighter 1568 px ceiling. The actual send-
-     * time re-resize (down to 1568, 2000, or 2576 px) is decided per
-     * (model, num_images) by ``MessageInput.handleSend`` so a stored
-     * blob can serve any model without losing the option to use Opus
-     * 4.7 at full resolution.
-     */
-    getAttachmentSupport() {
-        return {
-            images: true,
-            documents: true,
-            maxBytes: CLAUDE_MAX_FILE_BYTES,
-            acceptedMimeTypes: [
-                ...SUPPORTED_IMAGE_TYPES,
-                ...SUPPORTED_DOCUMENT_TYPES,
-                ...SUPPORTED_TEXT_TYPES,
-            ],
-            resizeImages: true,
-        }
     }
 
     /**

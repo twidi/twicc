@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - **Navigation rail** — Keep navigation and active sessions within reach, even with the sidebar closed. Quickly open recent projects and workspaces or start a new session.
+- **Attach any file** — Add files of any type and size to your messages. Files the agent cannot read directly are saved as artifacts of the session.
 - **Automatic title updates** — Session titles now follow the conversation’s main subjects. Titles you save stay unchanged. The title generation prompt is completely rewritten. If you use a custom prompt, rebuild it from the new default.
 - **Codex “async” questions** — Codex can now ask questions without pausing its work. Answer them alongside your next message.
 - **Snippet groups** — Organize composer snippets, terminal snippets and terminal combos into groups, and open them from compact popovers.

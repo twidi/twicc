@@ -21,22 +21,20 @@ import { usePeersStore } from '../../stores/peers'
 import { useDataStore, ALL_PROJECTS_ID, sessionSortComparator } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
 import { useWorkspacesStore } from '../../stores/workspaces'
-import { getProviderHelpers, getProviderLabel, getProviderOptions } from '../../providers'
+import { getProviderOptions } from '../../providers'
 import { SESSION_TIME_FORMAT } from '../../constants'
 import { formatDate } from '../../utils/date'
 import { apiFetch } from '../../utils/api'
 import { renderMarkdown } from '../../utils/markdown'
-import { sdkBlockToMediaItem } from '../../utils/fileUtils'
 import {
     addPeerAttachmentsToDraft,
-    firstCompatiblePeerProvider,
-    firstCompatiblePeerProviderForMetadata,
     formatPeerContentBytes,
     mergePeerAttachments,
     peerAttachmentBytes,
-    peerAttachmentCompatibilityError,
     peerContentAllowsDelivery,
     peerDeliveryTargetState,
+    peerEntryToFile,
+    peerEntryToStripItem,
     shouldConfirmPeerAttachments,
     shouldConfirmPeerMarkdown,
 } from '../../utils/peerMessageContent'
@@ -64,7 +62,7 @@ import {
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../utils/workspaceIds'
 import { ensureProjectTrust } from '../../composables/useTrustGate'
 import { useProjectMark } from '../../composables/useProjectMark'
-import MediaThumbnailGroup from '../media/MediaThumbnailGroup.vue'
+import AttachmentStrip from '../media/AttachmentStrip.vue'
 import ProjectBadge from '../project/ProjectBadge.vue'
 import ProjectMark from '../project/ProjectMark.vue'
 import ProjectSelectOptions from '../project/ProjectSelectOptions.vue'
@@ -103,7 +101,7 @@ const loadError = ref('')
 const renderedText = ref('')      // renderMarkdown is async — never bind the promise
 const markdownState = ref('loading')      // loading | confirm | rendering | declined | ready | error
 const attachmentsState = ref('unknown')  // unknown | confirm | loading | declined | ready | error
-const loadedAttachments = ref({ images: [], documents: [] })
+const loadedAttachments = ref({ attachments: [] })
 const note = ref('')
 const actionError = ref('')
 const busy = ref(false)
@@ -130,8 +128,9 @@ const actionSelectKey = ref(0)
 const activeResolutionAction = computed(() =>
     activePeerResolutionAction(busy.value, confirmingRefuse.value, mode.value, markingDone.value),
 )
-const NO_COMPATIBLE_PROVIDER_ERROR = 'No active provider can receive all attachments in this message. '
-    + 'Activate a compatible provider to continue.'
+// Every provider accepts every attachment (the server decides how each file
+// is sent): delivery only needs an active provider.
+const NO_ACTIVE_PROVIDER_ERROR = 'No active provider is available. Activate a provider to continue.'
 
 // Ordinary request-lifetime state. The boolean carries no target identity or
 // reason. The generation invalidates every result from a closed or reused
@@ -347,13 +346,14 @@ function openLocalSession() {
     router.push(sessionRouteLocation(target, route))
 }
 
-const mediaItems = computed(() => {
+// The attachments of the message, as the same strip as a user bubble of the
+// history: image thumbnails (preview with prev/next) and kind-icon tiles. No
+// tile links: the files are not artifacts.
+const attachmentStripItems = computed(() => {
     if (attachmentsState.value !== 'ready') return []
-    const payload = detail.value?.payload
-    if (!payload) return []
-    return [...(payload.images || []), ...(payload.documents || [])]
-        .map(sdkBlockToMediaItem)
-        .filter(Boolean)
+    const entries = detail.value?.payload?.attachments
+    if (!Array.isArray(entries)) return []
+    return entries.map(peerEntryToStripItem).filter(Boolean)
 })
 
 const workspacesStore = useWorkspacesStore()
@@ -587,15 +587,8 @@ const selectedSession = computed(() =>
     sessionRows.value.find(r => r.session.id === selectedSessionId.value)?.session || null
 )
 function deliveryTargetState(provider, missingTargetError = '') {
-    const target = provider
-        ? {
-            capabilities: getProviderHelpers(provider)?.getAttachmentSupport(),
-            providerLabel: getProviderLabel(provider),
-        }
-        : null
     return peerDeliveryTargetState(
-        detail.value?.payload,
-        target,
+        provider ? { provider } : null,
         contentAllowsDelivery.value,
         missingTargetError,
     )
@@ -609,36 +602,30 @@ function activeProviderTargets(preferred = null) {
         ...getProviderOptions().map(option => option.value).filter(provider => provider !== preferred),
     ]
         .filter(provider => provider && dataStore.isProviderAvailable(provider))
-        .map(provider => ({
-            provider,
-            capabilities: getProviderHelpers(provider)?.getAttachmentSupport(),
-        }))
 }
-const compatibleActiveProvider = computed(() => firstCompatiblePeerProviderForMetadata(
-    attachmentsLost.value ? [] : detail.value?.attachments_meta,
-    activeProviderTargets(),
-))
 const deliveryGloballyBlocked = computed(() =>
-    detailReady.value && !compatibleActiveProvider.value,
+    detailReady.value && !activeProviderTargets().length,
 )
 const deliveryActionVisibility = computed(() => peerDeliveryActionVisibility(
     deliveryGloballyBlocked.value,
     detail.value?.status,
 ))
-function compatibleProviderForProject(projectId) {
+/** The provider of a new draft in this project: its default when active,
+ *  else the first active one. */
+function activeProviderForProject(projectId) {
     if (!projectId) return null
     const preferred = resolveDraftProvider(
         projectId,
         dataStore.projects,
         settingsStore.defaultProvider,
     )
-    return firstCompatiblePeerProvider(detail.value?.payload, activeProviderTargets(preferred))
+    return activeProviderTargets(preferred)[0] ?? null
 }
-const pickedProjectProvider = computed(() => compatibleProviderForProject(pickedProjectId.value))
+const pickedProjectProvider = computed(() => activeProviderForProject(pickedProjectId.value))
 const newSessionDeliveryState = computed(() =>
     deliveryTargetState(
         pickedProjectProvider.value,
-        pickedProjectId.value ? NO_COMPATIBLE_PROVIDER_ERROR : '',
+        pickedProjectId.value ? NO_ACTIVE_PROVIDER_ERROR : '',
     ),
 )
 function isCurrentOpen(generation, messageId) {
@@ -655,7 +642,7 @@ function summaryShell(summary) {
     if (!summary) return null
     return {
         ...summary,
-        payload: { text: '', images: [], documents: [] },
+        payload: { text: '', attachments: [] },
     }
 }
 
@@ -830,7 +817,7 @@ watch(() => [props.open, props.messageId], async ([open, messageId]) => {
     const generation = ++openGeneration
     if (!open || messageId == null) return
     const summary = summaryForMessage(messageId)
-    loadedAttachments.value = { images: [], documents: [] }
+    loadedAttachments.value = { attachments: [] }
     detail.value = summaryShell(summary)
     detailReady.value = false
     loadError.value = ''
@@ -1021,22 +1008,6 @@ function setActionFailure(error) {
         : 'Network error — could not reach the server.'
 }
 
-/** Rebuild a File from an SDK attachment block so the normal draft-attachment
- *  pipeline (validation, resize, IndexedDB) processes it like a user upload. */
-function blockToFile(block, index) {
-    const source = block?.source || {}
-    if (source.type === 'text' && typeof source.data === 'string') {
-        return new File([source.data], `peer-attachment-${index + 1}.txt`, { type: 'text/plain' })
-    }
-    if (source.type === 'base64' && typeof source.data === 'string') {
-        const mime = source.media_type || 'application/octet-stream'
-        const bytes = Uint8Array.from(atob(source.data), c => c.charCodeAt(0))
-        const ext = mime === 'application/pdf' ? 'pdf' : (mime.split('/')[1] || 'bin')
-        return new File([bytes], block.title || `peer-attachment-${index + 1}.${ext}`, { type: mime })
-    }
-    return null
-}
-
 /** Ask the backend to resolve the message as delivered; returns the envelope
  *  text to prefill a composer with, or null on failure (actionError set). */
 async function markDelivered(sessionId) {
@@ -1062,41 +1033,33 @@ async function markDelivered(sessionId) {
     return payload.envelope
 }
 
-function targetAttachmentError(provider) {
-    const capabilities = getProviderHelpers(provider)?.getAttachmentSupport()
-    return peerAttachmentCompatibilityError(
-        detail.value?.payload,
-        capabilities,
-        getProviderLabel(provider),
-    )
-}
-
-/** Add the peer attachments to a composer's draft, one by one through the
- *  normal attachment pipeline. Returns the medias actually added so a failed
- *  delivery can remove exactly those — an existing composer may already hold
- *  user attachments that must survive a rollback. */
+/** Add the peer attachments to a composer's draft, one by one, in message
+ *  order, through the composer attachment pipeline: every entry becomes a
+ *  File with its real name, whatever the target provider (the server decides
+ *  at send how each file is sent). Returns the records actually added so a
+ *  failed delivery can release exactly those — an existing composer may
+ *  already hold user attachments that must survive a rollback. */
 async function addPeerAttachments(sessionId) {
     const added = []
     const error = await addPeerAttachmentsToDraft(
         detail.value?.payload,
-        blockToFile,
+        peerEntryToFile,
         async (file) => { added.push(await dataStore.addAttachment(sessionId, file)) },
     )
     return { added, error }
 }
 
 /** Put the target composer back exactly as it was before a failed delivery.
- *  A fresh draft session is entirely ours: drop it whole. An existing
- *  session only loses the attachments this delivery added. */
-async function rollbackDelivery(sessionId, addedMedias, { dropDraft }) {
+ *  A fresh draft session is entirely ours: drop it whole, releasing all its
+ *  staged attachments. An existing session only loses the attachments this
+ *  delivery added: exactly their staged refs are released. */
+async function rollbackDelivery(sessionId, addedRecords, { dropDraft }) {
     if (dropDraft) {
-        await dataStore.clearAttachmentsForSession(sessionId).catch(() => {})
-        dataStore.deleteDraftSession(sessionId)
+        dataStore.deleteDraftSession(sessionId, { releaseAttachments: true })
         return
     }
-    for (const media of addedMedias) {
-        await dataStore.removeAttachment(sessionId, media.id).catch(() => {})
-    }
+    await dataStore.releaseAttachments(addedRecords.map(record => ({ bucket: record.bucket, id: record.id })))
+        .catch(() => {})
 }
 
 /** One message for every delivery failure (attachments, server, network):
@@ -1118,11 +1081,6 @@ function navigateToComposer(sessionId, projectId) {
 async function deliverToSession(session) {
     actionError.value = ''
     confirmingRefuse.value = false
-    const compatibilityError = targetAttachmentError(session.provider)
-    if (compatibilityError) {
-        actionError.value = compatibilityError
-        return
-    }
     busy.value = true
     let envelope = null
     let added = []
@@ -1157,9 +1115,9 @@ async function deliverToSession(session) {
 
 async function deliverToNewSession(projectId) {
     actionError.value = ''
-    const provider = compatibleProviderForProject(projectId)
+    const provider = activeProviderForProject(projectId)
     if (!provider) {
-        actionError.value = NO_COMPATIBLE_PROVIDER_ERROR
+        actionError.value = NO_ACTIVE_PROVIDER_ERROR
         return
     }
     // Trust gate before mutation: if the user backs out, the message stays pending.
@@ -1339,9 +1297,9 @@ function onHide(event) {
 
             <!-- Attachments -->
             <template v-if="attachmentCount && !detail.purged">
-                <MediaThumbnailGroup
-                    v-if="attachmentsState === 'ready' && mediaItems.length"
-                    :items="mediaItems"
+                <AttachmentStrip
+                    v-if="attachmentsState === 'ready' && attachmentStripItems.length"
+                    :items="attachmentStripItems"
                 />
                 <div v-else class="pr-attachments-state">
                     <template v-if="attachmentsState === 'loading' || attachmentsState === 'unknown'">
@@ -1452,7 +1410,7 @@ function onHide(event) {
                     v-if="deliveryGloballyBlocked"
                     variant="warning" size="small"
                 >
-                    {{ NO_COMPATIBLE_PROVIDER_ERROR }}
+                    {{ NO_ACTIVE_PROVIDER_ERROR }}
                 </wa-callout>
                 <template v-else>
                     <!-- The current status concerns every action; what a

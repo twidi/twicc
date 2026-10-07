@@ -12,6 +12,7 @@ import { asyncQuestionRetryState } from '../../../../utils/asyncQuestions.js'
 import { toast } from '../../../../composables/useToast'
 import { generateUUID } from '../../../../utils/crypto'
 import { mediasToSdkFormat, resizeMediasForSend } from '../../../../utils/fileUtils'
+import { snapshotAttachmentRefs } from '../../../../utils/composerAttachments'
 import { getProviderHelpers, getProviderStore } from '../../../../providers'
 
 const props = defineProps({
@@ -33,7 +34,6 @@ const props = defineProps({
 const store = useDataStore()
 const insertTextAtCursor = inject('insertTextAtCursor', null)
 
-const working = ref(false)
 const retryState = computed(() => asyncQuestionRetryState(getEntry() || {}, store.getAsyncQuestionSnapshot(props.sessionId)))
 const uncertain = computed(() => getEntry()?.code === 'send_uncertain')
 const failedSend = computed(() => props.content?.failedSend || null)
@@ -62,7 +62,24 @@ const displayMessage = computed(() =>
 // nothing left to send: Retry and Edit would both be no-ops. Only Delete stays.
 const nothingLeftToSend = computed(() =>
     !!failedSend.value?.mediasDropped && !(failedSend.value?.text || '').trim()
+        && !getEntry()?.attachments?.length
 )
+
+// A Retry or an Edit in progress (both await before consuming the entry):
+// every action waits for it, so a concurrent Delete never releases the refs
+// an Edit is putting back into the composer.
+const actionInProgress = ref(false)
+
+/** Run Retry or Edit alone: no other action starts until it settles. */
+async function guarded(action) {
+    if (actionInProgress.value) return
+    actionInProgress.value = true
+    try {
+        await action()
+    } finally {
+        actionInProgress.value = false
+    }
+}
 
 function getEntry() {
     const requestId = failedSend.value?.requestId
@@ -74,17 +91,21 @@ function getEntry() {
  * settings untouched: the backend overwrites the stored settings bundle with
  * whatever the payload carries, so omitting them would reset the session's
  * forced settings to "use global default".
+ *
+ * A composer send resends the same staged refs (the server reuses its
+ * promotion tombstones); a legacy snapshot (medias) keeps the legacy path.
  */
 async function retry() {
     const entry = getEntry()
-    if (!entry || working.value || !retryState.value.canRetry) return
-    working.value = true
+    if (!entry || !retryState.value.canRetry) return
     try {
         const session = store.getSession(props.sessionId)
         const requestId = generateUUID()
-        // Same send-time resize as the composer. The model is the one the payload
-        // below re-sends: the session's stored model, else the provider's default.
-        const medias = await resizeMediasForSend(
+        const refs = snapshotAttachmentRefs(entry)
+        // Same send-time resize as the composer for legacy medias. The model is
+        // the one the payload below re-sends: the session's stored model, else
+        // the provider's default.
+        const medias = refs.length ? [] : await resizeMediasForSend(
             entry.medias || [],
             getProviderHelpers(session?.provider),
             session?.selected_model ?? getProviderStore(session?.provider)?.defaultModel,
@@ -108,12 +129,20 @@ async function retry() {
             request_id: requestId,
         }
         if (retryState.value.asyncQuestions) payload.async_questions = retryState.value.asyncQuestions
+        if (refs.length) payload.attachments = refs
         if (images.length) payload.images = images
         if (documents.length) payload.documents = documents
         store.applyCreationSendMode(payload)
+        // The staged refs travel with the new send (their snapshot keeps them);
+        // nothing is released: the server reuses its promotion tombstones.
         if (payload.async_questions) {
             await store.sendAsyncQuestionMessage(props.sessionId, props.projectId, requestId, payload, {
-                ...entry, asyncQuestions: payload.async_questions, images, documents,
+                ...entry,
+                asyncQuestions: payload.async_questions,
+                attachments: entry.attachments || [],
+                medias: refs.length ? [] : (entry.medias || []),
+                images,
+                documents,
             }, { retryRequestId: entry.requestId })
             return
         }
@@ -121,26 +150,26 @@ async function retry() {
         if (!sendWsMessage(payload)) return
         store.registerOutgoingSend(props.sessionId, props.projectId, requestId, {
             text: entry.text,
-            medias: entry.medias || [],
+            attachments: entry.attachments || [],
+            medias: refs.length ? [] : (entry.medias || []),
             images,
             documents,
         })
         store.removeFailedSend(props.sessionId, entry.requestId)
     } catch {
         toast.error('Failed to save the retry. Your message remains available for recovery.')
-    } finally { working.value = false }
+    }
 }
 
 /** Put the message back into the composer for rework, then drop the bubble. */
 async function edit() {
     const entry = getEntry()
-    if (!entry || !insertTextAtCursor || working.value || uncertain.value) return
-    working.value = true
+    if (!entry || !insertTextAtCursor || uncertain.value) return
     try {
         if (entry.asyncQuestions || entry.async_questions) {
+            // Restores the draft text, the answers and the staged refs (never released).
             if (!await store.editAsyncQuestionFailure(props.sessionId, entry.requestId)) return
         } else {
-            if (entry.medias?.length) await store.restoreDraftAttachments(props.sessionId, entry.medias)
             insertTextAtCursor(entry.text)
         }
         // insertTextAtCursor only focuses when the composer is already expanded; a
@@ -154,16 +183,31 @@ async function edit() {
         document
             .querySelector('.message-input.collapsed')
             ?.dispatchEvent(new CustomEvent('twicc:expand-composer'))
-        store.removeFailedSend(props.sessionId, entry.requestId)
+        if (!(entry.asyncQuestions || entry.async_questions)) {
+            // Staged refs come back as draft records (same id and bucket, appended
+            // after the composer's attachments); legacy medias go through the legacy
+            // migration (spec 2026-10-03 §9.5, §9.6), appended the same way. Only
+            // forgets the snapshot: the refs now belong to the draft.
+            if (entry.attachments?.length) {
+                await store.restoreDraftAttachmentRefs(props.sessionId, entry.attachments)
+            } else if (entry.medias?.length) {
+                await store.restoreLegacyDraftMedias(props.sessionId, entry.medias)
+            }
+            store.removeFailedSend(props.sessionId, entry.requestId)
+        }
     } catch {
         toast.error('Failed to restore the message. Your message remains available for recovery.')
-    } finally { working.value = false }
+    }
 }
 
+/** Delete the failed message: its staged refs are released (spec §6.1.4). */
 function discard() {
+    if (actionInProgress.value) return
     const entry = getEntry()
-    if (!entry || working.value || uncertain.value) return
+    if (!entry || uncertain.value) return
+    const refs = snapshotAttachmentRefs(entry)
     store.removeFailedSend(props.sessionId, entry.requestId)
+    if (refs.length) store.releaseAttachments(refs)
 }
 </script>
 
@@ -191,8 +235,8 @@ function discard() {
                     size="small"
                     variant="danger"
                     appearance="outlined"
-                    :disabled="nothingLeftToSend || working || !retryState.canRetry"
-                    @click="retry"
+                    :disabled="nothingLeftToSend || actionInProgress || !retryState.canRetry"
+                    @click="guarded(retry)"
                 >
                     <wa-icon slot="start" name="rotate-right"></wa-icon>
                     Retry
@@ -202,13 +246,13 @@ function discard() {
                     size="small"
                     variant="neutral"
                     appearance="outlined"
-                    :disabled="nothingLeftToSend || working || uncertain"
-                    @click="edit"
+                    :disabled="nothingLeftToSend || actionInProgress || uncertain"
+                    @click="guarded(edit)"
                 >
                     <wa-icon slot="start" name="pen"></wa-icon>
                     Edit
                 </wa-button>
-                <wa-button size="small" variant="neutral" appearance="plain" :disabled="working || uncertain" @click="discard">
+                <wa-button size="small" variant="neutral" appearance="plain" :disabled="actionInProgress || uncertain" @click="discard">
                     Delete
                 </wa-button>
             </div>

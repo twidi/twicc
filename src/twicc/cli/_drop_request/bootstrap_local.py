@@ -27,7 +27,6 @@ class ProviderBootstrap(NamedTuple):
     untrusted_permission_modes: frozenset
     untrusted_permission_mode_default: str | None
     model_registry: list
-    attachment_support: dict
     presets: list
 
 
@@ -71,7 +70,6 @@ def load_local_bootstrap() -> LocalBootstrap:
             untrusted_permission_modes=untrusted_modes,
             untrusted_permission_mode_default=untrusted_default,
             model_registry=provider_data.get("model_registry", []),
-            attachment_support=provider_data.get("attachment_support", {}),
             presets=presets,
         )
 

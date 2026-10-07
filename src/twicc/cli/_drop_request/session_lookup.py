@@ -60,9 +60,8 @@ def lookup_session(session_id: str) -> ResolvedSession:
 
     Raises :class:`SessionLookupError` on any failed precondition; otherwise
     returns a :class:`ResolvedSession` with the fields the caller needs to
-    keep going (notably ``provider`` to pick the right attachment caps, and
-    ``current_settings`` to build the effective post-update settings for
-    constraint validation).
+    keep going (notably ``provider``, and ``current_settings`` to build the
+    effective post-update settings for constraint validation).
     """
     from twicc.core.enums import Provider
     from twicc.core.models import Session, SessionType

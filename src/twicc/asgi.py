@@ -36,10 +36,15 @@ from twicc.agent_settings_presets import (
     write_agent_settings_presets,
 )
 from twicc.core.enums import Provider
+from twicc.core.services.attachments import lifecycle as attachment_lifecycle
+from twicc.core.services.attachments import planner as attachment_planner
+from twicc.core.services.attachments.staging import AttachmentError
+from twicc.core.services.attachments.target import resolve_existing_session_plan_target
 from twicc.core.services.session_creation import create_session_from_payload
 from twicc.core.services.title_suggestion import suggest_title
 from twicc.agent import ephemeral as ephemeral_runs
 from twicc.agent.exceptions import SendDeliveryError
+from twicc.agent.send_lanes import send_lane, wait_for_send_barrier
 from twicc.share.consumer import ShareConsumer
 from twicc.paths import is_first_run
 from twicc.providers.claude_code.ws import ClaudeCodeWSHandler
@@ -414,22 +419,25 @@ def _resolve_changelog_versions() -> tuple[str, str, bool]:
     return previous, last, show_forced
 
 
-# Detached background tasks spawned from the WS consumer (e.g. agent stops, which
-# hold the manager grace window for up to ~30s in ``interrupt_or_kill``). Awaiting
-# such an operation inline in ``receive_json`` would freeze the consumer: Channels
-# dispatches a connection's events serially (``await_many_dispatch``), so a blocked
-# handler stops the consumer answering the heartbeat ``ping`` — the client then
-# drops and reconnects the WS — and stops it flushing queued broadcasts until the
-# operation returns. Running detached keeps the receive loop free.
+# Detached background tasks spawned from the WS consumer (sends, and agent stops,
+# which hold the manager grace window for up to ~30s in ``interrupt_or_kill``).
+# Awaiting such an operation inline in ``receive_json`` would freeze the consumer:
+# Channels dispatches a connection's events serially (``await_many_dispatch``), so
+# a blocked handler stalls that connection's other business frames and its
+# outgoing broadcasts until the operation returns, and the transport stops reading
+# once ``MAX_QUEUED_EVENTS`` events are queued. (Heartbeat pings are answered
+# earlier, by ``websocket_transport.HeartbeatTransport``, so they keep flowing.)
+# Running detached keeps the receive loop free.
 #
-# The set lives at module scope, not on the consumer, on purpose: a stop must run
-# to completion (actually kill the agent) even if the spawning connection goes
-# away first. asyncio keeps only a weak reference to a running task, so without a
-# strong ref here the GC could destroy one mid-flight.
+# The set lives at module scope, not on the consumer, on purpose: a stop or an
+# admitted send must run to completion even if the spawning connection goes away
+# first (connection cleanup never cancels these tasks). asyncio keeps only a weak
+# reference to a running task, so without a strong ref here the GC could destroy
+# one mid-flight.
 _DETACHED_TASKS: set[asyncio.Task] = set()
 
 
-def _spawn_detached(coro, *, label: str) -> None:
+def _spawn_detached(coro, *, label: str) -> asyncio.Task:
     """Run ``coro`` detached from the consumer's serial receive loop.
 
     Keeps a strong reference until completion and logs any exception (a bare
@@ -444,6 +452,7 @@ def _spawn_detached(coro, *, label: str) -> None:
             logger.error("Detached WS task %s failed", label, exc_info=exc)
 
     task.add_done_callback(_on_done)
+    return task
 
 
 class WSConsumer(AsyncJsonWebsocketConsumer):
@@ -774,15 +783,15 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         if self._should_send("peer_messages_updated"):
             from twicc.core.models import PeerMessage, PeerMessageDirection, PeerMessageStatus, PeerState
             from twicc.core.serializers import serialize_peer_message
-            from twicc.core.services.peer_messages import peer_message_projects_map
+            from twicc.core.services.peer_messages import peer_message_projects_map, peer_message_summary_queryset
 
             def _peer_messages_snapshot():
                 # The serializer reads each message's local session titles: one
                 # JOIN, not one query per row. `replies` (the "answered by"
                 # line) is one extra query for the whole snapshot.
-                rows = PeerMessage.objects.select_related(
-                    "origin_session", "delivered_to_session", "reply_to_message",
-                ).prefetch_related("replies").exclude(peer__state=PeerState.REVOKED)
+                rows = peer_message_summary_queryset(
+                    PeerMessage.objects.exclude(peer__state=PeerState.REVOKED),
+                )
                 pending = list(rows.filter(
                     direction=PeerMessageDirection.IN, status=PeerMessageStatus.PENDING,
                 ))
@@ -1030,14 +1039,65 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             logger.exception("Error sending JSON message: %s", exc)
 
     async def _handle_send_message(self, content: dict) -> None:
+        """Check the frame shape inline, then run the send detached on its lane.
+
+        Only the shape checks run in the receive loop, so a slow send never
+        stalls this connection's other frames or broadcasts. The admitted send
+        runs in a detached task on the session's ordered lane
+        (``twicc.agent.send_lanes``), shared by every connection: two sends to
+        one session keep their arrival order, and a queued send never meets
+        the pending admission claim of the send ahead of it.
+        """
+        session_id = content.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            frame = {
+                "type": "error",
+                "code": "invalid_request",
+                "message": "send_message requires session_id and project_id",
+            }
+            if request_id := content.get("request_id"):
+                frame["request_id"] = request_id
+            logger.warning("send_message missing or invalid session_id: %r", session_id)
+            await self.send_json(frame)
+            return
+        # Composer refs: shape only (no disk access), answered at once (spec §6.6, §8).
+        try:
+            attachment_planner.validate_attachment_frame(content)
+        except AttachmentError as exc:
+            frame = {"type": "error", "code": exc.code, "message": str(exc), "session_id": session_id}
+            if request_id := content.get("request_id"):
+                frame["request_id"] = request_id
+            logger.warning("send_message for %s rejected: %s", session_id, exc)
+            await self.send_json(frame)
+            return
+        # Question answers: shape only too (their content is validated in the lane,
+        # against the durable snapshot). Same error family, same request id.
+        if content.get("async_questions") is not None and not isinstance(content["async_questions"], dict):
+            frame = {
+                "type": "error", "code": "async_questions_invalid",
+                "message": "async_questions must be an object", "session_id": session_id,
+            }
+            if request_id := content.get("request_id"):
+                frame["request_id"] = request_id
+            logger.warning("send_message for %s rejected: async_questions is not an object", session_id)
+            await self.send_json(frame)
+            return
+        _spawn_detached(
+            self._run_send_message(session_id, content),
+            label=f"send_message({session_id})",
+        )
+
+    async def _run_send_message(self, session_id: str, content: dict) -> None:
+        """Run one admitted send while holding the session's lane."""
+        async with send_lane(session_id):
+            await self._send_message_in_lane(session_id, content)
+
+    async def _send_message_in_lane(self, session_id: str, content: dict) -> None:
         """Reserve ephemeral admission before the first asynchronous lookup."""
         admission = None
-        session_id = content.get("session_id")
         try:
             ephemeral_runs.check_readonly(session_id)
-            if isinstance(session_id, str) and session_id and (
-                content.get("ephemeral") or not ephemeral_runs.is_active_normal(session_id)
-            ):
+            if content.get("ephemeral") or not ephemeral_runs.is_active_normal(session_id):
                 admission = ephemeral_runs.reserve(
                     session_id, str(content.get("provider") or ""), str(content.get("project_id") or ""),
                     ephemeral=bool(content.get("ephemeral")),
@@ -1065,7 +1125,9 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             "text": "The message text",       // May be empty for settings-only updates
             "title": "Optional session title",  // Only for new sessions
             "images": [...],  // Optional: array of SDK ImageBlockParam objects
-            "documents": [...]  // Optional: array of SDK DocumentBlockParam objects
+            "documents": [...],  // Optional: array of SDK DocumentBlockParam objects
+            "attachments": [{"bucket": ..., "id": ...}, ...]  // Optional: composer refs,
+                                                               // exclusive with images/documents
         }
 
         This handles both new sessions and existing sessions:
@@ -1091,6 +1153,12 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         # frontend can match an error to the exact send it made (and run its
         # recovery flow: restore the draft, drop the optimistic message).
         request_id = content.get("request_id")
+        # Composer refs, already shape-checked inline by ``_handle_send_message``
+        # (re-read here: pure, and it keeps direct callers of this method safe).
+        try:
+            attachment_refs = attachment_planner.validate_attachment_frame(content)
+        except AttachmentError:
+            attachment_refs = None
 
         async def send_error(message: str, *, code: str, **extra) -> None:
             frame: dict = {"type": "error", "code": code, "message": message, **extra}
@@ -1099,6 +1167,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             if session_id:
                 frame["session_id"] = session_id
             await self.send_json(frame)
+
+        if attachment_refs is None:
+            await send_error("Invalid attachments", code=attachment_planner.ERROR_INVALID_ATTACHMENTS)
+            return
 
         # Validate required fields (text is allowed to be empty for settings-only updates)
         if not session_id or not project_id:
@@ -1248,9 +1320,12 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
                 # If no text/attachments and no process is running, we're done:
                 # settings are saved to DB and broadcast, nothing to send.
-                has_content = bool(text) or bool(images) or bool(documents) or (
-                    provider == Provider.CODEX and isinstance(content.get("async_questions"), dict)
-                    and bool(content["async_questions"].get("answers"))
+                has_content = (
+                    bool(text) or bool(images) or bool(documents) or bool(attachment_refs)
+                    or (
+                        provider == Provider.CODEX and isinstance(content.get("async_questions"), dict)
+                        and bool(content["async_questions"].get("answers"))
+                    )
                 )
                 has_process = manager.get_agent_info(session_id) is not None
                 if not has_content and not has_process:
@@ -1264,11 +1339,21 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 # (single safety net — front should have corrected, but just in case)
                 effective_agent_settings = helpers.enforce_agent_settings_consistency(effective_agent_settings)
 
+                # Composer attachments: planned off the loop once the settings
+                # are resolved (spec §6.6); passed only when there are refs, so
+                # a legacy send keeps its exact manager call.
+                plan_kwargs = {}
+                if attachment_refs:
+                    plan_kwargs["attachment_plan"] = await self._plan_existing_session_attachments(
+                        manager, session_id, provider, effective_agent_settings, cwd, text, attachment_refs,
+                    )
+
                 # Session exists: send message to it
                 delivered = await manager.send_to_session(
                     session_id, project_id, cwd, text,
                     settings=effective_agent_settings,
                     images=images, documents=documents,
+                    **plan_kwargs,
                     **({"async_questions": content.get("async_questions"), "request_id": request_id,
                         "send_origin": "human"} if provider == Provider.CODEX else {}),
                 )
@@ -1296,18 +1381,23 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                     # (drop-request files, CLI) keeps the default False.
                     "hybrid": bool(content.get("hybrid")),
                     "ephemeral": bool(content.get("ephemeral")),
+                    # Composer refs, planned by the service. The WS path keeps owning
+                    # them (phase 1 rules: released on delivery only, below).
+                    "attachments": [ref._asdict() for ref in attachment_refs],
                     **agent_settings_kwargs_from_frontend_payload(content),
                 }
 
                 result = await create_session_from_payload(
-                    payload, allow_hybrid=True, allow_ephemeral=True, ephemeral_admission=ephemeral_admission,
+                    payload, allow_hybrid=True, allow_ephemeral=True,
+                    ephemeral_admission=ephemeral_admission,
                 )
                 if not result.success:
                     # Translate the first error to the WS-specific error frame shape.
                     # The frontend already understands the error codes the service emits
                     # (provider_disabled, project_not_found, etc.).
                     first = result.errors[0]
-                    await send_error(first.message, code=first.code)
+                    extra = {"names": list(result.error_names)} if result.error_names else {}
+                    await send_error(first.message, code=first.code, **extra)
                     return
                 # Success: the new agent started with the first message as its
                 # opening prompt. Mark it delivered so the ack below confirms
@@ -1319,7 +1409,11 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             # carries a specific code (agent_starting, hybrid_composer_busy, …);
             # plain RuntimeErrors fall back to the generic send_failed.
             logger.warning("send_message failed: %s", type(e).__name__ if ephemeral_admission and ephemeral_admission.ephemeral else e)
-            await send_error(str(e), code=getattr(e, "code", None) or "send_failed")
+            names = getattr(e, "names", ())
+            await send_error(
+                str(e), code=getattr(e, "code", None) or "send_failed",
+                **({"names": list(names)} if names else {}),
+            )
         except Exception as e:
             # Unexpected errors - log full traceback
             if ephemeral_admission and ephemeral_admission.ephemeral:
@@ -1336,14 +1430,51 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         # delivery confirmation for messages Claude Code accepts mid-turn —
         # those are folded into the running turn and never get their own
         # user_message line in the JSONL.
-        if delivered and request_id:
-            await self.send_json({
-                "type": "send_ack",
-                "request_id": request_id,
-                "session_id": session_id,
-            })
+        #
+        # Then the server release of the delivered composer refs (spec
+        # §6.1.4): a detached, best-effort task started AFTER the ack attempt
+        # whatever its outcome (a closed socket, a frame without request_id),
+        # since a delivered send is never retried.
+        try:
+            if delivered and request_id:
+                await self.send_json({
+                    "type": "send_ack",
+                    "request_id": request_id,
+                    "session_id": session_id,
+                })
+        finally:
+            if delivered and attachment_refs:
+                attachment_lifecycle.delivery_release(attachment_refs)()
 
         return delivered
+
+    async def _plan_existing_session_attachments(
+        self, manager, session_id: str, provider: Provider, effective_settings: AgentSettings, cwd: str,
+        text: str, refs: tuple,
+    ):
+        """Plan the composer *refs* of a message to the existing *session_id* (spec §6.6).
+
+        Runs after the settings are resolved and enforced; the plan itself runs
+        off the event loop. A staging or plan error is raised as
+        ``SendDeliveryError`` (with the ``names`` of the entries concerned), so
+        it goes through the usual error frame with the ``request_id``.
+        """
+        try:
+            target = await resolve_existing_session_plan_target(
+                session_id=session_id,
+                provider=provider.value,
+                effective_settings=effective_settings,
+                directory=cwd,
+                # A follow-up never targets an ephemeral run: those accept one message only.
+                ephemeral=False,
+                live_agent=manager.get_live_agent(session_id),
+            )
+            return await attachment_planner.plan_attachments_off_loop(refs, target, text=text)
+        except AttachmentError as exc:
+            code, message, names = attachment_planner.describe_attachment_error(exc)
+            error = SendDeliveryError(message, code=code)
+            error.names = names
+            raise error from exc
 
     async def _handle_set_session_hybrid(self, content: dict) -> None:
         """Switch an existing session to hybrid CLI mode (one-way).
@@ -1396,22 +1527,36 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         # holds the manager grace window for up to ~30s, and the whole tail must
         # stay ordered (kill → DB → broadcast), so run it off the receive loop to
         # avoid freezing this consumer (no heartbeat → the WS would drop).
+        # The task is created before this handler returns, so before the task of
+        # any ``send_message`` frame that follows: it joins the session's send
+        # lane first (see ``_run_switch_hybrid``).
         _spawn_detached(
             self._run_switch_hybrid(session_id),
             label=f"switch_hybrid({session_id})",
         )
 
     async def _run_switch_hybrid(self, session_id: str) -> None:
-        """Kill the SDK agent, mark the session hybrid, broadcast. Off the receive loop."""
+        """Kill the SDK agent, mark the session hybrid, broadcast. Off the receive loop.
+
+        The kill and the flag write hold the session's send lane, taken before
+        the first await. A send queued behind the switch (the composer sends
+        ``set_session_hybrid`` then ``send_message``; a CLI or MCP send can come
+        at any time) runs once ``Session.hybrid`` is written: its attachment
+        plan and the agent the manager builds both read that flag. A send
+        already in the lane runs first, through the SDK agent the switch then
+        kills. ``kill_agent`` never takes the lane, so holding it cannot
+        deadlock.
+        """
         from twicc.core.models import Session
         from twicc.core.serializers import serialize_session
 
-        manager = get_agent_manager_registry().get(Provider.CLAUDE_CODE)
-        await manager.kill_agent(session_id, reason="switch-hybrid")
+        async with send_lane(session_id):
+            manager = get_agent_manager_registry().get(Provider.CLAUDE_CODE)
+            await manager.kill_agent(session_id, reason="switch-hybrid")
 
-        await run_under_db_write_lock(
-            lambda: Session.objects.filter(id=session_id).aupdate(hybrid=True)
-        )
+            await run_under_db_write_lock(
+                lambda: Session.objects.filter(id=session_id).aupdate(hybrid=True)
+            )
         logger.info("Session %s switched to hybrid CLI mode", session_id)
         session = await sync_to_async(Session.objects.filter(id=session_id).first)()
         if session is not None:
@@ -1467,12 +1612,13 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 pass  # Unknown provider value — let the registry handle it
 
         # Detached: a soft stop holds the manager grace window for up to ~30s
-        # (``interrupt_or_kill`` interrupts, waits, then force-kills). Awaiting it
-        # here would freeze this consumer's serial receive loop for that whole
-        # window — no heartbeat ``pong`` (the client drops + reconnects the WS),
-        # no broadcasts flushed. Nothing here needs the result: the stop reports
-        # itself via broadcasts (``stopping`` then the DEAD ``process_state``).
-        # ``hard_kill_agent`` is fast but detached too, for uniformity.
+        # (``interrupt_or_kill`` interrupts, waits, then force-kills), and first
+        # waits behind the sends queued on the session's lane. Awaiting it here
+        # would freeze this consumer's serial receive loop for that whole time —
+        # no other business frame handled, no broadcasts flushed. Nothing here
+        # needs the result: the stop reports itself via broadcasts (``stopping``
+        # then the DEAD ``process_state``). ``hard_kill_agent`` is fast but
+        # detached too, for uniformity.
         _spawn_detached(
             self._run_kill_process(session_id, force=bool(content.get("force"))),
             label=f"kill_process({session_id})",
@@ -1480,13 +1626,18 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
     async def _run_kill_process(self, session_id: str, *, force: bool) -> None:
         """Stop an agent off the receive loop. See ``_handle_kill_process``."""
-        registry = get_agent_manager_registry()
-        # ``force`` escalates to a hard kill: SIGKILL the process tree now,
-        # bypassing the manager lock a soft stop may hold (no grace window).
+        # ``force`` escalates to a hard kill: SIGKILL the current process tree
+        # now, bypassing both the send lane and the manager lock a soft stop
+        # may hold (no grace window). It does not cancel a send still queued or
+        # planning: that send may start a process afterwards.
         if force:
-            killed = await registry.hard_kill_agent(session_id)
+            killed = await get_agent_manager_registry().hard_kill_agent(session_id)
         else:
-            killed = await registry.kill_agent(session_id, reason="manual")
+            # A soft stop runs after the sends queued before it, without
+            # holding the lane during its grace window.
+            if isinstance(session_id, str):
+                await wait_for_send_barrier(session_id)
+            killed = await get_agent_manager_registry().kill_agent(session_id, reason="manual")
         if not killed:
             # Process not found or not in killable state — not an error, just log.
             logger.debug(
@@ -1636,11 +1787,12 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 pass  # Unknown provider value — let the registry handle it
 
         # Detached: the hybrid-Claude interrupt presses Escape and polls the TUI
-        # composer for up to ~15s, so awaiting it on this serial receive loop
-        # would stall the heartbeat pong (client drops + reconnects) and block
-        # broadcasts. The SDK/Codex paths are fast, but we detach uniformly. The
-        # outcome surfaces via the normal ``process_state`` broadcast (USER_TURN),
-        # not a return value, so nothing here needs to await it.
+        # composer for up to ~15s, and every interrupt first waits behind the
+        # sends queued on the session's lane, so awaiting it on this serial
+        # receive loop would stall this connection's other frames and its
+        # broadcasts. The outcome surfaces via the normal ``process_state``
+        # broadcast (USER_TURN), not a return value, so nothing here needs to
+        # await it.
         _spawn_detached(
             self._run_interrupt_session(session_id),
             label=f"interrupt_session({session_id})",
@@ -1648,6 +1800,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
     async def _run_interrupt_session(self, session_id: str) -> None:
         """Interrupt a session's turn off the receive loop. See ``_handle_interrupt_session``."""
+        # Run after the sends queued before this frame, without holding the
+        # lane while the interrupt executes.
+        if isinstance(session_id, str):
+            await wait_for_send_barrier(session_id)
         interrupted = await get_agent_manager_registry().interrupt_agent(session_id)
         if not interrupted:
             # Not found, not in ASSISTANT_TURN, or the runtime can't interrupt —

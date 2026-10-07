@@ -44,7 +44,7 @@ $TWICC peer-message <MESSAGE_ID>
  "reply_to_ref": {"message_id": "pm_parent000000001", "title": "Original API question", "direction": "in", "status": "delivered"},
  "reply_target": "session-receiver", "title": "API changes recap", "status": "pending", "error": "",
  "text_preview": "Here is the recap...",
- "attachments_meta": [{"kind": "image", "media_type": "image/png", "bytes": 48211}],
+ "attachments_meta": [{"name": "screenshot.png", "media_type": "image/png", "bytes": 48211}],
  "origin": {"sent_at": "2026-07-24T12:00:00+00:00"},
  "recipient_note": "", "origin_session_id": "abc123", "delivered_to_session_id": null,
  "origin_session": {"id": "abc123", "title": "Front revamp", "project_id": "-home-me-app"},
@@ -60,6 +60,7 @@ $TWICC peer-message <MESSAGE_ID>
 - `reply_target` — id of the parent's local-end session, or `null`; it is not a delivery action or eligibility promise.
 - `title` — the required subject the send carried.
 - `origin_session` / `delivered_to_session` — the local session at each end (`null` when there is none), with its title read live. The peer receives neither.
+- `attachments_meta` — one row per attached file, in order: `name`, `media_type`, `bytes`. It survives the purge of the bytes.
 - **Wire boundary** — the peer-message wire carries `message_id`, `title`, `reply_to`, `origin.sent_at`, and `payload`. A root message carries `reply_to` as `""`. `thread_id`, `reply_to_ref`, and `reply_target` are local serialization values, not wire fields.
 
 ### Exit codes

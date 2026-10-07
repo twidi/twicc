@@ -378,6 +378,33 @@ def test_unknown_session(client, project):
     assert _json(resp)["error"]
 
 
+_COMPOSER_KEY = "draft/0b0e2f0e-8d6c-4c43-9a0e-2f7d4b4f6a11"
+
+
+@pytest.mark.parametrize("scoped", ["project", "session"])
+def test_scoped_prefixes_refuse_the_composer_origin(client, project, session, scoped):
+    url = f"/api/projects/{project.id}/uploads/"
+    if scoped == "session":
+        url = f"/api/projects/{project.id}/sessions/{session.id}/uploads/"
+    body = _body(None, origin={"panel": "composer", "key": _COMPOSER_KEY})
+    del body["target_dir"]
+    resp = _post(client, url, body)
+    assert resp.status_code == 400
+    assert _staging_files() == []
+
+
+def test_standalone_composer_origin_computes_its_target(client, data_dir):
+    body = _body(None, origin={"panel": "composer", "key": _COMPOSER_KEY})
+    del body["target_dir"]
+    resp = _post(client, STANDALONE_URL, body)
+    assert resp.status_code == 201
+    meta = store.read_metadata(_json(resp)["id"])
+    assert meta["scope"] == {"kind": "composer"}
+    assert meta["target_dir"] == os.path.join(
+        os.path.realpath(data_dir), "composer-attachments", *_COMPOSER_KEY.split("/"), "file"
+    )
+
+
 # ── Check 4: writable, never the staging dir ──────────────────────────────────
 
 

@@ -306,6 +306,29 @@ test('creation 4xx with X-Twicc-Upload removes the entry with a toast; without i
     assert.equal(h2.errorToasts().length, 0)
 })
 
+test('a refused creation calls onRejected with its HTTP status; without onRejected nothing changes', async () => {
+    const h = createHarness()
+    h.server.POST = () => respond(410, { error: 'The attachment was removed' })
+    const rejected = []
+    const clientId = `${TAB}:00000000000000ab`
+    await h.controller.startUploads({
+        files: [new File(['hello'], 'c.txt')], origin: COMPOSER, clientId, onRejected: info => rejected.push(info),
+    })
+    await flush()
+    assert.deepEqual(rejected, [{ client_id: clientId, filename: 'c.txt', code: 'creation_refused', status: 410 }])
+    assert.equal(h.list().length, 0)
+    assert.equal(h.errorToasts().length, 1)
+    assert.equal(h.errorToasts()[0].message, 'The attachment was removed')
+
+    // A Files-panel pick has no listener: the entry goes with its toast, as before.
+    const h2 = createHarness()
+    h2.server.POST = () => respond(410, { error: 'Gone' })
+    await h2.pick(['a.txt'])
+    assert.equal(h2.list().length, 0)
+    assert.equal(h2.errorToasts().length, 1)
+    assert.equal(h2.errorToasts()[0].message, 'Gone')
+})
+
 test('creation 507 from the upload code: entry removed, toast', async () => {
     const h = createHarness()
     h.server.POST = () => respond(507, { error: 'Not enough disk space' })
@@ -1381,4 +1404,129 @@ test('dispose stops the listeners and transfers', async () => {
     h.events.emit('online')
     const event = { preventDefault() { throw new Error('should not be called') } }
     h.events.emit('beforeunload', event)
+})
+
+// ── Composer origin (spec 2026-10-03 §6.1.1) ────────────────────────────────
+
+const COMPOSER = { panel: 'composer', key: 'bucket-1/00000000-0000-4000-8000-000000000001' }
+
+test('composer: standalone /api creation without target_dir nor root, with the caller client_id', async () => {
+    const h = createHarness()
+    const clientId = `${TAB}:abcdefabcdefabcd`
+    await h.controller.startUploads({ files: [new File(['hello'], 'c.txt')], origin: COMPOSER, clientId })
+    await flush()
+    const [post] = h.posts()
+    assert.equal(post.url, '/api/uploads/')
+    assert.equal(Object.hasOwn(post.body, 'target_dir'), false)
+    assert.equal(Object.hasOwn(post.body, 'root'), false)
+    assert.deepEqual(post.body.origin, COMPOSER)
+    assert.equal(post.body.client_id, clientId)
+    assert.equal(post.body.filename, 'c.txt')
+    assert.equal(post.body.size, 5)
+    const [entry] = h.list()
+    assert.equal(entry.key, clientId)
+    assert.equal(entry.clientId, clientId)
+    assert.equal(entry.localState, 'sending')
+})
+
+test('a caller client_id needs exactly one file', async () => {
+    const h = createHarness()
+    await assert.rejects(h.controller.startUploads({
+        files: [new File(['a'], 'a'), new File(['b'], 'b')], origin: COMPOSER, clientId: `${TAB}:1`,
+    }))
+    assert.equal(h.list().length, 0)
+})
+
+test('the controller exposes its tab id', () => {
+    assert.equal(createHarness().controller.tabId, TAB)
+})
+
+test('onRejected: an unreadable file calls back with the client_id allocated before the read, no toast', async () => {
+    const h = createHarness()
+    const rejected = []
+    const order = []
+    const broken = {
+        name: 'bad.bin',
+        size: 3,
+        slice: () => ({ arrayBuffer: async () => { order.push('read'); throw new Error('x') } }),
+    }
+    const clientId = `${TAB}:00000000000000aa`
+    await h.controller.startUploads({
+        files: [broken], origin: COMPOSER, clientId,
+        onRejected: info => { order.push('rejected'); rejected.push(info) },
+    })
+    assert.deepEqual(order, ['read', 'rejected'])
+    assert.deepEqual(rejected, [{ client_id: clientId, filename: 'bad.bin', code: 'file_unreadable' }])
+    assert.equal(h.list().length, 0)
+    assert.equal(h.toasts.length, 0)
+    assert.equal(h.posts().length, 0)
+})
+
+test('onRejected without a caller client_id gets a client_id of this tab', async () => {
+    const h = createHarness()
+    const rejected = []
+    const broken = { name: 'bad.bin', size: 3, slice: () => ({ arrayBuffer: async () => { throw new Error('x') } }) }
+    await h.controller.startUploads({ files: [broken], origin: COMPOSER, onRejected: info => rejected.push(info) })
+    assert.equal(rejected.length, 1)
+    assert.ok(rejected[0].client_id.startsWith(`${TAB}:`))
+    assert.equal(h.toasts.length, 0)
+})
+
+test('composer: no completion toast; the completion event still fires', async () => {
+    const h = createHarness()
+    const events = []
+    h.controller.onCompleted(r => events.push(r))
+    await h.controller.startUploads({ files: [new File(['hello'], 'c.txt')], origin: COMPOSER })
+    await flush()
+    const [entry] = h.list()
+    h.controller.applyServerRecord(next(entry.server, { state: 'completed', offset: 5, final_path: '/s/c.txt' }), { fromWs: true })
+    assert.equal(events.length, 1)
+    assert.equal(h.toasts.length, 0)
+    assert.equal(h.list().length, 0)
+})
+
+test('composer: no "cancelled in another tab" toast; a server failure still toasts', async () => {
+    const h = createHarness()
+    await h.controller.startUploads({ files: [new File(['hello'], 'c.txt')], origin: COMPOSER })
+    await flush()
+    const [entry] = h.list()
+    h.controller.applyServerRecord(next(entry.server, { state: 'cancelled' }), { fromWs: true })
+    assert.equal(h.toasts.length, 0)
+
+    const h2 = createHarness()
+    await h2.controller.startUploads({ files: [new File(['hello'], 'c.txt')], origin: COMPOSER })
+    await flush()
+    const [e2] = h2.list()
+    h2.controller.applyServerRecord(next(e2.server, { state: 'failed', error: 'Disk error' }), { fromWs: true })
+    assert.equal(h2.errorToasts().length, 1)
+    assert.equal(h2.errorToasts()[0].message, 'Disk error')
+})
+
+test('composer: a paused transfer toast names the message composer', async () => {
+    const h = createHarness()
+    await h.controller.startUploads({ files: [new File(['hello'], 'c.txt')], origin: COMPOSER })
+    await flush()
+    h.lastUpload().options.onError(tusError(507, { upload: true }))
+    await flush()
+    assert.equal(h.errorToasts().length, 1)
+    assert.match(h.errorToasts()[0].message, /from the message composer\.$/)
+    assert.doesNotMatch(h.errorToasts()[0].message, /tab/)
+})
+
+test('controller Retry of a paused composer transfer keeps the same client_id and upload', async () => {
+    const h = createHarness()
+    const clientId = `${TAB}:00000000000000bb`
+    await h.controller.startUploads({ files: [new File(['hello'], 'c.txt')], origin: COMPOSER, clientId })
+    await flush()
+    const [entry] = h.list()
+    const serverId = entry.server.id
+    h.lastUpload().options.onError(tusError(500, { upload: true }))
+    await flush()
+    assert.equal(entry.localState, 'paused')
+    assert.equal(entry.pauseReason, 'error')
+    h.controller.retry(entry.key)
+    assert.equal(entry.localState, 'sending')
+    assert.equal(entry.clientId, clientId)
+    assert.equal(h.posts().length, 1)
+    assert.equal(h.lastUpload().options.uploadUrl, `/api/uploads/${serverId}/`)
 })

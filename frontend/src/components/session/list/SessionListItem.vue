@@ -425,7 +425,7 @@ function handleMenuSelect(event) {
         if (props.active) {
             emit('select', session)
         }
-        store.deleteDraftSession(session.id)
+        store.deleteDraftSession(session.id, { releaseAttachments: true })
     } else if (action === 'archive') {
         // Delegates to the composable: it handles the crons / background shells confirmation
         // and the combined kill+archive in one place.

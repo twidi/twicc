@@ -4,6 +4,8 @@ from copy import deepcopy
 from datetime import datetime
 from typing import NamedTuple
 
+from twicc.context_injection import ATTACHMENTS_KEY
+
 
 class CanonicalImageGeneration(NamedTuple):
     id: str
@@ -70,11 +72,29 @@ def user_message_is_visible(record: dict) -> bool:
     return user_message_attachment_count(record) > 0
 
 
+def _extracted_attachment_entries(record: dict) -> list:
+    """The entries of the ``twicc_attachments`` manifest ingestion stored on ``record``."""
+    attachments = record.get(ATTACHMENTS_KEY)
+    if not isinstance(attachments, dict):
+        return []
+    entries = attachments.get("entries")
+    return entries if isinstance(entries, list) else []
+
+
 def user_message_attachment_count(record: dict) -> int:
-    return sum(
-        entry.get("type") in {"image", "local_image"}
-        for entry in _content(_item_of_type(record, "UserMessage"))
-    )
+    """Count a ``UserMessage``'s attachments.
+
+    With an extracted manifest, every entry counts (inline and file); its
+    inline images are the image entries of the content, so they are not
+    counted twice. Otherwise the native image entries count.
+    """
+    item = _item_of_type(record, "UserMessage")
+    if item is None:
+        return 0
+    extracted = _extracted_attachment_entries(record)
+    if extracted:
+        return len(extracted)
+    return sum(entry.get("type") in {"image", "local_image"} for entry in _content(item))
 
 
 def agent_message_text(record: dict) -> str | None:

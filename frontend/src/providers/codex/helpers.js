@@ -3,7 +3,6 @@ import { buildEphemeralResultContent } from '../ephemeralContent.js'
 import { BaseProviderHelpers, formatRetirementDate } from '../baseHelpers'
 import { PROVIDER, SYNTHETIC_ITEM } from '../../constants'
 import { getTwiccLaunchPrefix } from '../../utils/twiccLaunch'
-import { SUPPORTED_IMAGE_TYPES } from '../../utils/fileUtils'
 import { CONTEXT_MAX, EFFORT, PERMISSION_MODE, UNTRUSTED_PERMISSION_MODES } from './constants'
 import { useCodexStore } from './store'
 import {
@@ -35,13 +34,6 @@ const BUILTIN_COMMANDS = [
     { name: 'goal', plugin_name: null, is_builtin: true, is_global: true, description: "Set the session's goal (the objective Codex works toward), or 'clear' to remove it", argument_hint: '<objective> | clear' },
     { name: 'plan', plugin_name: null, is_builtin: true, is_global: true, description: 'Enter Plan mode — Codex designs an implementation plan before touching code', argument_hint: '[prompt]' },
 ]
-
-// Per-file ceiling for Codex uploads (5 MB). Aligned with the Claude
-// per-image API limit so a draft built up under one provider can be
-// switched to the other without a single attachment becoming invalid
-// retroactively. Codex's own server-side resize (to 2048 px on the long
-// edge) then handles whatever ends up reaching the CLI.
-const CODEX_MAX_FILE_BYTES = 5 * 1024 * 1024
 
 // Map of agent-setting wire names → store getter/setter for the persisted
 // default. Used by ``getDefaultValue`` / ``setDefaultValue`` so generic
@@ -661,27 +653,6 @@ export class CodexHelpers extends BaseProviderHelpers {
         ]
     }
 
-    /**
-     * Codex accepts images only. The Codex CLI core forwards
-     * ``ImageInput.url`` as either an http(s) URL or a base64 data URL.
-     * PDFs and text files have no input-block equivalent in the Codex
-     * protocol and are intentionally excluded.
-     *
-     * Images are resized to the shared ``MAX_IMAGE_DIMENSION`` (2576 px,
-     * Opus 4.7's native resolution) at upload time so the same stored
-     * blob can be sent to any provider without re-encoding. Codex's own
-     * server-side resize (to 2048 px) absorbs whatever ends up at the
-     * CLI without further frontend work.
-     */
-    getAttachmentSupport() {
-        return {
-            images: true,
-            documents: false,
-            maxBytes: CODEX_MAX_FILE_BYTES,
-            acceptedMimeTypes: [...SUPPORTED_IMAGE_TYPES],
-            resizeImages: true,
-        }
-    }
 }
 
 export const codexHelpers = new CodexHelpers()

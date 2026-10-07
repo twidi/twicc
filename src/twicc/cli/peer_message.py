@@ -26,13 +26,11 @@ def peer_message_cmd(
     from twicc.cli._output import emit_error, emit_json
     from twicc.core.models import PeerMessage, PeerMessageDirection
     from twicc.core.serializers import serialize_peer_message
+    from twicc.core.services.peer_messages import peer_message_summary_queryset
 
-    message = (
-        PeerMessage.objects.filter(direction=PeerMessageDirection.OUT, message_id=message_id)
-        .select_related("peer", "origin_session", "delivered_to_session", "reply_to_message")
-        .prefetch_related("replies")
-        .first()
-    )
+    message = peer_message_summary_queryset(
+        PeerMessage.objects.filter(direction=PeerMessageDirection.OUT, message_id=message_id),
+    ).first()
     if message is None:
         emit_error(f"unknown message_id {message_id!r}", code=1)
     emit_json(serialize_peer_message(message))

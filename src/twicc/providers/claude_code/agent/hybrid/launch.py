@@ -30,7 +30,6 @@ from twicc.paths import get_hybrid_hooks_dir, get_session_hybrid_dir
 from twicc.providers.claude_code.bin import resolve_bundled_binary
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
 
-
 # How long the CLI lets the PermissionRequest hook live — i.e. how long the
 # GUI-answer channel stays open for one prompt (the hook IS the channel: it
 # polls for the answer file until the CLI reaps it). Mirror of TwiCC's own
@@ -41,9 +40,36 @@ from twicc.providers.helpers import AgentSettings, get_provider_helpers
 HYBRID_HOOK_TIMEOUT_SECONDS = 14 * 24 * 3600
 
 
-def build_hooks_settings(session_id: str, fast_mode: bool) -> str:
+def chrome_onboarding_completed() -> bool:
+    """True when the CLI's one-time "Claude in Chrome" intro dialog was already answered.
+
+    The flag lives in the CLI's global config (not a settings key, so `--settings` cannot carry it) and the
+    user's own config is never written. Without it `--chrome` opens a dialog that no one answers in a tmux
+    session, so the session would stay in "starting" until the starting timeout. Read-only; a missing or
+    unreadable file counts as not completed. The caller withholds Chrome from the session while it is not.
+    """
+    from twicc.provider_homes import claude_global_config_path
+
+    try:
+        completed = orjson.loads(claude_global_config_path().read_bytes()).get("hasCompletedClaudeInChromeOnboarding")
+    except (OSError, ValueError, AttributeError):
+        completed = False
+    return completed is True
+
+
+def build_hooks_settings(session_id: str, fast_mode: bool, *, skip_bypass_dialog: bool = False) -> str:
     """Inline ``--settings`` JSON: fastMode + forced file checkpointing + the
     single ``PermissionRequest`` hook.
+
+    With ``skip_bypass_dialog`` the CLI's one-time "Bypass Permissions mode"
+    confirmation is not shown (``skipDangerousModePermissionPrompt``, honoured
+    from ``--settings``): bypassPermissions is chosen in TwiCC, which drives the
+    CLI, so asking again would only leave the session stuck in "starting" on
+    the dialog until the starting timeout stops it (observed: the dialog also
+    appears with another permission mode as soon as
+    ``--allow-dangerously-skip-permissions`` is given).
+    Given on the command line, the setting stays scoped to this session:
+    nothing is written to the user's own ``settings.json``.
 
     Schema validated empirically on CLI 2.1.170 (2026-06-11 design probe).
     The hook is pure shell — it drops its stdin JSON into the watched
@@ -88,6 +114,8 @@ def build_hooks_settings(session_id: str, fast_mode: bool) -> str:
             }],
         },
     }
+    if skip_bypass_dialog:
+        settings["skipDangerousModePermissionPrompt"] = True
     return orjson.dumps(settings).decode()
 
 
@@ -151,7 +179,15 @@ def build_argv(
     argv += ["--chrome"] if settings.claude_in_chrome else ["--no-chrome"]
     if settings.question_widget is False:
         argv += ["--disallowedTools", "AskUserQuestion"]
-    argv += ["--settings", build_hooks_settings(session_id, bool(settings.fast_mode))]
+    # Whenever bypassPermissions is on offer (the opt-in flag above, whatever the
+    # mode the session starts in: the CLI was observed to show its confirmation
+    # with the flag alone), the user chooses it in TwiCC, not in the CLI: the
+    # CLI's extra confirmation of that same choice is skipped. Untrusted projects
+    # withhold the opt-in, so they keep the CLI's default.
+    argv += [
+        "--settings",
+        build_hooks_settings(session_id, bool(settings.fast_mode), skip_bypass_dialog=not untrusted),
+    ]
     argv += ["--plugin-dir", str(get_plugin_dir())]
     # TwiCC's own MCP server (/mcp): pass the per-session config as a FILE path
     # (never inline JSON — the bearer token would show in ``ps``). No

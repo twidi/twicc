@@ -22,11 +22,17 @@ export function serializeDraftSession(session) {
     return JSON.parse(JSON.stringify(record))
 }
 
-export function summarizeEphemeralAttachments(medias = []) {
-    return medias.map(media => ({
-        name: media.name || media.filename || 'Attachment',
-        media_type: media.mimeType || media.media_type || '',
-        kind: media.type === 'image' ? 'image' : 'document',
+/**
+ * Local prompt summary of the attachments of an ephemeral send: name, MIME
+ * type and kind, never bytes nor preview URLs. Composer attachment metadata
+ * (`{bucket, id, name, mimeType, kind}`, spec 2026-10-03 §9.4) keeps its
+ * display kind; a legacy media (old snapshot) maps to `image` / `document`.
+ */
+export function summarizeEphemeralAttachments(items = []) {
+    return items.map(item => ({
+        name: item.name || item.filename || 'Attachment',
+        media_type: item.mimeType || item.media_type || '',
+        kind: typeof item.bucket === 'string' ? item.kind : (item.type === 'image' ? 'image' : 'document'),
     }))
 }
 
@@ -100,9 +106,30 @@ export function createSendFailureActions(inflightSends, { deleteInflight } = {})
     }
 }
 
-/** Dependencies are storage/transport boundaries; actions run unchanged in Pinia and tests. */
-export function createEphemeralActions({ saveControl, deleteControl, deleteSession, clearContent, stop, navigate, buildPrompt, rekeySession, uuid }) {
+/**
+ * Composer attachment state that the generic per-session map moves below must
+ * never touch: `attachmentRecords` is keyed by session id but its records also
+ * carry their owner and live in IndexedDB, so only `rebindDraftAttachments`
+ * (move) and `clearContent` (forget) handle it; `attachmentRuntime` is keyed
+ * by attachment id.
+ */
+const ATTACHMENT_STATE_KEYS = new Set(['attachmentRecords', 'attachmentRuntime'])
+
+/**
+ * Dependencies are storage/transport boundaries; actions run unchanged in Pinia and tests.
+ *
+ * `collectAttachmentRefs(ids)` returns a promise of every staged ref held for
+ * those ids (draft records, in-flight and failed snapshots, memory then
+ * storage); it reads memory synchronously when called. `releaseAttachmentRefs`
+ * releases explicit refs (spec 2026-10-03 §6.1.4). `clearContent(id)` forgets
+ * the local content of one id, attachment records included.
+ */
+export function createEphemeralActions({ saveControl, deleteControl, deleteSession, clearContent, stop, navigate, buildPrompt, rekeySession, uuid, collectAttachmentRefs, releaseAttachmentRefs }) {
     const persist = promise => Promise.resolve(promise).catch(error => console.warn('Ephemeral storage operation failed:', error))
+    // Move the unsent attachment records before the old id disappears.
+    function rebindAttachments(store, oldId, newId) {
+        return persist(store.rebindDraftAttachments?.(oldId, newId))
+    }
     return {
         isEphemeralDiscarded(id) {
             const session = this.sessions[id]
@@ -132,7 +159,7 @@ export function createEphemeralActions({ saveControl, deleteControl, deleteSessi
             if (session.title) payload.title = session.title
             return payload
         },
-        promoteEphemeralSession(id, { text, medias = [] }) {
+        promoteEphemeralSession(id, { text, attachments = [], medias = [] }) {
             const session = this.sessions[id]
             if (!session?.draft || !session.ephemeral) return false
             const known = this.localState.ephemeralIds ||= {}
@@ -140,7 +167,7 @@ export function createEphemeralActions({ saveControl, deleteControl, deleteSessi
             Object.assign(session, {
                 draft: false, ephemeralPhase: 'running', ephemeralStartedAt: new Date().toISOString(),
                 ephemeralDraftId: id, ephemeralBound: false,
-                ephemeralPrompt: { text, attachments: summarizeEphemeralAttachments(medias) },
+                ephemeralPrompt: { text, attachments: summarizeEphemeralAttachments(attachments?.length ? attachments : (medias || [])) },
             })
             this.localState.optimisticMessages[id] = buildPrompt(session, session.ephemeralPrompt)
             this._saveDraftToIndexedDB(id)
@@ -166,8 +193,10 @@ export function createEphemeralActions({ saveControl, deleteControl, deleteSessi
             if (draftId !== id) {
                 this.sessions[id] = { ...session, id }
                 delete this.sessions[draftId]
-                for (const map of [this.processStates, this.sessionItems, ...Object.values(this.localState)]) {
+                const rebinding = rebindAttachments(this, draftId, id)
+                for (const [key, map] of [['processStates', this.processStates], ['sessionItems', this.sessionItems], ...Object.entries(this.localState)]) {
                     if (map && typeof map === 'object' && !Array.isArray(map) && Object.hasOwn(map, draftId)
+                        && !ATTACHMENT_STATE_KEYS.has(key)
                         && map !== controls && map !== this.localState.ephemeralIds && map !== this.localState.draftAliases) {
                         map[id] = map[draftId]
                         delete map[draftId]
@@ -175,8 +204,8 @@ export function createEphemeralActions({ saveControl, deleteControl, deleteSessi
                 }
                 this._rekeyEphemeralInflight(draftId, id)
                 this.rekeyMruSession(draftId, id)
-                if (rekeySession) persist(rekeySession(draftId, id, serializeDraftSession(this.sessions[id])))
-                else persist(deleteSession(draftId))
+                const record = serializeDraftSession(this.sessions[id])
+                persist(rebinding.then(() => (rekeySession ? rekeySession(draftId, id, record) : deleteSession(draftId))))
             }
             this._saveDraftToIndexedDB(id)
             this.recomputeVisualItems(id)
@@ -191,8 +220,9 @@ export function createEphemeralActions({ saveControl, deleteControl, deleteSessi
             for (const key of ['ephemeralPhase', 'ephemeralStartedAt', 'ephemeralDraftId', 'ephemeralBound', 'ephemeralPrompt', 'ephemeralResult']) delete draft[key]
             this.sessions[newId] = draft
             delete this.sessions[id]
-            for (const map of Object.values(this.localState)) {
-                if (map && typeof map === 'object' && !Array.isArray(map)
+            const rebinding = rebindAttachments(this, id, newId)
+            for (const [key, map] of Object.entries(this.localState)) {
+                if (map && typeof map === 'object' && !Array.isArray(map) && !ATTACHMENT_STATE_KEYS.has(key)
                     && map !== this.localState.draftAliases && map !== this.localState.ephemeralControls
                     && map !== this.localState.ephemeralIds && Object.hasOwn(map, id)) {
                     map[newId] = map[id]
@@ -205,8 +235,8 @@ export function createEphemeralActions({ saveControl, deleteControl, deleteSessi
             this.localState.draftAliases[id] = newId
             this._rekeyEphemeralInflight(id, newId)
             this.rekeyMruSession(id, newId)
-            if (rekeySession) persist(rekeySession(id, newId, serializeDraftSession(draft)))
-            else persist(deleteSession(id))
+            const record = serializeDraftSession(draft)
+            persist(rebinding.then(() => (rekeySession ? rekeySession(id, newId, record) : deleteSession(id))))
             this._saveDraftToIndexedDB(newId)
             persist(navigate(id, newId, session.project_id))
             return newId
@@ -249,19 +279,42 @@ export function createEphemeralActions({ saveControl, deleteControl, deleteSessi
             await persist(saveControl(draftId, control))
             if (control.canonicalId) await stop(control.canonicalId)
         },
-        purgeEphemeralContent(ids) {
+        /**
+         * Retire every local trace of some ids, synchronously in memory.
+         * `releaseAttachments` (explicit user discard, or its persisted
+         * intention at hydrate) collects the held staged refs BEFORE anything
+         * is removed and releases them; otherwise attachments are only
+         * forgotten locally (by `clearContent`).
+         */
+        purgeEphemeralContent(ids, { releaseAttachments = false } = {}) {
+            const unique = [...new Set(ids.filter(Boolean))]
+            const collecting = releaseAttachments ? persist(collectAttachmentRefs(unique)) : null
             const writes = []
-            for (const id of new Set(ids.filter(Boolean))) {
+            for (const id of unique) {
                 this._clearEphemeralInflight(id)
                 delete this.sessions[id]
                 delete this.sessionItems[id]
                 delete this.processStates[id]
                 for (const [key, map] of Object.entries(this.localState)) {
-                    if (key !== 'ephemeralControls' && key !== 'ephemeralIds' && map && typeof map === 'object' && !Array.isArray(map)) delete map[id]
+                    if (key !== 'ephemeralControls' && key !== 'ephemeralIds' && !ATTACHMENT_STATE_KEYS.has(key)
+                        && map && typeof map === 'object' && !Array.isArray(map)) delete map[id]
                 }
                 this.removeMruSession(id)
-                writes.push(persist(deleteSession(id)), persist(clearContent(id)))
+                writes.push(persist(deleteSession(id)))
             }
+            if (!collecting) {
+                writes.push(...unique.map(id => persist(clearContent(id))))
+                return Promise.all(writes)
+            }
+            // Release first (its local part runs at once: it cancels this tab's
+            // uploads by attachment id), then forget whatever local content is
+            // left. The server requests are not awaited: they must never delay
+            // the purge (app boot, navigation after Discard).
+            writes.push((async () => {
+                const refs = await collecting
+                if (refs?.length) persist(releaseAttachmentRefs(refs))
+                await Promise.all(unique.map(id => persist(clearContent(id))))
+            })())
             return Promise.all(writes)
         },
         async discardEphemeralSession(id) {
@@ -276,7 +329,8 @@ export function createEphemeralActions({ saveControl, deleteControl, deleteSessi
                 canonicalId = control.canonicalId
             }
             // Retire content synchronously. A late error during Stop cannot restore it.
-            const cleanup = this.purgeEphemeralContent([id, draftId])
+            // An explicit discard releases every staged ref the entry holds.
+            const cleanup = this.purgeEphemeralContent([id, draftId], { releaseAttachments: true })
             const stopping = canonicalId ? persist(stop(canonicalId)) : Promise.resolve()
             await cleanup
             await navigate(id, null, session.project_id)

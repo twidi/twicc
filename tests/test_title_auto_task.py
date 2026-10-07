@@ -485,8 +485,8 @@ def test_server_owns_title_runner_before_provider_start_and_until_teardown(
         for name in (
             "sync_all_providers", "_orchestrate_global_search", "start_price_sync_task", "start_quota_wakeup_task",
             "start_session_dirs_cleanup_task", "start_peer_purge_task", "start_tmux_cleanup_task",
-            "start_upload_cleanup_task", "start_last_used_flush_task", "start_share_view_flush_task",
-            "start_denial_flush_task", "start_telemetry_task", "start_version_check_task",
+            "start_upload_cleanup_task", "start_composer_attachments_cleanup_task", "start_last_used_flush_task",
+            "start_share_view_flush_task", "start_denial_flush_task", "start_telemetry_task", "start_version_check_task",
             "start_tips_watcher_task", "start_help_watcher_task",
         ):
             monkeypatch.setattr(run, name, noop)

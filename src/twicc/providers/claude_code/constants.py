@@ -28,9 +28,9 @@ class ClaudeCodeModelExtra(NamedTuple):
     supports_effort_max: bool
     supports_fast: bool
     supports_permission_auto: bool
-    # Native vision resolution: True ⇒ ship images at MAX_IMAGE_DIMENSION
-    # (2576 px); False ⇒ downscale client-side to 1568 px. Replaces the old
-    # ``_is_opus_47_plus`` family/version hardcode.
+    # Native vision resolution flag, read by the frontend only
+    # (frontend/src/providers/claude_code/helpers.js getEffectiveImageDimension:
+    # True ⇒ 2576 px, False ⇒ 1568 px).
     supports_highres_images: bool
     # Whether the model allows turning thinking off. False ⇒ adaptive
     # thinking is always on and ``thinking:{type:disabled}`` is rejected by

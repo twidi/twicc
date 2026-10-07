@@ -33,6 +33,8 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from twicc.cli._drop_request import transport
 from twicc.cli._drop_request.whoami import forced_session_id
+from twicc.core.services.attachments.inline import INLINE_MAX_REQUEST_BYTES
+from twicc.log_redaction import redact_for_log
 from twicc.mcp.identity import resolve_session_token, external_caller, batch_correlation
 from twicc.mcp.batch import BatchRuntime
 from twicc.mcp.batch_contract import BATCH_NAMES, validate_batch, fit_result, rejected_batch
@@ -66,7 +68,8 @@ Conventions:
   says so; the connection carries the identity needed to resolve them,
   so `whoami` works and `create_session` records you as the spawner.
 - Always pass absolute paths (directories, attachments): tools execute inside
-  the TwiCC backend, whose working directory is not yours.
+  the TwiCC backend, whose working directory is not yours. `attach` also takes
+  data URIs (50 MB per command; larger: see `attach`).
 - Keep `wait_timeout` <= 300 seconds on the `*_wait_reply` tools and on
   `wait_reply` calls; wait again rather than exceeding it.
 - Catalogues (models, presets, providers) drift: fetch them live with `info`.
@@ -224,7 +227,7 @@ async def _call_tool(
             is_error=True,
         )
     except Exception as exc:
-        logger.exception("MCP tool %r failed (arguments=%r)", name, arguments)
+        logger.exception("MCP tool %r failed (arguments=%r)", name, redact_for_log(arguments))
         return mcp_types.CallToolResult(
             content=[mcp_types.TextContent(type="text", text=str(exc))],
             is_error=True,
@@ -264,12 +267,11 @@ _server: Server = Server(
 )
 
 
-# A tool call carrying attachments (``create_session``, ``send_message``, ...)
-# is capped at 32 MB of files by both providers' ATTACHMENT_SUPPORT
-# (providers/*/helpers.py) — ≈ 43 MB once base64-encoded, plus the prompt and
-# the JSON-RPC envelope. The MCP SDK caps the HTTP body at 4 MiB by default,
-# which would reject any real attachment with a 413.
-MAX_REQUEST_BODY_BYTES = 48 * 1024 * 1024
+# A tool call carrying inline attachments (data URIs in ``attach``) holds up to 50 MB of
+# decoded files, about 67 MB once base64-encoded, plus the prompt and the JSON-RPC envelope
+# (phase 2 design D12). The MCP SDK caps the HTTP body at 4 MiB by default, which would reject
+# any real attachment with a 413. The SDK reads and parses this body on the event loop.
+MAX_REQUEST_BODY_BYTES = INLINE_MAX_REQUEST_BYTES
 
 _session_manager: StreamableHTTPSessionManager | None = None
 
@@ -294,7 +296,11 @@ def get_session_manager() -> StreamableHTTPSessionManager:
 
 EXTERNAL_INSTRUCTIONS = """TwiCC external MCP: tools run on the TwiCC host.
 Use explicit session IDs; self, parent, and whoami are unavailable.
-Paths refer to the server filesystem. Attachments can use base64 data URIs.
+Paths refer to the server filesystem. To attach a file of your machine, pass a base64 data URI
+with name= to keep its file name: data:<mime>;name=<percent-encoded file name>;base64,<data>.
+Inline data is limited to 50 MB per command. For a larger file, put it on a file storage service and
+pass its URL in the message text, or pass an absolute path when the file is already on the server
+(peer_send: a URL only, because every file of a peer message travels inline).
 Ordinary results contain exit_code, result, and error. Use info for current models and settings.
 """
 

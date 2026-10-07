@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createEphemeralActions, createSendFailureActions, ephemeralFields, serializeDraftSession, isLaunchedEphemeral } from './ephemeralSessions.js'
+import { createEphemeralActions, createSendFailureActions, ephemeralFields, serializeDraftSession, isLaunchedEphemeral, summarizeEphemeralAttachments } from './ephemeralSessions.js'
+import { ephemeralPromptText } from '../providers/ephemeralContent.js'
 
 function fixture(overrides = {}) {
     const saved = new Map(), controls = new Map(), stopped = []
@@ -20,6 +21,8 @@ function fixture(overrides = {}) {
             stop: async id => stopped.push(id),
             navigate: async () => {},
             buildPrompt: (session, prompt) => ({ prompt }),
+            collectAttachmentRefs: async () => [],
+            releaseAttachmentRefs: async () => {},
             ...overrides,
         }),
     }
@@ -212,4 +215,113 @@ test('a pre-binding Discard does not consume an unrelated normal send failure', 
     assert.equal(store.isEphemeralDiscarded('unrelated-ephemeral'), false)
     assert.equal(store.failInflightSend('normal-request', { message: 'rejected' }), true)
     assert.equal(applied, true)
+})
+
+
+test('Discard collects attachment refs before any snapshot or map removal, then releases them', async () => {
+    const order = []
+    const { store } = fixture({
+        collectAttachmentRefs: ids => {
+            order.push(['collect', ids, !!store.sessions.canonical, store.cleared.length])
+            return Promise.resolve([{ bucket: 'draft', id: 'a' }])
+        },
+        releaseAttachmentRefs: async refs => order.push(['release', refs]),
+        clearContent: async id => order.push(['clear', id]),
+    })
+    store.cleared = []
+    store._clearEphemeralInflight = id => store.cleared.push(id)
+    store.promoteEphemeralSession('draft', { text: 'hello' })
+    await store.bindEphemeralSession('draft', 'canonical')
+    await store.discardEphemeralSession('canonical')
+    assert.deepEqual(order[0], ['collect', ['canonical', 'draft'], true, 0])
+    assert.deepEqual(order[1], ['release', [{ bucket: 'draft', id: 'a' }]])
+    assert.deepEqual(order.slice(2).map(entry => entry[0]), ['clear', 'clear'])
+})
+
+test('a default purge neither collects nor releases attachment refs', async () => {
+    const calls = []
+    const { store } = fixture({
+        collectAttachmentRefs: () => { calls.push('collect'); return Promise.resolve([]) },
+        releaseAttachmentRefs: async () => calls.push('release'),
+    })
+    await store.purgeEphemeralContent(['draft'])
+    assert.deepEqual(calls, [])
+    assert.equal(store.sessions.draft, undefined)
+})
+
+test('binding and recovery leave attachment records to their own rebind, then rekey the old draft', async () => {
+    const order = []
+    let finishRebind
+    const { store } = fixture({
+        rekeySession: async (oldId, newId) => order.push(['rekey', oldId, newId]),
+    })
+    const record = { id: 'a', sessionId: 'draft', bucket: 'draft', position: 0 }
+    store.localState.attachmentRecords = { draft: { a: record } }
+    store.localState.attachmentRuntime = { draft: 'not a session map' }
+    store.rebindDraftAttachments = (oldId, newId) => {
+        order.push(['rebind', oldId, newId])
+        return new Promise(resolve => { finishRebind = resolve })
+    }
+    store.promoteEphemeralSession('draft', { text: 'hello' })
+    await store.bindEphemeralSession('draft', 'canonical')
+    // The generic per-session map move never touches attachment state.
+    assert.deepEqual(store.localState.attachmentRecords, { draft: { a: record } })
+    assert.equal(store.localState.attachmentRuntime.draft, 'not a session map')
+    assert.deepEqual(order, [['rebind', 'draft', 'canonical']])
+    finishRebind()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(order, [['rebind', 'draft', 'canonical'], ['rekey', 'draft', 'canonical']])
+
+    order.length = 0
+    store.localState.attachmentRecords = { canonical: { a: record } }
+    const recovered = store.recoverEphemeralDraft('canonical')
+    assert.deepEqual(store.localState.attachmentRecords, { canonical: { a: record } })
+    assert.deepEqual(order, [['rebind', 'canonical', recovered]])
+    finishRebind()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(order.at(-1), ['rekey', 'canonical', recovered])
+})
+
+test('ephemeral summaries read the attachment metadata: name, MIME type and display kind, no bytes', () => {
+    const records = [
+        { id: 'a', sessionId: 'draft', bucket: 'draft', position: 0, name: 'chart.png', size: 9, mimeType: 'image/png', kind: 'image' },
+        { id: 'b', sessionId: 'draft', bucket: 'draft', position: 1, name: 'spec.pdf', size: 9, mimeType: 'application/pdf', kind: 'PDF' },
+        { id: 'c', sessionId: 'draft', bucket: 'draft', position: 2, name: 'notes.md', size: 9, mimeType: '', kind: 'text' },
+        { id: 'd', sessionId: 'draft', bucket: 'draft', position: 3, name: 'clip.mov', size: 9, mimeType: 'video/quicktime', kind: 'video' },
+        { id: 'e', sessionId: 'draft', bucket: 'draft', position: 4, name: 'song.mp3', size: 9, mimeType: 'audio/mpeg', kind: 'audio' },
+        { id: 'f', sessionId: 'draft', bucket: 'draft', position: 5, name: 'x.zip', size: 9, mimeType: 'application/zip', kind: 'other', previewUrl: 'blob:secret' },
+    ]
+    assert.deepEqual(summarizeEphemeralAttachments(records), [
+        { name: 'chart.png', media_type: 'image/png', kind: 'image' },
+        { name: 'spec.pdf', media_type: 'application/pdf', kind: 'PDF' },
+        { name: 'notes.md', media_type: '', kind: 'text' },
+        { name: 'clip.mov', media_type: 'video/quicktime', kind: 'video' },
+        { name: 'song.mp3', media_type: 'audio/mpeg', kind: 'audio' },
+        { name: 'x.zip', media_type: 'application/zip', kind: 'other' },
+    ])
+    // Legacy medias (old snapshots) keep their summary.
+    assert.deepEqual(summarizeEphemeralAttachments([
+        { name: 'a.png', mimeType: 'image/png', type: 'image', data: 'secret' },
+        { name: 'b.pdf', mimeType: 'application/pdf', type: 'pdf', data: 'secret' },
+    ]), [
+        { name: 'a.png', media_type: 'image/png', kind: 'image' },
+        { name: 'b.pdf', media_type: 'application/pdf', kind: 'document' },
+    ])
+})
+
+test('promotion summarizes the composer attachments of the send, else its legacy medias', () => {
+    const { store } = fixture()
+    store.promoteEphemeralSession('draft', {
+        text: 'hello',
+        attachments: [{ bucket: 'draft', id: 'a', name: 'clip.mov', size: 1, mimeType: 'video/quicktime', kind: 'video', previewUrl: 'blob:x' }],
+        medias: [],
+    })
+    const prompt = store.sessions.draft.ephemeralPrompt
+    assert.deepEqual(prompt.attachments, [{ name: 'clip.mov', media_type: 'video/quicktime', kind: 'video' }])
+    assert.equal(JSON.stringify(prompt).includes('blob:'), false)
+    assert.equal(ephemeralPromptText(prompt.text, prompt.attachments), 'hello\n\nAttachment: clip.mov (video/quicktime)')
+
+    const legacy = fixture().store
+    legacy.promoteEphemeralSession('draft', { text: '', medias: [{ name: 'a.png', mimeType: 'image/png', type: 'image', data: 'secret' }] })
+    assert.deepEqual(legacy.sessions.draft.ephemeralPrompt.attachments, [{ name: 'a.png', media_type: 'image/png', kind: 'image' }])
 })

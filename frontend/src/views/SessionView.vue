@@ -1956,7 +1956,8 @@ function registerSessionCommands() {
                     store.discardEphemeralSession(sessionId.value)
                     return
                 }
-                store.deleteDraftSession(sessionId.value)
+                // The user abandons the draft: release its staged attachments.
+                store.deleteDraftSession(sessionId.value, { releaseAttachments: true })
                 if (isAllProjectsMode.value) {
                     router.push({ name: 'projects-all', query: route.query.workspace ? { workspace: route.query.workspace } : {} })
                 } else {

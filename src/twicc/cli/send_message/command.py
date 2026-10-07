@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typer
 
-from twicc.cli._drop_request.help_strings import NO_EXPAND_HELP, PROMPT_INCLUDE_HINT
+from twicc.cli._drop_request.help_strings import ATTACH_HELP, NO_EXPAND_HELP, PROMPT_INCLUDE_HINT
 from twicc.cli._wait_reply import WAIT_BACKGROUND_HELP
 
 
@@ -32,20 +32,7 @@ def send_message_cmd(
         "--no-expand",
         help=NO_EXPAND_HELP,
     ),
-    attach: list[str] = typer.Option(
-        [],
-        "--attach",
-        help=(
-            "Path to a file to attach (repeatable). Claude Code accepts "
-            "PNG/JPEG/GIF/WebP/PDF/text/plain up to 5 MB each. Codex accepts "
-            "images only. Max 100 files, 32 MB total. "
-            "Each value is either a local file path OR a base64 data URI "
-            "(data:<mime>;base64,<data>) — the data-URI form lets remote/API "
-            "callers attach files without a shared filesystem. Over --remote, "
-            "prefix an absolute path with 'remote:' to read it on the remote "
-            "server instead."
-        ),
-    ),
+    attach: list[str] = typer.Option([], "--attach", help=ATTACH_HELP),
     wait_reply: bool = typer.Option(
         False,
         "--wait-reply",
@@ -136,12 +123,7 @@ def send_message_cmd(
     import django
     django.setup()
 
-    from twicc.cli._drop_request.attachments import (
-        AttachmentResizeError,
-        validate_and_encode,
-    )
-    from twicc.cli._drop_request import transport
-    from twicc.cli._drop_request.bootstrap_local import load_local_bootstrap
+    from twicc.cli._drop_request import attach_sources, transport
     from twicc.cli._drop_request.discovery import ServerDownError
     from twicc.cli._drop_request.output import (
         emit_final,
@@ -157,7 +139,7 @@ def send_message_cmd(
     from twicc.cli.create_session.command import DEFAULT_WAIT_TIMEOUT_SECONDS
     from twicc.cli._drop_request.whoami import resolve_current_session
     from twicc.cli._output import emit_error
-    from twicc.providers.helpers import get_provider_helpers
+    from twicc.core.services.attachments.inline import INLINE_TOO_LARGE_HINT
 
     # Refused rather than ignored, and through the structured payload like
     # every other local check: an MCP client echoing the documented default is
@@ -239,10 +221,17 @@ def send_message_cmd(
         )
         raise typer.Exit(1)
 
+    # --attach: resolved now (a missing file, a bad data URI or more than 50 MB of inline
+    # data is a local error); staged only once every other local check passed.
+    sources, attach_errors = attach_sources.resolve(attach or [], hint=INLINE_TOO_LARGE_HINT)
+    if attach_errors:
+        emit_validation_errors(attach_errors)
+        raise typer.Exit(1)
+
     # Resolve the prompt (inline text or file path → text content). Omitting it
     # is only valid when the message carries attachments instead.
     if prompt is None:
-        if not attach:
+        if not sources:
             emit_validation_errors(
                 [ValidationError(
                     "PROMPT", "missing_prompt",
@@ -272,49 +261,6 @@ def send_message_cmd(
         recipient_spawned_by_id=resolved.spawned_by_id,
     )
 
-    # Attachments are validated against the resolved session's provider, with
-    # the resize cap derived from its currently stored ``selected_model``
-    # (looked up via the helpers). The user has no way to override either
-    # here — both come from the existing session.
-    bootstrap = load_local_bootstrap()
-    helpers_obj = get_provider_helpers(resolved.provider)
-    support = (
-        bootstrap.providers[resolved.provider].attachment_support
-        if resolved.provider in bootstrap.providers else {}
-    )
-
-    # Effective model = stored on Session, with synced default as fallback,
-    # then provider-specific consistency rules. Mirrors what the backend
-    # service will compute (single source of truth: provider helpers).
-    from twicc.core.models import Session as SessionModel
-    session_row = SessionModel.objects.filter(id=resolved.session_id).first()
-    from twicc.providers.helpers import AgentSettings
-    stored = AgentSettings(**{
-        field: getattr(session_row, field) for field in AgentSettings._fields
-    })
-    effective_settings = helpers_obj.resolve_agent_settings(stored)
-    effective_settings = helpers_obj.enforce_agent_settings_consistency(effective_settings)
-    effective_model = effective_settings.selected_model
-
-    errors: list[ValidationError] = []
-    try:
-        attach_result = validate_and_encode(
-            attach or [], support, helpers_obj, effective_model,
-        )
-    except AttachmentResizeError as e:
-        errors.append(ValidationError(
-            f"--attach {e.path}", "resize_failed", e.message,
-        ))
-        emit_validation_errors(errors)
-        raise typer.Exit(1)
-
-    for err in attach_result.errors:
-        errors.append(ValidationError(f"--attach {err.file}", err.code, err.message))
-
-    if errors:
-        emit_validation_errors(errors)
-        raise typer.Exit(1)
-
     # Payload — minimum required for the ``send`` kind. The watcher derives
     # provider, project, cwd, and current settings from the DB row.
     payload = {
@@ -322,9 +268,13 @@ def send_message_cmd(
         "_send_origin": send_origin,
         "_send_request_id": str(uuid4()),
         "text": text,
-        "images": attach_result.images,
-        "documents": attach_result.documents,
     }
+    if sources:
+        refs, stage_errors = attach_sources.stage(sources, bucket=attach_sources.new_request_bucket())
+        if stage_errors:
+            emit_validation_errors(stage_errors)
+            raise typer.Exit(1)
+        payload["attachments"] = attach_sources.as_payload(refs)
 
     sub = transport.submit(payload, kind="session:send_message")
     outcome = transport.wait(sub, timeout_seconds=timeout)

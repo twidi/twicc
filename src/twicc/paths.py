@@ -320,6 +320,17 @@ def get_uploads_dir() -> Path:
     return get_data_dir() / "uploads"
 
 
+def get_composer_attachments_dir() -> Path:
+    """Staging area of the composer attachments (``<data_dir>/composer-attachments/``).
+
+    Layout: ``<bucket>/<attachment_id>/{file/<filename>, ready.json, committed.json,
+    promoted.json}`` plus ``<bucket>/.released/<attachment_id>`` tombstones. Path only —
+    ``twicc.core.services.attachments.staging`` creates what it needs.
+    See docs/plans/2026-10-03-composer-attachments-any-file-design.md.
+    """
+    return get_data_dir() / "composer-attachments"
+
+
 def get_project_icons_dir() -> Path:
     """Return the project-icons root directory (``<data_dir>/project-icons/``).
 

@@ -20,6 +20,7 @@ from twicc.pricing import FamilyPrices
 from twicc.providers.helpers import (
     AgentSettingCategory,
     AgentSettings,
+    AttachmentPolicy,
     BaseProviderHelpers,
     ModelVersion,
     StatuspageConfig,
@@ -96,16 +97,23 @@ AGENT_SETTINGS_CHOICES: dict[str, list] = {
 }
 
 
-ATTACHMENT_SUPPORT: dict = {
-    "images": True,
-    "documents": False,
-    "accepted_mime_types": [
-        "image/png", "image/jpeg", "image/gif", "image/webp",
-    ],
-    "max_bytes_per_file": 5 * 1024 * 1024,
-    "max_files_per_message": 100,
-    "max_total_bytes": 32 * 1024 * 1024,
-}
+# Native delivery of web composer attachments (design 2026-10-03 §6.3). Codex has no
+# document input: only images are native. 1,500 images is the public API's per-request
+# limit; there is no per-image byte limit. Codex has no hybrid mode nor platform switch,
+# so the hybrid and third-party values repeat the plain ones.
+ATTACHMENT_POLICY = AttachmentPolicy(
+    native_kinds=frozenset({"image"}),
+    hybrid_native_kinds=frozenset({"image"}),
+    pdf_native_max_bytes=None,
+    text_native_max_bytes=None,
+    max_native_items=1500,
+    max_native_items_1m=1500,
+    volume_budget=16 * 1024 * 1024,
+    volume_budget_third_party=16 * 1024 * 1024,
+    image_long_edge=2576,
+    per_image_base64_limit=None,
+    per_image_base64_limit_third_party=None,
+)
 
 
 _SYSTEM_PROMPT_STATIC_ADDENDUM = """\
@@ -368,8 +376,8 @@ class CodexHelpers(BaseProviderHelpers):
     def get_agent_settings_choices(self) -> dict[str, list]:
         return AGENT_SETTINGS_CHOICES
 
-    def get_attachment_support(self) -> dict:
-        return ATTACHMENT_SUPPORT
+    def get_attachment_policy(self) -> AttachmentPolicy:
+        return ATTACHMENT_POLICY
 
     def validate_usage_file_payload(self, payload: dict) -> tuple[bool, str]:
         """Accept a payload that has the shape of a Codex ``wham/usage`` response.

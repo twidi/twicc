@@ -262,9 +262,15 @@ export function sendWsMessage(data, { buffer = true } = {}) {
         return false
     }
     // Structured sends must roll back when disconnected, never enter the reconnect buffer.
-    if (!buffer) return __hmrState.wsSendFn(JSON.stringify(data), false)
-    __hmrState.wsSendFn(JSON.stringify(data))
-    return true
+    // A socket that throws did not send the frame: report it like a closed one.
+    try {
+        if (!buffer) return __hmrState.wsSendFn(JSON.stringify(data), false)
+        __hmrState.wsSendFn(JSON.stringify(data))
+        return true
+    } catch (error) {
+        console.warn('WebSocket send failed:', error)
+        return false
+    }
 }
 
 /**
@@ -1022,6 +1028,12 @@ export function useWebSocket() {
     const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
     const { status, send, open, close } = useVueWebSocket(`${wsProtocol}//${location.host}/ws/`, {
         immediate: false,
+        // VueUse closes the socket for good on `beforeunload`. That event also
+        // fires when the user cancels a "Leave site?" prompt (an upload is
+        // running): the page stays, with no socket and no reconnection, so no
+        // upload completion ever reaches it. The browser closes the socket
+        // itself when the page really unloads.
+        autoClose: false,
         autoReconnect: {
             // Don't reconnect if the last close was an auth failure.
             // For all other cases, always retry (equivalent to Infinity).
@@ -1985,9 +1997,12 @@ export function useWebSocket() {
             // Uploads: reconcile with the server list, then restart the
             // network-paused uploads (spec §6.3, §6.5). Every connection, the
             // first one included. Lazy import (no useWebSocket ↔ store cycle).
-            import('../stores/uploads').then(({ useUploadsStore }) => {
-                useUploadsStore().reconnected()
-            })
+            // Then the composer attachments this tab is not uploading itself
+            // ask the server their state (spec 2026-10-03 §9.2).
+            import('../stores/uploads')
+                .then(({ useUploadsStore }) => useUploadsStore().reconnected())
+                .then(() => useDataStore().reconcileAttachmentStatuses())
+                .catch(error => console.warn('Upload reconciliation failed', error))
             // After a real reconnection, the reconciliation re-syncs session
             // payloads (so presence flags like has_artifacts / has_plan are
             // fresh), but the transient tool-pane content events

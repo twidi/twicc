@@ -57,6 +57,9 @@ path filter. If you enter your External address as the peer address, that
 single address serves the app and peer traffic. Every other address, including
 `localhost`, never serves peer traffic.
 
+A proxy or a tunnel in front of your peer address must accept request bodies of
+72 MiB. One sized for the old 48 MiB limit refuses large messages.
+
 Do not use the dedicated sharing address for peers. TwiCC limits that hostname
 to sharing routes, and Settings refuses a peer address on it. See [reaching
 TwiCC from anywhere](help/external-url) for the general tunnel and password
@@ -82,8 +85,14 @@ rename, revoke, or reconnect them.
 ### Sending a message
 
 An agent can list active peers and send a titled message to one of them. A
-message can contain text and attachments. No extra sender-side confirmation is
-required after the user has approved the peer relationship.
+message can contain text and files of any type; each file keeps its name. All
+files of one message are limited to 50 MiB in total; for a larger file, the
+agent puts it on a file storage service and passes its URL in the message
+text. No extra sender-side confirmation is required after the user has
+approved the peer relationship.
+
+A peer that runs an older TwiCC refuses a message with files: its user must
+update. A message with text only still reaches it.
 
 You can also write a message yourself, from **Manage peers**, from the inbox,
 or as a reply while you review a message. This form takes a title and a text

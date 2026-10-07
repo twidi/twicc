@@ -1,8 +1,9 @@
 """Create a new agent session from a generic payload.
 
 Called by both ``WSConsumer._handle_send_message`` (when the front-end sends
-``send_message``) and ``DropRequestsWatcher`` (when the CLI drops a
-request file with ``kind="session:create"``). Centralises validation,
+``send_message``) and, through :func:`create_session_from_drop_payload`, the
+drop-request watcher and the in-backend transport of the RPC and the MCP
+(``kind="session:create"``). Centralises validation,
 project resolution, pending-settings stashing, and agent-manager
 invocation so both entry points stay in sync.
 
@@ -24,6 +25,12 @@ from asgiref.sync import sync_to_async
 from twicc.agent.system_prompt import compose_addendum
 from twicc.agent import ephemeral as ephemeral_runs
 from twicc.agent.exceptions import SendDeliveryError
+from twicc.agent.send_lanes import send_lane
+from twicc.core.services.attachments import drop as attachment_drop
+from twicc.core.services.attachments import lifecycle as attachment_lifecycle
+from twicc.core.services.attachments import planner as attachment_planner
+from twicc.core.services.attachments import target as plan_target
+from twicc.core.services.attachments.staging import AttachmentError
 from twicc.core.enums import Provider
 from twicc.pending_agent_settings import set_pending_agent_settings
 from twicc.pending_session_attributes import set_pending_session_attributes
@@ -49,11 +56,59 @@ class SessionCreationResult(NamedTuple):
     provider: str | None
     project_id: str | None
     errors: list[SessionCreationError] | None
+    # File names of the composer attachments an error concerns (``attachment_requires_artifacts``),
+    # for the WS error frame. Kept out of ``SessionCreationError`` so the drop-request status
+    # payload (``errors`` as dicts) keeps its shape.
+    error_names: tuple[str, ...] = ()
+
+
+async def create_session_from_drop_payload(payload: dict) -> SessionCreationResult:
+    """Drop-request handler for ``kind="session:create"`` (phase 2 design §4.5.1).
+
+    Takes the send lane of the new session id (the request uuid): a send that arrives right
+    after the row appears queues behind the creation instead of meeting its pending admission.
+    The backend owns the refs of the payload from here and releases them on every outcome (D14).
+    """
+    if attachment_drop.has_legacy_fields(payload):
+        attachment_lifecycle.delivery_release(attachment_drop.refs_to_release(payload))()
+        return SessionCreationResult(False, None, None, None, [SessionCreationError(
+            "attachments", attachment_planner.ERROR_INVALID_ATTACHMENTS, attachment_drop.LEGACY_FIELDS_MESSAGE,
+        )])
+    session_id = payload.get("session_id")
+    if session_id is None or session_id == "":
+        # Reported as ``missing`` with the other field errors; no session, so no lane.
+        return await create_session_from_payload(payload, release_refs_on_outcome=True)
+    if not isinstance(session_id, str):
+        # Refused here: the lane is keyed by a string, and a creation must never skip it.
+        attachment_lifecycle.delivery_release(attachment_drop.refs_to_release(payload))()
+        return SessionCreationResult(False, None, None, None, [SessionCreationError(
+            "session_id", "invalid", "session_id must be a string",
+        )])
+    async with send_lane(session_id):
+        return await create_session_from_payload(payload, release_refs_on_outcome=True)
 
 
 async def create_session_from_payload(
     payload: dict, *, allow_hybrid: bool = False, allow_ephemeral: bool = False,
-    ephemeral_admission=None,
+    ephemeral_admission=None, release_refs_on_outcome: bool = False,
+) -> SessionCreationResult:
+    """Create a session; with ``release_refs_on_outcome`` (drop-request callers), release the refs.
+
+    The WS handler never passes ``release_refs_on_outcome``: it owns its refs with the phase 1
+    rules (release on delivery only, so the browser can retry a failure).
+    """
+    owned_refs = attachment_drop.refs_to_release(payload) if release_refs_on_outcome else ()
+    try:
+        return await _admit_and_create(
+            payload, allow_hybrid=allow_hybrid, allow_ephemeral=allow_ephemeral,
+            ephemeral_admission=ephemeral_admission,
+        )
+    finally:
+        attachment_lifecycle.delivery_release(owned_refs)()
+
+
+async def _admit_and_create(
+    payload: dict, *, allow_hybrid: bool, allow_ephemeral: bool, ephemeral_admission,
 ) -> SessionCreationResult:
     """Admit ephemeral creation before any asynchronous operation or buffer write."""
     session_id = payload.get("session_id")
@@ -80,8 +135,7 @@ async def create_session_from_payload(
                     "session", "ephemeral_existing_session", "An existing session cannot become ephemeral.",
                 )])
         result = await _create_session_from_payload(
-            payload, allow_hybrid=allow_hybrid, ephemeral=ephemeral,
-            ephemeral_admission=ephemeral_admission,
+            payload, allow_hybrid=allow_hybrid, ephemeral=ephemeral, ephemeral_admission=ephemeral_admission,
         )
         return result
     finally:
@@ -92,8 +146,7 @@ async def create_session_from_payload(
 
 
 async def _create_session_from_payload(
-    payload: dict, *, allow_hybrid: bool = False, ephemeral: bool = False,
-    ephemeral_admission=None,
+    payload: dict, *, allow_hybrid: bool = False, ephemeral: bool = False, ephemeral_admission=None,
 ) -> SessionCreationResult:
     """Create a new session from a normalised payload.
 
@@ -120,6 +173,10 @@ async def _create_session_from_payload(
     - ``title``: optional, max 200 chars.
     - ``images``, ``documents``: lists of SDK block dicts (already validated
       by the caller — the service does not re-validate attachments).
+    - ``attachments``: staged refs ``[{bucket, id}, ...]`` (the WS composer,
+      the CLI, the RPC, the MCP). They are planned once the settings are
+      resolved and enforced, BEFORE any ``set_pending_*`` stash, so a plan
+      error leaves no stash behind.
     - ``worktree_branch``, ``worktree_path``, ``worktree_start_from``:
       optional (CLI only). When ``worktree_branch`` is set, a new git
       worktree of the source project is created at ``worktree_path`` and the
@@ -175,6 +232,10 @@ async def _create_session_from_payload(
     layout = payload.get("layout")
 
     errors: list[SessionCreationError] = []
+    try:
+        attachment_refs = attachment_planner.validate_attachment_frame(payload)
+    except AttachmentError as e:
+        return SessionCreationResult(False, None, None, None, [SessionCreationError("attachments", e.code, str(e))])
     if not session_id:
         errors.append(SessionCreationError("session_id", "missing", "session_id is required"))
     if not project_id:
@@ -332,12 +393,7 @@ async def _create_session_from_payload(
             return SessionCreationResult(False, None, None, None, [
                 SessionCreationError("title", "invalid_title", title_result.error)
             ])
-        if not ephemeral:
-            set_pending_title(session_id, title_result.title)
-
-    # --- stash agent settings (consumed by the watcher when it creates
-    #     the Session row from the JSONL) ---------------------------
-    set_pending_agent_settings(session_id, agent_settings)
+        title = title_result.title
 
     # --- resolve to effective settings: None -> global synced default --
     effective = helpers.resolve_agent_settings(agent_settings)
@@ -358,6 +414,30 @@ async def _create_session_from_payload(
         return SessionCreationResult(False, None, None, None, [
             SessionCreationError(e.field, e.code, e.message) for e in hidden_errors
         ])
+
+    # --- composer attachments: plan BEFORE any stash (spec §6.6) ------
+    # Needs the resolved model and context, so it runs after the settings
+    # above; off the event loop (image decode). A plan error leaves no
+    # ``set_pending_*`` stash behind.
+    attachment_plan = None
+    if attachment_refs:
+        try:
+            target = await plan_target.resolve_plan_target(
+                provider=provider.value, effective_settings=effective, directory=cwd,
+                hybrid=hybrid, ephemeral=ephemeral, live_agent=None,
+            )
+            attachment_plan = await attachment_planner.plan_attachments_off_loop(attachment_refs, target, text=text)
+        except AttachmentError as e:
+            code, message, names = attachment_planner.describe_attachment_error(e)
+            return SessionCreationResult(
+                False, None, None, None, [SessionCreationError("attachments", code, message)], error_names=names,
+            )
+
+    # --- stash title and agent settings (consumed by the watcher when it
+    #     creates the Session row from the JSONL) ----------------------
+    if title is not None and not ephemeral:
+        set_pending_title(session_id, title)
+    set_pending_agent_settings(session_id, agent_settings)
 
     # --- compose the TwiCC system-prompt addendum --------------------
     # Frozen at creation time and persisted on the row by the watcher.
@@ -430,10 +510,19 @@ async def _create_session_from_payload(
             settings=effective, images=images, documents=documents,
             ephemeral_admission=ephemeral_admission,
             **({"ephemeral": True} if ephemeral else {}),
+            **({"attachment_plan": attachment_plan} if attachment_plan is not None else {}),
         )
     except RuntimeError as e:
+        code = getattr(e, "code", "manager_busy")
+        if attachment_drop.is_attachment_code(code):
+            names = tuple(getattr(e, "names", ()) or ())
+            return SessionCreationResult(
+                False, None, None, None,
+                [SessionCreationError("attachments", code, attachment_drop.message_with_names(e))],
+                error_names=names,
+            )
         return SessionCreationResult(False, None, None, None, [
-            SessionCreationError("session", getattr(e, "code", "manager_busy"), str(e))
+            SessionCreationError("session", code, str(e))
         ])
 
     return SessionCreationResult(

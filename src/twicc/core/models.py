@@ -2024,15 +2024,15 @@ class PeerMessage(models.Model):
     thread_id = models.CharField(max_length=40)
     # Sender-written subject (required on every send since 2026-08-11; older
     # rows carry ""). A COLUMN, not a `payload` key: the payload is strictly
-    # the provider-common SDK block shape `{text, images, documents}` that the
-    # delivery composer re-walks, and the title — like `message_id` — is
+    # `{text, attachments?}` (the wire entries the delivery composer turns
+    # into files), and the title — like `message_id` — is
     # message metadata that must survive the attachment purge untouched.
     # One flattened line, ≤ 100 chars (`peer_messages.PEER_MESSAGE_TITLE_MAX_CHARS`).
     title = models.CharField(max_length=100, blank=True, default="")
-    # {text: str, images: list, documents: list} — attachments in the SDK block
-    # shape produced by cli/_drop_request/attachments.py.
+    # {text: str, attachments?: [{name, media_type, data}]} — the peer wire entries, base64 data
+    # (phase 2 design §4.8.1). No key when there is no attachment.
     payload = models.JSONField(default=dict)
-    # Computed at row creation: [{kind: "image"|"document", media_type, bytes, name?}]; survives the purge.
+    # Computed at row creation: [{name, media_type, bytes}], one row per entry, in order; survives the purge.
     attachments_meta = models.JSONField(default=list)
     # Provenance: {sent_at: iso8601}, and nothing else — the ONLY thing the
     # wire carries besides the payload. No session id (design §3.2/§8) and no

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from django.conf import settings
@@ -26,6 +27,7 @@ from .agent import ClaudeCodeAgent
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from twicc.core.services.attachments.types import AttachmentPlan
     from twicc.providers.claude_code.agent.hybrid.signals import HybridHookOutcome, HybridJsonlSignals
     from twicc.providers.helpers import AgentSettings
 
@@ -41,6 +43,33 @@ logger = logging.getLogger(__name__)
 # answer the same question ("may this session come back?") and must stay
 # aligned, whichever one is read first.
 _NO_CRON_RESTART_REASONS = DELIBERATE_STOP_REASONS | {"shutdown"}
+
+
+def _parked_content_kwargs(pending: dict) -> dict:
+    """The ``content`` kwarg of a parked send, or nothing for the legacy shape.
+
+    ``_pending_after_restart`` entries are either the legacy
+    ``{text, images, documents}`` or that plus the committed composer
+    ``content``, its ``refs`` and their ``on_delivered`` release; a legacy
+    entry keeps its exact legacy call.
+    """
+    content = pending.get("content")
+    return {"content": content} if content is not None else {}
+
+
+def _parked_start_kwargs(pending: dict) -> dict:
+    """The start kwargs of a parked send delivered by ``_start_agent``.
+
+    Adds ``on_delivered`` when the entry has one: a hybrid agent calls it after
+    its first paste succeeds; an SDK agent accepts it and never calls it (the
+    manager releases once ``_start_agent`` returns, see
+    ``_parked_release_after_start``).
+    """
+    kwargs = _parked_content_kwargs(pending)
+    on_delivered = pending.get("on_delivered")
+    if on_delivered is not None:
+        kwargs["on_delivered"] = on_delivered
+    return kwargs
 
 
 def _get_session_slug_sync(session_id: str) -> str | None:
@@ -106,7 +135,10 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         # Stored when the user sends text + startup settings changes during USER_TURN:
         # the agent must be killed and restarted, and this content is sent after
         # cron restart (if any) or directly with the new agent.
-        self._pending_after_restart: dict[str, dict] = {}  # session_id -> {text, images, documents}
+        # session_id -> {text, images, documents} (legacy) or that plus the
+        # committed composer attachment ``content``, its ``refs`` and their
+        # ``on_delivered`` release (called only once the send is delivered).
+        self._pending_after_restart: dict[str, dict] = {}
         # Settings a background shell held back, applied once the last one
         # ends (see ``_after_background_work_change``); cancelled at shutdown.
         self._deferred_settings_tasks: dict[str, asyncio.Task[None]] = {}
@@ -126,6 +158,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
         cancel_cron_restart: bool = True,
+        attachment_plan: AttachmentPlan | None = None,
     ) -> bool:
         """Send a message to an existing session, applying settings changes as needed.
 
@@ -154,141 +187,180 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             message was delivered now — settings-only update, or a
             restart-deferred send whose user_message line will confirm it.
 
+        ``attachment_plan`` (composer attachments) is committed at entry,
+        before ``_lock`` (spec §7.1); the resulting structured content then
+        goes to ``agent.send``, to the resume start, or into
+        ``_pending_after_restart``. A commit error propagates as
+        ``SendDeliveryError`` and nothing is sent.
+
         Raises:
             RuntimeError: If the agent cannot be started or message cannot be sent
+            SendDeliveryError: If the attachments cannot be committed
         """
         from twicc.providers.helpers import AgentSettingCategory, get_provider_helpers
 
         provider_helpers = get_provider_helpers(Provider.CLAUDE_CODE)
 
-        async with self._lock:
+        content = None
+        parked_attachments: dict = {}
+        if attachment_plan is not None and attachment_plan.entries:
+            # Refuse a read-only ephemeral target before promoting anything.
             self._check_ephemeral_readonly(session_id)
-            # Cancel any running cron restart task — user is taking over this session.
-            # Callers that ARE the cron restart task pass cancel_cron_restart=False
-            # to avoid cancelling themselves.
-            if cancel_cron_restart:
-                self._cancel_cron_restart_task(session_id)
+            content = await self._commit_attachment_plan(attachment_plan, session_id=session_id, text=text)
+            # A parked send is not delivered yet: it carries its refs and their
+            # release, called by whichever place delivers it (spec §6.1.4).
+            refs = tuple(entry.ref for entry in attachment_plan.entries)
+            parked_attachments = {"refs": refs, "on_delivered": self._delivery_release(refs)}
+        # Only when there is content: legacy calls keep their exact kwargs.
+        content_kwargs = {"content": content} if content is not None else {}
 
-            has_content = bool(text) or bool(images) or bool(documents)
+        # The release of a parked send this call delivers itself: called once
+        # ``_lock`` is released (the release itself never takes ``_lock``).
+        release_after_lock: Callable[[], None] | None = None
+        try:
+            async with self._lock:
+                self._check_ephemeral_readonly(session_id)
+                # Cancel any running cron restart task — user is taking over this session.
+                # Callers that ARE the cron restart task pass cancel_cron_restart=False
+                # to avoid cancelling themselves.
+                if cancel_cron_restart:
+                    self._cancel_cron_restart_task(session_id)
 
-            if session_id in self._agents:
-                agent = self._agents[session_id]
+                has_content = bool(text) or bool(images) or bool(documents) or content is not None
 
-                if agent.state == AgentState.DEAD:
-                    # Dead agent, clean it up and create a new one
-                    logger.debug("Removing dead agent for session %s", session_id)
-                    del self._agents[session_id]
+                if session_id in self._agents:
+                    agent = self._agents[session_id]
 
-                elif agent.state == AgentState.USER_TURN:
-                    changes = provider_helpers.classify_agent_settings_changes(
-                        agent.agent_settings, settings,
-                        categories=self._settings_categories_for(agent),
-                    )
-                    has_startup_changes = bool(changes[AgentSettingCategory.STARTUP])
+                    if agent.state == AgentState.DEAD:
+                        # Dead agent, clean it up and create a new one
+                        logger.debug("Removing dead agent for session %s", session_id)
+                        del self._agents[session_id]
 
-                    if has_startup_changes and agent.background_shell_count():
-                        # A restart would kill the background shells (a dev
-                        # server…): defer it like during ASSISTANT_TURN. The
-                        # caller already saved the settings; they apply once
-                        # the last shell ends (``_after_background_work_change``)
-                        # or when the process is stopped. What applies without
-                        # a restart (permission, model, context) applies now —
-                        # the agent is idle — and the message goes through.
-                        logger.info(
-                            "Startup settings changed for session %s (%s) while %d "
-                            "background shell(s) run — deferring the restart",
-                            session_id, changes[AgentSettingCategory.STARTUP],
-                            agent.background_shell_count(),
+                    elif agent.state == AgentState.USER_TURN:
+                        changes = provider_helpers.classify_agent_settings_changes(
+                            agent.agent_settings, settings,
+                            categories=self._settings_categories_for(agent),
                         )
-                        await agent.apply_live_settings(settings)
+                        has_startup_changes = bool(changes[AgentSettingCategory.STARTUP])
+
+                        if has_startup_changes and agent.background_shell_count():
+                            # A restart would kill the background shells (a dev
+                            # server…): defer it like during ASSISTANT_TURN. The
+                            # caller already saved the settings; they apply once
+                            # the last shell ends (``_after_background_work_change``)
+                            # or when the process is stopped. What applies without
+                            # a restart (permission, model, context) applies now —
+                            # the agent is idle — and the message goes through.
+                            logger.info(
+                                "Startup settings changed for session %s (%s) while %d "
+                                "background shell(s) run — deferring the restart",
+                                session_id, changes[AgentSettingCategory.STARTUP],
+                                agent.background_shell_count(),
+                            )
+                            await agent.apply_live_settings(settings)
+                            delivered = False
+                            if has_content:
+                                delivered = await agent.send(
+                                    text, images=images, documents=documents, **content_kwargs,
+                                )
+                            return delivered
+
+                        if has_startup_changes:
+                            # Startup settings changed → must kill and restart
+                            logger.info(
+                                "Startup settings changed for session %s (%s), killing agent",
+                                session_id, changes[AgentSettingCategory.STARTUP],
+                            )
+                            has_crons = await self._session_has_crons(agent)
+                            will_restart = has_content or has_crons
+                            if has_content:
+                                # A newer parked send overwrites an older one, whose
+                                # entries are not released (the reaper removes them).
+                                self._pending_after_restart[session_id] = {
+                                    "text": text, "images": images, "documents": documents,
+                                    **content_kwargs, **parked_attachments,
+                                }
+                            # _on_state_change(DEAD) fires once DEAD is reached:
+                            # - if has_crons: launches cron restart task (which will
+                            #   also send pending text after success)
+                            # - cleans up agent from _agents
+                            await agent.interrupt_or_kill(reason="apply-settings")
+                            if will_restart:
+                                # Broadcast "starting" so the frontend blocks interaction
+                                await self._broadcast_agent_state(
+                                    session_id, project_id, AgentState.STARTING,
+                                )
+                            # If no crons and has content → start directly
+                            if not has_crons and has_content:
+                                pending = self._pending_after_restart.pop(session_id, None)
+                                await self._start_agent(
+                                    session_id, project_id, cwd, pending["text"],
+                                    resume=True, settings=settings,
+                                    images=pending.get("images"),
+                                    documents=pending.get("documents"),
+                                    **_parked_start_kwargs(pending),
+                                )
+                                release_after_lock = self._parked_release_after_start(session_id, pending)
+                            # If has_crons → cron restart task handles it.
+                            # Delivery is deferred to after the restart, so this is
+                            # not a synchronous ack — the message's user_message
+                            # line (a fresh USER_TURN send) confirms it instead.
+                            return False
+                        else:
+                            # Only live/idle changes → apply on the live agent
+                            await agent.apply_live_settings(settings)
+                            delivered = False
+                            if has_content:
+                                delivered = await agent.send(
+                                    text, images=images, documents=documents, **content_kwargs,
+                                )
+                            return delivered
+
+                    elif agent.state == AgentState.ASSISTANT_TURN:
+                        # During assistant_turn: apply live (permission) immediately,
+                        # send text if any. Idle/startup changes are saved to DB by
+                        # the caller and will be checked on next USER_TURN transition.
+                        # Hybrid agents have no set_permission_mode (the mode is
+                        # STARTUP there) — the change is picked up by
+                        # _apply_pending_settings on the next USER_TURN.
+                        if (
+                            not getattr(agent, "is_hybrid", False)
+                            and settings.permission_mode != agent.agent_settings.permission_mode
+                        ):
+                            await agent.set_permission_mode(settings.permission_mode)
                         delivered = False
                         if has_content:
-                            delivered = await agent.send(text, images=images, documents=documents)
+                            delivered = await agent.send(
+                                text, images=images, documents=documents, **content_kwargs,
+                            )
                         return delivered
 
-                    if has_startup_changes:
-                        # Startup settings changed → must kill and restart
-                        logger.info(
-                            "Startup settings changed for session %s (%s), killing agent",
-                            session_id, changes[AgentSettingCategory.STARTUP],
-                        )
-                        has_crons = await self._session_has_crons(agent)
-                        will_restart = has_content or has_crons
-                        if has_content:
-                            self._pending_after_restart[session_id] = {
-                                "text": text, "images": images, "documents": documents,
-                            }
-                        # _on_state_change(DEAD) fires once DEAD is reached:
-                        # - if has_crons: launches cron restart task (which will
-                        #   also send pending text after success)
-                        # - cleans up agent from _agents
-                        await agent.interrupt_or_kill(reason="apply-settings")
-                        if will_restart:
-                            # Broadcast "starting" so the frontend blocks interaction
-                            await self._broadcast_agent_state(
-                                session_id, project_id, AgentState.STARTING,
-                            )
-                        # If no crons and has content → start directly
-                        if not has_crons and has_content:
-                            pending = self._pending_after_restart.pop(session_id, None)
-                            await self._start_agent(
-                                session_id, project_id, cwd, pending["text"],
-                                resume=True, settings=settings,
-                                images=pending.get("images"),
-                                documents=pending.get("documents"),
-                            )
-                        # If has_crons → cron restart task handles it.
-                        # Delivery is deferred to after the restart, so this is
-                        # not a synchronous ack — the message's user_message
-                        # line (a fresh USER_TURN send) confirms it instead.
-                        return False
                     else:
-                        # Only live/idle changes → apply on the live agent
-                        await agent.apply_live_settings(settings)
-                        delivered = False
-                        if has_content:
-                            delivered = await agent.send(text, images=images, documents=documents)
-                        return delivered
+                        # Agent starting - cannot send yet
+                        raise SendDeliveryError(
+                            f"Cannot send message: agent is in state {agent.state}",
+                            code="agent_starting",
+                        )
 
-                elif agent.state == AgentState.ASSISTANT_TURN:
-                    # During assistant_turn: apply live (permission) immediately,
-                    # send text if any. Idle/startup changes are saved to DB by
-                    # the caller and will be checked on next USER_TURN transition.
-                    # Hybrid agents have no set_permission_mode (the mode is
-                    # STARTUP there) — the change is picked up by
-                    # _apply_pending_settings on the next USER_TURN.
-                    if (
-                        not getattr(agent, "is_hybrid", False)
-                        and settings.permission_mode != agent.agent_settings.permission_mode
-                    ):
-                        await agent.set_permission_mode(settings.permission_mode)
-                    delivered = False
-                    if has_content:
-                        delivered = await agent.send(text, images=images, documents=documents)
-                    return delivered
-
-                else:
-                    # Agent starting - cannot send yet
-                    raise SendDeliveryError(
-                        f"Cannot send message: agent is in state {agent.state}",
-                        code="agent_starting",
+                # No live agent — a message is required to start one. Attachments
+                # alone qualify: Claude Code accepts a user message made only of
+                # image / document blocks (or of composer attachment content).
+                if not has_content:
+                    raise RuntimeError(
+                        "Cannot start a new agent without a message"
                     )
 
-            # No live agent — a message is required to start one. Attachments
-            # alone qualify: Claude Code accepts a user message made only of
-            # image / document blocks.
-            if not has_content:
-                raise RuntimeError(
-                    "Cannot start a new agent without a message"
+                # Create and start new agent with resume
+                await self._start_agent(
+                    session_id, project_id, cwd, text, resume=True,
+                    settings=settings,
+                    images=images, documents=documents,
+                    **content_kwargs,
                 )
-
-            # Create and start new agent with resume
-            await self._start_agent(
-                session_id, project_id, cwd, text, resume=True,
-                settings=settings,
-                images=images, documents=documents,
-            )
-            return True
+                return True
+        finally:
+            if release_after_lock is not None:
+                release_after_lock()
 
     async def create_session(
         self,
@@ -302,6 +374,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         documents: list[dict] | None = None,
         ephemeral: bool = False,
         ephemeral_admission=None,
+        attachment_plan: AttachmentPlan | None = None,
     ) -> str:
         """Create a new session with a client-provided session ID.
 
@@ -313,9 +386,21 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         the input ``session_id`` (the CLI accepts the client-supplied UUID
         via ``--session-id``).
 
+        ``attachment_plan`` is committed at entry, before ``_lock``, for the
+        draft id (which is the canonical id here); the content then goes to
+        the new agent's ``start``.
+
         Raises:
             RuntimeError: If an agent already exists for this session_id
+            SendDeliveryError: If the attachments cannot be committed
         """
+        content_kwargs = {}
+        if attachment_plan is not None and attachment_plan.entries:
+            self._check_ephemeral_readonly(session_id, ephemeral_admission)
+            content_kwargs["content"] = await self._commit_attachment_plan(
+                attachment_plan, session_id=session_id, text=text,
+            )
+
         async with self._lock:
             self._check_ephemeral_readonly(session_id, ephemeral_admission)
             if session_id in self._agents:
@@ -337,7 +422,32 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                 settings=settings,
                 images=images, documents=documents,
                 ephemeral=ephemeral, ephemeral_admission=ephemeral_admission,
+                **content_kwargs,
             )
+
+    @staticmethod
+    def _delivery_release(refs: tuple) -> Callable[[], None]:
+        """The release of delivered composer *refs* (a detached, best-effort task)."""
+        from twicc.core.services.attachments.lifecycle import delivery_release
+
+        return delivery_release(refs)
+
+    def _parked_release_after_start(self, session_id: str, pending: dict) -> Callable[[], None] | None:
+        """The release to call once ``_start_agent`` delivered the parked *pending* send, or ``None``.
+
+        Reads the NEW agent from ``_agents`` (a local variable may still hold
+        the killed one). Absent or DEAD: the start failed (a start error
+        removes the agent before ``_start_agent`` returns), the entries stay
+        for the browser's Retry. Hybrid: its first paste calls the callback
+        itself, after the message is really pasted (spec §6.1.4).
+        """
+        on_delivered = pending.get("on_delivered")
+        if on_delivered is None:
+            return None
+        agent = self._agents.get(session_id)
+        if agent is None or agent.state == AgentState.DEAD or getattr(agent, "is_hybrid", False):
+            return None
+        return on_delivered
 
     async def discard_active_tool(self, session_id: str, tool_use_id: str) -> bool:
         """Discard an active-tool entry on the matching agent. Returns True
@@ -1072,15 +1182,22 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             # Attachments alone are a message too — never gate on text only.
             if pending and (
                 pending.get("text") or pending.get("images") or pending.get("documents")
+                or pending.get("content") is not None
             ):
                 agent = self._agents.get(session_id)
                 if agent and agent.state == AgentState.USER_TURN:
                     logger.info("Sending pending message after cron restart for session %s", session_id)
-                    await agent.send(
+                    delivered = await agent.send(
                         pending["text"],
                         images=pending.get("images"),
                         documents=pending.get("documents"),
+                        **_parked_content_kwargs(pending),
                     )
+                    # Delivered now (this task never holds ``_lock``): release
+                    # the parked composer refs (spec §6.1.4).
+                    on_delivered = pending.get("on_delivered")
+                    if delivered and on_delivered is not None:
+                        on_delivered()
         except asyncio.CancelledError:
             logger.info("Cron restart task cancelled for session %s", session_id)
             raise
@@ -1340,7 +1457,13 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                     agent.session_id, agent.project_id, agent.cwd,
                     pending["text"], resume=True, settings=requested_settings,
                     images=pending.get("images"), documents=pending.get("documents"),
+                    **_parked_start_kwargs(pending),
                 )
+                # The callback only schedules a detached task, which never
+                # takes ``_lock`` (held here by some callers).
+                release = self._parked_release_after_start(agent.session_id, pending)
+                if release is not None:
+                    release()
         else:
             # Only live/idle changes → apply via SDK methods
             logger.info(

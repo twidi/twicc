@@ -547,6 +547,12 @@ function toggleJsonView() {
     background-image: linear-gradient(180deg, color-mix(in oklab, var(--wa-color-brand-60) 38%, var(--user-card-solid)), color-mix(in oklab, var(--wa-color-brand-60) 26%, var(--user-card-solid)));
     box-shadow: 0 8px 22px -8px color-mix(in oklab, var(--wa-color-brand-60) 80%, transparent),
         inset 0 1px 0 oklch(1 0 0 / 0.15);
+    /* The attachment strip's tiles (AttachmentStrip.vue): the same recipe as the bubble and the
+       quote cards, the accent mixed into the solid surface, so they stand out of the tinted bubble. */
+    --strip-tile-bg: color-mix(in oklab, var(--wa-color-brand-60) 20%, var(--user-card-solid));
+    --strip-tile-border: color-mix(in oklab, var(--wa-color-brand-60) 45%, transparent);
+    --strip-icon-color: var(--wa-color-text-normal);
+    --strip-tile-accent: var(--wa-color-text-normal);
 }
 /* Light only: a solid lit bubble, the accent itself (a little lighter at the top) with white text: the
    only filled surface of the chat. Its other content (quotes, code, links) is not adapted yet. */
@@ -563,6 +569,17 @@ html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] .markd
 }
 html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] .message-timestamp {
     color: oklch(1 0 0 / 0.78);
+}
+/* The attachment strip (AttachmentStrip.vue) sits in the message but outside its markdown: the
+   same white-on-accent colours, read through its custom properties. Names inherit the white text;
+   an openable file reads as a link (white, underlined), each tile is the frosted white of inline code,
+   and its hover border and focus ring are white. */
+html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] {
+    --strip-link-color: #fff;
+    --strip-icon-color: #fff;
+    --strip-tile-bg: oklch(1 0 0 / 0.2);
+    --strip-tile-border: oklch(1 0 0 / 0.45);
+    --strip-tile-accent: #fff;
 }
 /* What sits directly on the filled bubble (not in a quote, a container, a `::` line or a code
    block, which are light cards with their own colours): links, inline code, rules and tables read in white. */

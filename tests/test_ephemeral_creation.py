@@ -143,3 +143,50 @@ def test_normal_creation_claim_prevents_ephemeral_factory_and_buffer_collision(t
         ephemeral.drain_buffers("shared")
 
     asyncio.run(scenario())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_ephemeral_refs_needing_artifacts_fail_before_any_stash(tmp_path):
+    """The whole plan is refused (with the file names) before a stash or a manager call."""
+    from twicc.core.services.attachments import planner
+    from twicc.core.services.attachments import target as plan_target
+    from twicc.core.services.attachments.types import PlanTarget
+    from twicc.pending_agent_settings import _pending as pending_agent_settings
+    from twicc.pending_session_attributes import get_pending_session_attributes
+    from twicc.pending_titles import get_pending_title
+
+    Project.objects.create(id="p", directory=str(tmp_path))
+    manager = SimpleNamespace(create_session=AsyncMock(return_value="draft"))
+
+    def plan(refs, target, *, text):
+        assert target.ephemeral is True
+        raise planner.AttachmentPlanError(
+            "attachment_requires_artifacts", "Ephemeral sessions only accept native attachments",
+            names=("clip.mp4",),
+        )
+
+    async def target(**kwargs):
+        return PlanTarget("claude_code", False, kwargs["ephemeral"], "opus", False, "first_party")
+
+    with (
+        patch("twicc.core.services.session_creation.ensure_provider_running"),
+        patch("twicc.agent.registry.get_agent_manager_registry", return_value=SimpleNamespace(get=lambda p: manager)),
+        patch.object(planner, "plan_attachments", plan),
+        patch.object(plan_target, "resolve_plan_target", target),
+    ):
+        result = asyncio.run(create_session_from_payload(
+            {
+                "session_id": "draft", "project_id": "p", "provider": "claude_code", "text": "go",
+                "title": "T", "ephemeral": True,
+                "attachments": [{"bucket": "b", "id": "6f1c1f0e-8a8e-4c55-9d1e-0b0c8f6c1a01"}],
+            },
+            allow_ephemeral=True,
+        ))
+    assert [e.code for e in result.errors] == ["attachment_requires_artifacts"]
+    assert result.errors[0].message == "Ephemeral sessions only accept native attachments: clip.mp4"
+    assert result.error_names == ("clip.mp4",)
+    manager.create_session.assert_not_called()
+    assert get_pending_title("draft") is None
+    assert "draft" not in pending_agent_settings
+    assert get_pending_session_attributes("draft") is None
+    assert ephemeral.pending_snapshot() == []

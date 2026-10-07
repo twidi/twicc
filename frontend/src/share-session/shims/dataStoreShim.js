@@ -356,6 +356,8 @@ export const useDataStore = defineStore('shareData', {
 
         // ── No-op write surface (statically imported by reused components) ──
         registerOutgoingSend() {}, removeFailedSend() {}, restoreDraftAttachments() {},
+        restoreDraftAttachmentRefs() { return Promise.resolve([]) }, releaseAttachments() { return Promise.resolve() },
+        restoreLegacyDraftMedias() { return Promise.resolve() },
         setProcessState() {}, markItemsLive() {}, clearEndedStreamingBlocks() {},
         auditInflightSends() {}, ensureSessionItemsCoverage() { return Promise.resolve() },
     },

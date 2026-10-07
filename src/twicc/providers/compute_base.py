@@ -44,7 +44,14 @@ from django.core.exceptions import MultipleObjectsReturned
 from django.db import connection, transaction
 from django.db.models import F, QuerySet
 
-from twicc.context_injection import strip_context_blocks_in_place
+from twicc.context_injection import (
+    ATTACHMENTS_KEY,
+    extract_attachments_block,
+    slots_carry_attachments_block,
+    strip_context_blocks_in_place,
+    unwrap_cli_paste_in_slots,
+)
+from twicc.core.services.attachments.types import UserTextSlot
 from twicc.core.agent_runs import RunStateExclude, StopStepResult, interaction_payloads, run_stop_step
 from twicc.core.enums import ItemDisplayLevel, ItemKind, Provider
 from twicc.core.models import (
@@ -1036,10 +1043,17 @@ class BaseSessionCompute:
         agent still saw the block in its turn input and replayed rollout; only
         the persisted copy is cleaned.
 
+        Before that strip, the ``<twicc:attachments>`` manifest is extracted
+        from the record's user-message slots only (:meth:`_extract_attachments`),
+        and stored as the top-level ``twicc_attachments`` key.
+
         Returns the new serialised JSON string when anything changed (the
         caller updates ``SessionItem.content``), or ``None`` when the item was
         left untouched.
         """
+        extracted = self._extract_attachments(
+            parsed_json, session_id=session_id, in_memory_items=in_memory_items,
+        )
         stripped = strip_context_blocks_in_place(parsed_json)
         provider_content = self._transform_inline_provider(
             parsed_json,
@@ -1052,9 +1066,60 @@ class BaseSessionCompute:
         # own serialisation when only the strip fired.
         if provider_content is not None:
             return provider_content
-        if stripped:
+        if stripped or extracted:
             return orjson.dumps(parsed_json).decode()
         return None
+
+    def _extract_attachments(
+        self,
+        parsed_json: dict,
+        *,
+        session_id: str,
+        in_memory_items: list[tuple[int, datetime | None, dict]] | None,
+    ) -> bool:
+        """Move a validated ``<twicc:attachments>`` block into ``twicc_attachments``.
+
+        First, the hybrid string slots lose the CLI's paste wrapper
+        (:func:`unwrap_cli_paste_in_slots`), attachments or not. Only the
+        provider's user-message slots are inspected. An existing key is
+        never replaced nor removed: a recompute runs on the already-cleaned
+        stored copy. Owners are resolved only when a slot carries the tag, so a
+        record without it never pays for a lookup. Returns ``True`` when the
+        item changed.
+        """
+        slots = self.user_text_slots(parsed_json)
+        if not slots:
+            return False
+        # The CLI's paste wrapper goes whether or not the message carries attachments.
+        unwrapped = unwrap_cli_paste_in_slots(slots)
+        if ATTACHMENTS_KEY in parsed_json or not slots_carry_attachments_block(slots):
+            return unwrapped
+        self._prepare_attachment_owners(session_id=session_id, in_memory_items=in_memory_items)
+        result = extract_attachments_block(
+            slots, self.attachment_owners(parsed_json, session_id=session_id), session_id=session_id,
+        )
+        if result is None:
+            return unwrapped
+        parsed_json[ATTACHMENTS_KEY] = result
+        return True
+
+    def user_text_slots(self, parsed: dict) -> tuple[UserTextSlot, ...]:
+        """The containers holding the user's own message in this record (design §10.1).
+
+        Each slot is a whole string (hybrid) or a whole content array, never a
+        recursive walk. Tool results, assistant content and system records
+        return no slot. Default: no slot.
+        """
+        return ()
+
+    def attachment_owners(self, parsed: dict, *, session_id: str) -> set[str]:
+        """Session ids whose attachments a manifest in this record may name. Default: the record's session."""
+        return {session_id}
+
+    def _prepare_attachment_owners(
+        self, *, session_id: str, in_memory_items: list[tuple[int, datetime | None, dict]] | None,
+    ) -> None:
+        """Load what :meth:`attachment_owners` needs, right before a candidate block is checked. Default: nothing."""
 
     def _transform_inline_provider(
         self,

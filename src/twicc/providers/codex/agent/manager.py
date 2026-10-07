@@ -20,7 +20,7 @@ import logging
 import os
 import time
 from datetime import UTC, datetime
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import uuid4
 
 from asgiref.sync import sync_to_async
@@ -42,6 +42,9 @@ from .agent import CodexAgent, command_processes_may_run
 from .hardcoded_commands import HardcodedCommand, parse_hardcoded_command
 from .sdk_logger import attach_stderr_logging
 
+if TYPE_CHECKING:
+    from twicc.core.services.attachments.types import AttachmentContent, AttachmentPlan, PreparedAttachments
+
 logger = logging.getLogger(__name__)
 
 # Delay before re-pushing a resumed session's title to Codex, giving the first
@@ -56,6 +59,26 @@ _RESUME_TITLE_REPUSH_DELAY = 5.0
 # variable below (same unit: root included).
 _CODEX_MAX_AGENT_THREADS_ENV = "TWICC_CODEX_MAX_AGENT_THREADS"
 _CODEX_MAX_AGENT_THREADS_DEFAULT = 9
+
+
+def _content_kwargs(content: AttachmentContent | None) -> dict[str, AttachmentContent]:
+    """The ``content`` kwarg of a send, or nothing: legacy sends keep their exact calls."""
+    return {"content": content} if content is not None else {}
+
+
+def _finish_initial_attachments(
+    prepared: PreparedAttachments | None, canonical_id: str, text: str,
+) -> AttachmentContent | None:
+    """Finish the prepared composer attachments for the canonical thread id, or ``None``.
+
+    Runs on the loop: the finish step only does same-filesystem claims and
+    small marker writes (spec §7.1). Raises ``SendDeliveryError``.
+    """
+    if prepared is None:
+        return None
+    from twicc.core.services.attachments import committer
+
+    return committer.finish_attachments(prepared, session_id=canonical_id, text=text)
 
 
 class CodexAgentManager(BaseAgentManager):
@@ -195,12 +218,12 @@ class CodexAgentManager(BaseAgentManager):
     def _warn_about_documents(session_id: str, documents: list[dict] | None) -> None:
         """Defensive log when the frontend ships ``documents`` to a Codex session.
 
-        The frontend's :class:`CodexHelpers.getAttachmentSupport` declares
-        ``documents: false`` and refuses them at the file picker / paste /
-        drop layer, so reaching this point means either a UI bug or a
-        custom WebSocket client. Either way, Codex has no protocol for
-        PDF / TXT input, so we drop them and surface the discrepancy to
-        the logs rather than failing the whole turn.
+        The web composer sends staged attachment refs, never legacy
+        ``documents`` (spec 2026-10-03 §8), so reaching this point means a
+        legacy snapshot retried on Codex or a custom WebSocket client.
+        Either way, Codex has no protocol for legacy PDF / TXT blocks, so we
+        drop them and surface the discrepancy to the logs rather than
+        failing the whole turn.
         """
         if documents:
             logger.warning(
@@ -209,21 +232,65 @@ class CodexAgentManager(BaseAgentManager):
                 session_id, len(documents),
             )
 
+    @staticmethod
+    def _refuse_attachments_with_command(text: str) -> None:
+        """Composer attachments never ride a hardcoded command (spec §6.6).
+
+        The planner refuses this already; repeated here, before anything is
+        promoted, because the command path has no content to carry them.
+        """
+        if parse_hardcoded_command(text) is not None:
+            from twicc.core.services.attachments.planner import ERROR_WITH_COMMAND
+
+            raise SendDeliveryError("Attachments cannot be sent with a command", code=ERROR_WITH_COMMAND)
+
     def _send_gate(self, session_id: str) -> contextlib.AbstractAsyncContextManager:
         """Same order as ``send_to_session``: the migration gate, then the lock."""
         return gate_for(session_id)
 
     async def send_to_session(
-        self, session_id: str, project_id: str, cwd: str, text: str, settings: AgentSettings,
-        *, images: list[dict] | None = None, documents: list[dict] | None = None,
-        async_questions: dict | None = None, request_id: str | None = None, send_origin: str = "internal",
+        self,
+        session_id: str,
+        project_id: str,
+        cwd: str,
+        text: str,
+        settings: AgentSettings,
+        *,
+        images: list[dict] | None = None,
+        documents: list[dict] | None = None,
+        attachment_plan: AttachmentPlan | None = None,
+        async_questions: dict | None = None,
+        request_id: str | None = None,
+        send_origin: str = "internal",
     ) -> bool:
-        """Serialize admission, delivery and acceptance with rollout migration."""
+        """Serialize admission, delivery and acceptance with rollout migration.
+
+        ``attachment_plan`` (composer attachments) is committed here, at entry:
+        before the rollout-migration gate, the manager ``_lock`` and the
+        hardcoded-command dispatch (spec §7.1). A hardcoded command never
+        carries attachments (``attachments_with_command``, refused before
+        anything is promoted). A commit error propagates as
+        ``SendDeliveryError`` and nothing is sent.
+        """
+
         self._check_ephemeral_readonly(session_id)
+        content = None
+        if attachment_plan is not None and attachment_plan.entries:
+            self._refuse_attachments_with_command(text)
+            content = await self._commit_attachment_plan(attachment_plan, session_id=session_id, text=text)
         async with gate_for(session_id):
             return await self._send_to_session_under_gate(
-                session_id, project_id, cwd, text, settings, images=images, documents=documents,
-                async_questions=async_questions, request_id=request_id, send_origin=send_origin,
+                session_id,
+                project_id,
+                cwd,
+                text,
+                settings,
+                images=images,
+                documents=documents,
+                async_questions=async_questions,
+                request_id=request_id,
+                send_origin=send_origin,
+                **_content_kwargs(content),
             )
 
     async def reconcile_question_sends(
@@ -258,8 +325,16 @@ class CodexAgentManager(BaseAgentManager):
         self, session_id: str, project_id: str, cwd: str, text: str, settings: AgentSettings,
         *, images: list[dict] | None = None, documents: list[dict] | None = None,
         async_questions: dict | None = None, request_id: str | None = None, send_origin: str = "internal",
+        content: AttachmentContent | None = None,
     ) -> bool:
-        """Prepare durable intent before calling the ordinary send implementation."""
+        """Prepare durable intent before calling the ordinary send implementation.
+
+        ``content`` (committed composer attachments) carries the raw user text;
+        once the question answers are folded into the final text, the content's
+        ``user_text`` is replaced by that final text, so the turn input stays
+        ``native parts, manifest, folded user text`` with the answers inside the
+        user text (never a second copy, even on a stored retry).
+        """
         from twicc.core.services.async_questions import accept_question_send, prepare_question_send
         from twicc.providers.db_writer import run_under_db_write_lock
 
@@ -271,9 +346,10 @@ class CodexAgentManager(BaseAgentManager):
                 raise SendDeliveryError("Question answers cannot accompany a command", code="async_questions_command")
             return await self._deliver_to_session_under_gate(
                 session_id, project_id, cwd, text, settings, images=images, documents=documents,
+                **_content_kwargs(content),
             )
         has_answers = isinstance(async_questions, dict) and bool(async_questions.get("answers"))
-        if not text and not images and not documents and not has_answers:
+        if not text and not images and not documents and not has_answers and content is None:
             if async_questions is not None:
                 # Validate structured empty submissions without recording a boundary.
                 from twicc.core.services.async_questions import read_question_snapshot
@@ -284,6 +360,7 @@ class CodexAgentManager(BaseAgentManager):
                     raise SendDeliveryError(str(exc), code=str(exc)) from exc
             return await self._deliver_to_session_under_gate(
                 session_id, project_id, cwd, text, settings, images=images, documents=documents,
+                **_content_kwargs(content),
             )
         from twicc.core.models import AsyncQuestionState
         previous = await sync_to_async(lambda: (
@@ -299,6 +376,8 @@ class CodexAgentManager(BaseAgentManager):
         except ValueError as exc:
             raise SendDeliveryError(str(exc), code=str(exc)) from exc
         submission = prepared.submission
+        if content is not None:
+            content = content._replace(user_text=prepared.text)
         # Existing prepared intent can have reached the provider before a crash.
         if submission["status"] == "accepted":
             return True
@@ -307,7 +386,7 @@ class CodexAgentManager(BaseAgentManager):
         try:
             delivered = await self._deliver_to_session_under_gate(
                 session_id, project_id, cwd, prepared.text, settings,
-                images=images, documents=documents, submission=submission,
+                images=images, documents=documents, submission=submission, **_content_kwargs(content),
             )
             if submission.get("_delivery_future") is not None:
                 delivered = await submission["_delivery_future"]
@@ -371,6 +450,7 @@ class CodexAgentManager(BaseAgentManager):
         *,
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
+        content: AttachmentContent | None = None,
         submission: dict | None = None,
     ) -> bool:
         """Send a message to an existing session.
@@ -389,7 +469,9 @@ class CodexAgentManager(BaseAgentManager):
 
         ``images`` are forwarded to the SDK as ``ImageInput`` data URLs;
         ``documents`` are dropped with a warning (Codex protocol has no
-        equivalent input block).
+        equivalent input block). ``content`` is the committed composer
+        attachments (already finished by ``send_to_session``): it counts as
+        content at every gate and goes to ``agent.send`` or the resume start.
 
         Returns ``True`` when a message (or hardcoded command) was accepted
         for delivery, so the WS layer can emit a delivery ack; ``False`` for
@@ -428,7 +510,7 @@ class CodexAgentManager(BaseAgentManager):
                     del self._agents[session_id]
 
                 elif agent.state == AgentState.USER_TURN:
-                    if not text and not images:
+                    if not text and not images and content is None:
                         # Settings-only update with no turn to open. Refresh the
                         # bundle now; ``apply_agent_settings`` also persists a
                         # changed Fast tier for Codex-owned continuations.
@@ -452,10 +534,13 @@ class CodexAgentManager(BaseAgentManager):
                         old_settings.fast_mode, settings.fast_mode,
                     )
                     await agent.apply_agent_settings(settings)
-                    return await agent.send(text, images=images, **({"submission": submission} if submission else {}))
+                    return await agent.send(
+                        text, images=images, **({"submission": submission} if submission else {}),
+                        **_content_kwargs(content),
+                    )
 
                 elif agent.state == AgentState.ASSISTANT_TURN:
-                    if not text and not images:
+                    if not text and not images and content is None:
                         # Settings-only update during an active turn. Refresh
                         # the bundle so the NEXT turn picks up the new picker
                         # values; nothing to steer.
@@ -479,7 +564,10 @@ class CodexAgentManager(BaseAgentManager):
                         old_settings.fast_mode, settings.fast_mode,
                     )
                     await agent.apply_agent_settings(settings)
-                    return await agent.send(text, images=images, **({"submission": submission} if submission else {}))
+                    return await agent.send(
+                        text, images=images, **({"submission": submission} if submission else {}),
+                        **_content_kwargs(content),
+                    )
 
                 else:
                     raise SendDeliveryError(
@@ -487,14 +575,15 @@ class CodexAgentManager(BaseAgentManager):
                         code="agent_starting",
                     )
 
-            # No live agent — text or at least one image is required to
-            # spin one up.
-            if not text and not images:
+            # No live agent — text, at least one image, or composer attachment
+            # content is required to spin one up.
+            if not text and not images and content is None:
                 raise RuntimeError("Cannot start a new agent without a message")
 
             await self._start_agent(
                 session_id, project_id, cwd, text, resume=True,
                 settings=settings, images=images, **({"submission": submission} if submission else {}),
+                **_content_kwargs(content),
             )
             return True
 
@@ -690,6 +779,7 @@ class CodexAgentManager(BaseAgentManager):
         documents: list[dict] | None = None,
         ephemeral: bool = False,
         ephemeral_admission=None,
+        attachment_plan: AttachmentPlan | None = None,
     ) -> str:
         """Create a brand-new Codex thread for the draft ``session_id``.
 
@@ -704,6 +794,14 @@ class CodexAgentManager(BaseAgentManager):
 
         Same image / document policy as ``send_to_session``: images go
         through; documents are warned-and-dropped.
+
+        ``attachment_plan`` (composer attachments) is prepared here, before
+        the lock and off the event loop, for a not-yet-known session (spec
+        §7.1): the canonical id only exists after ``thread_start``. The
+        preparation goes down to ``_create_agent``, which finishes it for the
+        canonical id before ``session_bound`` and stores the content on the
+        new agent. This method owns the pre-copies: they are discarded
+        whatever happens, including a startup failure before the finish.
         """
         self._warn_about_documents(session_id, documents)
 
@@ -717,6 +815,43 @@ class CodexAgentManager(BaseAgentManager):
         if ephemeral and command is not None:
             raise SendDeliveryError("Commands are unavailable for ephemeral runs", code="ephemeral_command_unsupported")
 
+        if attachment_plan is None or not attachment_plan.entries:
+            return await self._create_session_locked(
+                session_id, project_id, cwd, text, settings, command,
+                images=images, ephemeral=ephemeral, ephemeral_admission=ephemeral_admission,
+            )
+
+        self._refuse_attachments_with_command(text)
+        # Refuse a read-only ephemeral target before preparing anything.
+        self._check_ephemeral_readonly(session_id, ephemeral_admission)
+        from twicc.core.services.attachments import committer
+
+        prepared = await self._prepare_attachment_plan(attachment_plan, session_id=None)
+        try:
+            return await self._create_session_locked(
+                session_id, project_id, cwd, text, settings, command,
+                images=images, ephemeral=ephemeral, ephemeral_admission=ephemeral_admission,
+                prepared_attachments=prepared,
+            )
+        finally:
+            committer.discard_prepared(prepared)
+
+    async def _create_session_locked(
+        self,
+        session_id: str,
+        project_id: str,
+        cwd: str,
+        text: str,
+        settings: AgentSettings,
+        command: HardcodedCommand | None,
+        *,
+        images: list[dict] | None,
+        ephemeral: bool,
+        ephemeral_admission,
+        prepared_attachments: PreparedAttachments | None = None,
+    ) -> str:
+        """The locked part of :meth:`create_session`."""
+        attachment_kwargs = {} if prepared_attachments is None else {"prepared_attachments": prepared_attachments}
         async with self._lock:
             self._check_ephemeral_readonly(session_id, ephemeral_admission)
             # No "session already exists" guard: by construction the draft id
@@ -737,6 +872,7 @@ class CodexAgentManager(BaseAgentManager):
                 session_id, project_id, cwd, text, resume=False,
                 settings=settings, images=images,
                 ephemeral=ephemeral, ephemeral_admission=ephemeral_admission,
+                **attachment_kwargs,
             )
 
     def get_user_terminated_tool_reason(
@@ -784,9 +920,20 @@ class CodexAgentManager(BaseAgentManager):
         resume: bool,
         settings: AgentSettings,
         ephemeral: bool = False,
+        prepared_attachments: PreparedAttachments | None = None,
+        initial_text: str = "",
         **kwargs: Any,
     ) -> CodexAgent:
         """Spin up the AsyncCodex client + thread, wrap them in a CodexAgent.
+
+        ``prepared_attachments`` (composer attachments prepared before the
+        lock, forwarded with the first message's ``initial_text`` by
+        ``_start_agent_with_admission``) are finished here, inside the
+        cleanup ``try``, right after the thread exists and its work dirs are
+        created, for the canonical id (spec §7.1). The content is stored on
+        the agent as ``_initial_content``, consumed by its ``start``. A finish
+        error closes the client and re-raises: no ``session_bound`` is ever
+        broadcast for it, so the browser draft stays a draft.
 
         For ``resume=True`` the input ``session_id`` is the canonical thread
         id (the frontend already knows it). For ``resume=False`` it's the
@@ -805,7 +952,13 @@ class CodexAgentManager(BaseAgentManager):
         can apply the latest model, effort, permission mode, and service tier.
         Fast mode is also persisted through ``thread/settings/update`` for
         Codex-owned continuations that do not pass through TwiCC's turn path.
+
+        A resume never receives ``prepared_attachments``: its canonical id is
+        known before the lock, so its attachments are finished there and travel
+        as the start ``content``. Passing them here is a programming error.
         """
+        if resume and prepared_attachments is not None:
+            raise ValueError("prepared_attachments are only finished by a new session, never by a resume")
         config = await make_codex_config(cwd=cwd)
         if ephemeral:
             config.config_overrides = (*config.config_overrides, "features.plugins=false")
@@ -829,6 +982,7 @@ class CodexAgentManager(BaseAgentManager):
         # subprocess. Once the agent is returned, ownership transfers to
         # the caller (``BaseAgentManager._start_agent`` covers the rest of
         # the startup sequence via its own cleanup wrapper).
+        initial_content: AttachmentContent | None = None
         try:
             # Trust clamp (security floor, trust design §13.4): in an untrusted
             # (or unknown-trust) project the thread never binds a no-guardrail
@@ -973,6 +1127,12 @@ class CodexAgentManager(BaseAgentManager):
                     pending_id=session_id,
                 )
 
+                # Composer attachments: promoted into the canonical session's
+                # attachments folder now that its id exists, before anything
+                # binds the draft to it. Only same-filesystem claims and marker
+                # writes (the copies were made by the prepare step).
+                initial_content = _finish_initial_attachments(prepared_attachments, thread.id, initial_text)
+
                 # A workspace-write thread needs the canonical scratch and
                 # artifact paths in its persistent next-turn settings too:
                 # Codex-owned continuations (notably /goal) do not pass through
@@ -1029,6 +1189,7 @@ class CodexAgentManager(BaseAgentManager):
                 work_dirs=work_dirs,
                 ephemeral=ephemeral,
             )
+            agent._initial_content = initial_content
 
             # Prime the environment-reconciliation baseline (best-effort; the
             # agent methods log-and-swallow on failure). On a fresh start, seed
