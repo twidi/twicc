@@ -8,6 +8,7 @@ import { saveEphemeralControl, deleteEphemeralControl, loadEphemeralControls } f
 import { defineStore, acceptHMRUpdate } from 'pinia'
 import { toRaw } from 'vue'
 import { jsonValuesEqual } from '../utils/jsonValuesEqual.js'
+import { getProjectActivityIndex } from '../utils/projectProcessActivity.js'
 import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
 import { computeVisualItems, visualItemEqual, insertDaySeparators, makeBackgroundWorkStatusItem, markLiveTimestampAnchor } from '../utils/visualItems'
 import { backgroundWorkStatusKey, buildBackgroundWorkStatusLines } from '../utils/backgroundWork'
@@ -1064,16 +1065,12 @@ export const useDataStore = defineStore('data', {
          */
         getProjectUnreadCount() {
             return (projectId) => {
-                if (hasActiveStartupPhase(this.startupProgress)) return 0
-                const scope = new Set(this.getProjectIndicatorScopeIds(projectId))
-                let count = 0
-                for (const session of Object.values(this.sessions)) {
-                    if (session.hidden) continue
-                    if (!scope.has(session.project_id)) continue
-                    if (isSessionUnread(session, this.processStates[session.id])) count++
-                }
-                return count
+                return getProjectActivityIndex(this).unread(this.getProjectIndicatorScopeIds(projectId))
             }
+        },
+        getProjectActivitySummary() {
+            const index = getProjectActivityIndex(this)
+            return (projectIds, previous) => index.summary(projectIds, previous)
         },
 
         /**
@@ -1139,14 +1136,8 @@ export const useDataStore = defineStore('data', {
          * Same logic as getProjectUnreadCount but without project filter.
          * @returns {number} The number of unread sessions
          */
-        getGlobalUnreadCount: (state) => {
-            if (hasActiveStartupPhase(state.startupProgress)) return 0
-            let count = 0
-            for (const session of Object.values(state.sessions)) {
-                if (session.hidden) continue
-                if (isSessionUnread(session, state.processStates[session.id])) count++
-            }
-            return count
+        getGlobalUnreadCount() {
+            return getProjectActivityIndex(this).totalUnread()
         },
 
         // Startup progress getters — aggregate per-phase across every
@@ -4699,7 +4690,7 @@ export const useDataStore = defineStore('data', {
                 return
             }
             const wasAssistantTurn = this.processStates[agentSessionId]?.state === PROCESS_STATE.ASSISTANT_TURN
-            this.processStates[agentSessionId] = {
+            this._patchProcessState(agentSessionId, {
                 state: PROCESS_STATE.ASSISTANT_TURN,
                 project_id: projectId,
                 provider,
@@ -4711,7 +4702,7 @@ export const useDataStore = defineStore('data', {
                 session_title: null,
                 project_name: null,
                 synthetic: true,
-            }
+            })
             if (!wasAssistantTurn && this.sessionItems[agentSessionId]) {
                 this.recomputeVisualItems(agentSessionId)
             }
@@ -4893,6 +4884,21 @@ export const useDataStore = defineStore('data', {
 
         // Process state actions
 
+        _patchProcessState(sessionId, snapshot) {
+            const existing = this.processStates[sessionId]
+            if (!existing) {
+                this.processStates[sessionId] = snapshot
+                return
+            }
+            // A real process replaces synthetic fields without replacing its identity.
+            for (const key of Object.keys(existing)) {
+                if (!Object.hasOwn(snapshot, key)) delete existing[key]
+            }
+            for (const [key, value] of Object.entries(snapshot)) {
+                if (!jsonValuesEqual(existing[key], value)) existing[key] = value
+            }
+        },
+
         /**
          * Optimistically mark a session as "stopping" so the spinner reacts to
          * the click immediately, before the backend confirms. The backend is the
@@ -4905,7 +4911,7 @@ export const useDataStore = defineStore('data', {
         setSessionStopping(sessionId) {
             const ps = this.processStates[sessionId]
             if (!ps) return
-            this.processStates[sessionId] = { ...ps, stopping: true }
+            ps.stopping = true
         },
 
         /**
@@ -4948,6 +4954,10 @@ export const useDataStore = defineStore('data', {
          */
         setProcessState(sessionId, projectId, state, extra = {}) {
             const previousState = this.processStates[sessionId]?.state
+            // Tools belong to one process/turn lifetime, not only to a state name.
+            const sameTurn = state === previousState && !this.processStates[sessionId]?.synthetic
+                && (extra.started_at || null) === this.processStates[sessionId]?.started_at
+                && (extra.state_changed_at || null) === this.processStates[sessionId]?.state_changed_at
             // Signature of the USER_TURN bottom status line (background shells,
             // active crons) before the update — see the recompute at the end.
             const nowSeconds = Date.now() / 1000
@@ -4982,7 +4992,7 @@ export const useDataStore = defineStore('data', {
             if (state === 'dead') {
                 this._dropProcessState(sessionId)
             } else {
-                this.processStates[sessionId] = {
+                this._patchProcessState(sessionId, {
                     state,
                     project_id: projectId,
                     provider: extra.provider || null,
@@ -4998,8 +5008,10 @@ export const useDataStore = defineStore('data', {
                     // {mode, terminal_blocked}). The options arg is itself
                     // named ``extra``; ``extra.extra`` is the serialized field.
                     extra: extra.extra || null,
-                    tools: [],
-                    lastStartedToolId: null,
+                    tools: Array.isArray(extra.active_tools) ? extra.active_tools
+                        : sameTurn ? this.processStates[sessionId]?.tools || [] : [],
+                    lastStartedToolId: Object.hasOwn(extra, 'last_started_tool_id') ? extra.last_started_tool_id || null
+                        : sameTurn ? this.processStates[sessionId]?.lastStartedToolId || null : null,
                     // Backend truth OR optimistic local flag (see `wasStopping`).
                     stopping: extra.stopping === true || wasStopping,
                     // Backend truth when it carries one, else the label already
@@ -5013,7 +5025,7 @@ export const useDataStore = defineStore('data', {
                     // An optimistic state (no backend frame yet) keeps the known
                     // chain: spawned_by never changes.
                     spawn_ancestors: extra.spawn_ancestors ?? this.processStates[sessionId]?.spawn_ancestors ?? [],
-                }
+                })
 
                 // Auto-unarchive: running and archived are mutually exclusive.
                 // But a stop-in-progress is NOT a start: the `stopping`
@@ -5087,15 +5099,20 @@ export const useDataStore = defineStore('data', {
                 if (key !== null) previousBackgroundStatusKeys.set(sid, key)
             }
 
-            // Clear existing states and rebuild from server data
-            this.processStates = {}
+            // Reconcile the authoritative snapshot without invalidating every consumer.
+            const liveIds = new Set(processes.filter(p => p.state !== 'dead').map(p => p.session_id))
+            for (const id of Object.keys(this.processStates)) {
+                if (!liveIds.has(id) && !(this.processStates[id].synthetic && this.localState.agentRunStates[id])) {
+                    delete this.processStates[id]
+                }
+            }
             // Clear stale streaming blocks and buffers from previous connection
             destroyAllBuffers()
             this.localState.streamingBlocks = {}
             for (const p of processes) {
                 // Only add non-dead processes
                 if (p.state !== 'dead') {
-                    this.processStates[p.session_id] = {
+                    this._patchProcessState(p.session_id, {
                         state: p.state,
                         project_id: p.project_id,
                         provider: p.provider || null,
@@ -5127,7 +5144,7 @@ export const useDataStore = defineStore('data', {
                         background_work_in_progress: p.background_work_in_progress || null,
                         // Parent first, up to the spawn root (Orchestration tab).
                         spawn_ancestors: p.spawn_ancestors || [],
-                    }
+                    })
 
                     // Auto-unarchive: running and archived are mutually exclusive.
                     // Skip a stopping process (see handleProcessState): a
@@ -5139,8 +5156,8 @@ export const useDataStore = defineStore('data', {
                     }
                 }
             }
-            // The rebuild dropped every synthetic state: re-apply the stored run
-            // states, so they survive a reconnect and an ``active_processes`` that
+            // Re-apply stored synthetic run states so they survive a reconnect
+            // and an ``active_processes`` that
             // lands after the snapshot (a real process state is never overwritten).
             for (const agentId of Object.keys(this.localState.agentRunStates)) {
                 this.applyAgentRunState(agentId)

@@ -13,8 +13,6 @@
  */
 import { computed } from 'vue'
 import { useDataStore } from '../../stores/data'
-import { isSessionUnread } from '../../utils/sessions'
-import { summarizeProcessActivity } from '../../utils/processActivity'
 import ProcessActivityIndicator from './ProcessActivityIndicator.vue'
 
 const props = defineProps({
@@ -57,39 +55,8 @@ const projectIdSet = computed(() => {
     return set
 })
 
-/**
- * The live processes of the project set. Only real session processes count:
- * synthetic subagent states are display plumbing (a subagent is not a
- * session), and hidden sessions must stay out of every user-facing counter
- * (the backend already keeps them out of the process broadcasts; the guard
- * covers hidden sessions explicitly loaded into the store via show_hidden).
- */
-const projectProcessStates = computed(() => {
-    const states = []
-    for (const [sessionId, ps] of Object.entries(dataStore.processStates)) {
-        if (ps.synthetic || dataStore.sessions[sessionId]?.hidden) continue
-        if (!projectIdSet.value.has(ps.project_id)) continue
-        states.push(ps)
-    }
-    return states
-})
-
-/** Number of sessions with unread content across all projects. */
-const unreadCount = computed(() => {
-    // Skip expensive iteration during background compute — unread counts are
-    // meaningless while metadata is being recomputed, and iterating all sessions
-    // on every addSession (thousands of times) causes O(n²) CPU usage.
-    if (dataStore.isStartupInProgress) return 0
-    let count = 0
-    for (const session of Object.values(dataStore.sessions)) {
-        if (session.hidden) continue
-        if (!projectIdSet.value.has(session.project_id)) continue
-        if (isSessionUnread(session, dataStore.processStates[session.id])) count++
-    }
-    return count
-})
-
-const summary = computed(() => summarizeProcessActivity(projectProcessStates.value, unreadCount.value))
+// Shared indexes scan process/session data once per relevant change.
+const summary = computed(previous => dataStore.getProjectActivitySummary(projectIdSet.value, previous))
 </script>
 
 <template>

@@ -1,9 +1,52 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { effectScope, nextTick, reactive, ref } from 'vue'
+import { effectScope, nextTick, reactive, ref, watch } from 'vue'
 import { useRailActiveSessions } from './useRailActiveSessions.js'
 
 const idle = { state: 'user_turn', project_id: 'p', provider: 'claude', session_title: 'Snapshot' }
+
+test('a replaced session record remains the reactive metadata source for rail rows', async () => {
+    const f = fixture()
+    f.store.sessions.s = { id: 's', project_id: 'p', title: 'Session' }
+    f.store.processStates.s = { ...idle }
+    await flush()
+    assert.strictEqual(f.api.rows.value[0].session, f.store.sessions.s)
+    f.store.sessions.s = { ...f.store.sessions.s }
+    await flush()
+    assert.strictEqual(f.api.rows.value[0].session, f.store.sessions.s)
+    f.store.sessions.s.title = 'Updated title'
+    assert.equal(f.api.rows.value[0].session.title, 'Updated title')
+    f.scope.stop()
+})
+
+test('changed request details retain unchanged rail rows and their subscribers', async () => {
+    const f = fixture()
+    f.store.sessions.s = { id: 's', project_id: 'p', title: 'Session' }
+    f.store.processStates.s = { ...idle, pending_requests: [{ request_id: 'r', tool_input: 'before' }] }
+    await flush()
+    const before = f.api.rows.value, row = before[0]
+    let updates = 0
+    const stop = watch(f.api.rows, () => updates++)
+    f.store.processStates.s.pending_requests = [{ request_id: 'r', tool_input: 'after' }]
+    await flush()
+    assert.strictEqual(f.api.rows.value, before); assert.strictEqual(f.api.rows.value[0], row)
+    assert.equal(updates, 0)
+    f.store.processStates.s.pending_requests = []
+    await flush()
+    assert.equal(f.api.rows.value[0].pendingRequest, false)
+    assert.equal(updates, 1)
+    stop(); f.scope.stop()
+})
+
+test('memory and labels do not invalidate a loaded rail list', async () => {
+    const f = fixture()
+    f.store.sessions.s = { id: 's', project_id: 'p', title: 'Session' }
+    f.store.processStates.s = { ...idle }
+    await flush(); const before = f.api.rows.value
+    f.store.processStates.s.memory = 123; f.store.processStates.s.label = 'Working'
+    await flush(); assert.strictEqual(f.api.rows.value, before)
+    f.scope.stop()
+})
 const unread = { id: 's', project_id: 'p', provider: 'claude', title: 'Loaded', last_new_content_at: '2026-10-05' }
 const flush = async () => { await nextTick(); await new Promise(resolve => setImmediate(resolve)); await nextTick() }
 function fixture() {

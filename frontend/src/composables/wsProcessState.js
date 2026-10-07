@@ -1,4 +1,5 @@
 import { backgroundWorkStatusKey } from '../utils/backgroundWork.js'
+import { jsonValuesEqual } from '../utils/jsonValuesEqual.js'
 
 /**
  * Apply a `process_background_work` message to the process-state map.
@@ -19,7 +20,8 @@ export function applyBackgroundWork(processStates, message, nowSeconds = Date.no
     const processState = processStates[message.session_id]
     if (!processState) return false
     const previousKey = backgroundWorkStatusKey(processState, nowSeconds)
-    processState.background_work_in_progress = message.background_work_in_progress || null
+    const next = message.background_work_in_progress || null
+    if (!jsonValuesEqual(processState.background_work_in_progress, next)) processState.background_work_in_progress = next
     return backgroundWorkStatusKey(processState, nowSeconds) !== previousKey
 }
 

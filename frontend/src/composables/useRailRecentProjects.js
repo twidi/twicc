@@ -2,6 +2,10 @@ import { computed, onScopeDispose, ref } from 'vue'
 
 const RECENT_WINDOW_SECONDS = 7 * 24 * 60 * 60
 
+function retainList(previous, next) {
+    return previous?.length === next.length && next.every((item, index) => item === previous[index]) ? previous : next
+}
+
 /**
  * Recent top-level projects and their selectable workspaces for SidebarRail.
  * Call inside the component's scope. The optional clock returns Unix seconds.
@@ -12,20 +16,20 @@ export function useRailRecentProjects(store, workspacesStore, settingsStore, clo
     const timer = setInterval(() => { now.value = clock() }, 60_000)
     onScopeDispose(() => clearInterval(timer))
 
-    const recentProjects = computed(() => {
+    const recentProjects = computed(previous => {
         const cutoff = now.value - RECENT_WINDOW_SECONDS
-        return store.getListableProjects.filter(project => {
+        return retainList(previous, store.getListableProjects.filter(project => {
             if (project.archived && !settingsStore.isShowArchivedProjects) return false
             const activity = store.getProjectActivity(project.id)
             return activity > 0 && activity >= cutoff
-        })
+        }))
     })
 
-    const recentWorkspaces = computed(() => {
+    const recentWorkspaces = computed(previous => {
         const projectIds = new Set(recentProjects.value.map(project => project.id))
-        return workspacesStore.getSelectableWorkspaces.filter(workspace =>
+        return retainList(previous, workspacesStore.getSelectableWorkspaces.filter(workspace =>
             workspacesStore.getVisibleProjectIds(workspace.id).some(id => projectIds.has(id))
-        )
+        ))
     })
 
     return { recentProjects, recentWorkspaces }

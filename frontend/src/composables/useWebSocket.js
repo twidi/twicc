@@ -1498,7 +1498,8 @@ export function useWebSocket() {
                     }
                 }
                 // Capture previous state before updating (needed for transition detection)
-                const previousProcessState = store.processStates[msg.session_id] || null
+                const previousProcessState = store.processStates[msg.session_id]
+                    ? { ...store.processStates[msg.session_id] } : null
                 // When leaving assistant_turn, optimistically set last_new_content_at
                 // to ensure the session appears unread immediately. The process_state
                 // message (from SDK) and session_updated (from file watcher) travel
@@ -1528,6 +1529,8 @@ export function useWebSocket() {
                     label: msg.label,
                     background_work_in_progress: msg.background_work_in_progress,
                     spawn_ancestors: msg.spawn_ancestors,
+                    ...(Object.hasOwn(msg, 'active_tools') ? { active_tools: msg.active_tools } : {}),
+                    ...(Object.hasOwn(msg, 'last_started_tool_id') ? { last_started_tool_id: msg.last_started_tool_id } : {}),
                 })
                 // Ensure the session is present in data.sessions so the cross-filter
                 // active block (sessions with a running process) can surface it

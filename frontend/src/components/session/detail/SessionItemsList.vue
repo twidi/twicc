@@ -575,14 +575,14 @@ const shouldShowProcessIndicator = computed(() => {
 // Watch process state changes to manage temporary indicator
 // Only show user_turn/dead when the state actually CHANGES (not on initial mount)
 // Guarded: skip timer creation when inactive (KeepAlive deactivated)
-watch(processState, (newState, oldState) => {
+watch(() => processState.value?.state, (state, oldState) => {
     // Clear any existing timer
     if (temporaryIndicatorTimer) {
         clearTimeout(temporaryIndicatorTimer)
         temporaryIndicatorTimer = null
     }
 
-    if (!newState) {
+    if (!state) {
         showTemporaryIndicator.value = false
         return
     }
@@ -590,12 +590,9 @@ watch(processState, (newState, oldState) => {
     // Skip timer creation when inactive (DOM is detached)
     if (!sessionActive.value) return
 
-    const state = newState.state
-    const oldStateValue = oldState?.state
-
     if (state === 'user_turn' || state === 'dead') {
         // Only show if state actually changed (not on initial mount when already in this state)
-        if (oldState && oldStateValue !== state) {
+        if (oldState && oldState !== state) {
             showTemporaryIndicator.value = true
             temporaryIndicatorTimer = setTimeout(() => {
                 showTemporaryIndicator.value = false

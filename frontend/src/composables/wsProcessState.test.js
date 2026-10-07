@@ -5,6 +5,12 @@ import { applyBackgroundWork, dropsProcessStateOnRemoval, shouldNotifyProcessSta
 
 const work = { subagents: 0, shells: 1, monitors: 0, scheduled_wakeup_at: null, goal: false }
 
+test('equivalent background snapshots preserve the stored object', () => {
+    const states = { s1: { state: 'user_turn', background_work_in_progress: work } }
+    applyBackgroundWork(states, { session_id: 's1', background_work_in_progress: { ...work } })
+    assert.strictEqual(states.s1.background_work_in_progress, work)
+})
+
 test('patches the known process in place, keeping its live tools', () => {
     const tools = [{ id: 'tool-1' }]
     const processStates = { s1: { state: 'user_turn', tools, background_work_in_progress: null } }

@@ -177,7 +177,7 @@ function activate(item) {
                         :for="`sidebar-rail-session-${row.session.id}`"
                         :ref="tooltip => setSessionTooltip(row.session.id, tooltip)"
                         :trigger="sessionTooltipTrigger"
-                        force interactive hoist placement="right" class="rail-session-tooltip"
+                        force interactive hoist placement="right" lazy class="rail-session-tooltip"
                     >
                         <div class="rail-session-preview">
                             <SessionListItem
@@ -199,7 +199,7 @@ function activate(item) {
                     </button>
                     <AppTooltip :for="`sidebar-rail-project-${project.id}`"
                         :ref="tooltip => setEntryTooltip(`project:${project.id}`, tooltip)" :trigger="sessionTooltipTrigger"
-                        force interactive hoist placement="right" class="rail-scope-tooltip">
+                        force interactive hoist placement="right" lazy class="rail-scope-tooltip">
                         <div class="rail-scope-preview">
                             <ProjectBadge :project-id="project.id" flag-missing-directory />
                             <AggregatedProcessIndicator :project-ids="[project.id]" />
@@ -216,7 +216,7 @@ function activate(item) {
                     </button>
                     <AppTooltip :for="`sidebar-rail-workspace-${workspace.id}`"
                         :ref="tooltip => setEntryTooltip(`workspace:${workspace.id}`, tooltip)" :trigger="sessionTooltipTrigger"
-                        force interactive hoist placement="right" class="rail-scope-tooltip">
+                        force interactive hoist placement="right" lazy class="rail-scope-tooltip">
                         <div class="rail-scope-preview">
                             <wa-icon name="layer-group" :style="{ color: workspace.color || undefined }" />
                             <span class="rail-scope-name">{{ workspace.name }}</span>
