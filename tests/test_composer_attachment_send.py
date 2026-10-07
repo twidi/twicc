@@ -75,7 +75,6 @@ def _clean_state():
     ephemeral.clear()
     send_lanes._reset_for_tests()
     asgi._DETACHED_TASKS.clear()
-    asgi._PENDING_HYBRID_SWITCHES.clear()
 
 
 @pytest.fixture
@@ -480,8 +479,8 @@ def test_requires_artifacts_lists_the_file_names(ws):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_the_hybrid_pending_switch_reaches_the_plan_target(ws, monkeypatch):
-    """The real resolver: a pending switch makes the plan target the hybrid CLI."""
+def test_the_session_hybrid_flag_reaches_the_plan_target(ws, monkeypatch):
+    """The real resolver: a session flagged hybrid makes the plan target the hybrid CLI."""
     from twicc.core.services.attachments import target as plan_target
 
     seen = []
@@ -492,7 +491,7 @@ def test_the_hybrid_pending_switch_reaches_the_plan_target(ws, monkeypatch):
 
     monkeypatch.setattr("twicc.asgi.resolve_existing_session_plan_target", _REAL_RESOLVER)
     monkeypatch.setattr(plan_target, "resolve_plan_target", resolve_plan_target)
-    asgi._PENDING_HYBRID_SWITCHES.add(SESSION_ID)
+    monkeypatch.setattr(plan_target, "_read_session_hybrid", AsyncMock(return_value=True))
     asyncio.run(ws.send(ws.frame()))
 
     assert seen[0]["hybrid"] is True

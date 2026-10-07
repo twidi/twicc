@@ -13,7 +13,7 @@ the resolved model, whether the Claude CLI runs with a 1M context, and the Claud
   resolved Claude config dir) or, only for a trusted project (an untrusted one loads the user
   settings only), of the project's ``.claude/settings.json`` / ``.claude/settings.local.json``.
 
-``hybrid`` is decided by the caller (``Session.hybrid``, the creation payload, or a pending switch).
+``hybrid`` is decided by the caller (``Session.hybrid`` or the creation payload).
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ from typing import TYPE_CHECKING
 import orjson
 from asgiref.sync import sync_to_async
 
-from twicc.agent.hybrid_switch import is_hybrid_switch_pending
 from twicc.core.services.attachments.types import PlanTarget
 from twicc.providers.helpers import AgentSettings
 
@@ -174,11 +173,10 @@ async def _read_session_hybrid(session_id: str) -> bool:
 async def resolve_session_hybrid(session_id: str) -> bool:
     """Whether a message to the existing *session_id* targets the hybrid CLI.
 
-    The pending membership is read BEFORE the database: the switch writes the flag before it
-    leaves the set, so a switch that ends between the two reads is still seen through the flag.
+    ``Session.hybrid`` only. The caller holds the session's send lane, and a switch to hybrid
+    writes the flag inside that lane, so the flag read here is the one the manager's agent
+    factory reads when it builds the agent that delivers the message.
     """
-    if is_hybrid_switch_pending(session_id):
-        return True
     return await _read_session_hybrid(session_id)
 
 
@@ -193,9 +191,9 @@ async def resolve_existing_session_plan_target(
 ) -> PlanTarget:
     """The composer attachment ``PlanTarget`` of a message to the existing *session_id*.
 
-    ``hybrid`` comes from :func:`resolve_session_hybrid`, so a pending switch to hybrid
-    already shapes the plan (spec §6.2). Shared by the WS handler and the send service
-    (phase 2 design §4.5.4). See :func:`resolve_plan_target` for the other fields.
+    ``hybrid`` comes from :func:`resolve_session_hybrid`. Shared by the WS handler and the
+    send service (phase 2 design §4.5.4), both inside the session's send lane. See
+    :func:`resolve_plan_target` for the other fields.
     """
     return await resolve_plan_target(
         provider=provider,

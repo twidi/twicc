@@ -5,8 +5,8 @@ The hybrid agent pastes one text into the Claude CLI TUI: the raw user text, a b
 ``att_<12 hex><ext>`` file written in the session's hybrid dir. A message starting with ``/`` or
 ``!`` (both turn the TUI input into a command) never carries attachments: the refusal is raised
 synchronously, before anything is launched, scheduled, written or pasted. ``on_delivered`` runs only
-after a successful first paste. The WS layer registers a pending switch to hybrid synchronously and the
-plan target of an existing session consumes that membership.
+after a successful first paste. The plan target of an existing session takes ``hybrid`` from the database
+flag, which a switch to hybrid writes inside the session's send lane.
 """
 
 from __future__ import annotations
@@ -20,8 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from twicc import asgi
-from twicc.agent import AgentState, SendDeliveryError
-from twicc.agent import hybrid_switch
+from twicc.agent import AgentState, SendDeliveryError, send_lanes
 from twicc.core.services.attachments import planner
 from twicc.core.services.attachments import target as target_module
 from twicc.core.services.attachments.manifest import INLINE_LINE_HYBRID, build_manifest, parse_manifest
@@ -496,31 +495,31 @@ def test_killing_a_never_launched_agent_skips_the_graceful_exit(tmux, monkeypatc
 
 
 # ----------------------------------------------------------------------
-# Pending switch to hybrid (asgi)
+# Switch to hybrid (asgi) and the plan target of an existing session
 # ----------------------------------------------------------------------
 
 
-@pytest.fixture
-def clean_pending():
-    hybrid_switch._PENDING_HYBRID_SWITCHES.clear()
-    yield
-    hybrid_switch._PENDING_HYBRID_SWITCHES.clear()
-
-
-def test_asgi_and_the_switch_module_share_one_pending_set():
-    assert asgi._PENDING_HYBRID_SWITCHES is hybrid_switch._PENDING_HYBRID_SWITCHES
+def test_asgi_uses_the_shared_plan_target_resolver():
     assert asgi.resolve_existing_session_plan_target is target_module.resolve_existing_session_plan_target
 
 
-def _switch_consumer(monkeypatch, *, kill_error: Exception | None = None):
+def _switch_consumer(monkeypatch):
     from twicc.core.models import SessionType
 
     session = SimpleNamespace(hybrid=False, provider="claude_code", type=SessionType.SESSION, hidden=False)
     monkeypatch.setattr(asgi.settings, "CLAUDE_HYBRID_ENABLED", True, raising=False)
     monkeypatch.setattr(asgi, "sync_to_async", lambda fn: AsyncMock(return_value=session))
-    manager = SimpleNamespace(kill_agent=AsyncMock(side_effect=kill_error))
+    lane_refs: list[tuple[str, int]] = []
+
+    async def kill_agent(session_id, reason):
+        lane_refs.append(("kill", send_lanes._reference_count(session_id)))
+
+    async def write(apply):
+        lane_refs.append(("write", send_lanes._reference_count(SESSION_ID)))
+
+    manager = SimpleNamespace(kill_agent=AsyncMock(side_effect=kill_agent))
     monkeypatch.setattr(asgi, "get_agent_manager_registry", lambda: SimpleNamespace(get=lambda provider: manager))
-    monkeypatch.setattr(asgi, "run_under_db_write_lock", AsyncMock())
+    monkeypatch.setattr(asgi, "run_under_db_write_lock", write)
     from twicc.core import serializers
 
     monkeypatch.setattr(serializers, "serialize_session", lambda session: {"id": SESSION_ID})
@@ -528,89 +527,37 @@ def _switch_consumer(monkeypatch, *, kill_error: Exception | None = None):
     consumer.send_json = AsyncMock()
     consumer.channel_layer = SimpleNamespace(group_send=AsyncMock())
     spawned: list = []
-
-    def fake_spawn(coro, *, label: str) -> MagicMock:
-        spawned.append((coro, hybrid_switch.is_hybrid_switch_pending(SESSION_ID)))
-        return MagicMock()
-
-    monkeypatch.setattr(asgi, "_spawn_detached", fake_spawn)
-    return consumer, spawned, manager
+    monkeypatch.setattr(asgi, "_spawn_detached", lambda coro, *, label: spawned.append(coro))
+    return consumer, spawned, manager, lane_refs
 
 
-def test_switch_registers_pending_membership_before_spawning(monkeypatch, clean_pending):
-    consumer, spawned, manager = _switch_consumer(monkeypatch)
+def test_the_switch_kills_then_writes_the_flag_inside_the_send_lane(monkeypatch):
+    send_lanes._reset_for_tests()
+    consumer, spawned, manager, lane_refs = _switch_consumer(monkeypatch)
 
     asyncio.run(consumer._handle_set_session_hybrid({"session_id": SESSION_ID}))
-
-    [(coro, pending_at_spawn)] = spawned
-    assert pending_at_spawn is True
-    assert hybrid_switch.is_hybrid_switch_pending(SESSION_ID) is True
+    [coro] = spawned
     asyncio.run(coro)
+
     manager.kill_agent.assert_awaited_once_with(SESSION_ID, reason="switch-hybrid")
-    assert hybrid_switch.is_hybrid_switch_pending(SESSION_ID) is False
+    assert lane_refs == [("kill", 1), ("write", 1)]
+    assert send_lanes._live_keys() == set()
 
 
-def test_a_failed_switch_clears_pending_membership(monkeypatch, clean_pending):
-    consumer, spawned, _ = _switch_consumer(monkeypatch, kill_error=RuntimeError("kill failed"))
-
-    asyncio.run(consumer._handle_set_session_hybrid({"session_id": SESSION_ID}))
-    [(coro, _)] = spawned
-    with pytest.raises(RuntimeError):
-        asyncio.run(coro)
-    assert hybrid_switch.is_hybrid_switch_pending(SESSION_ID) is False
-
-
-def test_a_switch_cancelled_before_it_runs_clears_pending_membership(monkeypatch, clean_pending):
-    """The detached task can be cancelled before its first step: its ``finally`` never runs."""
-    from twicc.core.models import SessionType
-
-    session = SimpleNamespace(hybrid=False, provider="claude_code", type=SessionType.SESSION, hidden=False)
-    monkeypatch.setattr(asgi.settings, "CLAUDE_HYBRID_ENABLED", True, raising=False)
-    monkeypatch.setattr(asgi, "sync_to_async", lambda fn: AsyncMock(return_value=session))
-    consumer = asgi.WSConsumer()
-    consumer.send_json = AsyncMock()
-
-    async def run() -> None:
-        await consumer._handle_set_session_hybrid({"session_id": SESSION_ID})
-        assert hybrid_switch.is_hybrid_switch_pending(SESSION_ID) is True
-        [task] = [t for t in asgi._DETACHED_TASKS if not t.done()]
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-
-    asyncio.run(run())
-    assert hybrid_switch.is_hybrid_switch_pending(SESSION_ID) is False
-
-
-def test_session_hybrid_reads_pending_membership_before_the_database(monkeypatch, clean_pending):
-    """The switch writes the flag before it clears membership, so this order never misses it."""
-    order: list[str] = []
-
-    async def read_db(session_id: str) -> bool:
-        order.append("db")
-        # The switch completes between the two reads: flag written, membership cleared.
-        hybrid_switch._PENDING_HYBRID_SWITCHES.discard(session_id)
-        return True
-
-    monkeypatch.setattr(target_module, "_read_session_hybrid", read_db)
-    assert asyncio.run(target_module.resolve_session_hybrid(SESSION_ID)) is True
-    assert order == ["db"]
-
-    hybrid_switch._PENDING_HYBRID_SWITCHES.add(SESSION_ID)
-    monkeypatch.setattr(target_module, "_read_session_hybrid", AsyncMock(side_effect=AssertionError("not read")))
+def test_session_hybrid_is_the_database_flag(monkeypatch):
+    monkeypatch.setattr(target_module, "_read_session_hybrid", AsyncMock(return_value=True))
     assert asyncio.run(target_module.resolve_session_hybrid(SESSION_ID)) is True
 
-    hybrid_switch._PENDING_HYBRID_SWITCHES.clear()
     monkeypatch.setattr(target_module, "_read_session_hybrid", AsyncMock(return_value=False))
     assert asyncio.run(target_module.resolve_session_hybrid(SESSION_ID)) is False
 
 
-def test_existing_session_target_consumes_pending_membership(monkeypatch, clean_pending):
+def test_existing_session_target_takes_hybrid_from_the_database_flag(monkeypatch):
     resolve = AsyncMock(return_value="target")
     monkeypatch.setattr(target_module, "resolve_plan_target", resolve)
-    monkeypatch.setattr(target_module, "_read_session_hybrid", AsyncMock(return_value=False))
+    monkeypatch.setattr(target_module, "_read_session_hybrid", AsyncMock(return_value=True))
     settings = AgentSettings(selected_model="opus")
     live = SimpleNamespace(agent_settings=settings)
-    hybrid_switch._PENDING_HYBRID_SWITCHES.add(SESSION_ID)
 
     result = asyncio.run(target_module.resolve_existing_session_plan_target(
         session_id=SESSION_ID, provider="claude_code", effective_settings=settings,

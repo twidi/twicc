@@ -44,7 +44,6 @@ from twicc.core.services.session_creation import create_session_from_payload
 from twicc.core.services.title_suggestion import suggest_title
 from twicc.agent import ephemeral as ephemeral_runs
 from twicc.agent.exceptions import SendDeliveryError
-from twicc.agent.hybrid_switch import _PENDING_HYBRID_SWITCHES
 from twicc.agent.send_lanes import send_lane, wait_for_send_barrier
 from twicc.share.consumer import ShareConsumer
 from twicc.paths import is_first_run
@@ -1528,35 +1527,36 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         # holds the manager grace window for up to ~30s, and the whole tail must
         # stay ordered (kill → DB → broadcast), so run it off the receive loop to
         # avoid freezing this consumer (no heartbeat → the WS would drop).
-        # The pending membership is registered first, synchronously: a
-        # ``send_message`` that follows is planned for the hybrid CLI (§6.2).
-        # The task's done callback clears it even when the task is cancelled
-        # before its first step (the coroutine's ``finally`` would never run).
-        _PENDING_HYBRID_SWITCHES.add(session_id)
-        task = _spawn_detached(
+        # The task is created before this handler returns, so before the task of
+        # any ``send_message`` frame that follows: it joins the session's send
+        # lane first (see ``_run_switch_hybrid``).
+        _spawn_detached(
             self._run_switch_hybrid(session_id),
             label=f"switch_hybrid({session_id})",
         )
-        task.add_done_callback(lambda _task: _PENDING_HYBRID_SWITCHES.discard(session_id))
 
     async def _run_switch_hybrid(self, session_id: str) -> None:
         """Kill the SDK agent, mark the session hybrid, broadcast. Off the receive loop.
 
-        Clears the pending switch membership in a ``finally``, success or
-        failure, only after ``Session.hybrid`` is written on success.
+        The kill and the flag write hold the session's send lane, taken before
+        the first await. A send queued behind the switch (the composer sends
+        ``set_session_hybrid`` then ``send_message``; a CLI or MCP send can come
+        at any time) runs once ``Session.hybrid`` is written: its attachment
+        plan and the agent the manager builds both read that flag. A send
+        already in the lane runs first, through the SDK agent the switch then
+        kills. ``kill_agent`` never takes the lane, so holding it cannot
+        deadlock.
         """
         from twicc.core.models import Session
         from twicc.core.serializers import serialize_session
 
-        try:
+        async with send_lane(session_id):
             manager = get_agent_manager_registry().get(Provider.CLAUDE_CODE)
             await manager.kill_agent(session_id, reason="switch-hybrid")
 
             await run_under_db_write_lock(
                 lambda: Session.objects.filter(id=session_id).aupdate(hybrid=True)
             )
-        finally:
-            _PENDING_HYBRID_SWITCHES.discard(session_id)
         logger.info("Session %s switched to hybrid CLI mode", session_id)
         session = await sync_to_async(Session.objects.filter(id=session_id).first)()
         if session is not None:
