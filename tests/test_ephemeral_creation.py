@@ -180,7 +180,7 @@ def test_ephemeral_refs_needing_artifacts_fail_before_any_stash(tmp_path):
                 "title": "T", "ephemeral": True,
                 "attachments": [{"bucket": "b", "id": "6f1c1f0e-8a8e-4c55-9d1e-0b0c8f6c1a01"}],
             },
-            allow_ephemeral=True, allow_attachments=True,
+            allow_ephemeral=True,
         ))
     assert [e.code for e in result.errors] == ["attachment_requires_artifacts"]
     assert result.errors[0].message == "Ephemeral sessions only accept native attachments: clip.mp4"

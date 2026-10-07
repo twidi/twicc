@@ -44,12 +44,12 @@ TMP_SUFFIX = ".tmp"
 _KIND_HANDLERS: dict[str, tuple[str, str, str]] = {
     "session:create": (
         "twicc.core.services.session_creation",
-        "create_session_from_payload",
+        "create_session_from_drop_payload",
         "created",
     ),
     "session:send_message": (
         "twicc.core.services.send_message",
-        "send_message_to_session_from_payload",
+        "send_message_from_drop_payload",
         "sent",
     ),
     "session:update_settings": (

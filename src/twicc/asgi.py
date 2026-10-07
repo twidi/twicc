@@ -1382,14 +1382,14 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                     # (drop-request files, CLI) keeps the default False.
                     "hybrid": bool(content.get("hybrid")),
                     "ephemeral": bool(content.get("ephemeral")),
-                    # Composer refs, planned by the service (trusted path:
-                    # allow_attachments below, like allow_hybrid).
+                    # Composer refs, planned by the service. The WS path keeps owning
+                    # them (phase 1 rules: released on delivery only, below).
                     "attachments": [ref._asdict() for ref in attachment_refs],
                     **agent_settings_kwargs_from_frontend_payload(content),
                 }
 
                 result = await create_session_from_payload(
-                    payload, allow_hybrid=True, allow_ephemeral=True, allow_attachments=True,
+                    payload, allow_hybrid=True, allow_ephemeral=True,
                     ephemeral_admission=ephemeral_admission,
                 )
                 if not result.success:

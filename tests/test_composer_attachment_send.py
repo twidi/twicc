@@ -37,7 +37,6 @@ from twicc.core.services.attachments.types import (
     PlanTarget,
     StagedEntry,
 )
-from twicc.core.services.send_message import send_message_to_session_from_payload
 from twicc.core.services.session_creation import create_session_from_payload
 from twicc.providers.claude_code.agent.manager import ClaudeCodeAgentManager
 from twicc.providers.helpers import AgentSettings
@@ -557,7 +556,8 @@ def test_new_session_passes_its_refs_to_the_trusted_service_and_releases(ws, mon
     monkeypatch.setattr("twicc.asgi.create_session_from_payload", create)
     asyncio.run(ws.send(ws.frame(provider="claude_code")))
 
-    assert create.await_args.kwargs["allow_attachments"] is True
+    assert "allow_attachments" not in create.await_args.kwargs
+    assert "release_refs_on_outcome" not in create.await_args.kwargs
     assert create.await_args.args[0]["attachments"] == WIRE_REFS
     assert _acks(ws.frames) == [{"type": "send_ack", "request_id": REQUEST_ID, "session_id": SESSION_ID}]
     assert ws.released == [REFS]
@@ -642,7 +642,7 @@ def creation(monkeypatch, tmp_path):
 
 @pytest.mark.django_db(transaction=True)
 def test_creation_plans_before_every_stash_and_hands_the_plan_over(creation):
-    result = asyncio.run(create_session_from_payload(creation.payload(), allow_attachments=True))
+    result = asyncio.run(create_session_from_payload(creation.payload()))
 
     assert result.success, result.errors
     assert creation.stashes_at_plan == [{}]
@@ -664,7 +664,7 @@ def test_creation_plan_error_leaves_no_stash_and_lists_the_names(creation):
         "attachment_requires_artifacts", "Ephemeral sessions only accept native attachments", names=("clip.mp4",),
     )
     # Not ephemeral: an ephemeral failure drains every buffer anyway, which would hide a stash.
-    result = asyncio.run(create_session_from_payload(creation.payload(), allow_attachments=True))
+    result = asyncio.run(create_session_from_payload(creation.payload()))
 
     assert result.success is False
     assert [e.code for e in result.errors] == ["attachment_requires_artifacts"]
@@ -678,7 +678,7 @@ def test_creation_plan_error_leaves_no_stash_and_lists_the_names(creation):
 @pytest.mark.django_db(transaction=True)
 def test_creation_target_is_ephemeral_for_an_ephemeral_run(creation):
     result = asyncio.run(create_session_from_payload(
-        creation.payload(ephemeral=True), allow_attachments=True, allow_ephemeral=True,
+        creation.payload(ephemeral=True), allow_ephemeral=True,
     ))
     assert result.success, result.errors
     assert creation.target_calls[0]["ephemeral"] is True
@@ -688,21 +688,21 @@ def test_creation_target_is_ephemeral_for_an_ephemeral_run(creation):
 @pytest.mark.django_db(transaction=True)
 def test_creation_staging_race_is_attachment_missing(creation):
     creation.plan_error = FileNotFoundError("gone")
-    result = asyncio.run(create_session_from_payload(creation.payload(), allow_attachments=True))
+    result = asyncio.run(create_session_from_payload(creation.payload()))
     assert [e.code for e in result.errors] == ["attachment_missing"]
     assert creation.stashes() == {}
 
 
 @pytest.mark.django_db(transaction=True)
 def test_creation_still_requires_text_with_refs(creation):
-    result = asyncio.run(create_session_from_payload(creation.payload(text=""), allow_attachments=True))
+    result = asyncio.run(create_session_from_payload(creation.payload(text="")))
     assert [e.code for e in result.errors] == ["empty_text"]
     assert creation.plan_calls == []
 
 
 @pytest.mark.django_db(transaction=True)
 def test_creation_with_empty_refs_plans_nothing(creation):
-    result = asyncio.run(create_session_from_payload(creation.payload(attachments=[]), allow_attachments=True))
+    result = asyncio.run(create_session_from_payload(creation.payload(attachments=[])))
     assert result.success
     assert creation.plan_calls == []
     assert "attachment_plan" not in creation.manager.create_session.await_args.kwargs
@@ -712,7 +712,7 @@ def test_creation_with_empty_refs_plans_nothing(creation):
 def test_creation_hybrid_flag_shapes_the_target(creation, settings):
     settings.CLAUDE_HYBRID_ENABLED = True
     result = asyncio.run(create_session_from_payload(
-        creation.payload(hybrid=True), allow_attachments=True, allow_hybrid=True,
+        creation.payload(hybrid=True), allow_hybrid=True,
     ))
     assert result.success
     assert creation.target_calls[0]["hybrid"] is True
@@ -721,35 +721,17 @@ def test_creation_hybrid_flag_shapes_the_target(creation, settings):
 @pytest.mark.django_db(transaction=True)
 def test_creation_commit_error_keeps_its_code(creation):
     creation.manager.create_session.side_effect = SendDeliveryError("disk", code="attachment_commit_failed")
-    result = asyncio.run(create_session_from_payload(creation.payload(), allow_attachments=True))
+    result = asyncio.run(create_session_from_payload(creation.payload()))
     assert [e.code for e in result.errors] == ["attachment_commit_failed"]
 
 
 @pytest.mark.django_db(transaction=True)
 def test_creation_rejects_malformed_refs(creation):
     result = asyncio.run(create_session_from_payload(
-        creation.payload(attachments=[{"bucket": "b", "id": "nope"}]), allow_attachments=True,
+        creation.payload(attachments=[{"bucket": "b", "id": "nope"}]),
     ))
     assert [e.code for e in result.errors] == ["invalid_attachments"]
     assert creation.stashes() == {}
-
-
-@pytest.mark.django_db(transaction=True)
-def test_drop_request_creation_rejects_refs(creation):
-    result = asyncio.run(create_session_from_payload(creation.payload()))
-    assert [e.code for e in result.errors] == ["invalid_attachments"]
-    assert creation.plan_calls == []
-    assert creation.stashes() == {}
-    creation.manager.create_session.assert_not_called()
-
-
-@pytest.mark.django_db
-def test_drop_request_send_rejects_refs():
-    result = asyncio.run(send_message_to_session_from_payload(
-        {"session_id": "unknown-session", "text": "hi", "attachments": WIRE_REFS},
-    ))
-    assert result.success is False
-    assert [e.code for e in result.errors] == ["invalid_attachments"]
 
 
 # ----------------------------------------------------------------------
