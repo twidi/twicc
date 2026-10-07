@@ -982,7 +982,7 @@ def test_the_remote_read_timeout_outlasts_the_wait():
     waiting = read_timeout(timeout=30, wait_reply=True, wait_timeout=None)
     explicit = read_timeout(timeout=30, wait_reply=True, wait_timeout=900)
 
-    assert plain == _remote._DEFAULT_TIMEOUT
+    assert plain == 30 + _remote._WAIT_TIMEOUT_MARGIN
     assert waiting > _remote._DEFAULT_WAIT_TIMEOUT
     assert explicit > 900
 

@@ -9,6 +9,8 @@ import orjson
 from django.db import close_old_connections
 from django.http import HttpRequest, HttpResponse
 
+from twicc.core.services.attachments.inline import INLINE_MAX_REQUEST_BYTES
+from twicc.log_redaction import redact_for_log
 from twicc.rpc.generator import build_registry, render_argv
 from twicc.rpc.invoker import invoke
 from twicc.rpc.permissions import RPC_SCOPE_FULL, RPC_SCOPE_READ, cookie_scope_allows
@@ -31,6 +33,43 @@ def _json(payload, *, status: int = 200) -> HttpResponse:
         status=status,
         content_type="application/json",
     )
+
+
+_BODY_TOO_LARGE = "Request body too large"
+
+
+class _BodyTooLarge(Exception):
+    """The body of a token call is above :data:`INLINE_MAX_REQUEST_BYTES`."""
+
+
+def _content_length(request: HttpRequest) -> int | None:
+    try:
+        return int(request.headers.get("Content-Length") or "")
+    except ValueError:
+        return None
+
+
+def _load_body(request: HttpRequest, scope: str) -> tuple[object, bool]:
+    """``(body, malformed)``: read and parse the request body (blocking: a worker thread).
+
+    A token (full-scope) call may carry inline attachments: it is read with
+    ``request.read`` and capped at :data:`INLINE_MAX_REQUEST_BYTES` (Django's
+    ``DATA_UPLOAD_MAX_MEMORY_SIZE`` is checked only by ``request.body``). A cookie
+    (read-scope) call keeps ``request.body`` and its 12 MB cap. A body without
+    ``Content-Length`` is bounded by the read itself.
+    """
+    if scope == RPC_SCOPE_READ:
+        raw = request.body
+    else:
+        raw = request.read(INLINE_MAX_REQUEST_BYTES + 1)
+        if len(raw) > INLINE_MAX_REQUEST_BYTES:
+            raise _BodyTooLarge
+    if not raw:
+        return {}, False
+    try:
+        return orjson.loads(raw), False
+    except ValueError:
+        return {}, True
 
 
 def _validate_body(spec, body) -> tuple[bool, dict | None]:
@@ -74,20 +113,19 @@ async def dispatch(request: HttpRequest, command_path: str) -> HttpResponse:
     if scope == RPC_SCOPE_READ and not cookie_scope_allows(command_path):
         return _json({"error": _READ_SCOPE_DENIED}, status=403)
 
-    raw = request.body
-    if not raw:
-        body = {}
-    else:
-        try:
-            body = orjson.loads(raw)
-        except ValueError:
-            # Only an explicit application/json content-type makes an
-            # unparseable body an error; otherwise (test-client multipart,
-            # stray form posts) fall back to empty so a valid JSON body sent
-            # without the header is still honored above, and junk is ignored.
-            if (request.content_type or "").startswith("application/json"):
-                return _json({"error": "Malformed JSON body."}, status=400)
-            body = {}
+    if scope != RPC_SCOPE_READ:
+        length = _content_length(request)
+        if length is not None and length > INLINE_MAX_REQUEST_BYTES:
+            return _json({"error": _BODY_TOO_LARGE}, status=413)
+    try:
+        body, malformed = await asyncio.to_thread(_load_body, request, scope)
+    except _BodyTooLarge:
+        return _json({"error": _BODY_TOO_LARGE}, status=413)
+    # Only an explicit application/json content-type makes an unparseable body an
+    # error; otherwise (test-client multipart, stray form posts) it falls back to
+    # empty, so a valid JSON body sent without the header is still honored.
+    if malformed and (request.content_type or "").startswith("application/json"):
+        return _json({"error": "Malformed JSON body."}, status=400)
 
     # Forward-compat: the future --remote forwarder sends {"argv": [...]}.
     # The argv form bypasses body→argv rendering, so it must be allowlist-checked
@@ -131,7 +169,7 @@ async def dispatch(request: HttpRequest, command_path: str) -> HttpResponse:
         # django.request logger is not wired to the file handler and DEBUG is
         # off in production. Log the full traceback ourselves and return a
         # structured 500 so the root cause is recoverable from the logs.
-        logger.exception("RPC command %r failed (argv=%r)", command_path, argv)
+        logger.exception("RPC command %r failed (argv=%r)", command_path, redact_for_log(argv))
         return _json({"error": "Internal error while executing the command."}, status=500)
     finally:
         transport.backend_loop.reset(token)

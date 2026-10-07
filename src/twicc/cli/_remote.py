@@ -30,15 +30,17 @@ task (R5). The public surface is intentionally small:
 from __future__ import annotations
 
 import base64
+import mimetypes
 import os
 import sys
 from typing import NamedTuple
+from urllib.parse import quote
 
 import click
 import httpx
 import orjson
+from click.core import ParameterSource
 
-from twicc.cli._drop_request.attachments import _sniff_mime
 from twicc.cli._drop_request.prompt import (
     PromptError,
     expand_prompt_includes,
@@ -47,6 +49,7 @@ from twicc.cli._drop_request.prompt import (
 from twicc.cli._drop_request.remote_scheme import has_remote_scheme, remote_scheme_path
 from twicc.cli._local_only import LOCAL_ONLY_COMMANDS
 from twicc.cli._session_group import SessionGroup
+from twicc.core.services.attachments import inline
 from twicc.rpc.generator import CommandSpec, build_registry
 from twicc.rpc.invoker import get_command
 from twicc.rpc.schema import ParamSpec
@@ -80,7 +83,8 @@ class Resolved(NamedTuple):
 
     path: str                # registry key, e.g. "session/content"
     spec: CommandSpec        # the matching CommandSpec from build_registry()
-    params: dict             # merged Click params across every navigated level
+    params: dict             # merged Click params across every navigated level (defaults included)
+    explicit: frozenset[str] = frozenset()  # params of the leaf given on the command line
 
 
 # Param names that accept the host-bound ``self`` / ``parent`` keywords.
@@ -175,7 +179,7 @@ def resolve_command(argv: list[str]) -> Resolved:
         )
 
     try:
-        path, params = _navigate(argv)
+        path, params, explicit = _navigate(argv)
     except RemoteUsageError:
         raise
     except Exception as exc:  # surface any Click parse failure as a usage error
@@ -188,11 +192,11 @@ def resolve_command(argv: list[str]) -> Resolved:
     if spec is None:
         raise RemoteUsageError(f"unknown command: {' '.join(argv)}")
 
-    return Resolved(path=path, spec=spec, params=params)
+    return Resolved(path=path, spec=spec, params=params, explicit=explicit)
 
 
-def _navigate(argv: list[str]) -> tuple[str, dict]:
-    """Walk the Click tree, returning the registry path and merged params.
+def _navigate(argv: list[str]) -> tuple[str, dict, frozenset[str]]:
+    """Walk the Click tree, returning the registry path, merged params and the leaf's explicit params.
 
     Each level is parsed with ``make_context`` so a group consumes its own
     options/arguments before its subcommand token is resolved — this is what
@@ -213,11 +217,15 @@ def _navigate(argv: list[str]) -> tuple[str, dict]:
     parent: click.Context | None = None
     path_tokens: list[str] = []
     merged: dict = {}
+    explicit: frozenset[str] = frozenset()
 
     while True:
         ctx = _make_context(cmd, args, parent)
         if not isinstance(cmd, click.Group):
             merged.update(ctx.params)
+            explicit = frozenset(
+                name for name in ctx.params if ctx.get_parameter_source(name) is ParameterSource.COMMANDLINE
+            )
             break
 
         remaining = _remaining_tokens(ctx)
@@ -225,6 +233,9 @@ def _navigate(argv: list[str]) -> tuple[str, dict]:
             # Group invoked without a subcommand: it is itself a route
             # (invoke_without_command). Its own params are the bound values.
             merged.update(ctx.params)
+            explicit = frozenset(
+                name for name in ctx.params if ctx.get_parameter_source(name) is ParameterSource.COMMANDLINE
+            )
             break
 
         if isinstance(cmd, SessionGroup):
@@ -258,7 +269,7 @@ def _navigate(argv: list[str]) -> tuple[str, dict]:
         args = rest
         parent = ctx
 
-    return "/".join(path_tokens), merged
+    return "/".join(path_tokens), merged, explicit
 
 
 def reject_host_bound(resolved: Resolved) -> None:
@@ -333,18 +344,16 @@ def _resolve_remote_path(value: str) -> str | None:
 def _inline_one(value: str) -> str:
     """Rewrite a single attach value for forwarding.
 
-    A value already in ``data:`` form is returned unchanged, and a ``remote:``
-    value is reduced to its bare absolute path so the *server* reads it (see
-    :func:`_resolve_remote_path`). Otherwise the value is a local file path
-    (relative paths are read against the client's cwd): its bytes are read, the
-    MIME is sniffed (falling back to ``application/octet-stream`` when the sniffer
-    can't recognize the bytes — same fallback the server uses for an unknown
-    declared media type), and the payload is base64-encoded into
-    ``data:<mime>;base64,<payload>``. The declared MIME is only a label; the
-    server re-sniffs from the decoded bytes.
+    A value already in ``data:`` form is returned unchanged, and a ``remote:`` value is
+    reduced to its bare absolute path so the *server* reads it (see
+    :func:`_resolve_remote_path`). Otherwise the value is a local file path (relative paths
+    are read against the client's cwd): its bytes become
+    ``data:<mime>;name=<percent-encoded base name>;base64,<payload>``, so the server stages
+    the file under its own name. The MIME is guessed from the name (``application/octet-stream``
+    otherwise) and is only a label: the server detects the kind from the bytes.
 
-    Raises :class:`RemoteUsageError` if a ``remote:`` path is not absolute, or a
-    local file is missing or unreadable (a client-side error — no HTTP attempted).
+    Raises :class:`RemoteUsageError` if a ``remote:`` path is not absolute, or a local file is
+    missing or unreadable (a client-side error — no HTTP attempted).
     """
     if value.startswith("data:"):
         return value
@@ -356,9 +365,11 @@ def _inline_one(value: str) -> str:
             data = f.read()
     except OSError:
         raise RemoteUsageError(f"attachment not found: {value}")
-    mime = _sniff_mime(data) or "application/octet-stream"
+    # A name read from the filesystem may hold undecodable bytes (surrogate escapes).
+    name = os.fsencode(os.path.basename(value)).decode("utf-8", "replace")
+    mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
     payload = base64.b64encode(data).decode("ascii")
-    return f"data:{mime};base64,{payload}"
+    return f"data:{mime};name={quote(name, safe='')};base64,{payload}"
 
 
 def _rewrite_option_values(
@@ -414,13 +425,13 @@ def inline_attachments(argv: list[str], resolved: Resolved) -> list[str]:
 
     Over ``--remote``, the server only sees the forwarded argv — it has no
     access to the client's filesystem. So every ``--attach`` value that names a
-    *local* file is rewritten to a ``data:<mime>;base64,<payload>`` URI that the
-    server decodes unchanged (it re-sniffs the MIME, so the label is advisory).
-    A value already in ``data:`` form is left as is. Commands without an attach
-    option return ``argv`` unchanged.
+    *local* file is rewritten to a ``data:<mime>;name=<percent-encoded base name>;base64,<payload>``
+    URI (see :func:`_inline_one`): the server stages the file under its own name, and the MIME,
+    guessed from the name, is only a label (the server detects the kind from the bytes). A value
+    already in ``data:`` form is left as is; a ``remote:`` value becomes its bare server path.
+    Commands without an attach option return ``argv`` unchanged.
 
-    No size pre-check is done here: an oversized payload fails later at the HTTP
-    layer and surfaces as a remote error.
+    The size pre-check runs before, in :func:`check_inline_size`.
 
     Raises :class:`RemoteUsageError` if an ``--attach`` file is missing or
     unreadable (a client-side error — no HTTP is attempted).
@@ -428,12 +439,63 @@ def inline_attachments(argv: list[str], resolved: Resolved) -> list[str]:
     return _rewrite_option_values(argv, _attach_option_strings(resolved) or [], _inline_one)
 
 
+# The registry path whose files all travel inline to a peer, ``remote:`` files included.
+_PEER_SEND_PATH = "peer-send"
+
+
+def _too_large_hint(resolved: Resolved) -> str:
+    return inline.PEER_TOO_LARGE_HINT if resolved.path == _PEER_SEND_PATH else inline.INLINE_TOO_LARGE_HINT
+
+
+def check_inline_size(resolved: Resolved) -> None:
+    """Refuse more than 50 MB of inline data before reading any file (phase 2 design §4.4.3).
+
+    Counts the size of every local ``--attach`` file and the decoded size of every data URI the
+    user gave. A ``remote:`` value is a server path: not counted here (for ``peer-send`` the
+    server-side command counts it). A missing local file is left to :func:`_inline_one`.
+    Raises :class:`RemoteUsageError` (exit 2) with the limit and the hint of the command.
+    """
+    total = 0
+    for value in resolved.params.get(_ATTACH_PARAM_NAME) or ():
+        if value.startswith("data:"):
+            total += inline.data_uri_size(value) or 0
+        elif not has_remote_scheme(value):
+            try:
+                total += os.path.getsize(value)
+            except OSError:
+                continue
+    if total > inline.INLINE_MAX_BYTES:
+        raise RemoteUsageError(
+            "--attach: " + inline.too_large_message(total, inline.INLINE_MAX_BYTES, _too_large_hint(resolved))
+        )
+
+
+def apply_peer_send_timeout(argv: list[str], resolved: Resolved) -> tuple[list[str], Resolved]:
+    """Give a ``peer-send`` with files and no explicit ``--timeout`` the long wait (§4.4.3).
+
+    The server-side command waits ``PEER_SEND_TIMEOUT_WITH_FILES`` for a message with files;
+    passing it explicitly lets the read timeout of this call cover that wait, without
+    measuring any file (``remote:`` files included).
+    """
+    if (
+        resolved.path != _PEER_SEND_PATH
+        or not resolved.params.get(_ATTACH_PARAM_NAME)
+        or "timeout" in resolved.explicit
+    ):
+        return list(argv), resolved
+    timeout = inline.PEER_SEND_TIMEOUT_WITH_FILES
+    return (
+        [argv[0], f"--timeout={timeout}", *argv[1:]],
+        resolved._replace(params={**resolved.params, "timeout": timeout}),
+    )
+
+
 # Click param names that carry a file-resolvable prompt / message body, audited
 # from the command signatures: ``create-session`` and ``send-message`` take it
 # as the positional ``prompt`` argument; ``send-messages`` takes it as the
 # ``--message`` option. No other CLI command defines a param with these names
-# (the ``message`` fields on the error NamedTuples in ``attachments.py`` /
-# ``validation.py`` are not Click params, so they never enter a CommandSpec).
+# (the ``message`` field of the ``ValidationError`` NamedTuple in ``validation.py``
+# is not a Click param, so it never enters a CommandSpec).
 # Only these specific params are inlined — a free-text value on any other
 # command is never read from disk.
 _PROMPT_PARAM_NAMES: frozenset[str] = frozenset({"prompt", "message"})
@@ -634,12 +696,13 @@ def inline_prompt(argv: list[str], resolved: Resolved) -> list[str]:
 # answers.
 _WAIT_REPLY_PATHS: frozenset[str] = frozenset({"session/wait-reply", "sessions/wait-reply"})
 
-# Read-timeout margin (seconds) added on top of a wait command's own timeout
-# so the local read does not race the server's own deadline.
+# Read-timeout margin (seconds) added on top of a command's own wait (its
+# ``--wait-timeout`` or its ``--timeout``) so the local read does not race the
+# server's own deadline.
 _WAIT_TIMEOUT_MARGIN = 15.0
 
-# Default connect/read timeout (seconds) for ordinary (non-wait) commands. Read
-# commands and drop-and-poll mutations all complete well within this.
+# Default read timeout (seconds) for read commands (no ``--timeout``). A
+# drop-and-poll command waits its own ``--timeout`` plus the margin instead.
 _DEFAULT_TIMEOUT = 30.0
 
 # Mirror of ``create_session.command.DEFAULT_WAIT_TIMEOUT_SECONDS``, used when
@@ -675,7 +738,10 @@ def _request_timeout(resolved: Resolved) -> httpx.Timeout:
 
     ``--wait-reply`` gets the same treatment on top of its own ``--timeout``:
     the server holds the connection for the drop request *and* the wait.
-    Every other command uses :data:`_DEFAULT_TIMEOUT` for both connect and read.
+    Every other drop-and-poll command (one with a ``--timeout``) waits up to its
+    effective ``--timeout``: the server now stages inline data and the send may
+    wait in the session's lane before its final status, so the read timeout is
+    that value plus the margin. Read commands use :data:`_DEFAULT_TIMEOUT`.
     The connect timeout is always the short, constant :data:`_CONNECT_TIMEOUT`.
     """
     read = _DEFAULT_TIMEOUT
@@ -696,6 +762,10 @@ def _request_timeout(resolved: Resolved) -> httpx.Timeout:
         command_timeout = resolved.params.get("timeout")
         base = float(command_timeout) if isinstance(command_timeout, (int, float)) else 0.0
         read = base + float(wait_timeout) + _WAIT_TIMEOUT_MARGIN
+    elif "timeout" in resolved.params:
+        command_timeout = resolved.params.get("timeout")
+        base = float(command_timeout) if isinstance(command_timeout, (int, float)) else _DEFAULT_TIMEOUT
+        read = base + _WAIT_TIMEOUT_MARGIN
     return httpx.Timeout(read, connect=_CONNECT_TIMEOUT)
 
 
@@ -755,7 +825,8 @@ def forward(url: str, token: str | None, argv: list[str]) -> int:
 
     Raises :class:`RemoteUsageError` for a local misuse caught pre-flight
     (unknown / local-only command, host-bound ``self`` / ``parent``, missing
-    attachment), and :class:`RemoteTransportError` for any transport- or
+    attachment, more than 50 MB of inline attachment data, a request body above
+    the 72 MB cap), and :class:`RemoteTransportError` for any transport- or
     remote-layer failure (cannot connect, DNS, timeout, non-200, malformed
     response). The caller prints ``twicc: <message>`` to stderr and exits with
     the exception's ``exit_code``; :func:`forward` itself only ever writes the
@@ -763,14 +834,22 @@ def forward(url: str, token: str | None, argv: list[str]) -> int:
     """
     resolved = resolve_command(argv)
     reject_host_bound(resolved)
+    check_inline_size(resolved)
     argv2 = inline_attachments(argv, resolved)
     argv2 = inline_prompt(argv2, resolved)
+    argv2, resolved = apply_peer_send_timeout(argv2, resolved)
 
     endpoint = _endpoint_url(url, resolved.path)
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     body = orjson.dumps({"argv": argv2})
+    if len(body) > inline.INLINE_MAX_REQUEST_BYTES:
+        # An inlined prompt file can push the body above the cap the server enforces.
+        raise RemoteUsageError(
+            f"the request is {inline.format_mb(len(body))} once encoded; the limit is "
+            f"{inline.format_mb(inline.INLINE_MAX_REQUEST_BYTES)}. {_too_large_hint(resolved)}"
+        )
 
     try:
         with httpx.Client(timeout=_request_timeout(resolved)) as client:
