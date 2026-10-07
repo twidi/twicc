@@ -51,7 +51,9 @@ def _session(session_id: str, *, mutation: bool = False) -> Session | None:
 
 def _state(session_id: str) -> dict:
     stored = AsyncQuestionState.objects.filter(session_id=session_id).values_list("state", flat=True).first()
-    return stored or {"schema": 1, "revision": 0, "facts": {}, "batches": {}}
+    # Reproject old collecting batches without writing during reads. Mutations
+    # use the same view, so validation agrees with hydration after an upgrade.
+    return reduce_question_state(stored, []) if stored else {"schema": 1, "revision": 0, "facts": {}, "batches": {}}
 
 
 def _snapshot(session: Session | None, state: dict) -> dict:
@@ -95,7 +97,7 @@ def read_question_snapshot(session_id: str) -> dict:
             state = session.async_question_state.state
         except AsyncQuestionState.DoesNotExist:
             pass
-    return _snapshot(session, state)
+    return _snapshot(session, reduce_question_state(state, []) if state else state)
 
 
 def read_question_send_statuses(session_id: str, request_ids: list[str]) -> dict:

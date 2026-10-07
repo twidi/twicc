@@ -419,10 +419,15 @@ def test_background_start_keeps_prepared_until_provider_outcome(harness, outcome
 
 
 @pytest.mark.parametrize("route", ["steer", "goal_steer", "fallback_start", "fallback_steer"])
-def test_live_routes_keep_one_native_client_id(harness, route):
+@pytest.mark.parametrize("text", ["", "next"])
+def test_live_routes_keep_one_native_client_id(harness, route, text):
     from openai_codex.errors import JsonRpcError
     from openai_codex.generated.v2_all import TurnSteerResponse
     from twicc.providers import db_writer
+
+    # No terminal evidence exists: completed questions must send while active.
+    AsyncQuestionState.objects.filter(session=harness.session).delete()
+    service.merge_question_facts(harness.session.id, [question()])
 
     async def run():
         db_writer.start_db_writer()
@@ -455,7 +460,7 @@ def test_live_routes_keep_one_native_client_id(harness, route):
                     harness.session.id,
                     harness.session.project_id,
                     "/tmp",
-                    "next",
+                    text,
                     AgentSettings(),
                     request_id="route-1",
                     send_origin="human",
@@ -463,6 +468,9 @@ def test_live_routes_keep_one_native_client_id(harness, route):
                 )
                 is True
             )
+            captured = await sync_to_async(lambda: AsyncQuestionState.objects.get(session=harness.session).state)()
+            assert captured["batches"]["q1"]["status"] == "sent"
+            assert captured["facts"]["send:route-1"]["data"]["text"].count("Answers to your questions") == 1
             assert ids and set(ids) == {"route-1"}
             if route.startswith("fallback"):
                 assert thread.turn_with_policy.await_args.kwargs["client_user_message_id"] == "route-1"
@@ -753,10 +761,12 @@ def test_native_source_association_preserves_agent_origin_and_original_boundary(
     assert snapshot(harness)["batches"][0]["status"] == "ready"
 
 
-def test_late_steering_user_item_cannot_retire_question_collecting_at_boundary(harness):
+def test_late_steering_source_keeps_excluded_and_newer_questions_available(harness):
     service.merge_question_facts(harness.session.id, [question("q2", "t2")])
     asyncio.run(harness.send("next", response()))
     before = AsyncQuestionState.objects.get(session=harness.session).state["facts"]["send:send-1"]["data"]["boundary"]
+    assert before["excluded_batch_ids"] == ["q2"]
+    service.merge_question_facts(harness.session.id, [question("q3", "t2", "2099-01-01T00:00:00Z")])
     service.merge_question_facts(
         harness.session.id,
         [
@@ -772,7 +782,7 @@ def test_late_steering_user_item_cannot_retire_question_collecting_at_boundary(h
             ),
         ],
     )
-    assert [batch["item_id"] for batch in snapshot(harness)["batches"]] == ["q2"]
+    assert [batch["item_id"] for batch in snapshot(harness)["batches"]] == ["q2", "q3"]
     after = AsyncQuestionState.objects.get(session=harness.session).state["facts"]["send:send-1"]["data"]
     assert after["boundary"] == before
     assert after["source_item_id"] == "u1"

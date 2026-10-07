@@ -189,7 +189,7 @@ def test_recorded_questions_hydrate_and_send_partial_answers_text_and_attachment
                                                 "phase": "final_answer", "content": [{"type": "Text",
                                                 "text": "A long final response. " * 100}]}),
     ]
-    assert harness.ingest(records)["batches"][0]["status"] == "collecting"
+    assert harness.ingest(records)["batches"][0]["status"] == "ready"
     harness.ingest([record("task_complete", second=5), canonical_question(1, turn="t2", second=6),
                     record("task_complete", turn="t2", second=7)])
     ready = harness.hydrate()
@@ -237,14 +237,14 @@ def test_recorded_questions_hydrate_and_send_partial_answers_text_and_attachment
 
 
 @pytest.mark.parametrize("continuation", [False, True])
-def test_sdk_and_canonical_ingestion_wait_for_real_control_return_before_subagent_hold(harness, continuation):
+def test_sdk_and_canonical_ingestion_show_questions_before_continuation_and_subagent_hold(harness, continuation):
     async def run():
         await harness.agent._link_async_question_turn("t1")
         await harness.agent._handle_stream_event(sdk_question(started=True))
         assert (await sync_to_async(service.read_question_snapshot)(harness.session.id))["batches"] == []
         await harness.agent._handle_stream_event(sdk_question())
         collecting = await sync_to_async(harness.ingest)([canonical_question(), record("task_complete", second=2)])
-        assert collecting["batches"][0]["status"] == "collecting"
+        assert collecting["batches"][0]["status"] == "ready"
         first = Turn("t1", [])
         first.events, first.finished = [sdk_question()], asyncio.Event()
         first.finished.set()
@@ -263,10 +263,10 @@ def test_sdk_and_canonical_ingestion_wait_for_real_control_return_before_subagen
 
             async def open_successor(*args, **kwargs):
                 before = await sync_to_async(service.read_question_snapshot)(harness.session.id)
-                assert before["batches"][0]["status"] == "collecting"
+                assert before["batches"][0]["status"] == "ready"
                 await sync_to_async(harness.ingest)([record("task_complete", turn="t2", second=4)])
                 assert (await sync_to_async(service.read_question_snapshot)(harness.session.id))["batches"][0][
-                    "status"] == "collecting"
+                    "status"] == "ready"
                 return second
 
             harness.thread.turn_with_policy.side_effect = open_successor
@@ -282,11 +282,11 @@ def test_sdk_and_canonical_ingestion_wait_for_real_control_return_before_subagen
 
 
 @pytest.mark.parametrize("text,before_completion,expected", [
-    ("Continue working", True, "ready"),
+    ("Continue working", True, "sent"),
     ("Yes, keep it", False, "sent"),
     ("/compact", False, "ready"),
     ("/goal clear", False, "ready"),
-    ("<twicc-resume>Continue</twicc-resume>", False, "collecting"),
+    ("<twicc-resume>Continue</twicc-resume>", False, "ready"),
     ("Message Type: MESSAGE\nTask name: /root\nSender: /root/worker\nPayload:\nDone", False, "ready"),
 ])
 def test_incremental_and_cold_recompute_apply_the_same_source_submission_boundary(
@@ -300,7 +300,7 @@ def test_incremental_and_cold_recompute_apply_the_same_source_submission_boundar
         values += [record("task_complete", second=2), user(text, second=3)]
     live = harness.ingest(values)
     batch_id = OBSERVED[0][0]
-    if expected in {"ready", "collecting"}:
+    if expected == "ready":
         assert live["batches"][0]["status"] == expected
     else:
         assert live["batches"] == []
@@ -412,7 +412,7 @@ def test_question_generated_during_older_send_remains_ready_after_acceptance_and
     harness.thread.turn_with_policy.side_effect = delayed_delivery
     assert harness.run(lambda: harness.send("Answer the first question", structured(ready)))
     collecting = harness.hydrate()
-    assert collecting["batches"][0]["status"] == "collecting"
+    assert collecting["batches"][0]["status"] == "ready"
     assert [batch["item_id"] for batch in collecting["batches"]] == [OBSERVED[1][0]]
     assert collecting["resolutions"] == {OBSERVED[0][0]: {"status": "sent", "request_id": "send-1"}}
 
@@ -577,7 +577,7 @@ def test_browser_request_reconciliation_never_redelivers(harness, monkeypatch, d
 def test_sdk_async_completion_keeps_question_identity_and_native_stream_end(harness):
     harness.run(lambda: harness.agent._handle_stream_event(sdk_question()))
     snapshot = harness.hydrate()
-    assert [(batch["item_id"], batch["status"]) for batch in snapshot["batches"]] == [(OBSERVED[0][0], "collecting")]
+    assert [(batch["item_id"], batch["status"]) for batch in snapshot["batches"]] == [(OBSERVED[0][0], "ready")]
     events = [call.args[0] for call in harness.agent._broadcast_stream_event.call_args_list]
     assert [event["type"] for event in events] == ["stream_block_stop", "stream_block_end"]
     assert events[-1]["message_id"] == events[-1]["uuid"] == OBSERVED[0][0]

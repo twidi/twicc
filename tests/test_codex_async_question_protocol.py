@@ -200,7 +200,7 @@ def test_sdk_and_canonical_messages_share_identity(item_id, second, line, title,
     assert list(state["batches"]) == [item_id]
     assert state["batches"][item_id]["line"] == line
     assert state["batches"][item_id]["questions"] == [{"index": 0, "title": title, "options": options}]
-    assert state["batches"][item_id]["status"] == "collecting"
+    assert state["batches"][item_id]["status"] == "ready"
     assert reduce_question_state(state, [sdk, canonical]) == state
     assert orjson.loads(orjson.dumps(state)) == state
 
@@ -231,12 +231,12 @@ def test_started_sdk_and_non_completed_canonical_items_are_ignored():
 
 
 @pytest.mark.parametrize("arrival", list(permutations(range(3))))
-def test_steering_before_control_return_survives_replay(arrival):
+def test_steering_before_control_return_retires_older_question_on_replay(arrival):
     facts = [question(), human_submit(second=2), control_return(second=3)]
     state = {}
     for index in arrival:
         state = reduce_question_state(state, [facts[index]])
-    assert state["batches"]["q1"]["status"] == "ready"
+    assert state["batches"]["q1"]["status"] == "sent"
 
 
 @pytest.mark.parametrize("arrival", list(permutations(range(3))))
@@ -263,12 +263,12 @@ def test_control_return_releases_interrupted_or_failed_turn(outcome):
 
 
 @pytest.mark.parametrize("root_turn_id", ["t1", None])
-def test_pending_live_owner_suppresses_raw_completion_before_rpc_link(root_turn_id):
+def test_pending_live_owner_keeps_completed_questions_ready_before_rpc_link(root_turn_id):
     state = reduce_question_state({}, [question(), owner(root_turn_id), end()])
-    assert state["batches"]["q1"]["status"] == "collecting"
+    assert state["batches"]["q1"]["status"] == "ready"
 
 
-def test_continuation_group_only_releases_after_control_return():
+def test_continuation_group_keeps_questions_ready_before_control_return():
     facts = [
         owner(),
         question(),
@@ -279,18 +279,18 @@ def test_continuation_group_only_releases_after_control_return():
         decision("t2", "pending", second=5),
     ]
     state = reduce_question_state({}, facts)
-    assert [batch["status"] for batch in state["batches"].values()] == ["collecting", "collecting"]
+    assert [batch["status"] for batch in state["batches"].values()] == ["ready", "ready"]
     state = reduce_question_state(
         state, [decision("t2", "return", second=6), control_return(turn_ids=["t1", "t2"], second=6)]
     )
     assert [batch["status"] for batch in state["batches"].values()] == ["ready", "ready"]
 
 
-def test_historical_continuation_and_goal_hints_suppress_intermediate_completion():
+def test_historical_continuation_and_goal_hints_keep_questions_ready():
     state = reduce_question_state(
         {}, [question(), end(continuation_turn_id="t2"), question("q2", "t2", 3), end("t2", 4, goal_active=True)]
     )
-    assert [batch["status"] for batch in state["batches"].values()] == ["collecting", "collecting"]
+    assert [batch["status"] for batch in state["batches"].values()] == ["ready", "ready"]
     state = reduce_question_state(state, [control_return(turn_ids=["t1", "t2"], second=5)])
     assert [batch["status"] for batch in state["batches"].values()] == ["ready", "ready"]
 
@@ -306,7 +306,7 @@ def test_internal_continuation_user_record_groups_source_turns():
         {"origin": "internal", "continuation_from_turn_id": "t1"},
     )
     state = reduce_question_state({}, [question(line=10), end(line=11), continuation, question("q2", "t2", 4, 14)])
-    assert state["batches"]["q1"]["status"] == "collecting"
+    assert state["batches"]["q1"]["status"] == "ready"
     state = reduce_question_state(state, [end("t2", 5, 15)])
     assert [batch["status"] for batch in state["batches"].values()] == ["ready", "ready"]
 
@@ -368,7 +368,7 @@ def test_source_user_links_to_native_client_id_without_a_second_boundary():
         line=20,
     )
     state = reduce_question_state(state, [source])
-    assert state["batches"]["q1"]["status"] == "ready"
+    assert state["batches"]["q1"]["status"] == "sent"
     assert state["facts"]["send:r1"]["data"]["source_item_id"] == "u1"
 
 
@@ -575,7 +575,7 @@ def test_repeated_pending_decision_does_not_erase_continuation_link():
         {}, [owner(), question(), end(), decision("t1", "continuation", "t2"), question("q2", "t2", 4)]
     )
     state = reduce_question_state(state, [decision("t1", "pending")])
-    assert state["batches"]["q1"]["status"] == "collecting"
+    assert state["batches"]["q1"]["status"] == "ready"
     assert state["facts"]["decision:t1"]["data"]["successor_turn_id"] == "t2"
 
 
@@ -614,7 +614,7 @@ def test_later_owned_turn_does_not_hide_already_ready_question():
     )
     state = reduce_question_state({}, [question(), end(), next_owner, question("q2", "t2", 5)])
     assert state["batches"]["q1"]["status"] == "ready"
-    assert state["batches"]["q2"]["status"] == "collecting"
+    assert state["batches"]["q2"]["status"] == "ready"
 
 
 def test_late_question_in_settled_group_uses_submission_group_boundary():
@@ -635,12 +635,12 @@ def test_late_question_in_settled_group_uses_submission_group_boundary():
     assert state["batches"]["q2"]["status"] == "sent"
 
 
-def test_successor_completion_before_rpc_link_stays_collecting():
+def test_successor_completion_before_rpc_link_keeps_questions_ready():
     state = reduce_question_state(
         {}, [owner(), question(), end(), decision("t1", "continuation"), question("q2", "t2", 4), end("t2", 5)]
     )
-    assert state["batches"]["q1"]["status"] == "collecting"
-    assert state["batches"]["q2"]["status"] == "collecting"
+    assert state["batches"]["q1"]["status"] == "ready"
+    assert state["batches"]["q2"]["status"] == "ready"
     state = reduce_question_state(
         state, [decision("t1", "continuation", "t2"), control_return(turn_ids=["t1", "t2"], second=6)]
     )
@@ -656,7 +656,7 @@ def test_mixed_sdk_and_rollout_batches_have_deterministic_source_order(arrival):
 
 @pytest.mark.parametrize("outcome", ["interrupted", "failed"])
 @pytest.mark.parametrize("arrival", list(permutations(range(5))))
-def test_successor_without_terminal_completion_preserves_control_return_boundary(outcome, arrival):
+def test_successor_without_terminal_completion_retires_prior_questions_on_human_reply(outcome, arrival):
     facts = [
         question()._replace(
             line=1, data={"source": "jsonl", "questions": [{"index": 0, "title": "First?", "options": []}]}
@@ -679,5 +679,23 @@ def test_successor_without_terminal_completion_preserves_control_return_boundary
     state = {}
     for index in arrival:
         state = reduce_question_state(state, [facts[index]])
+    assert state["batches"]["q1"]["status"] == "sent"
+    assert state["batches"]["q2"]["status"] == "sent"
+
+
+def test_completed_question_is_ready_before_any_turn_end():
+    state = reduce_question_state({}, [owner(), question()])
     assert state["batches"]["q1"]["status"] == "ready"
+    boundary = build_question_boundary(state, at=at(2))
+    assert boundary["batch_ids"] == ["q1"]
+
+
+def test_admission_retires_late_older_active_question_but_preserves_later_question():
+    state = reduce_question_state({}, [owner()])
+    boundary = build_question_boundary(state, at=at(3))
+    submission = human_submit(second=3, settled_turn_ids=[])._replace(
+        data={"origin": "human", "status": "accepted", "request_id": "r1", "boundary": boundary}
+    )
+    state = reduce_question_state(state, [submission, question(), question("q2", "t1", 4)])
+    assert state["batches"]["q1"]["status"] == "sent"
     assert state["batches"]["q2"]["status"] == "ready"
