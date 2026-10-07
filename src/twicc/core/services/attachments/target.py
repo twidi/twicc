@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 import orjson
 from asgiref.sync import sync_to_async
 
+from twicc.agent.hybrid_switch import is_hybrid_switch_pending
 from twicc.core.services.attachments.types import PlanTarget
 from twicc.providers.helpers import AgentSettings
 
@@ -38,7 +39,9 @@ __all__ = [
     "PLATFORM_FIRST_PARTY",
     "PLATFORM_FLAGS",
     "PLATFORM_THIRD_PARTY",
+    "resolve_existing_session_plan_target",
     "resolve_plan_target",
+    "resolve_session_hybrid",
 ]
 
 PLATFORM_FIRST_PARTY = "first_party"
@@ -155,4 +158,50 @@ async def resolve_plan_target(
     live_settings = live_agent.agent_settings if live_agent is not None else None
     return await sync_to_async(_resolve)(
         str(provider), effective_settings, directory, bool(hybrid), bool(ephemeral), live_settings
+    )
+
+
+async def _read_session_hybrid(session_id: str) -> bool:
+    """``Session.hybrid`` from the database (``False`` without a row)."""
+    from twicc.core.models import Session
+
+    hybrid = await sync_to_async(
+        lambda: Session.objects.filter(id=session_id).values_list("hybrid", flat=True).first()
+    )()
+    return bool(hybrid)
+
+
+async def resolve_session_hybrid(session_id: str) -> bool:
+    """Whether a message to the existing *session_id* targets the hybrid CLI.
+
+    The pending membership is read BEFORE the database: the switch writes the flag before it
+    leaves the set, so a switch that ends between the two reads is still seen through the flag.
+    """
+    if is_hybrid_switch_pending(session_id):
+        return True
+    return await _read_session_hybrid(session_id)
+
+
+async def resolve_existing_session_plan_target(
+    *,
+    session_id: str,
+    provider: str,
+    effective_settings: AgentSettings,
+    directory: str,
+    ephemeral: bool,
+    live_agent: BaseAgent | None,
+) -> PlanTarget:
+    """The composer attachment ``PlanTarget`` of a message to the existing *session_id*.
+
+    ``hybrid`` comes from :func:`resolve_session_hybrid`, so a pending switch to hybrid
+    already shapes the plan (spec §6.2). Shared by the WS handler and the send service
+    (phase 2 design §4.5.4). See :func:`resolve_plan_target` for the other fields.
+    """
+    return await resolve_plan_target(
+        provider=provider,
+        effective_settings=effective_settings,
+        directory=directory,
+        hybrid=await resolve_session_hybrid(session_id),
+        ephemeral=ephemeral,
+        live_agent=live_agent,
     )

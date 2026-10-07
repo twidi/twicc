@@ -21,7 +21,9 @@ import pytest
 
 from twicc import asgi
 from twicc.agent import AgentState, SendDeliveryError
+from twicc.agent import hybrid_switch
 from twicc.core.services.attachments import planner
+from twicc.core.services.attachments import target as target_module
 from twicc.core.services.attachments.manifest import INLINE_LINE_HYBRID, build_manifest, parse_manifest
 from twicc.core.services.attachments.types import (
     AttachmentContent,
@@ -500,9 +502,14 @@ def test_killing_a_never_launched_agent_skips_the_graceful_exit(tmux, monkeypatc
 
 @pytest.fixture
 def clean_pending():
-    asgi._PENDING_HYBRID_SWITCHES.clear()
+    hybrid_switch._PENDING_HYBRID_SWITCHES.clear()
     yield
-    asgi._PENDING_HYBRID_SWITCHES.clear()
+    hybrid_switch._PENDING_HYBRID_SWITCHES.clear()
+
+
+def test_asgi_and_the_switch_module_share_one_pending_set():
+    assert asgi._PENDING_HYBRID_SWITCHES is hybrid_switch._PENDING_HYBRID_SWITCHES
+    assert asgi.resolve_existing_session_plan_target is target_module.resolve_existing_session_plan_target
 
 
 def _switch_consumer(monkeypatch, *, kill_error: Exception | None = None):
@@ -523,7 +530,7 @@ def _switch_consumer(monkeypatch, *, kill_error: Exception | None = None):
     spawned: list = []
 
     def fake_spawn(coro, *, label: str) -> MagicMock:
-        spawned.append((coro, asgi.is_hybrid_switch_pending(SESSION_ID)))
+        spawned.append((coro, hybrid_switch.is_hybrid_switch_pending(SESSION_ID)))
         return MagicMock()
 
     monkeypatch.setattr(asgi, "_spawn_detached", fake_spawn)
@@ -537,10 +544,10 @@ def test_switch_registers_pending_membership_before_spawning(monkeypatch, clean_
 
     [(coro, pending_at_spawn)] = spawned
     assert pending_at_spawn is True
-    assert asgi.is_hybrid_switch_pending(SESSION_ID) is True
+    assert hybrid_switch.is_hybrid_switch_pending(SESSION_ID) is True
     asyncio.run(coro)
     manager.kill_agent.assert_awaited_once_with(SESSION_ID, reason="switch-hybrid")
-    assert asgi.is_hybrid_switch_pending(SESSION_ID) is False
+    assert hybrid_switch.is_hybrid_switch_pending(SESSION_ID) is False
 
 
 def test_a_failed_switch_clears_pending_membership(monkeypatch, clean_pending):
@@ -550,7 +557,7 @@ def test_a_failed_switch_clears_pending_membership(monkeypatch, clean_pending):
     [(coro, _)] = spawned
     with pytest.raises(RuntimeError):
         asyncio.run(coro)
-    assert asgi.is_hybrid_switch_pending(SESSION_ID) is False
+    assert hybrid_switch.is_hybrid_switch_pending(SESSION_ID) is False
 
 
 def test_a_switch_cancelled_before_it_runs_clears_pending_membership(monkeypatch, clean_pending):
@@ -565,13 +572,13 @@ def test_a_switch_cancelled_before_it_runs_clears_pending_membership(monkeypatch
 
     async def run() -> None:
         await consumer._handle_set_session_hybrid({"session_id": SESSION_ID})
-        assert asgi.is_hybrid_switch_pending(SESSION_ID) is True
+        assert hybrid_switch.is_hybrid_switch_pending(SESSION_ID) is True
         [task] = [t for t in asgi._DETACHED_TASKS if not t.done()]
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(run())
-    assert asgi.is_hybrid_switch_pending(SESSION_ID) is False
+    assert hybrid_switch.is_hybrid_switch_pending(SESSION_ID) is False
 
 
 def test_session_hybrid_reads_pending_membership_before_the_database(monkeypatch, clean_pending):
@@ -581,33 +588,31 @@ def test_session_hybrid_reads_pending_membership_before_the_database(monkeypatch
     async def read_db(session_id: str) -> bool:
         order.append("db")
         # The switch completes between the two reads: flag written, membership cleared.
-        asgi._PENDING_HYBRID_SWITCHES.discard(session_id)
+        hybrid_switch._PENDING_HYBRID_SWITCHES.discard(session_id)
         return True
 
-    monkeypatch.setattr(asgi, "_read_session_hybrid", read_db)
-    assert asyncio.run(asgi.resolve_session_hybrid(SESSION_ID)) is True
+    monkeypatch.setattr(target_module, "_read_session_hybrid", read_db)
+    assert asyncio.run(target_module.resolve_session_hybrid(SESSION_ID)) is True
     assert order == ["db"]
 
-    asgi._PENDING_HYBRID_SWITCHES.add(SESSION_ID)
-    monkeypatch.setattr(asgi, "_read_session_hybrid", AsyncMock(side_effect=AssertionError("not read")))
-    assert asyncio.run(asgi.resolve_session_hybrid(SESSION_ID)) is True
+    hybrid_switch._PENDING_HYBRID_SWITCHES.add(SESSION_ID)
+    monkeypatch.setattr(target_module, "_read_session_hybrid", AsyncMock(side_effect=AssertionError("not read")))
+    assert asyncio.run(target_module.resolve_session_hybrid(SESSION_ID)) is True
 
-    asgi._PENDING_HYBRID_SWITCHES.clear()
-    monkeypatch.setattr(asgi, "_read_session_hybrid", AsyncMock(return_value=False))
-    assert asyncio.run(asgi.resolve_session_hybrid(SESSION_ID)) is False
+    hybrid_switch._PENDING_HYBRID_SWITCHES.clear()
+    monkeypatch.setattr(target_module, "_read_session_hybrid", AsyncMock(return_value=False))
+    assert asyncio.run(target_module.resolve_session_hybrid(SESSION_ID)) is False
 
 
 def test_existing_session_target_consumes_pending_membership(monkeypatch, clean_pending):
-    from twicc.core.services.attachments import target as target_module
-
     resolve = AsyncMock(return_value="target")
     monkeypatch.setattr(target_module, "resolve_plan_target", resolve)
-    monkeypatch.setattr(asgi, "_read_session_hybrid", AsyncMock(return_value=False))
+    monkeypatch.setattr(target_module, "_read_session_hybrid", AsyncMock(return_value=False))
     settings = AgentSettings(selected_model="opus")
     live = SimpleNamespace(agent_settings=settings)
-    asgi._PENDING_HYBRID_SWITCHES.add(SESSION_ID)
+    hybrid_switch._PENDING_HYBRID_SWITCHES.add(SESSION_ID)
 
-    result = asyncio.run(asgi.resolve_existing_session_plan_target(
+    result = asyncio.run(target_module.resolve_existing_session_plan_target(
         session_id=SESSION_ID, provider="claude_code", effective_settings=settings,
         directory="/project", ephemeral=False, live_agent=live,
     ))

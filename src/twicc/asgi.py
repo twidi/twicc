@@ -39,10 +39,12 @@ from twicc.core.enums import Provider
 from twicc.core.services.attachments import lifecycle as attachment_lifecycle
 from twicc.core.services.attachments import planner as attachment_planner
 from twicc.core.services.attachments.staging import AttachmentError
+from twicc.core.services.attachments.target import resolve_existing_session_plan_target
 from twicc.core.services.session_creation import create_session_from_payload
 from twicc.core.services.title_suggestion import suggest_title
 from twicc.agent import ephemeral as ephemeral_runs
 from twicc.agent.exceptions import SendDeliveryError
+from twicc.agent.hybrid_switch import _PENDING_HYBRID_SWITCHES
 from twicc.agent.send_lanes import send_lane, wait_for_send_barrier
 from twicc.share.consumer import ShareConsumer
 from twicc.paths import is_first_run
@@ -452,69 +454,6 @@ def _spawn_detached(coro, *, label: str) -> asyncio.Task:
 
     task.add_done_callback(_on_done)
     return task
-
-
-# Session ids whose switch to hybrid CLI mode is in flight (spec §6.2): added
-# synchronously by ``_handle_set_session_hybrid`` before it spawns the detached
-# switch, removed once the switch ends (success, failure or cancellation),
-# always AFTER the switch wrote ``Session.hybrid``. The composer sends
-# ``set_session_hybrid`` and ``send_message`` back to back, so a send planned
-# while the switch runs must already target the hybrid CLI.
-_PENDING_HYBRID_SWITCHES: set[str] = set()
-
-
-def is_hybrid_switch_pending(session_id: str) -> bool:
-    """True while a switch of *session_id* to hybrid CLI mode is in flight."""
-    return session_id in _PENDING_HYBRID_SWITCHES
-
-
-async def _read_session_hybrid(session_id: str) -> bool:
-    """``Session.hybrid`` from the database (``False`` without a row)."""
-    from twicc.core.models import Session
-
-    hybrid = await sync_to_async(
-        lambda: Session.objects.filter(id=session_id).values_list("hybrid", flat=True).first()
-    )()
-    return bool(hybrid)
-
-
-async def resolve_session_hybrid(session_id: str) -> bool:
-    """Whether a message to the existing *session_id* targets the hybrid CLI.
-
-    The pending membership is read BEFORE the database: the switch writes the
-    flag before it leaves the set, so a switch that ends between the two reads
-    is still seen through the flag.
-    """
-    if is_hybrid_switch_pending(session_id):
-        return True
-    return await _read_session_hybrid(session_id)
-
-
-async def resolve_existing_session_plan_target(
-    *,
-    session_id: str,
-    provider: str,
-    effective_settings: AgentSettings,
-    directory: str,
-    ephemeral: bool,
-    live_agent,
-):
-    """The composer attachment ``PlanTarget`` of a message to the existing *session_id*.
-
-    ``hybrid`` comes from :func:`resolve_session_hybrid`, so a pending switch
-    to hybrid already shapes the plan (spec §6.2). See
-    ``attachments.target.resolve_plan_target`` for the other fields.
-    """
-    from twicc.core.services.attachments import target as plan_target
-
-    return await plan_target.resolve_plan_target(
-        provider=provider,
-        effective_settings=effective_settings,
-        directory=directory,
-        hybrid=await resolve_session_hybrid(session_id),
-        ephemeral=ephemeral,
-        live_agent=live_agent,
-    )
 
 
 class WSConsumer(AsyncJsonWebsocketConsumer):
