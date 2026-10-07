@@ -11,14 +11,15 @@ import { reactive } from 'vue'
 import {
     COMPOSER_PANEL,
     attachmentChipItem,
-    attachmentKindIcon,
     attachmentPayloadFields,
     canSendAttachments,
+    composerStripItems,
     createComposerAttachments,
     formatAttachmentSize,
     getDisplayKind,
+    legacyMediaIdOfStripItem,
+    legacyMediaStripItem,
     mapAttachmentStatus,
-    readTextPreview,
     releaseRef,
     sendComposerMessage,
     shouldAcceptCompletion,
@@ -1083,43 +1084,32 @@ test('post-send forget drops only the sent records; one added after the send sur
     assert.equal(h.requests.filter(r => r.method === 'DELETE').length, 0)
 })
 
-test('attachmentChipItem: six display kinds, previews from local object URLs, else the content endpoint once ready', () => {
+test('attachmentChipItem: image thumbnails from local object URLs, else the content endpoint once ready; other kinds none', () => {
     const rec = (kind, name) => ({ id: `id-${kind}`, bucket: 'b', position: 0, name, size: 1234, mimeType: '', kind })
     const ready = { state: 'ready', progress: 100, retryable: false, pauseReason: null }
     const uploading = { state: 'uploading', progress: 40, retryable: false, pauseReason: null }
 
     const localImage = attachmentChipItem(rec('image', 'a.png'), uploading, { previewUrl: 'blob:img' })
-    assert.equal(localImage.type, 'image')
     assert.equal(localImage.src, 'blob:img')
     assert.equal(localImage.progress, 40)
     assert.equal(localImage.state, 'uploading')
     const remoteImage = attachmentChipItem(rec('image', 'a.png'), ready)
     assert.equal(remoteImage.src, '/api/composer-attachments/b/id-image/content')
-    const pendingImage = attachmentChipItem(rec('image', 'a.png'), uploading)
-    assert.equal(pendingImage.src, null)
-    assert.equal(pendingImage.icon, 'file-image')
+    assert.equal(attachmentChipItem(rec('image', 'a.png'), uploading).src, null)
 
-    assert.equal(attachmentChipItem(rec('text', 'a.txt'), uploading, { previewUrl: 'blob:txt' }).textUrl, 'blob:txt')
-    const remoteText = attachmentChipItem(rec('text', 'a.txt'), ready)
-    assert.equal(remoteText.type, 'txt')
-    assert.equal(remoteText.textUrl, '/api/composer-attachments/b/id-text/content')
-    assert.equal(attachmentChipItem(rec('text', 'a.txt'), uploading).textUrl, null)
-
-    const pdf = attachmentChipItem(rec('PDF', 'a.pdf'), ready)
-    assert.equal(pdf.type, 'pdf')
-    assert.equal(pdf.icon, 'file-pdf')
-    for (const [kind, icon] of [['video', 'file-video'], ['audio', 'file-audio'], ['other', 'file']]) {
+    for (const kind of ['text', 'PDF', 'video', 'audio', 'other']) {
         const item = attachmentChipItem(rec(kind, `a.${kind}`), ready, { previewUrl: 'blob:never' })
-        assert.equal(item.type, 'other', kind)
         assert.equal(item.src, null, kind)
-        assert.equal(item.textUrl, null, kind)
-        assert.equal(item.icon, icon, kind)
-        assert.equal(attachmentKindIcon(kind), icon)
+        assert.equal(item.kind, kind)
     }
     const item = attachmentChipItem(rec('other', 'x.zip'), ready)
-    for (const key of ['id', 'name', 'size', 'kind', 'state', 'progress', 'retryable']) assert.ok(Object.hasOwn(item, key), key)
-    // No native/file indicator on a chip.
-    for (const key of ['mode', 'native', 'inline']) assert.equal(Object.hasOwn(item, key), false, key)
+    for (const key of ['id', 'name', 'size', 'sizeLabel', 'kind', 'state', 'progress', 'retryable', 'statusText', 'src']) {
+        assert.ok(Object.hasOwn(item, key), key)
+    }
+    // No native/file indicator, no artifact link, no legacy preview fields.
+    for (const key of ['mode', 'native', 'inline', 'canOpenArtifact', 'type', 'textUrl', 'icon']) {
+        assert.equal(Object.hasOwn(item, key), false, key)
+    }
 })
 
 test('formatAttachmentSize: bytes, KB, MB, GB; the chip carries the label', () => {
@@ -1171,7 +1161,7 @@ test('chip Retry of a paused transfer resumes the same upload through the contro
     assert.equal(h.posts().length, 1)
 })
 
-test('composer object URLs: image and text Files only; revoked once no composer nor optimistic bubble holds them', async () => {
+test('composer object URLs: image Files only; revoked once no composer nor optimistic bubble holds them', async () => {
     const created = []
     const revoked = []
     let seq = 0
@@ -1185,11 +1175,13 @@ test('composer object URLs: image and text Files only; revoked once no composer 
     const pdf = await h.add('s1', 'a.pdf', 'pdf', 'application/pdf')
     const video = await h.add('s1', 'a.mp4', 'mp4', 'video/mp4')
     const text = await h.add('s1', 'a.txt', 'hello', 'text/plain')
-    assert.deepEqual(created, [['blob:1', 'a.png'], ['blob:2', 'a.txt']])
+    const second = await h.add('s1', 'b.png', 'png', 'image/png')
+    assert.deepEqual(created, [['blob:1', 'a.png'], ['blob:2', 'b.png']])
     assert.equal(h.actions.getPreviewUrl(image.id), 'blob:1')
     assert.equal(h.actions.getPreviewUrl(pdf.id), null)
     assert.equal(h.actions.getPreviewUrl(video.id), null)
-    assert.equal(h.actions.getPreviewUrl(text.id), 'blob:2')
+    assert.equal(h.actions.getPreviewUrl(text.id), null)
+    assert.equal(h.actions.getPreviewUrl(second.id), 'blob:2')
 
     // Chip Remove: no other user, revoked at once.
     await h.actions.releaseAttachments([{ bucket: image.bucket, id: image.id }])
@@ -1198,27 +1190,13 @@ test('composer object URLs: image and text Files only; revoked once no composer 
 
     // Sent: the optimistic bubble holds the URL, the composer forgets the record.
     inUse.add('blob:2')
-    await h.actions.forgetAttachments('s1', { ids: [text.id] })
+    await h.actions.forgetAttachments('s1', { ids: [second.id, text.id] })
     await flush()
     assert.deepEqual(revoked, ['blob:1'])
     // The bubble goes away: the URL is revoked.
     inUse.delete('blob:2')
     await flush()
     assert.deepEqual(revoked, ['blob:1', 'blob:2'])
-})
-
-test('readTextPreview reads at most the limit and reports the truncation', async () => {
-    const fetchFn = async url => (url === '/bad' ? new Response('no', { status: 404 }) : new Response('héllo world'))
-    assert.deepEqual(await readTextPreview('/ok', { fetch: fetchFn, limit: 1000 }), { text: 'héllo world', truncated: false })
-    assert.deepEqual(await readTextPreview('/ok', { fetch: fetchFn, limit: 6 }), { text: 'héllo', truncated: true })
-    await assert.rejects(readTextPreview('/bad', { fetch: fetchFn, limit: 10 }))
-})
-
-test('readTextPreview: an answer without a body (204, empty) is an empty preview, never a throw', async () => {
-    const noBody = async () => new Response(null, { status: 204 })
-    assert.deepEqual(await readTextPreview('/empty', { fetch: noBody, limit: 10 }), { text: '', truncated: false })
-    const bodyless = async () => ({ ok: true, status: 200, body: null })
-    assert.deepEqual(await readTextPreview('/empty', { fetch: bodyless, limit: 10 }), { text: '', truncated: false })
 })
 
 test('dispose revokes every object URL the composer still holds, released ones kept for a bubble included', async () => {
@@ -1228,10 +1206,10 @@ test('dispose revokes every object URL the composer still holds, released ones k
     const inUse = reactive(new Set())
     const h = createHarness({ objectUrls, previewUrlsInUse: () => inUse })
     const image = await h.add('s1', 'a.png', 'png', 'image/png')
-    const text = await h.add('s1', 'a.txt', 'hello', 'text/plain')
-    // The text was sent: its optimistic bubble still holds the URL.
-    inUse.add(h.actions.getPreviewUrl(text.id))
-    await h.actions.forgetAttachments('s1', { ids: [text.id] })
+    const sent = await h.add('s1', 'b.png', 'png', 'image/png')
+    // The second image was sent: its optimistic bubble still holds the URL.
+    inUse.add(h.actions.getPreviewUrl(sent.id))
+    await h.actions.forgetAttachments('s1', { ids: [sent.id] })
     await flush()
     assert.deepEqual(revoked, [])
     h.actions.dispose()
@@ -1240,6 +1218,80 @@ test('dispose revokes every object URL the composer still holds, released ones k
     // A second dispose revokes nothing twice.
     h.actions.dispose()
     assert.equal(revoked.length, 2)
+})
+
+test('legacyMediaStripItem: a legacy media is a tile with its kind, size and image thumbnail; failed when undecodable', () => {
+    const image = legacyMediaStripItem({ id: 'm1', name: 'shot.png', type: 'image', mimeType: 'image/png', data: 'QUFBQQ==' })
+    assert.equal(image.id, 'legacy:m1')
+    assert.equal(image.kind, 'image')
+    assert.equal(image.src, 'data:image/png;base64,QUFBQQ==')
+    assert.equal(image.size, 4)
+    assert.equal(image.sizeLabel, '4 B')
+    assert.equal(image.state, '')
+    assert.equal(image.retryable, false)
+    assert.equal(image.statusText, 'Preparing')
+
+    const pdf = legacyMediaStripItem({ id: 'm2', name: 'doc.pdf', type: 'pdf', mimeType: 'application/pdf', data: 'QUJD' })
+    assert.equal(pdf.kind, 'PDF')
+    assert.equal(pdf.src, null)
+    assert.equal(pdf.size, 3)
+    const text = legacyMediaStripItem({ id: 'm3', name: 'notes.txt', type: 'txt', mimeType: 'text/plain', data: 'héllo' })
+    assert.equal(text.kind, 'text')
+    assert.equal(text.src, null)
+    assert.equal(text.size, 6, 'UTF-8 bytes')
+    assert.equal(legacyMediaStripItem({ id: 'm4', type: 'weird' }).kind, 'other')
+
+    const failed = legacyMediaStripItem({ id: 'm5', name: 'bad.png', type: 'image', data: '' }, { failed: true })
+    assert.equal(failed.state, 'failed')
+    assert.equal(failed.retryable, false, 'Remove only')
+    assert.equal(failed.statusText, 'Could not be converted, remove it')
+    assert.equal(failed.src, null)
+})
+
+test('composerStripItems: legacy medias first, then the staged chips; ids map back for Remove', () => {
+    const chip = attachmentChipItem({ id: 'r1', bucket: 'b', position: 0, name: 'a.zip', size: 10, kind: 'other' }, { state: 'ready' })
+    const items = composerStripItems({
+        legacyMedias: [
+            { id: 'm1', name: 'one.png', type: 'image', mimeType: 'image/png', data: 'QQ==' },
+            { id: 'm2', name: 'two.txt', type: 'txt', data: 'x' },
+        ],
+        chips: [chip],
+        failedLegacyIds: ['m2'],
+    })
+    assert.deepEqual(items.map(item => item.id), ['legacy:m1', 'legacy:m2', 'r1'])
+    assert.deepEqual(items.map(item => item.state), ['', 'failed', 'ready'])
+    assert.equal(items[2], chip)
+    assert.equal(legacyMediaIdOfStripItem('legacy:m1'), 'm1')
+    assert.equal(legacyMediaIdOfStripItem('r1'), null)
+    assert.equal(legacyMediaIdOfStripItem(undefined), null)
+    // A legacy media and the record its migration creates share an id: the tiles never do.
+    assert.notEqual(legacyMediaStripItem({ id: 'r1', type: 'image' }).id, chip.id)
+    assert.deepEqual(composerStripItems({}), [])
+    assert.deepEqual(composerStripItems({ legacyMedias: null, chips: null, failedLegacyIds: undefined }), [])
+})
+
+test('composer wiring: one editable AttachmentStrip, Remove and Retry by id, MediaThumbnailGroup gone', () => {
+    const input = readSource('../components/message/MessageInput.vue')
+    assert.match(input, /import AttachmentStrip from '\.\.\/media\/AttachmentStrip\.vue'/)
+    assert.match(input, /<AttachmentStrip\s+:items="attachmentStripItems"\s+editable\s+@remove="removeAttachment"\s+@retry="retryAttachment"/)
+    assert.match(input, /composerStripItems\(/)
+    assert.match(input, /container: attachment-strip-host \/ inline-size/)
+    const remove = input.slice(input.indexOf('function removeAttachment('), input.indexOf('\n}\n', input.indexOf('function removeAttachment(')))
+    assert.match(remove, /legacyMediaIdOfStripItem\(itemId\)/)
+    assert.match(remove, /store\.removeAttachment\(props\.sessionId, legacyId\)/)
+    assert.match(remove, /store\.releaseAttachments\(\[\{ bucket: record\.bucket, id: record\.id \}\]\)/)
+    assert.doesNotMatch(input, /MediaThumbnailGroup|draftMediaToMediaItem|removeAttachmentByIndex/)
+    assert.throws(() => readSource('../components/media/MediaThumbnailGroup.vue'), /ENOENT/)
+
+    const strip = readSource('../components/media/AttachmentStrip.vue')
+    assert.match(strip, /defineEmits\(\['open-artifact', 'remove', 'retry'\]\)/)
+    assert.match(strip, /editableTileState\(item\)/)
+    assert.match(strip, /<wa-progress-bar/)
+    assert.match(strip, /@container attachment-strip-host/)
+    assert.doesNotMatch(strip, /MediaPreviewDialog/, 'images preview through the global media preview')
+
+    const dialog = readSource('../components/media/MediaPreviewDialog.vue')
+    assert.doesNotMatch(dialog, /removable|textUrl|readTextPreview/, 'the dialog previews images only')
 })
 
 // ── Entry points (source contract) ───────────────────────────────────────────

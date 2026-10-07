@@ -413,6 +413,57 @@ export function stripItemArtifactRequest(item) {
 }
 
 /**
+ * How a tile of an editable strip (the composer: `AttachmentStrip` with
+ * `editable`) shows its upload state. The item is a composer item
+ * (`attachmentChipItem` / `legacyMediaStripItem` in utils/composerAttachments.js):
+ * `state` is `uploading`, `ready`, `failed` or `missing` (empty for a legacy
+ * media not converted yet), `progress` a percentage, `statusText` the state
+ * message, `sizeLabel` the formatted size.
+ *
+ * - `uploading`: the progress bar on the tile, with its percentage (0 to 100).
+ * - `error`: a failed or missing upload (danger border and badge).
+ * - `retryable`: the tile shows Retry.
+ * - `details`: the tooltip line under the name (size, status, percentage).
+ *
+ * @param {object} item
+ * @returns {{uploading: boolean, error: boolean, progress: number|null, retryable: boolean, statusText: string, details: string}}
+ */
+export function editableTileState(item) {
+    const state = item?.state || ''
+    const uploading = state === 'uploading'
+    const error = state === 'failed' || state === 'missing'
+    const rawProgress = Number(item?.progress)
+    const progress = uploading
+        ? Math.round(Math.min(100, Math.max(0, Number.isFinite(rawProgress) ? rawProgress : 0)))
+        : null
+    const statusText = typeof item?.statusText === 'string' ? item.statusText : ''
+    const status = uploading && statusText ? `${statusText} (${progress}%)` : statusText
+    return {
+        uploading,
+        error,
+        progress,
+        retryable: !!item?.retryable,
+        statusText,
+        details: [item?.sizeLabel, status].filter(Boolean).join(' · '),
+    }
+}
+
+/**
+ * The id of the tile that keeps the focus after a Remove: the next tile, else
+ * the previous one, else none (the strip is empty).
+ *
+ * @param {Array<{id: string}>} items
+ * @param {string} removedId
+ * @returns {string[]} the candidates, in order of preference
+ */
+export function focusCandidatesAfterRemove(items, removedId) {
+    const list = items || []
+    const index = list.findIndex(item => item?.id === removedId)
+    if (index < 0) return []
+    return [list[index + 1]?.id, list[index - 1]?.id].filter(id => typeof id === 'string')
+}
+
+/**
  * Where a file chip opens, derived in the current instance (no stored path):
  * the current session's own artifacts dir (absolute path for the in-session
  * reveal), else the owner session's Artifacts tab (a fork parent, or a

@@ -1,9 +1,8 @@
 // frontend/src/utils/fileUtils.js
 // Legacy draft medias (`DraftMedia`, base64 in IndexedDB): SDK format
-// conversion, send-time resize, and the normalized MediaItem shape shared by
-// the media preview components. New composer attachments are staged uploads
-// (utils/composerAttachments.js); these helpers serve legacy drafts, legacy
-// failed-send snapshots, and the rendering of SDK blocks.
+// conversion and send-time resize. New composer attachments are staged uploads
+// (utils/composerAttachments.js); these helpers serve legacy failed-send
+// snapshots.
 
 // =============================================================================
 // Constants
@@ -193,90 +192,4 @@ export function mediasToSdkFormat(medias) {
     }
 
     return { images, documents }
-}
-
-// =============================================================================
-// Data URL Helpers
-// =============================================================================
-
-/**
- * Create a data URL from a DraftMedia object for display purposes.
- * @param {DraftMedia} media - The media object
- * @returns {string} Data URL for use in img src, etc.
- */
-export function mediaToDataUrl(media) {
-    if (media.type === FILE_TYPES.TXT) {
-        // Text files: encode as base64 for data URL
-        const base64 = btoa(unescape(encodeURIComponent(media.data)))
-        return `data:text/plain;base64,${base64}`
-    }
-    // Images and PDFs: already base64
-    return `data:${media.mimeType};base64,${media.data}`
-}
-
-// =============================================================================
-// Normalized MediaItem conversion
-// =============================================================================
-
-/**
- * @typedef {Object} MediaItem
- * @property {'image' | 'pdf' | 'txt'} type - Media type category
- * @property {string} src - Full data URL for display (used as img src for images)
- * @property {string} [name] - Optional filename
- * @property {string} [textContent] - Raw text content (only for type 'txt', used for preview)
- */
-
-/**
- * Convert a DraftMedia object to a normalized MediaItem for shared preview components.
- * @param {DraftMedia} media - The draft media object
- * @returns {MediaItem} Normalized media item
- */
-export function draftMediaToMediaItem(media) {
-    const item = {
-        type: media.type,
-        src: mediaToDataUrl(media),
-        name: media.name
-    }
-    if (media.type === FILE_TYPES.TXT) {
-        item.textContent = media.data
-    }
-    return item
-}
-
-/**
- * Convert a Claude SDK content block to a normalized MediaItem.
- * Handles both 'image' blocks and 'document' blocks (text, PDF).
- * @param {Object} block - SDK content block (type: 'image' or 'document')
- * @returns {MediaItem|null} Normalized media item, or null if not convertible
- */
-export function sdkBlockToMediaItem(block) {
-    if (block.type === 'image') {
-        const mediaType = block.source?.media_type || 'image/png'
-        if (!block.source?.data) return null
-        return {
-            type: FILE_TYPES.IMAGE,
-            src: `data:${mediaType};base64,${block.source.data}`,
-            name: undefined
-        }
-    }
-    if (block.type === 'document') {
-        const source = block.source
-        if (source?.type === 'text') {
-            const base64 = btoa(unescape(encodeURIComponent(source.data)))
-            return {
-                type: FILE_TYPES.TXT,
-                src: `data:text/plain;base64,${base64}`,
-                name: block.title,
-                textContent: source.data
-            }
-        }
-        if (source?.type === 'base64' && source?.data) {
-            return {
-                type: FILE_TYPES.PDF,
-                src: `data:${source.media_type};base64,${source.data}`,
-                name: block.title
-            }
-        }
-    }
-    return null
 }

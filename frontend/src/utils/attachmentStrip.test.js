@@ -13,6 +13,8 @@ import {
     attachmentMatchKey,
     buildAttachmentStrip,
     defaultAttachmentName,
+    editableTileState,
+    focusCandidatesAfterRemove,
     inflightAttachmentCount,
     leadingMediaSlots,
     isNativeStripMedia,
@@ -504,6 +506,48 @@ test('native media: malformed input gives no item, ids stay unique and positiona
     assert.deepEqual(items.map(item => item.id), ['native-0', 'native-1'])
     assert.equal(Object.hasOwn(items[1], 'src'), false, 'an image without loadable source is an icon tile')
     assert.equal(items[1].name, 'attachment-2.png')
+})
+
+// ---------------------------------------------------------------------------
+// Editable strip (the composer)
+// ---------------------------------------------------------------------------
+
+test('editableTileState: progress while uploading, error for failed and missing, Retry flag, tooltip details', () => {
+    const uploading = editableTileState({ name: 'a.png', sizeLabel: '1.5 KB', state: 'uploading', progress: 42.4, statusText: 'Uploading' })
+    assert.deepEqual(uploading, {
+        uploading: true, error: false, progress: 42, retryable: false, statusText: 'Uploading', details: '1.5 KB · Uploading (42%)',
+    })
+    const paused = editableTileState({ sizeLabel: '2 B', state: 'uploading', progress: 30, retryable: true, statusText: 'Upload paused' })
+    assert.equal(paused.retryable, true)
+    assert.equal(paused.error, false)
+    assert.equal(paused.details, '2 B · Upload paused (30%)')
+    assert.equal(editableTileState({ state: 'uploading', progress: 140 }).progress, 100)
+    assert.equal(editableTileState({ state: 'uploading', progress: -3 }).progress, 0)
+    assert.equal(editableTileState({ state: 'uploading', progress: 'x' }).progress, 0)
+
+    const failed = editableTileState({ sizeLabel: '3 KB', state: 'failed', progress: 10, retryable: true, statusText: 'Upload failed' })
+    assert.deepEqual(failed, {
+        uploading: false, error: true, progress: null, retryable: true, statusText: 'Upload failed', details: '3 KB · Upload failed',
+    })
+    const missing = editableTileState({ sizeLabel: '3 KB', state: 'missing', statusText: 'File no longer available' })
+    assert.equal(missing.error, true)
+    assert.equal(missing.retryable, false)
+
+    const ready = editableTileState({ sizeLabel: '3 KB', state: 'ready', progress: 100, statusText: '' })
+    assert.deepEqual(ready, { uploading: false, error: false, progress: null, retryable: false, statusText: '', details: '3 KB' })
+    // A legacy media waiting for its migration: no state, its message in the tooltip.
+    assert.equal(editableTileState({ sizeLabel: '1 KB', state: '', statusText: 'Preparing' }).details, '1 KB · Preparing')
+    assert.deepEqual(editableTileState(null), { uploading: false, error: false, progress: null, retryable: false, statusText: '', details: '' })
+})
+
+test('focusCandidatesAfterRemove: the next tile, then the previous one', () => {
+    const items = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+    assert.deepEqual(focusCandidatesAfterRemove(items, 'b'), ['c', 'a'])
+    assert.deepEqual(focusCandidatesAfterRemove(items, 'a'), ['b'])
+    assert.deepEqual(focusCandidatesAfterRemove(items, 'c'), ['b'])
+    assert.deepEqual(focusCandidatesAfterRemove([{ id: 'a' }], 'a'), [])
+    assert.deepEqual(focusCandidatesAfterRemove(items, 'zzz'), [])
+    assert.deepEqual(focusCandidatesAfterRemove(null, 'a'), [])
 })
 
 // ---------------------------------------------------------------------------

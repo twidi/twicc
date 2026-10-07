@@ -16,12 +16,9 @@ import { COMPOSER_PANEL } from './uploads/controller.js'
 import { entryPercent } from './uploads/display.js'
 import { makeClientId } from './uploads/ids.js'
 import { migrateLegacyAttachments } from './attachmentMigration.js'
-import { attachmentKindIcon } from './attachmentStrip.js'
 
 /** The upload origin panel of composer attachments (defined by the upload controller). */
 export { COMPOSER_PANEL }
-// One kind → icon mapping for composer chips and history strips.
-export { attachmentKindIcon }
 
 /** Display states of a composer attachment chip (§9.2). */
 export const ATTACHMENT_STATE = Object.freeze({
@@ -169,7 +166,7 @@ export function attachmentOriginKey(record) {
     return `${record.bucket}/${record.id}`
 }
 
-/** URL of the staged content of one entry (image and text previews). */
+/** URL of the staged content of one entry (image thumbnails). */
 export function attachmentContentUrl(ref) {
     return `${API_ROOT}/${encodeURIComponent(ref.bucket)}/${encodeURIComponent(ref.id)}/content`
 }
@@ -482,14 +479,13 @@ function chipStatusText(state, retryable, pauseReason) {
 }
 
 /**
- * One composer chip (§9.3) for `MediaThumbnailGroup`: the record fields, its
- * upload state, and how to preview it. An image thumbnail and a text preview
- * come from the local object URL while the `File` is in memory, else from the
- * staging content endpoint once the entry is `ready`. Other kinds show an
- * icon. `type` is the legacy media family the preview dialog understands
- * (`image`, `txt`, `pdf`, or `other`). Retry is offered for a failed upload
- * whose `File` is in memory, and for a transfer the controller paused on an
- * error. No native/file indicator (D7).
+ * One composer item (§9.3) for the editable `AttachmentStrip`: the record
+ * fields, its upload state and its thumbnail. An image thumbnail comes from
+ * the local object URL while the `File` is in memory, else from the staging
+ * content endpoint once the entry is `ready`. Other kinds show the icon of
+ * their kind (the strip derives it from `kind`). Retry is offered for a failed
+ * upload whose `File` is in memory, and for a transfer the controller paused
+ * on an error. No native/file indicator (D7).
  *
  * @param {{id: string, bucket: string, name: string, size: number, kind: string}} record
  * @param {{state?: string, progress?: number, retryable?: boolean, pauseReason?: string|null}|null} runtime
@@ -503,18 +499,6 @@ export function attachmentChipItem(record, runtime, { previewUrl = null } = {}) 
         ? !!runtime?.retryable
         : state === ATTACHMENT_STATE.UPLOADING && pauseReason === 'error'
     const remote = state === ATTACHMENT_STATE.READY ? attachmentContentUrl(record) : null
-    let type = 'other'
-    let src = null
-    let textUrl = null
-    if (record.kind === 'image') {
-        src = previewUrl || remote
-        if (src) type = 'image'
-    } else if (record.kind === 'text') {
-        textUrl = previewUrl || remote
-        if (textUrl) type = 'txt'
-    } else if (record.kind === 'PDF') {
-        type = 'pdf'
-    }
     return {
         id: record.id,
         name: record.name,
@@ -525,52 +509,79 @@ export function attachmentChipItem(record, runtime, { previewUrl = null } = {}) 
         progress: runtime?.progress ?? 0,
         retryable,
         statusText: chipStatusText(state, !!runtime?.retryable, pauseReason),
-        icon: attachmentKindIcon(record.kind),
-        type,
-        src,
-        textUrl,
+        src: record.kind === 'image' ? previewUrl || remote : null,
     }
 }
 
+/** Prefix of the strip item id of a legacy media (never mixed with a record id). */
+const LEGACY_STRIP_ID_PREFIX = 'legacy:'
+
+const LEGACY_MEDIA_KINDS = Object.freeze({ image: 'image', pdf: 'PDF', txt: 'text' })
+
+/** Bytes of a legacy media: decoded base64 (image, PDF) or UTF-8 text. */
+function legacyMediaSize(media) {
+    const data = typeof media?.data === 'string' ? media.data : ''
+    if (media?.type === 'txt') return new TextEncoder().encode(data).length
+    const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0
+    return Math.max(0, Math.floor((data.length * 3) / 4) - padding)
+}
+
 /**
- * Read the start of a text file for a preview: at most `limit` bytes, decoded
- * as UTF-8 (a character cut by the limit is dropped). A local object URL or
- * the staging content endpoint.
+ * The composer strip item of a legacy media (§9.6: a draft saved before staged
+ * uploads, shown until its migration turns it into a record). No upload state
+ * while it waits for its migration; `failed` with Remove only when it cannot
+ * be decoded. Its id is prefixed, so it never collides with the record its
+ * migration creates under the same id.
  *
- * @param {string} url
- * @param {{fetch: Function, limit: number}} options
- * @returns {Promise<{text: string, truncated: boolean}>} rejects on a failed answer; an answer
- *     without a body is an empty, untruncated preview
+ * @param {{id: string, name?: string, type: string, mimeType?: string, data?: string}} media
+ * @param {{failed?: boolean}} [options]
+ * @returns {object}
  */
-export async function readTextPreview(url, { fetch: fetchFn, limit }) {
-    const res = await fetchFn(url)
-    if (!res.ok) throw new Error(`Preview failed (${res.status})`)
-    // A 204 or an empty answer has no body stream: an empty preview.
-    if (!res.body) return { text: '', truncated: false }
-    const decoder = new TextDecoder()
-    let text = ''
-    let read = 0
-    let truncated = false
-    const reader = res.body.getReader()
-    try {
-        for (;;) {
-            const { done, value } = await reader.read()
-            if (done) break
-            const room = limit - read
-            if (value.length > room) {
-                text += decoder.decode(value.subarray(0, room), { stream: true })
-                truncated = true
-                break
-            }
-            read += value.length
-            text += decoder.decode(value, { stream: true })
-        }
-    } finally {
-        if (truncated) reader.cancel().catch(() => {})
-        else reader.releaseLock()
+export function legacyMediaStripItem(media, { failed = false } = {}) {
+    const kind = LEGACY_MEDIA_KINDS[media?.type] || 'other'
+    const size = legacyMediaSize(media)
+    const item = {
+        id: `${LEGACY_STRIP_ID_PREFIX}${media?.id}`,
+        name: String(media?.name || ''),
+        size,
+        sizeLabel: formatAttachmentSize(size),
+        kind,
+        state: failed ? ATTACHMENT_STATE.FAILED : '',
+        progress: 0,
+        retryable: false,
+        statusText: failed ? 'Could not be converted, remove it' : 'Preparing',
+        src: null,
     }
-    if (!truncated) text += decoder.decode()
-    return { text, truncated }
+    if (kind === 'image' && media?.data) item.src = `data:${media.mimeType || 'image/png'};base64,${media.data}`
+    return item
+}
+
+/**
+ * The legacy media id a composer strip item id stands for, or null for a
+ * staged record.
+ *
+ * @param {string} itemId
+ * @returns {string|null}
+ */
+export function legacyMediaIdOfStripItem(itemId) {
+    return typeof itemId === 'string' && itemId.startsWith(LEGACY_STRIP_ID_PREFIX)
+        ? itemId.slice(LEGACY_STRIP_ID_PREFIX.length)
+        : null
+}
+
+/**
+ * The composer strip: legacy medias first (§9.6), then one item per staged
+ * record, in add order.
+ *
+ * @param {{legacyMedias?: object[], chips?: object[], failedLegacyIds?: string[]}} parts
+ * @returns {object[]}
+ */
+export function composerStripItems({ legacyMedias = [], chips = [], failedLegacyIds = [] } = {}) {
+    const failed = new Set(failedLegacyIds || [])
+    return [
+        ...(legacyMedias || []).map(media => legacyMediaStripItem(media, { failed: failed.has(media?.id) })),
+        ...(chips || []),
+    ]
 }
 
 /**
@@ -746,7 +757,7 @@ export function createComposerAttachments(deps) {
     const attempts = new Map()
     /** id → counter, bumped by every new attempt and every removal. */
     const generations = new Map()
-    /** id → local object URL of an image or text `File` (chip and bubble previews). */
+    /** id → local object URL of an image `File` (composer and bubble thumbnails). */
     const previews = new Map()
     /** Object URLs whose record is gone, kept while an optimistic bubble shows them. */
     const releasedPreviews = new Set()
@@ -766,7 +777,7 @@ export function createComposerAttachments(deps) {
     }
 
     function createPreview(id, file, kind) {
-        if (kind !== 'image' && kind !== 'text') return
+        if (kind !== 'image') return
         try {
             previews.set(id, objectUrls.create(file))
         } catch (error) {
@@ -1451,7 +1462,7 @@ export function createComposerAttachments(deps) {
         return files.get(id) || null
     }
 
-    /** The local preview object URL of an attachment (image or text File in memory), or null. */
+    /** The local preview object URL of an attachment (image File in memory), or null. */
     function getPreviewUrl(id) {
         return previews.get(id) || null
     }

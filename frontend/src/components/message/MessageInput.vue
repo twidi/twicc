@@ -17,11 +17,12 @@ import { ensureProjectTrust } from '../../composables/useTrustGate'
 import { useFooterBlockMotion } from '../../composables/useFooterMotion.js'
 import { resolveProjectTrust } from '../../utils/trust'
 import { vPopoverFocusFix } from '../../directives/vPopoverFocusFix'
-import { draftMediaToMediaItem } from '../../utils/fileUtils'
 import {
     attachmentBadge,
     attachmentChipItem,
     composerAttachmentsReady,
+    composerStripItems,
+    legacyMediaIdOfStripItem,
     sendComposerMessage,
     setAttachmentPayloadFields,
     snapshotAttachments,
@@ -30,7 +31,7 @@ import { toast } from '../../composables/useToast'
 import { useCodeCommentsStore, formatAllComments } from '../../stores/codeComments'
 import { getParsedContent } from '../../utils/parsedContent'
 import { generateUUID } from '../../utils/crypto'
-import MediaThumbnailGroup from '../media/MediaThumbnailGroup.vue'
+import AttachmentStrip from '../media/AttachmentStrip.vue'
 import AppTooltip from '../ui/AppTooltip.vue'
 import FilePickerPopup from '../files/FilePickerPopup.vue'
 import CommandPickerPopup from './CommandPickerPopup.vue'
@@ -447,8 +448,8 @@ const optimisticMessageText = computed(() => {
 })
 
 // Attachments for this session (spec 2026-10-03 §9.3). Any file is accepted;
-// each one is uploaded to the server staging store and shown as a chip, in
-// add order. Legacy medias (drafts saved before staged uploads) are shown
+// each one is uploaded to the server staging store and shown as a tile of the
+// editable attachment strip, in add order. Legacy medias (drafts saved before staged uploads) are shown
 // first until their migration turns them into staged chips (§9.6); they are
 // never sent as such.
 const legacyAttachments = computed(() => store.getAttachments(props.sessionId))
@@ -492,13 +493,13 @@ watch(attachmentCount, (newCount, oldCount) => {
     }
 })
 
-// Items of the thumbnail group: legacy medias first (normalized MediaItem),
-// then one chip per staged attachment. A chip's index in this list is the
-// `remove` event index (see removeAttachmentByIndex).
-const mediaItems = computed(() => [
-    ...legacyAttachments.value.map(a => draftMediaToMediaItem(a)),
-    ...chipItems.value,
-])
+// Tiles of the editable attachment strip: legacy medias first (§9.6), then
+// one per staged attachment. Remove and Retry name the tile by its id.
+const attachmentStripItems = computed(() => composerStripItems({
+    legacyMedias: legacyAttachments.value,
+    chips: chipItems.value,
+    failedLegacyIds: store.localState.legacyFailedIds[props.sessionId],
+}))
 
 // Determine if input/button should be disabled
 const isDisabled = computed(() => {
@@ -1543,23 +1544,22 @@ async function onFileSelected(event) {
 }
 
 /**
- * Remove an attachment by index (from MediaThumbnailGroup): a legacy media
- * (listed first) is deleted; a staged attachment is released (chip Remove,
- * spec 2026-10-03 §6.1.4).
+ * Remove one tile of the attachment strip (by its id): a legacy media is
+ * deleted; a staged attachment is released (spec 2026-10-03 §6.1.4).
  */
-function removeAttachmentByIndex(index) {
-    const legacy = legacyAttachments.value
-    if (index < legacy.length) {
-        store.removeAttachment(props.sessionId, legacy[index].id)
+function removeAttachment(itemId) {
+    const legacyId = legacyMediaIdOfStripItem(itemId)
+    if (legacyId) {
+        store.removeAttachment(props.sessionId, legacyId)
         return
     }
-    const record = composerRecords.value[index - legacy.length]
+    const record = composerRecords.value.find(candidate => candidate.id === itemId)
     if (record) {
         store.releaseAttachments([{ bucket: record.bucket, id: record.id }])
     }
 }
 
-/** Chip Retry of a staged attachment (by attachment id). */
+/** Retry of a staged attachment (by attachment id). */
 function retryAttachment(attachmentId) {
     store.retryAttachment(attachmentId).catch(error => {
         console.warn('Attachment retry failed', error)
@@ -2242,12 +2242,14 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
                         placement="top"
                         class="attachments-popover"
                     >
-                        <MediaThumbnailGroup
-                            :items="mediaItems"
-                            removable
-                            @remove="removeAttachmentByIndex"
-                            @retry="retryAttachment"
-                        />
+                        <div class="attachments-popover-strip">
+                            <AttachmentStrip
+                                :items="attachmentStripItems"
+                                editable
+                                @remove="removeAttachment"
+                                @retry="retryAttachment"
+                            />
+                        </div>
                         <div class="popover-actions">
                             <wa-button
                                 variant="danger"
@@ -2739,6 +2741,16 @@ body.sidebar-toggle-floating .message-input-toolbar {
 .attachments-popover {
     --max-width: min(400px, 90vw);
     --arrow-size: 16px;
+}
+
+/* The strip is one row that scrolls sideways: its box needs a definite width (an
+   inline-size container does not size to its content). Its tiles shrink when the
+   popover is narrow (mobile), through the `attachment-strip-host` container query
+   of AttachmentStrip.vue. */
+.attachments-popover-strip {
+    container: attachment-strip-host / inline-size;
+    width: min(24rem, calc(90vw - 2 * var(--wa-space-l)));
+    max-width: 100%;
 }
 
 .popover-actions {
