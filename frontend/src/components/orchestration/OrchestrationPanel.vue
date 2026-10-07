@@ -4,7 +4,7 @@
 //   - "sessions": the sessions spawned BY this session (the topology re-rooted on it), with a
 //     "Spawned by" line linking to the parent's own Orchestration tab;
 //   - "agents": the subagents this session launched, at any depth, live off the agent-link cache
-//     (no fetch, poll or error state of its own). Called "subagent" throughout the UI, never just "agent".
+//     (refreshed on activation, with no polling or error state). Called "subagent" throughout the UI.
 //
 // Sessions data: ``GET /api/projects/<pid>/sessions/<sid>/topology/`` returns the WHOLE spawn tree rooted
 // at its top-level ancestor; this panel finds the current session's subtree in it (the payload is
@@ -12,9 +12,9 @@
 // node of the payload is live (any process state other than ``dead``); the tab also force-fetches once on
 // every (re)activation. Polling is a stop-gap until the tree is pushed over the WebSocket.
 //
-// Each time bar is relative to its direct parent's span (``computeTreeGeometry``); ``now`` is refreshed on each load and
-// by a 30s timer that runs only while the tab is active and a displayed node is working.
-import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, useId } from 'vue'
+// Each time bar uses the direct parent's span at activation or refresh. A separate 30s clock
+// updates durations only while the panel is visible and a displayed node is working.
+import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, useId, provide } from 'vue'
 import { useResizeObserver } from '@vueuse/core'
 import { useRoute } from 'vue-router'
 import OrchestrationNode from './OrchestrationNode.vue'
@@ -31,13 +31,12 @@ import {
     reuseUnchangedMap, reuseUnchangedNodes, reuseUnchangedTree,
 } from '../../utils/orchestrationView'
 import { sessionRouteLocation } from '../../utils/sessionRoute'
+import { SESSION_TREE_CONTEXT, AGENT_TREE_CONTEXT } from './orchestrationKeys.js'
+import { useVisibleComputed } from './useVisibleComputed.js'
 
 const store = useDataStore()
 const settingsStore = useSettingsStore()
 const route = useRoute()
-// Honour the global "Show costs" toggle, like the rest of the app.
-const showCosts = computed(() => settingsStore.areCostsShown)
-
 const props = defineProps({
     sessionId: { type: String, required: true },
     projectId: { type: String, required: true },
@@ -47,22 +46,31 @@ const props = defineProps({
     active: { type: Boolean, default: false },
 })
 
+const panelActive = computed(() => props.active)
+const visibleComputed = useVisibleComputed(panelActive)
+// Honour the global "Show costs" toggle, like the rest of the app.
+const showCosts = visibleComputed(() => settingsStore.areCostsShown, false)
+
 // ── The two views ───────────────────────────────────────────────────────────
-const hasAgents = computed(() => store.hasSubagents(props.sessionId))
-const agentTree = computed(() => store.getAgentTree(props.sessionId))
+const hasAgents = visibleComputed(() => store.hasSubagents(props.sessionId), false)
 // The tab label's indicators, repeated on the view switch's inactive segment.
-const orchestrationActivity = computed(() => store.getOrchestrationActivity(props.sessionId))
-const canSwitchView = computed(() => props.hasSpawnTree && hasAgents.value)
+const orchestrationActivity = visibleComputed(() => store.getOrchestrationActivity(props.sessionId), null)
+const canSwitchView = visibleComputed(() => props.hasSpawnTree && hasAgents.value, false)
 const VIEW_OPTIONS = [
     { value: 'sessions', label: 'Sessions', icon: 'diagram-project' },
     { value: 'agents', label: 'Subagents', icon: 'robot' },
 ]
 // User choice, only honoured when both views exist; otherwise the available one wins.
 const selectedView = ref('sessions')
-const view = computed(() => {
+const view = visibleComputed(() => {
     if (canSwitchView.value) return selectedView.value
     return props.hasSpawnTree ? 'sessions' : 'agents'
-})
+}, props.hasSpawnTree ? 'sessions' : 'agents')
+const sessionsActive = computed(() => panelActive.value && view.value === 'sessions')
+const agentsActive = computed(() => panelActive.value && view.value === 'agents')
+const sessionComputed = useVisibleComputed(sessionsActive)
+const agentComputed = useVisibleComputed(agentsActive)
+const agentTree = agentComputed(previous => store.getAgentTree(props.sessionId, previous), [])
 
 // ── Lazy mounting, kept alive ───────────────────────────────────────────────
 // Rendering a long list (100+ subagents, 250 sessions) is synchronous: done in the task of the click, it
@@ -71,7 +79,6 @@ const view = computed(() => {
 // then stays mounted and is only toggled with ``v-show``: going back is instant and the fresh data patches it.
 // The view shown when the panel opens is mounted at once.
 const mountedViews = reactive({ sessions: false, agents: false })
-mountedViews[view.value] = true
 let mountToken = 0
 let unmounted = false
 // Resolves once the browser has painted the current state: the first frame runs the render that follows the
@@ -82,26 +89,27 @@ const frame = (callback) => {
     pendingFrames.add(id)
 }
 const afterPaint = () => new Promise(resolve => frame(() => frame(resolve)))
-watch(view, async (shown) => {
-    if (mountedViews[shown]) return
-    // Not a user switch (only one view exists): nothing to paint first.
-    if (!canSwitchView.value) {
+watch([panelActive, view], async ([active, shown], previous) => {
+    const token = ++mountToken
+    if (!active || mountedViews[shown]) return
+    // Opening the panel needs no switch animation before mounting.
+    if (!previous?.[0] || !canSwitchView.value) {
         mountedViews[shown] = true
         return
     }
-    const token = ++mountToken
     await nextTick()
     await afterPaint()
-    // Superseded by another switch, left for another view, or gone meanwhile: do not mount.
-    if (unmounted || token !== mountToken || view.value !== shown) return
+    if (unmounted || !panelActive.value || token !== mountToken || view.value !== shown) return
     mountedViews[shown] = true
-})
+}, { immediate: true })
 
 const loading = ref(false)
 const error = ref(null)
 const topology = ref(null)
-// Shared clock for working nodes' bars and durations (ms).
+// Live durations share a clock. Bar scales sample time only on activation or refresh.
 const now = ref(Date.now())
+const sessionsSnapshotNow = ref(now.value)
+const agentsSnapshotNow = ref(now.value)
 
 const AUTO_REFRESH_INTERVAL = 15000
 const NOW_INTERVAL = 30000
@@ -112,32 +120,32 @@ let inFlightController = null
 
 // ── Sessions view: the topology re-rooted on the current session ────────────
 // Stable across reloads: an unchanged map keeps its identity, so the cards bound to it are not re-patched.
-const nodesById = computed((previous) => {
+const nodesById = sessionComputed((previous) => {
     const map = {}
     for (const node of topology.value?.nodes ?? []) map[node.id] = node
     return reuseUnchangedMap(previous, map)
-})
+}, {})
 // ``null`` when the current session is not in the payload (a corrupt spawn edge): "No orchestration data."
-const subtree = computed(() => {
+const subtree = sessionComputed(() => {
     const tree = topology.value?.tree
     return tree && nodesById.value[props.sessionId] ? findSubtree(tree, props.sessionId) : null
-})
-const currentNode = computed(() => nodesById.value[props.sessionId] ?? null)
-const sessionNodes = computed(() => (subtree.value ? flattenTree(subtree.value) : []))
+}, null)
+const currentNode = sessionComputed(() => nodesById.value[props.sessionId] ?? null, null)
+const sessionNodes = sessionComputed(() => (subtree.value ? flattenTree(subtree.value) : []), [])
 const stateBucketOf = (id) => bucketOfProcessState(nodesById.value[id]?.process?.state ?? 'dead')
 // Tiles count the DESCENDANTS (the current session is the first card, not a spawned session).
-const sessionCounts = computed(() => countBuckets(sessionNodes.value.slice(1).map(n => stateBucketOf(n.id))))
+const sessionCounts = sessionComputed(() => countBuckets(sessionNodes.value.slice(1).map(n => stateBucketOf(n.id))))
 // Cost of the current session and everything below it (equals the root card's Σ).
-const sessionsCost = computed(() => currentNode.value?.subtree_total_cost ?? null)
+const sessionsCost = sessionComputed(() => currentNode.value?.subtree_total_cost ?? null)
 
 // "Spawned by": the direct parent only. A hidden parent cannot be opened (plain text + crossed-out eye).
-const parentNode = computed(() => parentOf(nodesById.value, props.sessionId))
-const parentTitle = computed(() => {
+const parentNode = sessionComputed(() => parentOf(nodesById.value, props.sessionId))
+const parentTitle = sessionComputed(() => {
     const t = parentNode.value?.session?.title
     return (t && t.trim()) ? t : (parentNode.value?.id ?? '').slice(0, 8)
 })
-const parentHidden = computed(() => parentNode.value?.session?.hidden === true)
-const parentRoute = computed(() => (parentNode.value && !parentHidden.value
+const parentHidden = sessionComputed(() => parentNode.value?.session?.hidden === true)
+const parentRoute = sessionComputed(() => (parentNode.value && !parentHidden.value
     ? sessionRouteLocation(
         { id: parentNode.value.id, project_id: parentNode.value.session.project_id },
         route,
@@ -145,34 +153,37 @@ const parentRoute = computed(() => (parentNode.value && !parentHidden.value
     )
     : null))
 // The note explains the crossed-out eye: shown iff a hidden session is displayed (parent or any card).
-const showHiddenNote = computed(() => parentHidden.value
+const showHiddenNote = sessionComputed(() => parentHidden.value
     || sessionNodes.value.some(n => nodesById.value[n.id]?.session?.hidden === true))
 
 // ── Agents view ─────────────────────────────────────────────────────────────
-const agentNodes = computed(() => agentTree.value.flatMap(flattenTree))
+const agentNodes = agentComputed(() => agentTree.value.flatMap(flattenTree), [])
 const agentIsRunning = (id) => !!store.getProcessState(id)
-const agentCounts = computed(() => countBuckets(agentNodes.value.map(n => (agentIsRunning(n.id) ? 'working' : 'stopped'))))
-const agentTotalCost = computed(() => agentForestCost(store, agentTree.value))
+const agentCounts = agentComputed(() => countBuckets(agentNodes.value.map(n => (agentIsRunning(n.id) ? 'working' : 'stopped'))))
+const agentTotalCost = agentComputed(() => agentForestCost(store, agentTree.value))
 // Nothing to show yet: the ``/subagents/`` snapshot never landed and no agent is cached. Once it has, an empty
 // list means "No subagent.".
-const agentsPending = computed(() => !agentNodes.value.length && !store.areSubagentsLoaded(props.sessionId))
+const agentsPending = agentComputed(() => !agentNodes.value.length && !store.areSubagentsLoaded(props.sessionId))
 
 // ── Time bars: each node relative to its direct parent ──────────────────────
 // The current session's own span anchors the first level in BOTH views: it is the first card of the sessions
 // view, and an extra item (no card) of the subagents view. ``null`` while its row is not loaded.
-const currentSessionItem = computed(() => {
+const currentSessionItem = agentComputed(previous => {
     const row = store.getSession(props.sessionId)
     if (!row) return null
-    return {
+    const working = bucketOfProcessState(store.getProcessState(props.sessionId)?.state ?? 'dead') === 'working'
+    const item = {
         id: props.sessionId,
         start: isoMs(row.created_at),
-        end: isoMs(row.last_new_content_at),
-        working: bucketOfProcessState(store.getProcessState(props.sessionId)?.state ?? 'dead') === 'working',
+        // Streaming changes this timestamp, but a working parent's bar uses snapshot time.
+        end: working ? null : isoMs(row.last_new_content_at),
+        working,
     }
-})
+    return previous && Object.keys(item).every(key => item[key] === previous[key]) ? previous : item
+}, null)
 // Each view has its OWN items and geometry, independent of the selected view: both trees stay mounted, and a
 // switch must not re-patch them with the other view's bars.
-const agentItems = computed(() => {
+const agentItems = agentComputed(() => {
     const items = agentNodes.value.map(n => ({
         id: n.id,
         start: isoMs(n.entry?.startedAt),
@@ -181,7 +192,7 @@ const agentItems = computed(() => {
     }))
     return currentSessionItem.value ? [currentSessionItem.value, ...items] : items
 })
-const sessionItems = computed(() => sessionNodes.value.map(n => {
+const sessionItems = sessionComputed(() => sessionNodes.value.map(n => {
     const node = nodesById.value[n.id]
     return {
         id: n.id,
@@ -190,27 +201,29 @@ const sessionItems = computed(() => sessionNodes.value.map(n => {
         working: stateBucketOf(n.id) === 'working',
     }
 }))
-const timelineItems = computed(() => (view.value === 'agents' ? agentItems.value : sessionItems.value))
+const timelineItems = visibleComputed(() => (view.value === 'agents' ? agentItems.value : sessionItems.value), [])
 // The global range only serves the cumulative-time tile (``rangeEnd``); the bars use the per-view geometry below.
-const globalTimeline = computed(() => computeTimeline(timelineItems.value, now.value))
+const globalTimeline = visibleComputed(() => computeTimeline(timelineItems.value, now.value), { range: null })
 // Bar geometry: root = the re-rooted subtree (sessions view) or a virtual node standing for the current
 // session (subagents view; with no item while its row is not loaded, the first level then ranges itself).
-function geometryOf(getRoot, items) {
-    return computed((previous) => {
+function geometryOf(calculate, snapshotNow, getRoot, items) {
+    return calculate((previous) => {
         const root = getRoot()
         if (!root) return { geometry: {} }
         const itemsById = Object.fromEntries(items.value.map(item => [item.id, item]))
         // Per-node geometry objects (and the whole result) are reused when unchanged, like the nodes.
-        const geometry = reuseUnchangedMap(previous?.geometry, computeTreeGeometry(root, itemsById, now.value))
+        const geometry = reuseUnchangedMap(previous?.geometry, computeTreeGeometry(root, itemsById, snapshotNow.value))
         return geometry === previous?.geometry ? previous : { geometry }
-    })
+    }, { geometry: {} })
 }
-const agentsTimeline = geometryOf(() => ({ id: props.sessionId, children: agentTree.value }), agentItems)
-const sessionsTimeline = geometryOf(() => subtree.value, sessionItems)
-const hasWorkingNode = computed(() => timelineItems.value.some(item => item.working))
+const agentsTimeline = geometryOf(agentComputed, agentsSnapshotNow, () => ({ id: props.sessionId, children: agentTree.value }), agentItems)
+const sessionsTimeline = geometryOf(sessionComputed, sessionsSnapshotNow, () => subtree.value, sessionItems)
+provide(SESSION_TREE_CONTEXT, { active: sessionsActive, nodesById, timeline: sessionsTimeline, now })
+provide(AGENT_TREE_CONTEXT, { active: agentsActive, timeline: agentsTimeline, now })
+const hasWorkingNode = visibleComputed(() => timelineItems.value.some(item => item.working), false)
 
 // The header's tiles. ``null`` while there is nothing to summarise (loading, error, no data).
-const summary = computed(() => {
+const summary = visibleComputed(() => {
     // Every node below the current session: the current session (first card, or the extra item of the
     // subagents view) is never counted.
     const cumulative = cumulativeSeconds(timelineItems.value, globalTimeline.value.range?.end, props.sessionId)
@@ -219,11 +232,11 @@ const summary = computed(() => {
     }
     if (!subtree.value) return null
     return { kind: 'sessions', counts: sessionCounts.value, cost: sessionsCost.value, cumulativeSeconds: cumulative }
-})
+}, null)
 
 // Auto-refresh gate: the poll runs while at least one node of the WHOLE payload is not ``dead`` (a live
-// ancestor or sibling keeps the parent line and the payload fresh), whatever is displayed.
-const hasLiveNode = computed(() =>
+// ancestor or sibling keeps the parent line and the payload fresh), while the sessions view is visible.
+const hasLiveNode = sessionComputed(() =>
     (topology.value?.nodes ?? []).some(n => (n.process?.state ?? 'dead') !== 'dead'),
 )
 
@@ -231,7 +244,7 @@ const hasLiveNode = computed(() =>
 // Refresh button's spinner and nothing else, so the tree already rendered stays on screen while it runs.
 // ``silent`` ticks (background polls) keep the last good snapshot on failure and raise no error banner.
 async function load({ silent = false } = {}) {
-    if (!props.projectId || !props.sessionId) return
+    if (!sessionsActive.value || !props.projectId || !props.sessionId) return
     if (!props.hasSpawnTree) return  // no spawned session: nothing to fetch
     if (inFlightController) inFlightController.abort()
     const controller = new AbortController()
@@ -244,15 +257,17 @@ async function load({ silent = false } = {}) {
             throw new Error(`Failed to load topology: ${response.status}`)
         }
         const payload = await response.json()
+        if (controller.signal.aborted || inFlightController !== controller || !sessionsActive.value) return
         const previous = topology.value
         // Unchanged nodes / subtrees keep their previous objects: Vue then patches only what changed.
         topology.value = previous
             ? { ...payload, nodes: reuseUnchangedNodes(previous.nodes, payload.nodes ?? []), tree: reuseUnchangedTree(previous.tree, payload.tree) }
             : payload
-        now.value = Date.now()
+        sessionsSnapshotNow.value = Date.now()
+        now.value = sessionsSnapshotNow.value
         error.value = null
     } catch (e) {
-        if (e.name === 'AbortError') return // superseded by a newer load
+        if (controller.signal.aborted || inFlightController !== controller || !sessionsActive.value || e.name === 'AbortError') return // superseded by a newer load
         console.error('Failed to load orchestration topology:', e)
         if (!silent || !topology.value) {
             error.value = 'Failed to load the orchestration topology.'
@@ -273,14 +288,14 @@ function stopAuto() {
     }
 }
 function syncAuto() {
-    const shouldRun = props.active && hasLiveNode.value
+    const shouldRun = sessionsActive.value && hasLiveNode.value
     if (shouldRun && autoTimer === null) {
         autoTimer = setInterval(() => load({ silent: true }), AUTO_REFRESH_INTERVAL)
     } else if (!shouldRun) {
         stopAuto()
     }
 }
-watch([() => props.active, hasLiveNode], syncAuto, { immediate: true })
+watch([sessionsActive, hasLiveNode], syncAuto, { immediate: true })
 
 function stopNow() {
     if (nowTimer !== null) {
@@ -304,40 +319,52 @@ watch([() => props.active, hasWorkingNode], syncNow, { immediate: true })
 // WebSocket, but the per-agent numbers it carries (cost, turns, context, model) only move with a read.
 // A counter: the activation read, the "agents appeared" read and a click can overlap.
 const agentReads = ref(0)
+let agentReadIncludesAgents = false
+let pendingAgentRefresh = false
 // The Refresh button spins while ANY read is in flight (topology or subagents snapshot), whichever view is shown.
-const refreshing = computed(() => loading.value || agentReads.value > 0)
+const refreshing = visibleComputed(() => view.value === 'agents' ? agentReads.value > 0 : loading.value, false)
 async function refreshAgents() {
+    if (unmounted || !agentsActive.value) return
+    agentReadIncludesAgents = hasAgents.value
+    pendingAgentRefresh = false
     agentReads.value++
     try {
         await store.fetchSubagentsState(props.projectId, props.sessionId)
+        if (!unmounted && agentsActive.value) agentsSnapshotNow.value = Date.now()
     } finally {
         agentReads.value--
+        // A live link newer than an in-flight snapshot keeps its identity but
+        // skips that snapshot's metrics. One newer read fills them afterwards.
+        if (!unmounted && agentReads.value === 0 && pendingAgentRefresh && agentsActive.value) refreshAgents()
     }
 }
 function refresh() {
     return view.value === 'agents' ? refreshAgents() : load()
 }
 
-// Force a fresh read every time the tab becomes active, regardless of the poll condition.
-watch(
-    () => props.active,
-    (active) => {
-        if (!active) return
+// Fetch only the selected, visible view. An obsolete topology response never
+// replaces the snapshot, even if the transport resolves after cancellation.
+watch(() => sessionsActive.value && props.hasSpawnTree
+    ? `${props.projectId}/${props.sessionId}` : null, key => {
+    if (key) {
+        sessionsSnapshotNow.value = Date.now()
         load()
-        if (hasAgents.value) refreshAgents()
-    },
-    { immediate: true },
-)
-
-// The tab can become active BEFORE what it shows has arrived: on a direct URL or a bookmark the session
-// row (its ``spawn_root``, hence ``hasSpawnTree``) and the agent links land after the first render, and
-// ``load()`` is a no-op without a spawn tree. Re-read as soon as each source becomes available while the
-// tab is active; otherwise it would sit on an empty state until the next activation.
-watch(() => props.hasSpawnTree, (has) => {
-    if (has && props.active) load()
-})
-watch(hasAgents, (has) => {
-    if (has && props.active) refreshAgents()
+    } else if (inFlightController) {
+        inFlightController.abort()
+        inFlightController = null
+        loading.value = false
+    }
+}, { immediate: true })
+watch([agentsActive, () => props.projectId, () => props.sessionId], ([active]) => {
+    if (!active) return
+    agentsSnapshotNow.value = Date.now()
+    refreshAgents()
+}, { immediate: true })
+// Late-discovered links still need their historical metrics while this view is open.
+watch(hasAgents, (has, had) => {
+    if (!has || had !== false || !agentsActive.value) return
+    if (agentReads.value === 0) refreshAgents()
+    else if (!agentReadIncludesAgents) pendingAgentRefresh = true
 })
 
 // ── Scroll-to-edge buttons ──────────────────────────────────────────────────
@@ -357,6 +384,7 @@ const scrollBottomButtonId = useId()
 const scrollTopButtonId = useId()
 
 function updateOverflow() {
+    if (!panelActive.value) return
     hasOverflow.value = [frameEl.value, contentEl.value].some(
         el => el && el.scrollHeight > el.clientHeight + 1,
     )
@@ -364,7 +392,7 @@ function updateOverflow() {
 useResizeObserver([frameEl, contentEl, sessionsTreeEl, agentsTreeEl], updateOverflow)
 // Data changes that alter the list's height without necessarily resizing an observed box.
 watch(
-    [view, () => mountedViews.sessions, () => mountedViews.agents, loading, error, topology, () => sessionNodes.value.length, () => agentNodes.value.length],
+    [panelActive, view, () => mountedViews.sessions, () => mountedViews.agents, loading, error, topology, () => sessionNodes.value.length, () => agentNodes.value.length],
     () => nextTick(updateOverflow),
     { flush: 'post' },
 )
@@ -392,6 +420,7 @@ function scrollListTo(toBottom) {
 
 onUnmounted(() => {
     unmounted = true
+    pendingAgentRefresh = false
     for (const id of pendingFrames) cancelAnimationFrame(id)
     pendingFrames.clear()
     stopAuto()
@@ -475,8 +504,6 @@ onUnmounted(() => {
                             :node="node"
                             :session-id="sessionId"
                             :project-id="projectId"
-                            :timeline="agentsTimeline"
-                            :now="now"
                         />
                     </div>
                     <div v-else class="orch-state orch-state-empty">
@@ -512,10 +539,7 @@ onUnmounted(() => {
                             <div ref="sessionsTreeEl" class="orch-tree">
                                 <OrchestrationNode
                                     :node="subtree"
-                                    :nodes-by-id="nodesById"
                                     :current-session-id="sessionId"
-                                    :timeline="sessionsTimeline"
-                                    :now="now"
                                 />
                             </div>
                             <div v-if="!subtree.children.length" class="orch-empty-line">

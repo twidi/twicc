@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createPinia, defineStore } from 'pinia'
 import { computed, nextTick, watch } from 'vue'
-import { descendantActiveProcessStates } from '../utils/orchestrationActivity.js'
+import { descendantActiveProcessStates, hasRunningAgent } from '../utils/orchestrationActivity.js'
+import { agentLinkState, setAgentLink, buildAgentTree } from '../utils/agentLinkIndex.js'
 import { summarizeProcessActivity } from '../utils/processActivity.js'
 
 const source = readFileSync(new URL('./data.js', import.meta.url), 'utf8')
@@ -67,4 +68,47 @@ test('pending requests and subagent activity replace the summary', () => {
     assert.equal(pending.sessions.pendingRequestCount, 1)
     store.runningAgent = true
     assert.equal(store.getOrchestrationActivity('root').subagentsRunning, true)
+})
+
+
+const runningStart = source.indexOf('        hasRunningSubagent:')
+const runningEnd = source.indexOf('        /**', runningStart)
+const runningGetters = new Function('buildAgentTree', 'hasRunningAgent',
+    `return { ${source.slice(runningStart, runningEnd)} }`)(buildAgentTree, hasRunningAgent)
+const useRunning = defineStore('running-orchestration-test', {
+    state: () => ({ localState: agentLinkState(), processStates: {} }), getters: runningGetters,
+})
+
+test('running subagent activity includes nested and unanchored agents but excludes other roots and real processes', () => {
+    const store = useRunning(createPinia())
+    const add = (id, owner, root = 'root') => setAgentLink(store.localState, owner, `spawn-${id}`, {
+        agentId: id, rootSessionId: root, startedAt: '2026-10-07T10:00:00Z',
+    })
+    add('parent', 'root'); add('nested', 'parent'); add('detached', 'missing')
+    add('cycle-a', 'cycle-b'); add('cycle-b', 'cycle-a'); add('other', 'root', 'elsewhere'); add('root', 'root')
+    assert.equal(store.hasRunningSubagent('root'), false)
+    for (const id of ['nested', 'detached', 'cycle-a']) {
+        store.processStates[id] = { synthetic: true }
+        assert.equal(store.hasRunningSubagent('root'), true)
+        delete store.processStates[id]
+    }
+    store.processStates.other = { synthetic: true }
+    store.processStates.root = { synthetic: true }
+    store.processStates.parent = { synthetic: false }
+    assert.equal(store.hasRunningSubagent('root'), false)
+})
+
+test('subagent activity does not depend on tree order or timestamps', () => {
+    const store = useRunning(createPinia())
+    for (const id of ['a', 'b']) setAgentLink(store.localState, 'root', `spawn-${id}`, {
+        agentId: id, rootSessionId: 'root', startedAt: '2026-10-07T10:00:00Z',
+    })
+    let reads = 0
+    const active = computed(() => { reads++; return store.hasRunningSubagent('root') })
+    assert.equal(active.value, false)
+    store.localState.agentLinkIndex.a.startedAt = '2026-10-07T10:00:01Z'
+    assert.equal(active.value, false)
+    assert.equal(reads, 1)
+    store.processStates.b = { synthetic: true }
+    assert.equal(active.value, true)
 })

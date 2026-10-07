@@ -15,7 +15,7 @@ import { backgroundWorkStatusKey, buildBackgroundWorkStatusLines } from '../util
 import { DISPLAY_LEVEL, DISPLAY_MODE, INITIAL_ITEMS_COUNT, PROCESS_STATE, SYNTHETIC_ITEM } from '../constants'
 import { getProviderHelpers, getProviderStore } from '../providers'
 import { getSessionCutoffMs, isSessionUnread } from '../utils/sessions'
-import { descendantActiveProcessStates, hasRunningAgent } from '../utils/orchestrationActivity'
+import { descendantActiveProcessStates } from '../utils/orchestrationActivity'
 import { dropsProcessStateOnRemoval } from '../composables/wsProcessState'
 import { summarizeProcessActivity } from '../utils/processActivity'
 import {
@@ -1212,11 +1212,11 @@ export const useDataStore = defineStore('data', {
         /** Whether a session spawned at least one agent, at any depth. */
         hasSubagents: (state) => (rootSessionId) => hasTreeAgents(state.localState, rootSessionId),
         /** The session's agent tree, nested by launcher — see ``buildAgentTree``. */
-        getAgentTree: (state) => (rootSessionId) => buildAgentTree(state.localState, rootSessionId),
+        getAgentTree: (state) => (rootSessionId, previous) => buildAgentTree(state.localState, rootSessionId, previous),
         /** Whether at least one of the session's subagents (any depth) runs now — see ``isAgentRunning``. */
-        hasRunningSubagent: (state) => (rootSessionId) => hasRunningAgent(
-            buildAgentTree(state.localState, rootSessionId),
-            agentId => !!state.processStates[agentId]?.synthetic,
+        hasRunningSubagent: (state) => (rootSessionId) => Object.values(state.localState.agentLinkIndex).some(
+            entry => entry.rootSessionId === rootSessionId && entry.agentId !== rootSessionId
+                && !!state.processStates[entry.agentId]?.synthetic,
         ),
         /**
          * Live process states of the visible sessions spawned under this one, at

@@ -226,6 +226,9 @@ export function staleSyntheticAgentIds(state, root, processStates, cutoffMs) {
 }
 // Every agent of one tree, whatever its depth (the snapshot and the WS events
 // both stamp ``rootSessionId``).
+function retainNodes(previous, next) {
+    return previous?.length === next.length && next.every((node, i) => node === previous[i]) ? previous : next
+}
 function treeAgentEntries(state, root) {
     return Object.values(state.agentLinkIndex).filter(entry => entry.rootSessionId === root && entry.agentId !== root)
 }
@@ -238,7 +241,15 @@ export function hasTreeAgents(state, root) {
 // or a cycle — re-anchors the agent on the root, so the result is always a tree
 // and no agent is silently dropped. Returns the root's children as
 // ``{ id, entry, children }`` nodes, oldest spawn first.
-export function buildAgentTree(state, root) {
+export function buildAgentTree(state, root, previous) {
+    const previousNodes = new Map()
+    const index = nodes => {
+        for (const node of nodes ?? []) {
+            previousNodes.set(node.id, node)
+            index(node.children)
+        }
+    }
+    index(previous)
     const entries = treeAgentEntries(state, root)
     const byId = new Map(entries.map(entry => [entry.agentId, entry]))
     const children = new Map()
@@ -255,8 +266,15 @@ export function buildAgentTree(state, root) {
     }
     const order = (a, b) => (time(a.startedAt) - time(b.startedAt)) || (a.agentId < b.agentId ? -1 : 1)
     const build = owner => (children.get(owner) ?? []).sort(order)
-        .map(entry => ({ id: entry.agentId, entry, children: build(entry.agentId) }))
-    return build(root)
+        .map(entry => {
+            const prior = previousNodes.get(entry.agentId)
+            const descendants = retainNodes(prior?.children, build(entry.agentId))
+            // Entries stay reactive. Reuse wrappers when identity and child order
+            // are unchanged; changed branches do not replace their siblings.
+            return prior?.entry === entry && prior.children === descendants
+                ? prior : { id: entry.agentId, entry, children: descendants }
+        })
+    return retainNodes(previous, build(root))
 }
 // Executable WS seam shared with the main dispatcher. A link event carries
 // identity only; the running state comes from ``agent_run_state``.

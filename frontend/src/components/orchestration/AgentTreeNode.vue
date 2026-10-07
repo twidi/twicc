@@ -8,7 +8,7 @@
 // ``agent_stopped`` events, so this view needs no polling of its own. Numbers come from the agent's own
 // ``Session`` row when it is loaded (live), else from the ``metrics`` block / ``model`` of the ``/subagents/``
 // snapshot — historical agents have no row in the store.
-import { computed, ref } from 'vue'
+import { ref, inject } from 'vue'
 import { useRoute } from 'vue-router'
 import AppTooltip from '../ui/AppTooltip.vue'
 import CostDisplay from '../ui/CostDisplay.vue'
@@ -22,13 +22,12 @@ import { agentCost, agentSubtreeCost } from '../../utils/agentTreeMetrics'
 import { formatDate, formatDuration } from '../../utils/date'
 import { agentModelLabel, BUCKET_BORDER_COLORS, flattenTree } from '../../utils/orchestrationView'
 import { sessionRouteLocation } from '../../utils/sessionRoute'
+import { AGENT_TREE_CONTEXT } from './orchestrationKeys.js'
+import { useVisibleComputed } from './useVisibleComputed.js'
 
 const store = useDataStore()
 const settingsStore = useSettingsStore()
 const route = useRoute()
-
-// Honour the global "Show costs" toggle, like the rest of the app.
-const showCosts = computed(() => settingsStore.areCostsShown)
 
 const props = defineProps({
     // Tree node from ``buildAgentTree``: { id, entry, children: [...] }
@@ -36,68 +35,67 @@ const props = defineProps({
     // The session that owns the tree (the root of every agent route here).
     sessionId: { type: String, required: true },
     projectId: { type: String, required: true },
-    // { geometry: { [id]: { left, width, live } } } from computeTimeline.
-    timeline: { type: Object, default: () => ({ geometry: {} }) },
-    // Shared clock from the panel, in milliseconds.
-    now: { type: Number, required: true },
 })
+const { active, timeline, now } = inject(AGENT_TREE_CONTEXT)
+const visibleComputed = useVisibleComputed(active)
+const showCosts = visibleComputed(() => settingsStore.areCostsShown)
 
-const entry = computed(() => props.node.entry)
-const hasChildren = computed(() => (props.node.children?.length ?? 0) > 0)
-const descendantCount = computed(() => flattenTree(props.node).length - 1)
+const entry = visibleComputed(() => props.node.entry)
+const hasChildren = visibleComputed(() => (props.node.children?.length ?? 0) > 0)
+const descendantCount = visibleComputed(() => flattenTree(props.node).length - 1)
 
 // The name the launcher gave this agent (see utils/agentLabel.js); ``Subagent "<short id>"`` when nothing
 // named it — this tab says "subagent" throughout, to tell these apart from the sessions in the other tree.
-const label = computed(() => {
+const label = visibleComputed(() => {
     const { name, isFallback } = getAgentDisplay(props.node.id, store)
     return isFallback ? `Subagent "${name}"` : name
 })
 
 // A running agent carries a process state — real, or the synthetic one the agent-link cache maintains.
-const isRunning = computed(() => !!store.getProcessState(props.node.id))
-const borderColor = computed(() => BUCKET_BORDER_COLORS[isRunning.value ? 'working' : 'stopped'])
+const isRunning = visibleComputed(() => !!store.getProcessState(props.node.id))
+const borderColor = visibleComputed(() => BUCKET_BORDER_COLORS[isRunning.value ? 'working' : 'stopped'])
 
 // Opening an agent goes through the regular subagent route (the one the in-chat "View Agent" button uses).
-const agentRoute = computed(() => sessionRouteLocation(
+const agentRoute = visibleComputed(() => sessionRouteLocation(
     { id: props.sessionId, project_id: props.projectId },
     route,
     { subagentId: props.node.id },
 ))
 
 // ── Model (spec 5.4): the subagent's own last used model ─────────────────────
-const provider = computed(() => store.getSessionProvider(props.sessionId))
-const modelLabel = computed(() => agentModelLabel(store.getSession(props.node.id)?.model ?? entry.value?.model))
+const provider = visibleComputed(() => store.getSessionProvider(props.sessionId))
+const modelLabel = visibleComputed(() => agentModelLabel(store.getSession(props.node.id)?.model ?? entry.value?.model))
 
 // ── Numbers ─────────────────────────────────────────────────────────────────
-const ownCost = computed(() => agentCost(store, props.node.id, entry.value?.metrics))
-const cumulativeCost = computed(() => agentSubtreeCost(store, props.node))
+const ownCost = visibleComputed(() => agentCost(store, props.node.id, entry.value?.metrics))
+const cumulativeCost = visibleComputed(() => agentSubtreeCost(store, props.node))
 
-const turnsLabel = computed(() => {
+const turnsLabel = visibleComputed(() => {
     const row = store.getSession(props.node.id)
     return row?.user_message_count ?? entry.value?.metrics?.userMessageCount ?? null
 })
 
 // Context window: an agent has no settings of its own — it runs inside its launcher's session, so the
 // window is the root session's effective one. Usage is the agent's own.
-const contextUsage = computed(() => {
+const contextUsage = visibleComputed(() => {
     const row = store.getSession(props.node.id)
     return row?.context_usage ?? entry.value?.metrics?.contextUsage ?? null
 })
-const contextMax = computed(() => store.getEffectiveContextMax(props.sessionId))
-const contextUsagePercentage = computed(() => {
+const contextMax = visibleComputed(() => store.getEffectiveContextMax(props.sessionId))
+const contextUsagePercentage = visibleComputed(() => {
     const usage = contextUsage.value
     const max = contextMax.value
     if (usage == null || !max) return null
     return Math.round((usage / max) * 100)
 })
-const contextUsageTooltip = computed(() => {
+const contextUsageTooltip = visibleComputed(() => {
     const max = contextMax.value
     if (max == null) return null
     const helpers = provider.value ? getProviderHelpers(provider.value) : null
     const label = helpers?.getChoiceLabel('context_max', max) || `${Math.round(max / 1000)}K`
     return `Context window usage (${label} max)`
 })
-const contextUsageColor = computed(() => {
+const contextUsageColor = visibleComputed(() => {
     const pct = contextUsagePercentage.value
     if (pct == null) return null
     if (pct > 70) return 'var(--wa-color-danger)'
@@ -114,19 +112,19 @@ function fmtDate(iso) {
 
 // The launch is the spawning tool_use's timestamp; the end is the persisted completion when there is one,
 // else the agent's own last idle boundary. A running agent ends at the panel's shared clock.
-const finishedAt = computed(() => entry.value?.stoppedAt ?? entry.value?.agentStoppedAt ?? null)
-const startLabel = computed(() => fmtDate(entry.value?.startedAt))
-const endLabel = computed(() => (isRunning.value ? 'now' : fmtDate(finishedAt.value)))
-const durationLabel = computed(() => {
+const finishedAt = visibleComputed(() => entry.value?.stoppedAt ?? entry.value?.agentStoppedAt ?? null)
+const startLabel = visibleComputed(() => fmtDate(entry.value?.startedAt))
+const endLabel = visibleComputed(() => (isRunning.value ? 'now' : fmtDate(finishedAt.value)))
+const durationLabel = visibleComputed(() => {
     const from = entry.value?.startedAt
-    const to = isRunning.value ? props.now : Date.parse(finishedAt.value)
+    const to = isRunning.value ? now.value : Date.parse(finishedAt.value)
     if (!from) return null
     const sec = (to - Date.parse(from)) / 1000
     return sec > 0 ? formatDuration(sec) : null
 })
 
-const geometry = computed(() => props.timeline?.geometry?.[props.node.id] ?? null)
-const barTitle = computed(() => (startLabel.value
+const geometry = visibleComputed(() => timeline.value?.geometry?.[props.node.id] ?? null)
+const barTitle = visibleComputed(() => (startLabel.value
     ? (endLabel.value ? `${startLabel.value} → ${endLabel.value}` : startLabel.value)
     : null))
 
@@ -212,8 +210,6 @@ const expanded = ref(true)
                 :node="child"
                 :session-id="sessionId"
                 :project-id="projectId"
-                :timeline="timeline"
-                :now="now"
             />
         </div>
     </div>
