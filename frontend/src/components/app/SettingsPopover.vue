@@ -39,7 +39,7 @@ import LayoutManagerDialog from '../session/layout/LayoutManagerDialog.vue'
 import ProviderSettingsSection from './ProviderSettingsSection.vue'
 import ShareManagerDialog from '../share/ShareManagerDialog.vue'
 import TelemetryPayloadDialog from './TelemetryPayloadDialog.vue'
-import { sendChangelogSeen, sendValidateUsageDumpPath, sendValidateUsageFile, sendValidateTmuxConfigPath, requestTelemetryInstanceIdReset } from '../../composables/useWebSocket'
+import { showUpdateToast, sendChangelogSeen, sendValidateUsageDumpPath, sendValidateUsageFile, sendValidateTmuxConfigPath, requestTelemetryInstanceIdReset } from '../../composables/useWebSocket'
 import { toast } from '../../composables/useToast'
 import { useProviderActivation } from '../../composables/useProviderActivation'
 import { vPopoverFocusFix } from '../../directives/vPopoverFocusFix'
@@ -1269,8 +1269,13 @@ function openChangelog(options) {
     changelogDialogRef.value?.open(options)
 }
 
+function onShowUpdateInstructions() {
+    popoverRef.value?.hide()
+    showUpdateToast(latestVersion.value?.version)
+}
+
 function onOpenChangelogEvent() {
-    openChangelog({ skipCombined: true })
+    openChangelog({ availableUpdates: true })
 }
 window.addEventListener('open-changelog', onOpenChangelogEvent)
 onBeforeUnmount(() => window.removeEventListener('open-changelog', onOpenChangelogEvent))
@@ -2319,7 +2324,16 @@ function onChangelogClose() {
                     <a href="https://github.com/twidi/twicc/" target="_blank" rel="noopener">TwiCC v{{ currentVersion }}</a><template v-if="store.isDevMode"> [dev]</template>
                     <template v-if="latestVersion">
                         &rarr;
-                        <a :href="latestVersion.releaseUrl" target="_blank" rel="noopener">v{{ latestVersion.version }} available</a>
+                        <wa-button
+                            class="settings-footer-update"
+                            variant="brand"
+                            appearance="accent"
+                            size="small"
+                            @click="onShowUpdateInstructions"
+                        >
+                            <wa-icon slot="start" name="arrow-up"></wa-icon>
+                            v{{ latestVersion.version }} available · How to update
+                        </wa-button>
                     </template>
                 </span>
                 ·
@@ -2823,7 +2837,14 @@ wa-popover > wa-divider {
 }
 
 .settings-footer-version {
-    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--wa-space-2xs);
+}
+
+.settings-footer-update::part(base) {
+    font-size: var(--wa-font-size-xs);
 }
 
 .settings-footer-logo {

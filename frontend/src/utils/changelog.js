@@ -128,3 +128,77 @@ export { resolvePublicAssetUrl as resolveImageLocalUrl } from './publicAsset.js'
 export function resolveImageGitHubUrl(path) {
     return GITHUB_RAW_BASE + path
 }
+
+// Sentinel key for the combined "previous → current" entry in the version selector
+export const COMBINED_VERSION_KEY = '__combined__'
+
+// Category display order for the combined multi-version screen. Each release
+// opens with a ### Summary (a single bold-led, one-line recap of the version) —
+// a deliberate deviation from Keep a Changelog — followed by the standard
+// ### Added / ### Changed / ### Fixed. Entries are grouped by category in this
+// fixed order, then by version (oldest first) within each category — so a
+// multi-version upgrade reads as "every release's summary first, then all the
+// new features, then all the changes, then all the fixes". A fixed list is
+// required because a category may appear in only some of the spanned versions,
+// leaving document order ambiguous. Any unexpected category is appended
+// afterwards in first-appearance order, so no entry is ever dropped.
+const COMBINED_CATEGORY_ORDER = ['summary', 'added', 'changed', 'fixed']
+
+/**
+ * Build a combined version entry spanning all changelogs from after previousVersion
+ * up to and including currentVersion. Uses file order (no semver comparison).
+ * Returns null if no combined entry should be shown.
+ */
+export function buildCombinedVersion(allVersions, previousVersion, currentVersion) {
+    if (!previousVersion || !currentVersion || previousVersion === currentVersion) return null
+
+    const currentIdx = allVersions.findIndex(v => v.version === currentVersion)
+    if (currentIdx === -1) return null
+
+    const previousIdx = allVersions.findIndex(v => v.version === previousVersion)
+    // If previous not found in changelog, take everything from current to end
+    const endIdx = previousIdx === -1 ? allVersions.length : previousIdx
+
+    if (currentIdx >= endIdx) return null
+
+    const versionsInRange = allVersions.slice(currentIdx, endIdx)
+
+    // Reverse to display oldest first (changelog file is newest-first)
+    const reversed = [...versionsInRange].reverse()
+
+    // Effective category order: the fixed list above for known categories, then
+    // any unexpected ones in first-appearance order so nothing is dropped.
+    const presentCategories = []
+    for (const v of reversed) {
+        for (const entry of v.entries) {
+            if (!presentCategories.includes(entry.category)) presentCategories.push(entry.category)
+        }
+    }
+    const orderedCategories = [
+        ...COMBINED_CATEGORY_ORDER.filter(c => presentCategories.includes(c)),
+        ...presentCategories.filter(c => !COMBINED_CATEGORY_ORDER.includes(c)),
+    ]
+
+    // Group by category first, then by version (oldest first) within each
+    // category. Entry order inside a same category/version pair is preserved.
+    const entries = []
+    for (const category of orderedCategories) {
+        for (const v of reversed) {
+            for (const entry of v.entries) {
+                if (entry.category === category) {
+                    entries.push({ ...entry, _sourceVersion: v.version })
+                }
+            }
+        }
+    }
+
+    if (!entries.length) return null
+
+    return {
+        version: COMBINED_VERSION_KEY,
+        date: null,
+        entries,
+        _previousVersion: previousVersion,
+        _currentVersion: currentVersion,
+    }
+}

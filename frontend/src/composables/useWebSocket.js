@@ -916,7 +916,7 @@ function notifyProcessStateChange(msg, previousState, route) {
  * Deduplication is done via localStorage to survive page reloads.
  */
 function handleUpdateAvailable(msg) {
-    const { latest_version, release_url } = msg
+    const { latest_version } = msg
     if (!latest_version) return
 
     // Check localStorage: skip if already notified for this version (or newer).
@@ -928,19 +928,26 @@ function handleUpdateAvailable(msg) {
     // Store the version so we don't notify again
     localStorage.setItem(UPDATE_NOTIFIED_VERSION_KEY, latest_version)
 
-    // Show persistent toast with upgrade instructions
+    showUpdateToast(latest_version)
+}
+
+/** Show upgrade instructions on detection or on an explicit Settings click. */
+export function showUpdateToast(version) {
+    if (!version) return
     const settings = useSettingsStore()
     const upgradeHint = settings.isUvxMode
         ? 'Stop and re-run: <code style="background: var(--wa-color-neutral-fill-normal); color: var(--wa-color-neutral-on-normal); padding: 0.1em 0.4em; border-radius: 3px; font-size: 0.9em;">uvx twicc@latest</code>'
         : 'Update TwiCC (with <code style="background: var(--wa-color-neutral-fill-normal); color: var(--wa-color-neutral-on-normal); padding: 0.1em 0.4em; border-radius: 3px; font-size: 0.9em;">uv tool upgrade twicc</code> if installed with uv) and restart'
     toast.custom({
         type: 'info',
-        title: `TwiCC v${latest_version} is available`,
+        title: `TwiCC v${version} is available`,
         duration: Infinity,
         html: `
             <div style="display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.25rem;">
                 <span>${upgradeHint}</span>
-                <a href="#" onclick="window.dispatchEvent(new CustomEvent('open-changelog')); return false;" style="color: var(--wa-color-text-link); text-decoration: underline;">View changes</a>
+                <div style="display: flex; justify-content: flex-end; margin-top: 0.25rem;">
+                    <wa-button size="small" variant="brand" onclick="window.dispatchEvent(new CustomEvent('open-changelog'));">View changes</wa-button>
+                </div>
             </div>
         `,
     })
