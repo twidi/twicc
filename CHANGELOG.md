@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Artifacts tab always available** — The tab now shows for every session, even before it has any artifact. Right-click "Session artifacts" to create a file or folder, or upload files.
 - **List ordering** — Drag a handle to reorder lists (composer snippets, projects in a workspace, ...), on desktop or mobile.
 - **Codex runtime** — Update from v0.160.0 to v0.161.0.
+- **Claude Agent SDK** — Upgrade from 0.2.163 to 0.2.164 (bundled Claude Code CLI: 2.1.286 → 2.1.292)
 
 ### Fixed
 
