@@ -12,6 +12,7 @@ Both features meet in three places, covered here:
 from __future__ import annotations
 
 import asyncio
+import base64
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -27,6 +28,8 @@ from twicc.providers.codex.async_questions import QuestionFact
 from twicc.providers.helpers import AgentSettings
 
 from tests.test_codex_attachment_delivery import (  # noqa: F401 - fixtures and builders
+    JPEG,
+    PNG,
     _content,
     _file_only_content,
     _items,
@@ -238,7 +241,7 @@ def test_a_retry_of_the_same_request_never_folds_the_answers_twice(harness):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_a_stale_rejection_after_the_commit_then_a_retry_under_a_new_request_id_sends_once(harness, released, monkeypatch):
+def test_a_stale_rejection_after_the_commit_then_a_retry_under_a_new_request_id_sends_once(harness, released, monkeypatch):  # noqa: F811
     stale = {**ANSWERS, "batch_ids": ["gone"], "answers": [{**ANSWERS["answers"][0], "item_id": "gone"}]}
     # The attachments are committed with the raw text at entry; the question guard then refuses the send.
     with pytest.raises(SendDeliveryError) as refused:
@@ -267,6 +270,88 @@ def test_a_stale_rejection_after_the_commit_then_a_retry_under_a_new_request_id_
     items = _items(_make_agent(monkeypatch, events, pending="<ctx>"), text, content)
     assert items[-1].text == f"<ctx>{text}"
     assert [event for event in events if event[0] == "pending"] == [("pending", content.user_text)]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_mid_turn_steer_carries_images_then_manifest_then_the_answers_folded_once(harness, monkeypatch):
+    # Questions are ready at once: answers often reach Codex during an active turn, so via the steer.
+    from asgiref.sync import sync_to_async
+    from openai_codex.generated.v2_all import TurnSteerResponse
+    from twicc.core.models import AsyncQuestionState
+    from twicc.providers import db_writer
+    from twicc.providers.codex.agent.agent import CodexAgent
+
+    from tests.test_codex_async_question_send import runtime_agent
+
+    # No turn_end fact: the question's turn is still the active one.
+    AsyncQuestionState.objects.filter(session=harness.session).delete()
+    service.merge_question_facts(harness.session.id, [_question()])
+
+    async def commit(plan, *, session_id, text):
+        harness.commits.append(text)
+        return _content(text)
+
+    monkeypatch.setattr(harness.manager, "_commit_attachment_plan", commit)
+    folded: list[str] = []
+
+    def apply_pending(session_id, text):
+        folded.append(text)
+        return text
+
+    monkeypatch.setattr("twicc.providers.codex.agent.agent.apply_pending_context", apply_pending)
+
+    async def run():
+        db_writer.start_db_writer()
+        agent, sdk, thread, turn = runtime_agent(harness)
+        agent._build_turn_input = CodexAgent._build_turn_input.__get__(agent, CodexAgent)
+        agent._reconcile_context = AsyncMock()
+        agent._set_state(AgentState.ASSISTANT_TURN)
+        agent._current_turn = turn
+        agent._current_turn_ready.set()
+        steers: list[dict] = []
+
+        async def request(method, params, **kwargs):
+            assert method == "turn/steer"
+            steers.append(params)
+            return TurnSteerResponse(turn_id="physical-turn")
+
+        sdk._client.request = request
+        try:
+            assert await harness.manager.send_to_session(
+                harness.session.id, harness.session.project_id, "/tmp", "Keep this.", AgentSettings(),
+                attachment_plan=_plan(), async_questions=ANSWERS, request_id="steer-1", send_origin="human",
+            ) is True
+            send_fact = await sync_to_async(
+                lambda: AsyncQuestionState.objects.get(session=harness.session).state["facts"]["send:steer-1"]["data"]
+            )()
+        finally:
+            if agent._turn_task:
+                agent._turn_task.cancel()
+                await asyncio.gather(agent._turn_task, return_exceptions=True)
+            await db_writer.stop_db_writer()
+        return thread, steers, send_fact
+
+    thread, steers, send_fact = asyncio.run(run())
+
+    # The attachments are committed once with the raw text; the send steers the active turn.
+    assert harness.commits == ["Keep this."]
+    thread.turn_with_policy.assert_not_awaited()
+    (steer,) = steers
+    assert steer["clientUserMessageId"] == "steer-1"
+    assert send_fact["delivery_route"] == "steer"
+    assert send_fact["status"] == "accepted"
+
+    # Images (native), then the manifest, then the user text with the answers folded exactly once.
+    content = _content(f"{ANSWER_TEXT}\n\nKeep this.")
+    wire = steer["input"]
+    assert [item["type"] for item in wire] == ["image", "image", "text", "text"]
+    assert wire[0]["url"] == f"data:image/png;base64,{base64.b64encode(PNG).decode()}"
+    assert wire[1]["url"] == f"data:image/jpeg;base64,{base64.b64encode(JPEG).decode()}"
+    assert wire[2]["text"] == build_manifest(content.manifest)
+    assert wire[3]["text"] == f"{ANSWER_TEXT}\n\nKeep this."
+    assert sum(item.get("text", "").count("Answers to your questions") for item in wire) == 1
+    assert folded == [f"{ANSWER_TEXT}\n\nKeep this."]
+    assert service.read_question_snapshot(harness.session.id)["resolutions"]["q1"]["status"] == "sent"
 
 
 @pytest.mark.django_db(transaction=True)
