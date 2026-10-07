@@ -6,6 +6,7 @@ import typer
 
 from twicc.cli._drop_request.help_context import load_help_context
 from twicc.cli._drop_request.help_strings import (
+    ATTACH_HELP,
     EFFORT_ALIAS_HINT,
     NO_EXPAND_HELP,
     PERMISSION_ALIAS_HINT,
@@ -195,20 +196,7 @@ def create_session_cmd(
             "title is auto-derived from the first message."
         ),
     ),
-    attach: list[str] = typer.Option(
-        [],
-        "--attach",
-        help=(
-            "Path to a file to attach (repeatable). Claude Code accepts "
-            "PNG/JPEG/GIF/WebP/PDF/text/plain up to 5 MB each. Codex accepts "
-            "images only. Max 100 files, 32 MB total. "
-            "Each value is either a local file path OR a base64 data URI "
-            "(data:<mime>;base64,<data>) — the data-URI form lets remote/API "
-            "callers attach files without a shared filesystem. Over --remote, "
-            "prefix an absolute path with 'remote:' to read it on the remote "
-            "server instead."
-        ),
-    ),
+    attach: list[str] = typer.Option([], "--attach", help=ATTACH_HELP),
     annotation: list[str] = typer.Option(
         [],
         "--annotation",
@@ -312,11 +300,7 @@ def create_session_cmd(
 
     from twicc.cli._drop_request.aliases import clamp_untrusted_permission_mode, resolve_overrides
     from twicc.cli._drop_request.annotations import parse_annotations
-    from twicc.cli._drop_request.attachments import (
-        AttachmentResizeError,
-        validate_and_encode,
-    )
-    from twicc.cli._drop_request import transport
+    from twicc.cli._drop_request import attach_sources, transport
     from twicc.cli._drop_request.bootstrap_local import load_local_bootstrap
     from twicc.cli._drop_request.discovery import ServerDownError
     from twicc.cli._drop_request.output import emit_final, emit_validation_errors
@@ -330,6 +314,7 @@ def create_session_cmd(
         validate_settings,
     )
     from twicc.cli._output import emit_error
+    from twicc.core.services.attachments.inline import INLINE_TOO_LARGE_HINT
     from twicc.providers.helpers import get_provider_helpers
 
     # Refused rather than ignored: a caller who tuned the wait and forgot to
@@ -479,35 +464,20 @@ def create_session_cmd(
         settings = settings._replace(question_widget=False)
 
     # Resolve effective settings (None → synced default, then consistency
-    # demotion) so we know the real model that will drive the resize cap.
-    # The back-end service redoes this for the actual session creation;
-    # the duplicated call here is cheap and local.
+    # demotion) for the hidden-session constraints. The back-end service redoes
+    # this for the actual session creation; the duplicated call is cheap and local.
     helpers_obj = (
         get_provider_helpers(provider) if provider in bootstrap.providers else None
     )
-    effective_model: str | None = None
     if helpers_obj is not None and not errors:
         effective_settings = helpers_obj.resolve_agent_settings(settings)
         effective_settings = helpers_obj.enforce_agent_settings_consistency(
             effective_settings
         )
-        effective_model = effective_settings.selected_model
         errors.extend(validate_hidden_constraints(provider, effective_settings, hidden=hidden))
 
-    support = bootstrap.providers[provider].attachment_support if provider in bootstrap.providers else {}
-    try:
-        attach_result = validate_and_encode(
-            attach or [], support, helpers_obj, effective_model,
-        )
-    except AttachmentResizeError as e:
-        errors.append(ValidationError(
-            f"--attach {e.path}", "resize_failed", e.message,
-        ))
-        emit_validation_errors(errors)
-        raise typer.Exit(1)
-
-    for err in attach_result.errors:
-        errors.append(ValidationError(f"--attach {err.file}", err.code, err.message))
+    sources, attach_errors = attach_sources.resolve(attach or [], hint=INLINE_TOO_LARGE_HINT)
+    errors.extend(attach_errors)
 
     # Worktree flags: --worktree-branch turns --project into the source repo
     # and creates the session in a NEW worktree; --worktree-path alone (no
@@ -564,8 +534,6 @@ def create_session_cmd(
         "provider": provider,
         "text": text,
         "title": title,
-        "images": attach_result.images,
-        "documents": attach_result.documents,
         "hidden": hidden,
         "mute_on_user_turn": mute_on_user_turn,
         "spawned_by_session_id": spawned_by_session_id,
@@ -583,6 +551,14 @@ def create_session_cmd(
             payload["worktree_start_from"] = wt_start_from
     elif wt_path:
         payload["worktree_path"] = wt_path
+
+    # Staged last, after every local check: a refused command leaves no entry behind.
+    if sources:
+        refs, stage_errors = attach_sources.stage(sources, bucket=attach_sources.new_request_bucket())
+        if stage_errors:
+            emit_validation_errors(stage_errors)
+            raise typer.Exit(1)
+        payload["attachments"] = attach_sources.as_payload(refs)
 
     sub = transport.submit(payload, kind="session:create")
     outcome = transport.wait(sub, timeout_seconds=timeout)

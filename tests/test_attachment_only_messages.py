@@ -1,7 +1,7 @@
 """Attachment-only messages: a follow-up carrying no text at all.
 
-Both providers accept a user message made only of image / document blocks, so
-TwiCC lets the composer (and the CLI) send one to an EXISTING session. Creating
+Both providers accept a user message made only of attachments, so TwiCC lets the
+composer (and the CLI, through staged refs) send one to an EXISTING session. Creating
 a session still demands text — that is where the title comes from — which
 ``test_create_session_still_requires_text`` pins down.
 """
@@ -49,22 +49,24 @@ def test_send_message_rejects_a_fully_empty_payload() -> None:
 
 
 @pytest.mark.django_db
-def test_send_message_accepts_empty_text_with_images() -> None:
+def test_send_message_accepts_empty_text_with_attachment_refs() -> None:
     """No ``empty_text`` error: validation moves on to the session lookup."""
     result = asyncio.run(send_message_to_session_from_payload(
-        {"session_id": "unknown-session", "text": "", "images": [IMAGE_BLOCK]},
+        {"session_id": "unknown-session", "text": "",
+         "attachments": [{"bucket": "cli-b", "id": "6f1c1f0e-8a8e-4c55-9d1e-0b0c8f6c1a01"}]},
     ))
     assert result.success is False
     assert _error_codes(result) == ["session_not_found"]
 
 
 @pytest.mark.django_db
-def test_send_message_accepts_empty_text_with_documents() -> None:
+def test_send_message_ignores_legacy_blocks_as_content() -> None:
+    """The service no longer reads ``images`` / ``documents``: they do not stand in for text."""
     result = asyncio.run(send_message_to_session_from_payload(
-        {"session_id": "unknown-session", "text": "", "documents": [DOCUMENT_BLOCK]},
+        {"session_id": "unknown-session", "text": "", "images": [IMAGE_BLOCK], "documents": [DOCUMENT_BLOCK]},
     ))
     assert result.success is False
-    assert _error_codes(result) == ["session_not_found"]
+    assert _error_codes(result) == ["empty_text"]
 
 
 @pytest.mark.django_db

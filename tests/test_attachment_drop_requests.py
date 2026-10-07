@@ -468,3 +468,33 @@ def test_the_ws_creation_still_passes_legacy_blocks(drop):
     ))
     assert result.success, result.errors
     assert drop.manager.calls[0].kwargs["images"] == [image]
+
+
+# ── Legacy fields (an older CLI) ─────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("legacy", [{"images": [{"type": "image"}]}, {"documents": [{"type": "document"}]}])
+def test_a_drop_send_with_legacy_blocks_is_refused_and_releases(drop, legacy):
+    status = _send(attachments=WIRE_REFS[:1], **legacy)
+    assert status["errors"][0]["code"] == "invalid_attachments"
+    assert "older than the server" in status["errors"][0]["message"]
+    assert drop.manager.calls == []
+    assert drop.released == [(REFS[0],)]
+
+
+@pytest.mark.parametrize("legacy", [{"images": [{"type": "image"}]}, {"documents": [{"type": "document"}]}])
+def test_a_drop_creation_with_legacy_blocks_is_refused(drop, legacy):
+    status = _create(**legacy)
+    assert status["errors"][0]["code"] == "invalid_attachments"
+    assert drop.manager.calls == []
+
+
+def test_empty_legacy_lists_are_accepted(drop):
+    assert _send(images=[], documents=[])["status"] == "sent"
+    assert _create(images=[], documents=[])["status"] == "created"
+
+
+def test_the_send_service_no_longer_passes_legacy_blocks(drop):
+    _send()
+    assert "images" not in drop.manager.calls[0].kwargs
+    assert "documents" not in drop.manager.calls[0].kwargs

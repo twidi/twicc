@@ -69,6 +69,11 @@ async def create_session_from_drop_payload(payload: dict) -> SessionCreationResu
     after the row appears queues behind the creation instead of meeting its pending admission.
     The backend owns the refs of the payload from here and releases them on every outcome (D14).
     """
+    if attachment_drop.has_legacy_fields(payload):
+        attachment_lifecycle.delivery_release(attachment_drop.refs_to_release(payload))()
+        return SessionCreationResult(False, None, None, None, [SessionCreationError(
+            "attachments", attachment_planner.ERROR_INVALID_ATTACHMENTS, attachment_drop.LEGACY_FIELDS_MESSAGE,
+        )])
     session_id = payload.get("session_id")
     if not isinstance(session_id, str) or not session_id:
         return await create_session_from_payload(payload, release_refs_on_outcome=True)

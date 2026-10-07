@@ -7,15 +7,18 @@ no I/O. Designed so ``create-session`` and ``update-session settings`` share
 the same wording without duplicating any of the rendering logic.
 
 The set of builders covers every flag whose help text depends on the user's
-current providers / presets / defaults. Flags whose help is purely static
-(``--timeout``, ``--attach``, ...) keep their inline help in the calling
-command — duplicating a one-liner is cheaper than shipping a tiny helper
-per flag.
+current providers / presets / defaults. Static texts that several commands
+share, or that are built from the inline attachment limits (``--no-expand``,
+the prompt include hint, the ``--attach`` texts), are module-level constants,
+defined before the builder functions. Any other static flag (``--timeout``,
+...) keeps its inline help in the calling command — duplicating a one-liner is
+cheaper than shipping a tiny helper per flag.
 """
 
 from __future__ import annotations
 
 from twicc.cli._drop_request.help_context import HelpContext
+from twicc.core.services.attachments.inline import INLINE_TOO_LARGE_HINT
 
 
 _PROVIDER_LABELS = {
@@ -56,6 +59,22 @@ NO_EXPAND_HELP = (
     "'@@'; the final text is capped at 500 KB. Over --remote, markers "
     "resolve on the client; use '@@remote:/abs/path' for a file on the "
     "remote server."
+)
+
+_ATTACH_FORMS = (
+    "Each value is a local file path, a base64 data URI "
+    "(data:<mime>;name=<percent-encoded file name>;base64,<data>; name= is optional), or, over "
+    "--remote, remote:<absolute path> to read a file on the server."
+)
+_INLINE_LIMIT = (
+    "Inline data is limited to 50 MB in total per command: data URIs, and local files sent over "
+    "--remote (the forwarder turns them into data URIs; on a local command line, Linux caps one "
+    "argument at 128 KiB). A file the CLI or the server reads from its own disk has no limit. "
+)
+ATTACH_HELP = "File to attach (repeatable), of any type. " + _ATTACH_FORMS + " " + _INLINE_LIMIT + INLINE_TOO_LARGE_HINT
+ATTACH_EVERY_MESSAGE_HELP = (
+    "File to attach to every message (repeatable), of any type; one copy is staged per recipient. "
+    + _ATTACH_FORMS + " " + _INLINE_LIMIT + INLINE_TOO_LARGE_HINT
 )
 
 

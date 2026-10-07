@@ -64,6 +64,11 @@ async def send_message_from_drop_payload(payload: dict) -> SendMessageResult:
     session keep their order whatever their entry point (D15). The backend owns the refs of
     the payload from here (D14).
     """
+    if attachment_drop.has_legacy_fields(payload):
+        attachment_lifecycle.delivery_release(attachment_drop.refs_to_release(payload))()
+        return _rejected(
+            "attachments", attachment_planner.ERROR_INVALID_ATTACHMENTS, attachment_drop.LEGACY_FIELDS_MESSAGE,
+        )
     session_id = payload.get("session_id")
     if not isinstance(session_id, str) or not session_id:
         return await send_message_to_session_from_payload(payload, release_refs_on_outcome=True)
@@ -85,7 +90,7 @@ async def send_message_to_session_from_payload(
     - ``attachments``: staged refs ``[{bucket, id}, ...]``, planned for the
       session's provider once its settings are resolved, then committed by the
       manager (phase 1 pipeline).
-    - ``images``, ``documents``: legacy SDK blocks of an older CLI, passed as is.
+    - ``images`` / ``documents`` (an older CLI) are refused by :func:`send_message_from_drop_payload`.
 
     With ``release_refs_on_outcome`` (drop-request callers), the refs are released
     on every outcome, except a send the manager did not deliver now: a parked send
@@ -121,8 +126,6 @@ async def _send(payload: dict) -> tuple[SendMessageResult, bool]:
     session_id = payload.get("session_id")
     raw_text = payload.get("text") or ""
     text = raw_text.strip()
-    images = payload.get("images") or []
-    documents = payload.get("documents") or []
     try:
         refs = attachment_planner.validate_attachment_frame(payload)
     except AttachmentError as exc:
@@ -131,7 +134,7 @@ async def _send(payload: dict) -> tuple[SendMessageResult, bool]:
     errors: list[SendMessageError] = []
     if not session_id:
         errors.append(SendMessageError("session_id", "missing", "session_id is required"))
-    if not text and not images and not documents and not refs and not (
+    if not text and not refs and not (
         isinstance(payload.get("async_questions"), dict) and payload["async_questions"].get("answers")
     ):
         errors.append(SendMessageError(
@@ -246,7 +249,7 @@ async def _send(payload: dict) -> tuple[SendMessageResult, bool]:
     try:
         delivered = await manager.send_to_session(
             session_id, session.project_id, project.directory, text,
-            settings=effective, images=images, documents=documents,
+            settings=effective,
             **plan_kwargs,
             **({"async_questions": payload.get("async_questions"),
                 "request_id": payload.get("_send_request_id") or str(uuid4()),

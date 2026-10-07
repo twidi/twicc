@@ -13,12 +13,11 @@ The message text is resolved once (inline or a file path → its content), then
 topped **per recipient** with the sender header (see
 ``_drop_request/sender_header.py``) when the caller is itself a TwiCC session —
 the relation wording (spawned/parent/sibling/another) depends on each
-recipient, so the delivered text can differ between them. The
-attachments are validated/encoded **per session** against that session's
-provider and effective model — so the same file can succeed on a Claude Code
-session and be rejected on a Codex one (which only accepts images), surfacing as
-a per-id ``validation_error`` while the other sessions still receive the
-message.
+recipient, so the delivered text can differ between them. The ``--attach``
+values are resolved once: a missing file, a bad data URI or more than 50 MB of
+inline data fails the whole command. The files are then staged once per
+recipient: each recipient's send consumes and releases its own copy, and no
+file is refused by provider.
 
 Like the singular command this is asynchronous: a per-id ``"sent"`` only means
 the message was handed to the agent, not that the agent finished. Pass
@@ -35,7 +34,7 @@ import time
 
 import typer
 
-from twicc.cli._drop_request.help_strings import NO_EXPAND_HELP, PROMPT_INCLUDE_HINT
+from twicc.cli._drop_request.help_strings import ATTACH_EVERY_MESSAGE_HELP, NO_EXPAND_HELP, PROMPT_INCLUDE_HINT
 from twicc.cli._wait_reply import WAIT_BACKGROUND_HELP
 
 
@@ -65,20 +64,7 @@ def send_messages_cmd(
         "--no-expand",
         help=NO_EXPAND_HELP,
     ),
-    attach: list[str] = typer.Option(
-        [],
-        "--attach",
-        help=(
-            "Path to a file to attach to every message (repeatable). Claude "
-            "Code accepts PNG/JPEG/GIF/WebP/PDF/text/plain up to 5 MB each; "
-            "Codex accepts images only. Max 100 files, 32 MB total. Validated "
-            "per session against its provider — a file its provider rejects "
-            "yields a per-id validation_error. Each value is a local file path "
-            "OR a base64 data URI (data:<mime>;base64,<data>) for remote/API "
-            "callers without a shared filesystem. Over --remote, prefix an "
-            "absolute path with 'remote:' to read it on the remote server instead."
-        ),
-    ),
+    attach: list[str] = typer.Option([], "--attach", help=ATTACH_EVERY_MESSAGE_HELP),
     spawned_by: str = typer.Option(
         None,
         "--spawned-by",
@@ -235,18 +221,14 @@ def send_messages_cmd(
 
     from twicc.cli._batch_runner import run_batch
     from twicc.cli.create_session.command import DEFAULT_WAIT_TIMEOUT_SECONDS
-    from twicc.cli._drop_request.attachments import (
-        AttachmentResizeError,
-        validate_and_encode,
-    )
-    from twicc.cli._drop_request.bootstrap_local import load_local_bootstrap
+    from twicc.cli._drop_request import attach_sources
     from twicc.cli._drop_request.prompt import PromptError, resolve_prompt
     from twicc.cli._drop_request.sender_header import prefix_sender_header
     from twicc.cli._drop_request.output import emit_validation_errors
     from twicc.cli._drop_request.validation import ValidationError
     from twicc.cli._drop_request.whoami import resolve_current_session
     from twicc.cli._output import emit_error
-    from twicc.providers.helpers import get_provider_helpers
+    from twicc.core.services.attachments.inline import INLINE_TOO_LARGE_HINT
 
     # Resolve the message once — same text for every recipient (global, fatal).
     # Omitting it is only valid when the batch carries attachments instead.
@@ -263,7 +245,12 @@ def send_messages_cmd(
         except PromptError as e:
             emit_error(f"Error: invalid --message: {e}", code=1)
 
-    bootstrap = load_local_bootstrap()
+    # One global check of the --attach values (validation_error, exit 1), before any recipient.
+    sources, attach_errors = attach_sources.resolve(attach or [], hint=INLINE_TOO_LARGE_HINT)
+    if attach_errors:
+        emit_validation_errors(attach_errors)
+        raise typer.Exit(1)
+    bucket = attach_sources.new_request_bucket() if sources else None
 
     # Identify the calling agent once (PID ancestry; MCP sets a forced session
     # id) — the sender header itself is computed per recipient in ``_prepare``,
@@ -276,56 +263,24 @@ def send_messages_cmd(
     send_origin = "agent" if caller is not None or external_caller.get() is not None else "human"
 
     def _prepare(resolved):
-        """Per-id: build the send payload, encoding attachments for this provider."""
-        recipient_text = prefix_sender_header(
-            text,
-            caller,
-            recipient_id=resolved.session_id,
-            recipient_spawned_by_id=resolved.spawned_by_id,
-        )
-        if not attach:
-            return {
-                "session_id": resolved.session_id,
-                "_send_origin": send_origin,
-                "_send_request_id": str(uuid4()),
-                "text": recipient_text,
-                "images": [],
-                "documents": [],
-            }
-
-        # Attachments are provider/model-specific: validate + (re)encode against
-        # THIS session's provider support and effective model. ``current_settings``
-        # comes from the lookup, so no extra DB round-trip.
-        helpers_obj = get_provider_helpers(resolved.provider)
-        support = (
-            bootstrap.providers[resolved.provider].attachment_support
-            if resolved.provider in bootstrap.providers else {}
-        )
-        effective = helpers_obj.resolve_agent_settings(resolved.current_settings)
-        effective = helpers_obj.enforce_agent_settings_consistency(effective)
-
-        try:
-            attach_result = validate_and_encode(
-                attach, support, helpers_obj, effective.selected_model,
-            )
-        except AttachmentResizeError as e:
-            return [ValidationError(f"--attach {e.path}", "resize_failed", e.message)]
-
-        errors = [
-            ValidationError(f"--attach {err.file}", err.code, err.message)
-            for err in attach_result.errors
-        ]
-        if errors:
-            return errors
-
-        return {
+        """Per-id: build the send payload and stage this recipient's own copy of the files (D19)."""
+        payload = {
             "session_id": resolved.session_id,
             "_send_origin": send_origin,
             "_send_request_id": str(uuid4()),
-            "text": recipient_text,
-            "images": attach_result.images,
-            "documents": attach_result.documents,
+            "text": prefix_sender_header(
+                text,
+                caller,
+                recipient_id=resolved.session_id,
+                recipient_spawned_by_id=resolved.spawned_by_id,
+            ),
         }
+        if sources:
+            refs, stage_errors = attach_sources.stage(sources, bucket=bucket)
+            if stage_errors:
+                return stage_errors
+            payload["attachments"] = attach_sources.as_payload(refs)
+        return payload
 
     wait_errors: list[ValidationError] = []
     if not wait_reply:

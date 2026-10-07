@@ -41,3 +41,19 @@ def message_with_names(exc: BaseException) -> str:
     names = tuple(getattr(exc, "names", ()) or ())
     message = str(exc)
     return f"{message}: {', '.join(names)}" if names else message
+
+
+LEGACY_FIELDS = ("images", "documents")
+LEGACY_FIELDS_MESSAGE = (
+    "images and documents are no longer accepted: this twicc CLI is older than the server. "
+    "Update the CLI."
+)
+
+
+def has_legacy_fields(payload: dict) -> bool:
+    """True when ``images`` or ``documents`` is non-empty (an empty list or no key is accepted).
+
+    An explicit check: ``validate_attachment_frame`` looks at the legacy fields only when
+    refs are present.
+    """
+    return any(payload.get(field) for field in LEGACY_FIELDS)

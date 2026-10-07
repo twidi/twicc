@@ -1083,7 +1083,7 @@ def _run_send_message(monkeypatch, status_data: dict, *,
     """Drive ``send_message_cmd --wait-reply`` over a stubbed transport.
 
     Everything the command does before the send is real (prompt resolution,
-    attachment validation, the settings lookup on the row); only the two
+    the ``--attach`` resolution) except the stubbed session lookup; only the two
     process boundaries are cut — the drop-request round trip, and the wait
     loop, which is replaced by a probe returning the arguments it received.
     """
