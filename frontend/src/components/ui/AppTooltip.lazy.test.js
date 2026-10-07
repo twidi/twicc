@@ -2,9 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { h, markRaw } from 'vue'
 import { compileComponent, makeRenderer, flush, descendants } from '../../../tests/helpers/scrollerComponentHarness.js'
+import { serializeTooltipTransitions } from '../../utils/tooltipTransitions.js'
 
 const Tooltip = compileComponent(new URL('./AppTooltip.vue', import.meta.url), {
     '../../stores/settings': { useSettingsStore: () => ({ isTouchDevice: false }) },
+    '../../utils/tooltipTransitions.js': { serializeTooltipTransitions },
 })
 const Duration = compileComponent(new URL('./ProcessDuration.vue', import.meta.url), {
     '../../utils/date': { formatDuration: value => String(value) },
@@ -23,8 +25,8 @@ async function fixture(t, lazy = true) {
         element.removeEventListener = (name, callback) => listeners.get(name)?.delete(callback)
         element.emit = (name, target = element) => { for (const callback of listeners.get(name) || []) callback({ target }) }
         element.open = false; element.trigger = 'manual'; element.anchor = {}
-        element.show = () => { element.open = true; element.emit('wa-show') }
-        element.hide = () => { element.open = false; element.emit('wa-hide') }
+        element.isConnected = true; element.eventController = new AbortController()
+        element.handleOpenChange = async () => element.emit(element.open ? 'wa-show' : 'wa-hide')
     })
     const app = view.renderer.createApp({ render: () => h(Tooltip, { force: true, interactive: true, lazy }, {
         default: () => h(Duration, { stateChangedAt: 100 }),

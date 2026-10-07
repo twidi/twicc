@@ -23,7 +23,8 @@ function fixture(trigger = 'manual', runtime = null) {
     const script = descriptor.script.content.replace(/export function /g, 'function ')
     const setup = descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
     const createApi = runtime?.createApi || runInNewContext(`${script}\n(function() { ${setup}\n;return {tooltipEl, hideAllTooltips, onTooltipDismissal, show, hide, setTrigger} })`, {
-        document, clearTimeout, Set,
+        // Native lifecycle serialization has its own integration tests.
+        document, clearTimeout, Set, serializeTooltipTransitions: () => {},
         defineProps: () => ({ force: true, interactive: true }), defineExpose: () => {},
         useSettingsStore: () => ({ isTouchDevice: true }), computed: fn => ({ get value() { return fn() } }),
         ref: () => ({ value: null }), watch: (_, callback) => { watcher = callback },

@@ -50,6 +50,7 @@ export function hideAllTooltips() {
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
+import { serializeTooltipTransitions } from '../../utils/tooltipTransitions.js'
 
 /**
  * Grace period, in ms, before an interactive tooltip closes once the pointer
@@ -244,6 +245,7 @@ watch([tooltipEl, () => props.interactive], ([el, interactive]) => {
     if (!el) {
         return
     }
+    serializeTooltipTransitions(el)
     if (interactive) {
         el.addEventListener('mouseover', cancelPendingHide)
     }
