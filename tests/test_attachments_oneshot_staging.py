@@ -88,6 +88,21 @@ def test_an_undecodable_file_name_is_made_valid_utf8(root, tmp_path):
     assert staging.load_entry(ref).filename == "bad�name.txt"
 
 
+def test_the_name_repair_ignores_the_locale(root, monkeypatch):
+    """A non-UTF-8 filesystem encoding never turns a valid name into replacement characters."""
+    monkeypatch.setattr(os, "fsencode", lambda name: name.encode("latin-1", "surrogateescape"))
+    ref = staging.stage_bytes(b"x", "café.txt", bucket=staging.new_bucket("api"), origin="api")
+    assert staging.load_entry(ref).filename == "café.txt"
+
+
+def test_an_unencodable_name_is_attachment_stage_failed_and_leaves_no_entry(root):
+    bucket = staging.new_bucket("api")
+    with pytest.raises(AttachmentError) as exc:
+        staging.stage_bytes(b"x", "\ud800.txt", bucket=bucket, origin="api")
+    assert exc.value.code == "attachment_stage_failed"
+    assert not (root / bucket).exists() or list((root / bucket).iterdir()) == []
+
+
 def test_the_marker_exists_before_the_copy(root, tmp_path, monkeypatch):
     source = tmp_path / "a.txt"
     source.write_bytes(b"abc")
@@ -234,12 +249,26 @@ def test_discard_staged_removes_only_the_given_entries_then_the_empty_bucket(roo
     assert not (root / bucket).exists()
 
 
-def test_discard_staged_never_touches_artifacts(root, tmp_path):
-    artifact = Path(os.environ["TWICC_DATA_DIR"]) / "artifacts" / "s" / "attachments" / "kept.txt"
+def test_discard_staged_never_touches_artifacts(root):
+    """A promoted copy (a hard link of the staged file, named by the entry's tombstone) survives."""
+    bucket = staging.new_bucket("cli")
+    ref = staging.stage_bytes(b"kept", "kept.txt", bucket=bucket, origin="cli")
+    staged_file = staging.load_entry(ref).path
+    artifact = staging.attachments_dir("session-1") / "kept.txt"
     artifact.parent.mkdir(parents=True)
-    artifact.write_text("kept")
-    staging.discard_staged([staging.validate_ref({"bucket": "s", "id": str(uuid.uuid4())})])
-    assert artifact.read_text() == "kept"
+    os.link(staged_file, artifact)
+    staging.write_marker(staging.entry_dir(ref), staging.PROMOTED_MARKER, {
+        "session_id": "session-1", "final_path": str(artifact), "final_name": "kept.txt",
+        "kind": "text", "original_name": "kept.txt", "size": 4,
+    })
+    assert staging.load_entry(ref).promoted.final_path == artifact
+
+    staging.discard_staged([ref])
+
+    assert not staging.entry_dir(ref).exists()
+    assert not (root / bucket).exists()
+    assert artifact.read_bytes() == b"kept"
+    assert sorted(p.name for p in artifact.parent.iterdir()) == ["kept.txt"]
 
 
 def test_name_max_bytes_lives_in_staging():

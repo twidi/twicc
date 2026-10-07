@@ -216,7 +216,7 @@ def test_a_body_above_the_request_cap_is_refused_before_the_post(transactional_d
     monkeypatch.setattr(inline, "INLINE_MAX_REQUEST_BYTES", 300)
     _active_peer()
     result = _run(peer_messages.send_peer_message_from_payload({"peer": "alice", "title": "T", "text": "x" * 400}))
-    assert [e.code for e in result.errors] == ["message_too_large"]
+    assert [(e.field, e.code) for e in result.errors] == [("payload", "message_too_large")]
     assert "once encoded" in result.errors[0].message
     assert wire == []
     assert PeerMessage.objects.count() == 0

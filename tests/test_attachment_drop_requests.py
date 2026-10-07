@@ -483,10 +483,33 @@ def test_a_drop_send_with_legacy_blocks_is_refused_and_releases(drop, legacy):
 
 
 @pytest.mark.parametrize("legacy", [{"images": [{"type": "image"}]}, {"documents": [{"type": "document"}]}])
-def test_a_drop_creation_with_legacy_blocks_is_refused(drop, legacy):
-    status = _create(**legacy)
+def test_a_drop_creation_with_legacy_blocks_is_refused_and_releases(drop, legacy):
+    status = _create(attachments=WIRE_REFS, **legacy)
     assert status["errors"][0]["code"] == "invalid_attachments"
+    assert "older than the server" in status["errors"][0]["message"]
     assert drop.manager.calls == []
+    assert drop.plan_calls == []
+    assert drop.released == [REFS]
+
+
+@pytest.mark.parametrize("session_id", [123, ["sid"], {"id": "sid"}, 0, False])
+def test_a_drop_with_a_non_string_session_id_is_refused_before_the_lane(drop, session_id):
+    """A non-string id would bypass the send lane: both drop wrappers refuse it and release the refs."""
+    for status in (_send(session_id=session_id, attachments=WIRE_REFS), _create(session_id=session_id,
+                                                                                attachments=WIRE_REFS)):
+        assert [(e["field"], e["code"]) for e in status["errors"]] == [("session_id", "invalid")]
+    assert drop.manager.calls == []
+    assert drop.plan_calls == []
+    assert drop.released == [REFS, REFS]
+
+
+@pytest.mark.parametrize("session_id", [None, ""])
+def test_a_drop_without_session_id_is_still_missing(drop, session_id):
+    for status in (_send(session_id=session_id, attachments=WIRE_REFS), _create(session_id=session_id,
+                                                                                attachments=WIRE_REFS)):
+        assert ("session_id", "missing") in [(e["field"], e["code"]) for e in status["errors"]]
+    assert drop.manager.calls == []
+    assert drop.released == [REFS, REFS]
 
 
 def test_empty_legacy_lists_are_accepted(drop):

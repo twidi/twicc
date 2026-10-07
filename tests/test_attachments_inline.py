@@ -4,6 +4,7 @@ Design: docs/plans/2026-10-06-attachments-phase2-cli-rpc-mcp-peer-design.md §4.
 """
 
 import base64
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -109,6 +110,36 @@ def test_the_label_is_never_the_uri():
 def test_the_label_uses_the_normalized_name():
     assert inline.data_uri_label("data:text/plain;name=..%2Fetc%2Fpasswd;base64,") == "data:text/plain .._etc_passwd"
     assert inline.data_uri_label("data:text/plain;name=%FF;base64,") == "data:text/plain"
+
+
+def test_the_data_scheme_is_case_insensitive():
+    for value in ("data:text/plain;base64,aGk=", "DATA:text/plain;base64,aGk=", "Data:;base64,"):
+        assert inline.is_data_uri(value)
+    assert inline.parse_data_uri("DATA:text/plain;name=a.txt;base64,aGk=") == inline.DataUri(
+        "a.txt", "text/plain", 2, b"hi",
+    )
+    assert inline.data_uri_label("DaTa:image/png;base64,AAAA") == "data:image/png"
+    for value in (" data:text/plain;base64,aGk=", "/tmp/data:x", "remote:/srv/x", "dat"):
+        assert not inline.is_data_uri(value)
+
+
+def test_the_attach_label_is_bounded():
+    huge = " data:text/plain;base64," + "A" * 100_000
+    label = inline.attach_label(huge)
+    assert label == huge[:inline.ATTACH_LABEL_MAX_CHARS] + "…"
+    assert inline.attach_label("/srv/a.txt") == "/srv/a.txt"
+    assert inline.attach_label("DATA:image/png;name=a.png;base64,AAAA") == "data:image/png a.png"
+
+
+def test_name_repair_is_locale_free(monkeypatch):
+    def latin1_fsencode(name):
+        return name.encode("latin-1", "surrogateescape")
+
+    monkeypatch.setattr(os, "fsencode", latin1_fsencode)
+    assert inline.repair_name("café.txt") == "café.txt"
+    assert inline.repair_name("bad\udcffname.txt") == "bad\ufffdname.txt"
+    with pytest.raises(UnicodeEncodeError):
+        inline.repair_name("\ud800.txt")
 
 
 def test_data_uri_size_does_not_decode():

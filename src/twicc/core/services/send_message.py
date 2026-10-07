@@ -70,8 +70,13 @@ async def send_message_from_drop_payload(payload: dict) -> SendMessageResult:
             "attachments", attachment_planner.ERROR_INVALID_ATTACHMENTS, attachment_drop.LEGACY_FIELDS_MESSAGE,
         )
     session_id = payload.get("session_id")
-    if not isinstance(session_id, str) or not session_id:
+    if session_id is None or session_id == "":
+        # Reported as ``missing`` with the other field errors; no session, so no lane.
         return await send_message_to_session_from_payload(payload, release_refs_on_outcome=True)
+    if not isinstance(session_id, str):
+        # Refused here: the lane is keyed by a string, and a send must never skip it.
+        attachment_lifecycle.delivery_release(attachment_drop.refs_to_release(payload))()
+        return _rejected("session_id", "invalid", "session_id must be a string")
     async with send_lane(session_id):
         return await send_message_to_session_from_payload(payload, release_refs_on_outcome=True)
 

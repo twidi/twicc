@@ -126,6 +126,49 @@ def test_resolution_errors_are_validation_errors(tmp_path, data_dir):
     ]
 
 
+def test_an_upper_case_data_scheme_is_a_data_uri(data_dir):
+    sources, errors = attach_sources.resolve(
+        ["DATA:text/plain;base64,aGk=", "Data:text/plain;name=x.txt;base64,aGk="], hint=inline.INLINE_TOO_LARGE_HINT,
+    )
+    assert errors == []
+    assert [(s.label, s.name, s.data) for s in sources] == [
+        ("data:text/plain", "attachment-1.txt", b"hi"), ("data:text/plain x.txt", "x.txt", b"hi"),
+    ]
+
+
+def test_a_huge_value_read_as_a_path_never_echoes_the_value(tmp_path, data_dir, monkeypatch):
+    payload = "A" * 100_000
+    values = [f" data:text/plain;base64,{payload}", f"remote:/{payload}"]
+    _sources, errors = attach_sources.resolve(values, hint=inline.INLINE_TOO_LARGE_HINT)
+    token = _capture.set(_Sink())
+    try:
+        _sources, api_errors = attach_sources.resolve([payload], hint=inline.INLINE_TOO_LARGE_HINT)
+    finally:
+        _capture.reset(token)
+    monkeypatch.setattr(inline, "INLINE_MAX_BYTES", 1)
+    deep = tmp_path / ("d" * 200) / ("e" * 200)
+    deep.mkdir(parents=True)
+    long_path = str(_file(deep, "f.bin", b"xx"))
+    _sources, budget_errors = attach_sources.resolve(
+        [long_path], hint=inline.PEER_TOO_LARGE_HINT, count_paths=True,
+    )
+    all_errors = errors + api_errors + budget_errors
+    assert [e.code for e in all_errors] == [
+        "not_a_file", "remote_requires_remote", "relative_path", "attachments_too_large",
+    ]
+    for error in all_errors:
+        assert len(error.field) < 300
+        assert payload not in error.message and len(error.message) < 600
+
+
+def test_an_unencodable_name_is_a_validation_error(data_dir):
+    source = attach_sources.AttachSource("data:text/plain", "\ud800.txt", None, b"x")
+    refs, errors = attach_sources.stage([source], bucket=attach_sources.new_request_bucket())
+    assert refs == ()
+    assert [(e.field, e.code) for e in errors] == [("--attach data:text/plain", "attachment_stage_failed")]
+    assert _staging_entries() == []
+
+
 def test_a_relative_path_is_refused_over_the_api(data_dir):
     token = _capture.set(_Sink())
     try:

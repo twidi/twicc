@@ -54,6 +54,33 @@ def test_an_undecodable_local_name_is_sent_as_valid_utf8(tmp_path):
     assert out[-1] == "data:application/octet-stream;name=bad%EF%BF%BD.bin;base64,eA=="
 
 
+def test_the_local_name_repair_ignores_the_locale(tmp_path, monkeypatch):
+    path = tmp_path / "café.txt"
+    path.write_bytes(b"x")
+    monkeypatch.setattr(os, "fsencode", lambda name: name.encode("latin-1", "surrogateescape"))
+    out = _inline(["send-message", "sid", "hi", "--attach", str(path)])
+    assert out[-1] == "data:text/plain;name=caf%C3%A9.txt;base64,eA=="
+
+
+def test_an_upper_case_data_uri_is_forwarded_as_is_and_counted(monkeypatch, posted):
+    uri = "DATA:text/plain;base64," + base64.b64encode(b"y" * 6).decode()
+    assert _inline(["send-message", "sid", "hi", "--attach", uri])[-1] == uri
+    monkeypatch.setattr(inline, "INLINE_MAX_BYTES", 4)
+    with pytest.raises(_remote.RemoteUsageError) as exc:
+        _remote.forward(URL, "tok", ["send-message", "sid", "hi", "--attach", uri])
+    assert "the limit is" in str(exc.value)
+    assert posted == []
+
+
+def test_a_huge_value_read_as_a_path_never_echoes_the_value(posted):
+    payload = "A" * 100_000
+    for value in (f" data:text/plain;base64,{payload}", f"remote:{payload}"):
+        with pytest.raises(_remote.RemoteUsageError) as exc:
+            _remote.forward(URL, "tok", ["send-message", "sid", "hi", "--attach", value])
+        assert payload not in str(exc.value) and len(str(exc.value)) < 600
+    assert posted == []
+
+
 def test_data_and_remote_values_keep_their_meaning():
     uri = "data:text/plain;base64,aGk="
     out = _inline(["send-message", "sid", "hi", "--attach", uri, "--attach=remote:/srv/x.bin"])

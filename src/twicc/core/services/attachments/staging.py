@@ -22,6 +22,7 @@ from typing import BinaryIO
 
 import orjson
 
+from twicc.core.services.attachments.inline import repair_name
 from twicc.core.services.attachments.types import AttachmentRef, PreparedEntry, PromotedEntry, StagedEntry
 from twicc.paths import get_artifacts_dir, get_composer_attachments_dir
 from twicc.uploads.store import COPY_BLOCK_SIZE, FILENAME_MAX_BYTES, TEMP_FILE_PREFIX, candidate_names, now_iso
@@ -513,10 +514,14 @@ def _stage(write: Callable[[BinaryIO], None], name: str, *, bucket: str, origin:
     # The error label: the raw name can be an unbounded ``name=`` of a data URI (RPC, MCP), so
     # it is cut until the normalized name replaces it.
     label = name[:_STAGE_LABEL_CHARS]
+    # A name read from the filesystem may hold undecodable bytes (surrogate escapes).
+    try:
+        repaired = repair_name(name)
+    except UnicodeEncodeError:
+        raise AttachmentError(ERROR_STAGE_FAILED, f"Cannot stage {label!r}: the file name is not valid text") from None
     try:
         ref, entry = _create_oneshot_entry(bucket, origin)
-        # A name read from the filesystem may hold undecodable bytes (surrogate escapes).
-        filename = normalize_filename(os.fsencode(name).decode("utf-8", "replace"), name_max_bytes())
+        filename = normalize_filename(repaired, name_max_bytes())
         label = filename
         file_dir = entry / FILE_DIR
         tmp = file_dir / f"{TEMP_FILE_PREFIX}{uuid.uuid4().hex}.tmp"

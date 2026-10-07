@@ -507,6 +507,24 @@ def _out_message(peer, **kw):
     return PeerMessage.objects.create(**defaults)
 
 
+def test_a_broadcast_of_a_deleted_row_sends_nothing(transactional_db, broadcasts, monkeypatch):
+    """The fresh re-read finds no row: the caller's instance (payload deferred) is never serialized."""
+    from twicc import external_notifications
+
+    notified = []
+    monkeypatch.setattr(external_notifications, "notify_peer_message", lambda *args: notified.append(args))
+    peer = _active_peer()
+    _out_message(peer)
+    message = PeerMessage.objects.defer("payload").get(message_id="pm_" + "b" * 16)
+    PeerMessage.objects.filter(pk=message.pk).delete()
+
+    _run(peer_messages.broadcast_peer_message_updated(message))
+    _run(peer_messages.broadcast_peer_message_received(message))
+
+    assert broadcasts == []
+    assert notified == []
+
+
 def test_status_callback_transitions(client, transactional_db, peer_host, broadcasts):
     peer = _active_peer()
     message = _out_message(peer)

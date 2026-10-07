@@ -336,7 +336,7 @@ def _resolve_remote_path(value: str) -> str | None:
     path = remote_scheme_path(value)
     if not path.startswith("/"):
         raise RemoteUsageError(
-            f"remote: requires an absolute path (e.g. remote:/abs/path), got {value!r}"
+            f"remote: requires an absolute path (e.g. remote:/abs/path), got {inline.attach_label(value)!r}"
         )
     return path
 
@@ -355,7 +355,7 @@ def _inline_one(value: str) -> str:
     Raises :class:`RemoteUsageError` if a ``remote:`` path is not absolute, or a local file is
     missing or unreadable (a client-side error — no HTTP attempted).
     """
-    if value.startswith("data:"):
+    if inline.is_data_uri(value):
         return value
     remote_path = _resolve_remote_path(value)
     if remote_path is not None:
@@ -363,10 +363,13 @@ def _inline_one(value: str) -> str:
     try:
         with open(value, "rb") as f:
             data = f.read()
-    except OSError:
-        raise RemoteUsageError(f"attachment not found: {value}")
+    except (OSError, ValueError):
+        raise RemoteUsageError(f"attachment not found: {inline.attach_label(value)}")
     # A name read from the filesystem may hold undecodable bytes (surrogate escapes).
-    name = os.fsencode(os.path.basename(value)).decode("utf-8", "replace")
+    try:
+        name = inline.repair_name(os.path.basename(value))
+    except UnicodeEncodeError:
+        raise RemoteUsageError(f"attachment name is not valid text: {inline.attach_label(value)!r}")
     mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
     payload = base64.b64encode(data).decode("ascii")
     return f"data:{mime};name={quote(name, safe='')};base64,{payload}"
@@ -457,7 +460,7 @@ def check_inline_size(resolved: Resolved) -> None:
     """
     total = 0
     for value in resolved.params.get(_ATTACH_PARAM_NAME) or ():
-        if value.startswith("data:"):
+        if inline.is_data_uri(value):
             total += inline.data_uri_size(value) or 0
         elif not has_remote_scheme(value):
             try:

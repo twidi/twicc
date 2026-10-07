@@ -28,7 +28,9 @@ class ClaudeCodeModelExtra(NamedTuple):
     supports_effort_max: bool
     supports_fast: bool
     supports_permission_auto: bool
-    # Native vision resolution flag, read by the frontend only (frontend/src/providers/claude_code/helpers.js getEffectiveImageDimension: True ⇒ 2576 px, False ⇒ 1568 px).
+    # Native vision resolution flag, read by the frontend only
+    # (frontend/src/providers/claude_code/helpers.js getEffectiveImageDimension:
+    # True ⇒ 2576 px, False ⇒ 1568 px).
     supports_highres_images: bool
     # Whether the model allows turning thinking off. False ⇒ adaptive
     # thinking is always on and ``thinking:{type:disabled}`` is rejected by

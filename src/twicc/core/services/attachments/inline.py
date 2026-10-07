@@ -46,6 +46,8 @@ DATA_URI_PREFIX = "data:"
 MEDIA_TYPE_MAX_CHARS = 255
 # How much of a malformed data URI (no comma) its error label shows.
 _LABEL_RAW_END = 40
+# How much of any other ``--attach`` value (a path) its error label shows.
+ATTACH_LABEL_MAX_CHARS = 256
 # ``type/subtype``, RFC 6838 restricted-name characters, no parameters.
 _MEDIA_TYPE = re.compile(r"[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*")
 
@@ -107,7 +109,18 @@ class DataUri(NamedTuple):
 
 
 def is_data_uri(value: str) -> bool:
-    return value.startswith(DATA_URI_PREFIX)
+    """True when *value* starts with the ``data:`` scheme, in any case (RFC 2397)."""
+    return value[:len(DATA_URI_PREFIX)].lower() == DATA_URI_PREFIX
+
+
+def repair_name(name: str) -> str:
+    """*name* as valid UTF-8 text, whatever the locale.
+
+    A name read from a filesystem or from ``argv`` holds each byte that is not UTF-8 as a
+    surrogate escape (U+DC80-U+DCFF): each one becomes U+FFFD. Raises ``UnicodeEncodeError``
+    for any other lone surrogate, which no byte sequence produces: the caller refuses the name.
+    """
+    return name.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
 
 
 def _decoded_size_or_none(data: str) -> int | None:
@@ -204,6 +217,17 @@ def data_uri_label(spec: str) -> str:
     from twicc.core.services.attachments.staging import name_max_bytes, normalize_filename
 
     return f"{DATA_URI_PREFIX}{media} {normalize_filename(name, name_max_bytes())}"
+
+
+def attach_label(spec: str) -> str:
+    """The error label of an ``--attach`` value, bounded whatever the value.
+
+    A data URI gets :func:`data_uri_label`. Any other value (a path, or a mistyped data URI read
+    as a path) is cut after :data:`ATTACH_LABEL_MAX_CHARS` characters.
+    """
+    if is_data_uri(spec):
+        return data_uri_label(spec)
+    return spec if len(spec) <= ATTACH_LABEL_MAX_CHARS else f"{spec[:ATTACH_LABEL_MAX_CHARS]}…"
 
 
 def default_name(media_type: str, n: int) -> str:

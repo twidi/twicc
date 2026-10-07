@@ -24,7 +24,7 @@ from twicc.core.services.attachments.types import AttachmentRef
 class AttachSource(NamedTuple):
     """One resolved ``--attach`` value: a file to copy (*path*) or decoded bytes (*data*)."""
 
-    label: str  # the error label: the value itself, or the short label of a data URI
+    label: str  # the error label: the bounded value, or the short label of a data URI
     name: str  # the staged file name, before normalization
     path: str | None
     data: bytes | None
@@ -63,8 +63,9 @@ def resolve(
     sources: list[AttachSource] = []
     errors: list[ValidationError] = []
     for n, spec in enumerate(attach, start=1):
+        # Never the raw value: a data URI can be tens of MB, and a mistyped one is read as a path.
+        label = inline.attach_label(spec)
         if inline.is_data_uri(spec):
-            label = inline.data_uri_label(spec)
             try:
                 uri = inline.parse_data_uri(spec, budget=None if over_budget else budget)
             except AttachmentError as exc:
@@ -76,29 +77,29 @@ def resolve(
         if has_remote_scheme(spec):
             # Only meaningful over --remote, where the forwarder strips it before the call.
             errors.append(ValidationError(
-                _field(spec), "remote_requires_remote", "remote: paths are only valid with --remote",
+                _field(label), "remote_requires_remote", "remote: paths are only valid with --remote",
             ))
             continue
         if in_api_mode() and not os.path.isabs(spec):
             errors.append(ValidationError(
-                _field(spec), "relative_path",
+                _field(label), "relative_path",
                 "relative path not allowed over the API (no caller working directory); "
                 "pass an absolute path or a data: URI",
             ))
             continue
         if not os.path.isfile(spec):
             errors.append(ValidationError(
-                _field(spec), "not_a_file", f"file {spec!r} does not exist or is not a regular file",
+                _field(label), "not_a_file", f"file {label!r} does not exist or is not a regular file",
             ))
             continue
         if count_paths and not over_budget:
             try:
                 budget.add(os.path.getsize(spec))
             except AttachmentError as exc:
-                errors.append(ValidationError(_field(spec), exc.code, str(exc)))
+                errors.append(ValidationError(_field(label), exc.code, str(exc)))
                 over_budget = True
                 continue
-        sources.append(AttachSource(spec, os.path.basename(spec), spec, None))
+        sources.append(AttachSource(label, os.path.basename(spec), spec, None))
     return sources, errors
 
 

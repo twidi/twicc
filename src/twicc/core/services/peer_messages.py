@@ -415,7 +415,7 @@ async def _broadcast(data: dict) -> None:
     await layer.group_send("updates", {"type": "broadcast", "data": data})
 
 
-async def _serialize_for_broadcast(message) -> dict:
+async def _serialize_for_broadcast(message) -> dict | None:
     """Serialize a message for the wire, with its local sessions loaded.
 
     Re-read rather than trust the caller's instance: the serializer reads the
@@ -423,6 +423,10 @@ async def _serialize_for_broadcast(message) -> dict:
     async context raises `SynchronousOnlyOperation`. Every broadcast path then
     stops being a trap — the mutations right above them (`_mark_delivered` &
     co.) reassign those FKs by id, which drops any cached object.
+
+    ``None`` when the row is gone: there is nothing to broadcast, and the
+    caller's instance (its payload may be deferred) is never serialized on
+    the event loop.
     """
     from twicc.core.models import PeerMessage
     from twicc.core.serializers import serialize_peer_message
@@ -435,13 +439,17 @@ async def _serialize_for_broadcast(message) -> dict:
         return fresh, projects.get(message.pk)
 
     fresh, effective_project = await sync_to_async(_load)()
-    return serialize_peer_message(fresh or message, effective_project=effective_project)
+    if fresh is None:
+        return None
+    return serialize_peer_message(fresh, effective_project=effective_project)
 
 
 async def broadcast_peer_message_received(message) -> None:
     from twicc.external_notifications import notify_peer_message, peer_message_routing
 
     serialized = await _serialize_for_broadcast(message)
+    if serialized is None:
+        return
     # Where the message counts (session, project), resolved in sync context
     # from the same serialized view the toast reads.
     routing = await sync_to_async(peer_message_routing)(serialized)
@@ -452,7 +460,9 @@ async def broadcast_peer_message_received(message) -> None:
 
 
 async def broadcast_peer_message_updated(message) -> None:
-    await _broadcast({"type": "peer_message_updated", "message": await _serialize_for_broadcast(message)})
+    serialized = await _serialize_for_broadcast(message)
+    if serialized is not None:
+        await _broadcast({"type": "peer_message_updated", "message": serialized})
 
 
 # ── Payload helpers ─────────────────────────────────────────────────────────
@@ -745,7 +755,7 @@ async def send_peer_message_from_payload(
     # alone does not bound the body (§4.8.3 step 4).
     if len(body) > inline.INLINE_MAX_REQUEST_BYTES:
         return PeerSendResult(False, None, peer.id, [PeerError(
-            "attachments", ERROR_MESSAGE_TOO_LARGE,
+            "payload", ERROR_MESSAGE_TOO_LARGE,
             f"The message (text and attachments) is {inline.format_mb(len(body))} once encoded; "
             f"the limit is {inline.format_mb(inline.INLINE_MAX_REQUEST_BYTES)}. {inline.PEER_TOO_LARGE_HINT}",
         )], {})
