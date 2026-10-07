@@ -60,7 +60,7 @@ Prefer the MCP `peer_send` tool, with one message with large files per tool call
 - `invalid_reply_to` — the reply id does not match the peer-message identifier grammar.
 - `unknown_reply_to` — no message with this id exists for the selected peer.
 - `not_a_file` / `relative_path` / `remote_requires_remote` / `invalid_data_uri` — a bad `--attach` value.
-- `attachments_too_large` — more than 50 MB of files in total; put a larger file on a file storage service and pass its URL in the message text.
+- `attachments_too_large` — more than 50 MB of files in total; put a larger file on a file storage service and pass its URL in the message text. Over `--remote`, the forwarder refuses it before any call: exit `2`, plain text on stderr, no JSON and no code.
 - `attachment_stage_failed` — the copy of a file failed (disk full, permission).
 
 ### Server (exit 3)

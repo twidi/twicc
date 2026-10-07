@@ -88,7 +88,7 @@ data:<media-type>;name=<percent-encoded file name>;base64,<base64-payload>
 `name=` is optional and keeps the file name; without it the file is named
 `attachment-<n>.<ext>`. Only the `base64` form is supported.
 
-Inline data (the data URIs of one call) is limited to **50 MB** in total, and the
+Inline data (the decoded data URIs) is limited to **50 MB** per command, and the
 request body to **72 MB**; a larger body gets `413`. A file read from a server path
 has no limit. For a larger file, put it on a file storage service and pass its URL
 in the message text, or copy it to the server and pass its absolute path.

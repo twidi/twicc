@@ -59,7 +59,7 @@ Local (exit 1):
 - `annotation_non_scalar` — use `--annotations-file` for list or object values.
 - `invalid_annotations_file` — file missing, invalid JSON, or root value is not an object.
 - `not_a_file` / `relative_path` / `remote_requires_remote` / `invalid_data_uri` — a bad `--attach` value.
-- `attachments_too_large` — more than 50 MB of inline data; the message says what to do instead.
+- `attachments_too_large` — more than 50 MB of inline data; the message says what to do instead. Over `--remote`, the forwarder refuses it before any call: exit `2`, plain text on stderr, no JSON and no code.
 - `attachment_stage_failed` — the copy of a file failed (disk full, permission).
 
 Server (exit 3):

@@ -75,7 +75,7 @@ The message is delivered immediately. The recipient picks it up based on its cur
 - `requires_wait_reply` — `--wait-timeout`, `--no-reply-text` or `--wait-background` passed without `--wait-reply`.
 - `invalid_value` — `--wait-timeout` is not > 0.
 - `not_a_file` / `relative_path` / `remote_requires_remote` / `invalid_data_uri` — a bad `--attach` value: a missing file or a directory, a relative path over MCP or the RPC, `remote:` without `--remote`, a malformed data URI.
-- `attachments_too_large` — more than 50 MB of inline data; the message says what to do instead.
+- `attachments_too_large` — more than 50 MB of inline data; the message says what to do instead. Over `--remote`, the forwarder refuses it before any call: exit `2`, plain text on stderr, no JSON and no code.
 - `attachment_stage_failed` — the copy of a file failed (disk full, permission).
 
 ### Server (exit 3)

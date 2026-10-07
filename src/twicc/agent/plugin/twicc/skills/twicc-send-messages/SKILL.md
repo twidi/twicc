@@ -69,7 +69,7 @@ So there is no need to check the recipients' states before sending.
 
 Argument-level problems fail the whole command (exit 1, plain-text on stderr): empty/unreadable `--message`, neither `--message` nor `--attach`, bad `--timeout`, two of `--spawned-by`/`--descendants`/`--siblings` together, `parent` scope (on `--spawned-by`/`--descendants`, or any value on `--siblings`), `--annotation` without a filiation scope, neither ids nor scope.
 
-A bad `--attach` value fails the whole command too, before any recipient, as one JSON `validation_error` (exit 1): `not_a_file`, `relative_path`, `remote_requires_remote`, `invalid_data_uri`, or `attachments_too_large` (more than 50 MB of inline data; the message says what to do instead: a file storage service URL in the text, or a path the server reads).
+A bad `--attach` value fails the whole command too, before any recipient, as one JSON `validation_error` (exit 1): `not_a_file`, `relative_path`, `remote_requires_remote`, `invalid_data_uri`, or `attachments_too_large` (more than 50 MB of inline data; the message says what to do instead: a file storage service URL in the text, or a path the server reads). Over `--remote`, the forwarder refuses it before any call: exit `2`, plain text on stderr, no JSON and no code.
 
 Local (exit 1), before anything is sent: `requires_wait_reply` (a wait modifier without `--wait-reply`) and `invalid_value` (`--wait-timeout` not > 0).
 
