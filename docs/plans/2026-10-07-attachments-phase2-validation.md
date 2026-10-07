@@ -9,7 +9,8 @@ Date: 2026-10-07. Branch: `attach-any-files` (base of this record: `99390d6a`).
 |---|---|
 | Automated tests and build | Run. All pass (§1). |
 | Manual matrix, local rows (CLI, `--remote`, hybrid, internal MCP) | Run on the worktree instance (backend `:3501`, Vite `:5174`) with real Claude and Codex. 8 PASS. |
-| Manual matrix, external MCP and peer rows | **NOT RUN.** They need a setup that only the user can make (§2.3). |
+| Manual matrix, peer rows 10–11 (two instances on this branch) | Run on 2026-10-07 between this instance and a second worktree instance. 2 PASS (§2.6). |
+| Manual matrix, external MCP and older-peer rows (9, 12–14) | **NOT RUN.** They need a setup that only the user can make (§2.3). |
 
 ## 1. Automated results
 
@@ -54,13 +55,13 @@ Every command below ran as `cd /home/twidi/dev/twicc-poc/.worktrees/attach-any-f
 | 7 | `--remote` with `remote:` | same with `--attach remote:/tmp/phase2-qa/sixty.bin` | exit 0; artifact `sixty.bin` | Exit 0 in 0.7 s. Artifact `sixty.bin`, byte-identical (`cmp`). UI: tile `sixty.bin`. | PASS |
 | 8 | Internal MCP: path + named data URI | A session of this instance (`17034654-…`) was asked to call `mcp__twicc__send_message` to `<CLAUDE_SID>` with prompt `mcp test` and `attach ['/tmp/phase2-qa/notes.txt', 'data:text/plain;name=hello%20world.txt;base64,SGVsbG8=']` | exit 0; tiles `notes.txt` and `hello world.txt` | Tool result `{"exit_code":0,"result":{"status":"sent",…}}`. The worktree `backend.log` shows the `POST /mcp` calls. Stored line: entries `notes.txt` and `hello world.txt` (both `mode` inline: small text files go natively to Claude). UI: tiles `notes.txt`, `hello world.txt`. | PASS |
 | 9 | External MCP: named data URI | Only with an external MCP client connected to this instance | exit 0; tile `hello world.txt`; the McpOperation audit row has no `attach` | Not run: no external MCP client can reach this instance. `mcpBaseUrl` is not set in its synced settings, so the external MCP host route is off. The `McpConnection` rows in its database are copies from the main instance database. | NOT RUN — no external MCP client connected; covered by the automated tests (`tests/test_mcp_attach.py`). |
-| 10 | Peers, Git patch → Codex and hybrid | Second instance on this branch, paired; `peer-send` `fix.patch`; deliver to `<CODEX_SID>`, redeliver to `<HYBRID_SID>` | review dialog lists `fix.patch`; delivered message carries `fix.patch` as a file in both sessions | — | NOT RUN — needs the user: a second instance on this branch (§2.3). |
-| 11 | Peers, 49 MB then 51 MB | `peer-send` `fortynine.bin`, then `fiftyone.bin` | 49 MB: exit 0 within 468 s; 51 MB: exit 1 `attachments_too_large` with the URL hint, nothing staged | — | NOT RUN — needs the user: a second instance on this branch (§2.3). |
+| 10 | Peers, Git patch → Codex and hybrid | Second instance on this branch, paired; `peer-send` `fix.patch`; deliver to `<CODEX_SID>`, redeliver to `<HYBRID_SID>` | review dialog lists `fix.patch`; delivered message carries `fix.patch` as a file in both sessions | Run on 2026-10-07 with new target sessions (§2.6): exit 0; review lists `fix.patch` (19 B); tile `fix.patch` and artifact `attachments/fix.patch` (byte-identical) in the Codex session and in the hybrid session. | PASS |
+| 11 | Peers, 49 MB then 51 MB | `peer-send` `fortynine.bin`, then `fiftyone.bin` | 49 MB: exit 0 within 468 s; 51 MB: exit 1 `attachments_too_large` with the URL hint, nothing staged | Run on 2026-10-07 (§2.6): 49 MB exit 0 in 16 s, stored on the receiver with 51380224 bytes; 51 MB exit 1 in 3.4 s, `attachments_too_large` with the URL hint, no new `composer-attachments/` entry. | PASS |
 | 12 | Older peer, small file | Pair with an instance on `main`; `peer-send` with `notes.txt` | exit 3 `send_failed`, "may be too old to receive attachments"; a text-only send still succeeds | — | NOT RUN — needs the user: pairing with an instance on `main` (§2.3). |
 | 13 | Older peer, 40 MB | `peer-send` with `forty.bin` | exit 3, "refused the message size. An older instance also refuses any attachment." | — | NOT RUN — needs the user (§2.3). |
 | 14 | Older peer, 35 MB | `peer-send` with `thirtyfive.bin` | exit 3, the 400 text | — | NOT RUN — needs the user (§2.3). |
 
-Totals: **8 PASS, 0 FAIL, 6 NOT RUN.**
+Totals: **10 PASS, 0 FAIL, 4 NOT RUN** (rows 10–11 added on 2026-10-07, §2.6).
 
 Extra observations from the run:
 
@@ -108,6 +109,35 @@ cd /home/twidi/dev/twicc-poc/.worktrees/attach-any-files && mkdir -p /tmp/phase2
 - Test files in `/tmp/phase2-qa/` deleted (the empty folder stays: it is the project folder of the test sessions).
 - `attachments/` of the five test sessions emptied. No session deleted.
 - RPC token `phase2-qa` (`tok_e29c796f`) revoked.
+
+### 2.6 Rows 10–11 run (2026-10-07)
+
+**Setup.**
+
+- Instance A: this worktree, backend restarted through `devctl.py stop back` / `start back` (port `3501` free after 1 s, `Uvicorn running` at 12:49:50).
+- Instance B: worktree `/home/twidi/dev/twicc-poc/.worktrees/feature-attach-any-files-peer`, branch `feature/attach-any-files-peer` from `6f65f718`, started with `uv run ./devctl.py start --empty-db` (backend `3502`, Vite `5175`).
+- Peer addresses: one Cloudflare tunnel hostname per instance, `https://twicc-peer-a.twidi.com` → `localhost:3501` and `https://twicc-peer-b.twidi.com` → `localhost:3502`. Set with `twicc settings set peerBaseUrl …` (and `peerDisplayName` "QA peer A" / "QA peer B") in each worktree. From outside: `/peer/handshake/request/` and `/peer/messages/` answer `405` on GET and `400 invalid_payload` on an empty POST; `/`, `/api/sessions/` and `/static/` answer `404` (origin gate). `localhost:3501` and `localhost:3502` answer `404` on `POST /peer/messages/`.
+- Pairing in Settings → Peers: B sent the request to A, A showed the code, B verified it, A accepted. A knows B as `peer_354986b8` ("QA peer B"); B knows A as `peer_8eb9f4a3` ("Peer A"). Both `active`.
+- Target sessions on A: "QA peer rows codex" `01a11602-32d1-70f0-89ed-2d6e3a1449b3` (Codex, project `/tmp/phase2-qa`) and "QA peer rows hybrid" `5fb6f8fe-7d56-409f-9b3f-e988495ed220` (Claude, project = this worktree, switched to hybrid in the composer before the send).
+
+Every B command ran as `cd /home/twidi/dev/twicc-poc/.worktrees/feature-attach-any-files-peer && TWICC_DATA_DIR=$PWD uv run twicc …`.
+
+**Row 10 — PASS.**
+
+- `peer-send peer_8eb9f4a3 'Patch' 'Apply this patch file …' --attach /tmp/phase2-qa/fix.patch` → exit 0, `"status": "sent"`, message `pm_5344498bff079d01`. It took 59 s: B was still in its initial sync (see the observation below). A stored it with `attachments_meta` `[{"name": "fix.patch", "media_type": "text/x-diff", "bytes": 19}]`.
+- A, peer inbox → review: the attachment list shows `fix.patch`, 19 B.
+- "Deliver to an existing session" → "QA peer rows codex": the composer holds the peer message and a ready `fix.patch` chip. After Send: `attachments/fix.patch` (19 bytes, byte-identical to the source); the stored user line has `twicc_attachments` entry `fix.patch`, `kind` text, `mode` file; UI: one tile `fix.patch`. Codex read the file and answered `diff --git a/x b/x`.
+- Redelivery from the history entry ("This message was already delivered; delivering it again is allowed") → "QA peer rows hybrid", hybrid switch staged, then Send. `backend.log`: `Stopping agent … (reason: switch-hybrid)`, `switched to hybrid CLI mode`, `Hybrid CLI launched`. `attachments/fix.patch` is byte-identical; the stored user line (`entrypoint` cli) has entry `fix.patch`, `mode` file; UI: one tile `fix.patch`. The agent then asked a Bash approval, not answered; the agent was stopped. B reports the message as `delivered`.
+
+**Row 11 — PASS.**
+
+- `peer-send peer_8eb9f4a3 'Big' … --attach /tmp/phase2-qa/fortynine.bin` (49 MB) → exit 0 in 16 s, message `pm_d3ce9fa306140da4`. A stored it `pending` with `attachments_meta` `fortynine.bin`, `application/octet-stream`, 51380224 bytes.
+- `peer-send peer_8eb9f4a3 'Too big' … --attach /tmp/phase2-qa/fiftyone.bin` (51 MB) → exit 1 in 3.4 s: `"status": "validation_error"`, code `attachments_too_large`, "The attached files total 51 MB of inline data; the limit is 50 MB. For a larger file, put it on a file storage service and pass its URL in the message text." The listing of B's `composer-attachments/` is identical before and after this send. Each successful send left only an empty bucket with its `.released` marker.
+- Text-only sends, both directions, exit 0: B → A `pm_f8bc81cab72e931a`, A → B (`twicc peer-send peer_354986b8 …` from this worktree) `pm_6f8011141b601402`.
+
+**Observation (outside the phase 2 scope).** The first send from B waited 55 s between the drop-request pickup (12:56:57) and the POST on A (12:57:52). In the same window, B's `backend.log` shows `Slow sync operation=executor_run elapsed_ms=86934.3` from its initial sync. Later sends, after the sync, took 16 s for 49 MB.
+
+**Cleanup.** Test files in `/tmp/phase2-qa/` deleted (the empty folder stays: it is the project folder of the test sessions). `attachments/` of the two new sessions emptied. No session deleted. Instance B, its worktree, the pairing, both Cloudflare hostnames and the pending messages stay in place for the user.
 
 ## 3. Accepted limitations
 
