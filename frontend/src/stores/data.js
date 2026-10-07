@@ -1,5 +1,5 @@
 import { buildProjectActivityIndex, createProjectActivityComparator } from '../utils/projectActivity.js'
-import { sessionSortComparator } from '../utils/sessionSort.js'
+import { getStableSessionList } from '../utils/sessionLists.js'
 import { agentLinkState, setAgentLink as cacheAgentLink, clearAgentLinks as clearAgentLinkCache, markAgentStopped as cacheAgentStop, markAgentIdle, beginAgentFetch, applyAgentSnapshot, rootAgentToolLine, staleSyntheticAgentIds, buildAgentTree, hasTreeAgents, runStateFromPayload, interactionFromPayload, setAgentRunState as cacheAgentRunState, setAgentInteraction as cacheAgentInteraction, dropRootAgentState, effectiveAgentRun } from '../utils/agentLinkIndex'
 // frontend/src/stores/data.js
 
@@ -109,6 +109,7 @@ function lineNumsToRanges(lineNums) {
 // `session_viewed` — is a no-op) and snapshotted to IndexedDB so they survive a reload.
 const layoutPersistDebouncers = new Map() // sessionId -> debounced fn
 const layoutPersistPending = new Set()    // sessionIds with an unsaved / in-flight layout change
+const layoutHydrationSnapshots = new WeakMap() // working copy -> last reconciled persisted snapshot
 const LAYOUT_PERSIST_DEBOUNCE_MS = 500
 
 /** A fresh empty intention — single pane. Matches EMPTY_INTENTION in useSessionLayout.js. */
@@ -867,60 +868,10 @@ export const useDataStore = defineStore('data', {
         // repository's. Falls back to the id as-is when the project is unknown.
         getMainRepoProjectId: (state) => (projectId) =>
             (projectId && state.projects[projectId]?.worktree_of) || projectId,
-        getProjectSessions: (state) => (projectId) => {
-            const projectState = state.localState.projects[projectId]
-            // Only apply the mtime lower-bound when there are more pages to load.
-            // When all pages have been fetched (hasMoreSessions=false), every
-            // session in the store should be visible — including ones added via
-            // WS during background compute whose mtime may be older than the bound.
-            const oldestMtime = projectState?.hasMoreSessions
-                ? projectState.oldestSessionMtime
-                : null
-            // During startup, skip per-property reactive tracking on sessions.
-            // Object.keys() tracks ITERATE_KEY (add/remove triggers re-eval),
-            // then toRaw() avoids the ~23K track() calls per eval from filter/sort
-            // property accesses. Normal tracking resumes after startup.
-            const isStartup = hasActiveStartupPhase(state.startupProgress)
-            let sessions, pStates
-            if (isStartup) {
-                Object.keys(state.sessions)
-                const raw = toRaw(state.sessions)
-                sessions = Object.values(raw)
-                pStates = toRaw(state.processStates)
-            } else {
-                sessions = Object.values(state.sessions)
-                pStates = state.processStates
-            }
-            return sessions
-                .filter(s => s.project_id === projectId && !s.parent_session_id && !s.hidden)
-                .filter(s => oldestMtime == null || s.mtime >= oldestMtime)
-                .sort(sessionSortComparator(pStates))
-        },
-        getAllSessions: (state) => {
-            const allState = state.localState.projects[ALL_PROJECTS_ID]
-            const oldestMtime = allState?.hasMoreSessions
-                ? allState.oldestSessionMtime
-                : null
-            // During startup, skip per-property reactive tracking on sessions.
-            // Object.keys() tracks ITERATE_KEY (add/remove triggers re-eval),
-            // then toRaw() avoids the ~23K track() calls per eval from filter/sort
-            // property accesses. Normal tracking resumes after startup.
-            const isStartup = hasActiveStartupPhase(state.startupProgress)
-            let sessions, pStates
-            if (isStartup) {
-                Object.keys(state.sessions)
-                const raw = toRaw(state.sessions)
-                sessions = Object.values(raw)
-                pStates = toRaw(state.processStates)
-            } else {
-                sessions = Object.values(state.sessions)
-                pStates = state.processStates
-            }
-            return sessions
-                .filter(s => !s.parent_session_id && !s.hidden)
-                .filter(s => oldestMtime == null || s.mtime >= oldestMtime)
-                .sort(sessionSortComparator(pStates))
-        },
+        getProjectSessions: (state) => (projectId) =>
+            getStableSessionList(state, projectId, ALL_PROJECTS_ID, hasActiveStartupPhase),
+        getAllSessions: (state) =>
+            getStableSessionList(state, ALL_PROJECTS_ID, ALL_PROJECTS_ID, hasActiveStartupPhase),
         getSession: (state) => (id) => state.sessions[id],
         getSessionProvider: (state) => (sessionId) => state.sessions[sessionId]?.provider ?? null,
         getSessionItems: (state) => (sessionId) => state.sessionItems[sessionId] || [],
@@ -1637,25 +1588,27 @@ export const useDataStore = defineStore('data', {
 
         // Sessions
         addSession(session) {
-            this.$patch({ sessions: { [session.id]: session } })
-            this._hydrateSessionLayoutFromPersisted(session.id, session.layout)
-            this.tryFinalizePendingBinding(session.id)
-            this._tryLinkPeerDelivery(session)
+            this.updateSession(session)
         },
         updateSession(session) {
             // When lifecycle timestamps change, clean up stale synthetic process states
             // for child agents that predate the new cutoff
             const prev = this.sessions[session.id]
-            if (session.parent_session_id && (!prev || prev.last_stopped_at !== session.last_stopped_at)) {
+            const startedAt = Object.hasOwn(session, 'last_started_at') ? session.last_started_at : prev?.last_started_at
+            const stoppedAt = Object.hasOwn(session, 'last_stopped_at') ? session.last_stopped_at : prev?.last_stopped_at
+            const parentId = Object.hasOwn(session, 'parent_session_id') ? session.parent_session_id : prev?.parent_session_id
+            const wasComputePending = prev?.compute_version_up_to_date === false
+            if (parentId && (!prev || prev.last_stopped_at !== stoppedAt)) {
                 // Display only (the agent's idle time); an idle/wake event also
                 // outranks a pending tree snapshot's link fields.
-                markAgentIdle(this.localState, session.id, session.last_stopped_at)
+                markAgentIdle(this.localState, session.id, stoppedAt)
             }
-            if (prev && (prev.last_started_at !== session.last_started_at ||
-                         prev.last_stopped_at !== session.last_stopped_at)) {
-                this._cleanStaleChildSynthetics(session)
+            if (prev && (prev.last_started_at !== startedAt || prev.last_stopped_at !== stoppedAt)) {
+                this._cleanStaleChildSynthetics({ ...session, last_started_at: startedAt, last_stopped_at: stoppedAt })
             }
-            const rootCutoffChanged = !session.parent_session_id && getSessionCutoffMs(prev) !== getSessionCutoffMs(session)
+            const rootCutoffChanged = !parentId && getSessionCutoffMs(prev) !== getSessionCutoffMs({
+                last_started_at: startedAt, last_stopped_at: stoppedAt,
+            })
             // Never let last_new_content_at regress — an optimistic value (set when
             // process_state exits assistant_turn) can be overwritten by a stale
             // session_updated broadcast from the file watcher.
@@ -1663,13 +1616,15 @@ export const useDataStore = defineStore('data', {
                 session.last_new_content_at < prev.last_new_content_at) {
                 session = { ...session, last_new_content_at: prev.last_new_content_at }
             }
-            // Tasks are complete snapshots. Deep merging keeps removed keys and
-            // replaces equal item arrays, so handle this field independently.
-            const { tasks, ...sessionFields } = session
-            this.$patch({ sessions: { [session.id]: sessionFields } })
-            if (Object.hasOwn(session, 'tasks') && !jsonValuesEqual(prev?.tasks, tasks)) {
-                this.sessions[session.id].tasks = tasks
-            }
+            // Nested fields are complete JSON snapshots. Preserve equal values,
+            // replace changed values (including removed keys), and retain the
+            // session object so unrelated metadata does not wake its consumers.
+            this.$patch(state => {
+                const current = state.sessions[session.id] ||= {}
+                for (const [key, value] of Object.entries(session)) {
+                    if (!jsonValuesEqual(current[key], value)) current[key] = value
+                }
+            })
             // A root cutoff change re-applies its agents' run states. After the
             // patch: ``applyAgentRunState`` reads the cutoff from ``sessions[root]``.
             if (rootCutoffChanged) {
@@ -1685,16 +1640,21 @@ export const useDataStore = defineStore('data', {
             // Edge-guarded (false→true) + items already loaded: fires once, only
             // where a spinner can show, and never overlaps SessionItemsList's
             // first-load fetch (which runs only when items are NOT yet fetched).
-            if (prev && prev.compute_version_up_to_date === false &&
+            if (wasComputePending &&
                 session.compute_version_up_to_date === true &&
                 this.localState.sessions[session.id]?.itemsFetched) {
                 this.refreshSessionToolStates(session.project_id, session.id).catch(() => {})
             }
             // Re-seed the live layout working copy from the persisted Session.layout (initial load /
             // cross-device sync), unless we have an unsaved local edit in flight (guarded inside).
-            this._hydrateSessionLayoutFromPersisted(session.id, session.layout)
+            this._hydrateSessionLayoutFromPersisted(session.id, this.sessions[session.id].layout)
             this.tryFinalizePendingBinding(session.id)
             this._tryLinkPeerDelivery(session)
+        },
+        // Backend rows are authoritative evidence that a browser draft is real.
+        // Local partial updates retain draft state through updateSession instead.
+        updateSessionFromServer(session) {
+            this.updateSession({ ...session, draft: false })
         },
         /**
          * Remove a session from the store by id.
@@ -2535,7 +2495,7 @@ export const useDataStore = defineStore('data', {
                     }
 
                     // Update store
-                    this.sessions[fresh.id] = fresh
+                    this.updateSessionFromServer(fresh)
                 }
 
                 // Update pagination state
@@ -2607,7 +2567,7 @@ export const useDataStore = defineStore('data', {
                 }
                 const data = await res.json()
                 for (const session of data.sessions) {
-                    this.sessions[session.id] = session
+                    this.updateSessionFromServer(session)
                 }
             } catch (error) {
                 console.error('Failed to load sticky sessions:', error)
@@ -2636,8 +2596,8 @@ export const useDataStore = defineStore('data', {
                     throw new Error(`Failed to load session: ${response.status}`)
                 }
                 const session = await response.json()
-                this.sessions[session.id] = session
-                return session
+                this.updateSessionFromServer(session)
+                return this.sessions[session.id]
             } catch (error) {
                 console.error(`Failed to load session ${sessionId}:`, error)
                 throw error
@@ -2987,7 +2947,7 @@ export const useDataStore = defineStore('data', {
                     console.error('Failed to refresh session record:', sessionId, res.status, res.statusText)
                     return false
                 }
-                this.updateSession(await res.json())
+                this.updateSessionFromServer(await res.json())
                 return true
             } catch (error) {
                 console.error('Failed to refresh session record:', sessionId, error)
@@ -4387,6 +4347,9 @@ export const useDataStore = defineStore('data', {
         persistSessionLayoutDebounced(sessionId) {
             const session = this.sessions[sessionId]
             if (!session || isLaunchedEphemeral(session)) return
+            // A local edit invalidates the last hydration comparison, including
+            // when persistence fails and the next snapshot must be retried.
+            layoutHydrationSnapshots.delete(this.localState.sessionLayout[sessionId])
             if (session.draft) {
                 const intention = this.localState.sessionLayout[sessionId]
                 if (intention) session.layout = stripLayoutForPersist(intention)
@@ -4453,10 +4416,16 @@ export const useDataStore = defineStore('data', {
             if (persisted === undefined) return
             const cur = this.localState.sessionLayout[sessionId]
             if (!cur) return
-            if (layoutPersistPending.has(sessionId)) return
+            if (layoutPersistPending.has(sessionId)) {
+                layoutHydrationSnapshots.delete(cur)
+                return
+            }
+            if (layoutHydrationSnapshots.get(cur) === persisted) return
             const next = hydrateLayoutIntention(persisted)
-            if (JSON.stringify(stripLayoutForPersist(cur)) === JSON.stringify(stripLayoutForPersist(next))) return
-            this.localState.sessionLayout[sessionId] = next
+            if (JSON.stringify(stripLayoutForPersist(cur)) !== JSON.stringify(stripLayoutForPersist(next))) {
+                this.localState.sessionLayout[sessionId] = next
+            }
+            layoutHydrationSnapshots.set(this.localState.sessionLayout[sessionId], persisted)
         },
 
         /** Drop all layout intention for a session (cancel any pending persist). */
@@ -5574,7 +5543,7 @@ export const useDataStore = defineStore('data', {
                 }
 
                 const updatedSession = await response.json()
-                this.sessions[sessionId] = { ...this.sessions[sessionId], ...updatedSession }
+                this.updateSessionFromServer({ id: sessionId, ...updatedSession })
 
             } catch (error) {
                 // Rollback on error
@@ -5622,7 +5591,7 @@ export const useDataStore = defineStore('data', {
                 }
 
                 const updatedSession = await response.json()
-                this.sessions[sessionId] = { ...this.sessions[sessionId], ...updatedSession }
+                this.updateSessionFromServer({ id: sessionId, ...updatedSession })
 
             } catch (error) {
                 // Rollback on error
@@ -5663,7 +5632,7 @@ export const useDataStore = defineStore('data', {
                 const updatedSession = await response.json()
                 const cur = this.sessions[sessionId]
                 if (cur && Array.isArray(updatedSession.plan_paths)) {
-                    cur.plan_paths = updatedSession.plan_paths
+                    this.updateSession({ id: sessionId, plan_paths: updatedSession.plan_paths })
                 }
             } catch {
                 // Best-effort re-probe; a failure leaves the flags unchanged.
@@ -5679,6 +5648,8 @@ export const useDataStore = defineStore('data', {
          * @param {string[]} ids - Session ids, in display order.
          */
         setDisplayedSessionIds(ids) {
+            const previous = this.localState.displayedSessionIds
+            if (previous.length === ids.length && ids.every((id, i) => id === previous[i])) return
             this.localState.displayedSessionIds = ids
         },
 
@@ -5828,7 +5799,7 @@ export const useDataStore = defineStore('data', {
                 }
 
                 const updatedSession = await response.json()
-                this.sessions[sessionId] = { ...this.sessions[sessionId], ...updatedSession }
+                this.updateSessionFromServer({ id: sessionId, ...updatedSession })
 
             } catch (error) {
                 // Rollback on error
@@ -5939,7 +5910,7 @@ export const useDataStore = defineStore('data', {
                 }
 
                 const updatedSession = await response.json()
-                this.sessions[sessionId] = { ...this.sessions[sessionId], ...updatedSession }
+                this.updateSessionFromServer({ id: sessionId, ...updatedSession })
 
             } catch (error) {
                 // Rollback on error

@@ -74,6 +74,7 @@ function makeStore({ fetches = [] } = {}) {
         processStates: {},
         sessionItems: {},
         $patch(patch) {
+            if (typeof patch === 'function') { patch(this); return }
             for (const [id, session] of Object.entries(patch.sessions || {})) this.sessions[id] = { ...this.sessions[id], ...session }
         },
         getSessionProvider(id) { return this.sessions[id]?.provider ?? null },

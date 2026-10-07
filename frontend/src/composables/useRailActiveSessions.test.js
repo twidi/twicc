@@ -47,6 +47,24 @@ test('memory and labels do not invalidate a loaded rail list', async () => {
     await flush(); assert.strictEqual(f.api.rows.value, before)
     f.scope.stop()
 })
+
+test('assistant content timestamps do not rebuild unchanged rail rows', async () => {
+    const f = fixture()
+    let reads = 0
+    f.store.sessions.s = { id: 's', project_id: 'p', last_new_content_at: '2026-10-07T12:00:00Z' }
+    Object.defineProperty(f.store.sessions.s, 'id', { configurable: true, get() { reads++; return 's' } })
+    f.store.processStates.s = { ...idle, state: 'assistant_turn' }
+    await flush()
+    const rows = f.api.rows.value, before = reads
+    f.store.sessions.s.last_new_content_at = '2026-10-07T12:01:00Z'
+    await flush()
+    assert.strictEqual(f.api.rows.value, rows)
+    assert.equal(reads, before)
+    f.store.processStates.s.state = 'user_turn'
+    await flush()
+    assert.equal(f.api.rows.value[0].unread, true)
+    f.scope.stop()
+})
 const unread = { id: 's', project_id: 'p', provider: 'claude', title: 'Loaded', last_new_content_at: '2026-10-05' }
 const flush = async () => { await nextTick(); await new Promise(resolve => setImmediate(resolve)); await nextTick() }
 function fixture() {

@@ -816,8 +816,10 @@ async function loadSessionData(lastLine) {
     }
 }
 
-// Load session data when session changes
-watch([() => props.sessionId, session], async ([newSessionId, newSession], [oldSessionId] = []) => {
+// A server snapshot can promote a draft while preserving the session object.
+// One watcher owns promotion and compute readiness, which can arrive together.
+watch([() => props.sessionId, session, () => session.value?.draft, () => session.value?.compute_version_up_to_date],
+    async ([newSessionId, newSession, , ready], [oldSessionId, , , oldReady] = []) => {
     if (!newSessionId) return
     const sessionChanged = newSessionId !== oldSessionId
 
@@ -847,6 +849,13 @@ watch([() => props.sessionId, session], async ([newSessionId, newSession], [oldS
 
     // Only initialize and load if not already done
     const isFirstLoad = !store.areSessionItemsFetched(newSessionId)
+
+    // An already-loaded session finishing a recompute needs fresh metadata.
+    // Initial readiness uses the first-load path, including its tool states.
+    if (!isFirstLoad && !sessionChanged && ready === true && oldReady !== true) {
+        await onComputeCompleted()
+        return
+    }
 
     // A first load is a reveal flow: the chat stays hidden (skeleton after 300ms) until
     // the load, the tool states and the initial scroll are all done.
@@ -987,14 +996,6 @@ async function onComputeCompleted() {
         release()
     }
 }
-
-// Watch for session compute completion
-watch(() => session.value?.compute_version_up_to_date, (newValue, oldValue) => {
-    // Transition from false (or undefined) to true
-    if (newValue === true && oldValue !== true) {
-        onComputeCompleted()
-    }
-})
 
 watch(
     [() => props.sessionId, isComputePending],

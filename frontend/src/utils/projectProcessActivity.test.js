@@ -21,6 +21,28 @@ test('shared indexes scan unread session fields once across multiple consumers',
     assert.equal(reads, before); assert.strictEqual(getProjectActivityIndex(store), index)
 })
 
+test('assistant timestamps do not rescan unrelated sessions for unread counts', () => {
+    const { store, index } = fixture()
+    let reads = 0
+    Object.defineProperty(store.sessions.b, 'last_new_content_at', {
+        configurable: true, get() { reads++; return '2026-10-07T12:00:00Z' },
+    })
+    assert.equal(index.totalUnread(), 1)
+    const before = reads
+    store.sessions.a.last_new_content_at = '2026-10-07T12:01:00Z'
+    store.sessions.a.last_viewed_at = '2026-10-07T12:02:00Z'
+    assert.equal(index.totalUnread(), 1)
+    assert.equal(reads, before)
+    store.processStates.a.state = 'user_turn'
+    assert.equal(index.totalUnread(), 1)
+    store.sessions.a.last_new_content_at = '2026-10-07T12:03:00Z'
+    assert.equal(index.totalUnread(), 2)
+    store.processStates.a.state = 'assistant_turn'
+    assert.equal(index.totalUnread(), 1)
+    delete store.processStates.a
+    assert.equal(index.totalUnread(), 2)
+})
+
 test('memory and labels do not recompute activity consumers', async () => {
     const { store, index } = fixture(); let calls = 0
     const summary = computed(previous => { calls++; return index.summary(['p'], previous) })

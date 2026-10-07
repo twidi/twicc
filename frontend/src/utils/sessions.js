@@ -71,8 +71,10 @@ export function isSessionUnread(session, processState) {
     if (!session) return false
     if (session.hidden) return false
     if (session.draft || session.ephemeral || session.archived || session.parent_session_id) return false
-    if (!hasUnreadContent(session)) return false
     if (processState && processState.state !== 'user_turn') return false
+    // While the assistant works, timestamps cannot affect the unread result.
+    // Do not subscribe shared indexes or rail selection to those updates.
+    if (!hasUnreadContent(session)) return false
     return true
 }
 

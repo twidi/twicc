@@ -2,6 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { reactive, watch, nextTick } from 'vue'
+import { getSessionCutoffMs } from './sessions.js'
+import { jsonValuesEqual } from './jsonValuesEqual.js'
 
 const title = await import('./sessionTitle.js').catch(() => ({}))
 const enabled = { titleAutoApply: true, titleGenerationEnabled: true }
@@ -180,12 +182,18 @@ test('invalid title inputs never save', async () => {
 test('renameSession sends a real PATCH even when the current title is unchanged', async () => {
     const start = data.indexOf('        async renameSession(')
     const code = data.slice(start, data.indexOf('        /**', start))
+    const updateStart = data.indexOf('        updateSession(')
+    const updateCode = data.slice(updateStart, data.indexOf('        /**', updateStart))
     const requests = []
-    const actions = new Function('apiFetch', `return { ${code} }`)(async (url, options) => {
+    const actions = new Function('apiFetch', 'getSessionCutoffMs', 'markAgentIdle', 'jsonValuesEqual',
+        `return { ${code} ${updateCode} }`)(async (url, options) => {
         requests.push([url, options.method, JSON.parse(options.body)])
         return { ok: true, json: async () => ({ title: 'Current', title_origin: 'user' }) }
-    })
-    const store = { ...actions, sessions: { s: { title: 'Current', title_origin: 'auto' } } }
+    }, getSessionCutoffMs, () => {}, jsonValuesEqual)
+    const store = { ...actions, sessions: { s: { title: 'Current', title_origin: 'auto' } },
+        localState: { agentRunStates: {}, sessions: {} }, $patch(apply) { apply(this) },
+        _hydrateSessionLayoutFromPersisted() {}, tryFinalizePendingBinding() {}, _tryLinkPeerDelivery() {},
+    }
     await store.renameSession('p', 's', 'Current')
     assert.deepEqual(requests, [['/api/projects/p/sessions/s/', 'PATCH', { title: 'Current' }]])
     assert.equal(store.sessions.s.title_origin, 'user')
