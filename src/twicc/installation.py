@@ -54,7 +54,7 @@ def resolve_update_instructions(mode: str) -> UpdateInstructions:
         command = f"{shlex.quote(sys.executable)} -m pip install --upgrade twicc"
         return UpdateInstructions(mode, "Stop TwiCC, run:", command, "Then restart TwiCC.")
     if mode == "source":
-        return UpdateInstructions(mode, "Update your source checkout, then restart TwiCC.", None, "")
+        return UpdateInstructions(mode, "Stop TwiCC, update your source checkout, then restart TwiCC.", None, "")
     return UpdateInstructions(
-        "unknown", "Update TwiCC with the package manager used to install it, then restart.", None, ""
+        "unknown", "Stop TwiCC, update it with the package manager used to install it, then restart.", None, ""
     )

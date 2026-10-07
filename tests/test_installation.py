@@ -61,7 +61,7 @@ def test_update_commands_target_the_detected_installation(monkeypatch, mode, com
     assert instructions.command == command
     assert instructions.after == after
     assert instructions.mode == mode
-    assert instructions.before
+    assert instructions.before.startswith("Stop TwiCC,")
 
 
 def test_direct_url_installation_keeps_generic_instructions(monkeypatch):

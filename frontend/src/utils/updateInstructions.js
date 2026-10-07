@@ -1,6 +1,6 @@
 // Bootstrap metadata lives outside stores to avoid circular imports.
 const fallback = {
-    before: 'Update TwiCC with the package manager used to install it, then restart.',
+    before: 'Stop TwiCC, update it with the package manager used to install it, then restart.',
     command: null,
     after: '',
 }
