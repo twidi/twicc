@@ -13,6 +13,7 @@ import { useWorkspacesStore } from '../../../stores/workspaces'
 import { useSessionSelectionStore } from '../../../stores/sessionSelection'
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../../utils/workspaceIds'
 import { computeSidebarSessionBlocks } from '../../../utils/sidebarSessions'
+import { retainSessionArray } from '../../../utils/sessionLists.js'
 import { matchQuery } from '../../../utils/textFilter'
 import { dateBucketSeparator } from '../../../utils/datePresets'
 import { useListCascade } from '../../../composables/useListCascade'
@@ -106,7 +107,7 @@ const activeWorkspaceId = computed(() => {
 // All four sidebar blocks, computed in one shot by the shared helper so the
 // command palette's "Go to Session…" sub-picker can use the exact same
 // ordering / filtering / grouping logic.
-const sessionBlocks = computed(() => computeSidebarSessionBlocks({
+const sessionBlocks = computed(previous => computeSidebarSessionBlocks({
     data: store,
     workspaces: workspacesStore,
     effectiveProjectId: props.projectId,
@@ -115,35 +116,36 @@ const sessionBlocks = computed(() => computeSidebarSessionBlocks({
     showArchived: props.showArchived,
     showArchivedProjects: props.showArchivedProjects,
     showActiveAcrossFilters: props.showActiveAcrossFilters,
-}))
+}, previous))
 
 const extraSessionId = computed(() => sessionBlocks.value.extra?.id ?? null)
 
 // Flat list consumed by the virtual scroller:
 //   [extra?, ...crossFilterPinned, ...crossFilterActive, ...natural]
 // Section separators live in the template, keyed off `separatorBeforeIds`.
-const allSessions = computed(() => {
+const allSessions = computed(previous => {
     const { extra, crossFilterPinned, crossFilterActive, natural } = sessionBlocks.value
     const result = []
     if (extra) result.push(extra)
     result.push(...crossFilterPinned)
     result.push(...crossFilterActive)
     result.push(...natural)
-    return result
+    return retainSessionArray(previous, result)
 })
 
 // Filtered sessions based on the search query. Fuzzy by default; exact
 // substring when the query is wrapped/prefixed with `"` or `'`.
-const sessions = computed(() => {
+const sessions = computed(previous => {
     const query = props.searchQuery.trim()
     if (!query) return allSessions.value
 
-    return allSessions.value.filter(session => {
+    const next = allSessions.value.filter(session => {
         const displayName = (session.draft && !session.title)
             ? 'New session'
             : (session.title || session.id)
         return matchQuery(query, displayName)
     })
+    return retainSessionArray(previous, next)
 })
 
 // One labeled separator before each group of the list (replacing the old
@@ -308,12 +310,12 @@ const paginationReady = computed(() => {
 })
 
 // Match the store's natural scope before archive/search/cross-filter display rules.
-const canonicalSessions = computed(() => {
+const canonicalSessions = computed(previous => {
     const ids = scopeProjectIds.value
     if (!ids) return store.getAllSessions
     if (!isWorkspaceProjectId(props.projectId) && ids.length === 1) return store.getProjectSessions(props.projectId)
     const scope = new Set(ids)
-    return store.getAllSessions.filter(session => scope.has(session.project_id))
+    return retainSessionArray(previous, store.getAllSessions.filter(session => scope.has(session.project_id)))
 })
 const paginationSnapshot = computed(() => ({
     cursor: store.localState.projects[props.projectId]?.oldestSessionMtime ?? null,

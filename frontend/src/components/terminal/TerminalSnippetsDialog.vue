@@ -1,6 +1,8 @@
 <script setup>
 // TerminalSnippetsDialog.vue - Dialog for managing text snippets with scope grouping
-import { ref, computed, nextTick, useId } from 'vue'
+import GroupedListEditor from '../ui/GroupedListEditor.vue'
+import { isSnippetGroup, getGroupItems, flattenGroupedEntries } from '../../utils/snippetGroups'
+import { ref, computed, nextTick, useId, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useTerminalConfigStore } from '../../stores/terminalConfig'
 import { useDataStore } from '../../stores/data'
@@ -35,6 +37,9 @@ const formId = `manage-snippets-form-${instanceId}`
 // ── View state ───────────────────────────────────────────────────────
 const view = ref('list') // 'list' or 'form'
 const editScope = ref(null)    // scope being edited (null for new)
+const editSourceGroupId = ref(null)
+const editSourceSnapshot = ref(null)
+const groupMode = ref(false)
 const editIndex = ref(null)    // index within scope (null for new)
 const isDuplicate = ref(false)
 const formData = ref(null)     // { label: '', snippet: '', appendEnter: true, scope: 'global' }
@@ -43,6 +48,7 @@ const warningMessage = ref('')
 
 // ── Computed ─────────────────────────────────────────────────────────
 const dialogLabel = computed(() => {
+    if (groupMode.value && view.value === 'form') return 'Add Group'
     if (view.value === 'list') return 'Manage Snippets'
     if (editIndex.value !== null) return 'Edit Snippet'
     return 'Add Snippet'
@@ -164,8 +170,27 @@ const selectedScopeWorkspaceColor = computed(() => {
     return workspaceColorFromScope(formData.value.scope)
 })
 
+const selectableGroups = computed(() =>
+    (terminalConfigStore.snippets[formData.value?.scope] || []).filter(isSnippetGroup)
+)
+
+watch(() => formData.value?.scope, () => {
+    if (formData.value?.groupId && !selectableGroups.value.some(group => group.id === formData.value.groupId)) {
+        formData.value.groupId = null
+    }
+})
+
+function openGroupForm() {
+    openAddForm()
+    groupMode.value = true
+    nextTick(() => labelInputRef.value?.focus())
+}
+
 // ── Form helpers ─────────────────────────────────────────────────────
-function openAddForm() {
+function openAddForm(scope = null, groupId = null) {
+    groupMode.value = false
+    editSourceGroupId.value = null
+    editSourceSnapshot.value = null
     editScope.value = null
     editIndex.value = null
     isDuplicate.value = false
@@ -174,7 +199,8 @@ function openAddForm() {
         snippet: '',
         appendEnter: true,
         openInNewTab: false,
-        scope: props.currentProjectId ? `project:${props.currentProjectId}` : 'global',
+        scope: scope || (props.currentProjectId ? `project:${props.currentProjectId}` : 'global'),
+        groupId,
     }
     errorMessage.value = ''
     warningMessage.value = ''
@@ -182,11 +208,37 @@ function openAddForm() {
     nextTick(() => syncFormState())
 }
 
-function openEditForm(scope, index) {
+function openEditForm(scope, index, groupId = null) {
+    groupMode.value = false
+    editSourceGroupId.value = groupId
     editScope.value = scope
     editIndex.value = index
     isDuplicate.value = false
-    const snippet = terminalConfigStore.snippets[scope]?.[index]
+    const snippet = getGroupItems(terminalConfigStore.snippets[scope] || [], groupId)?.[index]
+    if (!snippet) return
+    editSourceSnapshot.value = JSON.stringify(snippet)
+    formData.value = {
+        label: snippet.label,
+        snippet: snippet.snippet,
+        appendEnter: snippet.appendEnter,
+        openInNewTab: snippet.openInNewTab || false,
+        scope: scope,
+        groupId,
+    }
+    errorMessage.value = ''
+    warningMessage.value = ''
+    view.value = 'form'
+    nextTick(() => syncFormState())
+}
+
+function openDuplicateForm(scope, index, groupId = null) {
+    groupMode.value = false
+    editSourceGroupId.value = null
+    editSourceSnapshot.value = null
+    editScope.value = null
+    editIndex.value = null
+    isDuplicate.value = true
+    const snippet = getGroupItems(terminalConfigStore.snippets[scope] || [], groupId)?.[index]
     if (!snippet) return
     formData.value = {
         label: snippet.label,
@@ -194,25 +246,7 @@ function openEditForm(scope, index) {
         appendEnter: snippet.appendEnter,
         openInNewTab: snippet.openInNewTab || false,
         scope: scope,
-    }
-    errorMessage.value = ''
-    warningMessage.value = ''
-    view.value = 'form'
-    nextTick(() => syncFormState())
-}
-
-function openDuplicateForm(scope, index) {
-    editScope.value = null
-    editIndex.value = null
-    isDuplicate.value = true
-    const snippet = terminalConfigStore.snippets[scope]?.[index]
-    if (!snippet) return
-    formData.value = {
-        label: snippet.label,
-        snippet: snippet.snippet,
-        appendEnter: snippet.appendEnter,
-        openInNewTab: snippet.openInNewTab || false,
-        scope: scope,  // defaults to source scope
+        groupId,
     }
     errorMessage.value = ''
     warningMessage.value = ''
@@ -258,6 +292,29 @@ function handleSave() {
     errorMessage.value = ''
 
     const trimmedLabel = formData.value.label.trim()
+    if (groupMode.value) {
+        if (!trimmedLabel) {
+            errorMessage.value = 'Group name is required.'
+            return
+        }
+        if (!terminalConfigStore.addSnippetGroup(formData.value.scope, trimmedLabel)) {
+            errorMessage.value = 'This item or group changed. Reopen the item and try again.'
+            return
+        }
+        cancelForm()
+        return
+    }
+    if (editIndex.value !== null) {
+        const source = getGroupItems(terminalConfigStore.snippets[editScope.value] || [], editSourceGroupId.value)?.[editIndex.value]
+        if (!source || JSON.stringify(source) !== editSourceSnapshot.value) {
+            errorMessage.value = 'This item or group changed. Reopen the item and try again.'
+            return
+        }
+    }
+    if (formData.value.groupId && !selectableGroups.value.some(group => group.id === formData.value.groupId)) {
+        errorMessage.value = 'The selected group no longer exists. Select another group.'
+        return
+    }
     const trimmedSnippet = formData.value.snippet.trim()
 
     if (!trimmedLabel) {
@@ -280,10 +337,11 @@ function handleSave() {
     }
 
     // Check for duplicate label in same scope (warn but allow save on second submit)
-    const scopeSnippets = terminalConfigStore.snippets[selectedScope] || []
-    const hasDuplicateLabel = scopeSnippets.some((s, i) => {
+    const scopeSnippets = flattenGroupedEntries(terminalConfigStore.snippets[selectedScope] || [])
+    const sourceSnippet = getGroupItems(terminalConfigStore.snippets[editScope.value] || [], editSourceGroupId.value)?.[editIndex.value]
+    const hasDuplicateLabel = scopeSnippets.some(s => {
         // Skip self when editing within the same scope
-        if (editIndex.value !== null && editScope.value === selectedScope && i === editIndex.value) return false
+        if (editIndex.value !== null && editScope.value === selectedScope && s === sourceSnippet) return false
         return s.label.trim().toLowerCase() === trimmedLabel.toLowerCase()
     })
     if (hasDuplicateLabel && !warningMessage.value) {
@@ -293,10 +351,15 @@ function handleSave() {
     warningMessage.value = ''
 
     // Save
-    if (editIndex.value !== null) {
-        terminalConfigStore.updateSnippet(editScope.value, editIndex.value, snippetData, selectedScope)
-    } else {
-        terminalConfigStore.addSnippet(selectedScope, snippetData)
+    const saved = editIndex.value !== null
+        ? terminalConfigStore.updateSnippet(
+            editScope.value, editIndex.value, snippetData, selectedScope,
+            editSourceGroupId.value, formData.value.groupId,
+        )
+        : terminalConfigStore.addSnippet(selectedScope, snippetData, formData.value.groupId)
+    if (!saved) {
+        errorMessage.value = 'This item or group changed. Reopen the item and try again.'
+        return
     }
 
     view.value = 'list'
@@ -384,32 +447,19 @@ defineExpose({ open, close })
                     <ProjectBadge v-else :project-id="projectIdFromScope(group.scope)" use-directory-for-unnamed />
                 </div>
 
-                <!-- Snippets in this group -->
-                <div class="snippet-list">
-                    <div
-                        v-for="(snippet, index) in group.snippets"
-                        :key="index"
-                        class="snippet-row"
-                    >
-                        <!-- Reorder arrows -->
-                        <div class="reorder-arrows">
-                            <button
-                                class="reorder-btn"
-                                :class="{ disabled: index === 0 }"
-                                :disabled="index === 0"
-                                @click="terminalConfigStore.reorderSnippet(group.scope, index, index - 1)"
-                                title="Move up"
-                            ><wa-icon name="chevron-up" /></button>
-                            <button
-                                class="reorder-btn"
-                                :class="{ disabled: index === group.snippets.length - 1 }"
-                                :disabled="index === group.snippets.length - 1"
-                                @click="terminalConfigStore.reorderSnippet(group.scope, index, index + 1)"
-                                title="Move down"
-                            ><wa-icon name="chevron-down" /></button>
-                        </div>
-
-                        <!-- Display text -->
+                <GroupedListEditor
+                    :entries="group.snippets"
+                    item-name="snippet"
+                    @add="groupId => openAddForm(group.scope, groupId)"
+                    @edit="(index, groupId) => openEditForm(group.scope, index, groupId)"
+                    @duplicate="(index, groupId) => openDuplicateForm(group.scope, index, groupId)"
+                    @delete="(index, groupId) => terminalConfigStore.deleteSnippet(group.scope, index, groupId)"
+                    @move="(from, to) => terminalConfigStore.moveSnippet(group.scope, from, to)"
+                    @add-group="label => terminalConfigStore.addSnippetGroup(group.scope, label)"
+                    @rename-group="(id, label) => terminalConfigStore.renameSnippetGroup(group.scope, id, label)"
+                    @delete-group="id => terminalConfigStore.deleteSnippetGroup(group.scope, id)"
+                >
+                    <template #item="{ entry: snippet }">
                         <div class="snippet-display">
                             <span class="snippet-label">
                                 {{ snippet.label }}
@@ -417,21 +467,8 @@ defineExpose({ open, close })
                             </span>
                             <span class="snippet-text-preview">{{ snippet.snippet }}{{ snippet.appendEnter ? '↵' : '' }}</span>
                         </div>
-
-                        <!-- Action buttons -->
-                        <div class="snippet-actions">
-                            <button class="action-btn" @click="openEditForm(group.scope, index)" title="Edit">
-                                <wa-icon name="pen-to-square" />
-                            </button>
-                            <button class="action-btn" @click="openDuplicateForm(group.scope, index)" title="Duplicate">
-                                <wa-icon name="copy" />
-                            </button>
-                            <button class="action-btn action-btn-danger" @click="terminalConfigStore.deleteSnippet(group.scope, index)" title="Delete">
-                                <wa-icon name="trash-can" />
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                    </template>
+                </GroupedListEditor>
             </div>
 
             <!-- Show message when there are no scopes at all (edge case) -->
@@ -444,23 +481,26 @@ defineExpose({ open, close })
         <form v-else :id="formId" class="dialog-content" @submit.prevent="handleSave">
             <!-- Label field -->
             <div class="form-group">
-                <label class="form-label">Label</label>
+                <label class="form-label">{{ groupMode ? 'Group name' : 'Label' }}</label>
                 <wa-input
                     ref="labelInputRef"
                     :value="formData.label"
                     @input="formData.label = $event.target.value"
-                    placeholder='e.g. "git status"'
+                    :placeholder="groupMode ? 'e.g. Git' : 'e.g. &quot;git status&quot;'"
                     size="small"
                 />
             </div>
 
             <!-- Snippet text + options (shared editor component) -->
             <TerminalSnippetTextEditor
+                v-if="!groupMode"
                 v-model:text="formData.snippet"
                 v-model:append-enter="formData.appendEnter"
                 v-model:open-in-new-tab="formData.openInNewTab"
-            >
-                <!-- Scope select (extra option in the shared options row) -->
+            />
+            <div class="form-group">
+                <label class="form-label">Scope</label>
+                <!-- Scope select -->
                 <wa-select
                     :value="formData.scope"
                     @change="formData.scope = $event.target.value"
@@ -576,7 +616,15 @@ defineExpose({ open, close })
                         </wa-option>
                     </template>
                 </wa-select>
-            </TerminalSnippetTextEditor>
+            </div>
+
+            <div v-if="!groupMode" class="form-group">
+                <label class="form-label">Group</label>
+                <wa-select :value="formData.groupId || ''" @change="formData.groupId = $event.target.value || null" size="small">
+                    <wa-option value="">None</wa-option>
+                    <wa-option v-for="group in selectableGroups" :key="group.id" :value="group.id">{{ group.label }}</wa-option>
+                </wa-select>
+            </div>
 
             <!-- Warning (duplicate label) -->
             <wa-callout v-if="warningMessage" variant="warning" size="small">
@@ -595,7 +643,11 @@ defineExpose({ open, close })
                 <wa-button variant="neutral" appearance="outlined" @click="close">
                     Close
                 </wa-button>
-                <wa-button variant="brand" @click="openAddForm">
+                <wa-button variant="neutral" appearance="outlined" @click="openGroupForm">
+                    <wa-icon slot="start" name="folder-plus"></wa-icon>
+                    Add group
+                </wa-button>
+                <wa-button variant="brand" @click="openAddForm()">
                     <wa-icon slot="start" name="plus"></wa-icon>
                     Add snippet
                 </wa-button>
@@ -668,48 +720,6 @@ defineExpose({ open, close })
     color: var(--wa-color-text-normal);
 }
 
-/* ── Snippet list ─────────────────────────────────────────────────── */
-.snippet-list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--wa-space-3xs);
-}
-
-.snippet-row {
-    display: flex;
-    align-items: center;
-    gap: var(--wa-space-s);
-    background: var(--wa-color-surface-alt);
-    border-radius: var(--wa-border-radius-m);
-}
-
-/* ── Reorder arrows ───────────────────────────────────────────────── */
-.reorder-arrows {
-    display: flex;
-    gap: var(--wa-space-2xs);
-    flex-shrink: 0;
-}
-
-.reorder-btn {
-    background: none;
-    border: none;
-    color: var(--wa-color-text-quiet);
-    font-size: var(--wa-font-size-xs);
-    padding: var(--wa-space-2xs);
-    cursor: pointer;
-    transition: color 0.15s, background-color 0.15s;
-}
-
-.reorder-btn:hover:not(.disabled) {
-    color: var(--wa-color-text-base);
-    background: var(--wa-color-surface-alt);
-}
-
-.reorder-btn.disabled {
-    opacity: 0.25;
-    cursor: default;
-}
-
 /* ── Snippet display ──────────────────────────────────────────────── */
 .snippet-display {
     flex: 1;
@@ -742,33 +752,6 @@ defineExpose({ open, close })
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-}
-
-/* ── Action buttons ───────────────────────────────────────────────── */
-.snippet-actions {
-    display: flex;
-    gap: var(--wa-space-3xs);
-    flex-shrink: 0;
-}
-
-.action-btn {
-    background: none;
-    border: none;
-    font-size: var(--wa-font-size-m);
-    padding: var(--wa-space-xs);
-    cursor: pointer;
-    line-height: 1;
-    transition: background-color 0.15s, color 0.15s;
-    color: var(--wa-color-text-quiet);
-}
-
-.action-btn:hover {
-    background: var(--wa-color-surface-alt);
-    color: var(--wa-color-text-base);
-}
-
-.action-btn-danger:hover {
-    color: var(--wa-color-danger-60);
 }
 
 /* ── Form (label field — snippet text/options are in TerminalSnippetTextEditor) ── */

@@ -12,15 +12,17 @@
  *        `closest()`. When omitted, the component's OWN root element is observed — a true container
  *        query on the panel itself, so it reacts to the width it is actually rendered at (a dock
  *        region or the center slot in the dockable layout) rather than a fixed outer container.
- * @param {number} [options.breakpoint=640] - Width threshold in pixels. `isBelowBreakpoint`
- *        is `true` when the container is narrower than this value.
+ * @param {number} [options.breakpointRem=40] - Width threshold in rem. `isBelowBreakpoint`
+ *        is `true` when the container is narrower than this value. The rem is converted to pixels
+ *        with the live root font size (the "font size" user setting), so the threshold follows it.
  * @returns {{ isBelowBreakpoint: import('vue').Ref<boolean> }}
  */
 import { ref, onMounted, onBeforeUnmount, getCurrentInstance } from 'vue'
 
-export function useContainerBreakpoint({ containerSelector = null, breakpoint = 640 } = {}) {
+export function useContainerBreakpoint({ containerSelector = null, breakpointRem = 40 } = {}) {
     const isBelowBreakpoint = ref(false)
     let observer = null
+    let fontObserver = null
 
     onMounted(() => {
         const el = getCurrentInstance()?.proxy?.$el
@@ -34,15 +36,24 @@ export function useContainerBreakpoint({ containerSelector = null, breakpoint = 
             return
         }
 
+        let width = container.getBoundingClientRect().width
+        const update = () => {
+            const rootPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
+            isBelowBreakpoint.value = width < breakpointRem * rootPx
+        }
         observer = new ResizeObserver((entries) => {
-            const width = entries[0].contentRect.width
-            isBelowBreakpoint.value = width < breakpoint
+            width = entries[0].contentRect.width
+            update()
         })
         observer.observe(container)
+        // A font-size change moves the threshold without necessarily resizing the container.
+        fontObserver = new MutationObserver(update)
+        fontObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] })
     })
 
     onBeforeUnmount(() => {
         observer?.disconnect()
+        fontObserver?.disconnect()
     })
 
     return { isBelowBreakpoint }

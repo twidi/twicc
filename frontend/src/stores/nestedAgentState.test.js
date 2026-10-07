@@ -7,6 +7,7 @@ import {
     setAgentInteraction, dropRootAgentState, effectiveAgentRun,
 } from '../utils/agentLinkIndex.js'
 import { getSessionCutoffMs } from '../utils/sessions.js'
+import { jsonValuesEqual } from '../utils/jsonValuesEqual.js'
 
 // The real store actions, sliced from data.js (node cannot import the store:
 // extensionless imports). A slice runs from the action name to the next JSDoc.
@@ -53,7 +54,7 @@ function makeStore({ fetches = [] } = {}) {
     const deps = {
         cacheAgentRunState: setAgentRunState, cacheAgentInteraction: setAgentInteraction, cacheAgentStop: markAgentStopped,
         runStateFromPayload, interactionFromPayload, effectiveAgentRun, dropRootAgentState, beginAgentFetch,
-        applyAgentSnapshot, staleSyntheticAgentIds, markAgentIdle, getSessionCutoffMs, apiFetch, PROCESS_STATE,
+        applyAgentSnapshot, staleSyntheticAgentIds, markAgentIdle, getSessionCutoffMs, jsonValuesEqual, apiFetch, PROCESS_STATE,
         isLaunchedEphemeral: () => false, destroyAllBuffers: () => {}, backgroundWorkStatusKey: () => null,
         sweepPendingRequestDrafts: async () => {}, liveDraftKey: (a, b) => `${a}:${b}`, getToolHelpers: () => null,
     }
@@ -73,6 +74,7 @@ function makeStore({ fetches = [] } = {}) {
         processStates: {},
         sessionItems: {},
         $patch(patch) {
+            if (typeof patch === 'function') { patch(this); return }
             for (const [id, session] of Object.entries(patch.sessions || {})) this.sessions[id] = { ...this.sessions[id], ...session }
         },
         getSessionProvider(id) { return this.sessions[id]?.provider ?? null },

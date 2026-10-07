@@ -614,7 +614,8 @@ def main():
             logger.error("Invalid port '%s'. Must be a number between 1 and 65535.", port)
             sys.exit(1)
 
-        logger.info("Server starting on http://localhost:%d", port_int)
+        logger.info("Open http://localhost:%d in your browser.", port_int)
+        logger.info("\nPress Ctrl+C to stop TwiCC.")
 
         # Now that the port is known, write the sidecar info file so a second
         # ``twicc`` invocation can show a helpful "Holder: PID X, port Y" line.

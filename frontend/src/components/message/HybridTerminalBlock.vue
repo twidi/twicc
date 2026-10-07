@@ -104,7 +104,7 @@ function clearReconnectTimers() {
     reconnectTimers.forEach(clearTimeout)
     reconnectTimers = []
 }
-watch(processState, (state, oldState) => {
+watch(hasProcess, (state, oldState) => {
     if (!state || oldState) return
     clearReconnectTimers()
     for (const delay of [800, 2500, 6000]) {

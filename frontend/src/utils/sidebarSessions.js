@@ -23,6 +23,7 @@
 import { sessionSortComparator, ALL_PROJECTS_ID } from '../stores/data'
 import { isWorkspaceProjectId, extractWorkspaceId } from './workspaceIds'
 import { hasUnreadContent } from './sessions'
+import { retainSessionArray } from './sessionLists.js'
 
 /**
  * Build the archived-filter predicate. The currently-selected session is
@@ -74,7 +75,7 @@ export function computeSidebarSessionBlocks({
     showArchived,
     showArchivedProjects,
     showActiveAcrossFilters,
-}) {
+}, previous) {
     const passesArchiveFilter = makeArchiveFilter({
         data, showArchived, showArchivedProjects, sessionId,
     })
@@ -163,5 +164,11 @@ export function computeSidebarSessionBlocks({
         if (s && !s.parent_session_id) extra = s
     }
 
-    return { extra, crossFilterPinned, crossFilterActive, natural }
+    const next = {
+        extra,
+        crossFilterPinned: retainSessionArray(previous?.crossFilterPinned, crossFilterPinned),
+        crossFilterActive: retainSessionArray(previous?.crossFilterActive, crossFilterActive),
+        natural: retainSessionArray(previous?.natural, natural),
+    }
+    return previous && Object.keys(next).every(key => next[key] === previous[key]) ? previous : next
 }

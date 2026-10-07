@@ -118,7 +118,7 @@ def test_snapshot_contains_unresolved_batches_and_resolutions(authenticated_clie
     service.merge_question_facts(ready_session.id, [question("q2", "t2")])
     service.dismiss_question_batch(ready_session.id, "q1", request_id="dismiss-1")
     result = authenticated_client.get(question_url(ready_session)).json()
-    assert [(batch["item_id"], batch["status"]) for batch in result["batches"]] == [("q2", "collecting")]
+    assert [(batch["item_id"], batch["status"]) for batch in result["batches"]] == [("q2", "ready")]
     assert result["resolutions"] == {"q1": {"status": "dismissed", "request_id": "dismiss-1"}}
 
 

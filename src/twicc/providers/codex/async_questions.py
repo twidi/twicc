@@ -535,19 +535,19 @@ def _submissions(facts: dict) -> list[dict]:
     return _ordered(submissions)
 
 
-def _eligible(question: dict, ready: dict | None, submission: dict, group: str | None, names: dict) -> bool:
+def _eligible(question: dict, submission: dict) -> bool:
+    """Retire completed questions at the immutable human admission boundary.
+
+    Explicit membership preserves selected batches across source enrichment.
+    Excluded known batches stay available. Late older source facts are eligible
+    without waiting for turn completion; facts after admission remain available.
+    """
     boundary = submission["data"].get("boundary")
     if boundary is not None and question["item_id"] in boundary.get("excluded_batch_ids", []):
         return False
     if boundary is not None and question["item_id"] in boundary.get("batch_ids", []):
         return True
-    if ready is None:
-        return False
-    if boundary is None:
-        return _compare(question, submission) <= 0 and _compare(ready, submission) <= 0
-    settled = question.get("turn_id") in boundary.get("settled_turn_ids", [])
-    settled = settled or any(names.get(name) == group for name in boundary.get("group_ids", []))
-    return settled and _compare(question, boundary) <= 0 and _compare(ready, boundary) <= 0
+    return _compare(question, boundary if boundary is not None else submission) <= 0
 
 
 def build_question_boundary(
@@ -557,10 +557,10 @@ def build_question_boundary(
     line: int | None = None,
     batch_ids: list[str] | None = None,
 ) -> dict:
-    """Capture settled source groups, including groups without known questions.
+    """Capture completed batches and source chronology at human admission.
 
-    Explicit membership excludes other known ready batches. Unknown older
-    questions remain eligible through the complete settled-turn boundary.
+    Turn/group metadata remains compatible with stored boundaries, but no longer
+    gates eligibility. Unknown older source questions use admission chronology.
     """
     facts = _reconstruct_question_history(state.get("facts", {}))
     groups, names = _group_evidence(facts)
@@ -579,7 +579,7 @@ def build_question_boundary(
 
 
 def reduce_question_state(state: dict, facts: list[QuestionFact]) -> dict:
-    """Merge durable facts and derive collecting/ready/sent/dismissed batches."""
+    """Merge durable facts and derive immediately ready/sent/dismissed batches."""
     stored = deepcopy(state.get("facts", {}))
     for fact in facts:
         incoming = deepcopy(fact._asdict())
@@ -587,20 +587,16 @@ def reduce_question_state(state: dict, facts: list[QuestionFact]) -> dict:
         stored[fact.key] = _merge_fact(old, incoming) if old is not None else incoming
     submissions = _submissions(stored)
     ordered = _reconstruct_question_history(stored)
-    groups, names = _group_evidence(ordered)
-    readiness = _ready_boundaries(ordered, groups, names)
     dismissals = [fact for fact in ordered if fact["kind"] == "dismiss"]
     batches = {}
     for fact in ordered:
         if fact["kind"] != "question":
             continue
         item_id = fact["item_id"]
-        group = groups.get(fact.get("turn_id"))
-        ready = readiness.get(group)
-        status, request_id = ("ready" if ready is not None else "collecting"), None
+        status, request_id = "ready", None
         resolutions = []
         for submission in submissions:
-            if _eligible(fact, ready, submission, group, names):
+            if _eligible(fact, submission):
                 boundary = submission["data"].get("boundary", submission)
                 resolutions.append(({**submission, "at": boundary["at"], "line": boundary.get("line")}, "sent"))
         for dismissal in dismissals:

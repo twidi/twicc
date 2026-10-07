@@ -11,6 +11,7 @@ import { useTerminalCommandStore } from '../../stores/terminalCommand'
 import { sendWsMessage } from '../../composables/useWebSocket'
 import { useFocusRetry } from '../../composables/useFocusRetry'
 import { toast } from '../../composables/useToast'
+import { mapGroupedEntries } from '../../utils/snippetGroups'
 import { getUnavailablePlaceholders } from '../../utils/snippetPlaceholders'
 import AppTooltip from '../ui/AppTooltip.vue'
 import TabBar from '../ui/TabBar.vue'
@@ -142,7 +143,7 @@ const snippetsForProject = computed(() => {
         raw = terminalConfigStore.getGlobalSnippets()
     }
 
-    return raw.map(snippet => {
+    return mapGroupedEntries(raw, snippet => {
         const placeholders = snippet.placeholders || []
         if (placeholders.length === 0) return snippet
         // Per-snippet context: project-scoped snippets resolve {project-dir} etc.
@@ -302,6 +303,11 @@ const nextIndex = ref(1) // monotonically increasing counter
 // `activeIndex`, is active). The wa-tab panel name of an attached tab IS its pool
 // key (which never starts with "term-", so it's distinguishable from own tabs).
 const activeAttachedKey = ref(null)
+
+const snippetGroupContext = computed(() => [
+    props.contextKey, props.sessionId, resolvedProjectId.value, props.active,
+    activeAttachedKey.value, activeIndex.value, route.query.workspace,
+])
 const pendingRouteTermIndex = ref(null)
 // A key the user just detached. Its route token still points at it for a tick
 // (the navigate back to an own tab is async), so the route-retry watcher below
@@ -1678,6 +1684,7 @@ defineExpose({ activeIndex })
             :is-touch-device="settingsStore.isTouchDevice"
             :combos="terminalConfigStore.combos"
             :snippets="snippetsForProject"
+            :context="snippetGroupContext"
             :terminals="terminals"
             :active-terminal-index="activeIndex"
             @key-input="(...args) => activeApi?.handleExtraKeyInput?.(...args)"

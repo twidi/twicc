@@ -131,8 +131,8 @@ def test_dismiss_retry_is_idempotent(session):
     assert service.dismiss_question_batch(session.id, "q1", request_id="dismiss-1") == first
 
 
-@pytest.mark.parametrize("item_id", ["missing", "q1"])
-def test_dismiss_requires_ready_batch(session, item_id):
+@pytest.mark.parametrize("item_id", ["missing"])
+def test_dismiss_requires_known_batch(session, item_id):
     service.merge_question_facts(session.id, [question()])
     with pytest.raises(ValueError, match="async_questions_stale"):
         service.dismiss_question_batch(session.id, item_id, request_id="dismiss-1")
@@ -451,3 +451,27 @@ def test_read_snapshot_cannot_mutate_persisted_state(session):
     snapshot = service.read_question_snapshot(session.id)
     snapshot["batches"][0]["questions"][0]["options"].clear()
     assert state(session) == original
+
+
+def test_legacy_collecting_projection_reads_and_sends_immediately_without_writing(session):
+    from twicc.core.models import AsyncQuestionState
+    service.merge_question_facts(session.id, [question()])
+    stored = AsyncQuestionState.objects.get(session=session)
+    stored.state["batches"]["q1"]["status"] = "collecting"
+    stored.save(update_fields=["state"])
+    legacy = deepcopy(stored.state)
+    snapshot = service.read_question_snapshot(session.id)
+    assert snapshot["batches"][0]["status"] == "ready"
+    stored.refresh_from_db()
+    assert stored.state == legacy
+    outgoing = prepare(session, payload=response(answers=[
+        {"item_id": "q1", "index": 0, "kind": "option", "value": "Yes"}
+    ]), text="")
+    service.accept_question_send(session.id, outgoing.submission)
+    assert service.read_question_snapshot(session.id)["resolutions"]["q1"]["status"] == "sent"
+
+
+def test_completed_active_batch_can_be_dismissed(session):
+    service.merge_question_facts(session.id, [question()])
+    result = service.dismiss_question_batch(session.id, "q1", request_id="dismiss-active")
+    assert result["resolutions"]["q1"] == {"status": "dismissed", "request_id": "dismiss-active"}

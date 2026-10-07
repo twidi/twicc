@@ -8,8 +8,11 @@ function fixture(t) {
     const source = { isConnected: true }
     const shown = []
     const hidden = []
+    let openId = null
     const controller = createRailSessionLongPress({ document,
-        show: id => shown.push(id), hide: () => hidden.push(true) })
+        isOpen: id => openId === id,
+        show: id => { openId = id; shown.push(id) },
+        hide: id => { if (!id || openId === id) openId = null; hidden.push(id || true) } })
     const pointer = (type, overrides = {}) => {
         const event = new Event(type, { cancelable: true })
         Object.assign(event, { pointerType: 'touch', pointerId: 1, isPrimary: true,
@@ -87,4 +90,70 @@ test('a deliberate mouse press clears suppression after a cancelled successful t
     f.down(); t.mock.timers.tick(450); f.pointer('pointercancel')
     f.down({ pointerType: 'mouse' })
     assert.equal(f.click(), false)
+})
+
+test('a second hold on an open preview closes it and still suppresses navigation', t => {
+    const f = fixture(t)
+    f.down(); t.mock.timers.tick(450); f.pointer('pointerup'); assert.equal(f.click(), true)
+    f.down(); t.mock.timers.tick(450); f.pointer('pointerup'); assert.equal(f.click(), true)
+    assert.deepEqual(f.shown, ['one'])
+    assert.deepEqual(f.hidden, ['one'])
+    t.mock.timers.tick(3000)
+    assert.deepEqual(f.hidden, ['one'], 'closing cancels automatic dismissal')
+})
+
+test('a touch preview closes after three seconds and still suppresses a delayed synthetic click', t => {
+    const f = fixture(t)
+    f.down(); t.mock.timers.tick(450); f.pointer('pointerup')
+    t.mock.timers.tick(2999); assert.deepEqual(f.hidden, [])
+    t.mock.timers.tick(1); assert.deepEqual(f.hidden, ['one'])
+    assert.equal(f.click(), true)
+})
+
+test('opening a different entry resets the timeout and only closes that entry', t => {
+    const f = fixture(t)
+    f.down(); t.mock.timers.tick(450); t.mock.timers.tick(1500)
+    f.controller.start('two', { currentTarget: f.source, pointerType: 'touch', pointerId: 1,
+        isPrimary: true, button: 0, clientX: 20, clientY: 20 })
+    t.mock.timers.tick(450)
+    t.mock.timers.tick(1500)
+    assert.deepEqual(f.hidden, [])
+    t.mock.timers.tick(1500)
+    assert.deepEqual(f.hidden, ['two'])
+})
+
+for (const action of ['cancel', 'dispose']) {
+    test(`${action} clears the automatic dismissal timer`, t => {
+        const f = fixture(t)
+        f.down(); t.mock.timers.tick(450)
+        f.controller[action]()
+        const count = f.hidden.length
+        t.mock.timers.tick(3000)
+        assert.equal(f.hidden.length, count)
+    })
+}
+
+test('dismissal of another entry does not clear the active preview timeout', t => {
+    const f = fixture(t)
+    f.down(); t.mock.timers.tick(450)
+    f.controller.clearAutoHide('two')
+    t.mock.timers.tick(3000)
+    assert.deepEqual(f.hidden, ['one'])
+})
+
+test('native dismissal clears the active preview timeout', t => {
+    const f = fixture(t)
+    f.down(); t.mock.timers.tick(450)
+    f.controller.clearAutoHide('one')
+    t.mock.timers.tick(3000)
+    assert.deepEqual(f.hidden, [])
+})
+
+test('switching to a mouse press clears automatic dismissal', t => {
+    const f = fixture(t)
+    f.down(); t.mock.timers.tick(450)
+    f.down({ pointerType: 'mouse' })
+    t.mock.timers.tick(3000)
+    assert.deepEqual(f.hidden, [])
+    assert.deepEqual(f.shown, ['one'])
 })

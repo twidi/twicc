@@ -2,7 +2,7 @@ import { handleAgentEvent } from '../utils/agentLinkIndex'
 import { isLaunchedEphemeral } from '../utils/ephemeralSessions'
 // frontend/src/composables/useWebSocket.js
 
-import { ref, watch, defineAsyncComponent } from 'vue'
+import { ref, watch, defineAsyncComponent, onScopeDispose } from 'vue'
 import { useWebSocket as useVueWebSocket, useDebounceFn, useThrottleFn } from '@vueuse/core'
 import { useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
@@ -21,7 +21,8 @@ import { handleResyncRequired } from '../utils/resync'
 import { truncateTitle } from '../utils/truncate'
 import { peerMessageRouting, peerRoutingText } from '../utils/peerMessageRouting'
 import { toWorkspaceProjectId } from '../utils/workspaceIds'
-import { compareVersions } from '../utils/version'
+import { getUpdateInstructionsHtml } from '../utils/updateInstructions.js'
+import { createUpdateReminder, UPDATE_REMINDER_KEY } from '../utils/updateReminder.js'
 import { getProcessStateNotificationEffects, getUserTurnNotificationText } from '../utils/processStateNotifications.js'
 import { buildTitleSuggestionRequest } from '../utils/titleSuggestion.js'
 
@@ -43,8 +44,8 @@ const refreshSharesOnArtifactChange = useDebounceFn(() => {
 // WebSocket close code sent by backend when authentication fails
 const WS_CLOSE_AUTH_FAILURE = 4001
 
-// localStorage key for tracking the last version the user was notified about
-const UPDATE_NOTIFIED_VERSION_KEY = 'twicc-update-notified-version'
+// Initialized by the app's single WebSocket composable instance.
+let updateReminder = null
 
 // Module-level state, preserved across HMR reloads via import.meta.hot.
 // Without this, Vite HMR resets these variables to their initial values,
@@ -916,37 +917,24 @@ function notifyProcessStateChange(msg, previousState, route) {
     }
 }
 
-/**
- * Handle update_available message from the backend.
- * Shows a persistent toast if the user hasn't been notified for this version yet.
- * Deduplication is done via localStorage to survive page reloads.
- */
-function handleUpdateAvailable(msg) {
-    const { latest_version, release_url } = msg
-    if (!latest_version) return
+/** Show upgrade instructions on an explicit Settings click. */
+export function showUpdateToast(version) {
+    updateReminder?.showManually(version)
+}
 
-    // Check localStorage: skip if already notified for this version (or newer).
-    // Compare numerically — a string comparison gets "1.9.2" >= "1.10.0" wrong
-    // (true), which would silence the toast for any double-digit minor/patch bump.
-    const lastNotified = localStorage.getItem(UPDATE_NOTIFIED_VERSION_KEY)
-    if (lastNotified && compareVersions(lastNotified, latest_version) >= 0) return
-
-    // Store the version so we don't notify again
-    localStorage.setItem(UPDATE_NOTIFIED_VERSION_KEY, latest_version)
-
-    // Show persistent toast with upgrade instructions
-    const settings = useSettingsStore()
-    const upgradeHint = settings.isUvxMode
-        ? 'Stop and re-run: <code style="background: var(--wa-color-neutral-fill-normal); color: var(--wa-color-neutral-on-normal); padding: 0.1em 0.4em; border-radius: 3px; font-size: 0.9em;">uvx twicc@latest</code>'
-        : 'Update TwiCC (with <code style="background: var(--wa-color-neutral-fill-normal); color: var(--wa-color-neutral-on-normal); padding: 0.1em 0.4em; border-radius: 3px; font-size: 0.9em;">uv tool upgrade twicc</code> if installed with uv) and restart'
-    toast.custom({
+function createUpdateToast(version, onDismiss) {
+    const upgradeHint = getUpdateInstructionsHtml()
+    return toast.custom({
         type: 'info',
-        title: `TwiCC v${latest_version} is available`,
+        title: `TwiCC v${version} is available`,
         duration: Infinity,
+        onManualClear: onDismiss,
         html: `
             <div style="display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.25rem;">
                 <span>${upgradeHint}</span>
-                <a href="#" onclick="window.dispatchEvent(new CustomEvent('open-changelog')); return false;" style="color: var(--wa-color-text-link); text-decoration: underline;">View changes</a>
+                <div style="display: flex; justify-content: flex-end; margin-top: 0.25rem;">
+                    <wa-button size="small" variant="brand" onclick="window.dispatchEvent(new CustomEvent('open-changelog'));">View changes</wa-button>
+                </div>
             </div>
         `,
     })
@@ -989,6 +977,32 @@ export function useWebSocket() {
     const store = useDataStore()
     const route = useRoute()
     const { onReconnected } = useReconciliation()
+
+    const reminder = createUpdateReminder({
+        storage: localStorage,
+        locks: navigator.locks,
+        getVersions: () => ({ current: store.currentVersion, latest: store.latestVersion?.version }),
+        isVisible: () => document.visibilityState === 'visible',
+        show: createUpdateToast,
+    })
+    updateReminder = reminder
+    const checkUpdateReminder = () => reminder.check()
+    const onReminderStorage = event => {
+        if (event.key === UPDATE_REMINDER_KEY || event.key === null) reminder.check()
+    }
+    watch(() => [store.currentVersion, store.latestVersion?.version], checkUpdateReminder, { immediate: true })
+    const reminderTimer = window.setInterval(checkUpdateReminder, 60_000)
+    document.addEventListener('visibilitychange', checkUpdateReminder)
+    window.addEventListener('focus', checkUpdateReminder)
+    window.addEventListener('storage', onReminderStorage)
+    onScopeDispose(() => {
+        window.clearInterval(reminderTimer)
+        document.removeEventListener('visibilitychange', checkUpdateReminder)
+        window.removeEventListener('focus', checkUpdateReminder)
+        window.removeEventListener('storage', onReminderStorage)
+        reminder.dispose()
+        if (updateReminder === reminder) updateReminder = null
+    })
 
     // Mirror the current route's session id into module-level state so the
     // visibility listener (installed at module load, outside any composable)
@@ -1496,7 +1510,8 @@ export function useWebSocket() {
                     }
                 }
                 // Capture previous state before updating (needed for transition detection)
-                const previousProcessState = store.processStates[msg.session_id] || null
+                const previousProcessState = store.processStates[msg.session_id]
+                    ? { ...store.processStates[msg.session_id] } : null
                 // When leaving assistant_turn, optimistically set last_new_content_at
                 // to ensure the session appears unread immediately. The process_state
                 // message (from SDK) and session_updated (from file watcher) travel
@@ -1526,6 +1541,8 @@ export function useWebSocket() {
                     label: msg.label,
                     background_work_in_progress: msg.background_work_in_progress,
                     spawn_ancestors: msg.spawn_ancestors,
+                    ...(Object.hasOwn(msg, 'active_tools') ? { active_tools: msg.active_tools } : {}),
+                    ...(Object.hasOwn(msg, 'last_started_tool_id') ? { last_started_tool_id: msg.last_started_tool_id } : {}),
                 })
                 // Ensure the session is present in data.sessions so the cross-filter
                 // active block (sessions with a running process) can surface it
@@ -1894,7 +1911,6 @@ export function useWebSocket() {
                 break
             case 'update_available':
                 store.setLatestVersion(msg.latest_version, msg.release_url)
-                handleUpdateAvailable(msg)
                 break
             case 'send_ack': {
                 // Positive delivery acknowledgement for a send: the message

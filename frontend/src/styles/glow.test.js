@@ -282,7 +282,7 @@ test('6. motion.css: filter joins the wa-button lists, internal parts keep six',
 test('7. context ring: a real colour at every percentage, glow on the base part', () => {
     for (const file of ['../components/session/detail/SessionHeader.vue', '../components/orchestration/AgentTreeNode.vue', '../components/orchestration/OrchestrationNode.vue']) {
         const sfc = read(file)
-        const start = sfc.indexOf('const contextUsageColor = computed(')
+        const start = sfc.indexOf('const contextUsageColor = ')
         assert.ok(start >= 0, `${file}: contextUsageColor`)
         const body = sfc.slice(start, sfc.indexOf('\n})', start))
         assert.ok(!body.includes('--wa-color-primary'), `${file}: no --wa-color-primary`)

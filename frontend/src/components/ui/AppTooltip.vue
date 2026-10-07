@@ -40,6 +40,7 @@ export function hideAllTooltips() {
  *   - interactive: When true, the tooltip holds controls the pointer must be
  *     able to reach (buttons, links). Adds a grace period before it closes,
  *     cancelled as soon as the pointer lands on it. See cancelPendingHide.
+ *   - lazy: Mount the slot on show and remove it after the hide animation.
  *
  * All extra attributes are forwarded to the underlying <wa-tooltip>.
  *
@@ -49,6 +50,7 @@ export function hideAllTooltips() {
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
+import { serializeTooltipTransitions } from '../../utils/tooltipTransitions.js'
 
 /**
  * Grace period, in ms, before an interactive tooltip closes once the pointer
@@ -88,12 +90,18 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    lazy: {
+        type: Boolean,
+        default: false,
+    },
 })
 
 const settingsStore = useSettingsStore()
 const shouldShow = computed(() => props.force || !settingsStore.isTouchDevice)
 
 const tooltipEl = ref(null)
+const contentMounted = ref(false)
+const renderContent = computed(() => !props.lazy || contentMounted.value)
 
 function show() {
     clearPendingTimer(tooltipEl.value)
@@ -105,13 +113,17 @@ function hide() {
     return tooltipEl.value?.hide()
 }
 
+function isOpen() {
+    return !!tooltipEl.value?.open
+}
+
 // Update synchronously before the browser sends focus or compatibility mouse events.
 function setTrigger(trigger) {
     clearPendingTimer(tooltipEl.value)
     if (tooltipEl.value) tooltipEl.value.trigger = trigger
 }
 
-defineExpose({ show, hide, setTrigger })
+defineExpose({ show, hide, isOpen, setTrigger })
 
 /**
  * wa-tooltip never cancels a pending hide when the pointer enters the tooltip:
@@ -191,6 +203,7 @@ function handleShow(event) {
     if (event.target !== tooltipEl.value) {
         return
     }
+    contentMounted.value = true
     if (props.interactive) {
         for (const other of [...openInteractiveTooltips]) {
             if (other !== tooltipEl.value) {
@@ -204,9 +217,10 @@ function handleShow(event) {
 }
 
 function handleAfterHide(event) {
-    if (event.target !== tooltipEl.value) {
+    if (event.target !== tooltipEl.value || tooltipEl.value?.open) {
         return
     }
+    contentMounted.value = false
     openInteractiveTooltips.delete(tooltipEl.value)
     stopOutsideWatch()
 }
@@ -231,9 +245,11 @@ function stopListening() {
 // pointer needs to reach the tooltip only concerns the interactive ones.
 watch([tooltipEl, () => props.interactive], ([el, interactive]) => {
     stopListening()
+    contentMounted.value = !!el?.open
     if (!el) {
         return
     }
+    serializeTooltipTransitions(el)
     if (interactive) {
         el.addEventListener('mouseover', cancelPendingHide)
     }
@@ -255,6 +271,6 @@ onBeforeUnmount(stopListening)
         :hide-delay="interactive ? INTERACTIVE_HIDE_DELAY : undefined"
         v-bind="$attrs"
     >
-        <slot />
+        <slot v-if="renderContent" />
     </wa-tooltip>
 </template>

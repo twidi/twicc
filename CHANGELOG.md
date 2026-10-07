@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Attach any file** — Add files of any type and size to your messages. Files the agent cannot read directly are saved as artifacts of the session.
 - **Automatic title updates** — Session titles now follow the conversation’s main subjects. Titles you save stay unchanged. The title generation prompt is completely rewritten. If you use a custom prompt, rebuild it from the new default.
 - **Codex “async” questions** — Codex can now ask questions without pausing its work. Answer them alongside your next message.
+- **Snippet groups** — Organize composer snippets, terminal snippets and terminal combos into groups, and open them from compact popovers.
 - **Orchestration activity** — The Orchestration tab shows at a glance when its sessions or subagents are working.
 - **Task progress** — The Tasks tab shows how many tasks are done out of the total, and a green check once all are done.
 - **MCP Events** — External MCP clients, including ChatGPT Work, can now react when a TwiCC session replies or needs your input (via the `session.concluded` event).
@@ -20,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Orchestration tab** — The Orchestration tab gets a brand new look.
 - **Artifacts tab always available** — The tab now shows for every session, even before it has any artifact. Right-click "Session artifacts" to create a file or folder, or upload files.
+- **List ordering** — Drag a handle to reorder lists (composer snippets, projects in a workspace, ...), on desktop or mobile.
 
 ### Fixed
 

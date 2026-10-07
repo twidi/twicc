@@ -1,6 +1,8 @@
 <script setup>
 // MessageSnippetsDialog.vue - Dialog for managing message input snippets with scope grouping
-import { ref, computed, nextTick, useId } from 'vue'
+import GroupedListEditor from '../ui/GroupedListEditor.vue'
+import { isSnippetGroup, getGroupItems, flattenGroupedEntries } from '../../utils/snippetGroups'
+import { ref, computed, nextTick, useId, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useMessageSnippetsStore } from '../../stores/messageSnippets'
 import { useDataStore } from '../../stores/data'
@@ -35,6 +37,9 @@ const formId = `message-snippets-form-${instanceId}`
 // ── View state ───────────────────────────────────────────────────────
 const view = ref('list') // 'list' or 'form'
 const editScope = ref(null)    // scope being edited (null for new)
+const editSourceGroupId = ref(null)
+const editSourceSnapshot = ref(null)
+const groupMode = ref(false)
 const editIndex = ref(null)    // index within scope (null for new)
 const isDuplicate = ref(false)
 const formData = ref(null)     // { label: '', text: '', scope: 'global' }
@@ -43,6 +48,7 @@ const warningMessage = ref('')
 
 // ── Computed ─────────────────────────────────────────────────────────
 const dialogLabel = computed(() => {
+    if (groupMode.value && view.value === 'form') return 'Add Group'
     if (view.value === 'list') return 'Manage Message Snippets'
     if (editIndex.value !== null) return 'Edit Snippet'
     return 'Add Snippet'
@@ -164,15 +170,35 @@ const selectedScopeWorkspaceColor = computed(() => {
     return workspaceColorFromScope(formData.value.scope)
 })
 
+const selectableGroups = computed(() =>
+    (messageSnippetsStore.snippets[formData.value?.scope] || []).filter(isSnippetGroup)
+)
+
+watch(() => formData.value?.scope, () => {
+    if (formData.value?.groupId && !selectableGroups.value.some(group => group.id === formData.value.groupId)) {
+        formData.value.groupId = null
+    }
+})
+
+function openGroupForm() {
+    openAddForm()
+    groupMode.value = true
+    nextTick(() => labelInputRef.value?.focus())
+}
+
 // ── Form helpers ─────────────────────────────────────────────────────
-function openAddForm() {
+function openAddForm(scope = null, groupId = null) {
+    groupMode.value = false
+    editSourceGroupId.value = null
+    editSourceSnapshot.value = null
     editScope.value = null
     editIndex.value = null
     isDuplicate.value = false
     formData.value = {
         label: '',
         text: '',
-        scope: props.currentProjectId ? `project:${props.currentProjectId}` : 'global',
+        scope: scope || (props.currentProjectId ? `project:${props.currentProjectId}` : 'global'),
+        groupId,
     }
     errorMessage.value = ''
     warningMessage.value = ''
@@ -180,33 +206,41 @@ function openAddForm() {
     nextTick(() => syncFormState())
 }
 
-function openEditForm(scope, index) {
+function openEditForm(scope, index, groupId = null) {
+    groupMode.value = false
+    editSourceGroupId.value = groupId
     editScope.value = scope
     editIndex.value = index
     isDuplicate.value = false
-    const snippet = messageSnippetsStore.snippets[scope]?.[index]
+    const snippet = getGroupItems(messageSnippetsStore.snippets[scope] || [], groupId)?.[index]
+    if (!snippet) return
+    editSourceSnapshot.value = JSON.stringify(snippet)
+    formData.value = {
+        label: snippet.label,
+        text: snippet.text,
+        scope: scope,
+        groupId,
+    }
+    errorMessage.value = ''
+    warningMessage.value = ''
+    view.value = 'form'
+    nextTick(() => syncFormState())
+}
+
+function openDuplicateForm(scope, index, groupId = null) {
+    groupMode.value = false
+    editSourceGroupId.value = null
+    editSourceSnapshot.value = null
+    editScope.value = null
+    editIndex.value = null
+    isDuplicate.value = true
+    const snippet = getGroupItems(messageSnippetsStore.snippets[scope] || [], groupId)?.[index]
     if (!snippet) return
     formData.value = {
         label: snippet.label,
         text: snippet.text,
         scope: scope,
-    }
-    errorMessage.value = ''
-    warningMessage.value = ''
-    view.value = 'form'
-    nextTick(() => syncFormState())
-}
-
-function openDuplicateForm(scope, index) {
-    editScope.value = null
-    editIndex.value = null
-    isDuplicate.value = true
-    const snippet = messageSnippetsStore.snippets[scope]?.[index]
-    if (!snippet) return
-    formData.value = {
-        label: snippet.label,
-        text: snippet.text,
-        scope: scope,  // defaults to source scope
+        groupId,
     }
     errorMessage.value = ''
     warningMessage.value = ''
@@ -277,6 +311,29 @@ function handleSave() {
     errorMessage.value = ''
 
     const trimmedLabel = formData.value.label.trim()
+    if (groupMode.value) {
+        if (!trimmedLabel) {
+            errorMessage.value = 'Group name is required.'
+            return
+        }
+        if (!messageSnippetsStore.addSnippetGroup(formData.value.scope, trimmedLabel)) {
+            errorMessage.value = 'This item or group changed. Reopen the item and try again.'
+            return
+        }
+        cancelForm()
+        return
+    }
+    if (editIndex.value !== null) {
+        const source = getGroupItems(messageSnippetsStore.snippets[editScope.value] || [], editSourceGroupId.value)?.[editIndex.value]
+        if (!source || JSON.stringify(source) !== editSourceSnapshot.value) {
+            errorMessage.value = 'This item or group changed. Reopen the item and try again.'
+            return
+        }
+    }
+    if (formData.value.groupId && !selectableGroups.value.some(group => group.id === formData.value.groupId)) {
+        errorMessage.value = 'The selected group no longer exists. Select another group.'
+        return
+    }
     const text = formData.value.text
 
     if (!text.trim()) {
@@ -293,10 +350,11 @@ function handleSave() {
 
     // Check for duplicate label in same scope (warn but allow save on second submit)
     if (trimmedLabel) {
-        const scopeSnippets = messageSnippetsStore.snippets[selectedScope] || []
-        const hasDuplicateLabel = scopeSnippets.some((s, i) => {
+        const scopeSnippets = flattenGroupedEntries(messageSnippetsStore.snippets[selectedScope] || [])
+        const sourceSnippet = getGroupItems(messageSnippetsStore.snippets[editScope.value] || [], editSourceGroupId.value)?.[editIndex.value]
+        const hasDuplicateLabel = scopeSnippets.some(s => {
             // Skip self when editing within the same scope
-            if (editIndex.value !== null && editScope.value === selectedScope && i === editIndex.value) return false
+            if (editIndex.value !== null && editScope.value === selectedScope && s === sourceSnippet) return false
             return s.label && s.label.trim().toLowerCase() === trimmedLabel.toLowerCase()
         })
         if (hasDuplicateLabel && !warningMessage.value) {
@@ -307,10 +365,15 @@ function handleSave() {
     warningMessage.value = ''
 
     // Save
-    if (editIndex.value !== null) {
-        messageSnippetsStore.updateSnippet(editScope.value, editIndex.value, snippetData, selectedScope)
-    } else {
-        messageSnippetsStore.addSnippet(selectedScope, snippetData)
+    const saved = editIndex.value !== null
+        ? messageSnippetsStore.updateSnippet(
+            editScope.value, editIndex.value, snippetData, selectedScope,
+            editSourceGroupId.value, formData.value.groupId,
+        )
+        : messageSnippetsStore.addSnippet(selectedScope, snippetData, formData.value.groupId)
+    if (!saved) {
+        errorMessage.value = 'This item or group changed. Reopen the item and try again.'
+        return
     }
 
     view.value = 'list'
@@ -328,7 +391,9 @@ function syncFormState() {
 }
 
 function focusFirstInput() {
-    if (view.value === 'form') {
+    if (view.value === 'form' && groupMode.value) {
+        labelInputRef.value?.focus()
+    } else if (view.value === 'form') {
         // Focus the textarea (message text) since label is optional
         if (textareaRef.value) {
             const inner = textareaRef.value.shadowRoot?.querySelector('textarea')
@@ -402,53 +467,25 @@ defineExpose({ open, close })
                     <ProjectBadge v-else :project-id="projectIdFromScope(group.scope)" use-directory-for-unnamed />
                 </div>
 
-                <!-- Snippets in this group -->
-                <div class="snippet-list">
-                    <div
-                        v-for="(snippet, index) in group.snippets"
-                        :key="index"
-                        class="snippet-row"
-                    >
-                        <!-- Reorder arrows -->
-                        <div class="reorder-arrows">
-                            <button
-                                class="reorder-btn"
-                                :class="{ disabled: index === 0 }"
-                                :disabled="index === 0"
-                                @click="messageSnippetsStore.reorderSnippet(group.scope, index, index - 1)"
-                                title="Move up"
-                            ><wa-icon name="chevron-up" /></button>
-                            <button
-                                class="reorder-btn"
-                                :class="{ disabled: index === group.snippets.length - 1 }"
-                                :disabled="index === group.snippets.length - 1"
-                                @click="messageSnippetsStore.reorderSnippet(group.scope, index, index + 1)"
-                                title="Move down"
-                            ><wa-icon name="chevron-down" /></button>
-                        </div>
-
-                        <!-- Display text -->
+                <GroupedListEditor
+                    :entries="group.snippets"
+                    item-name="snippet"
+                    @add="groupId => openAddForm(group.scope, groupId)"
+                    @edit="(index, groupId) => openEditForm(group.scope, index, groupId)"
+                    @duplicate="(index, groupId) => openDuplicateForm(group.scope, index, groupId)"
+                    @delete="(index, groupId) => messageSnippetsStore.deleteSnippet(group.scope, index, groupId)"
+                    @move="(from, to) => messageSnippetsStore.moveSnippet(group.scope, from, to)"
+                    @add-group="label => messageSnippetsStore.addSnippetGroup(group.scope, label)"
+                    @rename-group="(id, label) => messageSnippetsStore.renameSnippetGroup(group.scope, id, label)"
+                    @delete-group="id => messageSnippetsStore.deleteSnippetGroup(group.scope, id)"
+                >
+                    <template #item="{ entry: snippet }">
                         <div class="snippet-display">
-                            <span v-if="snippetDisplayLabel(snippet)" class="snippet-label">
-                                {{ snippetDisplayLabel(snippet) }}
-                            </span>
+                            <span v-if="snippetDisplayLabel(snippet)" class="snippet-label">{{ snippetDisplayLabel(snippet) }}</span>
                             <span class="snippet-text-preview">{{ snippet.text }}</span>
                         </div>
-
-                        <!-- Action buttons -->
-                        <div class="snippet-actions">
-                            <button class="action-btn" @click="openEditForm(group.scope, index)" title="Edit">
-                                <wa-icon name="pen-to-square" />
-                            </button>
-                            <button class="action-btn" @click="openDuplicateForm(group.scope, index)" title="Duplicate">
-                                <wa-icon name="copy" />
-                            </button>
-                            <button class="action-btn action-btn-danger" @click="messageSnippetsStore.deleteSnippet(group.scope, index)" title="Delete">
-                                <wa-icon name="trash-can" />
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                    </template>
+                </GroupedListEditor>
             </div>
 
             <!-- Show message when there are no scopes at all -->
@@ -461,18 +498,18 @@ defineExpose({ open, close })
         <form v-else :id="formId" class="dialog-content" @submit.prevent="handleSave">
             <!-- Label field (optional) -->
             <div class="form-group">
-                <label class="form-label">Label <span class="form-optional">(optional)</span></label>
+                <label class="form-label">{{ groupMode ? 'Group name' : 'Label' }} <span v-if="!groupMode" class="form-optional">(optional)</span></label>
                 <wa-input
                     ref="labelInputRef"
                     :value="formData.label"
                     @input="formData.label = $event.target.value"
-                    placeholder='e.g. "Quick fix request"'
+                    :placeholder="groupMode ? 'e.g. Reviews' : 'e.g. &quot;Quick fix request&quot;'"
                     size="small"
                 />
             </div>
 
             <!-- Message text -->
-            <div class="form-group">
+            <div v-if="!groupMode" class="form-group">
                 <label class="form-label">Message</label>
                 <wa-textarea
                     ref="textareaRef"
@@ -619,6 +656,14 @@ defineExpose({ open, close })
                 </wa-select>
             </div>
 
+            <div v-if="!groupMode" class="form-group">
+                <label class="form-label">Group</label>
+                <wa-select :value="formData.groupId || ''" @change="formData.groupId = $event.target.value || null" size="small">
+                    <wa-option value="">None</wa-option>
+                    <wa-option v-for="group in selectableGroups" :key="group.id" :value="group.id">{{ group.label }}</wa-option>
+                </wa-select>
+            </div>
+
             <!-- Warning (duplicate label) -->
             <wa-callout v-if="warningMessage" variant="warning" size="small">
                 {{ warningMessage }}
@@ -636,7 +681,11 @@ defineExpose({ open, close })
                 <wa-button variant="neutral" appearance="outlined" @click="close">
                     Close
                 </wa-button>
-                <wa-button variant="brand" @click="openAddForm">
+                <wa-button variant="neutral" appearance="outlined" @click="openGroupForm">
+                    <wa-icon slot="start" name="folder-plus"></wa-icon>
+                    Add group
+                </wa-button>
+                <wa-button variant="brand" @click="openAddForm()">
                     <wa-icon slot="start" name="plus"></wa-icon>
                     Add snippet
                 </wa-button>
@@ -709,48 +758,6 @@ defineExpose({ open, close })
     color: var(--wa-color-text-normal);
 }
 
-/* ── Snippet list ─────────────────────────────────────────────────── */
-.snippet-list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--wa-space-3xs);
-}
-
-.snippet-row {
-    display: flex;
-    align-items: center;
-    gap: var(--wa-space-s);
-    background: var(--wa-color-surface-alt);
-    border-radius: var(--wa-border-radius-m);
-}
-
-/* ── Reorder arrows ───────────────────────────────────────────────── */
-.reorder-arrows {
-    display: flex;
-    gap: var(--wa-space-2xs);
-    flex-shrink: 0;
-}
-
-.reorder-btn {
-    background: none;
-    border: none;
-    color: var(--wa-color-text-quiet);
-    font-size: var(--wa-font-size-xs);
-    padding: var(--wa-space-2xs);
-    cursor: pointer;
-    transition: color 0.15s, background-color 0.15s;
-}
-
-.reorder-btn:hover:not(.disabled) {
-    color: var(--wa-color-text-base);
-    background: var(--wa-color-surface-alt);
-}
-
-.reorder-btn.disabled {
-    opacity: 0.25;
-    cursor: default;
-}
-
 /* ── Snippet display ──────────────────────────────────────────────── */
 .snippet-display {
     flex: 1;
@@ -776,33 +783,6 @@ defineExpose({ open, close })
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-}
-
-/* ── Action buttons ───────────────────────────────────────────────── */
-.snippet-actions {
-    display: flex;
-    gap: var(--wa-space-3xs);
-    flex-shrink: 0;
-}
-
-.action-btn {
-    background: none;
-    border: none;
-    font-size: var(--wa-font-size-m);
-    padding: var(--wa-space-xs);
-    cursor: pointer;
-    line-height: 1;
-    transition: background-color 0.15s, color 0.15s;
-    color: var(--wa-color-text-quiet);
-}
-
-.action-btn:hover {
-    background: var(--wa-color-surface-alt);
-    color: var(--wa-color-text-base);
-}
-
-.action-btn-danger:hover {
-    color: var(--wa-color-danger-60);
 }
 
 /* ── Form ─────────────────────────────────────────────────────────── */

@@ -4,12 +4,19 @@ import * as Vue from 'vue'
 import { readFileSync } from 'node:fs'
 import { compileComponent, makeRenderer, virtualScroller, row, flush, deferred, descendants } from '../../../../tests/helpers/scrollerComponentHarness.js'
 import * as helpers from '../../../utils/scrollerLoadWindow.js'
+import { retainSessionArray } from '../../../utils/sessionLists.js'
+import { getSessionCutoffMs } from '../../../utils/sessions.js'
+import { jsonValuesEqual } from '../../../utils/jsonValuesEqual.js'
 // Execute the production request registration, merge, loading flag, and finally ordering.
 const storeSource = readFileSync(new URL('../../../stores/data.js', import.meta.url), 'utf8')
 const storeStart = storeSource.indexOf('        async loadSessions(')
 const storeEnd = storeSource.indexOf('        /**\n         * Load all "sticky"', storeStart)
 const createStoreActions = new Function('sessionsLoadInFlight', 'syncBaseline', 'isWorkspaceProjectId',
     `return { ${storeSource.slice(storeStart, storeEnd)} }`)
+const updateStart = storeSource.indexOf('        updateSession(session)')
+const updateEnd = storeSource.indexOf('        /**', updateStart)
+const updateActions = new Function('getSessionCutoffMs', 'markAgentIdle', 'jsonValuesEqual',
+    `return { ${storeSource.slice(updateStart, updateEnd)} }`)(getSessionCutoffMs, () => {}, jsonValuesEqual)
 function mount(t, { initialLoading = false, height = 140, more = true, initialSessions = {} } = {}) {
     const { renderer, root } = makeRenderer(height)
     const props = Vue.reactive({ projectId: 'p', searchQuery: 'match' })
@@ -33,6 +40,10 @@ function mount(t, { initialLoading = false, height = 140, more = true, initialSe
     const localState = Vue.reactive({ projects: { p: state, q: { sessionsLoading: false, sessionsFetched: true, hasMoreSessions: true, oldestSessionMtime: 50 } }, sessions: {} })
     const store = {
         sessions, processStates: {}, localState,
+        ...updateActions,
+        $patch(apply) { apply({ sessions }) },
+        _cleanStaleChildSynthetics() {}, _hydrateSessionLayoutFromPersisted() {},
+        tryFinalizePendingBinding() {}, _tryLinkPeerDelivery() {},
         get getAllSessions() { return Object.values(sessions) }, getProjectSessions: id => Object.values(sessions).filter(s => s.project_id === id), getProjectScopeIds: id => [id],
         hasMoreSessions: id => localState.projects[id]?.hasMoreSessions ?? true, areSessionsLoading: id => localState.projects[id]?.sessionsLoading ?? false,
         setDisplayedSessionIds() {}, $onAction() {},
@@ -53,6 +64,7 @@ function mount(t, { initialLoading = false, height = 140, more = true, initialSe
         '../../../stores/sessionSelection': { useSessionSelectionStore: () => ({}) },
         '../../../utils/workspaceIds': { isWorkspaceProjectId: id => id.startsWith('workspace:'), extractWorkspaceId: id => id.slice(10) },
         '../../../utils/sidebarSessions': { computeSidebarSessionBlocks: ({ showArchived }) => ({ extra: null, crossFilterPinned: [], crossFilterActive: [], natural: Object.values(sessions).filter(session => showArchived || !session.archived) }) },
+        '../../../utils/sessionLists.js': { retainSessionArray },
         '../../../utils/textFilter': { matchQuery: (query, value) => value?.includes(query) },
         '../../../utils/datePresets': { dateBucketSeparator: () => ({ key: 'old', entry: { label: 'Older' } }) },
         '../../../composables/useListCascade': { useListCascade: () => noMotion },

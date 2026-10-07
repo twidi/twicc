@@ -7,6 +7,7 @@ from pathlib import Path
 from django.core.exceptions import ImproperlyConfigured
 
 from twicc import provider_homes
+from twicc.installation import detect_installation, resolve_update_instructions
 from twicc.paths import ensure_data_dirs, ensure_env_loaded, get_backend_log_path, get_db_path
 from twicc.secret_key import load_or_create_secret_key
 from twicc.version import get_version
@@ -17,28 +18,9 @@ APP_VERSION = get_version()
 DEV_MODE = PACKAGE_DIR.parent.name == "src"
 
 
-def _is_uv_managed(segment: str) -> bool:
-    """Whether ``sys.executable`` lives inside a uv-managed directory of
-    the given kind: ``archive-v0`` for ephemeral ``uvx`` runs (cache),
-    ``tools`` for persistent ``uv tool install`` venvs.
-
-    We don't rely on environment variables: ``UV_RUN_RECURSION_DEPTH`` is
-    only set by ``uv run``, never by ``uvx`` / ``uv tool run``. The
-    interpreter path is the only stable signal across both modes.
-
-    We intentionally do NOT ``resolve()`` the path: uv venvs ship a
-    ``bin/python`` that's a symlink to the system Python (or to its own
-    download), so resolving would strip the very ``uv/<segment>/`` parts
-    we're trying to detect.
-    """
-    parts = Path(sys.executable).parts
-    for i, p in enumerate(parts):
-        if p == "uv" and i + 1 < len(parts) and parts[i + 1] == segment:
-            return True
-    return False
-
-
-UVX_MODE = not DEV_MODE and _is_uv_managed("archive-v0")
+INSTALLATION_MODE = detect_installation(PACKAGE_DIR)
+UVX_MODE = INSTALLATION_MODE == "uvx"
+UPDATE_INSTRUCTIONS = resolve_update_instructions(INSTALLATION_MODE)._asdict()
 
 
 def _resolve_twicc_launch_prefix() -> str:
@@ -71,7 +53,7 @@ def _resolve_twicc_launch_prefix() -> str:
     # and creates a shim in the uv tool bin dir. Only return the bare name when
     # that shim is actually on PATH (so the command works from anywhere);
     # otherwise fall through to the absolute argv0 path below.
-    if not DEV_MODE and _is_uv_managed("tools") and shutil.which("twicc"):
+    if INSTALLATION_MODE == "uv_tool" and shutil.which("twicc"):
         return "twicc"
 
     # Build the shortest viable form of argv0 — both ``absolute()`` (no

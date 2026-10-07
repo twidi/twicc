@@ -25,6 +25,14 @@ const NOW = 2_000_000
 const WEEK = 604_800
 const ids = items => items.map(item => item.id)
 
+test('activity updates retain equivalent recent project and workspace lists', t => {
+    const { store, api } = fixture(t, [{ id: 'p', mtime: NOW - 10 }], [{ id: 'w', projectIds: ['p'] }])
+    const projects = api.recentProjects.value, workspaces = api.recentWorkspaces.value
+    store.projects.p.mtime = NOW
+    assert.strictEqual(api.recentProjects.value, projects)
+    assert.strictEqual(api.recentWorkspaces.value, workspaces)
+})
+
 function fixture(t, projects, workspaces = [], clock = () => NOW) {
     const store = useProjects(createPinia())
     store.projects = Object.fromEntries(projects.map(project => [project.id, project]))

@@ -4,7 +4,7 @@ Status: adversarial review complete; awaiting user review. Implementation has no
 
 ## 1. Purpose
 
-Keep Codex async questions visible when the main turn ends.
+Show completed Codex async questions immediately when they arrive.
 Let the user answer these questions and the final assistant message in one send.
 Use the existing question widget style inside the composer, directly above the textarea.
 
@@ -119,39 +119,30 @@ Exclude provider subagent sessions and copied parent history in child rollouts.
 
 ### 5.1 While the agent works
 
-Collect batches as completed question messages arrive.
-Show a compact `Questions pending` indicator in the composer header.
-Do not automatically expand the questions while the main turn runs.
+Show batches immediately when completed question messages arrive.
+Completed batches are ready during main turns, subagent activity, and goal continuations.
 Do not interrupt the turn or steal focus from the user's draft.
+Do not show a turn-readiness pending indicator.
 
-### 5.2 When the main turn ends
+### 5.2 Submission while the agent works
 
-Make collected questions ready when the main Codex turn ends and control returns to the user.
-Use actual turn lifecycle evidence. Do not derive readiness from message phase or display state.
-
-For a live session, use completed main-turn handling before TwiCC applies its subagent hold.
-If an immediate automatic continuation starts, keep collecting until that continuation finishes.
-Apply this rule to auto-review retries and Codex goal continuations.
-Background subagents alone must not delay question readiness after the parent returns control.
-
-The UI can therefore show questions while the displayed process state remains `assistant_turn`.
-Existing send and steering rules still determine when the user can submit a message.
+Answers can send alone or with textarea text whenever a normal message can send.
+Use the existing Codex steering, retry, and fallback delivery pipeline.
+Do not create a second send mechanism.
 
 A blocking request retains its normal priority and send lock.
 Async questions must not bypass that lock or create a second blocking request panel.
 When the blocking request clears, show the async questions in the composer.
 
-Use JSONL turn-end evidence for recovery and sessions without a live SDK stream.
-The SDK and JSONL paths must converge on the same readiness state.
-A late JSONL question for an already completed turn becomes ready unless a later human reply already retires it.
+SDK completion and canonical JSONL completion produce the same ready state.
+Late older questions retire when an accepted human submission follows them in the source timeline.
 Determine this from the source timeline, not from the time TwiCC discovers the question.
 
 ### 5.3 Stops and failures
 
-After an explicit interrupt or a terminal failure, show collected questions when normal composition becomes available.
-The question remains optional. It cannot prevent restarting or sending to the session.
-An abrupt backend shutdown without turn-end evidence does not imply successful completion.
-Recovery must reconcile the existing turn and process state before releasing collected questions.
+Questions stay available after interrupts, failures, and backend restarts.
+Normal send admission rules still apply during recovery.
+Old stored collecting projections become immediately ready on read without a database migration.
 
 ### 5.4 Later turns
 
@@ -163,10 +154,10 @@ An accepted ordinary human message retires batches that exist and are ready at i
 This also applies to plain-text replies from another browser or CLI, and questions discovered late.
 It means the user can answer naturally without using the cards.
 Internal prompts, context updates, automatic continuations, and agent-to-agent messages do not retire questions.
-Collecting batches are not retired by a steering message sent before they become ready.
+Accepted steering messages retire eligible older batches at the immutable submission boundary.
 
 Apply this same rule during live operation, reload, historical recovery, and recompute.
-Readiness follows the source turn lifecycle, not discovery time or the current process display state.
+Completed messages are immediately ready, independent of the source turn lifecycle or process display state.
 A question generated after the submission boundary remains unresolved.
 Late ingestion of an older question must not make it reappear after a relevant accepted human reply.
 
@@ -212,7 +203,7 @@ Use the existing footer size and scrolling conventions.
 
 ## 7. Message construction and delivery
 
-Each submission identifies the questions it answers and the readiness boundary for that send.
+Each submission identifies the questions it answers and the immutable admission boundary for that send.
 Validate that the answers belong to the target session and refer to unresolved, ready questions.
 Use the original question text and option labels when constructing the ordinary user message.
 Include only answered questions, in source order, followed by the main textarea text.
@@ -270,16 +261,16 @@ An accepted send clears its own answers normally. It must not recover those answ
 Questions must survive reloads, reconnects, backend restarts, and transcript pagination.
 Do not discover them only from the currently loaded frontend messages.
 
-Keep durable source identity, question content, source turn, readiness, and resolution evidence.
-Distinguish collecting, ready, sent, and dismissed batches.
+Keep durable source identity, question content, source turn, completion, and resolution evidence.
+Distinguish ready, sent, and dismissed batches.
 This lifecycle state is outside the agent-settings bundle.
 
 SDK reception, JSONL ingestion, and recompute must converge without duplicating batches.
 Recompute preserves send and dismiss decisions. It must never recreate a resolved batch as ready.
 
-For existing history, apply section 5.4 using the actual order of question generation, readiness, and human submissions.
-A steering before readiness does not retire a question, including after reload.
-A genuine human reply after readiness retires eligible questions, including questions discovered later.
+For existing history, apply section 5.4 using the actual source order of completed question messages and human submissions.
+Accepted human steering retires older completed questions, including after reload.
+A human reply retires eligible older completed questions, including questions discovered later.
 Internal and automatic messages never act as human replies.
 
 All browsers receive current unresolved batches and their resolution changes.
@@ -336,14 +327,14 @@ Verify these behavior groups:
 
 1. **Detection:** both observed messages produce one batch each. Ordinary assistant prose produces none.
 2. **Deduplication:** SDK start/completion, watcher ingestion, reload, and recompute do not duplicate questions.
-3. **Readiness:** `final_answer` alone does not open questions. Parent turn completion does, including a subagent hold.
-4. **Continuations:** immediate automatic turns defer readiness. Later turns preserve already ready choices.
+3. **Readiness:** completed async messages open questions immediately, before parent turn completion.
+4. **Continuations:** automatic turns, goals, and subagent activity preserve ready questions and choices.
 5. **Recovery:** late JSONL ingestion, historical sessions, interrupts, failures, and backend restarts reconcile correctly.
 6. **Interaction:** no default choice; Other, clear, partial answers, dismiss, and answer-only sends work.
 7. **Combined send:** selected answers, textarea, and attachments reach Codex through one ordinary send.
 8. **Failure:** send rejection restores every draft part. Uncertain delivery does not duplicate answer text.
 9. **Concurrency:** newly generated questions survive an older send. External resolution preserves local answers as editable draft text.
-10. **History:** steering before readiness preserves questions. Human replies after readiness retire eligible questions, including late ingestion.
+10. **History:** accepted human steering and replies retire older completed questions, including late ingestion.
 11. **Compatibility:** blocking questions, approvals, commands, settings-only actions, and disabled widgets retain their rules.
 12. **Visual QA:** existing widget style, keyboard access, mobile scrolling, collapsed composer, and focus behavior remain correct.
 

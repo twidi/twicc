@@ -47,7 +47,7 @@ def test_async_question_then_tools_then_final_emits_one_reply(env):
     env.tick()
     assert env.emissions == []
     assert env.monitor.wait.last_message.is_final is False
-    assert service.read_question_snapshot(env.session.id)["batches"][0]["status"] == "collecting"
+    assert service.read_question_snapshot(env.session.id)["batches"][0]["status"] == "ready"
     SessionItem.objects.create(session=env.session, line_num=2, kind=ItemKind.TOOL_USE,
                                content='{"type":"response_item","payload":{"type":"function_call",'
                                        '"call_id":"tool-1","name":"exec_command","arguments":"{}"}}')
@@ -90,7 +90,7 @@ def test_async_question_keeps_blocking_request_schema(env):
     reply = env.payloads()[0]["data"]["reply"]
     assert reply["outcome"] == "awaiting_user_input"
     assert env.payloads()[0]["data"]["request_type"] == "tool_approval"
-    assert service.read_question_snapshot(env.session.id)["batches"][0]["status"] == "collecting"
+    assert service.read_question_snapshot(env.session.id)["batches"][0]["status"] == "ready"
 
 
 def test_history_replacement_preserves_question_decisions_until_mcp_adopts_new_epoch(env, monkeypatch):

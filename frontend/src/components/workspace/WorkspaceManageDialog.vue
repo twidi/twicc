@@ -1,5 +1,7 @@
 <script setup>
 // WorkspaceManageDialog.vue - Dialog for managing workspaces (list + create/edit form)
+import ReorderHandle from '../ui/ReorderHandle.vue'
+import { moveVisibleItems } from '../../utils/listReorder'
 import { ref, computed, nextTick, useId } from 'vue'
 import { useWorkspacesStore } from '../../stores/workspaces'
 import { useSettingsStore } from '../../stores/settings'
@@ -94,7 +96,8 @@ const visibleProjectEntries = computed(() => {
 
 // -- List view helpers --------------------------------------------------------
 function handleReorder(fromIndex, toIndex) {
-    workspacesStore.reorderWorkspace(fromIndex, toIndex)
+    const indices = visibleWorkspaces.value.map((workspace) => workspacesStore.workspaces.indexOf(workspace))
+    workspacesStore.reorderWorkspace(fromIndex, toIndex, indices)
 }
 
 function requestDelete(workspaceId) {
@@ -170,24 +173,9 @@ function removeProject(visibleIndex) {
     formData.value.projectIds.splice(realIdx, 1)
 }
 
-/** Swap the two visible neighbors using their source indices, so hidden (archived) entries
- *  in between keep their absolute position. */
-function moveProjectUp(visibleIndex) {
-    if (visibleIndex <= 0) return
-    const entries = visibleProjectEntries.value
-    const fromIdx = entries[visibleIndex].index
-    const toIdx = entries[visibleIndex - 1].index
-    const ids = formData.value.projectIds
-    ;[ids[fromIdx], ids[toIdx]] = [ids[toIdx], ids[fromIdx]]
-}
-
-function moveProjectDown(visibleIndex) {
-    const entries = visibleProjectEntries.value
-    if (visibleIndex >= entries.length - 1) return
-    const fromIdx = entries[visibleIndex].index
-    const toIdx = entries[visibleIndex + 1].index
-    const ids = formData.value.projectIds
-    ;[ids[fromIdx], ids[toIdx]] = [ids[toIdx], ids[fromIdx]]
+/** Reorder visible projects without moving hidden archived projects or worktrees. */
+function reorderProjects(from, to) {
+    moveVisibleItems(formData.value.projectIds, visibleProjectEntries.value.map((entry) => entry.index), from, to)
 }
 
 // -- Pattern list manipulation (form) -----------------------------------------
@@ -420,29 +408,18 @@ defineExpose({ open, close, openForWorkspace, openNew })
             </div>
 
             <!-- Workspace list -->
-            <div class="workspace-list">
+            <div class="workspace-list" data-reorder-list>
                 <div
                     v-for="(workspace, index) in visibleWorkspaces"
                     :key="workspace.id"
-                    class="workspace-row"
+                    class="workspace-row" data-reorder-row
                 >
-                    <!-- Reorder arrows -->
-                    <div class="reorder-arrows">
-                        <button
-                            class="reorder-btn"
-                            :class="{ disabled: index === 0 }"
-                            :disabled="index === 0"
-                            @click="handleReorder(index, index - 1)"
-                            title="Move up"
-                        ><wa-icon name="chevron-up" /></button>
-                        <button
-                            class="reorder-btn"
-                            :class="{ disabled: index === visibleWorkspaces.length - 1 }"
-                            :disabled="index === visibleWorkspaces.length - 1"
-                            @click="handleReorder(index, index + 1)"
-                            title="Move down"
-                        ><wa-icon name="chevron-down" /></button>
-                    </div>
+                    <!-- Drag handle -->
+                    <ReorderHandle
+                        :index="index"
+                        :count="visibleWorkspaces.length"
+                        @reorder="handleReorder"
+                    />
 
                     <!-- Display info -->
                     <div class="workspace-display">
@@ -530,31 +507,18 @@ defineExpose({ open, close, openForWorkspace, openNew })
                     </wa-switch>
                 </div>
 
-                <div v-if="visibleProjectEntries.length > 0" class="project-list">
+                <div v-if="visibleProjectEntries.length > 0" class="project-list" data-reorder-list>
                     <div
                         v-for="(entry, visibleIndex) in visibleProjectEntries"
                         :key="entry.pid"
-                        class="project-row"
+                        class="project-row" data-reorder-row
                     >
-                        <!-- Reorder arrows -->
-                        <div class="reorder-arrows">
-                            <button
-                                type="button"
-                                class="reorder-btn"
-                                :class="{ disabled: visibleIndex === 0 }"
-                                :disabled="visibleIndex === 0"
-                                @click="moveProjectUp(visibleIndex)"
-                                title="Move up"
-                            ><wa-icon name="chevron-up" /></button>
-                            <button
-                                type="button"
-                                class="reorder-btn"
-                                :class="{ disabled: visibleIndex === visibleProjectEntries.length - 1 }"
-                                :disabled="visibleIndex === visibleProjectEntries.length - 1"
-                                @click="moveProjectDown(visibleIndex)"
-                                title="Move down"
-                            ><wa-icon name="chevron-down" /></button>
-                        </div>
+                        <!-- Drag handle -->
+                        <ReorderHandle
+                            :index="visibleIndex"
+                            :count="visibleProjectEntries.length"
+                            @reorder="reorderProjects"
+                        />
 
                         <!-- Project badge -->
                         <div class="project-row-badge">
@@ -792,33 +756,6 @@ defineExpose({ open, close, openForWorkspace, openNew })
     gap: var(--wa-space-s);
     background: var(--wa-color-surface-alt);
     border-radius: var(--wa-border-radius-m);
-}
-
-/* -- Reorder arrows (shared between list and form) -------------------------- */
-.reorder-arrows {
-    display: flex;
-    gap: var(--wa-space-2xs);
-    flex-shrink: 0;
-}
-
-.reorder-btn {
-    background: none;
-    border: none;
-    color: var(--wa-color-text-quiet);
-    font-size: var(--wa-font-size-xs);
-    padding: var(--wa-space-2xs);
-    cursor: pointer;
-    transition: color 0.15s, background-color 0.15s;
-}
-
-.reorder-btn:hover:not(.disabled) {
-    color: var(--wa-color-text-base);
-    background: var(--wa-color-surface-alt);
-}
-
-.reorder-btn.disabled {
-    opacity: 0.25;
-    cursor: default;
 }
 
 /* -- Workspace display ------------------------------------------------------ */

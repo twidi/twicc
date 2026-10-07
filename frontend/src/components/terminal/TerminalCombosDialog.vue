@@ -1,5 +1,7 @@
 <script setup>
 // TerminalCombosDialog.vue - Dialog for managing custom key combos
+import GroupedListEditor from '../ui/GroupedListEditor.vue'
+import { isSnippetGroup, getGroupItems, flattenGroupedEntries } from '../../utils/snippetGroups'
 import { ref, computed, nextTick, useId } from 'vue'
 import { useTerminalConfigStore } from '../../stores/terminalConfig'
 import { formatCombo, formatComboNotation } from '../../utils/terminalComboNotation'
@@ -16,6 +18,10 @@ const formId = `manage-combos-form-${instanceId}`
 
 // ── View state ───────────────────────────────────────────────────────
 const view = ref('list') // 'list' or 'form'
+const editSourceGroupId = ref(null)
+const editSourceSnapshot = ref(null)
+const groupMode = ref(false)
+const selectableGroups = computed(() => terminalConfigStore.combos.filter(isSnippetGroup))
 const editIndex = ref(null) // null = adding, number = editing
 const formData = ref(null) // { label: '', steps: [{ modifiers: [], key: '' }] }
 const errorMessage = ref('')
@@ -64,6 +70,7 @@ const MODIFIERS = ['ctrl', 'alt', 'shift']
 
 // ── Computed ─────────────────────────────────────────────────────────
 const dialogLabel = computed(() => {
+    if (groupMode.value && view.value === 'form') return 'Add Group'
     if (view.value === 'list') return 'Manage Combos'
     if (editIndex.value !== null) return 'Edit Combo'
     return 'Add Combo'
@@ -79,18 +86,26 @@ function displayKeyLabel(key) {
 }
 
 // ── Form helpers ─────────────────────────────────────────────────────
-function openAddForm() {
+function openAddForm(groupId = null) {
+    groupMode.value = false
+    editSourceGroupId.value = null
+    editSourceSnapshot.value = null
     editIndex.value = null
-    formData.value = { label: '', steps: [{ modifiers: [], key: '' }] }
+    formData.value = { label: '', steps: [{ modifiers: [], key: '' }], groupId }
     errorMessage.value = ''
     warningMessage.value = ''
     view.value = 'form'
     nextTick(() => syncFormState())
 }
 
-function openEditForm(index) {
+function openEditForm(index, groupId = null) {
+    groupMode.value = false
+    editSourceGroupId.value = groupId
     editIndex.value = index
-    formData.value = JSON.parse(JSON.stringify(terminalConfigStore.combos[index]))
+    const combo = getGroupItems(terminalConfigStore.combos, groupId)?.[index]
+    if (!combo) return
+    editSourceSnapshot.value = JSON.stringify(combo)
+    formData.value = { ...JSON.parse(JSON.stringify(combo)), groupId }
     // Ensure label and modifiers arrays exist
     if (!formData.value.label) formData.value.label = ''
     formData.value.steps.forEach(s => { if (!s.modifiers) s.modifiers = [] })
@@ -100,9 +115,14 @@ function openEditForm(index) {
     nextTick(() => syncFormState())
 }
 
-function openDuplicateForm(index) {
+function openDuplicateForm(index, groupId = null) {
+    groupMode.value = false
+    editSourceGroupId.value = null
+    editSourceSnapshot.value = null
     editIndex.value = null // null = creates new on save
-    formData.value = JSON.parse(JSON.stringify(terminalConfigStore.combos[index]))
+    const combo = getGroupItems(terminalConfigStore.combos, groupId)?.[index]
+    if (!combo) return
+    formData.value = { ...JSON.parse(JSON.stringify(combo)), groupId }
     // Ensure label and modifiers arrays exist
     if (!formData.value.label) formData.value.label = ''
     formData.value.steps.forEach(s => { if (!s.modifiers) s.modifiers = [] })
@@ -110,6 +130,12 @@ function openDuplicateForm(index) {
     warningMessage.value = ''
     view.value = 'form'
     nextTick(() => syncFormState())
+}
+
+function openGroupForm() {
+    openAddForm()
+    groupMode.value = true
+    nextTick(() => labelInputRef.value?.focus())
 }
 
 function cancelForm() {
@@ -178,7 +204,30 @@ function stepsMatch(a, b) {
 // ── Validation & save ────────────────────────────────────────────────
 function handleSave() {
     errorMessage.value = ''
-    warningMessage.value = ''
+    if (groupMode.value) {
+        const label = formData.value.label.trim()
+        if (!label) {
+            errorMessage.value = 'Group name is required.'
+            return
+        }
+        if (!terminalConfigStore.addComboGroup(label)) {
+            errorMessage.value = 'This item or group changed. Reopen the item and try again.'
+            return
+        }
+        cancelForm()
+        return
+    }
+    if (editIndex.value !== null) {
+        const source = getGroupItems(terminalConfigStore.combos, editSourceGroupId.value)?.[editIndex.value]
+        if (!source || JSON.stringify(source) !== editSourceSnapshot.value) {
+            errorMessage.value = 'This item or group changed. Reopen the item and try again.'
+            return
+        }
+    }
+    if (formData.value.groupId && !selectableGroups.value.some(group => group.id === formData.value.groupId)) {
+        errorMessage.value = 'The selected group no longer exists. Select another group.'
+        return
+    }
 
     if (!formData.value.steps || formData.value.steps.length === 0) {
         errorMessage.value = 'At least one step is required.'
@@ -204,8 +253,9 @@ function handleSave() {
     if (!cleanedData.label) delete cleanedData.label
 
     // Check for duplicate (warn but allow save on second submit)
-    const isDuplicate = terminalConfigStore.combos.some((combo, i) => {
-        if (editIndex.value === i) return false // skip self
+    const sourceCombo = getGroupItems(terminalConfigStore.combos, editSourceGroupId.value)?.[editIndex.value]
+    const isDuplicate = flattenGroupedEntries(terminalConfigStore.combos).some(combo => {
+        if (editIndex.value !== null && combo === sourceCombo) return false // skip self
         return stepsMatch(combo.steps, cleanedData.steps)
     })
     if (isDuplicate && !warningMessage.value) {
@@ -214,10 +264,12 @@ function handleSave() {
     }
 
     // Save
-    if (editIndex.value !== null) {
-        terminalConfigStore.updateCombo(editIndex.value, cleanedData)
-    } else {
-        terminalConfigStore.addCombo(cleanedData)
+    const saved = editIndex.value !== null
+        ? terminalConfigStore.updateCombo(editIndex.value, cleanedData, editSourceGroupId.value, formData.value.groupId)
+        : terminalConfigStore.addCombo(cleanedData, formData.value.groupId)
+    if (!saved) {
+        errorMessage.value = 'This item or group changed. Reopen the item and try again.'
+        return
     }
 
     view.value = 'list'
@@ -263,8 +315,8 @@ defineExpose({ open, close })
         ref="dialogRef"
         :label="dialogLabel"
         class="manage-combos-dialog"
-        @wa-show="syncFormState"
-        @wa-after-show="focusFirstInput"
+        @wa-show.self="syncFormState"
+        @wa-after-show.self="focusFirstInput"
     >
         <!-- ═══ LIST VIEW ═══ -->
         <div v-if="view === 'list'" class="dialog-content">
@@ -272,69 +324,44 @@ defineExpose({ open, close })
                 No custom combos yet. Add one to get started.
             </div>
 
-            <div v-else class="combo-list">
-                <div
-                    v-for="(combo, index) in terminalConfigStore.combos"
-                    :key="index"
-                    class="combo-row"
-                >
-                    <!-- Reorder arrows -->
-                    <div class="reorder-arrows">
-                        <button
-                            class="reorder-btn"
-                            :class="{ disabled: index === 0 }"
-                            :disabled="index === 0"
-                            @click="terminalConfigStore.reorderCombo(index, index - 1)"
-                            title="Move up"
-                        ><wa-icon name="chevron-up" /></button>
-                        <button
-                            class="reorder-btn"
-                            :class="{ disabled: index === terminalConfigStore.combos.length - 1 }"
-                            :disabled="index === terminalConfigStore.combos.length - 1"
-                            @click="terminalConfigStore.reorderCombo(index, index + 1)"
-                            title="Move down"
-                        ><wa-icon name="chevron-down" /></button>
-                    </div>
-
-                    <!-- Display text -->
+            <GroupedListEditor
+                :entries="terminalConfigStore.combos"
+                item-name="combo"
+                @add="openAddForm"
+                @edit="openEditForm"
+                @duplicate="openDuplicateForm"
+                @delete="terminalConfigStore.deleteCombo"
+                @move="terminalConfigStore.moveCombo"
+                @add-group="terminalConfigStore.addComboGroup"
+                @rename-group="terminalConfigStore.renameComboGroup"
+                @delete-group="terminalConfigStore.deleteComboGroup"
+            >
+                <template #item="{ entry: combo }">
                     <div class="combo-display">
                         <span class="combo-text">{{ formatCombo(combo) }}</span>
                         <span v-if="combo.label" class="combo-notation">{{ formatComboNotation(combo) }}</span>
                     </div>
-
-                    <!-- Action buttons -->
-                    <div class="combo-actions">
-                        <button class="action-btn" @click="openEditForm(index)" title="Edit">
-                            <wa-icon name="pen-to-square" />
-                        </button>
-                        <button class="action-btn" @click="openDuplicateForm(index)" title="Duplicate">
-                            <wa-icon name="copy" />
-                        </button>
-                        <button class="action-btn action-btn-danger" @click="terminalConfigStore.deleteCombo(index)" title="Delete">
-                            <wa-icon name="trash-can" />
-                        </button>
-                    </div>
-                </div>
-            </div>
+                </template>
+            </GroupedListEditor>
         </div>
 
         <!-- ═══ FORM VIEW ═══ -->
         <form v-else :id="formId" class="dialog-content" @submit.prevent="handleSave">
             <!-- Label field -->
             <div class="form-group">
-                <label class="form-label">Label</label>
+                <label class="form-label">{{ groupMode ? 'Group name' : 'Label' }}</label>
                 <wa-input
                     ref="labelInputRef"
                     :value="formData.label"
                     @input="formData.label = $event.target.value"
-                    placeholder='e.g. "tmux:new"'
+                    :placeholder="groupMode ? 'e.g. tmux' : 'e.g. &quot;tmux:new&quot;'"
                     size="small"
                 />
-                <div class="form-hint">Optional — replaces notation on button</div>
+                <div v-if="!groupMode" class="form-hint">Optional — replaces notation on button</div>
             </div>
 
             <!-- Steps -->
-            <div class="form-group">
+            <div v-if="!groupMode" class="form-group">
                 <label v-if="formData.steps.length > 1" class="form-label">Steps</label>
 
                 <div
@@ -409,6 +436,14 @@ defineExpose({ open, close })
                 <button ref="addStepBtnRef" type="button" class="add-step-btn" @click="addStep">+ Add step</button>
             </div>
 
+            <div v-if="!groupMode" class="form-group">
+                <label class="form-label">Group</label>
+                <wa-select :value="formData.groupId || ''" @change="formData.groupId = $event.target.value || null" size="small">
+                    <wa-option value="">None</wa-option>
+                    <wa-option v-for="group in selectableGroups" :key="group.id" :value="group.id">{{ group.label }}</wa-option>
+                </wa-select>
+            </div>
+
             <!-- Warning (duplicate) -->
             <wa-callout v-if="warningMessage" variant="warning" size="small">
                 {{ warningMessage }}
@@ -426,7 +461,11 @@ defineExpose({ open, close })
                 <wa-button variant="neutral" appearance="outlined" @click="close">
                     Close
                 </wa-button>
-                <wa-button variant="brand" @click="openAddForm">
+                <wa-button variant="neutral" appearance="outlined" @click="openGroupForm">
+                    <wa-icon slot="start" name="folder-plus"></wa-icon>
+                    Add group
+                </wa-button>
+                <wa-button variant="brand" @click="openAddForm()">
                     <wa-icon slot="start" name="plus"></wa-icon>
                     Add combo
                 </wa-button>
@@ -466,48 +505,6 @@ defineExpose({ open, close })
     padding: var(--wa-space-l) 0;
 }
 
-/* ── Combo list ───────────────────────────────────────────────────── */
-.combo-list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--wa-space-3xs);
-}
-
-.combo-row {
-    display: flex;
-    align-items: center;
-    gap: var(--wa-space-s);
-    background: var(--wa-color-surface-alt);
-    border-radius: var(--wa-border-radius-m);
-}
-
-/* ── Reorder arrows ───────────────────────────────────────────────── */
-.reorder-arrows {
-    display: flex;
-    gap: var(--wa-space-2xs);
-    flex-shrink: 0;
-}
-
-.reorder-btn {
-    background: none;
-    border: none;
-    color: var(--wa-color-text-quiet);
-    font-size: var(--wa-font-size-xs);
-    padding: var(--wa-space-2xs);
-    cursor: pointer;
-    transition: color 0.15s, background-color 0.15s;
-}
-
-.reorder-btn:hover:not(.disabled) {
-    color: var(--wa-color-text-base);
-    background: var(--wa-color-surface-alt);
-}
-
-.reorder-btn.disabled {
-    opacity: 0.25;
-    cursor: default;
-}
-
 /* ── Combo display ────────────────────────────────────────────────── */
 .combo-display {
     flex: 1;
@@ -534,33 +531,6 @@ defineExpose({ open, close })
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-}
-
-/* ── Action buttons ───────────────────────────────────────────────── */
-.combo-actions {
-    display: flex;
-    gap: var(--wa-space-3xs);
-    flex-shrink: 0;
-}
-
-.action-btn {
-    background: none;
-    border: none;
-    font-size: var(--wa-font-size-m);
-    padding: var(--wa-space-xs);
-    cursor: pointer;
-    line-height: 1;
-    transition: background-color 0.15s, color 0.15s;
-    color: var(--wa-color-text-quiet);
-}
-
-.action-btn:hover {
-    background: var(--wa-color-surface-alt);
-    color: var(--wa-color-text-base);
-}
-
-.action-btn-danger:hover {
-    color: var(--wa-color-danger-60);
 }
 
 /* ── Form ─────────────────────────────────────────────────────────── */

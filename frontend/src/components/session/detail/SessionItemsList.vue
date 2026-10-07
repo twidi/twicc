@@ -575,14 +575,14 @@ const shouldShowProcessIndicator = computed(() => {
 // Watch process state changes to manage temporary indicator
 // Only show user_turn/dead when the state actually CHANGES (not on initial mount)
 // Guarded: skip timer creation when inactive (KeepAlive deactivated)
-watch(processState, (newState, oldState) => {
+watch(() => processState.value?.state, (state, oldState) => {
     // Clear any existing timer
     if (temporaryIndicatorTimer) {
         clearTimeout(temporaryIndicatorTimer)
         temporaryIndicatorTimer = null
     }
 
-    if (!newState) {
+    if (!state) {
         showTemporaryIndicator.value = false
         return
     }
@@ -590,12 +590,9 @@ watch(processState, (newState, oldState) => {
     // Skip timer creation when inactive (DOM is detached)
     if (!sessionActive.value) return
 
-    const state = newState.state
-    const oldStateValue = oldState?.state
-
     if (state === 'user_turn' || state === 'dead') {
         // Only show if state actually changed (not on initial mount when already in this state)
-        if (oldState && oldStateValue !== state) {
+        if (oldState && oldState !== state) {
             showTemporaryIndicator.value = true
             temporaryIndicatorTimer = setTimeout(() => {
                 showTemporaryIndicator.value = false
@@ -819,8 +816,10 @@ async function loadSessionData(lastLine) {
     }
 }
 
-// Load session data when session changes
-watch([() => props.sessionId, session], async ([newSessionId, newSession], [oldSessionId] = []) => {
+// A server snapshot can promote a draft while preserving the session object.
+// One watcher owns promotion and compute readiness, which can arrive together.
+watch([() => props.sessionId, session, () => session.value?.draft, () => session.value?.compute_version_up_to_date],
+    async ([newSessionId, newSession, , ready], [oldSessionId, , , oldReady] = []) => {
     if (!newSessionId) return
     const sessionChanged = newSessionId !== oldSessionId
 
@@ -850,6 +849,13 @@ watch([() => props.sessionId, session], async ([newSessionId, newSession], [oldS
 
     // Only initialize and load if not already done
     const isFirstLoad = !store.areSessionItemsFetched(newSessionId)
+
+    // An already-loaded session finishing a recompute needs fresh metadata.
+    // Initial readiness uses the first-load path, including its tool states.
+    if (!isFirstLoad && !sessionChanged && ready === true && oldReady !== true) {
+        await onComputeCompleted()
+        return
+    }
 
     // A first load is a reveal flow: the chat stays hidden (skeleton after 300ms) until
     // the load, the tool states and the initial scroll are all done.
@@ -990,14 +996,6 @@ async function onComputeCompleted() {
         release()
     }
 }
-
-// Watch for session compute completion
-watch(() => session.value?.compute_version_up_to_date, (newValue, oldValue) => {
-    // Transition from false (or undefined) to true
-    if (newValue === true && oldValue !== true) {
-        onComputeCompleted()
-    }
-})
 
 watch(
     [() => props.sessionId, isComputePending],
@@ -1616,6 +1614,17 @@ function groupCommentsCount(groupHeadLineNum, groupTailLineNum) {
         if (ln >= groupHeadLineNum && ln <= tail) count++
     }
     return count
+}
+
+// Parent-owned slot dependencies. Parsed content stays a reactive read inside
+// each row, so streaming does not subscribe the entire scroller to every delta.
+function rowMemo(item) {
+    return [props.projectId, props.sessionId, props.parentSessionId,
+        item.isGroupHead ? groupCommentsCount(item.lineNum, item.groupTail) : 0,
+        item.detailToggleFor != null ? blockCommentsCount(item.detailToggleFor) : 0,
+        item.isGroupHead ? groupReveal.isHeadLeaving(item.lineNum) : false,
+        item.isGroupHead ? groupReveal.headLeaveClass(item.lineNum) : null,
+        item.isGroupHead ? JSON.stringify(groupReveal.headLeaveStyle(item.lineNum)) : null]
 }
 
 /**
@@ -2306,6 +2315,7 @@ defineExpose({
                     :prevent-auto-scroll-to-bottom="!!parentSessionId"
                     :item-class="rowClass"
                     :item-style="rowStyle"
+                    :item-memo="rowMemo"
                     class="session-items"
                     :class="{ 'initial-scrolling': reveal.hidden.value }"
                     @update="onScrollerUpdate"

@@ -1,5 +1,14 @@
 # Codex Async Questions in the Composer Implementation Plan
 
+> 2026-10-07 behavior update: completed async batches are immediately ready.
+> Turn settlement and continuation ownership no longer gate display or submission.
+> Answers use the existing normal send/steer/retry/fallback pipeline at any normal send admission point.
+> Accepted human submissions retire older eligible source batches at immutable admission boundaries.
+> New batches after admission survive. Old collecting projections reproject on read without a migration.
+> Remove the Questions pending UI. Historical task details below describe the original implementation.
+> The updated composer spec overrides readiness instructions in those historical task details.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Show optional Codex async questions above the composer textarea and send their answers with the user's message.

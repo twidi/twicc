@@ -1,0 +1,55 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { getUpdateInstructionsHtml, setUpdateInstructions } from '../utils/updateInstructions.js'
+
+// Exercise toast construction without initializing the WebSocket or Pinia.
+const source = readFileSync(new URL('./useWebSocket.js', import.meta.url), 'utf8')
+const handler = source.slice(source.indexOf('function createUpdateToast(version, onDismiss)'), source.indexOf('/**\n * Format the credit-detail'))
+
+function harness(instructions = null) {
+    setUpdateInstructions(instructions)
+    const notifications = []
+    const createUpdateToast = new Function('getUpdateInstructionsHtml', 'toast', `${handler}; return createUpdateToast`)(
+        getUpdateInstructionsHtml, { custom: options => { notifications.push(options); return { id: 'toast' } } },
+    )
+    return { createUpdateToast, notifications }
+}
+
+test('instructions match the installation mode and retain the brand View changes button', () => {
+    for (const command of ['uvx twicc@latest', 'uv tool upgrade twicc', '/custom/bin/python -m pip install --upgrade twicc']) {
+        const h = harness({ before: 'Stop TwiCC, run:', command, after: 'Then restart TwiCC.' })
+        h.createUpdateToast('1.5.0', () => {})
+        const notification = h.notifications[0]
+        assert.equal(notification.duration, Infinity)
+        assert.equal(notification.title, 'TwiCC v1.5.0 is available')
+        assert.ok(notification.html.includes(command))
+        assert.ok(notification.html.includes('<wa-button size="small" variant="brand"'))
+        assert.ok(notification.html.includes('View changes'))
+        assert.ok(notification.html.includes('open-changelog'))
+    }
+})
+
+test('the persistent toast exposes its dismissal callback and handle', () => {
+    const h = harness()
+    let dismissed = false
+    const result = h.createUpdateToast('1.5.0', () => { dismissed = true })
+    assert.deepEqual(result, { id: 'toast' })
+    assert.equal(dismissed, false)
+    h.notifications[0].onManualClear()
+    assert.equal(dismissed, true)
+})
+
+test('toast.custom forwards the dismissal callback to Notivue', () => {
+    const toastSource = readFileSync(new URL('./useToast.js', import.meta.url), 'utf8')
+    const customSource = toastSource.slice(toastSource.indexOf('function custom('), toastSource.indexOf('/**\n * Show a session-related toast'))
+    let received
+    const custom = new Function('push', 'markRaw', `${customSource}; return custom`)(
+        { info: options => { received = options } }, value => value,
+    )
+    const callback = () => {}
+    custom({ type: 'info', duration: Infinity, onManualClear: callback, html: 'Instructions' })
+    assert.equal(received.onManualClear, callback)
+    assert.equal(received.duration, Infinity)
+    assert.equal(received.props.html, 'Instructions')
+})

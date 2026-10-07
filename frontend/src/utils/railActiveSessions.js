@@ -14,12 +14,12 @@ export function isRailSessionProcess(processState, session) {
  * Metadata stays authoritative; a process snapshot supplies only the fallback.
  * Use the All Projects comparator and its stable session collection order.
  */
-export function selectRailActiveSessions(processStates, sessions, currentSessionId = null) {
+export function selectRailActiveSessions(processStates, sessions, currentSessionId = null, sessionOrder = null) {
     const rows = []
     // Object.values(store.sessions) supplies the stable order in getAllSessions.
     // Append missing snapshot records until their metadata joins that collection.
-    const sessionIds = [...Object.keys(sessions).filter(id => processStates[id]),
-        ...Object.keys(processStates).filter(id => !sessions[id])]
+    const order = sessionOrder || new Map(Object.keys(sessions).map((id, index) => [id, index]))
+    const sessionIds = Object.keys(processStates)
     for (const sessionId of sessionIds) {
         const processState = processStates[sessionId]
         const storedSession = sessions[sessionId]
@@ -45,5 +45,6 @@ export function selectRailActiveSessions(processStates, sessions, currentSession
         })
     }
     const compareSessions = sessionSortComparator(processStates)
-    return rows.sort((a, b) => compareSessions(a.session, b.session))
+    return rows.sort((a, b) => compareSessions(a.session, b.session)
+        || ((order.get(a.session.id) ?? Infinity) - (order.get(b.session.id) ?? Infinity)) || 0)
 }

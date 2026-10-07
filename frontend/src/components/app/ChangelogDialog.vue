@@ -2,7 +2,7 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { useDataStore } from '../../stores/data.js'
 import { useSettingsStore } from '../../stores/settings.js'
-import { fetchChangelog, resolveImageLocalUrl, resolveImageGitHubUrl } from '../../utils/changelog.js'
+import { fetchChangelog, resolveImageLocalUrl, resolveImageGitHubUrl, buildCombinedVersion, COMBINED_VERSION_KEY } from '../../utils/changelog.js'
 import { renderMarkdown } from '../../utils/markdown.js'
 import { openMediaPreview } from '../../composables/useMediaPreview'
 import { SPONSOR_URL } from '../../constants'
@@ -11,21 +11,6 @@ const emit = defineEmits(['close'])
 
 const store = useDataStore()
 const settingsStore = useSettingsStore()
-
-// Sentinel key for the combined "previous → current" entry in the version selector
-const COMBINED_VERSION_KEY = '__combined__'
-
-// Category display order for the combined multi-version screen. Each release
-// opens with a ### Summary (a single bold-led, one-line recap of the version) —
-// a deliberate deviation from Keep a Changelog — followed by the standard
-// ### Added / ### Changed / ### Fixed. Entries are grouped by category in this
-// fixed order, then by version (oldest first) within each category — so a
-// multi-version upgrade reads as "every release's summary first, then all the
-// new features, then all the changes, then all the fixes". A fixed list is
-// required because a category may appear in only some of the spanned versions,
-// leaving document order ambiguous. Any unexpected category is appended
-// afterwards in first-appearance order, so no entry is ever dropped.
-const COMBINED_CATEGORY_ORDER = ['summary', 'added', 'changed', 'fixed']
 
 const dialogRef = ref(null)
 const loading = ref(false)
@@ -125,65 +110,6 @@ function findInitialVersion(versionsList) {
     return versionsList[0].version
 }
 
-/**
- * Build a combined version entry spanning all changelogs from after previousVersion
- * up to and including currentVersion. Uses file order (no semver comparison).
- * Returns null if no combined entry should be shown.
- */
-function buildCombinedVersion(allVersions, previousVersion, currentVersion) {
-    if (!previousVersion || !currentVersion || previousVersion === currentVersion) return null
-
-    const currentIdx = allVersions.findIndex(v => v.version === currentVersion)
-    if (currentIdx === -1) return null
-
-    const previousIdx = allVersions.findIndex(v => v.version === previousVersion)
-    // If previous not found in changelog, take everything from current to end
-    const endIdx = previousIdx === -1 ? allVersions.length : previousIdx
-
-    if (currentIdx >= endIdx) return null
-
-    const versionsInRange = allVersions.slice(currentIdx, endIdx)
-
-    // Reverse to display oldest first (changelog file is newest-first)
-    const reversed = [...versionsInRange].reverse()
-
-    // Effective category order: the fixed list above for known categories, then
-    // any unexpected ones in first-appearance order so nothing is dropped.
-    const presentCategories = []
-    for (const v of reversed) {
-        for (const entry of v.entries) {
-            if (!presentCategories.includes(entry.category)) presentCategories.push(entry.category)
-        }
-    }
-    const orderedCategories = [
-        ...COMBINED_CATEGORY_ORDER.filter(c => presentCategories.includes(c)),
-        ...presentCategories.filter(c => !COMBINED_CATEGORY_ORDER.includes(c)),
-    ]
-
-    // Group by category first, then by version (oldest first) within each
-    // category. Entry order inside a same category/version pair is preserved.
-    const entries = []
-    for (const category of orderedCategories) {
-        for (const v of reversed) {
-            for (const entry of v.entries) {
-                if (entry.category === category) {
-                    entries.push({ ...entry, _sourceVersion: v.version })
-                }
-            }
-        }
-    }
-
-    if (!entries.length) return null
-
-    return {
-        version: COMBINED_VERSION_KEY,
-        date: null,
-        entries,
-        _previousVersion: previousVersion,
-        _currentVersion: currentVersion,
-    }
-}
-
 async function renderCurrentEntry() {
     const entry = currentEntry.value
     if (!entry) {
@@ -243,7 +169,7 @@ function versionOptionLabel(v) {
     return /^\d/.test(v.version) ? `v${v.version}` : v.version
 }
 
-async function open({ skipCombined = false } = {}) {
+async function open({ availableUpdates = false } = {}) {
     loading.value = true
     error.value = null
     versions.value = []
@@ -255,10 +181,13 @@ async function open({ skipCombined = false } = {}) {
 
     try {
         const data = await fetchChangelog(settingsStore.isDevMode)
-        if (skipCombined) {
-            versions.value = data
-            // Select the first (latest) version directly
-            selectedVersion.value = data.length ? data[0].version : ''
+        if (availableUpdates) {
+            const targetVersion = store.latestVersion?.version
+            const combined = buildCombinedVersion(data, store.currentVersion, targetVersion)
+            versions.value = combined ? [combined, ...data] : data
+            // Fall back to the available release when its combined entry is unavailable.
+            selectedVersion.value = combined ? COMBINED_VERSION_KEY
+                : data.find(v => v.version === targetVersion)?.version || data[0]?.version || ''
         } else {
             const combined = buildCombinedVersion(data, store.previousChangelogVersion, store.currentVersion)
             versions.value = combined ? [combined, ...data] : data
@@ -397,8 +326,7 @@ defineExpose({ open, close })
                 </span>
                 <wa-button
                     size="small"
-                    variant="neutral"
-                    appearance="outlined"
+                    variant="brand"
                     :disabled="currentEntryIdx >= totalScreens - 1"
                     @click="next"
                 >

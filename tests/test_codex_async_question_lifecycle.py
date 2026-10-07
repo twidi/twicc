@@ -57,9 +57,9 @@ def replay(records):
     return protocol.reduce_question_state({}, facts)
 
 
-def test_final_answer_phase_does_not_release_question():
+def test_completed_async_question_is_ready_before_later_tools_finish():
     state = replay([question(), record("item_completed", item={"id": "tool", "type": "CommandExecution"})])
-    assert state["batches"]["q1"]["status"] == "collecting"
+    assert state["batches"]["q1"]["status"] == "ready"
 
 
 def test_canonical_completion_and_later_human_retire_question():
@@ -81,31 +81,31 @@ def test_internal_and_agent_inputs_do_not_retire_questions(text):
     assert state["batches"]["q1"]["status"] != "sent"
 
 
-def test_historical_steering_before_completion_preserves_question():
+def test_historical_steering_before_completion_retires_older_question():
     state = replay([question(), user("Go on", turn="t1", second=2), record("task_complete", second=3)])
-    assert state["batches"]["q1"]["status"] == "ready"
+    assert state["batches"]["q1"]["status"] == "sent"
 
 
-def test_historical_active_goal_waits_for_terminal_goal_and_last_turn():
+def test_historical_active_goal_keeps_question_ready_before_terminal_goal():
     active = record("thread_goal_updated", second=0, goal={"id": "g1", "status": "active", "objective": "Build"})
     terminal = record("thread_goal_updated", turn="t2", second=5, goal={"id": "g1", "status": "complete"})
     records = [active, question(), record("task_complete", second=2), record("task_started", turn="t2", second=3)]
-    assert replay(records)["batches"]["q1"]["status"] == "collecting"
-    assert replay([*records, terminal])["batches"]["q1"]["status"] == "collecting"
+    assert replay(records)["batches"]["q1"]["status"] == "ready"
+    assert replay([*records, terminal])["batches"]["q1"]["status"] == "ready"
     assert (
         replay([*records, terminal, record("task_complete", turn="t2", second=6)])["batches"]["q1"]["status"] == "ready"
     )
 
 
-def test_internal_successor_keeps_preceding_questions_collecting():
+def test_internal_successor_keeps_preceding_questions_ready():
     from twicc.providers.codex.agent.agent import _AUTO_REVIEW_RETRY_PROMPT
 
     records = [question(), record("task_complete", second=2), user(_AUTO_REVIEW_RETRY_PROMPT)]
-    assert replay(records)["batches"]["q1"]["status"] == "collecting"
+    assert replay(records)["batches"]["q1"]["status"] == "ready"
     assert replay([*records, record("task_complete", turn="t2", second=4)])["batches"]["q1"]["status"] == "ready"
 
 
-def test_runtime_owner_holds_watcher_completion_until_explicit_settlement(monkeypatch):
+def test_runtime_owner_keeps_completed_question_ready_before_explicit_settlement(monkeypatch):
     from datetime import datetime
 
     clock = SimpleNamespace(now=lambda _: datetime.fromisoformat("2026-10-05T09:12:00+00:00"))
@@ -129,9 +129,9 @@ def test_runtime_owner_holds_watcher_completion_until_explicit_settlement(monkey
                 for fact in protocol.extract_async_question_facts(value, line=line)
             ]
         )
-        assert state["batches"]["q1"]["status"] == "collecting"
+        assert state["batches"]["q1"]["status"] == "ready"
         await agent._link_async_question_turn("t1")
-        assert state["batches"]["q1"]["status"] == "collecting"
+        assert state["batches"]["q1"]["status"] == "ready"
         await agent._settle_async_questions("t1", outcome="completed")
         assert state["batches"]["q1"]["status"] == "ready"
 
@@ -197,12 +197,12 @@ def test_sdk_and_watcher_deduplicate_and_keep_source_timestamp(monkeypatch):
         await agent._record_async_question_facts(protocol.extract_async_question_facts(question(), line=10))
         assert list(state()["batches"]) == ["q1"]
         assert state()["batches"]["q1"]["line"] == 10
-        assert state()["batches"]["q1"]["status"] == "collecting"
+        assert state()["batches"]["q1"]["status"] == "ready"
 
     asyncio.run(run())
 
 
-def test_parent_completion_releases_question_during_subagent_hold(monkeypatch):
+def test_parent_completion_preserves_ready_question_during_subagent_hold(monkeypatch):
     from tests.test_codex_send_fallback import Turn
     from twicc.agent import AgentState
 
@@ -220,7 +220,7 @@ def test_parent_completion_releases_question_during_subagent_hold(monkeypatch):
     assert agent.state == AgentState.ASSISTANT_TURN
 
 
-def test_auto_review_continuation_retains_question_until_successor_completes(monkeypatch):
+def test_auto_review_continuation_keeps_question_ready_before_successor_completes(monkeypatch):
     from tests.test_codex_send_fallback import Turn
 
     agent, state = live_agent(monkeypatch)
@@ -231,7 +231,7 @@ def test_auto_review_continuation_retains_question_until_successor_completes(mon
     agent._auto_review_retry_after_turn = True
 
     async def open_next(*args, **kwargs):
-        assert state()["batches"]["q1"]["status"] == "collecting"
+        assert state()["batches"]["q1"]["status"] == "ready"
         assert state()["facts"]["decision:t1"]["data"]["decision"] == "continuation"
         return second
 
@@ -282,7 +282,7 @@ def test_unlinked_runtime_goal_owner_overrides_historical_terminal(monkeypatch):
                 for fact in protocol.extract_async_question_facts(value, line=line)
             ]
         )
-        assert state()["batches"]["q1"]["status"] == "collecting"
+        assert state()["batches"]["q1"]["status"] == "ready"
 
     asyncio.run(run())
 
@@ -294,9 +294,9 @@ def test_unlinked_runtime_goal_owner_overrides_historical_terminal(monkeypatch):
     [
         ("idle", None, "ready"),
         ("systemError", None, "ready"),
-        ("active", None, "collecting"),
-        ("idle", "active", "collecting"),
-        (None, None, "collecting"),
+        ("active", None, "ready"),
+        ("idle", "active", "ready"),
+        (None, None, "ready"),
     ],
 )
 def test_restart_reconciles_pending_owner_completion_window(status, goal_status, expected, linked, completed):
@@ -327,7 +327,7 @@ def test_restart_reconciles_pending_owner_completion_window(status, goal_status,
         for fact in protocol.extract_async_question_facts(value, line=line)
     )
     merge_question_facts(session.id, facts)
-    assert read_question_snapshot(session.id)["batches"][0]["status"] == "collecting"
+    assert read_question_snapshot(session.id)["batches"][0]["status"] == "ready"
     agent = CodexAgent.__new__(CodexAgent)
     agent.session_id, agent.ephemeral = session.id, False
     read = AsyncMock(
@@ -356,7 +356,7 @@ def test_restart_reconciles_pending_owner_completion_window(status, goal_status,
     assert asyncio.run(run())["batches"][0]["status"] == expected
 
 
-def test_goal_terminal_boundary_follows_last_completion_and_intermediate_human():
+def test_human_submission_during_active_goal_retires_older_question():
     values = [
         record("thread_goal_updated", second=0, goal={"id": "g1", "status": "active"}),
         question(),
@@ -364,7 +364,7 @@ def test_goal_terminal_boundary_follows_last_completion_and_intermediate_human()
         user("Wait", turn="t1", second=3),
         record("thread_goal_updated", second=4, goal={"id": "g1", "status": "complete"}),
     ]
-    assert replay(values)["batches"]["q1"]["status"] == "ready"
+    assert replay(values)["batches"]["q1"]["status"] == "sent"
 
 
 def test_historical_native_goal_context_links_preceding_turn():
@@ -383,7 +383,7 @@ def test_historical_native_goal_context_links_preceding_turn():
         },
     }
     values = [question(), record("task_complete", second=2), record("task_started", turn="t2", second=3), context]
-    assert replay(values)["batches"]["q1"]["status"] == "collecting"
+    assert replay(values)["batches"]["q1"]["status"] == "ready"
 
 
 @pytest.mark.parametrize("outcome", ["interrupted", "failed"])
@@ -476,7 +476,7 @@ def test_new_thread_uses_watcher_creation_before_owner_rpc(tmp_path, monkeypatch
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("source_order", ["reply_after_end", "steering_before_end"])
-def test_live_incremental_history_retires_only_ready_questions(tmp_path, source_order):
+def test_live_incremental_history_retires_completed_questions_before_or_after_turn_end(tmp_path, source_order):
     from twicc.core.enums import Provider
     from twicc.core.models import Project, Session
     from twicc.core.services.async_questions import read_question_snapshot
@@ -497,10 +497,8 @@ def test_live_incremental_history_retires_only_ready_questions(tmp_path, source_
     for _ in records:
         compute.sync_session_slice(session.id, path, limits=LiveSyncLimits(max_lines=1))
     snapshot = read_question_snapshot(session.id)
-    if source_order == "reply_after_end":
-        assert snapshot["resolutions"]["q1"]["status"] == "sent"
-    else:
-        assert snapshot["batches"][0]["status"] == "ready"
+    assert snapshot["batches"] == []
+    assert snapshot["resolutions"]["q1"]["status"] == "sent"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -538,7 +536,7 @@ def test_snapshot_publication_occurs_after_commit_and_never_after_rollback(monke
     )
 
 
-def test_new_historical_goal_does_not_inherit_old_goal_return_boundary():
+def test_human_reply_during_later_goal_retires_older_questions():
     context = {
         "timestamp": "2026-10-05T09:12:06Z",
         "type": "response_item",
@@ -566,7 +564,7 @@ def test_new_historical_goal_does_not_inherit_old_goal_return_boundary():
         user("Wait for goal", turn="t2", second=9),
         record("thread_goal_updated", turn="t2", second=10, goal={"id": "g2", "status": "complete"}),
     ]
-    assert replay(values)["batches"]["q2"]["status"] == "ready"
+    assert replay(values)["batches"]["q2"]["status"] == "sent"
 
 
 def test_goal_router_owns_fast_physical_turns_before_consumer_settlement(monkeypatch):
@@ -609,7 +607,7 @@ def test_goal_router_owns_fast_physical_turns_before_consumer_settlement(monkeyp
                 for fact in protocol.extract_async_question_facts(value, line=line)
             ]
         )
-        assert state["batches"]["q1"]["status"] == "collecting"
+        assert state["batches"]["q1"]["status"] == "ready"
         goal_event(router, "complete")
         event(router, "turn/completed", "b")
         await asyncio.wait_for(agent._turn_task, 1)
@@ -665,7 +663,7 @@ def test_historical_internal_prompt_cannot_join_distinct_runtime_owners(monkeypa
         await agent._record_async_question_facts(
             protocol.extract_async_question_facts(question(turn="t2", item="q2", second=4), line=4)
         )
-        assert state()["batches"]["q2"]["status"] == "collecting"
+        assert state()["batches"]["q2"]["status"] == "ready"
 
     asyncio.run(run())
 
@@ -785,7 +783,7 @@ def test_explicit_stop_settles_all_retained_restart_owners(status):
                 ]
             )
             before = await sync_to_async(read_question_snapshot)(session.id)
-            assert [batch["status"] for batch in before["batches"]] == ["collecting", "collecting"]
+            assert [batch["status"] for batch in before["batches"]] == ["ready", "ready"]
             agent.kill_reason = "user"
             await agent._transition_to_dead()
             assert agent.state == AgentState.DEAD
@@ -915,7 +913,7 @@ def test_restart_ambiguous_native_start_remains_pending_until_precise_source_sta
         try:
             await agent._reconcile_async_question_owners()
             pending = await sync_to_async(read_question_snapshot)(session.id)
-            assert pending["batches"][0]["status"] == "collecting"
+            assert pending["batches"][0]["status"] == "ready"
             assert agent._async_question_pending_owners is True
             start = record("task_started", turn="t2", second=10)
             start["timestamp"] = "2026-10-05T09:12:10.600000Z"

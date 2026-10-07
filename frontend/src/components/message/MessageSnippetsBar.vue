@@ -1,6 +1,8 @@
 <script setup>
 // MessageSnippetsBar.vue - Displays message snippets as compact buttons below the textarea
 // Visual style mirrors the snippets tab in TerminalExtraKeysBar.vue
+import { onBeforeUnmount, ref } from 'vue'
+import GroupedSnippetEntries from '../ui/GroupedSnippetEntries.vue'
 import { useMessageSnippetsStore } from '../../stores/messageSnippets'
 import { useDataStore } from '../../stores/data'
 import { useWorkspacesStore } from '../../stores/workspaces'
@@ -9,6 +11,7 @@ import AppTooltip from '../ui/AppTooltip.vue'
 import ProjectMark from '../project/ProjectMark.vue'
 
 defineProps({
+    context: { default: null },
     /** Pre-enriched snippets (with _disabled / _disabledReason from parent). */
     snippets: {
         type: Array,
@@ -57,6 +60,7 @@ function commandBtnDisabledId(char) {
     return `command-btn-disabled-${char.charCodeAt(0)}`
 }
 
+const groupedEntries = ref(null)
 const messageSnippetsStore = useMessageSnippetsStore()
 const dataStore = useDataStore()
 const workspacesStore = useWorkspacesStore()
@@ -85,6 +89,7 @@ function snippetDisplayText(snippet) {
 }
 
 function handleSnippetClick(snippet) {
+    groupedEntries.value?.close()
     if (snippet._disabled) {
         emit('snippet-disabled-press', snippet)
     } else {
@@ -107,6 +112,7 @@ function onSnippetTouchStart(snippet, event) {
     longPressTriggered = false
     longPressTimer = setTimeout(() => {
         longPressTriggered = true
+        groupedEntries.value?.close()
         emit('snippet-long-press', snippet)
     }, LONG_PRESS_DELAY)
 }
@@ -125,6 +131,7 @@ function onSnippetTouchEnd(event) {
         event.preventDefault()
     }
 }
+onBeforeUnmount(() => clearTimeout(longPressTimer))
 </script>
 
 <template>
@@ -162,37 +169,57 @@ function onSnippetTouchEnd(event) {
         </button>
         <wa-divider orientation="vertical" class="history-divider"></wa-divider>
         <template v-if="snippets.length > 0">
-            <template v-for="(snippet, i) in snippets" :key="i">
-                <button
-                    :id="snippet._disabled ? `disabled-msg-snippet-${i}` : undefined"
-                    class="snippet-btn"
-                    :class="{ 'snippet-disabled': snippet._disabled }"
-                    :title="snippet.text"
-                    @click="handleSnippetClick(snippet)"
-                    @touchstart.passive="onSnippetTouchStart(snippet, $event)"
-                    @touchmove.passive="onSnippetTouchMove"
-                    @touchend="onSnippetTouchEnd"
-                >
-                    <template v-if="snippetScopeInfo(snippet)?.type === 'project'">
+            <GroupedSnippetEntries ref="groupedEntries" :entries="snippets" :context="context">
+                <template #group="{ entry, triggerId, expanded }">
+                    <button :id="triggerId" class="snippet-btn" :aria-expanded="expanded" aria-haspopup="dialog">
                         <ProjectMark
+                            v-if="snippetScopeInfo(entry)?.type === 'project'"
                             class="snippet-scope-mark"
-                            :icon-url="dataStore.resolvedProjectIcons[snippetScopeInfo(snippet).projectId] || null"
-                            :color="snippetScopeInfo(snippet).color"
+                            :icon-url="dataStore.resolvedProjectIcons[snippetScopeInfo(entry).projectId] || null"
+                            :color="snippetScopeInfo(entry).color"
                         />
-                    </template>
-                    <template v-else-if="snippetScopeInfo(snippet)?.type === 'workspace'">
                         <wa-icon
+                            v-else-if="snippetScopeInfo(entry)?.type === 'workspace'"
                             name="layer-group"
                             class="snippet-scope-icon"
-                            :style="snippetScopeInfo(snippet).color ? { color: snippetScopeInfo(snippet).color } : null"
+                            :style="snippetScopeInfo(entry).color ? { color: snippetScopeInfo(entry).color } : null"
                         ></wa-icon>
-                    </template>
-                    {{ snippetDisplayText(snippet) }}
-                </button>
-                <AppTooltip v-if="snippet._disabled" :for="`disabled-msg-snippet-${i}`">
-                    {{ snippet._disabledReason }}
-                </AppTooltip>
-            </template>
+                        {{ entry.label }}
+                        <wa-icon name="chevron-up"></wa-icon>
+                    </button>
+                </template>
+                <template #default="{ entry: snippet, itemId }">
+                    <button
+                        :id="snippet._disabled ? `disabled-msg-snippet-${itemId}` : undefined"
+                        class="snippet-btn"
+                        :class="{ 'snippet-disabled': snippet._disabled }"
+                        :title="snippet.text"
+                        @click="handleSnippetClick(snippet)"
+                        @touchstart.passive="onSnippetTouchStart(snippet, $event)"
+                        @touchmove.passive="onSnippetTouchMove"
+                        @touchend="onSnippetTouchEnd"
+                    >
+                        <template v-if="snippetScopeInfo(snippet)?.type === 'project'">
+                            <ProjectMark
+                                class="snippet-scope-mark"
+                                :icon-url="dataStore.resolvedProjectIcons[snippetScopeInfo(snippet).projectId] || null"
+                                :color="snippetScopeInfo(snippet).color"
+                            />
+                        </template>
+                        <template v-else-if="snippetScopeInfo(snippet)?.type === 'workspace'">
+                            <wa-icon
+                                name="layer-group"
+                                class="snippet-scope-icon"
+                                :style="snippetScopeInfo(snippet).color ? { color: snippetScopeInfo(snippet).color } : null"
+                            ></wa-icon>
+                        </template>
+                        {{ snippetDisplayText(snippet) }}
+                    </button>
+                    <AppTooltip v-if="snippet._disabled" :for="`disabled-msg-snippet-${itemId}`">
+                        {{ snippet._disabledReason }}
+                    </AppTooltip>
+                </template>
+            </GroupedSnippetEntries>
         </template>
         <span v-else class="empty-text">No snippets</span>
         <button

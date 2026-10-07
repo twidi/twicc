@@ -14,16 +14,18 @@ export function compileComponent(url, dependencies = {}) {
         if (!modules[path]) throw new Error(`Missing dependency ${path}`)
         if (names.startsWith('{')) return `const ${names.replace(/\bas\b/g, ':')} = modules[${JSON.stringify(path)}];`
         return `const ${names} = modules[${JSON.stringify(path)}];`
-    }).replace('export default', 'return')
+    }).replace(/export function /g, 'function ').replace('export default', 'return')
     return new Function('modules', code)(modules)
 }
 
-export function makeRenderer(height = 140) {
+export function makeRenderer(height = 140, decorate = () => {}) {
     function node(type, text = '') {
-        return { type, text, children: [], props: {}, clientHeight: height, scrollHeight: height, scrollTop: 0,
+        const element = { type, text, children: [], props: {}, clientHeight: height, scrollHeight: height, scrollTop: 0,
             addEventListener() {}, removeEventListener() {}, querySelectorAll: () => [], querySelector: () => null,
             getBoundingClientRect: () => ({ top: 0, bottom: height, height }),
         }
+        decorate(element)
+        return element
     }
     const renderer = Vue.createRenderer({
         createElement: node, createText: text => node('#text', text), createComment: text => node('#comment', text),

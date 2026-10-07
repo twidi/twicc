@@ -99,6 +99,7 @@ import { router } from './router'
 import App from './App.vue'
 import { installScrollEdges, vScrollShadow } from './utils/scrollEdges'
 import { installSessionSwitchTransition } from './utils/sessionSwitchTransition'
+import { setUpdateInstructions } from './utils/updateInstructions.js'
 import { applyDefaultSettings, initSettings } from './stores/settings'
 import { setTwiccLaunchPrefix } from './utils/twiccLaunch'
 import { useAuthStore } from './stores/auth'
@@ -246,6 +247,7 @@ if (!authStore.needsLogin) {
             // synchronously via ``getTwiccLaunchPrefix()`` (see
             // ``frontend/src/utils/twiccLaunch.js``).
             setTwiccLaunchPrefix(twicc_launch_prefix)
+            setUpdateInstructions(bootstrapData.update_instructions)
             applyDefaultSettings(default_settings, settings, dev_mode, uvx_mode, settings_version, disabledProvidersPresent, disabledProviders, claudeHybridEnabled)
             // Seed the data store's provider lifecycle map.
             useDataStore().applyProviderStates(providerStates ?? {})

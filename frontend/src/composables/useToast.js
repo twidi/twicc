@@ -127,6 +127,7 @@ function info(message, options = {}) {
  * @param {string} [options.html] - Raw HTML content (alternative to component)
  * @param {Object} [options.props] - Props to pass to the content component
  * @param {number} [options.duration] - Duration in ms
+ * @param {Function} [options.onManualClear] - Called when the toast is dismissed.
  */
 function custom(componentOrOptions, options = {}) {
     // Support two signatures: custom(Component, opts) or custom(opts)
@@ -150,6 +151,7 @@ function custom(componentOrOptions, options = {}) {
     const pushOptions = {
         message: '',
         title: opts.title,
+        ...(opts.onManualClear ? { onManualClear: opts.onManualClear } : {}),
         props: {
             custom: true,
             persistent: opts.persistent === true,

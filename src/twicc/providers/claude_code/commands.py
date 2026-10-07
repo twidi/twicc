@@ -13,69 +13,17 @@ import re
 from pathlib import Path
 from typing import NamedTuple
 
+import yaml
+
 from .workflow_meta import WorkflowMetaError, extract_workflow_meta
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# YAML frontmatter parser (no PyYAML dependency — handles simple key: value)
+# YAML frontmatter parser
 # ---------------------------------------------------------------------------
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n([\s\S]*?)---\s*\n?([\s\S]*)", re.MULTILINE)
-_YAML_LIST_ITEM_RE = re.compile(r"^\s*-\s+(.*)")
-
-
-def _parse_yaml_value(raw: str) -> str | bool | None:
-    """Parse a simple YAML scalar value."""
-    raw = raw.strip()
-    if not raw:
-        return None
-    if (raw.startswith('"') and raw.endswith('"')) or (raw.startswith("'") and raw.endswith("'")):
-        return raw[1:-1]
-    lower = raw.lower()
-    if lower == "true":
-        return True
-    if lower == "false":
-        return False
-    if lower in ("null", "~"):
-        return None
-    return raw
-
-
-def _parse_simple_yaml(text: str) -> dict[str, str | bool | list[str] | None]:
-    """Parse simple YAML (single-level key: value, with optional list values)."""
-    result: dict[str, str | bool | list[str] | None] = {}
-    lines = text.split("\n")
-    current_key: str | None = None
-    current_list: list[str] | None = None
-
-    for line in lines:
-        list_match = _YAML_LIST_ITEM_RE.match(line)
-        if list_match and current_key is not None:
-            if current_list is None:
-                current_list = []
-            current_list.append(list_match.group(1).strip().strip("'\""))
-            continue
-
-        if current_key is not None and current_list is not None:
-            result[current_key] = current_list
-            current_list = None
-            current_key = None
-
-        colon_pos = line.find(":")
-        if colon_pos > 0 and not line[:colon_pos].startswith(" "):
-            key = line[:colon_pos].strip()
-            value_part = line[colon_pos + 1:].strip()
-            current_key = key
-            if value_part:
-                result[key] = _parse_yaml_value(value_part)
-            else:
-                result[key] = None
-
-    if current_key is not None and current_list is not None:
-        result[current_key] = current_list
-
-    return result
 
 
 def _parse_frontmatter(content: str) -> tuple[dict, str]:
@@ -83,7 +31,13 @@ def _parse_frontmatter(content: str) -> tuple[dict, str]:
     match = _FRONTMATTER_RE.match(content)
     if not match:
         return {}, content
-    fm = _parse_simple_yaml(match.group(1))
+    try:
+        fm = yaml.safe_load(match.group(1))
+    except yaml.YAMLError as exc:
+        logger.warning("Invalid command YAML frontmatter: %s", exc)
+        fm = {}
+    if not isinstance(fm, dict):
+        fm = {}
     return fm, match.group(2)
 
 

@@ -5,6 +5,18 @@ import { isRailSessionProcess, selectRailActiveSessions } from '../utils/railAct
 // fetched records; this map only owns the request until it settles.
 const inFlightByStore = new WeakMap()
 
+function sameArray(previous, next) {
+    return previous?.length === next.length && next.every((value, index) => value === previous[index])
+        ? previous : next
+}
+
+function sameRow(a, b) {
+    return Object.keys(b).every(key => a[key] === b[key]
+        || (key === 'session' && a.metadataStatus !== 'loaded' && b.metadataStatus !== 'loaded'
+            && Object.keys(a.session).length === Object.keys(b.session).length
+            && Object.keys(b.session).every(field => a.session[field] === b.session[field])))
+}
+
 function loadMetadata(store, sessionId) {
     let inFlight = inFlightByStore.get(store)
     if (!inFlight) {
@@ -35,12 +47,19 @@ function loadMetadata(store, sessionId) {
 export function useRailActiveSessions(store, currentSessionId = () => null) {
     const metadata = shallowReactive(new Map())
     let disposed = false
-    const candidates = computed(() => Object.keys(store.processStates)
-        .filter(id => isRailSessionProcess(store.processStates[id], store.sessions[id])))
+    const candidates = computed(previous => sameArray(previous, Object.keys(store.processStates)
+        .filter(id => isRailSessionProcess(store.processStates[id], store.sessions[id]))))
+    // Rebuild tie ordering only when session membership changes, not per process update.
+    const sessionOrder = computed(() => new Map(Object.keys(store.sessions).map((id, index) => [id, index])))
 
     // Load before cron exclusion: full metadata can reveal canonical unread.
     // Track record availability, not metadata status, to avoid fetch loops.
-    watch(() => candidates.value.map(id => ({ id, loaded: !!store.sessions[id] })), entries => {
+    const metadataEntries = computed(previous => {
+        const next = candidates.value.map(id => ({ id, loaded: !!store.sessions[id] }))
+        return previous?.length === next.length && next.every((entry, i) => entry.id === previous[i].id && entry.loaded === previous[i].loaded)
+            ? previous : next
+    })
+    watch(metadataEntries, entries => {
         const active = new Set(entries.map(entry => entry.id))
         for (const id of metadata.keys()) {
             if (!active.has(id)) metadata.delete(id)
@@ -60,10 +79,17 @@ export function useRailActiveSessions(store, currentSessionId = () => null) {
 
     onScopeDispose(() => { disposed = true })
 
-    const rows = computed(() => selectRailActiveSessions(store.processStates, store.sessions, currentSessionId())
-        .map(row => ({
-            ...row,
-            metadataStatus: store.sessions[row.session.id] ? 'loaded' : metadata.get(row.session.id)?.status || 'loading',
-        })))
+    const rows = computed(previous => {
+        const previousRows = new Map(previous?.map(row => [row.session.id, row]) || [])
+        const next = selectRailActiveSessions(store.processStates, store.sessions, currentSessionId(), sessionOrder.value)
+            .map(row => ({
+                ...row,
+                metadataStatus: store.sessions[row.session.id] ? 'loaded' : metadata.get(row.session.id)?.status || 'loading',
+            })).map(row => {
+                const old = previousRows.get(row.session.id)
+                return old && sameRow(old, row) ? old : row
+            })
+        return sameArray(previous, next)
+    })
     return { rows }
 }

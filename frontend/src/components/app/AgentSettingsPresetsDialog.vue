@@ -18,6 +18,7 @@
 // not through each provider's own store. The on-disk format is the same
 // for every provider — only the file path varies.
 
+import ReorderHandle from '../ui/ReorderHandle.vue'
 import { computed, nextTick, ref, watch } from 'vue'
 import { getProviderHelpers } from '../../providers'
 import { RESERVED_PRESET_NAMES, useAgentSettingsPresetsStore } from '../../stores/agentSettingsPresets'
@@ -197,8 +198,8 @@ function handleDuplicate(index) {
     presetsStore.duplicate(props.provider, index)
 }
 
-function handleReorder(index, direction) {
-    presetsStore.reorder(props.provider, index, direction)
+function handleReorder(from, to) {
+    presetsStore.reorder(props.provider, from, to)
 }
 
 function closeDialog() {
@@ -299,24 +300,13 @@ function handleSave() {
             <div v-if="presets.length === 0" class="empty-message">
                 No presets yet. Add one to get started.
             </div>
-            <div v-else class="preset-list">
-                <div v-for="(preset, index) in presets" :key="index" class="preset-row">
-                    <div class="reorder-arrows">
-                        <button
-                            class="reorder-btn"
-                            :class="{ disabled: index === 0 }"
-                            :disabled="index === 0"
-                            title="Move up"
-                            @click="handleReorder(index, -1)"
-                        ><wa-icon name="chevron-up" /></button>
-                        <button
-                            class="reorder-btn"
-                            :class="{ disabled: index === presets.length - 1 }"
-                            :disabled="index === presets.length - 1"
-                            title="Move down"
-                            @click="handleReorder(index, 1)"
-                        ><wa-icon name="chevron-down" /></button>
-                    </div>
+            <div v-else class="preset-list" data-reorder-list>
+                <div v-for="(preset, index) in presets" :key="index" class="preset-row" data-reorder-row>
+                    <ReorderHandle
+                        :index="index"
+                        :count="presets.length"
+                        @reorder="(from, to) => handleReorder(from, to)"
+                    />
                     <div class="preset-display">
                         <span class="preset-name">{{ preset.name }}</span>
                         <AgentSettingsSummaryView
@@ -458,31 +448,6 @@ function handleSave() {
     border-radius: var(--wa-border-radius-m);
 }
 
-.reorder-arrows {
-    display: flex;
-    gap: var(--wa-space-2xs);
-    flex-shrink: 0;
-}
-
-.reorder-btn {
-    background: none;
-    border: none;
-    color: var(--wa-color-text-quiet);
-    font-size: var(--wa-font-size-xs);
-    padding: var(--wa-space-2xs);
-    cursor: pointer;
-    transition: color 0.15s, background-color 0.15s;
-}
-
-.reorder-btn:hover:not(.disabled) {
-    color: var(--wa-color-text-base);
-    background: var(--wa-color-surface-alt);
-}
-
-.reorder-btn.disabled {
-    opacity: 0.25;
-    cursor: default;
-}
 
 .preset-display {
     flex: 1;

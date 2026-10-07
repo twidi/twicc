@@ -4,7 +4,7 @@
 // annotations. The left border carries the state bucket. Hidden sessions are dimmed and not linked.
 // Non-hidden titles link to the session; the layout is shared with AgentTreeNode through treeNode.css.
 // Self-references for recursion via filename.
-import { computed, ref } from 'vue'
+import { ref, inject } from 'vue'
 import { useRoute } from 'vue-router'
 import CostDisplay from '../ui/CostDisplay.vue'
 import AppTooltip from '../ui/AppTooltip.vue'
@@ -18,23 +18,23 @@ import { sessionRouteLocation } from '../../utils/sessionRoute'
 import { backgroundShellsRunningPhrase, userTurnBackgroundShellCount } from '../../utils/backgroundWork'
 import { BUCKET_BORDER_COLORS, bucketOfProcessState, flattenTree } from '../../utils/orchestrationView'
 import { useSettingsStore } from '../../stores/settings'
+import { SESSION_TREE_CONTEXT } from './orchestrationKeys.js'
+import { useVisibleComputed } from './useVisibleComputed.js'
 
 const settingsStore = useSettingsStore()
 const route = useRoute()
 
-// Honour the global "Show costs" toggle, like every other cost display in the app.
-const showCosts = computed(() => settingsStore.areCostsShown)
-
 const props = defineProps({
     // Id-only tree node: { id, children: [...] }
     node: { type: Object, required: true },
-    // Map of session id -> full topology node (session, process, metrics)
-    nodesById: { type: Object, required: true },
     // Id of the session the Orchestration tab belongs to (outlined).
     currentSessionId: { type: String, default: null },
-    // { geometry: { [id]: { left, width, live } } } from computeTimeline.
-    timeline: { type: Object, default: () => ({ geometry: {} }) },
 })
+// Each computed returns only this card's value. Unchanged values prevent an
+// unrelated map update from rendering the card. Stopped durations do not read now.
+const { active, nodesById, timeline, now } = inject(SESSION_TREE_CONTEXT)
+const visibleComputed = useVisibleComputed(active)
+const showCosts = visibleComputed(() => settingsStore.areCostsShown)
 
 // Process-state vocabulary from the topology payload. ``dead`` shows NO icon (a stopped session is the
 // common, expected state). The label stays as the tooltip and accessible name; no text is drawn.
@@ -46,26 +46,26 @@ const PROCESS_STATUS = {
     dead:                { label: 'Stopped',         icon: null,              color: 'var(--wa-color-neutral-50)' },
 }
 
-const nodeData = computed(() => props.nodesById[props.node.id] ?? null)
-const isCurrent = computed(() => props.node.id === props.currentSessionId)
-const isHidden = computed(() => nodeData.value?.session?.hidden === true)
+const nodeData = visibleComputed(() => nodesById.value[props.node.id] ?? null)
+const isCurrent = visibleComputed(() => props.node.id === props.currentSessionId)
+const isHidden = visibleComputed(() => nodeData.value?.session?.hidden === true)
 
 // Preserve the current frame (all-projects vs single-project prefix + project filter + workspace).
-const sessionRoute = computed(() => sessionRouteLocation(
+const sessionRoute = visibleComputed(() => sessionRouteLocation(
     { id: props.node.id, project_id: nodeData.value?.session?.project_id },
     route,
 ))
 
-const projectId = computed(() => nodeData.value?.session?.project_id ?? null)
-const title = computed(() => {
+const projectId = visibleComputed(() => nodeData.value?.session?.project_id ?? null)
+const title = visibleComputed(() => {
     const t = nodeData.value?.session?.title
     return (t && t.trim()) ? t : props.node.id.slice(0, 8)
 })
-const provider = computed(() => nodeData.value?.session?.provider ?? null)
+const provider = visibleComputed(() => nodeData.value?.session?.provider ?? null)
 
 // The agent-settings summary: unchanged. The model's version is always shown (derive "family-version"
 // from the RESOLVED model so a bare "opus" reads "Opus 4.7").
-const summaryParts = computed(() => {
+const summaryParts = visibleComputed(() => {
     const helpers = provider.value ? getProviderHelpers(provider.value) : null
     if (!helpers) return []
     const s = nodeData.value.session
@@ -97,23 +97,23 @@ const summaryParts = computed(() => {
     return helpers.getSummaryParts(state) ?? []
 })
 
-const ownCost = computed(() => nodeData.value?.session?.total_cost ?? null)
-const cumulativeCost = computed(() => nodeData.value?.subtree_total_cost ?? null)
-const hasChildren = computed(() => (props.node.children?.length ?? 0) > 0)
-const descendantCount = computed(() => flattenTree(props.node).length - 1)
+const ownCost = visibleComputed(() => nodeData.value?.session?.total_cost ?? null)
+const cumulativeCost = visibleComputed(() => nodeData.value?.subtree_total_cost ?? null)
+const hasChildren = visibleComputed(() => (props.node.children?.length ?? 0) > 0)
+const descendantCount = visibleComputed(() => flattenTree(props.node).length - 1)
 
-const annotations = computed(() => nodeData.value?.session?.annotations ?? null)
-const hasAnnotations = computed(() => {
+const annotations = visibleComputed(() => nodeData.value?.session?.annotations ?? null)
+const hasAnnotations = visibleComputed(() => {
     const a = annotations.value
     return !!a && typeof a === 'object' && Object.keys(a).length > 0
 })
 
-const processState = computed(() => nodeData.value?.process?.state ?? 'dead')
-const bucket = computed(() => bucketOfProcessState(processState.value))
-const isWorking = computed(() => bucket.value === 'working')
-const borderColor = computed(() => BUCKET_BORDER_COLORS[bucket.value])
+const processState = visibleComputed(() => nodeData.value?.process?.state ?? 'dead')
+const bucket = visibleComputed(() => bucketOfProcessState(processState.value))
+const isWorking = visibleComputed(() => bucket.value === 'working')
+const borderColor = visibleComputed(() => BUCKET_BORDER_COLORS[bucket.value])
 
-const status = computed(() => {
+const status = visibleComputed(() => {
     const base = PROCESS_STATUS[processState.value] ?? PROCESS_STATUS.dead
     // A finished turn with a shell the agent left running: terminal icon, same green, breathing.
     const shells = userTurnBackgroundShellCount(nodeData.value?.process)
@@ -127,41 +127,40 @@ function fmtDate(iso) {
     const ms = Date.parse(iso)
     return Number.isNaN(ms) ? null : formatDate(ms / 1000, { smart: true })
 }
-const startLabel = computed(() => fmtDate(nodeData.value?.session?.created_at))
+const startLabel = visibleComputed(() => fmtDate(nodeData.value?.session?.created_at))
 // A working node ends "now"; otherwise the last assistant message synced is the "finished" proxy.
-const endLabel = computed(() => (isWorking.value ? 'now' : fmtDate(nodeData.value?.session?.last_new_content_at)))
-// No duration while working, nor without a positive span.
-const durationLabel = computed(() => {
-    if (isWorking.value) return null
+const endLabel = visibleComputed(() => (isWorking.value ? 'now' : fmtDate(nodeData.value?.session?.last_new_content_at)))
+// Working nodes use the panel's shared clock; only positive spans have a duration.
+const durationLabel = visibleComputed(() => {
     const c = nodeData.value?.session?.created_at
-    const f = nodeData.value?.session?.last_new_content_at
-    if (!c || !f) return null
-    const sec = (Date.parse(f) - Date.parse(c)) / 1000
+    const f = isWorking.value ? now.value : Date.parse(nodeData.value?.session?.last_new_content_at)
+    if (!c) return null
+    const sec = (f - Date.parse(c)) / 1000
     return sec > 0 ? formatDuration(sec) : null
 })
-const turnsLabel = computed(() => nodeData.value?.session?.user_message_count ?? null)
+const turnsLabel = visibleComputed(() => nodeData.value?.session?.user_message_count ?? null)
 
 // ── Context window ring: same data and rules as the SessionHeader. ───────────
-const providerHelpers = computed(() => (provider.value ? getProviderHelpers(provider.value) : null))
-const contextMax = computed(() => {
+const providerHelpers = visibleComputed(() => (provider.value ? getProviderHelpers(provider.value) : null))
+const contextMax = visibleComputed(() => {
     const s = nodeData.value?.session
     const helpers = providerHelpers.value
     if (!s || !helpers) return null
     return helpers.getEffectiveContextMax(s)
 })
-const contextUsagePercentage = computed(() => {
+const contextUsagePercentage = visibleComputed(() => {
     const usage = nodeData.value?.session?.context_usage
     const max = contextMax.value
     if (usage == null || !max) return null
     return Math.round((usage / max) * 100)
 })
-const contextUsageTooltip = computed(() => {
+const contextUsageTooltip = visibleComputed(() => {
     const max = contextMax.value
     if (max == null) return null
     const label = providerHelpers.value?.getChoiceLabel('context_max', max) || `${Math.round(max / 1000)}K`
     return `Context window usage (${label} max)`
 })
-const contextUsageColor = computed(() => {
+const contextUsageColor = visibleComputed(() => {
     const pct = contextUsagePercentage.value
     if (pct == null) return null
     if (pct > 70) return 'var(--wa-color-danger)'
@@ -169,8 +168,8 @@ const contextUsageColor = computed(() => {
     return 'var(--glow-context-ring)'
 })
 
-const geometry = computed(() => props.timeline?.geometry?.[props.node.id] ?? null)
-const barTitle = computed(() => (startLabel.value
+const geometry = visibleComputed(() => timeline.value?.geometry?.[props.node.id] ?? null)
+const barTitle = visibleComputed(() => (startLabel.value
     ? (endLabel.value ? `${startLabel.value} → ${endLabel.value}` : startLabel.value)
     : null))
 
@@ -273,9 +272,7 @@ const expanded = ref(true)
                 v-for="child in node.children"
                 :key="child.id"
                 :node="child"
-                :nodes-by-id="nodesById"
                 :current-session-id="currentSessionId"
-                :timeline="timeline"
             />
         </div>
     </div>

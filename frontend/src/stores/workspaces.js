@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { useSettingsStore } from './settings'
 import { useDataStore } from './data'
+import { moveVisibleItems } from '../utils/listReorder'
 
 export const useWorkspacesStore = defineStore('workspaces', {
     state: () => ({
@@ -260,10 +261,8 @@ export const useWorkspacesStore = defineStore('workspaces', {
         },
 
         /** Reorder workspaces (move from fromIndex to toIndex). */
-        reorderWorkspace(fromIndex, toIndex) {
-            if (toIndex < 0 || toIndex >= this.workspaces.length) return
-            const [item] = this.workspaces.splice(fromIndex, 1)
-            this.workspaces.splice(toIndex, 0, item)
+        reorderWorkspace(fromIndex, toIndex, indices = this.workspaces.map((_, index) => index)) {
+            if (!moveVisibleItems(this.workspaces, indices, fromIndex, toIndex)) return
             this._sendWorkspaces()
         },
     },

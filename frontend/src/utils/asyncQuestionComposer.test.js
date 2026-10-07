@@ -250,3 +250,23 @@ it('composer blocks actual slash commands with answers and permits ordinary slas
     messageText.value = '/goal\nKeep working'
     assert.equal(state.value.commandBlocked, true)
 })
+
+
+it('collapsed composer shows arriving ready questions during active turns without pending readiness', () => {
+    const source = readFileSync(new URL('../components/message/MessageInput.vue', import.meta.url), 'utf8')
+    const start = source.indexOf('const collapsedLabel = computed(')
+    const end = source.indexOf('const collapsedMessageLabel =', start)
+    const setup = new Function('computed', 'readyAsyncQuestionCount', 'collapsedMessageLabel', `
+        ${source.slice(start, end)}
+        return collapsedLabel
+    `)
+    const count = ref(0)
+    const label = setup(computed, count, ref('Your message is waiting'))
+    assert.equal(label.value, 'Your message is waiting')
+    count.value = 1
+    assert.equal(label.value, '1 question ready · Your message is waiting')
+    count.value = 2
+    assert.equal(label.value, '2 questions ready · Your message is waiting')
+    count.value = 0
+    assert.equal(label.value, 'Your message is waiting')
+})

@@ -46,6 +46,7 @@ import AsyncQuestions from './AsyncQuestions.vue'
 import { classifyAsyncQuestionSend, prepareAsyncQuestionSend } from '../../utils/asyncQuestions.js'
 import { useMessageSnippetsStore } from '../../stores/messageSnippets'
 import { useWorkspacesStore } from '../../stores/workspaces'
+import { mapGroupedEntries } from '../../utils/snippetGroups'
 import { getUnavailablePlaceholders, resolveSnippetText } from '../../utils/snippetPlaceholders'
 
 const props = defineProps({
@@ -157,8 +158,6 @@ const readyAsyncQuestionBatches = computed(() => asyncQuestionWidgetEnabled.valu
     ? asyncQuestionSnapshot.value.batches.filter(batch => batch.status === 'ready') : [])
 const readyAsyncQuestionCount = computed(() => readyAsyncQuestionBatches.value
     .reduce((count, batch) => count + batch.questions.length, 0))
-const hasCollectingAsyncQuestions = computed(() => asyncQuestionWidgetEnabled.value
-    && asyncQuestionSnapshot.value.batches.some(batch => batch.status === 'collecting'))
 const asyncQuestionAnswers = computed(() => readyAsyncQuestionBatches.value
     .filter(batch => !store.getPendingAsyncQuestionIds(props.sessionId).includes(batch.item_id)).flatMap(batch =>
     batch.questions.flatMap(question => {
@@ -782,7 +781,6 @@ const collapsedLabel = computed(() => {
     if (readyAsyncQuestionCount.value > 0) {
         parts.push(`${readyAsyncQuestionCount.value} question${readyAsyncQuestionCount.value === 1 ? '' : 's'} ready`)
     }
-    if (hasCollectingAsyncQuestions.value) parts.push('Questions pending...')
     if (parts.length) return `${parts.join(' · ')} · ${collapsedMessageLabel.value}`
     return collapsedMessageLabel.value
 })
@@ -1915,6 +1913,10 @@ function addAllCommentsToMessage() {
 // ── Message snippets ────────────────────────────────────────────────
 const messageSnippetsStore = useMessageSnippetsStore()
 
+const snippetGroupContext = computed(() => [
+    props.sessionId, props.projectId, session.value?.provider, route.query.workspace, collapsed.value,
+])
+
 /** Placeholder resolution context (same shape as terminal uses). */
 const placeholderContext = computed(() => {
     const s = session.value
@@ -1946,7 +1948,7 @@ const snippetsForProject = computed(() => {
     const raw = snippetListProjectId.value ? messageSnippetsStore.getSnippetsForProject(snippetListProjectId.value, snippetWorkspaceIds.value) : []
     const ctx = placeholderContext.value
 
-    return raw.map(snippet => {
+    return mapGroupedEntries(raw, snippet => {
         const placeholders = snippet.placeholders || []
         if (placeholders.length === 0) return snippet
         const unavailable = getUnavailablePlaceholders(placeholders, ctx)
@@ -2021,7 +2023,7 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
 <template>
     <div class="message-input" ref="rootRef" :class="{ collapsed, 'message-input--has-panel-above': hasPanelAbove,
         'message-input--has-questions': readyAsyncQuestionCount > 0 && !hideAsyncQuestions,
-        'message-input--has-question-block': (readyAsyncQuestionCount > 0 || hasCollectingAsyncQuestions) && !hideAsyncQuestions }">
+        'message-input--has-question-block': readyAsyncQuestionCount > 0 && !hideAsyncQuestions }">
         <!-- Collapsed bar: single line shown in place of the whole composer.
              Clickable anywhere to restore; the explicit button is the visual cue.
              Keeps the .message-input-collapsed-bar class so the collapsed-state
@@ -2093,7 +2095,7 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
             </wa-button>
         </div>
         <div
-            v-if="(readyAsyncQuestionCount > 0 || hasCollectingAsyncQuestions) && !hideAsyncQuestions"
+            v-if="readyAsyncQuestionCount > 0 && !hideAsyncQuestions"
             class="async-question-header"
         >
             <wa-icon name="circle-question" class="async-question-header-icon"></wa-icon>
@@ -2101,9 +2103,6 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
                 {{ readyAsyncQuestionCount === 1
                     ? 'Along with your next message, you can answer the following question.'
                     : 'Along with your next message, you can answer the following questions.' }}
-            </span>
-            <span v-if="hasCollectingAsyncQuestions" class="async-question-pending" role="status">
-                Questions pending...
             </span>
         </div>
         <div v-if="asyncQuestionNotice" class="async-question-notice" role="status">{{ asyncQuestionNotice }}</div>
@@ -2172,6 +2171,7 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
         <!-- Message snippets bar -->
         <MessageSnippetsBar
             :snippets="snippetsForProject"
+            :context="snippetGroupContext"
             :show-history-button="!isDraft"
             :activation-chars="commandActivationChars"
             :can-open-command="messageText.length === 0"
@@ -2469,13 +2469,13 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
    the hybrid terminal block and/or the goal bar — a hairline separates the composer from it
    (each of those panels itself sits under its own wa-divider). Mirrors the
    collapsed-state border so the separator is present whether the composer is a
-   bar or expanded. Ready or pending questions inside the composer use the same top border. */
+   bar or expanded. Questions inside the composer use the same top border. */
 .message-input.message-input--has-panel-above,
 .message-input.message-input--has-question-block {
     border-top: var(--divider-size) solid var(--wa-color-surface-border);
 }
 /* Breathing room below the separator when the composer is expanded under the
-   panel or showing ready or pending questions. (Collapsed, the bar owns its own padding.) */
+   panel or showing questions. (Collapsed, the bar owns its own padding.) */
 .message-input.message-input--has-panel-above:not(.collapsed),
 .message-input.message-input--has-question-block:not(.collapsed) {
     padding-top: var(--wa-space-s);
@@ -2520,20 +2520,12 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
 .async-question-header-icon {
     flex-shrink: 0;
 }
-.async-question-header:has(.async-question-pending) {
-    margin-bottom: var(--wa-space-xs);
-}
 .async-question-header-description {
     flex: 1;
     min-width: 0;
     font-weight: var(--wa-font-weight-normal);
     color: var(--wa-color-text-quiet);
 }
-.async-question-pending {
-    font-weight: var(--wa-font-weight-normal);
-    font-style: italic;
-}
-.async-question-pending,
 .async-question-notice {
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);

@@ -26,8 +26,11 @@ import { userTurnBackgroundShellCount } from './backgroundWork.js'
  */
 export function descendantActiveProcessStates(processStates, sessions, sessionId) {
     const states = []
-    for (const [id, ps] of Object.entries(processStates)) {
-        if (id === sessionId || ps.synthetic || ps.extra?.ephemeral) continue
+    for (const id of Object.keys(processStates)) {
+        // Skip the owner before reading its state: replacement is unrelated activity.
+        if (id === sessionId) continue
+        const ps = processStates[id]
+        if (ps.synthetic || ps.extra?.ephemeral) continue
         if (sessions[id]?.hidden) continue
         if (ps.state === 'user_turn' && userTurnBackgroundShellCount(ps) === 0) continue
         if (!ps.spawn_ancestors?.includes(sessionId)) continue
