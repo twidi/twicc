@@ -353,7 +353,7 @@ def _find_by_client_id(client_id: str) -> dict | None:
 
 
 # Room kept for a " (n)" suffix in the final name (§5.3 check 2).
-_NAME_SUFFIX_ROOM = 8
+_NAME_SUFFIX_ROOM = staging.NAME_SUFFIX_ROOM
 
 
 def _check_target_writable(target_dir: str) -> JsonResponse | None:
@@ -430,24 +430,6 @@ class ComposerTarget(NamedTuple):
     scope: dict
 
 
-def _composer_name_max_bytes() -> int:
-    """Longest file name the composer staging area accepts, keeping room for a `` (n)`` suffix.
-
-    ``PC_NAME_MAX`` is read on the deepest existing directory of the staging area, so a normalized
-    name always passes the later ``PC_NAME_MAX`` check of the target.
-    """
-    path = os.path.realpath(staging.get_composer_attachments_dir())
-    while not os.path.isdir(path) and os.path.dirname(path) != path:
-        path = os.path.dirname(path)
-    try:
-        name_max = os.pathconf(path, "PC_NAME_MAX")
-    except (OSError, ValueError):
-        name_max = None
-    if name_max is not None and 0 < name_max < 255:
-        return max(1, min(store.FILENAME_MAX_BYTES, name_max - _NAME_SUFFIX_ROOM))
-    return store.FILENAME_MAX_BYTES
-
-
 async def _prepare_composer_target(body: CreationRequest) -> ComposerTarget | JsonResponse:
     """Steps 2-5 of a composer creation (spec 2026-10-03 §6.1.1), under the creation lock.
 
@@ -460,7 +442,7 @@ async def _prepare_composer_target(body: CreationRequest) -> ComposerTarget | Js
     if await asyncio.to_thread(lifecycle.is_released, ref):
         return _error("The attachment was removed", 410)
     # 3. File name: any name is accepted, normalized.
-    filename = staging.normalize_filename(body.filename, await asyncio.to_thread(_composer_name_max_bytes))
+    filename = staging.normalize_filename(body.filename, await asyncio.to_thread(staging.name_max_bytes))
     # 4. Settle every other attempt for the entry.
     try:
         await lifecycle.settle_entry_uploads(ref)

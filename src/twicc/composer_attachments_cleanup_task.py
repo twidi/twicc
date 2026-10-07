@@ -6,7 +6,9 @@ One pass:
 
 1. **Entries** (``<staging>/<bucket>/<attachment_id>/``): removed when the directory mtime (refreshed
    by uploads and by ``touch/``) is at least :data:`COMMITTED_ENTRY_AGE` old with ``committed.json``,
-   or :data:`DRAFT_ENTRY_AGE` old without it; never while a non-terminal upload targets the entry.
+   or :data:`DRAFT_ENTRY_AGE` old without it. An entry with ``oneshot.json`` (CLI, RPC, MCP) is
+   removed once :data:`ONESHOT_ENTRY_AGE` old; that rule wins. Never while a non-terminal upload
+   targets the entry.
    The reaper never cancels an upload: the uploads janitor expires a stalled one.
 2. **Release tombstones** (``<bucket>/.released/<attachment_id>``) at least
    :data:`RELEASE_TOMBSTONE_AGE` old, then an empty ``.released/``, then an empty bucket.
@@ -49,6 +51,8 @@ COMPOSER_CLEANUP_INTERVAL = 24 * 60 * 60
 COMMITTED_ENTRY_AGE = timedelta(days=7)
 # A draft attachment no browser has referenced for this long.
 DRAFT_ENTRY_AGE = timedelta(days=30)
+# A one-shot entry (CLI, RPC, MCP): nobody can send it twice (phase 2 design §4.3.2).
+ONESHOT_ENTRY_AGE = timedelta(hours=24)
 RELEASE_TOMBSTONE_AGE = timedelta(hours=24)
 PRECOPY_AGE = timedelta(hours=24)
 
@@ -95,6 +99,8 @@ def _entry_is_expired(ref: AttachmentRef, now: datetime) -> bool:
     if _lstat_mtime(entry.parent, stat.S_IFDIR) is None:
         return False
     mtime = _lstat_mtime(entry, stat.S_IFDIR)
+    if os.path.lexists(entry / staging.ONESHOT_MARKER):
+        return _is_older(mtime, ONESHOT_ENTRY_AGE, now)
     committed = os.path.lexists(entry / staging.COMMITTED_MARKER)
     return _is_older(mtime, COMMITTED_ENTRY_AGE if committed else DRAFT_ENTRY_AGE, now)
 

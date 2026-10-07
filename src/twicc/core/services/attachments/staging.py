@@ -4,22 +4,27 @@ Layout (``paths.get_composer_attachments_dir()``): ``<bucket>/<attachment_id>/``
 ``file/<filename>``, ``ready.json``, ``committed.json`` and ``promoted.json``.
 Every path is built from a validated ref and a sanitized file name, and real paths are
 checked before any content access.
+A one-shot entry (CLI, RPC, MCP) also holds ``oneshot.json``.
 Design: docs/plans/2026-10-03-composer-attachments-any-file-design.md §6.1.
+Phase 2 design: docs/plans/2026-10-06-attachments-phase2-cli-rpc-mcp-peer-design.md §4.3.
 """
 
 import errno
 import logging
 import os
 import re
+import shutil
 import stat
 import uuid
+from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import BinaryIO
 
 import orjson
 
 from twicc.core.services.attachments.types import AttachmentRef, PreparedEntry, PromotedEntry, StagedEntry
 from twicc.paths import get_artifacts_dir, get_composer_attachments_dir
-from twicc.uploads.store import TEMP_FILE_PREFIX, candidate_names
+from twicc.uploads.store import COPY_BLOCK_SIZE, FILENAME_MAX_BYTES, TEMP_FILE_PREFIX, candidate_names, now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -27,18 +32,27 @@ __all__ = [
     "ERROR_COMMIT_FAILED",
     "ERROR_MISSING",
     "ERROR_NOT_READY",
+    "ERROR_STAGE_FAILED",
     "NO_HARD_LINK_ERRNOS",
+    "ONESHOT_MARKER",
+    "ORIGIN_API",
+    "ORIGIN_CLI",
     "AttachmentError",
     "attachments_dir",
     "content_location",
     "content_media_type",
+    "discard_staged",
     "entry_dir",
     "get_composer_attachments_dir",
     "load_entry",
     "mark_committed",
+    "name_max_bytes",
+    "new_bucket",
     "normalize_filename",
     "on_upload_completed",
     "promote_entry",
+    "stage_bytes",
+    "stage_path",
     "validate_ref",
     "write_marker",
 ]
@@ -58,6 +72,19 @@ READY_MARKER = "ready.json"
 COMMITTED_MARKER = "committed.json"
 PROMOTED_MARKER = "promoted.json"
 RELEASED_DIR = ".released"
+ONESHOT_MARKER = "oneshot.json"
+ERROR_STAGE_FAILED = "attachment_stage_failed"
+# Origins of a one-shot entry (phase 2 design D13): the CLI process on its own, or a command
+# running inside the backend (RPC, MCP).
+ORIGIN_CLI = "cli"
+ORIGIN_API = "api"
+_ORIGINS = frozenset({ORIGIN_CLI, ORIGIN_API})
+# Room kept for a `` (n)`` suffix in a final name (the same room as ``uploads.views``).
+NAME_SUFFIX_ROOM = 8
+# The reaper removes an empty bucket: the creation of an entry is retried this many times.
+_CREATE_ATTEMPTS = 3
+# Characters of the raw name an error shows before the name is normalized.
+_STAGE_LABEL_CHARS = 64
 
 # Control characters (U+0000-U+001F, U+007F), line/paragraph separators, and the path separators.
 _FORBIDDEN_CHARS = re.compile("[\x00-\x1f\x7f\x85  /\\\\]")
@@ -149,6 +176,24 @@ def normalize_filename(name: str, max_bytes: int) -> str:
     if result in ("", ".", ".."):
         return FALLBACK_NAME
     return result
+
+
+def name_max_bytes() -> int:
+    """Longest file name the staging area accepts, keeping room for a `` (n)`` suffix.
+
+    ``PC_NAME_MAX`` is read on the deepest existing directory of the staging area, so a normalized
+    name always passes the later ``PC_NAME_MAX`` check of the target.
+    """
+    path = os.path.realpath(get_composer_attachments_dir())
+    while not os.path.isdir(path) and os.path.dirname(path) != path:
+        path = os.path.dirname(path)
+    try:
+        name_max = os.pathconf(path, "PC_NAME_MAX")
+    except (OSError, ValueError):
+        name_max = None
+    if name_max is not None and 0 < name_max < 255:
+        return max(1, min(FILENAME_MAX_BYTES, name_max - NAME_SUFFIX_ROOM))
+    return FILENAME_MAX_BYTES
 
 
 # ── Paths ──
@@ -406,6 +451,125 @@ def on_upload_completed(meta: dict, final_path: str | Path) -> None:
     if _read_json(entry / READY_MARKER) == payload:
         return
     write_marker(entry, READY_MARKER, payload)
+
+
+# ── One-shot entries (CLI, RPC, MCP) ──
+#
+# Phase 2 design §4.3: no tus upload fills them, so no creation lock, no release tombstone
+# check and no settle rule. ``oneshot.json`` is written before ``file/`` exists, so an entry
+# never exists without it: the reaper removes it after 24 h, ready or not.
+
+
+def new_bucket(origin: str) -> str:
+    """A fresh bucket for one request: ``<origin>-<uuid4>``."""
+    if origin not in _ORIGINS:
+        raise ValueError(f"Unknown staging origin: {origin!r}")
+    return f"{origin}-{uuid.uuid4()}"
+
+
+def _mkdir_entry(entry: Path) -> None:
+    """Create the entry directory (its own function: the race test replaces it)."""
+    entry.mkdir()
+
+
+def _create_oneshot_entry(bucket: str, origin: str) -> tuple[AttachmentRef, Path]:
+    """Create ``<bucket>/<new id>/`` with ``oneshot.json``, then ``file/``."""
+    _validate_key(bucket, "bucket")
+    root = _staging_root()
+    for attempt in range(_CREATE_ATTEMPTS):
+        ref = AttachmentRef(bucket, str(uuid.uuid4()))
+        bucket_dir = root / bucket
+        bucket_dir.mkdir(parents=True, exist_ok=True)
+        entry = bucket_dir / ref.id
+        try:
+            _mkdir_entry(entry)
+        except FileNotFoundError:
+            # The reaper removed the empty bucket between the two ``mkdir`` calls.
+            if attempt == _CREATE_ATTEMPTS - 1:
+                raise
+            continue
+        try:
+            write_marker(entry, ONESHOT_MARKER, {"origin": origin, "at": now_iso()})
+            (entry / FILE_DIR).mkdir()
+        except BaseException:
+            # The caller never gets the entry: remove it here, or a directory without its
+            # one-shot marker would wait for the 30-day draft rule.
+            shutil.rmtree(entry, ignore_errors=True)
+            raise
+        return ref, entry
+    raise AssertionError("unreachable")
+
+
+def _remove_partial(entry: Path | None) -> None:
+    if entry is not None:
+        shutil.rmtree(entry, ignore_errors=True)
+
+
+def _stage(write: Callable[[BinaryIO], None], name: str, *, bucket: str, origin: str) -> AttachmentRef:
+    """Steps 1-5 of §4.3.1: entry and marker, name, temporary write + fsync + rename, ready marker."""
+    if origin not in _ORIGINS:
+        raise ValueError(f"Unknown staging origin: {origin!r}")
+    entry: Path | None = None
+    # The error label: the raw name can be an unbounded ``name=`` of a data URI (RPC, MCP), so
+    # it is cut until the normalized name replaces it.
+    label = name[:_STAGE_LABEL_CHARS]
+    try:
+        ref, entry = _create_oneshot_entry(bucket, origin)
+        # A name read from the filesystem may hold undecodable bytes (surrogate escapes).
+        filename = normalize_filename(os.fsencode(name).decode("utf-8", "replace"), name_max_bytes())
+        label = filename
+        file_dir = entry / FILE_DIR
+        tmp = file_dir / f"{TEMP_FILE_PREFIX}{uuid.uuid4().hex}.tmp"
+        with open(tmp, "xb") as out:
+            write(out)
+            out.flush()
+            os.fsync(out.fileno())
+        final = file_dir / filename
+        os.replace(tmp, final)
+        fsync_dir(file_dir)
+        write_marker(entry, READY_MARKER, {"filename": filename, "size": os.stat(final).st_size})
+        return ref
+    except OSError as exc:
+        _remove_partial(entry)
+        raise AttachmentError(ERROR_STAGE_FAILED, f"Cannot stage {label!r}: {exc.strerror or exc}") from exc
+    except BaseException:
+        _remove_partial(entry)
+        raise
+
+
+def stage_path(source: str | os.PathLike, *, bucket: str, origin: str, name: str | None = None) -> AttachmentRef:
+    """Copy the file at *source* into a new one-shot entry; *name* defaults to its base name.
+
+    Always a real copy, never a hard link of the user's file (D18).
+    """
+    source = os.fspath(source)
+
+    def write(out: BinaryIO) -> None:
+        with open(source, "rb") as reader:
+            shutil.copyfileobj(reader, out, COPY_BLOCK_SIZE)
+
+    return _stage(write, os.path.basename(source) if name is None else name, bucket=bucket, origin=origin)
+
+
+def stage_bytes(data: bytes, name: str, *, bucket: str, origin: str) -> AttachmentRef:
+    """Write *data* into a new one-shot entry named *name*."""
+    return _stage(lambda out: out.write(data), name, bucket=bucket, origin=origin)
+
+
+def discard_staged(refs: Iterable[AttachmentRef]) -> None:
+    """Remove staged entries, then their bucket when it is empty. Never touches ``artifacts/``."""
+    for ref in refs:
+        try:
+            entry = _real_entry_dir(validate_ref(ref))
+        except AttachmentError:
+            continue
+        if entry is None:
+            continue
+        shutil.rmtree(entry, ignore_errors=True)
+        try:
+            os.rmdir(entry.parent)
+        except OSError:
+            pass
 
 
 # ── Promotion ──

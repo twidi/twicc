@@ -142,6 +142,41 @@ def test_draft_entries_expire_at_exactly_30_days():
     assert entry_path(week_old).exists()
 
 
+def make_oneshot_entry(ref, *, age: timedelta, committed=False):
+    entry = make_entry(ref, age=age, committed=committed)
+    (entry / "oneshot.json").write_bytes(b'{"origin": "cli", "at": "x"}')
+    set_mtime(entry, NOW - age)
+    return entry
+
+
+def test_oneshot_entries_expire_at_exactly_24_hours():
+    expired, kept = new_ref("cli-bucket"), new_ref("cli-bucket")
+    make_oneshot_entry(expired, age=timedelta(hours=24))
+    make_oneshot_entry(kept, age=timedelta(hours=24) - SECOND)
+    stats = run_pass()
+    assert not entry_path(expired).exists()
+    assert entry_path(kept).exists()
+    assert stats.entries == 1
+
+
+def test_the_oneshot_rule_wins_over_the_committed_and_draft_rules():
+    committed, draft = new_ref("api-bucket"), new_ref("api-bucket")
+    make_oneshot_entry(committed, age=timedelta(days=2), committed=True)
+    make_oneshot_entry(draft, age=timedelta(days=2))
+    run_pass()
+    assert not entry_path(committed).exists()
+    assert not entry_path(draft).exists()
+
+
+def test_a_live_upload_still_protects_a_oneshot_entry():
+    ref = new_ref("cli-bucket")
+    make_oneshot_entry(ref, age=timedelta(days=2))
+    make_live_upload(ref)
+    set_mtime(entry_path(ref), NOW - timedelta(days=2))
+    run_pass()
+    assert entry_path(ref).exists()
+
+
 def test_a_recent_touch_keeps_an_entry():
     ref = new_ref()
     make_entry(ref, age=timedelta(days=40), committed=True)
