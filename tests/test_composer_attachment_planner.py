@@ -145,11 +145,29 @@ def test_provider_policies_hold_the_exact_limits():
     assert (codex.per_image_base64_limit, codex.per_image_base64_limit_third_party) == (None, None)
 
 
-def test_policy_is_exposed_by_the_provider_helpers_and_legacy_support_is_kept():
+def test_policy_is_exposed_by_the_provider_helpers_and_the_legacy_support_is_gone():
+    from twicc.cli._drop_request.bootstrap_local import ProviderBootstrap
+    from twicc.providers import helpers as base_helpers
+
     assert get_provider_helpers("claude_code").get_attachment_policy() is claude_helpers.ATTACHMENT_POLICY
     assert get_provider_helpers("codex").get_attachment_policy() is codex_helpers.ATTACHMENT_POLICY
-    assert claude_helpers.ATTACHMENT_SUPPORT["max_files_per_message"] == 100
-    assert codex_helpers.ATTACHMENT_SUPPORT["documents"] is False
+    assert "attachment_support" not in ProviderBootstrap._fields
+    for module in (claude_helpers, codex_helpers, base_helpers):
+        assert not hasattr(module, "ATTACHMENT_SUPPORT")
+        assert not hasattr(module, "MAX_IMAGE_DIMENSION")
+    for provider in ("claude_code", "codex"):
+        helpers = get_provider_helpers(provider)
+        for name in (
+            "get_attachment_support", "get_effective_image_dimension",
+            "selected_model_supports_highres_images", "_upgrade_retired_model",
+        ):
+            assert not hasattr(helpers, name), (provider, name)
+
+
+@pytest.mark.django_db
+def test_the_bootstrap_data_has_no_attachment_support_key():
+    for provider in ("claude_code", "codex"):
+        assert "attachment_support" not in get_provider_helpers(provider).get_bootstrap_data()
 
 
 @pytest.mark.parametrize("target", ALL_TARGETS)

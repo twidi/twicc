@@ -97,18 +97,6 @@ AGENT_SETTINGS_CHOICES: dict[str, list] = {
 }
 
 
-ATTACHMENT_SUPPORT: dict = {
-    "images": True,
-    "documents": False,
-    "accepted_mime_types": [
-        "image/png", "image/jpeg", "image/gif", "image/webp",
-    ],
-    "max_bytes_per_file": 5 * 1024 * 1024,
-    "max_files_per_message": 100,
-    "max_total_bytes": 32 * 1024 * 1024,
-}
-
-
 # Native delivery of web composer attachments (design 2026-10-03 §6.3). Codex has no
 # document input: only images are native. 1,500 images is the public API's per-request
 # limit; there is no per-image byte limit. Codex has no hybrid mode nor platform switch,
@@ -387,9 +375,6 @@ class CodexHelpers(BaseProviderHelpers):
 
     def get_agent_settings_choices(self) -> dict[str, list]:
         return AGENT_SETTINGS_CHOICES
-
-    def get_attachment_support(self) -> dict:
-        return ATTACHMENT_SUPPORT
 
     def get_attachment_policy(self) -> AttachmentPolicy:
         return ATTACHMENT_POLICY

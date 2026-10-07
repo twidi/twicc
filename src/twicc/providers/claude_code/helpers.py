@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from datetime import date
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
@@ -21,7 +20,6 @@ from django.conf import settings
 from twicc.core.enums import Provider
 from twicc.pricing import FamilyPrices
 from twicc.providers.helpers import (
-    MAX_IMAGE_DIMENSION,
     AgentSettingCategory,
     AgentSettings,
     AttachmentPolicy,
@@ -116,19 +114,6 @@ AGENT_SETTINGS_CHOICES: dict[str, list] = {
     "context_max": [200_000, 1_000_000],
     "claude_in_chrome": [True, False],
     "fast_mode": [True, False],
-}
-
-
-ATTACHMENT_SUPPORT: dict = {
-    "images": True,
-    "documents": True,
-    "accepted_mime_types": [
-        "image/png", "image/jpeg", "image/gif", "image/webp",
-        "application/pdf", "text/plain",
-    ],
-    "max_bytes_per_file": 5 * 1024 * 1024,
-    "max_files_per_message": 100,
-    "max_total_bytes": 32 * 1024 * 1024,
 }
 
 
@@ -583,19 +568,6 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
             mv = self._resolve_to_default_model_version()
         return bool(mv and mv.provider_extra.supports_permission_auto)
 
-    def selected_model_supports_highres_images(self, selected_model: str | None) -> bool:
-        """Return ``True`` if the model ships images at native ``MAX_IMAGE_DIMENSION`` (2576 px).
-
-        ``False`` models are downscaled client-side to 1568 px (the older
-        Claude vision resolution). Reads the per-model capability flag rather
-        than parsing the version string, so a new family opts in via the
-        registry just like ``supports_1m`` & co.
-        """
-        mv = self.find_model(selected_model) if selected_model else None
-        if mv is None:
-            mv = self._resolve_to_default_model_version()
-        return bool(mv and mv.provider_extra.supports_highres_images)
-
     def selected_model_supports_thinking_disabled(self, selected_model: str | None) -> bool:
         """Return ``True`` if the model lets you turn thinking off.
 
@@ -734,72 +706,8 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
     def get_agent_settings_choices(self) -> dict[str, list]:
         return AGENT_SETTINGS_CHOICES
 
-    def get_attachment_support(self) -> dict:
-        return ATTACHMENT_SUPPORT
-
     def get_attachment_policy(self) -> AttachmentPolicy:
         return ATTACHMENT_POLICY
-
-    def get_effective_image_dimension(
-        self, model: str | None, num_images: int
-    ) -> int:
-        """Return the long-edge cap (in px) for outgoing images.
-
-        Mirrors ``ClaudeCodeHelpers.getEffectiveImageDimension`` in
-        ``frontend/src/providers/claude_code/helpers.js``.
-
-        Anthropic vision rules in play:
-
-        - Models flagged ``supports_highres_images`` accept native
-          ``MAX_IMAGE_DIMENSION`` (2576 px); we ship at full resolution.
-        - Older Claude models downscale server-side to 1568 px; we cap
-          there ahead of time to save bandwidth and keep token usage
-          predictable.
-        - Any request carrying more than 20 images is further capped by
-          Anthropic to 2000 px regardless of model; apply the tighter
-          of {model cap, 2000} in that case.
-
-        A retired ``model`` is upgraded to its successor first (matching
-        what ``enforce_agent_settings_consistency`` would do) so the
-        capability check uses the post-upgrade alias.
-        """
-        upgraded = self._upgrade_retired_model(model) or model
-        highres = self.selected_model_supports_highres_images(upgraded)
-        cap = MAX_IMAGE_DIMENSION if highres else 1568
-        if num_images > 20:
-            cap = min(cap, 2000)
-        return cap
-
-    def _upgrade_retired_model(self, model: str | None) -> str | None:
-        """Return the successor of ``model`` if it is past retirement.
-
-        Mirrors ``getRetiredModelUpgrade`` in
-        ``frontend/src/providers/claude_code/helpers.js``. Returns ``None``
-        when the input is missing, current, or already the latest in its
-        family.
-        """
-        if not model:
-            return None
-        today = date.today()
-        entry = next(
-            (mv for mv in self.MODEL_VERSIONS
-             if self.selected_model_value(mv) == model),
-            None,
-        )
-        if entry is None or entry.latest:
-            return None
-        if entry.retirement_date is None or entry.retirement_date >= today:
-            return None
-        family = sorted(
-            (mv for mv in self.MODEL_VERSIONS if mv.model == entry.model),
-            key=lambda mv: tuple(int(p) for p in mv.version.split(".")),
-        )
-        current_parts = tuple(int(p) for p in entry.version.split("."))
-        for candidate in family:
-            candidate_parts = tuple(int(p) for p in candidate.version.split("."))
-            if candidate_parts > current_parts:
-                return self.selected_model_value(candidate)
-        return None
 
     def serialize_model_extra(self, mv: ModelVersion) -> dict:
         """Expose Claude Code's :class:`ClaudeCodeModelExtra` flags on the wire."""
