@@ -1618,6 +1618,17 @@ function groupCommentsCount(groupHeadLineNum, groupTailLineNum) {
     return count
 }
 
+// Parent-owned slot dependencies. Parsed content stays a reactive read inside
+// each row, so streaming does not subscribe the entire scroller to every delta.
+function rowMemo(item) {
+    return [props.projectId, props.sessionId, props.parentSessionId,
+        item.isGroupHead ? groupCommentsCount(item.lineNum, item.groupTail) : 0,
+        item.detailToggleFor != null ? blockCommentsCount(item.detailToggleFor) : 0,
+        item.isGroupHead ? groupReveal.isHeadLeaving(item.lineNum) : false,
+        item.isGroupHead ? groupReveal.headLeaveClass(item.lineNum) : null,
+        item.isGroupHead ? JSON.stringify(groupReveal.headLeaveStyle(item.lineNum)) : null]
+}
+
 /**
  * Get the scroller element for scroll compensation.
  * @returns {HTMLElement|null}
@@ -2306,6 +2317,7 @@ defineExpose({
                     :prevent-auto-scroll-to-bottom="!!parentSessionId"
                     :item-class="rowClass"
                     :item-style="rowStyle"
+                    :item-memo="rowMemo"
                     class="session-items"
                     :class="{ 'initial-scrolling': reveal.hidden.value }"
                     @update="onScrollerUpdate"

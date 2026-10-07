@@ -1,6 +1,7 @@
 <script setup>
 import { onBeforeUnmount, onDeactivated, ref, useId, watch } from 'vue'
 import { isSnippetGroup } from '../../utils/snippetGroups'
+import { jsonValuesEqual } from '../../utils/jsonValuesEqual.js'
 
 const props = defineProps({
     entries: { type: Array, default: () => [] },
@@ -32,8 +33,13 @@ function setPopover(key, element) {
     else popovers.delete(key)
 }
 
-watch(() => props.context, close, { deep: true })
-watch(() => props.entries, close, { deep: true })
+// Immutable snapshots detect in-place edits without treating new references
+// as changes. JSON values are the shared snippet/config context contract.
+function closeOnChange(next, previous) {
+    if (!jsonValuesEqual(JSON.parse(next ?? 'null'), JSON.parse(previous ?? 'null'))) close()
+}
+watch(() => JSON.stringify(props.context), closeOnChange)
+watch(() => JSON.stringify(props.entries), closeOnChange)
 onDeactivated(close)
 onBeforeUnmount(close)
 defineExpose({ close })

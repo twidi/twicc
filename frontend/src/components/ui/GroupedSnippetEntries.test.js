@@ -3,21 +3,26 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
+import { reactive, ref, watch, nextTick } from 'vue'
+import { jsonValuesEqual } from '../../utils/jsonValuesEqual.js'
 
 const source = readFileSync(new URL('./GroupedSnippetEntries.vue', import.meta.url), 'utf8')
 
 function fixture() {
     const watchers = []
+    const stops = []
+    const props = reactive({ entries: [], context: null })
     const lifecycle = {}
     const { descriptor } = parse(source)
     const script = descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
     const api = runInNewContext(`(function() { ${script}\nreturn { entryKey, close, onShow, setPopover, openGroup } })`, {
-        defineProps: () => ({ entries: [], context: null }),
+        defineProps: () => props,
         defineExpose: () => {},
         isSnippetGroup: entry => entry.type === 'group',
-        ref: value => ({ value }),
+        ref,
+        jsonValuesEqual,
         useId: () => 'test',
-        watch: (read, callback) => watchers.push(callback),
+        watch: (read, callback, options) => { watchers.push(callback); stops.push(watch(read, callback, options)) },
         onBeforeUnmount: callback => { lifecycle.unmount = callback },
         onDeactivated: callback => { lifecycle.deactivate = callback },
     })()
@@ -25,7 +30,7 @@ function fixture() {
     const second = { open: false }
     api.setPopover('first', first)
     api.setPopover('second', second)
-    return { api, first, second, watchers, lifecycle }
+    return { api, first, second, watchers, lifecycle, props, dispose: () => stops.forEach(stop => stop()) }
 }
 
 test('opening another group closes the previous group; leaf dismissal closes every group', () => {
@@ -48,10 +53,57 @@ test('context changes, entry changes, deactivation, and unmount close active gro
     for (const callback of [...watchers, lifecycle.deactivate, lifecycle.unmount]) {
         first.open = true
         api.onShow('first')
-        callback()
+        callback('["changed"]', '["initial"]')
         assert.equal(first.open, false)
         assert.equal(api.openGroup.value, null)
     }
+})
+
+test('equivalent context and entries preserve an open group', async t => {
+    const f = fixture(); t.after(f.dispose)
+    f.props.context = ['session', 'project', 'claude_code', null, false]
+    f.props.entries = [{ type: 'group', id: 'first', label: 'Group', items: [{ label: 'Leaf', text: 'Text' }] }]
+    await nextTick()
+    f.first.open = true; f.api.onShow('first')
+    f.props.context = [...f.props.context]
+    f.props.entries = JSON.parse(JSON.stringify(f.props.entries))
+    await nextTick()
+    assert.equal(f.first.open, true)
+    assert.equal(f.api.openGroup.value, 'first')
+})
+
+test('equivalent entries with different object key order preserve the group', async t => {
+    const f = fixture(); t.after(f.dispose)
+    f.props.entries = [{ type: 'group', id: 'first', label: 'Group', items: [] }]
+    await nextTick()
+    f.first.open = true; f.api.onShow('first')
+    f.props.entries = [{ items: [], label: 'Group', id: 'first', type: 'group' }]
+    await nextTick()
+    assert.equal(f.first.open, true)
+})
+
+test('actual context changes close the group', async t => {
+    const f = fixture(); t.after(f.dispose)
+    f.props.context = ['session', 'project', 'claude_code', null, false]
+    await nextTick()
+    f.first.open = true; f.api.onShow('first')
+    f.props.context[0] = 'other-session'
+    await nextTick()
+    assert.equal(f.first.open, false)
+})
+
+test('in-place entry edits and group removal close the group', async t => {
+    const f = fixture(); t.after(f.dispose)
+    f.props.entries = [{ type: 'group', id: 'first', label: 'Group', items: [{ label: 'Leaf', text: 'Text' }] }]
+    await nextTick()
+    f.first.open = true; f.api.onShow('first')
+    f.props.entries[0].items[0].text = 'Changed'
+    await nextTick()
+    assert.equal(f.first.open, false)
+    f.first.open = true; f.api.onShow('first')
+    f.props.entries = []
+    await nextTick()
+    assert.equal(f.first.open, false)
 })
 
 test('group keys include scope and group ID, and removed popovers leave no active reference', () => {

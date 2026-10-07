@@ -21,7 +21,7 @@
  * NOTE: This component is client-only (SSR is not supported due to
  * ResizeObserver and DOM measurement requirements).
  */
-import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, toRef, nextTick, provide } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, toRef, nextTick, provide, normalizeClass, normalizeStyle } from 'vue'
 import { useVirtualScroll } from '../../composables/useVirtualScroll'
 import { createVirtualScrollRangeUpdates } from '../../utils/virtualScrollRangeUpdates.js'
 import { createRowVisibilityObserver } from '../../utils/rowVisibilityObserver.js'
@@ -112,8 +112,25 @@ const props = defineProps({
     itemStyle: {
         type: Function,
         default: null
+    },
+    /**
+     * Optional (item, index) => dependencies for parent-owned slot state.
+     * Callers must include every external value used by their row slot.
+     * Reactive reads inside the row still update it independently (streaming).
+     */
+    itemMemo: {
+        type: Function,
+        default: null
     }
 })
+
+function rowMemo(item, index, key) {
+    // Without an explicit contract, keep the normal dynamic-slot behavior.
+    if (!props.itemMemo) return [{}]
+    return [item, index, key, props.minItemHeight, props.itemMinHeight?.(item) ?? null,
+        normalizeClass(props.itemClass?.(item)), JSON.stringify(normalizeStyle(props.itemStyle?.(item))),
+        ...props.itemMemo(item, index)]
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Events
@@ -767,6 +784,7 @@ defineExpose({
         <VirtualScrollerItem
             v-for="{ item, index, key } in renderedItems"
             :key="key"
+            v-memo="rowMemo(item, index, key)"
             :item-key="key"
             :estimated-height="minItemHeight"
             :min-height="itemMinHeight ? itemMinHeight(item) : null"

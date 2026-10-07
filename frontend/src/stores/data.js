@@ -7,6 +7,7 @@ import { createEphemeralActions, createSendFailureActions, ephemeralFields, seri
 import { saveEphemeralControl, deleteEphemeralControl, loadEphemeralControls } from '../utils/ephemeralStorage'
 import { defineStore, acceptHMRUpdate } from 'pinia'
 import { toRaw } from 'vue'
+import { jsonValuesEqual } from '../utils/jsonValuesEqual.js'
 import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
 import { computeVisualItems, visualItemEqual, insertDaySeparators, makeBackgroundWorkStatusItem, markLiveTimestampAnchor } from '../utils/visualItems'
 import { backgroundWorkStatusKey, buildBackgroundWorkStatusLines } from '../utils/backgroundWork'
@@ -1288,12 +1289,20 @@ export const useDataStore = defineStore('data', {
          * tab label and the panel's view switch.
          */
         getOrchestrationActivity() {
+            const activities = new Map()
             return (sessionId) => {
                 const descendants = this.getDescendantActiveProcessStates(sessionId)
-                return {
-                    sessions: descendants.length ? summarizeProcessActivity(descendants) : null,
-                    subagentsRunning: this.hasRunningSubagent(sessionId),
+                const sessions = descendants.length ? summarizeProcessActivity(descendants) : null
+                const subagentsRunning = this.hasRunningSubagent(sessionId)
+                const previous = activities.get(sessionId)
+                const sameSessions = previous?.sessions === sessions || (previous?.sessions && sessions
+                    && Object.keys(sessions).every(key => sessions[key] === previous.sessions[key]))
+                if (previous && previous.subagentsRunning === subagentsRunning && sameSessions) {
+                    return previous
                 }
+                const activity = { sessions, subagentsRunning }
+                activities.set(sessionId, activity)
+                return activity
             }
         },
 
@@ -1583,10 +1592,15 @@ export const useDataStore = defineStore('data', {
             // by reference, so removals propagate), while preserving any
             // client-only keys the payload doesn't carry.
             const existing = this.projects[project.id]
+            const previousName = existing?.name
+            const previousDirectory = existing?.directory
             if (existing) Object.assign(existing, project)
             else this.projects[project.id] = project
-            // Invalidate display name cache so it gets recomputed
-            delete this.localState.projectDisplayNames[project.id]
+            // Activity updates must preserve the cached name and its consumers.
+            // Compare after merging so partial payloads retain omitted fields.
+            if (!existing || existing.name !== previousName || existing.directory !== previousDirectory) {
+                delete this.localState.projectDisplayNames[project.id]
+            }
         },
         /**
          * Set the archived state of a project.
@@ -1658,7 +1672,13 @@ export const useDataStore = defineStore('data', {
                 session.last_new_content_at < prev.last_new_content_at) {
                 session = { ...session, last_new_content_at: prev.last_new_content_at }
             }
-            this.$patch({ sessions: { [session.id]: session } })
+            // Tasks are complete snapshots. Deep merging keeps removed keys and
+            // replaces equal item arrays, so handle this field independently.
+            const { tasks, ...sessionFields } = session
+            this.$patch({ sessions: { [session.id]: sessionFields } })
+            if (Object.hasOwn(session, 'tasks') && !jsonValuesEqual(prev?.tasks, tasks)) {
+                this.sessions[session.id].tasks = tasks
+            }
             // A root cutoff change re-applies its agents' run states. After the
             // patch: ``applyAgentRunState`` reads the cutoff from ``sessions[root]``.
             if (rootCutoffChanged) {
@@ -3134,8 +3154,12 @@ export const useDataStore = defineStore('data', {
             const failedSends = this.localState.failedSends[sessionId]
             const hasFailedSends = !!failedSends && Object.keys(failedSends).length > 0
             if (!items.length && !this.localState.optimisticMessages[sessionId] && !hasFailedSends) {
-                this.localState.sessionVisualItems[sessionId] = []
-                this.localState.visualItemCache[sessionId] = new Map()
+                if (!this.localState.sessionVisualItems[sessionId] || this.localState.sessionVisualItems[sessionId].length) {
+                    this.localState.sessionVisualItems[sessionId] = []
+                }
+                if (!this.localState.visualItemCache[sessionId] || this.localState.visualItemCache[sessionId].size) {
+                    this.localState.visualItemCache[sessionId] = new Map()
+                }
                 return
             }
 
@@ -3441,8 +3465,13 @@ export const useDataStore = defineStore('data', {
                     // Properties identical — reuse old reference.
                     // Forward the parsed content from the new computation to the
                     // cached object in case items were re-parsed (e.g. content loaded).
-                    const parsed = getParsedContent(vi)
-                    if (parsed !== null) setParsedContent(cached, parsed)
+                    // The working row's status key already covers its visible content.
+                    const unchangedWorking = vi.syntheticKind === SYNTHETIC_ITEM.WORKING_ASSISTANT_MESSAGE.kind
+                        && getParsedContent(cached) !== null
+                    if (!unchangedWorking) {
+                        const parsed = getParsedContent(vi)
+                        if (parsed !== null) setParsedContent(cached, parsed)
+                    }
                     newCache.set(vi.lineNum, cached)
                     return cached
                 }
@@ -3455,7 +3484,11 @@ export const useDataStore = defineStore('data', {
             })
 
             this.localState.visualItemCache[sessionId] = newCache
-            this.localState.sessionVisualItems[sessionId] = stableItems
+            const previousItems = this.localState.sessionVisualItems[sessionId]
+            if (!previousItems || previousItems.length !== stableItems.length
+                || stableItems.some((item, index) => item !== previousItems[index])) {
+                this.localState.sessionVisualItems[sessionId] = stableItems
+            }
         },
 
         /**

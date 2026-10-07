@@ -1894,6 +1894,10 @@ function addAllCommentsToMessage() {
 // ── Message snippets ────────────────────────────────────────────────
 const messageSnippetsStore = useMessageSnippetsStore()
 
+const snippetGroupContext = computed(() => [
+    props.sessionId, props.projectId, session.value?.provider, route.query.workspace, collapsed.value,
+])
+
 /** Placeholder resolution context (same shape as terminal uses). */
 const placeholderContext = computed(() => {
     const s = session.value
@@ -2151,7 +2155,7 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
         <!-- Message snippets bar -->
         <MessageSnippetsBar
             :snippets="snippetsForProject"
-            :context="[sessionId, projectId, session?.provider, route.query.workspace, collapsed]"
+            :context="snippetGroupContext"
             :show-history-button="!isDraft"
             :activation-chars="commandActivationChars"
             :can-open-command="messageText.length === 0"
