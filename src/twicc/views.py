@@ -3722,6 +3722,7 @@ async def bootstrap(request):
         "dev_mode": settings.DEV_MODE,
         "uvx_mode": settings.UVX_MODE,
         "twicc_launch_prefix": settings.TWICC_LAUNCH_PREFIX,
+        "update_instructions": settings.UPDATE_INSTRUCTIONS,
         "claudeHybridEnabled": settings.CLAUDE_HYBRID_ENABLED,
         "workspaces": workspaces_data.get("workspaces", []),
         "terminal_config": terminal_config,

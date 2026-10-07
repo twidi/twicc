@@ -21,6 +21,7 @@ import { handleResyncRequired } from '../utils/resync'
 import { truncateTitle } from '../utils/truncate'
 import { peerMessageRouting, peerRoutingText } from '../utils/peerMessageRouting'
 import { toWorkspaceProjectId } from '../utils/workspaceIds'
+import { getUpdateInstructionsHtml } from '../utils/updateInstructions.js'
 import { createUpdateReminder, UPDATE_REMINDER_KEY } from '../utils/updateReminder.js'
 import { getProcessStateNotificationEffects, getUserTurnNotificationText } from '../utils/processStateNotifications.js'
 import { buildTitleSuggestionRequest } from '../utils/titleSuggestion.js'
@@ -916,10 +917,7 @@ export function showUpdateToast(version) {
 }
 
 function createUpdateToast(version, onDismiss) {
-    const settings = useSettingsStore()
-    const upgradeHint = settings.isUvxMode
-        ? 'Stop and re-run: <code style="background: var(--wa-color-neutral-fill-normal); color: var(--wa-color-neutral-on-normal); padding: 0.1em 0.4em; border-radius: 3px; font-size: 0.9em;">uvx twicc@latest</code>'
-        : 'Update TwiCC (with <code style="background: var(--wa-color-neutral-fill-normal); color: var(--wa-color-neutral-on-normal); padding: 0.1em 0.4em; border-radius: 3px; font-size: 0.9em;">uv tool upgrade twicc</code> if installed with uv) and restart'
+    const upgradeHint = getUpdateInstructionsHtml()
     return toast.custom({
         type: 'info',
         title: `TwiCC v${version} is available`,

@@ -1,27 +1,29 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { getUpdateInstructionsHtml, setUpdateInstructions } from '../utils/updateInstructions.js'
 
 // Exercise toast construction without initializing the WebSocket or Pinia.
 const source = readFileSync(new URL('./useWebSocket.js', import.meta.url), 'utf8')
 const handler = source.slice(source.indexOf('function createUpdateToast(version, onDismiss)'), source.indexOf('/**\n * Format the credit-detail'))
 
-function harness(isUvxMode = false) {
+function harness(instructions = null) {
+    setUpdateInstructions(instructions)
     const notifications = []
-    const createUpdateToast = new Function('useSettingsStore', 'toast', `${handler}; return createUpdateToast`)(
-        () => ({ isUvxMode }), { custom: options => { notifications.push(options); return { id: 'toast' } } },
+    const createUpdateToast = new Function('getUpdateInstructionsHtml', 'toast', `${handler}; return createUpdateToast`)(
+        getUpdateInstructionsHtml, { custom: options => { notifications.push(options); return { id: 'toast' } } },
     )
     return { createUpdateToast, notifications }
 }
 
 test('instructions match the installation mode and retain the brand View changes button', () => {
-    for (const mode of [false, true]) {
-        const h = harness(mode)
+    for (const command of ['uvx twicc@latest', 'uv tool upgrade twicc', '/custom/bin/python -m pip install --upgrade twicc']) {
+        const h = harness({ before: 'Stop TwiCC, run:', command, after: 'Then restart TwiCC.' })
         h.createUpdateToast('1.5.0', () => {})
         const notification = h.notifications[0]
         assert.equal(notification.duration, Infinity)
         assert.equal(notification.title, 'TwiCC v1.5.0 is available')
-        assert.ok(notification.html.includes(mode ? 'uvx twicc@latest' : 'uv tool upgrade twicc'))
+        assert.ok(notification.html.includes(command))
         assert.ok(notification.html.includes('<wa-button size="small" variant="brand"'))
         assert.ok(notification.html.includes('View changes'))
         assert.ok(notification.html.includes('open-changelog'))
