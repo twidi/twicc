@@ -32,11 +32,16 @@ from twicc.core.models import (
 )
 from twicc.core.services.peer_messages import PEER_MESSAGE_AUTHORS
 from twicc.core.services.peer_tokens import peer_base_url
+from twicc.core.services.public_origin import usable_public_origin
+from twicc.layouts import read_layouts
+from twicc.message_snippets import read_message_snippets_config
 from twicc.mcp.oauth.config import base_url as external_mcp_base_url
 from twicc.providers.helpers import get_provider_helpers
 from twicc.providers.state import get_enabled_providers
+from twicc.synced_settings import read_synced_settings
 from twicc.telemetry.install_method import detect_install_method
 from twicc.telemetry.state import MAX_DAY_ENTRIES
+from twicc.terminal_config import read_terminal_config
 from twicc.workspaces import read_workspaces
 
 SCHEMA_VERSION = 1
@@ -196,8 +201,35 @@ def model_family_version(
     return ("unknown", "unknown")
 
 
+def count_grouped_entries(entries: list) -> int:
+    """Count saved snippets or combos, excluding their group containers."""
+    if not isinstance(entries, list):
+        return 0
+    count = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("type") == "group":
+            count += count_grouped_entries(entry.get("items", []))
+        else:
+            count += 1
+    return count
+
+
+def count_scoped_snippets(config: dict) -> int:
+    """Count each stored entry once, rather than its appearances across views."""
+    scopes = config.get("snippets", {}) if isinstance(config, dict) else {}
+    if not isinstance(scopes, dict):
+        return 0
+    return sum(count_grouped_entries(entries) for entries in scopes.values())
+
+
 def build_instance_block() -> dict:
     workspaces = read_workspaces().get("workspaces", [])
+    preferences = read_synced_settings()
+    terminal = read_terminal_config()
+    layouts = read_layouts().get("layouts", [])
+    targets = preferences.get("externalNotificationTargets", [])
     return {
         "twicc_version": settings.APP_VERSION,
         "python": f"{sys.version_info.major}.{sys.version_info.minor}",
@@ -208,6 +240,18 @@ def build_instance_block() -> dict:
         "projects_bucket": bucket(Project.objects.count(), PROJECT_BUCKETS),
         "workspaces_bucket": bucket(len(workspaces), WORKSPACE_BUCKETS),
         "remote_access": bool(settings.TWICC_PASSWORD_HASH),
+        # Configuration snapshots only: no new activity counters or content.
+        "message_snippets_bucket": bucket(count_scoped_snippets(read_message_snippets_config()), WORKSPACE_BUCKETS),
+        "terminal_snippets_bucket": bucket(count_scoped_snippets(terminal), WORKSPACE_BUCKETS),
+        "terminal_combos_bucket": bucket(count_grouped_entries(terminal.get("combos", [])), WORKSPACE_BUCKETS),
+        "saved_layouts_bucket": bucket(len(layouts), WORKSPACE_BUCKETS),
+        "external_notifications_bucket": bucket(
+            sum(1 for target in targets if isinstance(target, dict) and target.get("enabled") is True),
+            WORKSPACE_BUCKETS,
+        ),
+        "sharing_configured": bool(usable_public_origin(preferences.get("shareBaseUrl"))),
+        "title_generation_enabled": preferences.get("titleGenerationEnabled", True) is True,
+        "title_auto_apply": preferences.get("titleAutoApply", True) is True,
         # Peer messaging adoption, in two steps: an empty `peerBaseUrl` keeps
         # the whole feature off, so the boolean is the configuration gate and
         # the bucket the scale actually reached. Only ACTIVE relationships

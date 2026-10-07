@@ -230,6 +230,68 @@ def test_instance_block_reports_peer_messaging_gate(project, monkeypatch):
     assert snapshot.build_instance_block()["peer_messaging"] is True
 
 
+@pytest.mark.parametrize("count, expected", [(0, "0"), (1, "1"), (2, "2-5"), (5, "2-5"),
+                                            (6, "6-20"), (20, "6-20"), (21, "21+")])
+def test_instance_configuration_buckets(project, monkeypatch, count, expected):
+    snippets = [{"label": "private label", "text": "private text"} for _ in range(count)]
+    # Split scopes and use a group: a snippet must count once regardless of presentation.
+    config = {"snippets": {
+        "global": snippets[:1],
+        "project:private-id": [{"type": "group", "label": "private group", "items": snippets[1:]}],
+        "workspace:private-id": [{"type": "group", "items": []}],
+    }}
+    monkeypatch.setattr(snapshot, "read_message_snippets_config", lambda: config)
+    monkeypatch.setattr(snapshot, "read_terminal_config", lambda: {
+        **config, "combos": [{"type": "group", "items": snippets}],
+    })
+    monkeypatch.setattr(snapshot, "read_layouts", lambda: {"layouts": [{"name": "private layout"}] * count})
+    monkeypatch.setattr(snapshot, "read_synced_settings", lambda: {
+        "externalNotificationTargets": [
+            *[{"enabled": True, "url": "private notification URL"} for _ in range(count)],
+            {"enabled": False}, {},
+        ],
+    })
+
+    block = snapshot.build_instance_block()
+
+    for key in ("message_snippets_bucket", "terminal_snippets_bucket", "terminal_combos_bucket",
+                "saved_layouts_bucket", "external_notifications_bucket"):
+        assert block[key] == expected
+    serialized = orjson.dumps(block).decode()
+    assert "private" not in serialized
+
+
+@pytest.mark.parametrize("share_url, configured", [
+    ("", False), ("https://share.example", True), ("not an origin", False),
+])
+@pytest.mark.parametrize("generation, auto_apply", [(False, False), (False, True), (True, False), (True, True)])
+def test_instance_configuration_flags(project, monkeypatch, share_url, configured, generation, auto_apply):
+    monkeypatch.setattr(snapshot, "read_synced_settings", lambda: {
+        "shareBaseUrl": share_url, "titleGenerationEnabled": generation, "titleAutoApply": auto_apply,
+    })
+    block = snapshot.build_instance_block()
+    assert block["sharing_configured"] is configured
+    assert block["title_generation_enabled"] is generation
+    assert block["title_auto_apply"] is auto_apply
+    assert "share.example" not in orjson.dumps(block).decode()
+
+
+def test_instance_configuration_defaults(project, monkeypatch):
+    monkeypatch.setattr(snapshot, "read_message_snippets_config", lambda: {"snippets": {}})
+    monkeypatch.setattr(snapshot, "read_terminal_config", lambda: {"snippets": {}, "combos": []})
+    monkeypatch.setattr(snapshot, "read_layouts", lambda: {})
+    monkeypatch.setattr(snapshot, "read_synced_settings", lambda: {})
+    block = snapshot.build_instance_block()
+    assert block["message_snippets_bucket"] == "0"
+    assert block["terminal_snippets_bucket"] == "0"
+    assert block["terminal_combos_bucket"] == "0"
+    assert block["saved_layouts_bucket"] == "0"
+    assert block["external_notifications_bucket"] == "0"
+    assert block["sharing_configured"] is False
+    assert block["title_generation_enabled"] is True
+    assert block["title_auto_apply"] is True
+
+
 def test_build_day_block_groups_mcp_calls(project):
     connection = _make_mcp_connection()
     _make_mcp_operation(connection, "sessions")

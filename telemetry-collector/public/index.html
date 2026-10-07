@@ -65,6 +65,14 @@
       <tr><td><code>projects_bucket</code></td><td><code>0</code>, <code>1</code>, <code>2-5</code>, <code>6-20</code>, <code>21-50</code>, <code>51-100</code>, <code>101+</code></td><td>scale of use</td></tr>
       <tr><td><code>workspaces_bucket</code></td><td><code>0</code>, <code>1</code>, <code>2-5</code>, <code>6-20</code>, <code>21+</code></td><td>scale of use</td></tr>
       <tr><td><code>remote_access</code></td><td>boolean</td><td>whether the instance is served beyond localhost (a password is configured)</td></tr>
+      <tr><td><code>message_snippets_bucket</code></td><td><code>0</code>, <code>1</code>, <code>2-5</code>, <code>6-20</code>, <code>21+</code></td><td>saved composer snippets across all scopes, including grouped snippets; never their text or labels</td></tr>
+      <tr><td><code>terminal_snippets_bucket</code></td><td><code>0</code>, <code>1</code>, <code>2-5</code>, <code>6-20</code>, <code>21+</code></td><td>saved terminal snippets across all scopes, including grouped snippets; never their text or labels</td></tr>
+      <tr><td><code>terminal_combos_bucket</code></td><td><code>0</code>, <code>1</code>, <code>2-5</code>, <code>6-20</code>, <code>21+</code></td><td>saved custom terminal combos, including grouped combos; never their keys or labels</td></tr>
+      <tr><td><code>saved_layouts_bucket</code></td><td><code>0</code>, <code>1</code>, <code>2-5</code>, <code>6-20</code>, <code>21+</code></td><td>saved named layouts; never their names or arrangements</td></tr>
+      <tr><td><code>external_notifications_bucket</code></td><td><code>0</code>, <code>1</code>, <code>2-5</code>, <code>6-20</code>, <code>21+</code></td><td>enabled Apprise notification destinations; never their URLs, names or service details</td></tr>
+      <tr><td><code>sharing_configured</code></td><td>boolean</td><td>whether a usable share base origin is configured; never the address</td></tr>
+      <tr><td><code>title_generation_enabled</code></td><td>boolean</td><td>whether automatic title generation is enabled; never the prompt or generated titles</td></tr>
+      <tr><td><code>title_auto_apply</code></td><td>boolean</td><td>whether automatic application of generated titles is enabled</td></tr>
       <tr><td><code>peer_messaging</code></td><td>boolean</td><td>whether peer messaging is configured (a peer base URL is set); no address is ever sent</td></tr>
       <tr><td><code>peers_active_bucket</code></td><td><code>0</code>, <code>1</code>, <code>2-5</code>, <code>6-20</code>, <code>21+</code></td><td>peer messaging adoption; active relationships only, never their identity</td></tr>
       <tr><td><code>external_mcp</code></td><td>boolean</td><td>whether external MCP access is configured and live; no address is ever sent</td></tr>
@@ -91,7 +99,7 @@
 
   <p>
     The feature block is deliberately small and limited to what can be derived from the database
-    without instrumentation or content scans; it may grow or shrink across schema versions.
+    and saved configuration without new activity tracking or content scans; it may grow or shrink across schema versions.
   </p>
 
   <h2>What is never collected</h2>
