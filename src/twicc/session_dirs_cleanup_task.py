@@ -1,37 +1,18 @@
-"""Daily janitor for empty per-session ``artifacts``/``scratch`` directories.
+"""Delayed daily cleanup of session artifacts and scratch directories.
 
-TwiCC pre-creates ``<data_dir>/artifacts/<session_id>/`` and
-``<data_dir>/scratch/<session_id>/`` at agent start/resume
-(:func:`twicc.agent.work_dirs.resolve_and_create_work_dirs`). Most
-sessions never write anything into them, so over time the two roots accumulate
-empty directories. This task prunes them once a day.
+Empty directories retain their existing 30-day cleanup policy. Scratch folders
+are also removed recursively when every user is archived or hidden and has
+been inactive for 30 days. Unreferenced orphan scratch folders are removed
+without an age requirement. Artifacts are never removed recursively.
 
-A directory is removed only when it is **empty** *and* stale:
+Shared scratch users include the folder's owner, spawn_root descendants, and
+scratch_dir annotations (including paths inside a folder). Unknown timestamps
+never authorize recursive removal. Active agents protect their work folders.
 
-- For a directory whose name matches a known :class:`~twicc.core.models.Session`,
-  "stale" means the most recent of ``last_updated_at`` / ``last_started_at`` /
-  ``created_at`` is older than :data:`STALE_SESSION_DIR_AGE`. ``last_started_at``
-  is included on purpose: a session resumed today but with no new content yet
-  has an old ``last_updated_at``, and we must not prune its freshly (re)used
-  directory out from under a running agent.
-- For an *orphan* directory (no matching session row — a session never synced,
-  one whose JSONL was removed, a leftover test dir, ...), the directory's own
-  filesystem mtime is the age reference.
-
-Pruning is **non-destructive**: the directory is recreated on the session's next
-start/resume. Removal goes through :func:`os.rmdir`, which only removes empty
-directories — a hard safety net against a race where a file appears between the
-emptiness check and the removal.
-
-The whole cycle (filesystem scan + one read-only ``Session`` query + the
-``rmdir`` calls) is blocking, so it runs on a worker thread via
-:func:`asyncio.to_thread`. It performs **no DB writes**, so nothing is routed
-through the DB writer.
-
-Gated by ``settings.SESSION_DIRS_CLEANUP_ENABLED`` (env
-``TWICC_NO_SESSION_DIRS_CLEANUP``): devctl sets the flag in worktree mode, where
-``artifacts/`` and ``scratch/`` are symlinks shared with the main instance —
-only the main instance owns the cleanup.
+The first pass runs 30 minutes after startup; later passes run every 24 hours.
+Filesystem work runs on a worker thread, with agent starts excluded during the
+pass. Worktrees retain the existing disable flag because their roots may be
+shared with the main instance.
 """
 
 from __future__ import annotations
@@ -39,57 +20,37 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 from datetime import datetime, timedelta, UTC
 from pathlib import Path
+from typing import NamedTuple
 
 logger = logging.getLogger(__name__)
 
-
-# Run once a day. The loop sleeps before its first pass (like
-# ``pricing_task.start_price_sync_task``) so the initial JSONL sync has settled
-# and every active session has a fresh ``last_started_at`` before we ever prune.
+SESSION_DIRS_CLEANUP_INITIAL_DELAY = 30 * 60
 SESSION_DIRS_CLEANUP_INTERVAL = 24 * 60 * 60
-
-# A session directory must be untouched for at least this long before it is
-# eligible for removal.
 STALE_SESSION_DIR_AGE = timedelta(days=30)
-
-# Cap each ``id__in`` batch well below SQLite's variable limit, so a long-lived
-# instance with tens of thousands of session dirs never overflows the query.
 _QUERY_CHUNK = 500
 
 
-def _is_stale(reference: datetime | None, now: datetime) -> bool:
-    """True iff ``reference`` is known and at least :data:`STALE_SESSION_DIR_AGE` old.
+class SessionDirectoryState(NamedTuple):
+    reference: datetime | None
+    eligible: bool
+    scratch_paths: tuple[Path, ...]
 
-    A ``None`` reference (no usable timestamp at all) is treated as *not* stale:
-    we never prune a directory we cannot date.
-    """
-    if reference is None:
-        return False
-    return now - reference >= STALE_SESSION_DIR_AGE
+
+def _is_stale(reference: datetime | None, now: datetime) -> bool:
+    return reference is not None and now - reference >= STALE_SESSION_DIR_AGE
 
 
 def _dir_mtime(path: Path) -> datetime | None:
-    """Return ``path``'s filesystem mtime as an aware UTC datetime, or ``None``.
-
-    ``None`` when the directory has vanished (or cannot be stat-ed) between the
-    scan and this call — the caller then treats it as not stale and skips it.
-    """
     try:
-        ts = path.stat().st_mtime
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
     except OSError:
         return None
-    return datetime.fromtimestamp(ts, tz=UTC)
 
 
 def _remove_if_empty(path: Path) -> bool:
-    """Remove ``path`` iff it is an empty directory. Return ``True`` on removal.
-
-    Uses :func:`os.rmdir`, which raises on a non-empty directory — that is the
-    intended safety net: if a file slipped in since the scan, the directory is
-    left intact. A vanished or otherwise non-removable directory is a no-op.
-    """
     try:
         os.rmdir(path)
         return True
@@ -97,91 +58,153 @@ def _remove_if_empty(path: Path) -> bool:
         return False
 
 
-def _load_references(session_ids: set[str]) -> dict[str, datetime | None]:
-    """Map each known session id to its newest lifecycle timestamp (or ``None``).
+_SESSION_FIELDS = (
+    "id", "created_at", "last_started_at", "last_updated_at", "last_stopped_at",
+    "archived", "hidden", "spawn_root_id", "annotations",
+)
 
-    The reference is ``max(last_updated_at, last_started_at, created_at)`` over
-    the non-null values; ``None`` when a row exists but carries no timestamp yet.
-    Ids with no matching row are simply absent from the result (orphans). Read
-    only; chunked to stay under SQLite's variable limit.
-    """
+
+def _session_state(row: dict, scratch_root: Path, now: datetime) -> SessionDirectoryState:
+    timestamps = [row[field] for field in _SESSION_FIELDS[1:5] if row[field] is not None]
+    reference = max(timestamps) if timestamps else None
+    shared = []
+    if row["spawn_root_id"]:
+        shared.append(scratch_root / row["spawn_root_id"])
+    annotations = row["annotations"]
+    annotated_path = annotations.get("scratch_dir") if isinstance(annotations, dict) else None
+    if isinstance(annotated_path, str) and annotated_path and Path(annotated_path).is_absolute():
+        shared.append(Path(annotated_path))
+    return SessionDirectoryState(
+        reference, bool(row["archived"] or row["hidden"]) and _is_stale(reference, now), tuple(shared),
+    )
+
+
+def _uses_folder(shared_path: Path, folder: Path) -> bool:
+    # Resolve only for ownership comparison, never as a deletion target.
+    # A nested annotation protects the whole containing session folder.
+    try:
+        for shared, candidate in (
+            (Path(os.path.abspath(shared_path)), Path(os.path.abspath(folder))),
+            (shared_path.resolve(), folder.resolve()),
+        ):
+            if shared.is_relative_to(candidate) or candidate.is_relative_to(shared):
+                return True
+        return False
+    except (OSError, RuntimeError):
+        return True  # An unreadable shared path must not authorize deletion.
+
+
+def _scratch_users(folder: Path, scratch_root: Path, now: datetime) -> dict[str, SessionDirectoryState]:
+    """Read current users immediately before removing a scratch folder."""
+    from django.db.models import Q
+
     from twicc.core.models import Session
 
-    references: dict[str, datetime | None] = {}
-    ids = list(session_ids)
-    for start in range(0, len(ids), _QUERY_CHUNK):
-        batch = ids[start:start + _QUERY_CHUNK]
-        for row in Session.objects.filter(id__in=batch).values(
-            "id", "last_updated_at", "last_started_at", "created_at"
-        ):
-            known = [
-                ts
-                for ts in (row["last_updated_at"], row["last_started_at"], row["created_at"])
-                if ts is not None
-            ]
-            references[row["id"]] = max(known) if known else None
-    return references
+    users = {}
+    rows = Session.objects.filter(
+        Q(id=folder.name) | Q(spawn_root_id=folder.name) | Q(annotations__scratch_dir__isnull=False)
+    ).values(*_SESSION_FIELDS)
+    for row in rows.iterator(chunk_size=_QUERY_CHUNK):
+        state = _session_state(row, scratch_root, now)
+        if row["id"] == folder.name or any(_uses_folder(path, folder) for path in state.scratch_paths):
+            users[row["id"]] = state
+    return users
 
 
 def _prune_stale_session_dirs() -> tuple[int, int]:
-    """Run one cleanup cycle. Return ``(artifacts_removed, scratch_removed)``.
-
-    Synchronous: a filesystem scan, read-only ``Session`` queries, and the
-    ``rmdir`` calls. Meant to run on a worker thread (no event loop), so the
-    sync ORM access is safe.
-    """
+    """Return (artifact folders removed, scratch folders removed)."""
     from django.utils import timezone
 
+    from twicc.agent.registry import get_agent_manager_registry
+    from twicc.core.models import Session
     from twicc.paths import get_artifacts_dir, get_scratch_dir
 
     now = timezone.now()
-    roots = (("artifacts", get_artifacts_dir()), ("scratch", get_scratch_dir()))
-
-    # (root_label, session_id, path) for every per-session subdirectory under
-    # both roots, so the timestamps for all of them resolve in one batched query.
-    candidates: list[tuple[str, str, Path]] = []
+    scratch_root = get_scratch_dir()
+    roots = (("artifacts", get_artifacts_dir()), ("scratch", scratch_root))
+    candidates = []
     for label, root in roots:
         try:
-            entries = list(os.scandir(root))
+            with os.scandir(root) as entries:
+                candidates.extend(
+                    (label, entry.name, Path(entry.path))
+                    for entry in entries if entry.is_dir(follow_symlinks=False)
+                )
         except FileNotFoundError:
             continue
-        for entry in entries:
-            if entry.is_dir(follow_symlinks=False):
-                candidates.append((label, entry.name, Path(entry.path)))
 
     if not candidates:
         return (0, 0)
 
-    references = _load_references({sid for _, sid, _ in candidates})
-
+    registry = get_agent_manager_registry()
+    active_ids = {info.session_id for info in registry.get_active_agents()}
+    active_paths = [Path(path) for path in registry.get_active_work_dirs()]
+    states = {
+        row["id"]: _session_state(row, scratch_root, now)
+        for row in Session.objects.values(*_SESSION_FIELDS).iterator(chunk_size=_QUERY_CHUNK)
+    }
+    protected_shared = [
+        path
+        for session_id, state in states.items()
+        if not state.eligible or session_id in active_ids
+        for path in state.scratch_paths
+    ]
     removed = {"artifacts": 0, "scratch": 0}
     for label, session_id, path in candidates:
-        if session_id in references:
-            # Known session; fall back to mtime only if it has no timestamp yet.
-            reference = references[session_id] or _dir_mtime(path)
-        else:
-            # Orphan directory: no matching session → use the dir's own mtime.
-            reference = _dir_mtime(path)
-
+        if session_id in active_ids or any(_uses_folder(active, path) for active in active_paths):
+            continue
+        state = states.get(session_id)
+        if label == "scratch":
+            if any(_uses_folder(shared, path) for shared in protected_shared):
+                continue
+            if state is None or state.eligible:
+                # Re-read ownership and dates so unarchiving or new references
+                # between the initial scan and this folder protect it.
+                users = _scratch_users(path, scratch_root, now)
+                if any(not user.eligible or sid in active_ids for sid, user in users.items()):
+                    continue
+                try:
+                    # rmtree does not follow child symlinks and refuses a
+                    # top-level symlink if the folder was replaced meanwhile.
+                    shutil.rmtree(path)
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    logger.warning("Session dirs cleanup: cannot remove %s", path, exc_info=True)
+                    continue
+                removed[label] += 1
+                logger.info("Session dirs cleanup: removed scratch folder %s", path)
+                continue
+        reference = (state.reference if state else None) or _dir_mtime(path)
         if _is_stale(reference, now) and _remove_if_empty(path):
             removed[label] += 1
 
-    total = removed["artifacts"] + removed["scratch"]
-    if total:
+    if any(removed.values()):
         logger.info(
-            "Session dirs cleanup: pruned %d empty dir(s) (artifacts: %d, scratch: %d)",
-            total, removed["artifacts"], removed["scratch"],
+            "Session dirs cleanup: removed %d artifacts and %d scratch folders",
+            removed["artifacts"], removed["scratch"],
         )
-    return (removed["artifacts"], removed["scratch"])
+    return removed["artifacts"], removed["scratch"]
+
+
+async def _run_cleanup_pass() -> None:
+    from twicc.agent.registry import get_agent_manager_registry
+
+    # Starts/resumes hold a provider manager lock while granting work dirs.
+    # Holding all manager locks makes the runtime snapshot stable and prevents
+    # an orphan-folder deletion racing a new session before its first DB row.
+    async with get_agent_manager_registry().work_dirs_cleanup_guard():
+        task = asyncio.create_task(asyncio.to_thread(_prune_stale_session_dirs))
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # Cancelling to_thread does not stop its worker. Keep the locks
+            # until deletion finishes, including during server shutdown.
+            await task
+            raise
 
 
 async def start_session_dirs_cleanup_task(stop_event: asyncio.Event) -> None:
-    """Periodic janitor loop for empty per-session ``artifacts``/``scratch`` dirs.
-
-    Sleeps :data:`SESSION_DIRS_CLEANUP_INTERVAL` seconds, then prunes, repeating
-    until ``stop_event`` is set (the shared shutdown event). No-op — logs and
-    returns — when ``settings.SESSION_DIRS_CLEANUP_ENABLED`` is false.
-    """
     from django.conf import settings
 
     if not settings.SESSION_DIRS_CLEANUP_ENABLED:
@@ -189,20 +212,19 @@ async def start_session_dirs_cleanup_task(stop_event: asyncio.Event) -> None:
         return
 
     logger.info("Session dirs cleanup task started")
+    delay = SESSION_DIRS_CLEANUP_INITIAL_DELAY
     try:
         while not stop_event.is_set():
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=SESSION_DIRS_CLEANUP_INTERVAL)
+                await asyncio.wait_for(stop_event.wait(), timeout=delay)
             except TimeoutError:
-                # Timeout means it's time to prune again.
                 pass
             else:
-                # stop_event fired — exit before another pass.
                 break
-
             try:
-                await asyncio.to_thread(_prune_stale_session_dirs)
-            except Exception:  # noqa: BLE001 — keep the loop alive across transient errors
+                await _run_cleanup_pass()
+            except Exception:
                 logger.exception("Session dirs cleanup cycle failed")
+            delay = SESSION_DIRS_CLEANUP_INTERVAL
     finally:
         logger.info("Session dirs cleanup task stopped")

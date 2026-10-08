@@ -16,6 +16,8 @@ when the registry singleton is created.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import ClassVar
 
 from twicc.core.enums import Provider
@@ -59,6 +61,24 @@ class AgentManagerRegistry:
     def items(self) -> list[tuple[Provider, BaseAgentManager]]:
         """Return ``(provider, manager)`` pairs for every registered provider."""
         return list(self._managers.items())
+
+    @asynccontextmanager
+    async def work_dirs_cleanup_guard(self) -> AsyncIterator[None]:
+        """Exclude agent starts/resumes while their work folders are cleaned."""
+        async with AsyncExitStack() as stack:
+            for manager in self._managers.values():
+                await stack.enter_async_context(manager._lock)
+            yield
+
+    def get_active_work_dirs(self) -> list[str]:
+        """Include work folders granted before a new session reaches the DB."""
+        return [
+            path
+            for manager in self._managers.values()
+            for agent in list(manager._agents.values())
+            if agent.state != AgentState.DEAD
+            for path in agent._work_dirs
+        ]
 
     # ------------------------------------------------------------------
     # Aggregate operations (mirror BaseAgentManager API)

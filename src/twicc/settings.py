@@ -422,10 +422,9 @@ CRON_AUTO_RESTART = os.environ.get("TWICC_NO_CRON_RESTART", "").strip().lower() 
 # ``CODEX_HOME`` installs its own copy of the plugin there).
 CODEX_PLUGIN_INSTALL_ENABLED = os.environ.get("TWICC_NO_CODEX_PLUGIN", "").strip().lower() not in ("1", "true", "yes")
 
-# Daily cleanup of empty per-session artifacts/scratch directories
-# Set TWICC_NO_SESSION_DIRS_CLEANUP=1 to disable the janitor that prunes empty
-# ``<data_dir>/artifacts/<id>/`` and ``<data_dir>/scratch/<id>/`` dirs 30 days
-# after a session's last activity (cf. twicc.session_dirs_cleanup_task).
+# Cleanup of empty session folders and expired archived/hidden scratch.
+# Runs first after 30 minutes, then daily. Set TWICC_NO_SESSION_DIRS_CLEANUP=1
+# to disable it (cf. twicc.session_dirs_cleanup_task).
 # Worktrees set this: artifacts/ and scratch/ are symlinks shared with the main
 # instance, which owns the cleanup.
 SESSION_DIRS_CLEANUP_ENABLED = os.environ.get("TWICC_NO_SESSION_DIRS_CLEANUP", "").strip().lower() not in ("1", "true", "yes")

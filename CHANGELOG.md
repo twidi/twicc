@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **Automatic cleanup** — Temporary files from archived or hidden sessions are removed after 30 days of inactivity to free disk space.
+
 ### Fixed
 
 - **Session messages** — Messages now load correctly when opening a session or returning after switching apps, and earlier exchanges remain accessible.
