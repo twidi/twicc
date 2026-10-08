@@ -46,7 +46,7 @@ function realStore(settings) {
     return new Function(...Object.keys(deps), `${body}; return useDataStore`)(...Object.values(deps))
 }
 
-async function mount(t) {
+async function mount(t, { initialManifest = manifest(263) } = {}) {
     const previous = { window: globalThis.window, location: globalThis.location, history: globalThis.history,
         fetch: globalThis.fetch, getComputedStyle: globalThis.getComputedStyle }
     const events = new Map()
@@ -55,12 +55,15 @@ async function mount(t) {
     globalThis.history = { replaceState() {} }
     globalThis.getComputedStyle = () => ({ scrollPaddingTop: '0' })
     const requests = [], items = [item(2, tag('calculator')), item(10, 'History marker 010', 'user_message'), item(263, tag('preferences'))]
-    let boundary = 263, metadataReply = null, metaReply = null
+    let boundary = 263, metadataReply = null, metaReply = null, manifestReply = null
     globalThis.fetch = async (url, options = {}) => {
         requests.push(String(url))
         if (options.method === 'HEAD') return new Response(null, { status: 200 })
         if (url.endsWith('/api/meta/')) return Response.json(metaReply ? await metaReply() : meta(boundary))
-        if (url.endsWith('/api/inline-artifacts/')) return Response.json(manifest(boundary))
+        if (url.endsWith('/api/inline-artifacts/')) {
+            const reply = manifestReply ? await manifestReply() : boundary === 263 ? initialManifest : manifest(boundary)
+            return reply instanceof Response ? reply : Response.json(reply)
+        }
         if (url.endsWith('/items/metadata/')) {
             const rows = metadataReply ? await metadataReply() : items
             return Response.json(rows.map(({ content, ...row }) => row))
@@ -149,7 +152,7 @@ async function mount(t) {
     return { store, requests, scroller, app, root, runtime: () => runtime,
         focus: () => events.get('focus')(),
         advance(line = 267) { boundary = line; items.push(item(line, tag('preferences'))) },
-        metadata(fn) { metadataReply = fn }, meta(fn) { metaReply = fn },
+        metadata(fn) { metadataReply = fn }, meta(fn) { metaReply = fn }, manifest(fn) { manifestReply = fn },
     }
 }
 
@@ -231,6 +234,79 @@ test('snapshot exclusion hides retained frames before changed-boundary metadata 
     assert.equal(f.store.getSession('root').last_line, 267)
     assert.ok(f.store.getSessionVisualItems('root').some(row => row.lineNum === 267))
     assert.equal(runtime.active.value, false, 'metadata recovery must preserve authoritative exclusion')
+})
+
+test('snapshot reactivation waits for transcript rows before resuming retained pending completion', async t => {
+    const initialManifest = manifest(263)
+    initialManifest.artifacts[1].status = 'pending'
+    initialManifest.artifacts[1].code_revision = null
+    const f = await mount(t, { initialManifest }), pending = deferred(), runtime = f.runtime()
+    const key = '["root","preferences"]'
+    const entry = runtime.entries.get(key)
+    const bindingGeneration = entry.generation
+    f.meta(() => ({ ...meta(263), include_inline_artifacts: false }))
+    f.manifest(() => new Response(null, { status: 503 }))
+    await f.focus(); await flush()
+    assert.equal(runtime.active.value, false, 'exclusion must remain immediate')
+    assert.equal(entry.descriptor.status, 'pending', 'manifest503 must retain the pending descriptor')
+    f.advance()
+    f.meta(() => meta(267))
+    f.manifest(null)
+    f.metadata(() => pending.promise)
+    f.requests.length = 0
+    const focus = f.focus(); await flush()
+    await new Promise(resolve => setTimeout(resolve, 1100)); await flush()
+    const publicationBeforeRows = entry.descriptor.publicationKey
+    const generationBeforeRows = entry.generation
+    const boundaryBeforeRows = f.store.getSession('root').last_line
+    pending.reject(Object.assign(new Error('metadata unavailable'), { status: 503 }))
+    await focus; await flush()
+    assert.equal(boundaryBeforeRows, 263)
+    assert.equal(publicationBeforeRows, '["root",263,0,0]', 'completion must keep the old binding while rows are pending')
+    assert.equal(generationBeforeRows, bindingGeneration, 'completion must not invalidate the old binding')
+    await new Promise(resolve => setTimeout(resolve, 1100)); await flush()
+    assert.equal(entry.descriptor.publicationKey, '["root",263,0,0]', 'failed metadata must not release newer placement')
+    assert.equal(f.store.getSession('root').last_line, 263)
+    assert.equal(f.store.getSessionItem('root', 267), null)
+    assert.equal(f.requests.filter(url => url.endsWith('/api/inline-artifacts/')).length, 0)
+    f.metadata(null)
+    let completionRequests = 0
+    f.manifest(() => {
+        assert.equal(f.store.getSession('root').last_line, 267, 'successful boundary must precede every manifest request')
+        assert.ok(f.store.getSessionVisualItems('root').some(row => row.lineNum === 267))
+        const reply = manifest(267)
+        if (++completionRequests === 1) {
+            reply.artifacts[1].status = 'pending'
+            reply.artifacts[1].code_revision = null
+        } else reply.revision = 268
+        return reply
+    })
+    await f.focus(); await flush()
+    assert.equal(entry.descriptor.publicationKey, '["root",267,0,0]')
+    assert.equal(entry.descriptor.status, 'pending')
+    assert.equal(runtime.active.value, true)
+    await new Promise(resolve => setTimeout(resolve, 1100)); await flush()
+    assert.equal(entry.descriptor.status, 'ready', 'successful metadata must resume automatic pending completion')
+    assert.equal(completionRequests, 2)
+    await f.store.loadSessionItemsRanges('share', 'root', [[267, 267]]); await flush()
+    assert.equal(descendants(f.root, node => node.props['data-publication'] === '["root",267,0,0]' && node.props['data-status'] === 'ready').length, 1)
+})
+
+test('failed snapshot meta fetch preserves completion at the reconciled transcript boundary', async t => {
+    const initialManifest = manifest(263)
+    initialManifest.artifacts[1].status = 'pending'
+    initialManifest.artifacts[1].code_revision = null
+    const f = await mount(t, { initialManifest }), runtime = f.runtime()
+    f.meta(() => { throw Object.assign(new Error('meta unavailable'), { status: 503 }) })
+    f.manifest(() => ({ ...manifest(263), revision: 264 }))
+    await f.focus(); await flush()
+    await new Promise(resolve => setTimeout(resolve, 1100)); await flush()
+    const descriptor = runtime.entries.get('["root","preferences"]').descriptor
+    assert.equal(descriptor.status, 'ready', 'meta503 must preserve completion while the known boundary stays reconciled')
+    assert.equal(descriptor.publicationKey, '["root",263,0,0]')
+    assert.equal(f.store.getSession('root').last_line, 263)
+    assert.equal(runtime.active.value, true)
+    assert.equal(f.requests.filter(url => url.endsWith('/items/metadata/')).length, 0)
 })
 
 test('unmounted snapshot ignores delayed root metadata and inline refresh', async t => {

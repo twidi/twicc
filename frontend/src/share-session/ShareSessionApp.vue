@@ -82,13 +82,14 @@ watch(() => revoked.value || !ready.value || meta.include_inline_artifacts === f
     suppressed => inlineRuntime?.setActive(!suppressed), { immediate: true, flush: 'sync' })
 let disconnectLive = null, disposed = false
 let snapshotFocusGeneration = 0
+const snapshotRowsReady = ref(true)
 const focusController = new AbortController()
 const inlineCompletion = inlineAdapter ? createShareInlineCompletion({
     adapter: inlineAdapter, isSnapshot: () => meta.mode === 'snapshot',
-    accessClosed: () => revoked.value || !ready.value || meta.include_inline_artifacts === false,
+    accessClosed: () => revoked.value || !ready.value || meta.include_inline_artifacts === false || !snapshotRowsReady.value,
     onAccessClosed: () => { revoked.value = true },
 }) : null
-watch(() => [meta.mode, revoked.value, ready.value, meta.include_inline_artifacts],
+watch(() => [meta.mode, revoked.value, ready.value, meta.include_inline_artifacts, snapshotRowsReady.value],
     () => inlineCompletion?.accessChanged(), { flush: 'sync' })
 async function refreshInline() {
     if (!inlineAdapter || disposed || revoked.value) return
@@ -107,6 +108,8 @@ async function onWindowFocus() {
         const fresh = await api.fetchMeta({ signal: focusController.signal })
         if (disposed || generation !== snapshotFocusGeneration) return
         const { last_line: lastLine, ...freshState } = fresh
+        // Pause completion only when fresh metadata reveals an unreconciled boundary.
+        if (lastLine !== store.getSession(meta.session_id)?.last_line) snapshotRowsReady.value = false
         // Access changes take effect even if transcript metadata is unavailable.
         Object.assign(meta, freshState)
         if (fresh.ready !== false && fresh.last_line !== store.getSession(meta.session_id)?.last_line) {
@@ -118,6 +121,7 @@ async function onWindowFocus() {
             store.setSession({ ...store.getSession(meta.session_id), last_line: fresh.last_line })
         }
         meta.last_line = lastLine
+        snapshotRowsReady.value = true
         await refreshInline()
     } catch (error) {
         if (!disposed && generation === snapshotFocusGeneration && [401, 403, 404].includes(error.status)) revoked.value = true
