@@ -413,7 +413,7 @@ test('Ctrl+Enter still adds to message instead of sending', async () => {
     } finally { f.cleanup() }
 })
 
-test('rendered form offers three actions only with a composer and disables only Send during another operation', async () => {
+test('rendered form offers a close control and two actions with a composer and disables only Send during another operation', async () => {
     const bridge = { available: true, pending: true }
     const f = await formFixture(bridge)
     try {
@@ -434,11 +434,17 @@ test('rendered form offers three actions only with a composer and disables only 
             return out
         }
         const actions = buttons(render({}, [], {}, setup))
-        assert.deepEqual(actions.map(button => button.children.trim()), ['Cancel', 'Add to message', 'Send to Agent'])
-        assert.equal(actions[1].props.disabled, false)
-        assert.equal(actions[2].props.disabled, true)
+        assert.equal(actions[0].props['aria-label'], 'Close')
+        assert.equal(actions[0].props.disabled, false)
+        actions[0].props.onClick()
+        assert.deepEqual(f.emitted, ['close'])
+        assert.deepEqual(actions.slice(2).map(button => button.children.trim()), ['Add to message', 'Send to Agent'])
+        assert.equal(actions[1].props['aria-label'], 'Move dialog')
+        assert.equal(actions[2].props.disabled, false)
+        assert.equal(actions[3].props.disabled, true)
         bridge.available = false
         const withoutComposer = buttons(render({}, [], {}, setup))
-        assert.deepEqual(withoutComposer.map(button => button.children.trim()), ['Cancel', 'Add to message'])
+        assert.equal(withoutComposer[0].props['aria-label'], 'Close')
+        assert.deepEqual(withoutComposer.slice(2).map(button => button.children.trim()), ['Add to message'])
     } finally { f.cleanup() }
 })

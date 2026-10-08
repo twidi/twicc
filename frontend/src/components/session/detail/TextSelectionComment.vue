@@ -65,7 +65,7 @@ const placeholderText = computed(() => {
     return `Optional comment... (${keys} to add to message)`
 })
 
-// The help hint (discard-on-click-outside note + drag tip) is dismissible: once
+// The help hint (discard-on-click-outside note) is dismissible: once
 // the user clicks "Dismiss", it stays hidden for good (persisted to localStorage).
 const showHelpHint = computed(() => !settingsStore.selectionCommentHintDismissed)
 
@@ -118,7 +118,15 @@ function clampToViewport() {
     const el = rootRef.value
     if (!el) return
 
-    const rect = el.getBoundingClientRect()
+    const panelRect = el.getBoundingClientRect()
+    const rect = { left: panelRect.left, right: panelRect.right, top: panelRect.top, bottom: panelRect.bottom }
+    for (const control of el.querySelectorAll?.('.tsc-corner') ?? []) {
+        const controlRect = control.getBoundingClientRect()
+        rect.left = Math.min(rect.left, controlRect.left)
+        rect.right = Math.max(rect.right, controlRect.right)
+        rect.top = Math.min(rect.top, controlRect.top)
+        rect.bottom = Math.max(rect.bottom, controlRect.bottom)
+    }
     const margin = 8
     const vv = window.visualViewport
     const viewportLeft = vv?.offsetLeft ?? 0
@@ -185,7 +193,7 @@ function onDragPointerDown(e) {
     // Don't drag when interacting with quote (scrollable), textareas, buttons,
     // or the screenshot controls (switch + clickable thumbnail).
     const target = e.target
-    if (target.closest('.tsc-quote, wa-textarea, wa-button, textarea, button, a, .tsc-shot')) return
+    if (!target.closest('.tsc-grip') && target.closest('.tsc-quote, wa-textarea, wa-button, textarea, button, a, .tsc-shot')) return
     e.preventDefault()
     isDragging.value = true
     dragStart = { x: e.clientX, y: e.clientY, ...panelOffset.value }
@@ -420,8 +428,31 @@ defineExpose({ isExpanded: expanded })
             @keydown="handleKeydown"
             @pointerdown="onDragPointerDown"
         >
-            <!-- Selected text preview (scrollable) -->
             <div class="tsc-quote quote-card">{{ selectedText }}</div>
+            <wa-button
+                class="tsc-corner tsc-close"
+                size="small"
+                variant="neutral"
+                appearance="plain"
+                aria-label="Close"
+                :disabled="submitting"
+                @click="close"
+            >
+                <wa-icon name="xmark"></wa-icon>
+                <span class="tsc-control-label">Close</span>
+            </wa-button>
+
+            <wa-button
+                class="tsc-corner tsc-grip"
+                size="small"
+                variant="neutral"
+                appearance="plain"
+                aria-label="Move dialog"
+                title="Move dialog"
+            >
+                <wa-icon name="grip-vertical" family="classic" variant="solid"></wa-icon>
+                <span class="tsc-control-label">Move dialog</span>
+            </wa-button>
 
             <wa-textarea
                 ref="textareaRef"
@@ -454,14 +485,11 @@ defineExpose({ isExpanded: expanded })
             </div>
 
             <div v-if="showHelpHint" class="tsc-help">
-                <strong>Note:</strong> Clicking outside this dialog will discard the selection and any comment entered. Drag here to move the dialog.
+                <strong>Note:</strong> Clicking outside this dialog will discard the selection and any comment entered.
                 <a class="tsc-help-dismiss" href="#" @click.prevent="dismissHelpHint">Dismiss</a>
             </div>
 
             <div class="tsc-actions">
-                <wa-button size="small" variant="neutral" appearance="outlined" :disabled="submitting" @click="close">
-                    Cancel
-                </wa-button>
                 <wa-button
                     size="small"
                     variant="brand"
@@ -502,8 +530,9 @@ defineExpose({ isExpanded: expanded })
 /* ── Panel ───────────────────────────────────────────────────────── */
 
 .tsc-panel {
-    width: 25rem;
-    max-width: calc(100vw - 1rem);
+    position: relative;
+    width: 20rem;
+    max-width: calc(100vw - 3rem);
     padding: var(--wa-space-s);
     border-radius: var(--wa-border-radius-m);
     display: flex;
@@ -515,6 +544,52 @@ defineExpose({ isExpanded: expanded })
 
 .tsc-panel.dragging {
     cursor: grabbing;
+}
+
+.tsc-corner {
+    position: absolute;
+    top: 0;
+    z-index: 101; /* Above the glass surface's border overlay (100). */
+    --wa-form-control-padding-inline: 0.375rem;
+    --wa-color-surface-default: var(--surface-solid);
+}
+
+.tsc-close {
+    right: 0;
+    transform: translate(calc(50% - 4px), calc(-50% + 4px));
+}
+
+.tsc-grip {
+    left: 0;
+    transform: translate(calc(-50% + 4px), calc(-50% + 4px));
+    touch-action: none;
+}
+
+.tsc-grip::part(base) {
+    cursor: grab;
+}
+
+.dragging .tsc-grip::part(base) {
+    cursor: grabbing;
+}
+
+.tsc-corner::part(base) {
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    background: var(--surface-solid);
+    border: 1px solid var(--wa-color-border-neutral-tertiary);
+    border-radius: var(--wa-border-radius-circle);
+    box-shadow: var(--wa-shadow-s);
+}
+
+.tsc-control-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
 }
 
 /* ── Selected text quote ─────────────────────────────────────────── */
