@@ -1,5 +1,5 @@
 <script setup>
-import { computed, watch, ref, reactive, readonly, provide, inject, onActivated, onDeactivated, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { computed, watch, ref, shallowRef, reactive, readonly, provide, inject, onActivated, onDeactivated, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { useWorkspacesStore } from '../stores/workspaces'
@@ -48,6 +48,11 @@ import TaskTabProgress from '../components/tasks/TaskTabProgress.vue'
 import { countTasks } from '../utils/todoList'
 import { useCodeCommentsStore } from '../stores/codeComments'
 import { useFramePoolStore } from '../stores/framePool'
+import { apiFetch } from '../utils/api'
+import { INLINE_ARTIFACT_CONTEXT } from '../inline-artifacts/context.js'
+import { createInlineArtifactRuntime } from '../inline-artifacts/runtime.js'
+import { makeOwnerInlineAdapter } from '../inline-artifacts/ownerAdapter.js'
+import InlineArtifactRuntimeHost from '../inline-artifacts/InlineArtifactRuntimeHost.vue'
 import { useUploadsStore } from '../stores/uploads'
 import { originKey } from '../utils/uploads/rules'
 import {
@@ -386,6 +391,33 @@ const planRouteDocPath = computed(() => {
 
 // Session data
 const session = computed(() => store.getSession(sessionId.value))
+
+// Freeze the source identity before cached routes can change globally.
+const inlineSourceSessionId = sessionId.value
+const inlineRuntime = shallowRef(null)
+const inlineFramePool = useFramePoolStore()
+let inlineAdapter = null
+watch(() => [session.value?.type, session.value?.inline_artifacts], () => {
+    if (session.value?.type !== 'session') {
+        inlineRuntime.value?.setActive(false)
+        return
+    }
+    if (!inlineRuntime.value) {
+        inlineAdapter = makeOwnerInlineAdapter({ sessionId: inlineSourceSessionId, store, api: apiFetch })
+        inlineRuntime.value = createInlineArtifactRuntime({ viewId: `session:${inlineSourceSessionId}`,
+            pool: inlineFramePool, adapter: inlineAdapter })
+        // The authorized main list exclusively enables this runtime.
+        inlineRuntime.value.setActive(false)
+    }
+    inlineRuntime.value.reconcile(inlineAdapter.manifest())
+}, { immediate: true, deep: true })
+provide(INLINE_ARTIFACT_CONTEXT, computed(() => session.value?.type === 'session' && inlineRuntime.value
+    ? { runtime: inlineRuntime.value, sourceSessionId: inlineSourceSessionId } : null))
+watch(isActive, active => {
+    // Parent activation cannot expose frames while a cached child panel stays open.
+    if (!active) inlineRuntime.value?.setActive(false)
+}, { flush: 'sync' })
+onBeforeUnmount(() => inlineRuntime.value?.dispose())
 
 // ─── Artifacts tab ───────────────────────────────────────────────────────────
 // The tab is present for every real session. The "Session artifacts" root is
@@ -2332,6 +2364,7 @@ onBeforeUnmount(() => {
 
 <template>
     <div class="session-view">
+        <InlineArtifactRuntimeHost v-if="inlineRuntime" :runtime="inlineRuntime" :pool="inlineFramePool" />
         <!-- Main session header (always visible, above tabs) -->
         <SessionHeader
             v-if="session"

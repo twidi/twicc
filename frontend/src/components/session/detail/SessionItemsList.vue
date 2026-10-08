@@ -1,4 +1,5 @@
 <script setup>
+import { INLINE_ARTIFACT_CONTEXT } from '../../../inline-artifacts/context.js'
 import { MARKDOWN_RENDER_VIEW_CONTEXT, STREAMING_VIEW_CONTEXT } from '../../../composables/streamPublicationKeys.js'
 import { computed, watch, ref, reactive, provide, nextTick, inject, onMounted, onBeforeUnmount, onActivated, onDeactivated, unref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -178,6 +179,19 @@ function onHybridTerminalState(state) {
 
 // Session data
 const session = computed(() => store.getSession(props.sessionId))
+
+const inheritedInlineContext = inject(INLINE_ARTIFACT_CONTEXT, null)
+const inlineContext = computed(() => {
+    const context = unref(inheritedInlineContext)
+    return !props.parentSessionId && session.value?.type === 'session'
+        && context?.sourceSessionId === props.sessionId ? context : null
+})
+// Shadow ancestor context for every native subagent or different-source list.
+provide(INLINE_ARTIFACT_CONTEXT, inlineContext)
+watch([inlineContext, () => props.viewActive, sessionActive], ([context, visible, active]) => {
+    context?.runtime.setActive(visible && active)
+}, { immediate: true, flush: 'sync' })
+
 // Question hydration is independent of transcript pages and compute status.
 watch([() => props.sessionId, () => props.viewActive, sessionActive,
     () => session.value?.provider, () => session.value?.draft], () => {

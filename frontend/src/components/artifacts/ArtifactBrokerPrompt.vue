@@ -6,15 +6,37 @@
 // Two prompt types share this dialog: `network` (a cross-origin/brokered
 // request) and `data-write` (the page wants to store data next to itself,
 // design 2026-08-05 §6 — tab-lifetime only, hence no "Forever").
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 
 const props = defineProps({
     // { type: 'network', host, ip, kind, canRemember }
     // | { type: 'data-write', path }
     // | null
     prompt: { type: Object, default: null },
+    // Passive owner hiding preserves the pending broker decision.
+    visible: { type: Boolean, default: true },
 })
 const emit = defineEmits(['decision'])
+const dialogOpen = computed(() => !!props.prompt && props.visible)
+let controlledCloses = 0
+let openPrompt = props.prompt
+let dismissedPrompt = null
+watch([dialogOpen, () => props.prompt], ([open, prompt], [previous]) => {
+    if (previous && !open && openPrompt !== dismissedPrompt) controlledCloses++
+    if (!open) dismissedPrompt = null
+    if (open) openPrompt = prompt
+}, { flush: 'sync' })
+function onDialogHide() {
+    // A close transition may finish after the owner becomes visible again.
+    if (controlledCloses) {
+        controlledCloses--
+        return
+    }
+    if (props.visible && props.prompt) {
+        dismissedPrompt = props.prompt
+        emit('decision', 'deny')
+    }
+}
 
 const isDataWrite = computed(() => props.prompt?.type === 'data-write')
 
@@ -73,9 +95,9 @@ const calloutText = computed(() => {
          nested wa-* event must never be read as a decision. Dismiss == deny is
          the safe default. -->
     <wa-dialog
-        :open="!!prompt"
+        :open="dialogOpen"
         :label="isDataWrite ? 'Store data' : 'Network request'"
-        @wa-hide.self="emit('decision', 'deny')"
+        @wa-hide.self="onDialogHide"
     >
         <div v-if="prompt && isDataWrite" class="broker-prompt">
             <p>This page wants to store data in:</p>
