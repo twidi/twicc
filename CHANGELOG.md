@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Selection comments** — Use “Send to Agent” to send a selection and your comment directly to the agent.
+
 ### Changed
 
 - **Automatic cleanup** — Temporary files from archived or hidden sessions are removed after 30 days of inactivity to free disk space.
