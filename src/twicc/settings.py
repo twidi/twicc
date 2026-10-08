@@ -438,8 +438,8 @@ SESSION_DIRS_CLEANUP_ENABLED = os.environ.get("TWICC_NO_SESSION_DIRS_CLEANUP", "
 TMUX_CLEANUP_ENABLED = os.environ.get("TWICC_NO_TMUX_CLEANUP", "").strip().lower() not in ("1", "true", "yes")
 
 # Anonymous telemetry (design docs/plans/2026-07-18-telemetry-design.md).
-# Env kill switch; the synced setting telemetryEnabled is checked at runtime.
-TELEMETRY_ENABLED = os.environ.get("TWICC_NO_TELEMETRY", "").strip().lower() not in ("1", "true", "yes")
+# TWICC_NO_TELEMETRY initializes the synced setting once at backend startup.
+# Runtime activity depends only on synced settings (see twicc.telemetry.task).
 
 # Where telemetry payloads are POSTed. The hardcoded production URL is the
 # authoritative value shipped with the project; the env override exists for

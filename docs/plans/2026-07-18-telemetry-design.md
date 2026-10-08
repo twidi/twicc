@@ -82,8 +82,8 @@ Pure read-only ORM aggregation over `Session`, `DailyActivity`, `Share`, `Artifa
 ## 6. Opt-out
 
 - `telemetryEnabled: true` in synced settings (`src/twicc/synced_settings.py` defaults) — flat camelCase per the synced-settings convention; the nested `telemetry: {"enabled": ...}` sketch above was normalized at implementation. Toggled from the **bottom of the Global section** of `SettingsPopover.vue`. A companion flat key, `telemetryNoticeSeen`, tracks whether the first-launch notice (§6 below) has been acknowledged.
-- Env kill switch `TWICC_NO_TELEMETRY=1` (same family as `TWICC_NO_MCP`): overrides the setting, task never starts.
-- **Off means no data about that period:** on an off→on transition (setting re-enabled, or kill switch removed), the last-sent marker jumps to the current day — day blocks covering the disabled window are never sent, mirroring the first-run no-backfill rule.
+- `TWICC_NO_TELEMETRY=1` initializes `telemetryEnabled=false` once per instance at backend startup, including settings copied into a worktree. The `environment_default_applied` marker lives in instance-local `telemetry.json`. Manual changes survive restarts even while the variable remains set. The task stays running and checks synced settings at runtime.
+- **Off means no data about that period:** on an off→on transition (setting re-enabled), the last-sent marker jumps to the current day — day blocks covering the disabled window are never sent, mirroring the first-run no-backfill rule.
 - **First-launch notice:** on the first backend start where telemetry is active and no notice has been acknowledged (flag in the state file), the frontend shows a dismissible notice — "TwiCC collects anonymous usage statistics — see what is sent or disable it in Settings" — linking straight to the toggle. Sending is not blocked on acknowledgement, but the first cycle only fires 24 h of data later by construction (only *complete* days are sent), so a user who disables on first sight leaks nothing.
 
 ## 7. Collector (server side)

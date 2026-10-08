@@ -36,8 +36,6 @@ GRACE_AFTER_ACTIVATION = 60 * 60  # 1 hour
 
 
 def is_telemetry_active() -> bool:
-    if not settings.TELEMETRY_ENABLED:
-        return False
     from twicc.synced_settings import read_synced_settings
 
     synced = read_synced_settings()
@@ -125,14 +123,6 @@ async def send_cycle() -> None:
 
 
 async def start_telemetry_task(stop_event: asyncio.Event) -> None:
-    if not settings.TELEMETRY_ENABLED:
-        logger.info("Telemetry disabled (TWICC_NO_TELEMETRY)")
-        # Record the disabled state so a later start without the kill switch
-        # counts as an off->on transition (the disabled window is never sent).
-        from twicc.telemetry.state import note_active_transition
-
-        await asyncio.to_thread(note_active_transition, False)
-        return
     logger.info("Telemetry task started")
     ticks_since_send = TELEMETRY_SEND_INTERVAL  # send on first loop entry
     try:

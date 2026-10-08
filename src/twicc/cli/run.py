@@ -229,6 +229,11 @@ async def run_server(port: int):
     from twicc.providers.state import apply_auto_enable_providers_bootstrap
     apply_auto_enable_providers_bootstrap()
 
+    # Initialize the user setting before clients connect. The environment
+    # opt-out is a one-time default, so users can enable telemetry afterwards.
+    from twicc.telemetry.state import apply_telemetry_settings_bootstrap
+    await asyncio.to_thread(apply_telemetry_settings_bootstrap)
+
     # Cross-provider boot cleanup of stale ProcessRun rows from a previous
     # TwiCC instance. Runs after the DB writer is up but before any
     # provider orchestrator starts, so no live agent's freshly-created

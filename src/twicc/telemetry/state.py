@@ -10,6 +10,7 @@ dialog), and ``last_sent_at`` (UTC timestamp of that last successful send).
 
 from __future__ import annotations
 
+import os
 import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, UTC
@@ -65,6 +66,28 @@ def state_txn():
 def ensure_state() -> dict:
     with state_txn() as txn:
         return dict(txn.data)
+
+
+def apply_telemetry_settings_bootstrap() -> None:
+    """Apply the environment opt-out once, including settings copied into worktrees.
+
+    Keep the marker in instance-local telemetry state so a later user choice
+    survives restarts while TWICC_NO_TELEMETRY remains set.
+    """
+    if os.environ.get("TWICC_NO_TELEMETRY", "").strip().lower() not in ("1", "true", "yes"):
+        return
+    from twicc.synced_settings import _settings_lock, read_synced_settings, write_synced_settings
+
+    with state_txn() as txn:
+        if txn.data.get("environment_default_applied"):
+            return
+        with _settings_lock:
+            synced = read_synced_settings()
+            synced["telemetryEnabled"] = False
+            synced["_version"] = synced.get("_version", 0) + 1
+            write_synced_settings(synced)
+        txn.data["environment_default_applied"] = True
+        txn.write()
 
 
 def reset_instance_id() -> str:

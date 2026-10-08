@@ -890,8 +890,8 @@ def get_process_config(backend_port: int, frontend_port: int) -> dict:
                 #   otherwise prune the shared dirs based on its own, partial DB).
                 # - The tmux reaper stays ON: the tmux sockets are per data dir (see
                 #   tmux_socket_suffix), so a worktree only ever sees its own sessions.
-                # - Disable telemetry: dev worktrees are throwaway instances that would each
-                #   register as a distinct install and pollute the collected stats.
+                # - Initialize the telemetry setting to OFF once: dev worktrees are
+                #   throwaway instances. Users can enable it in Settings afterwards.
                 # - Never prune old Codex runtimes: ~/.cache/twicc/codex-runtime/ is shared
                 #   with the main instance, and a worktree bumping CODEX_VERSION would delete
                 #   the version that instance is running on. It still downloads its own.

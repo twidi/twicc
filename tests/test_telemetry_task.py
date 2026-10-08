@@ -47,26 +47,23 @@ def temp_state(tmp_path, monkeypatch):
 
 
 class TestIsTelemetryActive:
-    def test_false_when_env_kill_switch_disabled(self, monkeypatch):
-        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", False)
-        assert task.is_telemetry_active() is False
+    def test_setting_can_enable_telemetry_with_environment_opt_out(self, temp_settings, notice_acknowledged, monkeypatch):
+        monkeypatch.setenv("TWICC_NO_TELEMETRY", "1")
+        assert task.is_telemetry_active() is True
 
-    def test_false_when_synced_setting_disabled(self, temp_settings, monkeypatch):
-        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", True)
+    def test_false_when_synced_setting_disabled(self, temp_settings):
         ss.write_synced_settings({**ss.read_synced_settings(), "telemetryEnabled": False})
         assert task.is_telemetry_active() is False
 
-    def test_true_otherwise(self, temp_settings, notice_acknowledged, monkeypatch):
-        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", True)
+    def test_true_otherwise(self, temp_settings, notice_acknowledged):
         # Isolated synced settings with no override -> the default
         # telemetryEnabled (True) applies, so telemetry is active.
         assert task.is_telemetry_active() is True
 
-    def test_true_when_synced_setting_is_null(self, temp_settings, notice_acknowledged, monkeypatch):
+    def test_true_when_synced_setting_is_null(self, temp_settings, notice_acknowledged):
         # The frontend syncs a `null` placeholder for unset synced keys; a
         # present null must read as enabled (default-on), matching the frontend
         # getter `telemetryEnabled !== false` -- never silently disabled.
-        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", True)
         ss.write_synced_settings({**ss.read_synced_settings(), "telemetryEnabled": None})
         assert task.is_telemetry_active() is True
 
@@ -213,11 +210,10 @@ class TestSendCycle:
 
 @pytest.mark.django_db
 class TestTickOnceGating:
-    def test_tick_once_noop_when_inactive(self, temp_state, temp_settings, notice_acknowledged, monkeypatch):
+    def test_tick_once_noop_when_inactive(self, temp_state, temp_settings, notice_acknowledged):
         # First tick while active: records a real day entry. temp_settings
         # isolates the synced settings so is_telemetry_active() sees the default
         # (telemetryEnabled unset -> True) instead of the real machine's file.
-        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", True)
         task.tick_once()
 
         import twicc.telemetry.state as state_mod
@@ -227,8 +223,8 @@ class TestTickOnceGating:
         assert day in state_after_first_tick["days"]
         entry_after_first_tick = dict(state_after_first_tick["days"][day])
 
-        # Disable via the env kill switch, tick again: no change.
-        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", False)
+        # Disable via the synced setting, tick again: no change.
+        ss.write_synced_settings({**ss.read_synced_settings(), "telemetryEnabled": False})
         task.tick_once()
 
         state_after_second_tick = state_mod.ensure_state()
@@ -244,7 +240,6 @@ class TestStartTelemetryTaskLoop:
     """
 
     def test_sends_on_first_iteration_then_waits_a_full_interval(self, monkeypatch):
-        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", True)
         monkeypatch.setattr(task, "TICK_INTERVAL", 0.001)
         monkeypatch.setattr(task, "TELEMETRY_SEND_INTERVAL", 0.003)  # 3 ticks between sends
 
@@ -272,7 +267,6 @@ class TestStartTelemetryTaskLoop:
         assert send_calls == [1, 4]
 
     def test_exits_promptly_once_stop_event_is_set(self, monkeypatch):
-        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", True)
         monkeypatch.setattr(task, "TICK_INTERVAL", 0.001)
         monkeypatch.setattr(task, "TELEMETRY_SEND_INTERVAL", 10)  # never due, keep it out of the way
 
@@ -297,7 +291,6 @@ class TestStartTelemetryTaskLoop:
         assert len(tick_calls) == 2
 
     def test_cancellation_propagates_and_does_not_hang(self, monkeypatch):
-        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", True)
         monkeypatch.setattr(task, "TICK_INTERVAL", 0.001)
         monkeypatch.setattr(task, "TELEMETRY_SEND_INTERVAL", 10)
 
@@ -318,51 +311,54 @@ class TestStartTelemetryTaskLoop:
 
         asyncio.run(_run())
 
-    def test_early_return_when_env_disabled(self, temp_state, monkeypatch):
-        # temp_state: the kill-switched early return records was_active=False
-        # in the state file, which must not be the real one.
-        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", False)
+    @pytest.mark.django_db
+    def test_disabled_loop_can_resume_after_setting_enabled(
+        self, temp_state, temp_settings, notice_acknowledged, monkeypatch
+    ):
+        ss.write_synced_settings({**ss.read_synced_settings(), "telemetryEnabled": False})
+        monkeypatch.setenv("TWICC_NO_TELEMETRY", "1")
+        monkeypatch.setattr(task, "TICK_INTERVAL", 0.001)
+        monkeypatch.setattr(task, "build_pending_payload", lambda: None)
+        real_tick = task.tick_once
+        ticks = []
+        stop_event = asyncio.Event()
 
-        tick_calls: list[int] = []
-        monkeypatch.setattr(task, "tick_once", lambda: tick_calls.append(1))
+        def tick_and_enable():
+            real_tick()
+            ticks.append(1)
+            if len(ticks) == 1:
+                ss.write_synced_settings({**ss.read_synced_settings(), "telemetryEnabled": True})
+            else:
+                stop_event.set()
 
-        async def fake_send_cycle():
-            raise AssertionError("send_cycle should not fire when telemetry is disabled")
+        monkeypatch.setattr(task, "tick_once", tick_and_enable)
+        asyncio.run(asyncio.wait_for(task.start_telemetry_task(stop_event), timeout=5))
 
-        monkeypatch.setattr(task, "send_cycle", fake_send_cycle)
+        from twicc.telemetry.state import ensure_state
 
-        async def _run():
-            stop_event = asyncio.Event()
-            await asyncio.wait_for(task.start_telemetry_task(stop_event), timeout=5)
-
-        asyncio.run(_run())
-
-        assert tick_calls == []
+        assert len(ticks) == 2
+        assert utc_today().isoformat() in ensure_state()["days"]
 
 
 class TestNoticeGate:
     """Nothing at all before the user has acknowledged the notice dialog."""
 
-    def test_false_when_notice_never_seen(self, temp_settings, monkeypatch):
-        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", True)
-
+    def test_false_when_notice_never_seen(self, temp_settings):
         # Isolated settings, notice untouched -> the default (False) applies.
         assert task.is_telemetry_active() is False
 
-    def test_false_when_notice_seen_is_null(self, temp_settings, monkeypatch):
+    def test_false_when_notice_seen_is_null(self, temp_settings):
         """A synced null placeholder is NOT an acknowledgement.
 
         Asymmetric with ``telemetryEnabled`` on purpose: that one is opt-out
         (null reads as enabled), this one is an explicit user act.
         """
-        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", True)
         ss.write_synced_settings({**ss.read_synced_settings(), "telemetryNoticeSeen": None})
 
         assert task.is_telemetry_active() is False
 
-    def test_notice_alone_is_not_enough(self, temp_settings, notice_acknowledged, monkeypatch):
+    def test_notice_alone_is_not_enough(self, temp_settings, notice_acknowledged):
         """Acknowledging the notice does not re-enable a setting turned off."""
-        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", True)
         ss.write_synced_settings({**ss.read_synced_settings(), "telemetryEnabled": False})
 
         assert task.is_telemetry_active() is False
@@ -400,7 +396,6 @@ class TestActivationGrace:
         """The end-to-end gate: an acknowledgement is never followed by a send."""
         import twicc.telemetry.state as state_mod
 
-        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", True)
         # A complete unsent day exists, so only the grace can hold the payload back.
         with state_mod.state_txn() as txn:
             txn.data["last_sent_date"] = (utc_today() - timedelta(days=3)).isoformat()
@@ -414,7 +409,6 @@ class TestActivationGrace:
     ):
         import twicc.telemetry.state as state_mod
 
-        monkeypatch.setattr(task.settings, "TELEMETRY_ENABLED", True)
         with state_mod.state_txn() as txn:
             txn.data["last_sent_date"] = (utc_today() - timedelta(days=3)).isoformat()
             txn.data["active_since"] = (
@@ -423,3 +417,44 @@ class TestActivationGrace:
             txn.write()
 
         assert task.build_pending_payload() is not None
+
+
+class TestTelemetrySettingsBootstrap:
+    @pytest.mark.parametrize("initial", [True, None, False])
+    def test_environment_disables_copied_setting(self, temp_state, temp_settings, monkeypatch, initial):
+        from twicc.telemetry import state
+
+        ss.write_synced_settings({
+            "telemetryEnabled": initial,
+            "telemetryNoticeSeen": False,
+            "publicBaseUrl": "https://example.com",
+        })
+        monkeypatch.setenv("TWICC_NO_TELEMETRY", "1")
+        state.apply_telemetry_settings_bootstrap()
+        ss._cache.clear()
+        settings = ss.read_synced_settings()
+        assert settings["telemetryEnabled"] is False
+        assert settings["telemetryNoticeSeen"] is False
+        assert settings["publicBaseUrl"] == "https://example.com"
+
+    def test_manual_enable_survives_restart(self, temp_state, temp_settings, monkeypatch):
+        from twicc.telemetry import state
+
+        monkeypatch.setenv("TWICC_NO_TELEMETRY", "1")
+        state.apply_telemetry_settings_bootstrap()
+        ss.write_synced_settings({**ss.read_synced_settings(), "telemetryEnabled": True})
+        ss._cache.clear()
+        state.apply_telemetry_settings_bootstrap()
+        assert ss.read_synced_settings()["telemetryEnabled"] is True
+
+    @pytest.mark.parametrize("value", [None, "0", "false"])
+    def test_without_opt_out_keeps_setting(self, temp_state, temp_settings, monkeypatch, value):
+        from twicc.telemetry import state
+
+        if value is None:
+            monkeypatch.delenv("TWICC_NO_TELEMETRY", raising=False)
+        else:
+            monkeypatch.setenv("TWICC_NO_TELEMETRY", value)
+        state.apply_telemetry_settings_bootstrap()
+        assert ss.read_synced_settings()["telemetryEnabled"] is True
+        assert not temp_state.exists()
