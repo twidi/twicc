@@ -6,7 +6,7 @@
 // Two prompt types share this dialog: `network` (a cross-origin/brokered
 // request) and `data-write` (the page wants to store data next to itself,
 // design 2026-08-05 §6 — tab-lifetime only, hence no "Forever").
-import { computed, watch } from 'vue'
+import { computed, watch, ref, nextTick } from 'vue'
 
 const props = defineProps({
     // { type: 'network', host, ip, kind, canRemember }
@@ -17,7 +17,9 @@ const props = defineProps({
     visible: { type: Boolean, default: true },
 })
 const emit = defineEmits(['decision'])
+const dialogRef = ref(null)
 const dialogOpen = computed(() => !!props.prompt && props.visible)
+let closing = false
 let controlledCloses = 0
 let openPrompt = props.prompt
 let dismissedPrompt = null
@@ -26,16 +28,31 @@ watch([dialogOpen, () => props.prompt], ([open, prompt], [previous]) => {
     if (!open) dismissedPrompt = null
     if (open) openPrompt = prompt
 }, { flush: 'sync' })
-function onDialogHide() {
-    // A close transition may finish after the owner becomes visible again.
-    if (controlledCloses) {
-        controlledCloses--
+function onDialogHide(event) {
+    const controlled = controlledCloses > 0
+    if (controlled) controlledCloses--
+    // WA emits hide before its animation. A second close must not dismiss the next prompt.
+    if (closing) {
+        event.preventDefault()
         return
     }
+    closing = true
+    if (controlled) return
     if (props.visible && props.prompt) {
         dismissedPrompt = props.prompt
         emit('decision', 'deny')
     }
+}
+
+async function onDialogAfterHide() {
+    const dialog = dialogRef.value
+    // WA writes open=false after its animation. Let Lit consume that property first.
+    await dialog?.updateComplete
+    await nextTick()
+    if (dialogRef.value !== dialog) return
+    closing = false
+    // The next queued prompt or a returning owner can leave Vue's open prop unchanged.
+    if (dialogOpen.value && dialog) dialog.open = true
 }
 
 const isDataWrite = computed(() => props.prompt?.type === 'data-write')
@@ -95,9 +112,11 @@ const calloutText = computed(() => {
          nested wa-* event must never be read as a decision. Dismiss == deny is
          the safe default. -->
     <wa-dialog
+        ref="dialogRef"
         :open="dialogOpen"
         :label="isDataWrite ? 'Store data' : 'Network request'"
         @wa-hide.self="onDialogHide"
+        @wa-after-hide.self="onDialogAfterHide"
     >
         <div v-if="prompt && isDataWrite" class="broker-prompt">
             <p>This page wants to store data in:</p>
