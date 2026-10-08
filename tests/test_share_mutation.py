@@ -344,3 +344,17 @@ def test_valid_and_empty_expiry_unchanged(session):
     }))
     assert none1.success
     assert Share.objects.get(id=none1.share_id).expires_at is None
+
+
+def test_disabled_create_does_not_copy_unavailable_inline_sources(session, artifacts_root):
+    session.inline_artifacts = {'schema': 1, 'publications': [{
+        'artifact_id': 'missing', 'line_num': 10, 'text_block_index': 0, 'tag_offset': 0,
+        'src': 'inline-artifacts/missing/index.html', 'title': 'Missing', 'height': 360,
+    }]}
+    session.compute_version = 0
+    session.save(update_fields=['inline_artifacts', 'compute_version'])
+    result = _run(share_mutation.create_share('session', session=session, options={'include_inline_artifacts': False}))
+    assert result.success
+    share = Share.objects.get(id=result.share_id)
+    assert share.inline_artifact_exports == {}
+    assert not (paths.get_share_snapshot_dir(share.id) / 'inline-artifacts').exists()

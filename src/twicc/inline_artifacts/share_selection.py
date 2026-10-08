@@ -16,7 +16,7 @@ from twicc.share.display import filtered_items_qs
 _PUBLICATION_FIELDS = ('artifact_id', 'line_num', 'text_block_index', 'tag_offset', 'src', 'title', 'height')
 _ID = re.compile(r'[a-z][a-z0-9_-]{0,63}\Z')
 _STATUSES = frozenset({'pending', 'ready', 'error', 'not_included'})
-_ERROR_CODES = frozenset({'artifact_unavailable', 'export_failed', 'export_too_large'})
+_ERROR_CODES = frozenset({'artifact_unavailable', 'export_failed', 'export_too_large', 'export_interrupted'})
 
 
 class SelectionNotReady(Exception):
@@ -154,7 +154,7 @@ def prepare_share_selection(share, *, recapture: bool = False) -> dict:
         prior_record = previous.get('selected', {}).get(key)
         if snapshot and not recapture and captured is not None:
             prior_record = captured.get(key, prior_record)
-        if prior_record == record and key in entries:
+        if not recapture and prior_record == record and key in entries:
             state['artifacts'][key] = deepcopy(entries[key])
         else:
             state['artifacts'][key] = {'status': 'pending', 'code_revision': None, 'copy_id': None}

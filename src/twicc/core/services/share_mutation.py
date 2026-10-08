@@ -228,9 +228,25 @@ def _not_ready_result(share_id):
     )])
 
 
-async def _save_share(share, *, check_inline=False, **save_kwargs):
+async def _save_share(share, *, check_inline=False, recapture=False, **save_kwargs):
     """Recheck root readiness inside the serialized mutation commit gate."""
     from twicc.inline_artifacts.share_selection import SelectionNotReady
+    from twicc.inline_artifacts.share_exports import InlineExportFailure, save_inline_share
+
+    if check_inline and share.kind == "session":
+        try:
+            committed = await save_inline_share(share, writer=run_under_db_write_lock,
+                                                recapture=recapture, **save_kwargs)
+            if not committed:
+                return ShareMutationResult(False, share.id, [ShareError(
+                    "options", "export_interrupted", "Share changes invalidate the prepared inline exports.",
+                )])
+        except SelectionNotReady:
+            return _not_ready_result(share.id if not save_kwargs.get("force_insert") else None)
+        except InlineExportFailure as error:
+            return ShareMutationResult(False, share.id if not save_kwargs.get("force_insert") else None,
+                                       [ShareError("options", error.code, "Inline artifact export fails.")])
+        return None
 
     async def commit():
         if check_inline:
@@ -410,7 +426,7 @@ async def propagate_share(share) -> ShareMutationResult:
         if err:
             return ShareMutationResult(False, share.id, [ShareError("bookmark", "snapshot_failed", err)])
         share.options = {**share.options, "snapshot_at": _now().isoformat()}
-    failure = await _save_share(share, check_inline=share.kind == ShareKind.SESSION.value,
+    failure = await _save_share(share, check_inline=share.kind == ShareKind.SESSION.value, recapture=True,
                                 update_fields=["options", "updated_at"])
     if failure:
         return failure
@@ -420,6 +436,9 @@ async def propagate_share(share) -> ShareMutationResult:
 
 
 async def revoke_share(share, *, revoked: bool = True) -> ShareMutationResult:
+    from twicc.inline_artifacts.share_exports import invalidate_inline_exports
+
+    invalidate_inline_exports(share.id)
     share.revoked_at = _now() if revoked else None
     await run_under_db_write_lock(lambda: share.asave(update_fields=["revoked_at", "updated_at"]))
     await broadcast_share_updated(share)
@@ -431,6 +450,11 @@ async def delete_share(share) -> ShareMutationResult:
 
     share_id = share.id
     kind = share.kind
+    from twicc.inline_artifacts.share_exports import remove_inline_share_exports
+
+    # Deny new readers before removing the row. Existing response leases survive.
+    if kind == ShareKind.SESSION.value:
+        await remove_inline_share_exports(share_id)
     await run_under_db_write_lock(lambda: share.adelete())
     if kind == ShareKind.ARTIFACT.value:
         await sync_to_async(remove_snapshot)(share_id)
