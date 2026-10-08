@@ -197,6 +197,7 @@ def serialize_session(session):
         "id": session.id,
         "project_id": session.project_id,
         "provider": session.provider,  # Backend provider (see Provider enum)
+        "type": session.type,  # Authoritative regular/native identity for frontend publication gates
         "parent_session_id": session.parent_session_id,  # None for regular sessions, set for subagents
         "last_line": session.last_line,
         "mtime": session.mtime,

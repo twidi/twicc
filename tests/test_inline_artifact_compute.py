@@ -164,6 +164,105 @@ def test_public_metadata_has_only_safe_support_flag(case):
     assert serialize_share_public_meta(share)['inline_artifacts_supported'] is False
 
 
+@pytest.mark.parametrize('session_type', [SessionType.SESSION, SessionType.SUBAGENT])
+@pytest.mark.parametrize('public', [False, True])
+def test_serialized_identity_reaches_actual_inline_context_and_adapter(case, session_type, public):
+    """Feed real wire payloads into the owning Vue context and JavaScript adapter."""
+    provider, session, compute, path = case
+    session.type = session_type
+    session.save(update_fields=['type'])
+    ingest(compute, session, path, [assistant(provider)])
+    record = orjson.loads(SessionItem.objects.get(session=session, line_num=1).content)
+    share = Share.objects.create(kind='session', token='c' * 64, session=session)
+    wire = serialize_share_public_meta(share) if public else serialize_session(session)
+    javascript = '''
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import { computed, ref, shallowRef, watch, unref, effectScope } from 'vue';
+import { createPinia, setActivePinia } from 'pinia';
+import { useFramePoolStore } from './src/stores/framePool.js';
+import { makeOwnerInlineAdapter } from './src/inline-artifacts/ownerAdapter.js';
+import { createInlineArtifactRuntime } from './src/inline-artifacts/runtime.js';
+import { INLINE_ARTIFACT_CONTEXT } from './src/inline-artifacts/context.js';
+import { assistantTextBlocks } from './src/providers/codex/canonical.js';
+import { createInlineTextContext, displayInlineText, inlineArtifactPlacement } from './src/inline-artifacts/rendering.js';
+import { splitMarkdownBlocks } from './src/utils/markdown.js';
+const { wire, record, provider, expectedType, public: isPublic } = JSON.parse(fs.readFileSync(0, 'utf8'));
+function excerpt(path, start, end, dependencies, result) {
+    const source = fs.readFileSync(path, 'utf8');
+    const left = source.indexOf(start), right = source.indexOf(end, left);
+    assert.ok(left >= 0 && right > left, path);
+    return new Function(...Object.keys(dependencies), source.slice(left, right) + '\\n' + result)(...Object.values(dependencies));
+}
+if (isPublic) {
+    let seeded;
+    excerpt('src/share-session/ShareSessionApp.vue', 'store.setSession({', '// Show-timestamps:',
+        { store: { setSession: value => { seeded = value; } }, meta: wire }, '');
+    assert.equal(seeded.type, expectedType);
+    assert.equal(wire.inline_artifacts_supported, expectedType === 'session');
+} else {
+    const scope = effectScope();
+    scope.run(() => {
+        setActivePinia(createPinia());
+        let provided;
+        const store = { getSession: id => id === wire.id ? wire : null };
+        const dependencies = { computed, ref, shallowRef, watch, unref, INLINE_ARTIFACT_CONTEXT,
+            session: computed(() => store.getSession(wire.id)), sessionId: ref(wire.id), isActive: ref(true),
+            store, useFramePoolStore, makeOwnerInlineAdapter, createInlineArtifactRuntime,
+            apiFetch: () => { throw new Error('No probe before a visible placement'); },
+            provide: (key, value) => { assert.equal(key, INLINE_ARTIFACT_CONTEXT); provided = value; },
+            onBeforeUnmount: () => {},
+        };
+        const runtime = excerpt('src/views/SessionView.vue', '// Freeze the source identity',
+            '// ─── Artifacts tab', dependencies, 'return inlineRuntime.value;');
+        assert.equal(Boolean(runtime), expectedType === 'session');
+        // Native sessions without parent metadata must still remain excluded.
+        assert.equal(wire.type, expectedType);
+        const props = { sessionId: wire.id, parentSessionId: null, kind: 'assistant_message',
+            lineNum: 1, content: record, syntheticKind: null };
+        const listContext = excerpt('src/components/session/detail/SessionItemsList.vue',
+            'const inheritedInlineContext =', 'watch([inlineContext,', {
+                props, computed, unref, INLINE_ARTIFACT_CONTEXT, session: dependencies.session,
+                inject: () => provided, provide: () => {},
+            }, 'return inlineContext;');
+        const itemContext = excerpt('src/components/session/detail/SessionItem.vue',
+            'const providedInlineContext =', '// Whether this item', {
+                props, computed, unref, INLINE_ARTIFACT_CONTEXT, dataStore: store, inject: () => listContext,
+            }, 'return inlineContext.value;');
+        assert.equal(Boolean(itemContext), expectedType === 'session');
+        if (runtime) {
+            const adapter = makeOwnerInlineAdapter({ sessionId: wire.id, store, api: dependencies.apiFetch });
+            assert.equal(adapter.manifest().descriptors.length, 1);
+            const blocks = provider === 'codex' ? assistantTextBlocks(record) : record.message.content.flatMap((b, i) =>
+                b.type === 'text' ? [{ textBlockIndex: i, text: b.text }] : []);
+            const context = createInlineTextContext(itemContext, blocks);
+            const display = displayInlineText(blocks.map(b => b.text).join(''), context);
+            const widgets = splitMarkdownBlocks(display.source, { inlineArtifacts: true, ...display.inlineContext })
+                .blocks.filter(block => block.type === 'inline-artifact');
+            assert.equal(widgets.length, 1);
+            assert.equal(inlineArtifactPlacement(context, widgets[0].span, runtime).status, 'ready');
+            assert.equal(adapter.documentUrl(adapter.manifest().descriptors[0]),
+                '/api/sessions/s/inline-artifacts/preferences/index.html');
+            runtime.dispose();
+        } else {
+            assert.equal(unref(provided), null);
+            assert.equal(makeOwnerInlineAdapter({ sessionId: wire.id, store, api: dependencies.apiFetch })
+                .manifest().descriptors.length, 0);
+        }
+    });
+    scope.stop();
+}
+'''
+    result = subprocess.run(
+        ['node', '--input-type=module', '--eval', javascript], cwd=Path(__file__).resolve().parents[1] / 'frontend',
+        input=orjson.dumps({'wire': wire, 'record': record, 'provider': provider.value,
+                           'expectedType': session_type, 'public': public}),
+        capture_output=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    assert result.stdout == b''
+
+
 def test_migration_defaults_are_empty_and_independent(db):
     project = Project.objects.create(id='defaults')
     first = Session.objects.create(id='first', file_path='first.jsonl', project=project)
