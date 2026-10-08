@@ -612,3 +612,27 @@ def test_inline_event_uses_fresh_sanitized_manifest(session):
         assert await comm.receive_nothing(timeout=.1)
         await comm.disconnect()
     _run(scenario())
+
+
+def test_active_live_to_snapshot_sends_metadata_without_revoking_viewer(session):
+    from asgiref.sync import sync_to_async
+
+    share = _share(session, options={'mode': 'live', 'include_inline_artifacts': True})
+
+    async def scenario():
+        comm = _communicator(share.token)
+        assert (await comm.connect())[0]
+        share.options = {'mode': 'snapshot', 'frozen_at_line': 5, 'include_inline_artifacts': True}
+        await sync_to_async(share.save)(update_fields=['options'])
+        await get_channel_layer().group_send('updates', {'type': 'broadcast', 'data': {
+            'type': 'share_updated', 'share': {'id': share.id, 'status': 'active', 'options': share.options}}})
+        event = await comm.receive_json_from(timeout=1)
+        assert event['type'] == 'share_meta', 'active snapshot adoption is not revocation'
+        assert event['meta']['mode'] == 'snapshot'
+        assert event['meta']['last_line'] == 5
+        output = await comm.receive_output(timeout=1)
+        assert output['type'] == 'websocket.close'
+        assert output['code'] == 1000
+        await comm.disconnect()
+
+    _run(scenario())

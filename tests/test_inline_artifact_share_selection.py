@@ -354,3 +354,50 @@ def test_public_websocket_metadata_never_forwards_private_catalog(share):
             await communicator.disconnect()
 
     asyncio.run(scenario())
+
+
+def test_terminal_inline_delivery_recovers_after_compute_readiness_without_source_event(share):
+    import asyncio
+    from asgiref.sync import sync_to_async
+    from channels.layers import get_channel_layer
+    from channels.testing import WebsocketCommunicator
+    from twicc.core.services.share_mutation import broadcast_share_updated
+    from twicc.share.consumer import ShareConsumer
+
+    publish(share, publication())
+    share.options['mode'] = 'live'
+    share.inline_artifact_exports = prepare_share_selection(share)
+    share.inline_artifact_exports['artifacts'][KEY].update(status='ready', code_revision=4, copy_id='/private/export')
+    share.save()
+
+    async def scenario():
+        communicator = WebsocketCommunicator(ShareConsumer.as_asgi(), '/ws/share/token/')
+        communicator.scope['url_route'] = {'kwargs': {'token': 'token'}}
+        connected, _ = await communicator.connect()
+        assert connected
+        try:
+            # Both producer and relay read an obsolete root during the terminal update.
+            share.session.compute_version -= 1
+            await sync_to_async(share.session.save)(update_fields=['compute_version'])
+            await broadcast_share_updated(share)
+            assert (await communicator.receive_json_from(timeout=2))['type'] == 'share_meta'
+            assert await communicator.receive_nothing(timeout=0.1)
+            share.session.compute_version += 1
+            await sync_to_async(share.session.save)(update_fields=['compute_version'])
+            await get_channel_layer().group_send('updates', {'type': 'broadcast', 'data': {
+                'type': 'session_updated', 'session': {'id': 'main'}}})
+            assert (await communicator.receive_json_from(timeout=2))['type'] == 'share_meta'
+            event = await communicator.receive_json_from(timeout=1)
+            assert event['type'] == 'share_inline_artifacts'
+            assert event['manifest']['artifacts'][0]['status'] == 'ready'
+            assert event['manifest']['artifacts'][0]['code_revision'] == 4
+            assert '/private/export' not in orjson.dumps(event).decode()
+            # A delivered obligation clears: unrelated later metadata does not replay it.
+            await get_channel_layer().group_send('updates', {'type': 'broadcast', 'data': {
+                'type': 'session_updated', 'session': {'id': 'main'}}})
+            assert (await communicator.receive_json_from(timeout=2))['type'] == 'share_meta'
+            assert await communicator.receive_nothing(timeout=0.1)
+        finally:
+            await communicator.disconnect()
+
+    asyncio.run(scenario())

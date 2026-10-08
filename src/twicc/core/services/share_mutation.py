@@ -213,7 +213,9 @@ async def broadcast_share_updated(share) -> None:
         try:
             manifest = await sync_to_async(public_inline_manifest)(share)
         except SelectionNotReady:
-            return
+            # Consumers retain the delivery obligation until root compute is ready.
+            # They always reload the authorized manifest; this event carries no source data.
+            manifest = None
         await layer.group_send('updates', {'type': 'broadcast', 'data': {
             'type': 'share_inline_artifacts', 'share_id': share.id, 'manifest': manifest,
         }})

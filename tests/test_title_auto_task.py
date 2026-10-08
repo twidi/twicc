@@ -422,7 +422,7 @@ def test_same_session_waits_for_real_corrective_push(runner, env, session, monke
     assert env.pushes == [(session.id, env.output), (session.id, "User choice")]
 
 
-@pytest.mark.parametrize("startup_phase", ["normal", "provider-failure", "adoption-cancel"])
+@pytest.mark.parametrize("startup_phase", ["normal", "provider-failure", "adoption-cancel", "export-failure"])
 def test_server_owns_title_runner_before_provider_start_and_until_teardown(
     runner, monkeypatch, settings, startup_phase,
 ):
@@ -440,7 +440,7 @@ def test_server_owns_title_runner_before_provider_start_and_until_teardown(
             return None
 
         async def check(session_id, *, closing):
-            assert effects == ["db-start", "providers-start"]
+            assert effects == ["db-start", "exports-start", "providers-start"]
             entered.set()
             try:
                 await asyncio.Event().wait()
@@ -464,7 +464,7 @@ def test_server_owns_title_runner_before_provider_start_and_until_teardown(
             effects.append("providers-stop")
 
         async def db_stop():
-            assert effects[-1] == "providers-stop"
+            assert effects[-1] == "exports-stop"
             effects.append("db-stop")
 
         class Server:
@@ -507,9 +507,21 @@ def test_server_owns_title_runner_before_provider_start_and_until_teardown(
             get=lambda provider: SimpleNamespace(adopt_running_hybrid_sessions=adopt)))
         monkeypatch.setattr("twicc.drop_requests_watcher.get_drop_requests_watcher", lambda: SimpleNamespace(start=noop))
         monkeypatch.setattr("twicc.artifacts_watcher.get_artifacts_watcher", lambda: SimpleNamespace(start=noop))
+        async def exports_start():
+            effects.append("exports-start")
+            if startup_phase == "export-failure":
+                await asyncio.sleep(0)
+                raise RuntimeError("export startup failed")
+
+        async def exports_stop():
+            effects.append("exports-stop")
+
         monkeypatch.setattr("twicc.inline_artifacts.share_exports.get_inline_export_coordinator",
-                            lambda: SimpleNamespace(start=noop, stop=noop))
-        if startup_phase == "provider-failure":
+                            lambda: SimpleNamespace(start=exports_start, stop=exports_stop))
+        if startup_phase == "export-failure":
+            with pytest.raises(RuntimeError, match="export startup failed"):
+                await asyncio.wait_for(run.run_server(0), timeout=5)
+        elif startup_phase == "provider-failure":
             with pytest.raises(RuntimeError, match="provider startup failed"):
                 await asyncio.wait_for(run.run_server(0), timeout=5)
         elif startup_phase == "adoption-cancel":
@@ -523,7 +535,12 @@ def test_server_owns_title_runner_before_provider_start_and_until_teardown(
         assert asyncio.all_tasks() == before
 
     asyncio.run(scenario())
-    expected = ["db-start", "providers-start", "check-cancel"]
+    expected = ["db-start", "exports-start", "providers-start", "check-cancel"]
+    if startup_phase == "export-failure":
+        expected = ["db-start", "exports-start"]
     if startup_phase == "normal":
-        expected += ["providers-stop", "db-stop"]
+        expected += ["providers-stop"]
+    expected += ["exports-stop"]
+    if startup_phase == "normal":
+        expected += ["db-stop"]
     assert effects == expected

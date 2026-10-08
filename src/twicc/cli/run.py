@@ -276,10 +276,11 @@ async def run_server(port: int):
     # Start before provider watchers can submit live requests. The runner owns
     # no boot scan; initial sync does not request automatic title checks.
     title_auto_task = asyncio.create_task(start_title_auto_task(shutdown_event))
-    from twicc.inline_artifacts.share_exports import get_inline_export_coordinator
-    inline_exports = get_inline_export_coordinator()
-    await inline_exports.start()
+    inline_exports = None
     try:
+        from twicc.inline_artifacts.share_exports import get_inline_export_coordinator
+        inline_exports = get_inline_export_coordinator()
+        await inline_exports.start()
         await orchestrators.start_all(shutdown_event, search_index_ready)
 
         # Configure uvicorn
@@ -508,6 +509,7 @@ async def run_server(port: int):
             # subprocess is still alive, so nothing is left pushing onto the
             # shared queues.
             await inline_exports.stop()
+            inline_exports = None
             await stop_db_writer()
 
             # Finally tear down the search index itself. Done after the
@@ -517,10 +519,13 @@ async def run_server(port: int):
 
             logger.info("Server shutdown complete")
     finally:
-        # Startup can fail after provider startup, including hybrid adoption.
-        # The title runner remains owned throughout configuration and serving.
-        if not title_auto_task.done():
-            await _cancel_task(title_auto_task, "Automatic title task")
+        # Own partial coordinator startup and provider/configuration failures too.
+        try:
+            if not title_auto_task.done():
+                await _cancel_task(title_auto_task, "Automatic title task")
+        finally:
+            if inline_exports is not None:
+                await inline_exports.stop()
 
 
 def _close_log_file_handlers() -> None:

@@ -1,5 +1,5 @@
 /** Token-only adapter for one regular root. HTTP and WS share one revision gate. */
-export function makeShareInlineAdapter({ api, tokenPath, store }) {
+export function makeShareInlineAdapter({ api, tokenPath, store, canAcceptManifest = () => true, onNeedsReconcile }) {
     const base = tokenPath.replace(/\/+$/, '')
     const sourceSessionId = store.sharedSessionId
     let revision = -1, disposed = false, descriptors = new Map(), refreshRequest = null
@@ -10,8 +10,11 @@ export function makeShareInlineAdapter({ api, tokenPath, store }) {
         if (disposed || !Number.isInteger(wire?.revision) || wire.revision <= revision) return null
         // Reconnect must restore source rows before replacing their retained bindings.
         // A disabled manifest still closes access immediately.
-        if (manifestsPaused && wire.enabled !== false) {
+        if (wire.enabled !== false && (manifestsPaused || !canAcceptManifest(wire))) {
+            const needsReconcile = !manifestsPaused
+            manifestsPaused = true
             if (!pendingManifest || wire.revision > pendingManifest.revision) pendingManifest = wire
+            if (needsReconcile) onNeedsReconcile?.()
             return null
         }
         revision = wire.revision

@@ -69,7 +69,9 @@ const providerIcon = computed(() => getProviderIcon(meta.provider))
 const subagentStack = ref([])
 const inlinePool = useFramePoolStore()
 const inlineAdapter = meta.inline_artifacts_supported === true
-    ? makeShareInlineAdapter({ api, tokenPath: props.tokenPath, store }) : null
+    ? makeShareInlineAdapter({ api, tokenPath: props.tokenPath, store,
+        canAcceptManifest: manifestRowsReady, onNeedsReconcile: () => beginReconciliation(),
+    }) : null
 const inlineRuntime = inlineAdapter ? createInlineArtifactRuntime({
     viewId: `share:${props.tokenPath}`, pool: inlinePool, adapter: inlineAdapter,
 }) : null
@@ -80,68 +82,56 @@ if (inlineRuntime) {
 provide(INLINE_ARTIFACT_CONTEXT, inlineRuntime ? { sourceSessionId: meta.session_id, runtime: inlineRuntime } : null)
 watch(() => revoked.value || !ready.value || meta.include_inline_artifacts === false || subagentStack.value.length > 0,
     suppressed => inlineRuntime?.setActive(!suppressed), { immediate: true, flush: 'sync' })
-let disconnectLive = null, disposed = false
-let snapshotFocusGeneration = 0
+let disconnectLive = null, disposed = false, mounted = false
 const snapshotRowsReady = ref(true)
-const focusController = new AbortController()
 let reconnectOwner = null, reconnectTimer = null, liveMetaGeneration = 0
 const inlineCompletion = inlineAdapter ? createShareInlineCompletion({
     adapter: inlineAdapter, isSnapshot: () => meta.mode === 'snapshot',
     accessClosed: () => revoked.value || !ready.value || meta.include_inline_artifacts === false || !snapshotRowsReady.value,
     onAccessClosed: () => { revoked.value = true },
+    // Completion uses the same metadata boundary as focus and mode adoption.
+    refresh: () => beginReconciliation({ forceRows: false, allowMetaFailure: true, replaceOwner: false }),
 }) : null
 watch(() => [meta.mode, revoked.value, ready.value, meta.include_inline_artifacts, snapshotRowsReady.value],
     () => inlineCompletion?.accessChanged(), { flush: 'sync' })
+watch(() => [meta.mode, revoked.value, ready.value], syncLiveTransport, { flush: 'sync' })
+
+function manifestRowsReady(wire) {
+    const boundary = store.getSession(meta.session_id)?.last_line ?? 0
+    return (wire.artifacts || []).every(item => {
+        const publication = item.publication
+        if (item.source_session_id !== meta.session_id || !Array.isArray(publication) || publication.length !== 4
+            || publication[0] !== meta.session_id || !publication.slice(1).every(Number.isInteger)) return true
+        return publication[1] <= boundary && !!store.getSessionItem(meta.session_id, publication[1])
+    })
+}
 async function refreshInline() {
     if (!inlineAdapter || disposed || revoked.value) return
     try { await inlineAdapter.refresh() }
     catch (error) {
-        if (!disposed && [401, 403, 404].includes(error.status)) {
-            revoked.value = true
-            inlineRuntime.setActive(false)
-        }
+        if (!disposed && [401, 403, 404].includes(error.status)) revoked.value = true
     }
 }
-async function onWindowFocus() {
+function onWindowFocus() {
     if (meta.mode !== 'snapshot' || disposed) return
-    const generation = ++snapshotFocusGeneration
-    try {
-        const fresh = await api.fetchMeta({ signal: focusController.signal })
-        if (disposed || generation !== snapshotFocusGeneration) return
-        const { last_line: lastLine, ...freshState } = fresh
-        // Pause completion only when fresh metadata reveals an unreconciled boundary.
-        if (lastLine !== store.getSession(meta.session_id)?.last_line) snapshotRowsReady.value = false
-        // Access changes take effect even if transcript metadata is unavailable.
-        Object.assign(meta, freshState)
-        if (fresh.ready !== false && fresh.last_line !== store.getSession(meta.session_id)?.last_line) {
-            // Push can move the latest publication beyond the cached transcript.
-            // Extend its rows before accepting that publication's new binding.
-            const metadata = await api.fetchItemsMetadata()
-            if (disposed || generation !== snapshotFocusGeneration) return
-            store.initSessionItemsFromMetadata(meta.session_id, metadata)
-            store.setSession({ ...store.getSession(meta.session_id), last_line: fresh.last_line })
-        }
-        meta.last_line = lastLine
-        snapshotRowsReady.value = true
-        await refreshInline()
-    } catch (error) {
-        if (!disposed && generation === snapshotFocusGeneration && [401, 403, 404].includes(error.status)) revoked.value = true
-    }
+    return beginReconciliation({ forceRows: false, allowMetaFailure: true })
 }
-
 function stopReconnect() {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
     reconnectOwner?.controller.abort()
     reconnectOwner = null
 }
-function onReconnect() {
+function onReconnect() { return beginReconciliation() }
+function beginReconciliation({ forceRows = true, allowMetaFailure = false, replaceOwner = true } = {}) {
     if (disposed || revoked.value) return
+    if (!replaceOwner && reconnectOwner) return reconnectOwner.promise
     stopReconnect()
     inlineAdapter?.pauseManifests()
-    const owner = { controller: new AbortController() }
+    const owner = { controller: new AbortController(), forceRows, allowMetaFailure, promise: null }
     reconnectOwner = owner
-    reconcileReconnect(owner)
+    owner.promise = reconcileReconnect(owner)
+    return owner.promise
 }
 async function reconcileReconnect(owner) {
     const current = () => !disposed && !revoked.value && reconnectOwner === owner && !owner.controller.signal.aborted
@@ -149,34 +139,39 @@ async function reconcileReconnect(owner) {
     const retry = () => {
         if (current()) reconnectTimer = setTimeout(() => {
             reconnectTimer = null
-            reconcileReconnect(owner)
+            owner.promise = reconcileReconnect(owner)
         }, 1000)
     }
     try {
         const metaGeneration = liveMetaGeneration
-        const fresh = await api.fetchMeta({ signal: owner.controller.signal })
+        let fresh
+        try { fresh = await api.fetchMeta({ signal: owner.controller.signal }) }
+        catch (error) {
+            // Completion can finish an already-authorized placement during meta503.
+            // The adapter still buffers every publication without a cached source row.
+            if (!owner.allowMetaFailure || !snapshotRowsReady.value || [401, 403, 404].includes(error.status)) throw error
+        }
         if (!current()) return
-        const { last_line: lastLine, ...freshState } = fresh
-        // A newer channel access decision must not be undone by an older HTTP response.
-        if (metaGeneration === liveMetaGeneration) Object.assign(meta, freshState)
-        if (fresh.ready === false) { retry(); return }
-        const metadata = await api.fetchItemsMetadata(null, { signal: owner.controller.signal })
-        if (!current()) return
-        store.initSessionItemsFromMetadata(meta.session_id, metadata)
-        // Metadata can include rows computed after the preceding meta request.
-        const boundary = metadata.reduce((line, row) => Math.max(line, row.line_num), lastLine)
-        store.setSession({ ...store.getSession(meta.session_id), last_line: boundary })
-        meta.last_line = boundary
+        if (fresh) {
+            const { last_line: lastLine, ...freshState } = fresh
+            // A newer channel decision must not be undone by an older HTTP response.
+            if (metaGeneration === liveMetaGeneration) Object.assign(meta, freshState)
+            if (fresh.ready === false) { retry(); return }
+            if (owner.forceRows || !snapshotRowsReady.value || lastLine !== store.getSession(meta.session_id)?.last_line) {
+                snapshotRowsReady.value = false
+                const metadata = await api.fetchItemsMetadata(null, { signal: owner.controller.signal })
+                if (!current()) return
+                store.initSessionItemsFromMetadata(meta.session_id, metadata)
+                const boundary = metadata.reduce((line, row) => Math.max(line, row.line_num), lastLine)
+                store.setSession({ ...store.getSession(meta.session_id), last_line: boundary })
+                meta.last_line = boundary
+                snapshotRowsReady.value = true
+            }
+        }
         await inlineAdapter?.refresh({ signal: owner.controller.signal })
         if (!current()) return
-        const resumed = inlineAdapter?.resumeManifests(wire => (wire.artifacts || []).every(item => {
-            const publication = item.publication
-            if (item.source_session_id !== meta.session_id || !Array.isArray(publication) || publication.length !== 4
-                || publication[0] !== meta.session_id || !publication.slice(1).every(Number.isInteger)) return true
-            return publication[1] <= boundary && !!store.getSessionItem(meta.session_id, publication[1])
-        })) ?? true
-        // A concurrent manifest can name a row newer than this HTTP snapshot.
-        if (!resumed) { retry(); return }
+        const resumed = inlineAdapter?.resumeManifests(manifestRowsReady) ?? true
+        if (!resumed) { owner.forceRows = true; retry(); return }
         reconnectOwner = null
     } catch (error) {
         if (!current()) return
@@ -235,6 +230,7 @@ provide('sharedSessionId', meta.session_id)
 provide('transcriptFrozen', computed(() => meta.mode !== 'live' || revoked.value))
 
 onMounted(() => {
+    mounted = true
     window.addEventListener('popstate', onPopState)
     window.addEventListener('focus', onWindowFocus)
     refreshInline()
@@ -245,7 +241,18 @@ onMounted(() => {
     if (meta.include_subagents && hash && hash[1]) {
         for (const id of hash[1].split(',').filter(Boolean)) openSubagent(id)
     }
-    if (ready.value && meta.mode === 'live') {
+    syncLiveTransport()
+})
+function syncLiveTransport() {
+    if (!mounted || disposed) return
+    if (revoked.value) stopReconnect()
+    if (revoked.value || !ready.value || meta.mode !== 'live') {
+        disconnectLive?.()
+        disconnectLive = null
+        store.setLiveAssistantTurn(meta.session_id, false)
+        return
+    }
+    if (!disconnectLive) {
         disconnectLive = connectShareLive({
             tokenPath: props.tokenPath, sessionId: meta.session_id,
             // The consumer forwards subagent traffic too — route by the message's
@@ -257,7 +264,12 @@ onMounted(() => {
             // viewer's current mode so the select never sits on a now-invalid value.
             onMeta: (m) => {
                 liveMetaGeneration++
-                Object.assign(meta, m)
+                const modeChanged = m.mode !== undefined && m.mode !== meta.mode
+                if (modeChanged) inlineAdapter?.pauseManifests()
+                const { last_line: lastLine, ...freshState } = m
+                Object.assign(meta, freshState)
+                if (!modeChanged && lastLine !== undefined) meta.last_line = lastLine
+                if (modeChanged) beginReconciliation()
                 // include_subagents turned off live: no run state is relayed any
                 // more, so stop reading the stored ones (never back on before reload).
                 if (store.runStatesAvailable && !m.include_subagents) store.disableRunStates(meta.session_id)
@@ -287,10 +299,9 @@ onMounted(() => {
             onClosed: () => { revoked.value = true; stopReconnect(); store.setLiveAssistantTurn(meta.session_id, false) },
         })
     }
-})
+}
 onUnmounted(() => {
     disposed = true
-    focusController.abort()
     stopReconnect()
     disconnectLive?.()
     window.removeEventListener('popstate', onPopState)

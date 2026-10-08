@@ -167,7 +167,7 @@ async function mount(t, { initialManifest = manifest(263), mode = 'snapshot' } =
     await store.loadSessionItemsRanges('share', 'root', [[2, 10]])
     await flush()
     requests.length = 0
-    return { store, requests, scroller, app, root, runtime: () => runtime,
+    return { store, requests, scroller, app, root, sockets, runtime: () => runtime,
         focus: () => events.get('focus')(),
         open: () => sockets.at(-1).onopen(),
         message: message => sockets.at(-1).sendMessage(message),
@@ -570,4 +570,74 @@ test('a newer reconnect replaces an aborted manifest request without waiting for
     pending.resolve(manifest(269)); await flush()
     assert.equal(f.store.getSession('root').last_line, 270)
     assert.equal(f.runtime().entries.get('["root","preferences"]').descriptor.publicationKey, '["root",270,0,0]')
+})
+
+
+test('snapshot completion restores Push rows before accepting its publication without focus', async t => {
+    const initialManifest = manifest(263)
+    initialManifest.artifacts[1].status = 'pending'
+    initialManifest.artifacts[1].code_revision = null
+    const f = await mount(t, { initialManifest }), pending = deferred(), runtime = f.runtime()
+    const oldEntry = runtime.entries.get('["root","preferences"]')
+    f.advance(267); f.metadata(() => pending.promise)
+    await new Promise(resolve => setTimeout(resolve, 1100)); await flush()
+    assert.equal(oldEntry.descriptor.publicationKey, '["root",263,0,0]', 'completion must wait for the selected source row')
+    assert.equal(f.store.getSessionItem('root', 267), null)
+    pending.resolve([item(267, tag('preferences'))])
+    await waitFor(() => oldEntry.descriptor.publicationKey === '["root",267,0,0]')
+    assert.ok(f.store.getSessionItem('root', 267), 'accepted publication must have a reachable transcript row')
+    assert.equal(f.store.getSession('root').last_line, 267)
+    assert.equal(f.scroller.mounts, 1)
+})
+
+test('snapshot adopts live mode and receives later publications through exactly one socket', async t => {
+    const f = await mount(t)
+    f.meta(() => ({ ...meta(263), mode: 'live' }))
+    await f.focus(); await flush()
+    assert.equal(f.sockets.length, 1, 'adopting live mode must start live updates')
+    f.open(); await flush()
+    await waitFor(() => f.requests.some(url => url.endsWith('/items/metadata/')))
+    f.advance(267)
+    f.message({ type: 'share_items_added', items: [item(267, tag('preferences'))], session_id: 'root' })
+    f.message({ type: 'share_inline_artifacts', manifest: manifest(267) })
+    await new Promise(resolve => setTimeout(resolve, 1100))
+    await waitFor(() => f.runtime().entries.get('["root","preferences"]').descriptor.publicationKey === '["root",267,0,0]')
+    assert.ok(f.store.getSessionItem('root', 267))
+    assert.equal(f.sockets.length, 1)
+})
+
+test('live adopts snapshot mode and freezes the replacement after row reconciliation retries', async t => {
+    const f = await mount(t, { mode: 'live' }), runtime = f.runtime()
+    f.open(); await flush()
+    await waitFor(() => f.requests.some(url => url.endsWith('/api/inline-artifacts/')))
+    f.advance(267)
+    f.meta(() => meta(267))
+    f.metadata(() => new Response(null, { status: 503 }))
+    f.message({ type: 'share_meta', meta: meta(267) })
+    await flush()
+    assert.equal(f.sockets[0].closed, true, 'snapshot adoption must stop the live transport')
+    assert.equal(runtime.active.value, true, 'an active snapshot keeps artifact access')
+    assert.equal(runtime.entries.get('["root","preferences"]').descriptor.publicationKey, '["root",263,0,0]')
+    assert.equal(f.store.getSessionItem('root', 267), null)
+    f.metadata(null)
+    await new Promise(resolve => setTimeout(resolve, 1100))
+    await waitFor(() => runtime.entries.get('["root","preferences"]').descriptor.publicationKey === '["root",267,0,0]')
+    assert.ok(f.store.getSessionItem('root', 267))
+    assert.equal(f.scroller.mounts, 1)
+    await new Promise(resolve => setTimeout(resolve, 1100))
+    assert.equal(f.sockets.length, 1, 'the stopped socket must not reconnect')
+})
+
+test('retry responses that select a new snapshot publication wait for its source row', async t => {
+    const initialManifest = manifest(263)
+    initialManifest.artifacts[1].status = 'error'
+    const f = await mount(t, { initialManifest }), pending = deferred(), oldFetch = globalThis.fetch
+    const entry = f.runtime().entries.get('["root","preferences"]')
+    f.advance(267); f.metadata(() => pending.promise)
+    globalThis.fetch = (url, options) => url.endsWith('/retry/') ? Promise.resolve(Response.json(manifest(267))) : oldFetch(url, options)
+    await f.runtime().reload(entry.artifactKey); await flush()
+    assert.equal(entry.descriptor.publicationKey, '["root",263,0,0]', 'retry must retain the accepted binding until rows exist')
+    pending.resolve([item(267, tag('preferences'))])
+    await waitFor(() => entry.descriptor.publicationKey === '["root",267,0,0]')
+    assert.ok(f.store.getSessionItem('root', 267))
 })

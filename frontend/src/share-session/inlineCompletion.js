@@ -1,5 +1,6 @@
 /** Temporary snapshot completion fetches. Live shares retain their existing channel. */
 export function createShareInlineCompletion({ adapter, isSnapshot, accessClosed, onAccessClosed,
+    refresh = options => adapter.refresh(options),
     setTimer = setTimeout, clearTimer = clearTimeout,
 }) {
     let pending = false, disposed = false, timer = null, controller = null, generation = 0
@@ -22,7 +23,7 @@ export function createShareInlineCompletion({ adapter, isSnapshot, accessClosed,
         const captured = generation
         const activeController = new AbortController()
         controller = activeController
-        try { await adapter.refresh({ signal: activeController.signal }) }
+        try { await refresh({ signal: activeController.signal }) }
         catch (error) {
             if (captured !== generation || activeController.signal.aborted) return
             if ([401, 403, 404].includes(error.status)) {

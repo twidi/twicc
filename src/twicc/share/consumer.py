@@ -29,6 +29,9 @@ def _session_is_ready(session_id: str) -> bool:
 
 
 class ShareConsumer(AsyncJsonWebsocketConsumer):
+    # One obligation coalesces skipped terminal updates; root compute recovery drains it.
+    _inline_manifest_pending = False
+
     async def connect(self):
         token = self.scope["url_route"]["kwargs"]["token"]
         share = await aresolve_share(token)
@@ -288,6 +291,8 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
             meta = await self._public_meta()
             if meta is not None:
                 await self.send_json({"type": "share_meta", "meta": meta})
+                if self._inline_manifest_pending and meta.get('ready') is not False:
+                    await self._send_inline_manifest()
             return
 
         if mtype in ("share_updated", "share_removed"):
@@ -296,11 +301,22 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
                 return
             share = data.get("share") or {}
             status = share.get("status")
-            if mtype == "share_removed" or status in ("revoked", "expired") \
-                    or share.get("options", {}).get("mode") == "snapshot":
-                # Revoked / expired / flipped to snapshot → close it out.
+            if mtype == "share_removed" or status in ("revoked", "expired"):
+                # Actual access loss remains immediate.
                 await self.send_json({"type": "share_closed"})
                 await self.close(code=WS_CLOSE_SHARE_UNAVAILABLE)
+                return
+            if share.get("options", {}).get("mode") == "snapshot":
+                # An active snapshot remains readable. Let the viewer reconcile its
+                # captured rows and copies before it stops the live transport.
+                meta = await self._public_meta()
+                if meta is not None:
+                    await self.send_json({"type": "share_meta", "meta": meta})
+                    await self.close(code=1000)
+                else:
+                    await self.send_json({"type": "share_closed"})
+                    await self.close(code=WS_CLOSE_SHARE_UNAVAILABLE)
+                self._inline_manifest_pending = False
                 return
             # Still live: re-resolve the connect-time filters from the fresh options.
             # HTTP re-resolves per request, but this open socket would otherwise keep
@@ -335,6 +351,7 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
         share = await sync_to_async(
             lambda: Share.objects.select_related('session').filter(id=self.share_id).first()
         )()
+        self._inline_manifest_pending = False
         if (share is None or not share.is_active() or share.kind != 'session'
                 or share.session_id != self.session_id or share.session.type != SessionType.SESSION
                 or (share.options or {}).get('mode', 'live') != 'live'):
@@ -347,5 +364,6 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
         try:
             manifest = await sync_to_async(public_inline_manifest)(share)
         except SelectionNotReady:
+            self._inline_manifest_pending = True
             return
         await self.send_json({'type': 'share_inline_artifacts', 'share_id': share.id, 'manifest': manifest})
