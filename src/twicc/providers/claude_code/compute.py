@@ -1694,6 +1694,24 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
 
         return orjson.dumps(parsed_json).decode('utf-8')
 
+    def extract_inline_artifact_texts(self, parsed_json: dict) -> list[tuple[int, str]]:
+        if (
+            parsed_json.get('type') != 'assistant'
+            or parsed_json.get('isApiErrorMessage')
+            or parsed_json.get('isMeta')
+            or 'twiccOriginalContent' in parsed_json
+        ):
+            return []
+        content = get_message_content(parsed_json)
+        if isinstance(content, str):
+            return [(0, content)]
+        if not isinstance(content, list):
+            return []
+        return [
+            (index, block['text']) for index, block in enumerate(content)
+            if isinstance(block, dict) and block.get('type') == 'text' and isinstance(block.get('text'), str)
+        ]
+
     def compute_item_kind(self, parsed_json: dict) -> ItemKind | None:
         # NOTE: any change to this classification MUST bump
         # CLAUDE_CODE_COMPUTE_VERSION so existing sessions are recomputed.

@@ -7,6 +7,7 @@ safe to call from async contexts without sync_to_async wrapping, as long as
 the model instance was already fetched from the database.
 """
 
+from twicc.inline_artifacts.publications import latest_publications
 from twicc.project_icons import project_own_icon_url, project_repo_icon_url
 from twicc.providers.helpers import AGENT_SETTINGS_HIDDEN_FROM_FRONTEND, AgentSettings, get_provider_helpers
 
@@ -177,6 +178,7 @@ def serialize_session(session):
     This ensures that when a session is created with a custom title, the title
     is immediately visible even before it's written to the JSONL file.
     """
+    from twicc.core.models import SessionType
     from twicc.pending_titles import get_pending_title
     from twicc.artifacts_watcher import session_has_artifacts
     from twicc.paths import get_session_artifacts_dir
@@ -234,6 +236,7 @@ def serialize_session(session):
         "mute_on_user_turn": session.mute_on_user_turn,
         "layout": session.layout,  # Per-session dockable-layout intention (UI state; {} = single pane)
         "browser_url": session.browser_url,  # Browser-pane last URL (UI state; None = use the resolved default)
+        "inline_artifacts": latest_publications(session.inline_artifacts) if session.type == SessionType.SESSION else {},
         "tasks": session.tasks,  # Latest task/todo/plan snapshot (common shape; {} = none). Not consumed by the UI yet
         # Plan-like documents touched by the session (list; [] = none) —
         # emitted verbatim, honoring this serializer's query-free contract:
@@ -470,6 +473,7 @@ def serialize_share_public_meta(share):
     else the real session title (per `show_title`) / bookmark name. Cost is never
     exposed to viewers."""
     from twicc.core.enums import ShareKind
+    from twicc.core.models import SessionType
 
     opts = _serialize_share_options(share.options)
     if share.kind == ShareKind.SESSION.value:
@@ -480,6 +484,7 @@ def serialize_share_public_meta(share):
             last_line = min(last_line, frozen)
         data = {
             "kind": "session",
+            "inline_artifacts_supported": bool(sess and sess.type == SessionType.SESSION),
             "ready": session_compute_ready(sess) if sess else False,
             "session_id": share.session_id,
             "provider": sess.provider if sess else None,

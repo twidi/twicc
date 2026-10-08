@@ -4262,6 +4262,20 @@ class CodexSessionCompute(BaseSessionCompute):
             )
         return None
 
+    def extract_inline_artifact_texts(self, parsed_json: dict) -> list[tuple[int, str]]:
+        # Completed items are authoritative; response_item and streaming mirrors
+        # remain excluded. Normalized real plan answers also use this shape.
+        item = completed_item(parsed_json)
+        if item is None or item.get('type') != 'AgentMessage':
+            return []
+        content = item.get('content')
+        if not isinstance(content, list):
+            return []
+        return [
+            (index, block['text']) for index, block in enumerate(content)
+            if isinstance(block, dict) and block.get('type') == 'Text' and isinstance(block.get('text'), str)
+        ]
+
     def compute_item_kind(self, parsed_json: dict) -> ItemKind | None:
         # NOTE: any change to this classification MUST bump
         # CODEX_COMPUTE_VERSION so existing sessions are recomputed.

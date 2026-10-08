@@ -68,6 +68,7 @@ from twicc.core.models import (
 )
 from twicc.core.session_queries import TOOL_STATE_ANNOTATIONS
 from twicc.git import is_git_root_related, read_head_branch, resolve_git_from_path
+from twicc.inline_artifacts.publications import merge_publications
 from twicc.providers.enrichment_cache import BorrowedEnrichment, EnrichmentCache
 from twicc.providers.live_sync import LiveSyncLimits, LiveSyncResult, LiveSyncUpdates, RawLiveSlice, read_live_slice
 from twicc.providers.live_aggregates import (
@@ -1197,6 +1198,30 @@ class BaseSessionCompute:
     def compute_item_kind(self, parsed_json: dict) -> ItemKind | None:
         """Determine the :class:`ItemKind` for a parsed JSONL line, or ``None``."""
         raise NotImplementedError
+
+    def extract_inline_artifact_texts(self, parsed_json: dict) -> list[tuple[int, str]]:
+        """Return original block indices and canonical finalized assistant text.
+
+        Called after normalization, only for regular sessions. Provider mirrors,
+        reasoning, tool output, and synthetic messages cannot publish.
+        """
+        return []
+
+    def build_inline_artifact_publications(
+        self, session_id: str, line_num: int, parsed_json: dict,
+    ) -> list[dict]:
+        """Build file-independent publication records at exact source offsets."""
+        from twicc.inline_artifacts.publications import parse_inline_artifact_blocks
+
+        records = []
+        for block_index, text in self.extract_inline_artifact_texts(parsed_json):
+            for block in parse_inline_artifact_blocks(text):
+                if block.descriptor is not None:
+                    records.append({
+                        **block.descriptor, 'line_num': line_num,
+                        'text_block_index': block_index, 'tag_offset': block.start,
+                    })
+        return records
 
     def extract_tasks_payload(self, parsed_json: dict) -> dict | None:
         """Return the task/todo/plan state carried by this JSONL line, in the
@@ -2941,6 +2966,7 @@ class BaseSessionCompute:
         # top-level ancestor's list at apply time (never their own row).
         plan_doc_events: list[tuple[DocEditEvent, datetime | None]] = []
         is_main_session = session.type == SessionType.SESSION
+        inline_publications: list[dict] = []
         # Goal lifecycle history, folded from every goal line across the whole
         # session (authoritative full rebuild — starts empty).
         goals: list[dict] = []
@@ -3021,6 +3047,11 @@ class BaseSessionCompute:
             if new_content is not None and new_content != item.content:
                 item.content = new_content
                 content_overrides.append({'id': item.id, 'content': new_content})
+
+            if is_main_session:
+                inline_publications.extend(self.build_inline_artifact_publications(
+                    session_id, item.line_num, parsed,
+                ))
 
             # Single-pass content analysis (avoids redundant traversals)
             analysis = self.analyze_content(
@@ -3483,6 +3514,7 @@ class BaseSessionCompute:
                 # Full recompute is authoritative for the whole file: reset to
                 # {} when no JSONL state exists; apply preserves SDK-only state.
                 'tasks': last_tasks_snapshot if last_tasks_snapshot is not None else {},
+                'inline_artifacts': merge_publications({}, inline_publications),
                 # Authoritative too — [] when no plan-doc was ever touched.
                 'plan_paths': plan_paths,
                 # Authoritative for the whole file too — [] when no goal ever set.
@@ -4066,6 +4098,7 @@ class BaseSessionCompute:
         # save (the subagent's own row keeps its default []).
         plan_doc_events: list[tuple[DocEditEvent, datetime | None]] = []
         is_main_session = session.type == SessionType.SESSION
+        inline_publications: list[dict] = []
         # Goal history folded incrementally onto the persisted list: start from
         # the stored state and apply only this batch's transitions.
         goals = copy.deepcopy(session.goals) if session.goals else []
@@ -4155,6 +4188,11 @@ class BaseSessionCompute:
                         "(session=%s, line=%d)",
                         session.id, current_line_num,
                     )
+
+            if is_main_session:
+                inline_publications.extend(self.build_inline_artifact_publications(
+                    session.id, current_line_num, parsed,
+                ))
 
             # Current-batch evidence is published before the next transform,
             # even though raw items are only inserted after this first pass.
@@ -4523,6 +4561,11 @@ class BaseSessionCompute:
         ]
         if subagent_lifecycle_changed:
             session_update_fields.append("last_stopped_at")
+        # A native subagent must also clear any catalog from older compute rules.
+        inline_catalog = merge_publications(session.inline_artifacts, inline_publications) if is_main_session else {}
+        if inline_catalog != session.inline_artifacts:
+            session.inline_artifacts = inline_catalog
+            session_update_fields.append("inline_artifacts")
         # Persist a refreshed task snapshot only when this batch carried one, so
         # a batch with no task line leaves the stored Session.tasks intact.
         if last_tasks_snapshot is not None:

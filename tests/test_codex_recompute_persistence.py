@@ -332,3 +332,17 @@ def test_full_recompute_preserves_private_agent_origin_without_sender_header(cod
     assert submission["status"] == "accepted"
     assert after["batches"]["recorded-question"]["status"] == "ready"
     assert after["facts"]["question:recorded-question"]["line"] == 2
+
+
+def test_stale_recompute_does_not_erase_live_inline_correction(codex_session, tmp_path):
+    from tests.test_inline_artifact_compute import TAG, assistant, capture, ingest
+
+    compute = get_compute()
+    path = tmp_path / 'catalog.jsonl'
+    ingest(compute, codex_session, path, [assistant(Provider.CODEX, TAG)])
+    rebuilt = capture(compute, codex_session)
+    ingest(compute, codex_session, path, [assistant(Provider.CODEX, TAG)], append=True)
+    result = compute.apply_session_complete(rebuilt)
+    codex_session.refresh_from_db()
+    assert result.outcome == 'superseded'
+    assert codex_session.inline_artifacts['publications'][-1]['line_num'] == 2

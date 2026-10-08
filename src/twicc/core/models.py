@@ -564,6 +564,9 @@ class Session(models.Model):
     # Codex SDK turn/plan/updated snapshots have line=None and turn_id.
     # Both compute paths preserve these unless JSONL supplies newer state.
     tasks = models.JSONField(default=dict, blank=True)
+    # Canonical finalized assistant publications; native subagents always keep {}.
+    # Full compute rebuilds all occurrences; live compute merges source identities.
+    inline_artifacts = models.JSONField(default=dict, blank=True)
     # Plan-like documents this session touched (plans, specs, handoffs, design
     # notes...), append-ordered — the frontend sorts by ``updated_at``. Each
     # entry: ``{path, exists, created_at, updated_at, source}`` where ``path``
@@ -1812,6 +1815,8 @@ class Share(models.Model):
     revoked_at = models.DateTimeField(null=True, blank=True)
     # Kind-specific options (design §5.2). Validated by the service, never trusted raw.
     options = models.JSONField(default=dict, blank=True)
+    # Server-owned inline export state, never part of writable share options.
+    inline_artifact_exports = models.JSONField(default=dict, blank=True)
     view_count = models.PositiveIntegerField(default=0)
     last_viewed_at = models.DateTimeField(null=True, blank=True)
     notify_on_view = models.BooleanField(default=False)

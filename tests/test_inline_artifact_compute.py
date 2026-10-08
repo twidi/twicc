@@ -1,0 +1,241 @@
+"""Canonical publication catalogs remain identical across compute paths."""
+
+import queue
+
+import orjson
+import pytest
+
+from twicc.core.enums import Provider
+from twicc.core.models import Project, Session, SessionType, Share
+from twicc.core.serializers import serialize_session, serialize_share_public_meta
+from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
+from twicc.providers.codex.compute import CodexSessionCompute
+from twicc.providers.live_sync import LiveSyncLimits
+
+
+TAG = '<twicc:inline-artifact id="preferences" src="inline-artifacts/preferences/index.html" />'
+TEXT = '😀\r\n\r\n  ' + TAG + '\r\n'
+RECORD = {
+    'artifact_id': 'preferences', 'line_num': 1, 'text_block_index': 1,
+    'tag_offset': 7, 'src': 'inline-artifacts/preferences/index.html',
+    'title': 'preferences', 'height': 360,
+}
+
+
+def assistant(provider, text=TEXT):
+    if provider == Provider.CLAUDE_CODE:
+        return {'type': 'assistant', 'uuid': 'message-1', 'timestamp': '2026-10-08T10:00:00Z',
+                'message': {'id': 'msg-1', 'role': 'assistant', 'content': [
+                    {'type': 'thinking', 'thinking': TAG}, {'type': 'text', 'text': text}]}}
+    return {'type': 'event_msg', 'timestamp': '2026-10-08T10:00:00Z', 'payload': {
+        'type': 'item_completed', 'thread_id': 's', 'turn_id': 't', 'item': {
+            'type': 'AgentMessage', 'id': 'msg-1', 'phase': 'commentary', 'content': [
+                {'type': 'Image', 'url': 'x'}, {'type': 'Text', 'text': text}]}}}
+
+
+def mirror(provider):
+    if provider == Provider.CLAUDE_CODE:
+        return {'type': 'user', 'message': {'role': 'user', 'content': [{'type': 'text', 'text': TAG}]}}
+    return {'type': 'response_item', 'payload': {'type': 'message', 'role': 'assistant',
+            'content': [{'type': 'output_text', 'text': TEXT}]}}
+
+
+def capture(compute, session):
+    results = queue.Queue()
+    compute.compute_session_metadata(session.id, results, run_id=0)
+    return orjson.loads(results.get_nowait())
+
+
+def ingest(compute, session, path, records, *, append=False):
+    with path.open('ab' if append else 'wb') as stream:
+        for record in records:
+            stream.write(orjson.dumps(record) + b'\n')
+    while True:
+        result = compute.sync_session_slice(session.id, path, limits=LiveSyncLimits(max_bytes=256))
+        if not result.has_more:
+            break
+    session.refresh_from_db()
+
+
+@pytest.fixture(params=[Provider.CLAUDE_CODE, Provider.CODEX])
+def case(request, db, tmp_path):
+    provider = request.param
+    session = Session.objects.create(id='s', file_path='s.jsonl', project=Project.objects.create(id='p'), provider=provider)
+    compute = ClaudeCodeSessionCompute() if provider == Provider.CLAUDE_CODE else CodexSessionCompute()
+    return provider, session, compute, tmp_path / 'rollout.jsonl'
+
+
+def test_live_and_full_publish_identical_catalog(case):
+    provider, session, compute, path = case
+    ingest(compute, session, path, [assistant(provider), mirror(provider), assistant(provider, TAG)])
+    expected = {'schema': 1, 'publications': [RECORD, {**RECORD, 'line_num': 3, 'tag_offset': 0}]}
+    assert session.inline_artifacts == expected
+    rebuilt = capture(compute, session)
+    assert rebuilt['session_fields']['inline_artifacts'] == expected
+    session.inline_artifacts = {}
+    session.save(update_fields=['inline_artifacts'])
+    compute.apply_session_complete(rebuilt)
+    session.refresh_from_db()
+    assert session.inline_artifacts == expected
+    assert serialize_session(session)['inline_artifacts'] == {'preferences': expected['publications'][1]}
+
+
+def test_finalized_text_publishes_before_turn_end_and_invalid_tag_keeps_latest(case):
+    provider, session, compute, path = case
+    ingest(compute, session, path, [assistant(provider)])
+    assert session.inline_artifacts == {'schema': 1, 'publications': [RECORD]}
+    ingest(compute, session, path, [assistant(provider, TAG.replace('index.html', 'index.js'))], append=True)
+    assert serialize_session(session)['inline_artifacts'] == {'preferences': RECORD}
+    # No files exist. Catalog validity depends only on finalized text.
+    assert not (path.parent / 'inline-artifacts').exists()
+
+
+def test_reingestion_and_recompute_keep_source_identity(case):
+    provider, session, compute, path = case
+    ingest(compute, session, path, [assistant(provider)])
+    session.last_offset = 0
+    session.last_line = 0
+    session.save(update_fields=['last_offset', 'last_line'])
+    compute.sync_session_slice(session.id, path, limits=LiveSyncLimits())
+    compute.apply_session_complete(capture(compute, session))
+    session.refresh_from_db()
+    assert session.inline_artifacts == {'schema': 1, 'publications': [RECORD]}
+
+
+@pytest.mark.parametrize('copied_parent', [False, True])
+def test_native_subagents_never_publish_and_recompute_clears_stale_catalog(case, copied_parent, monkeypatch):
+    provider, session, compute, path = case
+    session.type = SessionType.SUBAGENT
+    if copied_parent:
+        parent = Session.objects.create(id='parent', file_path='parent.jsonl', project=session.project, provider=provider)
+        session.parent_session = parent
+    session.save()
+
+    def forbidden_hook(*_args):
+        raise AssertionError('subagent extraction hook must never run')
+
+    monkeypatch.setattr(compute, 'extract_inline_artifact_texts', forbidden_hook, raising=False)
+    ingest(compute, session, path, [assistant(provider)])
+    assert session.inline_artifacts == {}
+    session.inline_artifacts = {'schema': 1, 'publications': [RECORD]}
+    session.save(update_fields=['inline_artifacts'])
+    compute.apply_session_complete(capture(compute, session))
+    session.refresh_from_db()
+    assert session.inline_artifacts == {}
+    assert serialize_session(session)['inline_artifacts'] == {}
+
+
+def test_nonassistant_and_unfinished_messages_never_publish(case):
+    provider, session, compute, path = case
+    if provider == Provider.CLAUDE_CODE:
+        records = [mirror(provider), {'type': 'assistant', 'message': {'content': [
+            {'type': 'thinking', 'thinking': TAG}, {'type': 'tool_use', 'id': 'tool-1',
+             'name': 'Read', 'input': {'file_path': TAG}}]}},
+            {'type': 'system', 'subtype': 'local_command', 'content': '<local-command-stdout>' + TAG + '</local-command-stdout>'},
+            {'type': 'assistant', 'isApiErrorMessage': True, 'message': {'content': [{'type': 'text', 'text': TAG}]}}]
+    else:
+        records = [mirror(provider), {'type': 'event_msg', 'payload': {'type': 'agent_message', 'message': TAG}},
+            {'type': 'event_msg', 'payload': {'type': 'item_started', 'item': {'type': 'AgentMessage', 'content': [{'type': 'Text', 'text': TAG}]}}},
+            {'type': 'event_msg', 'payload': {'type': 'item_completed', 'item': {'type': 'Reasoning', 'content': [{'type': 'Text', 'text': TAG}]}}},
+            {'type': 'event_msg', 'payload': {'type': 'item_completed', 'item': {'type': 'UserMessage', 'content': [{'type': 'text', 'text': TAG}]}}}]
+    ingest(compute, session, path, records)
+    assert session.inline_artifacts == {}
+    compute.apply_session_complete(capture(compute, session))
+    session.refresh_from_db()
+    assert session.inline_artifacts == {}
+
+
+def test_public_metadata_has_only_safe_support_flag(case):
+    provider, session, compute, path = case
+    ingest(compute, session, path, [assistant(provider)])
+    share = Share.objects.create(kind='session', token='a' * 64, session=session,
+                                 inline_artifact_exports={'owner_path': '/private/location'})
+    public = serialize_share_public_meta(share)
+    assert public['inline_artifacts_supported'] is True
+    assert 'inline_artifacts' not in public
+    assert 'inline_artifact_exports' not in public
+    assert '/private/location' not in orjson.dumps(public).decode()
+    session.type = SessionType.SUBAGENT
+    assert serialize_share_public_meta(share)['inline_artifacts_supported'] is False
+
+
+def test_migration_defaults_are_empty_and_independent(db):
+    project = Project.objects.create(id='defaults')
+    first = Session.objects.create(id='first', file_path='first.jsonl', project=project)
+    second = Session.objects.create(id='second', file_path='second.jsonl', project=project)
+    share = Share.objects.create(kind='session', token='b' * 64, session=first)
+    first.refresh_from_db()
+    second.refresh_from_db()
+    share.refresh_from_db()
+    assert first.inline_artifacts == second.inline_artifacts == share.inline_artifact_exports == {}
+    first.inline_artifacts['schema'] = 1
+    assert second.inline_artifacts == {}
+
+
+def test_screenshot_normalization_offsets_use_persisted_text(case):
+    provider, session, compute, path = case
+    ingest(compute, session, path, [assistant(provider, '<twicc:insert-screenshot />\r\n\r\n' + TAG)])
+    publication = session.inline_artifacts['publications'][0]
+    # Screenshot normalization changes source length; Codex coalesces blocks.
+    assert publication == {**RECORD, 'text_block_index': 1 if provider == Provider.CLAUDE_CODE else 0,
+                           'tag_offset': 31}
+    rebuilt = capture(compute, session)
+    assert rebuilt['session_fields']['inline_artifacts'] == session.inline_artifacts
+
+
+def test_claude_string_text_uses_block_zero(db, tmp_path):
+    session = Session.objects.create(id='hybrid', file_path='hybrid.jsonl',
+                                    project=Project.objects.create(id='hybrid-p'), provider=Provider.CLAUDE_CODE)
+    compute = ClaudeCodeSessionCompute()
+    ingest(compute, session, tmp_path / 'hybrid.jsonl', [
+        {'type': 'assistant', 'message': {'role': 'assistant', 'content': TAG}},
+        {'type': 'assistant', 'message': {}},
+    ])
+    assert session.inline_artifacts == {'schema': 1, 'publications': [
+        {**RECORD, 'text_block_index': 0, 'tag_offset': 0}]}
+    assert capture(compute, session)['session_fields']['inline_artifacts'] == session.inline_artifacts
+
+
+def test_codex_normalized_plan_preserves_publication_source(db, tmp_path):
+    session = Session.objects.create(id='plan', file_path='plan.jsonl',
+                                    project=Project.objects.create(id='plan-p'), provider=Provider.CODEX)
+    compute = CodexSessionCompute()
+    source = {'type': 'response_item', 'payload': {'type': 'message', 'role': 'assistant',
+        'content': [{'type': 'output_text', 'text': '<proposed_plan>\r\n\r\n' + TAG + '\r\n\r\n</proposed_plan>'}]}}
+    ingest(compute, session, tmp_path / 'plan.jsonl', [source])
+    assert session.inline_artifacts == {'schema': 1, 'publications': [
+        {**RECORD, 'text_block_index': 0, 'tag_offset': 19}]}
+    assert capture(compute, session)['session_fields']['inline_artifacts'] == session.inline_artifacts
+
+
+def test_generated_migration_initializes_existing_rows(tmp_path, django_db_blocker):
+    """Apply the generated operations to existing rows in a disposable DB."""
+    from importlib import import_module
+
+    from django.db import connections, models
+    from django.db.migrations.state import ModelState, ProjectState
+    from twicc.db.backends.sqlite3.base import DatabaseWrapper
+
+    alias = 'inline_catalog_migration'
+    config = {**connections['default'].settings_dict, 'NAME': str(tmp_path / 'migration.sqlite3')}
+    connection = DatabaseWrapper(config, alias)
+    setattr(connections._connections, alias, connection)
+    state = ProjectState()
+    for name in ('Session', 'Share'):
+        state.add_model(ModelState('core', name, [('id', models.CharField(primary_key=True, max_length=64))]))
+    migration = import_module('twicc.core.migrations.0154_inline_artifact_catalogs').Migration('0154', 'core')
+    try:
+        with django_db_blocker.unblock():
+            with connection.schema_editor() as editor:
+                for name in ('Session', 'Share'):
+                    model = state.apps.get_model('core', name)
+                    editor.create_model(model)
+                    model.objects.using(alias).create(id='existing')
+            with connection.schema_editor() as editor:
+                state = migration.apply(state, editor)
+            session = state.apps.get_model('core', 'Session').objects.using(alias).get(id='existing')
+            share = state.apps.get_model('core', 'Share').objects.using(alias).get(id='existing')
+            assert session.inline_artifacts == share.inline_artifact_exports == {}
+    finally:
+        connection.close()
+        delattr(connections._connections, alias)

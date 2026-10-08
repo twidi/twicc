@@ -153,3 +153,30 @@ def test_invalid_final_facts_emit_failure_without_publishing_version():
     assert "key must be a nonempty string" in signal.error
     assert session.compute_version is None
     assert not SessionHistoryFact.objects.filter(session=session).exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_session_updated_broadcast_exposes_latest_inline_descriptor():
+    from channels.layers import get_channel_layer
+    from tests.test_inline_artifact_compute import RECORD
+
+    session = Session.objects.create(
+        id='inline-broadcast', file_path='inline-broadcast.jsonl',
+        project=Project.objects.create(id='inline-broadcast-project'), provider=Provider.CODEX,
+        user_message_count=1,
+        inline_artifacts={'schema': 1, 'publications': [RECORD, {**RECORD, 'line_num': 87}]},
+    )
+
+    async def scenario():
+        layer = get_channel_layer()
+        channel = await layer.new_channel()
+        await layer.group_add('updates', channel)
+        try:
+            await db_writer.broadcast_session_updated(session.id)
+            return await asyncio.wait_for(layer.receive(channel), timeout=2)
+        finally:
+            await layer.group_discard('updates', channel)
+
+    event = asyncio.run(scenario())
+    assert event['data']['type'] == 'session_updated'
+    assert event['data']['session']['inline_artifacts'] == {'preferences': {**RECORD, 'line_num': 87}}
