@@ -502,8 +502,8 @@ defineExpose({ isExpanded: expanded })
 /* ── Panel ───────────────────────────────────────────────────────── */
 
 .tsc-panel {
-    width: 20rem;
-    max-width: calc(100vw - 2rem);
+    width: 25rem;
+    max-width: calc(100vw - 1rem);
     padding: var(--wa-space-s);
     border-radius: var(--wa-border-radius-m);
     display: flex;
@@ -595,5 +595,19 @@ defineExpose({ isExpanded: expanded })
     justify-content: flex-end;
     gap: var(--wa-space-s);
     margin-top: var(--wa-space-xs);
+}
+
+@media (max-width: 480px) {
+    .tsc-panel {
+        padding: var(--wa-space-xs);
+    }
+
+    .tsc-actions {
+        gap: var(--wa-space-xs);
+    }
+
+    .tsc-actions wa-button {
+        --wa-form-control-padding-inline: 0.375rem;
+    }
 }
 </style>
