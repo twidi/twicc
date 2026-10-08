@@ -641,3 +641,39 @@ test('retry responses that select a new snapshot publication wait for its source
     await waitFor(() => entry.descriptor.publicationKey === '["root",267,0,0]')
     assert.ok(f.store.getSessionItem('root', 267))
 })
+
+test('temporary live compute readiness loss preserves terminal delivery and immediate access closure', async t => {
+    const initialManifest = manifest(263)
+    initialManifest.artifacts[1].status = 'pending'
+    initialManifest.artifacts[1].code_revision = null
+    const f = await mount(t, { mode: 'live', initialManifest }), runtime = f.runtime()
+    f.open(); await flush()
+    await waitFor(() => f.requests.some(url => url.endsWith('/api/inline-artifacts/')))
+    await flush()
+    const entry = runtime.entries.get('["root","preferences"]')
+    runtime.attach(entry.artifactKey, '["root",263,0,0]', { placeholderEl: {}, clipEl: {}, isSuppressed: () => false })
+    runtime.setVisible(entry.artifactKey, true)
+    f.requests.length = 0
+    f.message({ type: 'share_meta', meta: { ...meta(263), mode: 'live', ready: false } })
+    await flush()
+    assert.equal(runtime.active.value, false, 'unready source must suspend execution')
+    assert.notEqual(f.sockets[0].closed, true, 'temporary compute readiness must retain the authorized delivery channel')
+    assert.equal(f.sockets.length, 1)
+    f.message({ type: 'share_meta', meta: { ...meta(263), mode: 'live', ready: true } })
+    const completed = { ...manifest(263), revision: 264 }
+    f.message({ type: 'share_inline_artifacts', manifest: completed })
+    await waitFor(() => entry.descriptor.status === 'ready' && entry.registered)
+    assert.equal(runtime.active.value, true)
+    assert.equal(entry.descriptor.publicationKey, '["root",263,0,0]')
+    assert.ok(useFramePoolStore().frames[entry.frameId])
+    assert.equal(f.requests.filter(url => url.includes('/inline-artifacts/root/preferences/index.html')).length, 1)
+    await new Promise(resolve => setTimeout(resolve, 1100)); await flush()
+    assert.equal(f.sockets.length, 1, 'compute recovery must not replace the retained socket')
+    assert.equal(f.requests.filter(url => url.endsWith('/api/inline-artifacts/') || url.endsWith('/api/meta/')).length, 0,
+        'retained terminal delivery must not depend on live polling')
+    f.message({ type: 'share_meta', meta: { ...meta(263), mode: 'live', include_inline_artifacts: false } })
+    assert.equal(runtime.active.value, false, 'inclusion loss remains immediate')
+    f.message({ type: 'share_closed' })
+    assert.equal(f.sockets[0].closed, true, 'actual access closure must stop the transport')
+    assert.equal(runtime.active.value, false)
+})

@@ -94,7 +94,7 @@ const inlineCompletion = inlineAdapter ? createShareInlineCompletion({
 }) : null
 watch(() => [meta.mode, revoked.value, ready.value, meta.include_inline_artifacts, snapshotRowsReady.value],
     () => inlineCompletion?.accessChanged(), { flush: 'sync' })
-watch(() => [meta.mode, revoked.value, ready.value], syncLiveTransport, { flush: 'sync' })
+watch(() => [meta.mode, revoked.value], syncLiveTransport, { flush: 'sync' })
 
 function manifestRowsReady(wire) {
     const boundary = store.getSession(meta.session_id)?.last_line ?? 0
@@ -246,7 +246,8 @@ onMounted(() => {
 function syncLiveTransport() {
     if (!mounted || disposed) return
     if (revoked.value) stopReconnect()
-    if (revoked.value || !ready.value || meta.mode !== 'live') {
+    // Compute readiness suspends execution, but the channel owns readiness recovery.
+    if (revoked.value || meta.mode !== 'live') {
         disconnectLive?.()
         disconnectLive = null
         store.setLiveAssistantTurn(meta.session_id, false)
