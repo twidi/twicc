@@ -61,6 +61,7 @@ import { createAsyncQuestionActions } from '../utils/asyncQuestionState'
 import { retainsAsyncQuestionSend } from '../utils/asyncQuestions'
 import { saveInflightSend, deleteInflightSend, getAllInflightSends } from '../utils/inflightStorage'
 import { liveDraftKey, sweepPendingRequestDrafts } from '../utils/pendingRequestDraftStorage'
+import { withAutoDenyDeadlines } from '../utils/autoDeny'
 import { mediasToSdkFormat } from '../utils/fileUtils'
 import {
     addLegacyFailures,
@@ -5194,7 +5195,11 @@ export const useDataStore = defineStore('data', {
                     state_changed_at: extra.state_changed_at || null,
                     memory: extra.memory || null,
                     error: extra.error || null,
-                    pending_requests: extra.pending_requests || [],
+                    pending_requests: withAutoDenyDeadlines(
+                        extra.pending_requests || [],
+                        Date.now(),
+                        this.processStates[sessionId]?.pending_requests,
+                    ),
                     active_crons: extra.active_crons || null,
                     session_title: extra.session_title || null,
                     project_name: extra.project_name || null,
@@ -5314,7 +5319,11 @@ export const useDataStore = defineStore('data', {
                         state_changed_at: p.state_changed_at || null,
                         memory: p.memory || null,
                         error: p.error || null,
-                        pending_requests: p.pending_requests || [],
+                        pending_requests: withAutoDenyDeadlines(
+                            p.pending_requests || [],
+                            snapshotAt,
+                            this.processStates[p.session_id]?.pending_requests,
+                        ),
                         active_crons: p.active_crons || null,
                         session_title: p.session_title || null,
                         project_name: p.project_name || null,

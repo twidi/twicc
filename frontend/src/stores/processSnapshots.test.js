@@ -6,6 +6,7 @@ import { computed, effectScope, watch, nextTick } from 'vue'
 import { PROCESS_STATE } from '../constants.js'
 import { backgroundWorkStatusKey } from '../utils/backgroundWork.js'
 import { jsonValuesEqual } from '../utils/jsonValuesEqual.js'
+import { withAutoDenyDeadlines } from '../utils/autoDeny.js'
 import { getProjectActivityIndex } from '../utils/projectProcessActivity.js'
 import { useRailActiveSessions } from '../composables/useRailActiveSessions.js'
 
@@ -15,7 +16,7 @@ const start = source.indexOf('        _patchProcessState(') >= 0
 const end = source.indexOf('        // ── Streaming blocks', start)
 const syntheticStart = source.indexOf('        setSyntheticProcessState(')
 const syntheticEnd = source.indexOf('        /**', syntheticStart)
-const deps = { PROCESS_STATE, backgroundWorkStatusKey, jsonValuesEqual,
+const deps = { PROCESS_STATE, backgroundWorkStatusKey, jsonValuesEqual, withAutoDenyDeadlines,
     destroyAllBuffers() {}, sweepPendingRequestDrafts: () => Promise.resolve(), liveDraftKey: (id, key) => `${id}:${key}` }
 const actions = new Function(...Object.keys(deps), `return { ${source.slice(start, end)} ${source.slice(syntheticStart, syntheticEnd)} }`)(...Object.values(deps))
 const useSnapshots = defineStore('process-snapshot-tests', {

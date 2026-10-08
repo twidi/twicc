@@ -21,6 +21,7 @@
 
 import { getDb, PENDING_REQUEST_DRAFTS_STORE } from './draftStorage'
 import { hashString } from './hash'
+import { withoutAutoDenyKeys } from './autoDeny'
 
 // Above this serialized size (chars), the draft is not written at all. The
 // answer fields themselves are tiny; the one field that can blow up is Claude's
@@ -33,15 +34,17 @@ const MAX_STATE_CHARS = 512 * 1024
  * Hash of a pending request as the client received it, used to confirm on
  * restore that the stored draft belongs to this exact request.
  *
- * The whole wire object is hashed as-is: `request_id` and `created_at` are
- * fixed for the lifetime of a request, so including them costs nothing and
- * keeps the call trivial.
+ * The whole object is hashed except the auto-deny deadline keys: the local
+ * deadline is computed at reception, so it differs between two page loads
+ * and would make every stored draft unrestorable. `request_id` and
+ * `created_at` are fixed for the lifetime of a request, so including them
+ * costs nothing.
  *
- * @param {Object} pendingRequest - The wire pending request object
+ * @param {Object} pendingRequest - The pending request object from the store
  * @returns {string} base36 hash
  */
 export function hashPendingRequest(pendingRequest) {
-    return hashString(JSON.stringify(pendingRequest))
+    return hashString(JSON.stringify(withoutAutoDenyKeys(pendingRequest)))
 }
 
 /**
