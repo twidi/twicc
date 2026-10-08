@@ -452,3 +452,266 @@ def test_access_change_during_data_copy_rejects_late_result(case, monkeypatch, a
     cid = before['artifacts'][KEY]['copy_id']
     assert (exports.inline_export_root(share.id) / cid / 'data' / 'value').read_bytes() == b'old'
     assert {item.name for item in exports.inline_export_root(share.id).iterdir()} == {cid}
+
+
+@pytest.mark.parametrize('unrelated_event', ['html', 'publication'])
+def test_unrelated_event_preserves_inflight_data_requirement(case, monkeypatch, unrelated_event):
+    source = write_source(case, b'published')
+    data = source.parent / 'data' / 'value'
+    data.parent.mkdir()
+    data.write_bytes(b'old')
+    share = create(case, mode='live')
+    before_revision = share.inline_artifact_exports['artifacts'][KEY]['code_revision']
+    entered, resume = Event(), Event()
+    copied = []
+    original_copy = exports.copy_export_with_source_data
+    def paused(*args):
+        result = original_copy(*args)
+        copied.append(result)
+        if len(copied) == 2:
+            entered.set()
+            assert resume.wait(5)
+        return result
+    monkeypatch.setattr(exports, 'copy_export_with_source_data', paused)
+    async def scenario():
+        startup_done = asyncio.Event()
+        original_reconcile = exports.InlineExportCoordinator._reconcile
+        async def observed(*args, **kwargs):
+            result = await original_reconcile(*args, **kwargs)
+            startup_done.set()
+            return result
+        monkeypatch.setattr(exports.InlineExportCoordinator, '_reconcile', observed)
+        coordinator = exports.InlineExportCoordinator()
+        await coordinator.start()
+        await asyncio.wait_for(startup_done.wait(), 5)
+        data.write_bytes(b'new')
+        coordinator.files_changed(case.id, ['inline-artifacts/widget/data/value'])
+        assert await asyncio.to_thread(entered.wait, 5)
+        source.write_bytes(b'unpublished')
+        if unrelated_event == 'html':
+            coordinator.files_changed(case.id, ['inline-artifacts/widget/index.html'])
+        else:
+            coordinator.publication_changed(case.id)
+        resume.set()
+        await coordinator.stop()
+    asyncio.run(scenario())
+    share.refresh_from_db()
+    assert read_asset(share, 'data/value') == b'new'
+    assert leased_bytes(share) == b'published'
+    assert share.inline_artifact_exports['artifacts'][KEY]['code_revision'] == before_revision
+    assert len(copied) >= 3
+
+
+@pytest.mark.parametrize('publication_first', [True, False])
+def test_unrelated_file_coalescing_keeps_new_publication_work(case, monkeypatch, publication_first):
+    set_publications(case, publication(), publication(15, 'other'))
+    write_source(case, b'published other', artifact_id='other')
+    share = create(case, mode='live')
+    copies = []
+    original_copy = exports.copy_source_artifact
+    def counted(*args):
+        copies.append(args[1]['artifact_id'])
+        return original_copy(*args)
+    monkeypatch.setattr(exports, 'copy_source_artifact', counted)
+    async def scenario():
+        startup_done = asyncio.Event()
+        original_reconcile = exports.InlineExportCoordinator._reconcile
+        async def observed(*args, **kwargs):
+            result = await original_reconcile(*args, **kwargs)
+            startup_done.set()
+            return result
+        monkeypatch.setattr(exports.InlineExportCoordinator, '_reconcile', observed)
+        coordinator = exports.InlineExportCoordinator()
+        await coordinator.start()
+        await asyncio.wait_for(startup_done.wait(), 5)
+        write_source(case, b'published replacement')
+        await sync_to_async(set_publications)(case, publication(), publication(15, 'other'), publication(18))
+        if publication_first:
+            coordinator.publication_changed(case.id)
+            coordinator.files_changed(case.id, ['inline-artifacts/other/index.html'])
+        else:
+            coordinator.files_changed(case.id, ['inline-artifacts/other/index.html'])
+            coordinator.publication_changed(case.id)
+        await coordinator.stop()
+    asyncio.run(scenario())
+    share.refresh_from_db()
+    assert share.inline_artifact_exports['selected'][KEY]['line_num'] == 18
+    assert share.inline_artifact_exports['artifacts'][KEY]['status'] == 'ready'
+    assert leased_bytes(share) == b'published replacement'
+    assert copies == ['widget']
+
+
+def test_unrelated_file_event_does_not_retry_unchanged_error(case, monkeypatch):
+    set_publications(case, publication(), publication(15, 'other'))
+    write_source(case, b'published other', artifact_id='other')
+    share = create(case, mode='live')
+    set_publications(case, publication(18, filename='replacement.html'), publication(15, 'other'))
+    asyncio.run(exports.InlineExportCoordinator().reconcile(share.id))
+    share.refresh_from_db()
+    before = deepcopy(share.inline_artifact_exports)
+    assert before['artifacts'][KEY]['status'] == 'error'
+    write_source(case, b'unpublished replacement', filename='replacement.html')
+    copies = []
+    original_copy = exports.copy_source_artifact
+    def counted(*args):
+        copies.append(args[1]['artifact_id'])
+        return original_copy(*args)
+    monkeypatch.setattr(exports, 'copy_source_artifact', counted)
+    asyncio.run(exports.InlineExportCoordinator()._reconcile(share.id, {'inline-artifacts/other/index.html'}))
+    share.refresh_from_db()
+    assert share.inline_artifact_exports == before
+    assert copies == []
+
+
+def test_superseding_event_preserves_consumed_data_queued_behind_other_session(case, monkeypatch):
+    from twicc.core.models import Session
+    second = Session.objects.create(id='second', project=case.project, provider=case.provider,
+                                    file_path='second.jsonl', last_line=20, compute_version=case.compute_version)
+    set_publications(second, publication())
+    first_source = write_source(case, b'published first')
+    second_source = write_source(second, b'published second')
+    for source in (first_source, second_source):
+        (source.parent / 'data').mkdir()
+        (source.parent / 'data' / 'value').write_bytes(b'old')
+    first_share, second_share = create(case, mode='live'), create(second, mode='live')
+    entered, resume = Event(), Event()
+    pause = [False]
+    original_copy = exports.copy_export_with_source_data
+    def paused(*args):
+        result = original_copy(*args)
+        if pause[0] and args[1] == case.id:
+            pause[0] = False
+            entered.set()
+            assert resume.wait(5)
+        return result
+    monkeypatch.setattr(exports, 'copy_export_with_source_data', paused)
+    async def scenario():
+        startup_done = asyncio.Event()
+        started = []
+        original_reconcile = exports.InlineExportCoordinator._reconcile
+        async def observed(*args, **kwargs):
+            result = await original_reconcile(*args, **kwargs)
+            started.append(args[1])
+            if len(started) == 2:
+                startup_done.set()
+            return result
+        monkeypatch.setattr(exports.InlineExportCoordinator, '_reconcile', observed)
+        coordinator = exports.InlineExportCoordinator()
+        await coordinator.start()
+        await asyncio.wait_for(startup_done.wait(), 5)
+        (first_source.parent / 'data' / 'value').write_bytes(b'new first')
+        (second_source.parent / 'data' / 'value').write_bytes(b'new second')
+        pause[0] = True
+        coordinator.files_changed(case.id, ['inline-artifacts/widget/data/value'])
+        coordinator.files_changed(second.id, ['inline-artifacts/widget/data/value'])
+        assert await asyncio.to_thread(entered.wait, 5)
+        coordinator.files_changed(second.id, ['inline-artifacts/widget/index.html'])
+        resume.set()
+        await coordinator.stop()
+    asyncio.run(scenario())
+    assert read_asset(first_share, 'data/value') == b'new first'
+    lease = exports.lease_inline_asset(second_share.id, '["second","widget"]', 'data/value')
+    try:
+        assert lease.file.read() == b'new second'
+    finally:
+        lease.file.close()
+        lease.release()
+
+
+@pytest.mark.parametrize('operation', ['ensure', 'retry'])
+def test_direct_authorized_operation_preserves_active_data(case, monkeypatch, operation):
+    set_publications(case, publication(), publication(15, 'other'))
+    source = write_source(case, b'published widget')
+    write_source(case, b'published other', artifact_id='other')
+    data = source.parent / 'data' / 'value'
+    data.parent.mkdir()
+    data.write_bytes(b'old')
+    share = create(case, mode='live')
+    frozen = create(case, mode='snapshot')
+    frozen_state = deepcopy(frozen.inline_artifact_exports)
+    set_publications(case, publication(), publication(18, 'other', 'replacement.html'))
+    asyncio.run(exports.InlineExportCoordinator().reconcile(share.id))
+    share.refresh_from_db()
+    before_revision = share.inline_artifact_exports['artifacts'][KEY]['code_revision']
+    assert share.inline_artifact_exports['artifacts']['["main","other"]']['status'] == 'error'
+    entered, resume = Event(), Event()
+    copied = []
+    reservations = []
+    original_copy = exports.copy_export_with_source_data
+    def paused(*args):
+        result = original_copy(*args)
+        copied.append(result)
+        if len(copied) == 2:
+            entered.set()
+            assert resume.wait(5)
+        return result
+    monkeypatch.setattr(exports, 'copy_export_with_source_data', paused)
+    async def scenario():
+        startup_done, api_reserved = asyncio.Event(), asyncio.Event()
+        original_reconcile = exports.InlineExportCoordinator._reconcile
+        async def observed(*args, **kwargs):
+            result = await original_reconcile(*args, **kwargs)
+            startup_done.set()
+            return result
+        monkeypatch.setattr(exports.InlineExportCoordinator, '_reconcile', observed)
+        coordinator = exports.InlineExportCoordinator()
+        monkeypatch.setattr(exports, 'get_inline_export_coordinator', lambda: coordinator)
+        await coordinator.start()
+        await asyncio.wait_for(startup_done.wait(), 5)
+        data.write_bytes(b'new')
+        coordinator.files_changed(case.id, ['inline-artifacts/widget/data/value'])
+        assert await asyncio.to_thread(entered.wait, 5)
+        source.write_bytes(b'unpublished widget')
+        write_source(case, b'published retry', artifact_id='other', filename='replacement.html')
+        original_reserve = exports.reserve_inline_exports
+        def reserved(share_id):
+            generation = original_reserve(share_id)
+            reservations.append(generation)
+            api_reserved.set()
+            return generation
+        monkeypatch.setattr(exports, 'reserve_inline_exports', reserved)
+        api = asyncio.create_task(exports.ensure_inline_exports(share.id) if operation == 'ensure'
+                                  else exports.retry_inline_export(share.id, '["main","other"]'))
+        await asyncio.wait_for(api_reserved.wait(), 5)
+        resume.set()
+        await api
+        await coordinator.stop()
+    asyncio.run(scenario())
+    share.refresh_from_db()
+    frozen.refresh_from_db()
+    assert len(reservations) == 1
+    assert read_asset(share, 'data/value') == b'new'
+    assert leased_bytes(share) == b'published widget'
+    assert share.inline_artifact_exports['artifacts'][KEY]['code_revision'] == before_revision
+    assert frozen.inline_artifact_exports == frozen_state
+    assert read_asset(frozen, 'data/value') == b'old'
+    if operation == 'retry':
+        assert share.inline_artifact_exports['artifacts']['["main","other"]']['status'] == 'ready'
+
+
+def test_direct_ensure_preserves_data_queued_before_worker_consumption(case, monkeypatch):
+    source = write_source(case, b'published')
+    data = source.parent / 'data' / 'value'
+    data.parent.mkdir()
+    data.write_bytes(b'old')
+    share = create(case, mode='live')
+    async def scenario():
+        startup_done = asyncio.Event()
+        original_reconcile = exports.InlineExportCoordinator._reconcile
+        async def observed(*args, **kwargs):
+            result = await original_reconcile(*args, **kwargs)
+            startup_done.set()
+            return result
+        monkeypatch.setattr(exports.InlineExportCoordinator, '_reconcile', observed)
+        coordinator = exports.InlineExportCoordinator()
+        monkeypatch.setattr(exports, 'get_inline_export_coordinator', lambda: coordinator)
+        await coordinator.start()
+        await asyncio.wait_for(startup_done.wait(), 5)
+        data.write_bytes(b'new')
+        coordinator.files_changed(case.id, ['inline-artifacts/widget/data/value'])
+        # The direct API reserves before the worker can consume its data hint.
+        await exports.ensure_inline_exports(share.id)
+        await coordinator.stop()
+    asyncio.run(scenario())
+    assert read_asset(share, 'data/value') == b'new'
+    assert leased_bytes(share) == b'published'

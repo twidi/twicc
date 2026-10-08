@@ -476,6 +476,7 @@ async def ensure_inline_exports(share_id: str) -> None:
     Later authorized ensure/retry calls recover interrupted pending captures.
     """
     generation = reserve_inline_exports(share_id)
+    get_inline_export_coordinator().preserve_unfinished_data(share_id, generation)
     async with share_export_lock(share_id):
         if not _generation_current(share_id, generation):
             return
@@ -581,6 +582,7 @@ async def publish_inline_export_error(
 async def retry_inline_export(share_id: str, artifact_key: str) -> None:
     """Retry failed initial snapshot entries or current live errors only."""
     generation = reserve_inline_exports(share_id)
+    get_inline_export_coordinator().preserve_unfinished_data(share_id, generation)
     async with share_export_lock(share_id):
         if not _generation_current(share_id, generation):
             return
@@ -744,6 +746,7 @@ class InlineExportCoordinator:
 
     def __init__(self):
         self._pending = {}
+        self._active_paths = {}
         self._shares = {}
         self._wake = asyncio.Event()
         self._worker = None
@@ -787,13 +790,48 @@ class InlineExportCoordinator:
             return
         for share_id in self._shares.get(session_id, ()):
             self._reservations[share_id] = reserve_inline_exports(share_id)
+        self._merge_pending_paths(session_id, paths)
+
+    def _merge_pending_paths(self, session_id, paths):
         if session_id not in self._pending and len(self._pending) >= self.MAX_PENDING_SESSIONS:
             self._sweep = True
         else:
             previous = self._pending.get(session_id, set())
-            combined = None if paths is None or previous is None else previous | paths
+            active = self._active_paths.get(session_id, set())
+            # Superseding a consumed batch must retain its unfinished data.
+            # HTML and duplicate-publication events can invalidate its token.
+            combined = None if paths is None or previous is None or active is None else previous | active | paths
             self._pending[session_id] = None if combined is None or len(combined) > self.MAX_PENDING_PATHS else combined
         self._wake.set()
+
+    def preserve_unfinished_data(self, share_id: str, expected_generation: int) -> None:
+        """Replay queued or active data under a direct API's reservation.
+
+        Call synchronously after ensure/retry reserves, before its first await.
+        No ORM, new reservation, or snapshot work occurs in this callback.
+        The share lock lets the authorized API settle before its replay loads.
+        """
+        if self._worker is None or not self._accepting or not _generation_current(share_id, expected_generation):
+            return
+        for session_id, share_ids in self._shares.items():
+            if share_id not in share_ids:
+                continue
+            active = self._active_paths.get(session_id, set())
+            pending = self._pending.get(session_id, set())
+            paths = None if active is None or pending is None else active | pending
+            if paths is not None:
+                paths = {path for path in paths if path == 'inline-artifacts'
+                         or len(path.split('/')) == 2 or path.split('/')[2:3] == ['data']}
+                if not paths:
+                    return
+            # Keep this operation's token unchanged. Other shares retain the
+            # token captured for their original queued work, when available.
+            with _guard:
+                self._reservations[share_id] = expected_generation
+                for other_id in share_ids - {share_id}:
+                    self._reservations.setdefault(other_id, _generations.get(_root_key(other_id), 0))
+            self._merge_pending_paths(session_id, paths)
+            return
 
     async def _load_live_shares(self):
         rows = await sync_to_async(list)(Share.objects.filter(
@@ -850,6 +888,9 @@ class InlineExportCoordinator:
             if self._sweep:
                 self._sweep = False
                 pending.update({sid: None for sid in self._shares})
+            # Keep all consumed hints until the batch finishes, including work
+            # queued behind another share. Superseding events merge these hints.
+            self._active_paths = pending
             for session_id, paths in pending.items():
                 for share_id in tuple(self._shares.get(session_id, ())):
                     try:
@@ -866,6 +907,7 @@ class InlineExportCoordinator:
                         pass
                     except Exception:
                         logger.exception('Inline export reconciliation failed for share %s', share_id)
+            self._active_paths = {}
 
     async def reconcile(self, share_id: str):
         """Reconcile current live publications and ready data after reconnect."""
@@ -899,7 +941,9 @@ class InlineExportCoordinator:
                     return
                 if entry.get('status') in {'pending', 'error'}:
                     artifact_id = fresh.inline_artifact_exports.get('selected', {}).get(key, {}).get('artifact_id')
-                    relevant = paths is None or not paths or any(
+                    # A selected pending placement requires its first complete
+                    # publication even when coalesced paths refer elsewhere.
+                    relevant = entry['status'] == 'pending' or paths is None or not paths or any(
                         path == 'inline-artifacts' or path == f'inline-artifacts/{artifact_id}'
                         or path.startswith(f'inline-artifacts/{artifact_id}/') for path in paths)
                     if relevant:
