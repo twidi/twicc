@@ -9,11 +9,14 @@ into the same fields when shape-compatible; the serializer omits empty fields.
 
 from dataclasses import dataclass
 from enum import StrEnum
+import time
 from typing import NamedTuple
 
 import psutil
 
 from twicc.core.enums import Provider
+
+from .auto_deny import auto_deny_remaining
 
 
 def format_bytes(size: int) -> str:
@@ -62,7 +65,7 @@ class PendingRequest:
     clarifying questions (the agent needs the user to choose between options).
     Provider-specific metadata such as ``permission_suggestions`` stays
     optional so other providers can populate the common fields and ignore the
-    rest.
+    rest. ``auto_deny_at`` is set only by the base agent's auto-deny timer.
     """
 
     request_id: str
@@ -71,6 +74,10 @@ class PendingRequest:
     tool_input: dict
     created_at: float
     permission_suggestions: list[dict] | None = None
+    # Wall-clock instant (same clock as ``created_at``) at which the backend
+    # denies the request by itself; ``None`` when it is not armed. Set only by
+    # ``BaseAgent._await_pending_request`` (see ``twicc.agent.auto_deny``).
+    auto_deny_at: float | None = None
 
 
 class AgentState(StrEnum):
@@ -173,6 +180,7 @@ def serialize_agent_info(info: AgentInfo) -> dict:
         data["kill_reason"] = info.kill_reason
     if info.pending_requests:
         serialized = []
+        now = time.time()
         for pr in info.pending_requests:
             entry = {
                 "request_id": pr.request_id,
@@ -183,6 +191,11 @@ def serialize_agent_info(info: AgentInfo) -> dict:
             }
             if pr.permission_suggestions:
                 entry["permission_suggestions"] = pr.permission_suggestions
+            # The time left, not the deadline: the browser may run on another
+            # machine whose clock differs. ``is not None``, never truthiness —
+            # ``0.0`` (deadline passed, deny imminent) must reach the client.
+            if pr.auto_deny_at is not None:
+                entry["auto_deny_in_seconds"] = auto_deny_remaining(pr, now)
             serialized.append(entry)
         data["pending_requests"] = serialized
     if info.active_tools:

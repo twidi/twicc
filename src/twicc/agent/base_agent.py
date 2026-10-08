@@ -11,6 +11,7 @@ shared by every provider.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import logging
 import time
 from collections.abc import Callable, Collection, Coroutine, Iterable, Sequence
@@ -19,6 +20,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 
+from twicc.agent.auto_deny import AUTO_DENY_CHECK_INTERVAL_SECONDS, AUTO_DENY_DELAY_SECONDS
 from twicc.agent.shell_notice import OwnerFacts, ShellLookup, ShellNoticeState, ShellResolution
 from twicc.agent.work_dir_autoapprove import all_targets_within_work_dirs
 from twicc.agent.work_dirs import resolve_and_create_work_dirs
@@ -153,6 +155,10 @@ class BaseAgent:
         # Codex: raw dict). The caller is responsible for the cast.
         self._pending_requests: dict[str, PendingRequest] = {}
         self._pending_futures: dict[str, asyncio.Future[Any]] = {}
+        # Auto-deny checks of armed pending requests, keyed by request_id: the
+        # next scheduled wall-clock check (see ``_check_auto_deny``). Empty when
+        # nothing is armed. Cancelled in ``_await_pending_request``'s finally.
+        self._auto_deny_timers: dict[str, asyncio.TimerHandle] = {}
 
         # ProcessRun model row, populated by the manager once the agent is registered.
         self.process_run: Any = None
@@ -422,7 +428,9 @@ class BaseAgent:
             sorted(self._pending_requests.values(), key=lambda r: r.created_at)
         )
 
-    async def _await_pending_request(self, request: PendingRequest) -> Any:
+    async def _await_pending_request(
+        self, request: PendingRequest, *, auto_deny_response: Any = None,
+    ) -> Any:
         """Register a pending request, broadcast, wait for resolution, return raw response.
 
         Provider subclasses construct the ``PendingRequest`` (which knows the
@@ -431,9 +439,16 @@ class BaseAgent:
         by ``resolve_pending_request`` when the WS layer routes a user decision
         back, or via ``_cancel_all_pending_futures`` on kill.
 
+        ``auto_deny_response`` arms the auto-deny (``twicc.agent.auto_deny``):
+        the request gets ``auto_deny_at = created_at + AUTO_DENY_DELAY_SECONDS``
+        and the Future resolves with this provider-specific deny value when
+        nobody answers by then. ``None`` (the default) leaves it unarmed.
+
         The return type is ``Any`` because each provider's wire decision is its
         own type — the caller in the subclass casts.
         """
+        if auto_deny_response is not None:
+            request = replace(request, auto_deny_at=request.created_at + AUTO_DENY_DELAY_SECONDS)
         self._pending_requests[request.request_id] = request
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._pending_futures[request.request_id] = future
@@ -442,8 +457,17 @@ class BaseAgent:
         await self._notify_state_change()
 
         try:
+            # Started inside the ``try`` so that its ``finally`` always cancels
+            # the scheduled check, whatever ends the wait.
+            if auto_deny_response is not None:
+                self._check_auto_deny(request, future, auto_deny_response)
             return await future
         finally:
+            # Stop the auto-deny checks whatever ended the wait: an answer,
+            # the auto-deny itself, or a cancellation (kill / interrupt).
+            timer = self._auto_deny_timers.pop(request.request_id, None)
+            if timer is not None:
+                timer.cancel()
             # Drop the entry whether we resolved or were cancelled.
             self._pending_requests.pop(request.request_id, None)
             self._pending_futures.pop(request.request_id, None)
@@ -470,6 +494,35 @@ class BaseAgent:
             # already announced the final state to the frontend.
             if self.state != AgentState.DEAD:
                 await self._notify_state_change()
+
+    def _check_auto_deny(
+        self, request: PendingRequest, future: asyncio.Future[Any], response: Any,
+    ) -> None:
+        """Deny ``request`` once its wall-clock deadline has passed, else check again later.
+
+        The deadline is wall-clock (``time.time()``), the value the frontend
+        counts down. ``loop.call_later`` runs on the monotonic clock, which does
+        not advance during a machine suspend, so one long delay could fire long
+        after the deadline: the check re-runs at most
+        ``AUTO_DENY_CHECK_INTERVAL_SECONDS`` apart instead. A Future already
+        done (answered, cancelled) ends the checks without touching it.
+        """
+        self._auto_deny_timers.pop(request.request_id, None)
+        if future.done():
+            return
+        remaining = request.auto_deny_at - time.time()
+        if remaining <= 0:
+            with provider_log_context(self.provider):
+                self._logger.info(
+                    "[session %s] Auto-denying unanswered %s request %s",
+                    self.session_id, request.tool_name, request.request_id,
+                )
+            future.set_result(response)
+            return
+        self._auto_deny_timers[request.request_id] = asyncio.get_running_loop().call_later(
+            min(AUTO_DENY_CHECK_INTERVAL_SECONDS, remaining),
+            self._check_auto_deny, request, future, response,
+        )
 
     def _cancel_all_pending_futures(self) -> None:
         """Cancel every in-flight pending Future.
