@@ -481,3 +481,337 @@ def test_failed_retry_cannot_publish_after_revoke_and_restore(case, monkeypatch)
     asyncio.run(race())
     share.refresh_from_db()
     assert share.inline_artifact_exports == before
+
+
+@pytest.mark.parametrize('shares_directory_exists', [False, True])
+def test_startup_recovers_capture_before_any_inline_directory_exists(case, shares_directory_exists):
+    share = Share.objects.create(id='shr_capture_crash', token='capturecrash', kind='session', session=case,
+                                  options={'mode': 'snapshot', 'frozen_at_line': 20})
+    state = prepare_share_selection(share)
+    share.inline_artifact_exports = state
+    share.save(update_fields=['inline_artifact_exports'])
+    if shares_directory_exists:
+        paths.get_shares_dir().mkdir()
+    set_publications(case, publication(), publication(15, filename='new.html'))
+    asyncio.run(exports.reconcile_inline_exports())
+    share.refresh_from_db()
+    assert share.inline_artifact_exports['captured'] == {KEY: publication()}
+    assert share.inline_artifact_exports['artifacts'][KEY]['status'] == 'error'
+    assert share.inline_artifact_exports['artifacts'][KEY]['error'] == 'export_interrupted'
+    assert not exports.inline_export_root(share.id).exists()
+    asyncio.run(exports.retry_inline_export(share.id, KEY))
+    assert leased_bytes(share) == b'first'
+
+
+@pytest.mark.parametrize('operation', ['public_commit', 'owner_push'])
+@pytest.mark.parametrize('old_response_open', [False, True])
+def test_actual_writer_cancel_after_commit_keeps_published_copy_and_retires_old(
+    case, monkeypatch, operation, old_response_open,
+):
+    from twicc.providers import db_writer
+    share = create(case)
+    before = deepcopy(share.inline_artifact_exports)
+    old_root = exports.inline_export_root(share.id) / before['artifacts'][KEY]['copy_id']
+    old_lease = exports.lease_inline_asset(share.id, KEY, 'index.html') if old_response_open else None
+    write_source(case, b'replacement')
+    committed, finish = Event(), Event()
+    original_commit = exports._commit_prepared
+    def pause_after_commit(*args, **kwargs):
+        result = original_commit(*args, **kwargs)
+        assert result is True
+        committed.set()
+        assert finish.wait(5)
+        return result
+    monkeypatch.setattr(exports, '_commit_prepared', pause_after_commit)
+    monkeypatch.setattr(exports, 'run_under_db_write_lock', db_writer.run_under_db_write_lock)
+    monkeypatch.setattr(share_mutation, 'run_under_db_write_lock', db_writer.run_under_db_write_lock)
+    async def cancel_after_commit():
+        monkeypatch.setattr(db_writer, '_db_write_lock', asyncio.Lock())
+        monkeypatch.setattr(db_writer, '_db_writer_stop_event', asyncio.Event())
+        if operation == 'public_commit':
+            selection = await sync_to_async(prepare_share_selection)(share, recapture=True)
+            prepared = await exports.prepare_inline_exports(share.id, selection, retain=before)
+            task = asyncio.create_task(exports.commit_inline_exports(share.id, before['revision'], prepared, share.options))
+        else:
+            task = asyncio.create_task(share_mutation.propagate_share(share))
+        assert await asyncio.to_thread(committed.wait, 5)
+        task.cancel()
+        finish.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    asyncio.run(cancel_after_commit())
+    share.refresh_from_db()
+    current_root = exports.inline_export_root(share.id) / share.inline_artifact_exports['artifacts'][KEY]['copy_id']
+    assert current_root.exists()
+    assert leased_bytes(share) == b'replacement'
+    if old_lease:
+        assert old_root.exists()
+        assert old_lease.file.read() == b'first'
+        old_lease.file.close()
+        old_lease.release()
+    assert not old_root.exists()
+
+
+@pytest.mark.parametrize('operation', ['owner_push', 'legacy_initialize', 'snapshot_retry', 'live_retry'])
+def test_revoke_restore_before_preparation_does_not_refresh_operation_generation(case, monkeypatch, operation):
+    if operation == 'legacy_initialize':
+        share = Share.objects.create(id='shr_preparation_race', token='preparationrace', kind='session', session=case,
+                                      options={'mode': 'snapshot', 'frozen_at_line': 20})
+    else:
+        share = create(case, mode='live' if operation == 'live_retry' else 'snapshot')
+        if 'retry' in operation:
+            state = deepcopy(share.inline_artifact_exports)
+            state['artifacts'][KEY] = dict(status='error', copy_id=None, code_revision=None, error='export_failed')
+            share.inline_artifact_exports = state
+            share.save(update_fields=['inline_artifact_exports'])
+    write_source(case, b'stale-operation')
+    original_prepare = exports.prepare_inline_exports
+    async def race():
+        entered, finish = asyncio.Event(), asyncio.Event()
+        async def pause_before_prepare(*args, **kwargs):
+            entered.set()
+            await finish.wait()
+            return await original_prepare(*args, **kwargs)
+        monkeypatch.setattr(exports, 'prepare_inline_exports', pause_before_prepare)
+        if operation == 'owner_push':
+            task = asyncio.create_task(share_mutation.propagate_share(share))
+        elif operation == 'legacy_initialize':
+            task = asyncio.create_task(exports.ensure_inline_exports(share.id))
+        else:
+            task = asyncio.create_task(exports.retry_inline_export(share.id, KEY))
+        await asyncio.wait_for(entered.wait(), 5)
+        state_at_pause = await sync_to_async(lambda: deepcopy(Share.objects.get(id=share.id).inline_artifact_exports))()
+        await share_mutation.revoke_share(share)
+        await share_mutation.revoke_share(share, revoked=False)
+        finish.set()
+        result = await task
+        if operation == 'owner_push':
+            assert not result.success
+            assert result.errors[0].code == 'export_interrupted'
+        final = await sync_to_async(lambda: Share.objects.get(id=share.id).inline_artifact_exports)()
+        assert final == state_at_pause
+    asyncio.run(race())
+    if operation == 'owner_push':
+        assert leased_bytes(share) == b'first'
+
+
+@pytest.mark.parametrize('operation', ['owner_push', 'snapshot_retry', 'live_retry', 'direct_prepare'])
+def test_revoke_restore_during_preparation_loading_keeps_original_generation(case, monkeypatch, operation):
+    share = create(case, mode='live' if operation == 'live_retry' else 'snapshot')
+    if 'retry' in operation:
+        state = deepcopy(share.inline_artifact_exports)
+        state['artifacts'][KEY] = dict(status='error', copy_id=None, code_revision=None, error='export_failed')
+        share.inline_artifact_exports = state
+        share.save(update_fields=['inline_artifact_exports'])
+    before = deepcopy(share.inline_artifact_exports)
+    write_source(case, b'stale-loading')
+    loaded, finish = Event(), Event()
+    original_load = exports._load_share
+    calls = 0
+    def pause_loading(share_id):
+        nonlocal calls
+        result = original_load(share_id)
+        calls += 1
+        # Preparation's second asynchronous load follows owner/retry loading.
+        target_call = 1 if operation == 'direct_prepare' else 2
+        if calls == target_call:
+            loaded.set()
+            assert finish.wait(5)
+        return result
+    monkeypatch.setattr(exports, '_load_share', pause_loading)
+    async def race():
+        if operation == 'owner_push':
+            task = asyncio.create_task(share_mutation.propagate_share(share))
+        elif operation == 'direct_prepare':
+            selection = await sync_to_async(prepare_share_selection)(share, recapture=True)
+            task = asyncio.create_task(exports.prepare_inline_exports(share.id, selection, retain=before))
+        else:
+            task = asyncio.create_task(exports.retry_inline_export(share.id, KEY))
+        assert await asyncio.to_thread(loaded.wait, 5)
+        # Revoke's Django save uses the same sync thread. Invalidate immediately,
+        # release loading, then complete revoke/restore before preparation resumes.
+        exports.invalidate_inline_exports(share.id)
+        finish.set()
+        await share_mutation.revoke_share(share)
+        await share_mutation.revoke_share(share, revoked=False)
+        if operation == 'direct_prepare':
+            with pytest.raises(exports.InlineExportFailure, match='export_interrupted'):
+                await task
+        else:
+            result = await task
+            if operation == 'owner_push':
+                assert not result.success
+        state = await sync_to_async(lambda: Share.objects.get(id=share.id).inline_artifact_exports)()
+        assert state == before
+    asyncio.run(race())
+
+
+def test_push_generation_starts_before_owner_session_loading(case, monkeypatch):
+    share = create(case)
+    before = deepcopy(share.inline_artifact_exports)
+    write_source(case, b'outdated-push')
+    original_save = share_mutation._save_share
+    async def race():
+        entered, finish = asyncio.Event(), asyncio.Event()
+        async def pause_before_owner_save(*args, **kwargs):
+            entered.set()
+            await finish.wait()
+            return await original_save(*args, **kwargs)
+        monkeypatch.setattr(share_mutation, '_save_share', pause_before_owner_save)
+        task = asyncio.create_task(share_mutation.propagate_share(share))
+        await asyncio.wait_for(entered.wait(), 5)
+        await share_mutation.revoke_share(share)
+        await share_mutation.revoke_share(share, revoked=False)
+        finish.set()
+        result = await task
+        assert not result.success
+        assert result.errors[0].code == 'export_interrupted'
+    asyncio.run(race())
+    share.refresh_from_db()
+    assert share.inline_artifact_exports == before
+    assert leased_bytes(share) == b'first'
+
+
+@pytest.mark.parametrize('operation', ['owner_push', 'legacy_initialize', 'snapshot_retry', 'live_retry'])
+def test_operation_waiting_for_share_lock_cannot_reserve_after_revoke_restore(case, monkeypatch, operation):
+    if operation == 'legacy_initialize':
+        share = Share.objects.create(id='shr_lock_race', token='lockrace', kind='session', session=case,
+                                      options={'mode': 'snapshot', 'frozen_at_line': 20})
+    else:
+        share = create(case, mode='live' if operation == 'live_retry' else 'snapshot')
+        if 'retry' in operation:
+            state = deepcopy(share.inline_artifact_exports)
+            state['artifacts'][KEY] = dict(status='error', copy_id=None, code_revision=None, error='export_failed')
+            share.inline_artifact_exports = state
+            share.save(update_fields=['inline_artifact_exports'])
+    before = deepcopy(share.inline_artifact_exports)
+    write_source(case, b'stale-queued')
+    async def race():
+        entered = asyncio.Event()
+        lock = exports.share_export_lock(share.id)
+        await lock.acquire()
+        class LockBarrier:
+            async def __aenter__(self):
+                entered.set()
+                await lock.acquire()
+            async def __aexit__(self, *args):
+                lock.release()
+        monkeypatch.setattr(exports, 'share_export_lock', lambda _share_id: LockBarrier())
+        if operation == 'owner_push':
+            task = asyncio.create_task(share_mutation.propagate_share(share))
+        elif operation == 'legacy_initialize':
+            task = asyncio.create_task(exports.ensure_inline_exports(share.id))
+        else:
+            task = asyncio.create_task(exports.retry_inline_export(share.id, KEY))
+        await asyncio.wait_for(entered.wait(), 5)
+        await share_mutation.revoke_share(share)
+        await share_mutation.revoke_share(share, revoked=False)
+        lock.release()
+        result = await task
+        if operation == 'owner_push':
+            assert not result.success
+    asyncio.run(race())
+    share.refresh_from_db()
+    assert share.inline_artifact_exports == before
+
+
+def test_authorized_ensure_and_retry_recover_aborted_legacy_capture_without_recopying_ready(case, monkeypatch):
+    set_publications(case, publication(), publication(15, 'other'))
+    write_source(case, b'initial-other', 'other')
+    share = Share.objects.create(id='shr_aborted_legacy', token='abortedlegacy', kind='session', session=case,
+                                  options={'mode': 'snapshot', 'frozen_at_line': 20})
+    other_key = '["main","other"]'
+    original_prepare = exports.prepare_inline_exports
+    async def abort_second_copy():
+        entered, finish = asyncio.Event(), asyncio.Event()
+        calls = 0
+        async def pause_second_copy(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                entered.set()
+                await finish.wait()
+            return await original_prepare(*args, **kwargs)
+        monkeypatch.setattr(exports, 'prepare_inline_exports', pause_second_copy)
+        task = asyncio.create_task(exports.ensure_inline_exports(share.id))
+        await asyncio.wait_for(entered.wait(), 5)
+        await share_mutation.revoke_share(share)
+        await share_mutation.revoke_share(share, revoked=False)
+        finish.set()
+        await task
+    asyncio.run(abort_second_copy())
+    share.refresh_from_db()
+    state = deepcopy(share.inline_artifact_exports)
+    assert state['artifacts'][KEY]['status'] == 'ready'
+    assert state['artifacts'][other_key]['status'] == 'pending'
+    set_publications(case, publication(), publication(15, 'other'), publication(18, 'other', 'new.html'))
+    write_source(case, b'changed-ready')
+    write_source(case, b'recovered-other', 'other')
+    monkeypatch.setattr(exports, 'prepare_inline_exports', original_prepare)
+    asyncio.run(exports.ensure_inline_exports(share.id))
+    share.refresh_from_db()
+    assert share.inline_artifact_exports['artifacts'][KEY] == state['artifacts'][KEY]
+    assert share.inline_artifact_exports['artifacts'][other_key]['error'] == 'export_interrupted'
+    asyncio.run(exports.retry_inline_export(share.id, other_key))
+    share.refresh_from_db()
+    assert share.inline_artifact_exports['selected'][other_key]['line_num'] == 15
+    assert leased_bytes(share) == b'first'
+    assert leased_bytes(share, other_key) == b'recovered-other'
+
+
+def test_retry_directly_recovers_interrupted_pending_snapshot_capture(case):
+    share = Share.objects.create(id='shr_pending_retry', token='pendingretry', kind='session', session=case,
+                                  options={'mode': 'snapshot', 'frozen_at_line': 20})
+    share.inline_artifact_exports = prepare_share_selection(share)
+    share.save(update_fields=['inline_artifact_exports'])
+    set_publications(case, publication(), publication(15, filename='new.html'))
+    asyncio.run(exports.retry_inline_export(share.id, KEY))
+    share.refresh_from_db()
+    assert share.inline_artifact_exports['selected'][KEY]['line_num'] == 10
+    assert leased_bytes(share) == b'first'
+
+
+def test_push_keeps_start_generation_during_first_async_root_load(case, monkeypatch):
+    share = create(case)
+    before = deepcopy(share.inline_artifact_exports)
+    write_source(case, b'outdated-loading')
+    original_adapter = share_mutation.sync_to_async
+    async def race():
+        entered, finish = asyncio.Event(), asyncio.Event()
+        first = True
+        def pause_first_adapter(func, *args, **kwargs):
+            nonlocal first
+            pause = first
+            first = False
+            adapted = original_adapter(func, *args, **kwargs)
+            async def execute(*call_args, **call_kwargs):
+                if pause:
+                    entered.set()
+                    await finish.wait()
+                return await adapted(*call_args, **call_kwargs)
+            return execute
+        monkeypatch.setattr(share_mutation, 'sync_to_async', pause_first_adapter)
+        task = asyncio.create_task(share_mutation.propagate_share(share))
+        await asyncio.wait_for(entered.wait(), 5)
+        await share_mutation.revoke_share(share)
+        await share_mutation.revoke_share(share, revoked=False)
+        finish.set()
+        result = await task
+        assert not result.success
+        assert result.errors[0].code == 'export_interrupted'
+    asyncio.run(race())
+    share.refresh_from_db()
+    assert share.inline_artifact_exports == before
+    assert leased_bytes(share) == b'first'
+
+
+def test_startup_reconciliation_preserves_standalone_artifact_share_directories(case):
+    from twicc.core.models import ArtifactBookmark
+    bookmark = ArtifactBookmark.objects.create(session=case, project=case.project, relative_path='demo/index.html',
+                                                name='Standalone', scope='project')
+    share = Share.objects.create(id='shr_standalone', token='standalone', kind='artifact', artifact_bookmark=bookmark)
+    source_file = paths.get_share_snapshot_dir(share.id) / 'inline-artifacts' / ('a' * 32) / 'index.html'
+    source_file.parent.mkdir(parents=True)
+    source_file.write_bytes(b'standalone-owned-bytes')
+    asyncio.run(exports.reconcile_inline_exports())
+    assert source_file.read_bytes() == b'standalone-owned-bytes'

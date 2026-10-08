@@ -102,6 +102,22 @@ def invalidate_inline_exports(share_id: str) -> int:
         return generation
 
 
+def reserve_inline_exports(share_id: str) -> int:
+    """Reserve one generation before an operation's first asynchronous work."""
+    return invalidate_inline_exports(share_id)
+
+
+def _generation_current(share_id, generation):
+    root = _root_key(share_id)
+    with _guard:
+        return root not in _removed and _generations.get(root, 0) == generation
+
+
+def _check_generation(share_id, generation):
+    if not _generation_current(share_id, generation):
+        raise InlineExportFailure('export_interrupted', generation=generation)
+
+
 def _copy_ids(state):
     return {entry['copy_id'] for entry in state.get('artifacts', {}).values()
             if isinstance(entry, dict) and isinstance(entry.get('copy_id'), str)
@@ -117,17 +133,23 @@ def _tree_bytes(path):
     return sum(entry.stat().st_size for entry in path.rglob('*') if entry.is_file())
 
 
-async def prepare_inline_exports(share_id: str, selection: dict, *, retain: dict | None = None) -> PreparedInlineExports:
+async def prepare_inline_exports(
+    share_id: str, selection: dict, *, retain: dict | None = None, expected_generation: int | None = None,
+) -> PreparedInlineExports:
     """Prepare complete replacement copies off-thread, without DB writes.
 
     Pending selected entries require copies. Ready snapshot tombstones retain
     their bytes. Inclusion re-enable replaces selected files within the capture.
+    Pass the operation-start generation across loading and selection. If omitted,
+    reservation occurs at API entry, before loading. A stale reservation fails.
     Any failure discards all new copies and leaves published state unchanged.
     """
+    generation = reserve_inline_exports(share_id) if expected_generation is None else expected_generation
+    _check_generation(share_id, generation)
     base = await sync_to_async(_load_share)(share_id)
+    _check_generation(share_id, generation)
     previous = deepcopy(retain if retain is not None else (base.inline_artifact_exports if base else {}))
     state = deepcopy(selection)
-    generation = invalidate_inline_exports(share_id)
     new_ids = []
     retained = set()
     copied = 0
@@ -249,6 +271,20 @@ async def retire_inline_exports(share_id: str, copy_ids: list[str]) -> None:
     await sync_to_async(retire)()
 
 
+async def _settle_inline_exports(share_id, copy_ids):
+    """Finish reference-aware retirement even after repeated cancellation."""
+    task = asyncio.create_task(retire_inline_exports(share_id, list(copy_ids)))
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+    task.result()
+    if cancelled:
+        raise asyncio.CancelledError()
+
+
 def _commit_prepared(share_id, expected_revision, prepared, options, *, owner=None, save_kwargs=None):
     """Run under the DB writer, with no filesystem copying."""
     with _guard, transaction.atomic():
@@ -302,29 +338,27 @@ async def commit_inline_exports(share_id: str, expected_revision: int, prepared:
     A rejected commit discards only this preparation's new folders. The caller
     can retry from fresh state. Readiness failures remain typed and retriable.
     """
-    previous = await sync_to_async(_load_share)(share_id)
+    previous = None
     async def commit():
         return await sync_to_async(_commit_prepared)(share_id, expected_revision, prepared, options)
     try:
-        committed = await run_under_db_write_lock(commit)
-    except BaseException:
-        await discard_inline_exports(share_id, prepared.new_copy_ids)
-        raise
-    if not committed:
-        await discard_inline_exports(share_id, prepared.new_copy_ids)
-    elif previous:
-        await retire_inline_exports(share_id, list(_copy_ids(previous.inline_artifact_exports or {})))
-    return committed
+        previous = await sync_to_async(_load_share)(share_id)
+        return await run_under_db_write_lock(commit)
+    finally:
+        # The shielded writer can commit before raising outer cancellation.
+        # Durable references decide which new and old trees can retire.
+        old_ids = _copy_ids(previous.inline_artifact_exports or {}) if previous else set()
+        await _settle_inline_exports(share_id, set(prepared.new_copy_ids) | old_ids)
 
 
-async def save_inline_share(share, *, writer, recapture=False, **save_kwargs) -> bool:
+async def save_inline_share(
+    share, *, writer, recapture=False, expected_generation: int | None = None, **save_kwargs,
+) -> bool:
     """Owner mutation integration. Explicit mutations are all-or-nothing."""
     disabling = not include_inline_artifacts(share.options or {})
-    requested_generation = _generations.get(_root_key(share.id), 0)
-    if disabling:
-        invalidate_inline_exports(share.id)
+    generation = reserve_inline_exports(share.id) if expected_generation is None else expected_generation
     async def save():
-        if not disabling and _generations.get(_root_key(share.id), 0) != requested_generation:
+        if not _generation_current(share.id, generation):
             return False
         fresh = await sync_to_async(_load_share)(share.id)
         previous = deepcopy(fresh.inline_artifact_exports or {}) if fresh else {}
@@ -345,21 +379,16 @@ async def save_inline_share(share, *, writer, recapture=False, **save_kwargs) ->
                 selection.update(enabled=False, revision=previous.get('revision', 0) + int(previous.get('enabled', True)))
         else:
             selection = await sync_to_async(prepare_share_selection)(share, recapture=recapture)
-        prepared = await prepare_inline_exports(share.id, selection, retain=previous)
+        prepared = await prepare_inline_exports(share.id, selection, retain=previous, expected_generation=generation)
         prepared = prepared._replace(recapture=recapture)
         async def commit():
             return await sync_to_async(_commit_prepared)(share.id, previous.get('revision', 0), prepared, share.options,
                                                          owner=share, save_kwargs=save_kwargs)
         try:
-            committed = await writer(commit)
-        except BaseException:
-            await discard_inline_exports(share.id, prepared.new_copy_ids)
-            raise
-        if not committed:
-            await discard_inline_exports(share.id, prepared.new_copy_ids)
-        else:
-            await retire_inline_exports(share.id, list(_copy_ids(previous)))
-        return committed
+            return await writer(commit)
+        finally:
+            await _settle_inline_exports(share.id, set(prepared.new_copy_ids) | _copy_ids(previous))
+
     if disabling:
         return await save()
     async with share_export_lock(share.id):
@@ -434,10 +463,12 @@ async def ensure_inline_exports(share_id: str) -> None:
     """Capture legacy metadata before copying; failures are per artifact.
 
     Initialized snapshot captures and successful copies never recapture.
-    Startup calls recover_snapshot_initialization before retrying errors.
+    Later authorized ensure/retry calls recover interrupted pending captures.
     """
+    generation = reserve_inline_exports(share_id)
     async with share_export_lock(share_id):
-        generation = invalidate_inline_exports(share_id)
+        if not _generation_current(share_id, generation):
+            return
         async def initialize():
             def commit():
                 with _guard, transaction.atomic():
@@ -447,7 +478,7 @@ async def ensure_inline_exports(share_id: str) -> None:
                             or share.session.type != SessionType.SESSION):
                         return []
                     if (share.inline_artifact_exports or {}).get('initialized'):
-                        return []
+                        return None
                     state = prepare_share_selection(share)
                     if _generations.get(_root_key(share_id), 0) != generation:
                         return []
@@ -456,11 +487,16 @@ async def ensure_inline_exports(share_id: str) -> None:
                     return list(state['selected'])
             return await sync_to_async(commit)()
         keys = await run_under_db_write_lock(initialize)
+        if keys is None:
+            await recover_snapshot_initialization(share_id, expected_generation=generation)
+            return
         for key in keys:
-            await _retry_locked(share_id, key, initial=True)
+            await _retry_locked(share_id, key, initial=True, expected_generation=generation)
 
 
-async def _retry_locked(share_id, artifact_key, *, initial=False):
+async def _retry_locked(share_id, artifact_key, *, initial=False, expected_generation):
+    if not _generation_current(share_id, expected_generation):
+        return
     share = await sync_to_async(_load_share)(share_id)
     if (share is None or not share.is_active() or not include_inline_artifacts(share.options or {})
             or share.kind != 'session' or share.session.type != SessionType.SESSION):
@@ -480,7 +516,8 @@ async def _retry_locked(share_id, artifact_key, *, initial=False):
     selected = selection['selected']
     selection['selected'] = {artifact_key: selected[artifact_key]}
     try:
-        prepared = await prepare_inline_exports(share_id, selection, retain=previous)
+        prepared = await prepare_inline_exports(share_id, selection, retain=previous,
+                                                expected_generation=expected_generation)
     except InlineExportFailure as error:
         await publish_inline_export_error(share_id, previous, artifact_key, error.code, complete_selection,
                                           expected_generation=error.generation)
@@ -522,25 +559,31 @@ async def publish_inline_export_error(
                 share.save(update_fields=['inline_artifact_exports', 'updated_at'])
                 return True
         return await sync_to_async(commit)()
-    committed = await run_under_db_write_lock(publish)
-    if committed:
-        await retire_inline_exports(share_id, list(_copy_ids(previous)))
-    return committed
+    try:
+        return await run_under_db_write_lock(publish)
+    finally:
+        await _settle_inline_exports(share_id, _copy_ids(previous))
 
 
 async def retry_inline_export(share_id: str, artifact_key: str) -> None:
     """Retry failed initial snapshot entries or current live errors only."""
+    generation = reserve_inline_exports(share_id)
     async with share_export_lock(share_id):
-        await _retry_locked(share_id, artifact_key)
+        if not _generation_current(share_id, generation):
+            return
+        await recover_snapshot_initialization(share_id, expected_generation=generation)
+        await _retry_locked(share_id, artifact_key, expected_generation=generation)
 
 
-async def recover_snapshot_initialization(share_id: str) -> None:
-    """Turn interrupted pending snapshot copies into retriable stable errors."""
+async def recover_snapshot_initialization(share_id: str, *, expected_generation: int | None = None) -> None:
+    """Recover pending captures under a new or existing authorized generation."""
+    generation = reserve_inline_exports(share_id) if expected_generation is None else expected_generation
     async def recover():
         def commit():
             with _guard, transaction.atomic():
                 share = _load_share(share_id)
-                if share is None or (share.options or {}).get('mode') != 'snapshot':
+                if (share is None or (share.options or {}).get('mode') != 'snapshot'
+                        or not _generation_current(share_id, generation)):
                     return
                 state = deepcopy(share.inline_artifact_exports or {})
                 changed = False
@@ -549,7 +592,6 @@ async def recover_snapshot_initialization(share_id: str) -> None:
                         entry.update(status='error', error='export_interrupted')
                         changed = True
                 if changed:
-                    invalidate_inline_exports(share_id)
                     state['revision'] = state.get('revision', 0) + 1
                     share.inline_artifact_exports = state
                     share.save(update_fields=['inline_artifact_exports', 'updated_at'])
@@ -559,6 +601,13 @@ async def recover_snapshot_initialization(share_id: str) -> None:
 
 async def reconcile_inline_exports() -> None:
     """Startup cleanup preserves referenced trees and removes crash leftovers."""
+    # Initialization commits pending capture before creating any directory.
+    # Recover durable rows independently from filesystem orphan cleanup.
+    snapshot_ids = await sync_to_async(list)(Share.objects.filter(
+        kind='session', options__mode='snapshot', inline_artifact_exports__initialized=True,
+    ).values_list('id', flat=True))
+    for share_id in snapshot_ids:
+        await recover_snapshot_initialization(share_id)
     root = get_shares_dir()
     if not root.exists():
         return
@@ -570,8 +619,9 @@ async def reconcile_inline_exports() -> None:
         if share is None:
             await remove_inline_share_exports(directory.name)
             continue
+        if share.kind != 'session':
+            continue
         with _guard:
             active = {cid for path, cid in _preparing if path == str(inline)}
         await retire_inline_exports(share.id, [entry.name for entry in inline.iterdir()
                                              if entry.name not in active])
-        await recover_snapshot_initialization(share.id)

@@ -228,15 +228,17 @@ def _not_ready_result(share_id):
     )])
 
 
-async def _save_share(share, *, check_inline=False, recapture=False, **save_kwargs):
+async def _save_share(share, *, check_inline=False, recapture=False, expected_generation=None, **save_kwargs):
     """Recheck root readiness inside the serialized mutation commit gate."""
     from twicc.inline_artifacts.share_selection import SelectionNotReady
     from twicc.inline_artifacts.share_exports import InlineExportFailure, save_inline_share
 
     if check_inline and share.kind == "session":
         try:
-            committed = await save_inline_share(share, writer=run_under_db_write_lock,
-                                                recapture=recapture, **save_kwargs)
+            committed = await save_inline_share(
+                share, writer=run_under_db_write_lock, recapture=recapture,
+                expected_generation=expected_generation, **save_kwargs,
+            )
             if not committed:
                 return ShareMutationResult(False, share.id, [ShareError(
                     "options", "export_interrupted", "Share changes invalidate the prepared inline exports.",
@@ -414,10 +416,13 @@ async def propagate_share(share) -> ShareMutationResult:
 
     original = share
     share = copy(share)
+    generation = None
     if share.kind == ShareKind.SESSION.value:
         if share.options.get("mode") != "snapshot":
             return ShareMutationResult(False, share.id,
                                        [ShareError("mode", "not_snapshot", "only snapshot shares re-freeze")])
+        from twicc.inline_artifacts.share_exports import reserve_inline_exports
+        generation = reserve_inline_exports(share.id)
         share.session = await sync_to_async(lambda: share.session)()
         fresh = await sync_to_async(type(share.session).objects.get)(id=share.session_id)
         share.options = {**share.options, "frozen_at_line": fresh.last_line}
@@ -427,6 +432,7 @@ async def propagate_share(share) -> ShareMutationResult:
             return ShareMutationResult(False, share.id, [ShareError("bookmark", "snapshot_failed", err)])
         share.options = {**share.options, "snapshot_at": _now().isoformat()}
     failure = await _save_share(share, check_inline=share.kind == ShareKind.SESSION.value, recapture=True,
+                                expected_generation=generation,
                                 update_fields=["options", "updated_at"])
     if failure:
         return failure
