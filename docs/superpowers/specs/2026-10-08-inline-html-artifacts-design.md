@@ -2,9 +2,9 @@
 
 Date: 2026-10-08
 
-Status: Adversarial spec review complete. Awaiting user review. Implementation has not started.
+Status: Main-session-only scope and matching implementation plan pass adversarial review. Implementation has not started.
 
-Scope: Private conversations and shared conversations, for Claude Code and Codex.
+Scope: Main-session private and shared conversations, for Claude Code and Codex. Native subagent conversations are excluded.
 
 ## 1. Purpose
 
@@ -24,6 +24,8 @@ Virtual scrolling removes message placeholders, but does not remove artifact ifr
 The user confirms these requirements during the design conversation:
 
 - Support HTML pages only.
+- Only the main agent of a regular session creates and publishes inline artifacts. Native subagents do neither.
+- Do not implement inline artifact parsing, rendering, retention, or export for native subagent conversations.
 - Support a single HTML file, or an HTML entry point with relative JavaScript, CSS, assets, and optional `data/`.
 - Keep one live source folder per artifact.
 - Do not store source versions or provide code history.
@@ -173,8 +175,11 @@ Never interpret title content as HTML.
 ### 5.2 Recognition boundaries
 
 Only finalized, user-facing assistant text can publish an artifact.
-Support both providers and provider subagent sessions.
+Support both providers in regular sessions only.
 The owning session is the session containing the message.
+Sessions whose type is `subagent` do not publish inline artifacts.
+Their tag-like text follows ordinary Markdown rendering, without artifact errors, placeholders, frames, or brokers.
+The main agent does not delegate inline artifact generation or publication to native subagents.
 
 Recognize complete tags as standalone top-level Markdown blocks.
 Permit whitespace and line breaks inside a complete tag.
@@ -195,7 +200,7 @@ Publication does not wait for the entire agent turn to end.
 
 Deduplicate provider representations of the same finalized message.
 A canonical message and its provider mirror must not create two publications.
-Retain the existing provider rules for copied parent history in child rollouts.
+Copied parent history in native subagent rollouts cannot publish an inline artifact.
 
 ### 5.3 Publication identity and ordering
 
@@ -239,7 +244,7 @@ The private session payload exposes the latest descriptor per ID.
 The frontend does not need the complete internal occurrence catalog.
 
 The share service derives a separate filtered manifest from the catalog.
-It checks source item visibility and permitted source sessions.
+It checks source item visibility and requires the source session to be the shared regular session itself.
 Do not expose the private catalog directly through public metadata.
 
 ## 7. Conversation rendering
@@ -448,25 +453,24 @@ Public file and proxy routes refuse access, even when old copies still exist on 
 ### 12.2 Eligible publications
 
 Build the public manifest from publications whose messages are accessible under that share.
-Apply the existing display ceiling, frozen line, and subagent visibility rules.
+Apply the existing display ceiling and frozen line to the shared session itself.
+Never select an inline artifact from a native subagent conversation, even when Include subagents is enabled.
 For live shares, choose the last permitted publication independently for each artifact identity.
 
 For snapshots, capture that selection when preparing the initial export or an explicit snapshot update.
 After publication, the captured manifest determines widget positions until Push update or a share mode change.
-Do not reselect publications merely because permitted subagent transcripts continue to grow.
+Do not reselect publications merely because share metadata is fetched again.
 
-Changes to the display ceiling or subagent inclusion preserve captured publications and copies that remain permitted.
+Changes to the display ceiling preserve captured publications and copies that remain permitted.
 Newly included artifacts get a selected publication and a corresponding initial copy.
 If a captured publication becomes excluded, remove its widget and deny its export routes.
-Do not substitute an earlier tag or a newer child tag automatically.
+Do not substitute another tag automatically.
 Push update can capture another permitted publication for that artifact.
 Changes to titles or timestamps do not reselect publications or replace copies.
 
-For the root of a snapshot share, ignore publications after `frozen_at_line`.
-For subagents, retain the existing share policy for permitted subagents and their transcript boundaries.
-Do not create a new subagent visibility policy for artifacts.
-Their later text can remain visible under that existing policy.
-Their later artifact tags do not replace captured widgets or introduce additional widgets into the existing snapshot.
+For a snapshot share, ignore publications after `frozen_at_line`.
+Include subagents continues to control existing subagent transcript visibility only.
+Changing it does not change inline selection, copies, or code revisions.
 
 The viewer's local choice to collapse details does not grant or revoke file access.
 The server's share ceiling and source-session authorization determine access.
@@ -646,7 +650,8 @@ Snapshot exports are never rebuilt automatically from changed source files.
 
 Changing the share mode rebuilds a coherent initial export set from the current permitted sources.
 It then starts live updates or freezes those copies according to the selected mode.
-Changing the display ceiling or subagent inclusion updates eligible artifact selection.
+Changing the display ceiling updates eligible artifact selection.
+Changing subagent inclusion does not update inline artifact selection or copies.
 For snapshots, retain both the captured publication and its copy when that publication remains permitted.
 Copy current files only for newly included snapshot artifacts, using their newly selected publications.
 An excluded captured publication has no fallback widget until an explicit snapshot update selects one.
@@ -661,7 +666,7 @@ Deleting a share removes its inline export copies through the existing snapshot 
 
 ## 15. Public routes and broker
 
-Provide token-scoped routes with source-session identity to avoid subagent ID collisions:
+Provide token-scoped routes with explicit source-session identity:
 
 ```text
 /share/<token>/inline-artifacts/<source-session-id>/<artifact-id>/<asset-path>
@@ -676,7 +681,7 @@ Every route checks these conditions:
 - The share token resolves to an active session share.
 - The viewer satisfies its password gate.
 - Include inline artifacts is enabled.
-- The source session is permitted by that share.
+- The source session equals the share's regular session; native subagent IDs are refused.
 - The artifact is selected by the share's current filtered manifest.
 - Its export is ready for the selected publication.
 - The requested file remains inside that artifact's export folder.
@@ -718,6 +723,9 @@ Include one single-file example and one folder-with-assets example.
 Explain these authoring rules:
 
 - Write under `inline-artifacts/<id>/` in the current session's artifacts root.
+- Only the main session agent creates and publishes inline artifacts.
+- Do not delegate inline artifact generation or publication to native subagents.
+- A native subagent must not create or publish inline artifacts.
 - Write a complete page before inserting its tag.
 - Use relative assets and a real HTML entry file.
 - Insert a standalone tag in finalized assistant text at the intended conversation position.
@@ -735,6 +743,7 @@ The existing file tools and message text are sufficient.
 ## 17. Non-goals
 
 - Source-code version history or immutable private publications.
+- Inline artifact generation, publication, rendering, retention, or sharing in native subagent conversations.
 - Restoring arbitrary JavaScript state after a document reload.
 - Shared memory state between inline and Artifacts-tab viewers.
 - Automatic saving of DOM input values.
@@ -751,6 +760,7 @@ The existing file tools and message text are sufficient.
 ### Publication and provider behavior
 
 - Both providers publish a single-file widget and a folder-based widget.
+- Native subagent tags and copied parent tags create no catalog records, placeholders, frames, brokers, or public exports.
 - Attribute order and supported multiline syntax produce the same descriptor.
 - Tags in examples, comments, tool results, user messages, and reasoning do not execute.
 - Incomplete streaming tags do not publish or supersede.
@@ -777,7 +787,8 @@ The existing file tools and message text are sufficient.
 - Publish the same ID in a later message while the old message is not loaded.
 - Verify that only the latest occurrence displays a widget.
 - Load the old range later and verify that its widget remains absent.
-- Verify the same behavior with collapsed message groups and subagent views.
+- Verify the same behavior with collapsed message groups.
+- Opening a subagent view hides main-session frames as needed without creating subagent inline runtimes.
 - A new publication reloads once; recompute and reconnect do not reload it again.
 - Intermediate code writes do not reload an inline widget.
 - Data writes do not reload an inline or existing Artifacts-tab preview.
@@ -799,7 +810,7 @@ The existing file tools and message text are sufficient.
 - Missing files, oversized copies, and replacement failures do not expose partial exports.
 - A live publication updates its copy and placement; a data change updates only copied data without reload.
 - A snapshot remains unchanged until Push update; enabling it later copies current files at its existing tag placement.
-- Later permitted subagent text remains visible without replacing a snapshot's captured widget positions.
+- Include subagents changes transcript visibility without changing inline selections, copies, or code revisions.
 - Selection-affecting option changes retain both the captured tag and copy for widgets that remain permitted.
 - Excluding a captured tag removes its widget without substituting another tag or serving an incompatible copy.
 - A successful Push update can replace a copy without another tag; viewer reconciliation reloads that copy once.
@@ -830,9 +841,9 @@ Two independent internal reviewers assess product behavior and public sharing ac
 They review spec-level contradictions and missing outcomes, without requiring implementation details.
 Both final verdicts are **READY**, after a final verification of the snapshot-disable correction.
 
-The review resolves these issues:
+The original review resolves these issues:
 
-- Freeze snapshot widget selection even when permitted subagent transcripts continue to grow.
+- Freeze snapshot widget selection between explicit updates.
 - Preserve matching captured publications and copies through visibility-option changes.
 - Keep snapshot updates atomic on export failure, with separate recovery for existing default-on links.
 - Reload replaced public code copies during reconciliation, even when their tag stays unchanged.
@@ -841,3 +852,7 @@ The review resolves these issues:
 
 The shared system-prompt addendum update remains required by section 16.
 Product implementation and runtime checks remain outside this review.
+
+The user subsequently excludes native subagents from inline artifact authoring and runtime support.
+Two internal reviewers validate the main-session-only amendment and matching implementation plan.
+Both final verdicts are **READY** after checking scope exclusion, ordinary subagent transcript behavior, and share-option independence.
