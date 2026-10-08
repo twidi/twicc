@@ -62,7 +62,8 @@ def _install_factory_fakes(monkeypatch, work_dirs: list[str]):
     codex = _FakeCodex()
     resolved: list[tuple[str, str | None]] = []
 
-    async def fake_make_codex_config(*, cwd):
+    async def fake_make_codex_config(*, cwd, disable_async_questions):
+        assert disable_async_questions is True
         return {"cwd": cwd}
 
     async def fake_resolve(session_id, *, pending_id=None):

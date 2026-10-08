@@ -959,7 +959,9 @@ class CodexAgentManager(BaseAgentManager):
         """
         if resume and prepared_attachments is not None:
             raise ValueError("prepared_attachments are only finished by a new session, never by a resume")
-        config = await make_codex_config(cwd=cwd)
+        # Keep synchronous question widgets, but remove async questions from
+        # every model exposed to this agent and its native subagents.
+        config = await make_codex_config(cwd=cwd, disable_async_questions=True)
         if ephemeral:
             config.config_overrides = (*config.config_overrides, "features.plugins=false")
         codex = TwiccAsyncCodex(config=config)

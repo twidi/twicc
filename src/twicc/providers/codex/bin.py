@@ -11,10 +11,12 @@ Mirrors the shape of ``twicc.providers.claude_code.bin`` (same function name
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from typing import NamedTuple
 
+import orjson
 from openai_codex import CodexConfig
 
 from .runtime import (
@@ -85,18 +87,30 @@ def _codex_env() -> dict[str, str]:
     return env
 
 
-async def make_codex_config(*, cwd: str | None = None, **extra) -> CodexConfig:
+async def make_codex_config(*, cwd: str | None = None, disable_async_questions: bool = False, **extra) -> CodexConfig:
     """Ensure the runtime is present, then build a ``CodexConfig`` for it.
 
     Async because the first call may trigger the one-time runtime download
     (run off the event loop). Every backend Codex entry point that builds a
     ``CodexConfig`` uses this. Also creates a configured ``CODEX_HOME`` when
     missing: Codex refuses to start otherwise (nothing created, exit 1).
+
+    Interactive agents set ``disable_async_questions`` to filter the bundled
+    model catalogue. Other callers retain their existing catalogue behavior,
+    including hermetic calls that supply their own process overrides.
     """
     from twicc.provider_homes import ensure_codex_home
 
     await ensure_codex_runtime()
     ensure_codex_home()
+    if disable_async_questions:
+        from .interactive_catalog import ensure_catalog
+
+        catalog_path = await asyncio.to_thread(ensure_catalog, codex_binary_path())
+        extra["config_overrides"] = (
+            *extra.get("config_overrides", ()),
+            f"model_catalog_json={orjson.dumps(str(catalog_path)).decode()}",
+        )
     return CodexConfig(
         codex_bin=str(codex_binary_path()),
         env=_codex_env(),

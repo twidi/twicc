@@ -598,7 +598,8 @@ class _FakeNewAgent:
 def _install_creation_fakes(monkeypatch, events: list, thread_id: str, *, start_error=None) -> _FakeCodex:
     codex = _FakeCodex(events, thread_id, start_error=start_error)
 
-    async def fake_make_codex_config(*, cwd):
+    async def fake_make_codex_config(*, cwd, disable_async_questions):
+        assert disable_async_questions is True
         return SimpleNamespace(config_overrides=())
 
     async def fake_work_dirs(session_id, *, pending_id=None):

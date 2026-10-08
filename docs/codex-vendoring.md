@@ -20,6 +20,46 @@ The cache is shared by every checkout on the machine, so bumping `CODEX_VERSION`
 
 The extracted tree is the whole `codex_cli_bin/` package (not just the `codex` binary), so its sibling resources ship too: `codex-resources/bwrap` (Linux sandbox helper) and `codex-resources/zsh` are found by `codex` relative to its own path, and `codex-path/rg` (ripgrep) is put on PATH by `make_codex_config` (the SDK only does that itself when `codex_bin` is auto-resolved, which is never our case).
 
+## Interactive question catalogue
+
+Interactive agents pass `disable_async_questions=True` to `make_codex_config`.
+`interactive_catalog.py` extracts the pinned binary's catalogue with
+`codex debug models --bundled`. It removes only `request_user_input_async` and
+its legacy name `send_user_message_async` from each model's
+`experimental_supported_tools`. Synchronous question widgets retain their
+existing `question_widget` configuration.
+
+The generated file lives under `<data_dir>/cache/interactive-codex-catalog-*.json`.
+Its name includes the CLI version, filtered content hash, and transformation
+version. Writes are atomic; missing or damaged cache files regenerate on launch.
+Unknown model fields are preserved. An incompatible tools schema fails startup
+instead of silently restoring async questions.
+
+Each catalogue check also removes unused older interactive catalogue files and
+their `.lease` sidecars. A backend holds a shared OS file lock for every catalogue
+it uses until it exits. Cleanup takes a nonblocking exclusive lock and skips
+catalogues retained by any running backend, including idle agents. A directory
+lock serializes lease acquisition, atomic writes, and cleanup across processes.
+Other cache files, including hermetic catalogues, are untouched. After an older
+backend exits, its files become eligible for cleanup on the next agent launch.
+
+The process-level `model_catalog_json` override applies to new and resumed
+interactive agents and their native subagents. It does not modify provider
+configuration, provider caches, standalone CLI invocations, or hermetic calls.
+This catalogue is static: remote model additions and instruction changes take
+effect only after a binary update. A new binary version regenerates the file
+automatically. Restart existing agent processes to load a new catalogue.
+This is intentional: the catalogue follows the pinned runtime. Do not refresh
+it from remote APIs independently of a runtime update.
+
+On each Codex update, verify that the catalogue names still control async tool
+registration and synchronous `request_user_input` remains independent. Run
+`tests/test_codex_interactive_catalog.py` and the thread configuration tests.
+Run `TWICC_CODEX_INTEGRATION=1 uv run pytest tests/test_codex_interactive_catalog_integration.py`
+with the runtime already downloaded. The local Responses endpoint verifies
+new threads, app-server restarts with durable thread resume, native subagents,
+and every bundled model advertising async questions, without any remote model call.
+
 ## Local patches
 
 Deliberate divergences from the pristine upstream tree. Re-apply them after every re-vendor (a `diff -rq <pristine> src/openai_codex` against the current version's pristine tree finds them all), and drop each one once upstream ships the fix.
