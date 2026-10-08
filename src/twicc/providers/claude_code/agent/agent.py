@@ -25,6 +25,7 @@ from claude_agent_sdk import (
     HookMatcher,
     PermissionResultAllow,
     PermissionResultDeny,
+    PermissionUpdate,
     ResultMessage, StreamEvent, SystemMessage, ThinkingConfigAdaptive, ThinkingConfigDisabled,
     ToolPermissionContext, ToolResultBlock, ToolUseBlock, UserMessage,
 )
@@ -35,6 +36,7 @@ import json_repair
 import orjson
 
 from twicc.agent import AgentInfo, AgentState, BaseAgent, PendingRequest, StateChangeCallback
+from twicc.agent.auto_deny import AUTO_DENY_MESSAGE, AUTO_DENY_TOOLS
 from twicc.agent.plugin import get_plugin_dir
 from twicc.agent.shell_notice import (
     ClaudeLiveOwners,
@@ -782,9 +784,9 @@ class ClaudeCodeAgent(BaseAgent):
         # messages, bookmarks — never the project's code); auto-approve them in
         # every mode and trust, exactly like the skills+CLI the agent already
         # has. This fires before any pending request is created, so no prompt
-        # ever appears. In ``bypassPermissions`` the callback isn't invoked at
-        # all; this covers the restrictive modes (default/plan/acceptEdits).
-        # See MCP plan D9.
+        # ever appears. It matters mostly in the restrictive modes
+        # (default/plan/acceptEdits): in ``bypassPermissions`` the CLI calls
+        # this callback only for its own safety checks. See MCP plan D9.
         if tool_name.startswith("mcp__twicc__"):
             return PermissionResultAllow()
 
@@ -826,8 +828,24 @@ class ClaudeCodeAgent(BaseAgent):
             permission_suggestions=permission_suggestions,
         )
 
+        # Auto-deny (design docs/plans/2026-10-08-bypass-approval-auto-deny-spec.md):
+        # in bypassPermissions the CLI still prompts for some dangerous actions
+        # and nobody is expected to watch, so an unanswered prompt is denied
+        # after AUTO_DENY_DELAY_SECONDS, like the Claude Code CLI does. Only
+        # the action tools are armed: questions, plan reviews and any other tool
+        # keep waiting. The mode is the one TwiCC last applied, kept exact by
+        # ``_mirror_session_set_mode``; an untrusted project never arms.
+        auto_deny_response = None
+        if (
+            request_type == "tool_approval"
+            and tool_name in AUTO_DENY_TOOLS
+            and not untrusted
+            and self.agent_settings.permission_mode == "bypassPermissions"
+        ):
+            auto_deny_response = PermissionResultDeny(message=AUTO_DENY_MESSAGE, interrupt=False)
+
         try:
-            response = await self._await_pending_request(request)
+            response = await self._await_pending_request(request, auto_deny_response=auto_deny_response)
         except asyncio.CancelledError:
             self._logger.warning(
                 "[session %s] [permission %s] Future cancelled while awaiting (tool=%r)",
@@ -845,7 +863,30 @@ class ClaudeCodeAgent(BaseAgent):
                 session_id=self.session_id,
             )
 
+        if isinstance(response, PermissionResultAllow):
+            self._mirror_session_set_mode(response)
+
         return response
+
+    def _mirror_session_set_mode(self, response: PermissionResultAllow) -> None:
+        """Keep ``agent_settings.permission_mode`` equal to the mode the CLI applies.
+
+        An approval answer may carry a ``setMode`` permission ("allow, and
+        switch to default"). ``ws.py`` persists it and the CLI applies it
+        through ``updated_permissions``, but nothing else updates this
+        in-memory copy before the next send or USER_TURN — and the auto-deny
+        arming reads it. Same rule as ``HybridClaudeAgent.resolve_pending_request``:
+        only a session-destination (or destination-less) ``setMode`` counts.
+        The settings monitor then sees no difference and does not re-apply it.
+        """
+        for permission in response.updated_permissions or ():
+            data = permission.to_dict() if isinstance(permission, PermissionUpdate) else permission
+            if (
+                data.get("type") == "setMode"
+                and data.get("mode")
+                and data.get("destination") in (None, "session")
+            ):
+                self.agent_settings = self.agent_settings._replace(permission_mode=data["mode"])
 
     async def _handle_elicitation_request(self, params: dict) -> dict:
         """Elicitation-bridge handler: create a pending request and wait for the user.
