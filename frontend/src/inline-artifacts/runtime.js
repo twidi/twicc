@@ -28,9 +28,10 @@ export function createInlineArtifactRuntime({ viewId, pool, adapter }) {
     }
 
     function chooseAttachment(entry) {
-        if (!active.value || !entry.requestedVisible || !runnable(entry)) return null
+        if (!active.value || !runnable(entry)) return null
         for (const attachment of attachments.get(entry.artifactKey)?.values() || []) {
-            if (!attachment.isSuppressed?.() && (attachment.isVisible?.() ?? true)) return attachment
+            const visible = attachment.isVisible ? attachment.isVisible() : entry.requestedVisible
+            if (!attachment.isSuppressed?.() && visible) return attachment
         }
         return null
     }

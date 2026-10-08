@@ -20,6 +20,8 @@ export function artifactKey(sourceSessionId, artifactId) {
  *
  * Attachment contract: placeholderEl, clipEl, isSuppressed(), focusConversation().
  * Optional isVisible() distinguishes duplicate presentations; attachment order
- * selects the first visible, unsuppressed placement. setVisible() supplies the
- * artifact visibility gate when callers have no per-attachment getter.
+ * selects the first visible, unsuppressed placement. setVisible() supplies a
+ * visibility fallback only for attachments without a getter. A false hint
+ * never hides another attachment whose getter is true. setActive() gates
+ * the entire owning view.
  */

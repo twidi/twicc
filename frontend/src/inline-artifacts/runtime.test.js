@@ -31,7 +31,7 @@ function fixture(viewId = 'view-a', sharedPool) {
     }
     const runtime = createInlineArtifactRuntime({ viewId, pool, adapter })
     const attachment = { placeholderEl: {}, clipEl: {}, isSuppressed: () => false,
-        isVisible: () => true, focusConversation: () => {} }
+        focusConversation: () => {} }
     const reconcile = (revision = 1, d = descriptor()) => runtime.reconcile({ revision, descriptors: [d] })
     const entry = () => runtime.entries.get(key)
     const succeed = async (index = probes.length - 1) => {
@@ -94,7 +94,7 @@ test('duplicate presentations share one frame and select the first visible attac
     f.reconcile()
     let firstVisible = false
     const first = { ...f.attachment, isVisible: () => firstVisible }
-    const second = { ...f.attachment, placeholderEl: { second: true } }
+    const second = { ...f.attachment, placeholderEl: { second: true }, isVisible: () => true }
     f.runtime.attach(key, publication, first)
     const detachSecond = f.runtime.attach(key, publication, second)
     f.runtime.setVisible(key, true)
@@ -103,9 +103,71 @@ test('duplicate presentations share one frame and select the first visible attac
     firstVisible = true
     f.runtime.setVisible(key, true)
     assert.equal(f.entry().attachment, first)
+    firstVisible = false
+    f.runtime.setVisible(key, false)
+    assert.equal(f.entry().attachment, second)
+    assert.equal(f.pool.frames[f.entry().frameId].visible, true)
+    firstVisible = true
+    f.runtime.setVisible(key, false)
+    assert.equal(f.entry().attachment, first)
     detachSecond()
     assert.equal(f.entry().attachment, first)
     assert.equal(Object.keys(f.pool.frames).length, 1)
+    assert.equal(f.probes.length, 1)
+    f.runtime.dispose()
+})
+
+test('an invisible duplicate hint cannot abort a visible attachment probe', async () => {
+    const f = fixture()
+    f.reconcile()
+    const first = { ...f.attachment, isVisible: () => false }
+    const second = { ...f.attachment, isVisible: () => true }
+    f.runtime.attach(key, publication, first)
+    f.runtime.attach(key, publication, second)
+    f.runtime.setVisible(key, true)
+    f.runtime.setVisible(key, false)
+    assert.equal(f.entry().attachment, second)
+    assert.equal(f.probes[0].signal.aborted, false)
+    await f.succeed()
+    assert.equal(f.pool.frames[f.entry().frameId].visible, true)
+    assert.equal(f.probes.length, 1)
+    f.runtime.dispose()
+})
+
+test('mixed attachments use getter visibility and the boolean fallback independently', async () => {
+    const f = fixture()
+    f.reconcile()
+    let getterVisible = false
+    const fallback = f.attachment
+    const withGetter = { ...f.attachment, isVisible: () => getterVisible }
+    f.runtime.attach(key, publication, fallback)
+    f.runtime.attach(key, publication, withGetter)
+    f.runtime.setVisible(key, false)
+    assert.equal(f.entry().attachment, null)
+    assert.equal(f.probes.length, 0)
+    assert.deepEqual(Object.keys(f.pool.frames), [])
+    getterVisible = true
+    f.runtime.setVisible(key, false)
+    assert.equal(f.entry().attachment, withGetter)
+    await f.succeed()
+    const frame = f.pool.frames[f.entry().frameId]
+    f.runtime.setVisible(key, true)
+    assert.equal(f.entry().attachment, fallback)
+    f.runtime.setVisible(key, false)
+    assert.equal(f.entry().attachment, withGetter)
+    assert.equal(frame.visible, true)
+    getterVisible = false
+    f.runtime.setVisible(key, false)
+    assert.equal(frame.visible, false)
+    f.runtime.setVisible(key, true)
+    assert.equal(f.entry().attachment, fallback)
+    assert.equal(frame.visible, true)
+    getterVisible = true
+    f.runtime.setActive(false)
+    assert.equal(f.entry().attachment, null)
+    assert.equal(frame.visible, false)
+    f.runtime.setActive(true)
+    assert.equal(frame.visible, true)
     assert.equal(f.probes.length, 1)
     f.runtime.dispose()
 })
