@@ -169,197 +169,205 @@ const notivue = createNotivue({
 })
 app.use(notivue)
 
-// Resolve authentication before fetching any protected data. /api/bootstrap/
-// is behind the password-auth middleware, so on a locked instance we must
-// send the user to /login first (the router guard handles that). Once the
-// user logs in, LoginView triggers a full page reload so this whole init
-// cycle re-runs with an authenticated session.
-const authStore = useAuthStore()
-await authStore.checkAuth()
+// Let the entry module finish evaluating before startup awaits dynamic imports.
+// Production chunks can import this entry again while restoring drafts.
+// A top-level await would make both operations wait for each other.
+async function initializeApp() {
+    // Resolve authentication before fetching any protected data. /api/bootstrap/
+    // is behind the password-auth middleware, so on a locked instance we must
+    // send the user to /login first (the router guard handles that). Once the
+    // user logs in, LoginView triggers a full page reload so this whole init
+    // cycle re-runs with an authenticated session.
+    const authStore = useAuthStore()
+    await authStore.checkAuth()
 
-// An unprotected instance (no password) refuses non-local access: there's
-// nothing to authenticate against, so it must not be reachable over the
-// network. The backend tells us via /api/auth/check/. Render a terminal screen
-// here — before mounting Vue or fetching any protected data — explaining how to
-// enable access by setting a password.
-if (authStore.accessDenied) {
-    const cmd = authStore.setPasswordCommand || 'twicc password set'
-    const esc = (s) => String(s).replace(/[&<>"']/g, (c) => (
-        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-    ))
-    document.getElementById('app').innerHTML = `
-        <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:2rem;font-family:system-ui,sans-serif">
-            <div style="max-width:520px;padding:2rem;border-radius:12px;background:#422006;border:1px solid #854d0e;color:#fcd34d">
-                <h2 style="margin:0 0 .75rem;font-size:1.25rem;color:#fde68a">Access blocked</h2>
-                <p style="margin:0 0 1rem;line-height:1.5">
-                    For your security, TwiCC refuses remote access while it isn't
-                    protected by a password. Set one on the machine running TwiCC,
-                    restart it, then reload this page:
-                </p>
-                <pre id="twicc-blocked-cmd" title="Click to copy" style="margin:0;padding:.75rem 1rem;border-radius:8px;background:#1c1207;color:#fde68a;overflow:auto;text-wrap:wrap;font-size:.9rem;cursor:pointer"><code>${esc(cmd)}</code></pre>
-                <p id="twicc-blocked-hint" style="margin:.5rem 0 0;font-size:.8rem;opacity:.7">Click the command to copy</p>
-            </div>
-        </div>`
-    const copyCmd = async () => {
-        let ok = false
-        try {
-            // navigator.clipboard only exists in secure contexts; remote access
-            // is often plain HTTP, so fall back to execCommand on a temp textarea.
-            if (navigator.clipboard && window.isSecureContext) {
-                await navigator.clipboard.writeText(cmd)
-                ok = true
-            } else {
-                const ta = document.createElement('textarea')
-                ta.value = cmd
-                ta.style.position = 'fixed'
-                ta.style.opacity = '0'
-                document.body.appendChild(ta)
-                ta.select()
-                ok = document.execCommand('copy')
-                document.body.removeChild(ta)
-            }
-        } catch {
-            ok = false
-        }
-        const hint = document.getElementById('twicc-blocked-hint')
-        if (hint) {
-            hint.textContent = ok ? 'Copied!' : 'Press Ctrl/Cmd+C to copy'
-            if (ok) setTimeout(() => { hint.textContent = 'Click the command to copy' }, 1500)
-        }
-    }
-    document.getElementById('twicc-blocked-cmd')?.addEventListener('click', copyCmd)
-    throw new Error('Access blocked — TwiCC is not password protected on a non-local URL')
-}
-
-if (!authStore.needsLogin) {
-    // Fetch bootstrap data from backend before initializing stores.
-    // This single call returns settings, workspaces, terminal config, and message snippets
-    // so the UI has everything it needs before mount (without waiting for the WebSocket).
-    let bootstrapData
-    let bootstrapFailed = false
-    try {
-        const resp = await fetch('/api/bootstrap/')
-        if (resp.ok) {
-            bootstrapData = await resp.json()
-            const { settings, settings_version, default_settings, dev_mode, uvx_mode, twicc_launch_prefix, providers, disabledProvidersPresent, disabledProviders, providerStates, claudeHybridEnabled } = bootstrapData
-            // Seed the launch prefix into its neutral module *before* any
-            // store / provider helper is instantiated — providers read it
-            // synchronously via ``getTwiccLaunchPrefix()`` (see
-            // ``frontend/src/utils/twiccLaunch.js``).
-            setTwiccLaunchPrefix(twicc_launch_prefix)
-            setUpdateInstructions(bootstrapData.update_instructions)
-            applyDefaultSettings(default_settings, settings, dev_mode, uvx_mode, settings_version, disabledProvidersPresent, disabledProviders, claudeHybridEnabled)
-            // Seed the data store's provider lifecycle map.
-            useDataStore().applyProviderStates(providerStates ?? {})
-            // Seed each provider's bootstrap-driven state (agent-setting categories
-            // for ``classifyAgentSettingsChanges``, model registry for capability
-            // and retired-model lookups, agent-setting presets). Optional chaining:
-            // providers without one of those concerns simply won't expose the
-            // corresponding setter.
-            const presetsStore = useAgentSettingsPresetsStore()
-            for (const [provider, providerData] of Object.entries(providers ?? {})) {
-                // Cross-provider: presets land in the shared keyed store, not on
-                // each provider's own store (the on-disk format is identical).
-                if (providerData?.agent_settings_presets !== undefined) {
-                    presetsStore.applyConfig(provider, providerData.agent_settings_presets)
-                }
-                const providerStore = getProviderStore(provider)
-                if (!providerStore) continue
-                if (providerData?.agent_settings_categories) {
-                    providerStore.setAgentSettingsCategories?.(providerData.agent_settings_categories)
-                }
-                if (providerData?.model_registry) {
-                    providerStore.setModelRegistry?.(providerData.model_registry)
-                }
-            }
-        } else {
-            bootstrapFailed = true
-        }
-    } catch {
-        bootstrapFailed = true
-    }
-    if (bootstrapFailed) {
+    // An unprotected instance (no password) refuses non-local access: there's
+    // nothing to authenticate against, so it must not be reachable over the
+    // network. The backend tells us via /api/auth/check/. Render a terminal screen
+    // here — before mounting Vue or fetching any protected data — explaining how to
+    // enable access by setting a password.
+    if (authStore.accessDenied) {
+        const cmd = authStore.setPasswordCommand || 'twicc password set'
+        const esc = (s) => String(s).replace(/[&<>"']/g, (c) => (
+            { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+        ))
         document.getElementById('app').innerHTML = `
             <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:2rem;font-family:system-ui,sans-serif">
-                <div style="max-width:480px;padding:2rem;border-radius:12px;background:#451a1a;border:1px solid #7f1d1d;color:#fca5a5">
-                    <h2 style="margin:0 0 .75rem;font-size:1.25rem;color:#fecaca">Backend unreachable</h2>
-                    <p style="margin:0;line-height:1.5">
-                        TwiCC could not connect to the backend server.
-                        Try restarting the backend and refreshing this page.
+                <div style="max-width:520px;padding:2rem;border-radius:12px;background:#422006;border:1px solid #854d0e;color:#fcd34d">
+                    <h2 style="margin:0 0 .75rem;font-size:1.25rem;color:#fde68a">Access blocked</h2>
+                    <p style="margin:0 0 1rem;line-height:1.5">
+                        For your security, TwiCC refuses remote access while it isn't
+                        protected by a password. Set one on the machine running TwiCC,
+                        restart it, then reload this page:
                     </p>
+                    <pre id="twicc-blocked-cmd" title="Click to copy" style="margin:0;padding:.75rem 1rem;border-radius:8px;background:#1c1207;color:#fde68a;overflow:auto;text-wrap:wrap;font-size:.9rem;cursor:pointer"><code>${esc(cmd)}</code></pre>
+                    <p id="twicc-blocked-hint" style="margin:.5rem 0 0;font-size:.8rem;opacity:.7">Click the command to copy</p>
                 </div>
             </div>`
-        throw new Error('Backend unreachable — cannot fetch bootstrap data')
-    }
-
-    // Initialize settings (localStorage persistence, theme, font size, display mode watchers)
-    initSettings()
-
-    // Apply bootstrap data to stores so the UI has workspaces, snippets, and terminal config
-    // immediately available. The WebSocket will re-push these on (re)connect for live updates.
-    useWorkspacesStore().applyWorkspaces(bootstrapData.workspaces)
-    useTerminalConfigStore().applyConfig(bootstrapData.terminal_config)
-    useMessageSnippetsStore().applyConfig(bootstrapData.message_snippets)
-    useTipsStore().applyManifest(bootstrapData.tips_manifest)
-    useTipsStore().applyDefaultEnabled(bootstrapData.tips_default_enabled)
-    useTipsStore().applySeenTips(bootstrapData.seen_tips)
-    useHelpStore().applyManifest(bootstrapData.help_manifest)
-    useHelpStore().applySeenHelp(bootstrapData.seen_help)
-
-    // Hydrate drafts from IndexedDB before mounting the WebSocket consumer
-    // Order matters: sessions first so draft messages have their session available
-    const dataStore = useDataStore()
-
-    // Seed per-provider usage from the bootstrap so the UI can render immediately
-    // without waiting for the WS connect-time ``usage_updated`` push. The WS will
-    // still send fresh data on (re)connect and at every periodic sync — those
-    // updates flow through the same setUsage path.
-    {
-        for (const [provider, providerData] of Object.entries(bootstrapData.providers ?? {})) {
-            if (providerData?.tracks_usage && providerData.usage) {
-                const computed = computeUsageData(providerData.usage)
-                getProviderStore(provider)?.setUsage(true, 'bootstrap', providerData.usage, computed)
+        const copyCmd = async () => {
+            let ok = false
+            try {
+                // navigator.clipboard only exists in secure contexts; remote access
+                // is often plain HTTP, so fall back to execCommand on a temp textarea.
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(cmd)
+                    ok = true
+                } else {
+                    const ta = document.createElement('textarea')
+                    ta.value = cmd
+                    ta.style.position = 'fixed'
+                    ta.style.opacity = '0'
+                    document.body.appendChild(ta)
+                    ta.select()
+                    ok = document.execCommand('copy')
+                    document.body.removeChild(ta)
+                }
+            } catch {
+                ok = false
+            }
+            const hint = document.getElementById('twicc-blocked-hint')
+            if (hint) {
+                hint.textContent = ok ? 'Copied!' : 'Press Ctrl/Cmd+C to copy'
+                if (ok) setTimeout(() => { hint.textContent = 'Click the command to copy' }, 1500)
             }
         }
+        document.getElementById('twicc-blocked-cmd')?.addEventListener('click', copyCmd)
+        throw new Error('Access blocked — TwiCC is not password protected on a non-local URL')
     }
 
-    // The draft hydration waits for the IndexedDB upgrade, which an older
-    // TwiCC tab can block: show a notice (plain DOM, Vue is not mounted yet)
-    // for as long as it is blocked. Subscribed before any awaited hydration.
-    const removeDraftStorageBlockedNotice = installDraftStorageBlockedNotice(subscribeDraftStorageBlocked)
+    if (!authStore.needsLogin) {
+        // Fetch bootstrap data from backend before initializing stores.
+        // This single call returns settings, workspaces, terminal config, and message snippets
+        // so the UI has everything it needs before mount (without waiting for the WebSocket).
+        let bootstrapData
+        let bootstrapFailed = false
+        try {
+            const resp = await fetch('/api/bootstrap/')
+            if (resp.ok) {
+                bootstrapData = await resp.json()
+                const { settings, settings_version, default_settings, dev_mode, uvx_mode, twicc_launch_prefix, providers, disabledProvidersPresent, disabledProviders, providerStates, claudeHybridEnabled } = bootstrapData
+                // Seed the launch prefix into its neutral module *before* any
+                // store / provider helper is instantiated — providers read it
+                // synchronously via ``getTwiccLaunchPrefix()`` (see
+                // ``frontend/src/utils/twiccLaunch.js``).
+                setTwiccLaunchPrefix(twicc_launch_prefix)
+                setUpdateInstructions(bootstrapData.update_instructions)
+                applyDefaultSettings(default_settings, settings, dev_mode, uvx_mode, settings_version, disabledProvidersPresent, disabledProviders, claudeHybridEnabled)
+                // Seed the data store's provider lifecycle map.
+                useDataStore().applyProviderStates(providerStates ?? {})
+                // Seed each provider's bootstrap-driven state (agent-setting categories
+                // for ``classifyAgentSettingsChanges``, model registry for capability
+                // and retired-model lookups, agent-setting presets). Optional chaining:
+                // providers without one of those concerns simply won't expose the
+                // corresponding setter.
+                const presetsStore = useAgentSettingsPresetsStore()
+                for (const [provider, providerData] of Object.entries(providers ?? {})) {
+                    // Cross-provider: presets land in the shared keyed store, not on
+                    // each provider's own store (the on-disk format is identical).
+                    if (providerData?.agent_settings_presets !== undefined) {
+                        presetsStore.applyConfig(provider, providerData.agent_settings_presets)
+                    }
+                    const providerStore = getProviderStore(provider)
+                    if (!providerStore) continue
+                    if (providerData?.agent_settings_categories) {
+                        providerStore.setAgentSettingsCategories?.(providerData.agent_settings_categories)
+                    }
+                    if (providerData?.model_registry) {
+                        providerStore.setModelRegistry?.(providerData.model_registry)
+                    }
+                }
+            } else {
+                bootstrapFailed = true
+            }
+        } catch {
+            bootstrapFailed = true
+        }
+        if (bootstrapFailed) {
+            document.getElementById('app').innerHTML = `
+                <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:2rem;font-family:system-ui,sans-serif">
+                    <div style="max-width:480px;padding:2rem;border-radius:12px;background:#451a1a;border:1px solid #7f1d1d;color:#fca5a5">
+                        <h2 style="margin:0 0 .75rem;font-size:1.25rem;color:#fecaca">Backend unreachable</h2>
+                        <p style="margin:0;line-height:1.5">
+                            TwiCC could not connect to the backend server.
+                            Try restarting the backend and refreshing this page.
+                        </p>
+                    </div>
+                </div>`
+            throw new Error('Backend unreachable — cannot fetch bootstrap data')
+        }
 
-    // Restore local runs and control intentions before the first WS snapshot.
-    await dataStore.hydrateDraftSessions()
-    await Promise.all([
-        dataStore.hydrateDraftMessages(),
-        dataStore.hydrateAttachments(),
-        dataStore.hydrateInflightSends(),
-    ])
-    removeDraftStorageBlockedNotice()
-    await dataStore.hydrateAsyncQuestionDrafts()
-    dataStore.refreshActiveAsyncQuestions().catch(error => console.warn('Failed to recover question sends:', error))
-    // First heartbeat of the staged composer attachments, once the draft
-    // records AND the send snapshots are loaded (not awaited).
-    dataStore.touchHeldAttachments().catch(err => console.warn('Attachment heartbeat failed:', err))
+        // Initialize settings (localStorage persistence, theme, font size, display mode watchers)
+        initSettings()
 
-    // Wire the global auto-apply title watcher. Module-level watchEffect that
-    // survives router.replace (which would otherwise tear down a watcher held
-    // inside SessionView when a draft binds to its canonical id).
-    const { startAutoApplyTitleWatcher } = await import('./composables/useAutoApplyTitle')
-    startAutoApplyTitleWatcher()
+        // Apply bootstrap data to stores so the UI has workspaces, snippets, and terminal config
+        // immediately available. The WebSocket will re-push these on (re)connect for live updates.
+        useWorkspacesStore().applyWorkspaces(bootstrapData.workspaces)
+        useTerminalConfigStore().applyConfig(bootstrapData.terminal_config)
+        useMessageSnippetsStore().applyConfig(bootstrapData.message_snippets)
+        useTipsStore().applyManifest(bootstrapData.tips_manifest)
+        useTipsStore().applyDefaultEnabled(bootstrapData.tips_default_enabled)
+        useTipsStore().applySeenTips(bootstrapData.seen_tips)
+        useHelpStore().applyManifest(bootstrapData.help_manifest)
+        useHelpStore().applySeenHelp(bootstrapData.seen_help)
 
-    // Periodically clean up orphan draft sessions (every 2 hours).
-    // A draft becomes orphan when its session was created on the backend but the
-    // IndexedDB entry was never removed (e.g. tab closed mid-send, crash).
-    const DRAFT_CLEANUP_INTERVAL_MS = 2 * 60 * 60 * 1000
-    setInterval(() => dataStore.cleanupOrphanDraftSessions(), DRAFT_CLEANUP_INTERVAL_MS)
-    // Same interval, independent of that cleanup: the heartbeat of the staged
-    // composer attachments that drafts and send snapshots still hold.
-    setInterval(() => dataStore.touchHeldAttachments(), DRAFT_CLEANUP_INTERVAL_MS)
+        // Hydrate drafts from IndexedDB before mounting the WebSocket consumer
+        // Order matters: sessions first so draft messages have their session available
+        const dataStore = useDataStore()
 
-    // Hydrate code comments from IndexedDB (async, non-blocking)
-    const codeCommentsStore = useCodeCommentsStore()
-    codeCommentsStore.hydrateComments()
+        // Seed per-provider usage from the bootstrap so the UI can render immediately
+        // without waiting for the WS connect-time ``usage_updated`` push. The WS will
+        // still send fresh data on (re)connect and at every periodic sync — those
+        // updates flow through the same setUsage path.
+        {
+            for (const [provider, providerData] of Object.entries(bootstrapData.providers ?? {})) {
+                if (providerData?.tracks_usage && providerData.usage) {
+                    const computed = computeUsageData(providerData.usage)
+                    getProviderStore(provider)?.setUsage(true, 'bootstrap', providerData.usage, computed)
+                }
+            }
+        }
+
+        // The draft hydration waits for the IndexedDB upgrade, which an older
+        // TwiCC tab can block: show a notice (plain DOM, Vue is not mounted yet)
+        // for as long as it is blocked. Subscribed before any awaited hydration.
+        const removeDraftStorageBlockedNotice = installDraftStorageBlockedNotice(subscribeDraftStorageBlocked)
+
+        // Restore local runs and control intentions before the first WS snapshot.
+        await dataStore.hydrateDraftSessions()
+        await Promise.all([
+            dataStore.hydrateDraftMessages(),
+            dataStore.hydrateAttachments(),
+            dataStore.hydrateInflightSends(),
+        ])
+        removeDraftStorageBlockedNotice()
+        await dataStore.hydrateAsyncQuestionDrafts()
+        dataStore.refreshActiveAsyncQuestions().catch(error => console.warn('Failed to recover question sends:', error))
+        // First heartbeat of the staged composer attachments, once the draft
+        // records AND the send snapshots are loaded (not awaited).
+        dataStore.touchHeldAttachments().catch(err => console.warn('Attachment heartbeat failed:', err))
+
+        // Wire the global auto-apply title watcher. Module-level watchEffect that
+        // survives router.replace (which would otherwise tear down a watcher held
+        // inside SessionView when a draft binds to its canonical id).
+        const { startAutoApplyTitleWatcher } = await import('./composables/useAutoApplyTitle')
+        startAutoApplyTitleWatcher()
+
+        // Periodically clean up orphan draft sessions (every 2 hours).
+        // A draft becomes orphan when its session was created on the backend but the
+        // IndexedDB entry was never removed (e.g. tab closed mid-send, crash).
+        const DRAFT_CLEANUP_INTERVAL_MS = 2 * 60 * 60 * 1000
+        setInterval(() => dataStore.cleanupOrphanDraftSessions(), DRAFT_CLEANUP_INTERVAL_MS)
+        // Same interval, independent of that cleanup: the heartbeat of the staged
+        // composer attachments that drafts and send snapshots still hold.
+        setInterval(() => dataStore.touchHeldAttachments(), DRAFT_CLEANUP_INTERVAL_MS)
+
+        // Hydrate code comments from IndexedDB (async, non-blocking)
+        const codeCommentsStore = useCodeCommentsStore()
+        codeCommentsStore.hydrateComments()
+    }
+
+    app.mount('#app')
 }
 
-app.mount('#app')
+// Keep draft hydration before mount, without blocking module evaluation.
+void initializeApp()
