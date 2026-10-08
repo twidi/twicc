@@ -9,7 +9,7 @@ import re
 from typing import NamedTuple
 
 from markdown_it import MarkdownIt
-from markdown_it.rules_inline import backtick
+from markdown_it.rules_inline import backtick, image
 
 
 class ArtifactBlock(NamedTuple):
@@ -114,6 +114,27 @@ def _backtick_source_span(state, silent):
     return matched
 
 
+def _image_source_label(state, silent):
+    """Record the substring origin used by native image-label parsing."""
+    start = state.pos
+    token_count = len(state.tokens)
+    matched = image(state, silent)
+    if not silent and len(state.tokens) > token_count:
+        token = state.tokens[-1]
+        if token.type == "image":
+            token.meta["source_label_offset"] = start + 2
+    return matched
+
+
+def _source_code_ranges(tokens, offset=0):
+    for token in tokens:
+        if token.type == "code_inline" and "source_span" in token.meta:
+            left, right = token.meta["source_span"]
+            yield offset + left, offset + right
+        elif token.type == "image" and "source_label_offset" in token.meta:
+            yield from _source_code_ranges(token.children or [], offset + token.meta["source_label_offset"])
+
+
 _MARKDOWN = MarkdownIt("default", {"html": False})
 _MARKDOWN.block.ruler.before(
     "fence", "colon_block", _colon_block, {"alt": ["paragraph", "reference", "blockquote", "list"]}
@@ -121,6 +142,7 @@ _MARKDOWN.block.ruler.before(
 _MARKDOWN.block.ruler.before("paragraph", "html_comment", _comment_block)
 _MARKDOWN.inline.ruler.before("html_inline", "html_comment", _comment_inline)
 _MARKDOWN.inline.ruler.at("backticks", _backtick_source_span)
+_MARKDOWN.inline.ruler.at("image", _image_source_label)
 
 
 def _line_offsets(text):
@@ -157,10 +179,7 @@ def _comment_ranges(text, tokens, offsets):
                 continue
             children = []
             _MARKDOWN.inline.parse(text[start:end], _MARKDOWN, {}, children)
-            for child in children:
-                if child.type == "code_inline" and "source_span" in child.meta:
-                    left, right = child.meta["source_span"]
-                    code_ranges.append((start + left, start + right))
+            code_ranges.extend(_source_code_ranges(children, start))
     code_ranges.sort()
     ranges = []
     pos = 0

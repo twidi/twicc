@@ -4,6 +4,7 @@
 
 import MarkdownItAsync from 'markdown-it-async'
 import backtick from 'markdown-it/lib/rules_inline/backticks.mjs'
+import image from 'markdown-it/lib/rules_inline/image.mjs'
 import { fromAsyncCodeToHtml } from '@shikijs/markdown-it/async'
 import { codeToHtml } from 'shiki'
 import DOMPurify from 'dompurify'
@@ -175,6 +176,18 @@ md.inline.ruler.at('backticks', (state, silent) => {
     return matched
 })
 
+// Image labels parse a substring. Record its origin for nested code spans.
+md.inline.ruler.at('image', (state, silent) => {
+    const start = state.pos
+    const tokenCount = state.tokens.length
+    const matched = image(state, silent)
+    if (state.env.recordInlineSourceSpans && !silent && state.tokens.length > tokenCount) {
+        const token = state.tokens.at(-1)
+        if (token.type === 'image') token.meta = { sourceLabelOffset: start + 2 }
+    }
+    return matched
+})
+
 md.renderer.rules.html_comment = () => ''
 
 // Wrapper around codeToHtml that falls back to 'text' (plain) for unknown languages.
@@ -240,9 +253,22 @@ export async function renderMarkdown(source, env) {
     return DOMPurify.sanitize(rawHtml, DOMPURIFY_CONFIG)
 }
 
+function collectSourceCodeRanges(tokens, offset = 0) {
+    const ranges = []
+    for (const token of tokens) {
+        if (token.type === 'code_inline' && token.meta?.sourceSpan) {
+            ranges.push(token.meta.sourceSpan.map(position => offset + position))
+        } else if (token.type === 'image' && token.meta?.sourceLabelOffset !== undefined) {
+            ranges.push(...collectSourceCodeRanges(token.children || [], offset + token.meta.sourceLabelOffset))
+        }
+    }
+    return ranges
+}
+
 /**
  * Return syntax tokens without rendering or enabling raw HTML.
- * Inline tokens carry `meta.sourceCodeRanges`: original-source UTF-16 spans.
+ * Inline tokens carry `meta.sourceCodeRanges`: original-source UTF-16 spans,
+ * including code nested inside image labels.
  * Replaying their raw mapped source preserves CRLF and nested block prefixes.
  */
 export function parseMarkdownTokens(source) {
@@ -257,9 +283,7 @@ export function parseMarkdownTokens(source) {
         md.inline.parse(source.slice(start, end), md, { recordInlineSourceSpans: true }, children)
         token.meta = {
             ...token.meta,
-            sourceCodeRanges: children
-                .filter(child => child.type === 'code_inline' && child.meta?.sourceSpan)
-                .map(child => child.meta.sourceSpan.map(position => start + position)),
+            sourceCodeRanges: collectSourceCodeRanges(children, start),
         }
     }
     return tokens

@@ -1251,5 +1251,90 @@
     "name": "similar tag name does not hide a comment opener",
     "text": "<twicc:inline-artifacts title=\"<!--\" />\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
     "expected": []
+  },
+  {
+    "name": "image alt code preserves original source span",
+    "text": "`ok` ![`<!--`](image.png)\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 27,
+        "end": 115,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "nested image alt code preserves original source span",
+    "text": "![![`<!--`](inner.png)](outer.png)\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 36,
+        "end": 124,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "image alt code after consumed comment",
+    "text": "![<!-- ` --> `<!-- `](image.png)\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 34,
+        "end": 122,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "image alt code with emoji and CRLF",
+    "text": "😀 ![`<!--`](image.png)\r\n\r\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 26,
+        "end": 114,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "link label code remains protected",
+    "text": "`ok` [`<!--`](link)\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 21,
+        "end": 109,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
   }
 ]
