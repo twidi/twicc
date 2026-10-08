@@ -49,3 +49,13 @@ def test_twicc_share_skill_contract():
     assert "revoke|unrevoke|delete|propagate" not in text
     assert "--max-display debug" not in text
     assert "draft to adapt" not in text
+
+
+def test_inline_artifact_share_guidance():
+    text = SKILL.read_text()
+    assert '--include-inline-artifacts' in text
+    assert '--no-inline-artifacts' in text
+    assert 'saved data/' in text
+    assert 'Visitors cannot modify the saved data.' in text
+    assert 'native subagent' in text
+    assert 'session_not_ready' in text

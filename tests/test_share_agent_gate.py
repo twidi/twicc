@@ -577,3 +577,20 @@ def test_error_messages_name_the_key_and_accepted_shape():
     errors = gate.validate_create(_create_session_payload(extra=1))
     err = next(e for e in errors if e.field == "extra")
     assert "extra" in err.message and "accepted" in err.message.lower()
+
+
+@pytest.mark.parametrize('value', [True, False])
+def test_inline_artifact_option_accepts_literal_boolean(value):
+    assert gate.validate_create(_create_session_payload(options={'include_inline_artifacts': value})) == []
+
+
+@pytest.mark.parametrize('value', [None, 0, 1, 'false', [], {}])
+def test_inline_artifact_option_rejects_non_boolean(value):
+    errors = gate.validate_create(_create_session_payload(options={'include_inline_artifacts': value}))
+    assert ('include_inline_artifacts', 'field_forbidden') in _codes(errors)
+
+
+@pytest.mark.parametrize('key', ['inline_artifact_exports', 'captured', 'publications', 'src', 'copy_id', 'initialized', 'ready'])
+def test_inline_export_metadata_is_server_owned(key):
+    errors = gate.validate_create(_create_session_payload(options={key: {}}))
+    assert (key, 'field_forbidden') in _codes(errors)

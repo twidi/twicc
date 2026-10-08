@@ -1332,6 +1332,8 @@ def _share_create_session(
     ),
     max_display: str = typer.Option("normal", "--max-display"),
     include_subagents: bool = typer.Option(True, "--include-subagents/--no-subagents"),
+    include_inline_artifacts: bool = typer.Option(True, "--include-inline-artifacts/--no-inline-artifacts",
+                                                 help="Include root inline pages, assets, and saved data as read-only exports."),
     title: str = typer.Option(None, "--title", help="Public title shown to viewers (default: the session title). Ignored with --no-title."),
     show_title: bool = typer.Option(True, "--show-title/--no-title", help="Show a title to viewers; --no-title shows a generic label instead."),
     timeout: int = typer.Option(30, "--timeout"),
@@ -1350,6 +1352,7 @@ def _share_create_session(
         session_id=session_id, label=label, password=password, expires_at=expires,
         mode=None if live is None else ("live" if live else "snapshot"),
         options={"max_display_mode": max_display, "include_subagents": include_subagents,
+                 "include_inline_artifacts": include_inline_artifacts,
                  "show_title": show_title, "display_title": (title or "") if show_title else ""},
         timeout=timeout,
     )

@@ -3,6 +3,7 @@ import { ref, reactive, computed, watch, nextTick, useId, defineAsyncComponent }
 import { useSharesStore } from '../../stores/shares'
 import { useSettingsStore } from '../../stores/settings'
 import { useDataStore } from '../../stores/data'
+import { includeInlineArtifacts } from '../../inline-artifacts/shareOptions'
 import { shareAbsoluteUrl } from '../../utils/shareUrl'
 import { apiFetch } from '../../utils/api'
 import { toast } from '../../composables/useToast'
@@ -42,7 +43,7 @@ const sharingEnabled = computed(() => !!settings.getUsableShareBaseUrl)
 const form = reactive({
     label: '', display_title: '', password: '', expires_at: '', notify_on_view: false,
     // session options
-    mode: 'live', max_display_mode: 'normal', include_subagents: true,
+    mode: 'live', max_display_mode: 'normal', include_subagents: true, include_inline_artifacts: true,
     show_timestamps: true, show_title: true,
 })
 const error = ref('')
@@ -113,6 +114,7 @@ function reset() {
         mode: e?.options?.mode || 'live',
         max_display_mode: e?.options?.max_display_mode || 'normal',
         include_subagents: e?.options?.include_subagents ?? true,
+        include_inline_artifacts: includeInlineArtifacts(e?.options),
         show_timestamps: e?.options?.show_timestamps ?? true,
         show_title: e?.options?.show_title ?? true,
     })
@@ -130,6 +132,7 @@ function sessionOptions() {
     return {
         mode: form.mode, max_display_mode: form.max_display_mode,
         include_subagents: form.include_subagents,
+        include_inline_artifacts: form.include_inline_artifacts,
         show_timestamps: form.show_timestamps, show_title: form.show_title,
     }
 }
@@ -260,6 +263,8 @@ function onHide(e) { if (e.target === dialogRef.value) emit('close') }
                     </wa-select>
                 </label>
                 <wa-switch :checked="form.include_subagents" @change.stop="form.include_subagents = $event.target.checked">Include subagents</wa-switch>
+                <wa-switch :checked="form.include_inline_artifacts" @change.stop="form.include_inline_artifacts = $event.target.checked">Include inline artifacts</wa-switch>
+                <p v-if="form.include_inline_artifacts" class="net-hint">Includes inline artifact pages, their assets, and their saved data/ files. Visitors cannot modify the saved data.</p>
                 <wa-switch :checked="form.show_timestamps" @change.stop="form.show_timestamps = $event.target.checked">Show timestamps</wa-switch>
             </template>
 

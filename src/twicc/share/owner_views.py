@@ -14,7 +14,9 @@ from twicc.core.services.public_origin import usable_public_origin
 
 
 def _err_response(result):
-    return JsonResponse({"errors": [e._asdict() for e in (result.errors or [])]}, status=400)
+    errors = result.errors or []
+    status = 409 if any(error.code == "session_not_ready" for error in errors) else 400
+    return JsonResponse({"errors": [e._asdict() for e in errors]}, status=status)
 
 
 async def _load(share_id):

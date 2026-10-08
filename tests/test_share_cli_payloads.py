@@ -81,3 +81,14 @@ def test_bare_share_create_is_a_usage_error_not_silent_success():
     result = runner.invoke(app, ["share", "create"])
     assert result.exit_code == 2
     assert "Missing command" in result.output
+
+
+@pytest.mark.parametrize('flag,expected', [(None, True), ('--include-inline-artifacts', True),
+                                           ('--no-inline-artifacts', False)])
+def test_inline_artifact_cli_option(captured_drop, flag, expected):
+    args = ['share', 'create', 'session', 'sess-1']
+    if flag:
+        args.append(flag)
+    result = _invoke(args)
+    assert result.exit_code == 0, result.output
+    assert captured_drop[0]['payload']['options']['include_inline_artifacts'] is expected

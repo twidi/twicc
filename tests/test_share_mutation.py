@@ -15,6 +15,7 @@ from twicc.core.models import (
     Share,
 )
 from twicc.core.services import share_mutation
+from twicc.providers.helpers import get_provider_helpers
 from twicc.core.services.share_mutation import (
     _validate_artifact_options,
     _validate_session_options,
@@ -34,6 +35,7 @@ def session(project):
         id="sess-shm", project=project, provider="claude_code",
         file_path="sess-shm.jsonl", type=SessionType.SESSION, title="Session SHM",
         created_at=now, last_new_content_at=now, user_message_count=1, last_line=17,
+        compute_version=get_provider_helpers("claude_code").current_compute_version,
     )
 
 

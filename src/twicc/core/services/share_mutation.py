@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+from copy import copy
 from datetime import datetime, UTC
 from typing import NamedTuple
 
@@ -33,7 +34,7 @@ _MAX_SNAPSHOT_BYTES = 200 * 1024 * 1024
 
 # Option key allowlists per kind (design §5.2). Unknown keys are rejected.
 _SESSION_OPTION_KEYS = frozenset({
-    "mode", "frozen_at_line", "max_display_mode", "include_subagents",
+    "mode", "frozen_at_line", "max_display_mode", "include_subagents", "include_inline_artifacts",
     "show_timestamps", "show_title", "display_title",
 })
 _ARTIFACT_OPTION_KEYS = frozenset({"snapshot_at", "show_title", "display_title"})
@@ -67,9 +68,12 @@ def _validate_session_options(opts: dict) -> tuple[dict, list[ShareError]]:
         "mode": opts.get("mode", "live"),
         "max_display_mode": opts.get("max_display_mode", "normal"),
         "include_subagents": bool(opts.get("include_subagents", True)),
+        "include_inline_artifacts": opts.get("include_inline_artifacts", True),
         "show_timestamps": bool(opts.get("show_timestamps", True)),
         "show_title": bool(opts.get("show_title", True)),
     }
+    if type(out["include_inline_artifacts"]) is not bool:
+        errors.append(ShareError("include_inline_artifacts", "invalid", "include_inline_artifacts must be a boolean"))
     if out["mode"] not in ("snapshot", "live"):
         errors.append(ShareError("mode", "invalid", "mode must be 'snapshot' or 'live'"))
     if out["max_display_mode"] not in _DISPLAY_MODES:
@@ -207,6 +211,45 @@ async def broadcast_share_removed(share_id: str) -> None:
     })
 
 
+async def _check_inline_readiness(share) -> None:
+    """Reload the enabled regular root. Descendant readiness is irrelevant."""
+    from twicc.core.models import Session
+    from twicc.inline_artifacts.share_selection import check_selection_ready, include_inline_artifacts
+
+    if share.kind != "session" or not include_inline_artifacts(share.options or {}):
+        return
+    share.session = await sync_to_async(Session.objects.get)(id=share.session_id)
+    check_selection_ready(share)
+
+
+def _not_ready_result(share_id):
+    return ShareMutationResult(False, share_id, [ShareError(
+        "session", "session_not_ready", "Session metadata computation is pending; retry after computation completes.",
+    )])
+
+
+async def _save_share(share, *, check_inline=False, **save_kwargs):
+    """Recheck root readiness inside the serialized mutation commit gate."""
+    from twicc.inline_artifacts.share_selection import SelectionNotReady
+
+    async def commit():
+        if check_inline:
+            await _check_inline_readiness(share)
+        await share.asave(**save_kwargs)
+    try:
+        if check_inline:
+            await _check_inline_readiness(share)
+        await run_under_db_write_lock(commit)
+    except SelectionNotReady:
+        return _not_ready_result(share.id if not save_kwargs.get("force_insert") else None)
+    return None
+
+
+def _inline_options_changed(before, after):
+    defaults = {"mode": "live", "frozen_at_line": None, "max_display_mode": "normal", "include_inline_artifacts": True}
+    return any(before.get(key, default) != after.get(key, default) for key, default in defaults.items())
+
+
 # ── Core mutations ──────────────────────────────────────────────────────────
 
 async def create_share(
@@ -273,7 +316,9 @@ async def create_share(
             return ShareMutationResult(False, None, [ShareError("bookmark", "snapshot_failed", err)])
         share.options = {**opts, "snapshot_at": _now().isoformat()}
 
-    await run_under_db_write_lock(lambda: share.asave(force_insert=True))
+    failure = await _save_share(share, check_inline=kind == ShareKind.SESSION.value, force_insert=True)
+    if failure:
+        return failure
     await broadcast_share_updated(share)
     logger.info("[share_create] id=%s kind=%s target=%s", share.id, kind,
                 session.id if session else bookmark.id)
@@ -285,6 +330,9 @@ async def patch_share(share, fields: dict) -> ShareMutationResult:
     A password change re-hashes (invalidating viewer grants via the new fingerprint)."""
     from twicc.core.enums import ShareKind
 
+    original = share
+    share = copy(share)
+    previous_options = dict(share.options or {})
     update_fields: list[str] = []
     if "label" in fields:
         share.label = (fields["label"] or "").strip()
@@ -334,7 +382,11 @@ async def patch_share(share, fields: dict) -> ShareMutationResult:
     if not update_fields:
         return ShareMutationResult(True, share.id, None)
     update_fields.append("updated_at")
-    await run_under_db_write_lock(lambda: share.asave(update_fields=update_fields))
+    failure = await _save_share(share, update_fields=update_fields,
+                                check_inline="options" in fields and _inline_options_changed(previous_options, share.options))
+    if failure:
+        return failure
+    original.__dict__.update(share.__dict__)
     await broadcast_share_updated(share)
     return ShareMutationResult(True, share.id, None)
 
@@ -344,6 +396,8 @@ async def propagate_share(share) -> ShareMutationResult:
     snapshot_at (atomic swap). Broadcasts."""
     from twicc.core.enums import ShareKind
 
+    original = share
+    share = copy(share)
     if share.kind == ShareKind.SESSION.value:
         if share.options.get("mode") != "snapshot":
             return ShareMutationResult(False, share.id,
@@ -356,7 +410,11 @@ async def propagate_share(share) -> ShareMutationResult:
         if err:
             return ShareMutationResult(False, share.id, [ShareError("bookmark", "snapshot_failed", err)])
         share.options = {**share.options, "snapshot_at": _now().isoformat()}
-    await run_under_db_write_lock(lambda: share.asave(update_fields=["options", "updated_at"]))
+    failure = await _save_share(share, check_inline=share.kind == ShareKind.SESSION.value,
+                                update_fields=["options", "updated_at"])
+    if failure:
+        return failure
+    original.__dict__.update(share.__dict__)
     await broadcast_share_updated(share)
     return ShareMutationResult(True, share.id, None)
 

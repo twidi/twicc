@@ -8,6 +8,7 @@ from django.utils import timezone as djtz
 
 from twicc.core.models import ArtifactBookmark, PinMode, Project, Session, SessionType
 from twicc.core.services import share_mutation
+from twicc.providers.helpers import get_provider_helpers
 
 
 @pytest.fixture
@@ -22,6 +23,7 @@ def session(project):
         id="sess-reads", project=project, provider="claude_code",
         file_path="sess-reads.jsonl", type=SessionType.SESSION,
         created_at=now, last_line=5,
+        compute_version=get_provider_helpers("claude_code").current_compute_version,
     )
 
 
@@ -136,6 +138,7 @@ def test_project_filter_expands_downward_to_worktree_for_both_kinds(
         id="sess-reads-wt", project=worktree, provider="claude_code",
         file_path="sess-reads-wt.jsonl", type=SessionType.SESSION,
         created_at=now, last_line=8,
+        compute_version=get_provider_helpers("claude_code").current_compute_version,
     )
     wt_bookmark = ArtifactBookmark.objects.create(
         session=wt_session, project=worktree,

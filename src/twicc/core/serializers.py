@@ -431,6 +431,7 @@ def serialize_share(share):
         "url_path": f"/share/{share.token}/",
     }
     if share.kind == ShareKind.SESSION.value:
+        data["options"].setdefault("include_inline_artifacts", True)
         data["session_id"] = share.session_id
         sess = share.session if share.session_id else None
         data["project_id"] = sess.project_id if sess else None
@@ -492,6 +493,7 @@ def serialize_share_public_meta(share):
             "mode": opts.get("mode", "live"),
             "max_display_mode": opts.get("max_display_mode", "normal"),
             "include_subagents": opts.get("include_subagents", True),
+            "include_inline_artifacts": opts.get("include_inline_artifacts", True),
             "show_timestamps": opts.get("show_timestamps", True),
             # Drives the viewer's /compact reorder (compact_summary vs the /compact
             # command land in swapped JSONL order).

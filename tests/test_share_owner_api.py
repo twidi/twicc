@@ -17,6 +17,7 @@ from twicc.core.models import (
     ShareAccess,
 )
 from twicc.core.services.share_tokens import mint_token
+from twicc.providers.helpers import get_provider_helpers
 
 
 @pytest.fixture
@@ -33,6 +34,7 @@ def session(transactional_db):
         id="sess-owner", project=project, provider="claude_code",
         file_path="sess-owner.jsonl", type=SessionType.SESSION, title="Owner",
         created_at=now, last_new_content_at=now, user_message_count=1, last_line=5,
+        compute_version=get_provider_helpers("claude_code").current_compute_version,
     )
 
 

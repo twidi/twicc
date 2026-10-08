@@ -60,12 +60,16 @@ Returns one share, including its `url` when the setting for its kind is enabled.
 ### Create a session share
 
 ```bash
-$TWICC share create session <SESSION_ID|self|parent> [--label L] [--password P] [--expires ISO] [--live|--frozen] [--max-display MODE] [--include-subagents|--no-subagents] [--title T] [--show-title|--no-title] [--timeout N]
+$TWICC share create session <SESSION_ID|self|parent> [--label L] [--password P] [--expires ISO] [--live|--frozen] [--max-display MODE] [--include-subagents|--no-subagents] [--include-inline-artifacts|--no-inline-artifacts] [--title T] [--show-title|--no-title] [--timeout N]
 ```
 
 - With no `--live`/`--frozen` flag your share is a **frozen snapshot** at the
   current line; pass `--live` explicitly for a live-following link. Use
   `share propagate <SHARE_ID>` to re-freeze a snapshot at the newest content.
+- `--include-inline-artifacts` / `--no-inline-artifacts` — include or exclude inline exports; default: included.
+- Inline exports include main-session pages, assets, and saved data/ files. Visitors cannot modify the saved data.
+- Inline exports exclude native subagent publications, regardless of `--include-subagents`.
+- Snapshot inline exports keep captured publications until `share propagate`; live shares follow eligible main-session publications.
 - `--max-display` accepts `conversation`, `simplified`, `normal`.
 - `parent` resolves, then fails the scope test (`out_of_scope`): you cannot
   share the session that spawned you.
@@ -186,6 +190,7 @@ Advance an in-scope frozen share to current content. `--timeout N` defaults to 3
 - `invalid` — an expiry is not a valid ISO 8601 datetime.
 - `not_found` — the requested target session, bookmark, or share does not exist.
 - `snapshot_failed` — the artifact snapshot could not be created or refreshed.
+- `session_not_ready` — root metadata computation is pending; retry after computation completes.
 - `not_snapshot` — `propagate` was used on a live session share.
 
 ## Output format

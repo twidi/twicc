@@ -83,6 +83,7 @@ _SESSION_OPTION_TYPES = {
     "mode": (_is_str, "a JSON string"),
     "max_display_mode": (_is_str, "a JSON string"),
     "include_subagents": (_is_bool, "a literal JSON boolean"),
+    "include_inline_artifacts": (_is_bool, "a literal JSON boolean"),
     "show_title": (_is_bool, "a literal JSON boolean"),
     "display_title": (_is_str, "a JSON string"),
 }

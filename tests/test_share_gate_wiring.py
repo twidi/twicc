@@ -11,6 +11,7 @@ from django.utils import timezone as djtz
 from twicc import paths
 from twicc.core.models import ArtifactBookmark, PinMode, Project, Session, SessionType, Share
 from twicc.core.services import share_mutation
+from twicc.providers.helpers import get_provider_helpers
 
 
 def _run(coro):
@@ -24,6 +25,7 @@ def _mk(project, sid, *, spawned_by=None, spawn_root=None, parent_session=None):
         type=SessionType.SUBAGENT if parent_session else SessionType.SESSION,
         spawned_by=spawned_by, spawn_root=spawn_root, parent_session=parent_session,
         created_at=now, last_new_content_at=now, last_line=21,
+        compute_version=get_provider_helpers("claude_code").current_compute_version,
     )
 
 
