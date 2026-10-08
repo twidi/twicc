@@ -12,6 +12,11 @@ import { frameClipPath, frameFlushCorners, visibleRect } from '../../utils/panel
 // NOTE: pool.hostMounted is owned by ProjectView (set in its setup, cleared in
 // its onUnmounted), NOT here — panes can mount before this component does on
 // cold-load deep links, and the flag must already be true for them.
+const props = defineProps({
+    // Standalone public viewers select tiers below their subagent drawers.
+    // Private pane frames keep their existing default tiers.
+    zTiers: { type: Object, default: () => ({}) },
+})
 const pool = useFramePoolStore()
 const hostEl = ref(null)
 const hostRect = useElementBounding(hostEl)
@@ -26,7 +31,8 @@ const Z_TIERS = {
 
 function cellStyle(frame) {
     const { x, y, width, height } = frame.rect
-    const zIndex = Z_TIERS[frame.zTier] ?? Z_TIERS.base
+    const tiers = { ...Z_TIERS, ...props.zTiers }
+    const zIndex = tiers[frame.zTier] ?? tiers.base
     const style =
         frame.zTier === 'fullscreen'
             ? {

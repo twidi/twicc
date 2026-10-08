@@ -70,3 +70,19 @@ test('setFrameEl / setOverlayEl are independent and null-safe', () => {
     // Overlay is untouched by the frame setter.
     assert.equal(pool.frameOverlayEl('a'), overlay)
 })
+
+test('ensureRegistered patches existing descriptors without replacing frame or DOM references', () => {
+    const pool = useFramePoolStore()
+    const frame = pool.ensureRegistered('inline-a', { src: 'old', remountKey: 0 })
+    pool.ensureRegistered('inline-b', { src: 'other' })
+    const el = { tag: 'iframe' }
+    pool.setFrameEl('inline-a', el)
+    pool.patch('inline-a', { visible: true })
+    const again = pool.ensureRegistered('inline-a', { src: 'new' })
+    assert.equal(again, frame)
+    assert.equal(frame.el, el)
+    assert.equal(frame.visible, true)
+    assert.equal(frame.src, 'new')
+    assert.equal(frame.remountKey, 0)
+    assert.deepEqual(Object.keys(pool.frames), ['inline-a', 'inline-b'])
+})

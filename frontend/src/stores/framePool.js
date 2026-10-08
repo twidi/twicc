@@ -72,6 +72,17 @@ export const useFramePoolStore = defineStore('framePool', {
             }
         },
 
+        // Retained owners can reconcile repeatedly without replacing a frame's
+        // registry object, DOM references, geometry, or append-only position.
+        ensureRegistered(id, descriptor) {
+            if (this.frames[id]) {
+                this.patch(id, descriptor)
+            } else {
+                this.register(id, descriptor)
+            }
+            return this.frames[id]
+        },
+
         patch(id, fields) {
             const frame = this.frames[id]
             if (frame) Object.assign(frame, fields)
