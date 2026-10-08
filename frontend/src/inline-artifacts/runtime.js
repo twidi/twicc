@@ -1,8 +1,10 @@
 import { shallowReactive, shallowRef } from 'vue'
+import { createInlineGeometryScheduler, returnInlineFocus } from './geometry.js'
 import { artifactKey, INLINE_ARTIFACT_RELOAD_QUERY } from './context.js'
 
 /** A cached view owns frames. Rows own disposable geometry attachments only. */
 export function createInlineArtifactRuntime({ viewId, pool, adapter }) {
+    const geometry = createInlineGeometryScheduler({ pool })
     const entries = shallowReactive(new Map())
     const loadedEntries = shallowReactive([])
     const fullscreenArtifactKey = shallowRef(null)
@@ -37,13 +39,16 @@ export function createInlineArtifactRuntime({ viewId, pool, adapter }) {
     }
 
     function updateVisibility(entry) {
+        const previousAttachment = entry.attachment
         entry.attachment = chooseAttachment(entry)
         const fullscreen = active.value && fullscreenArtifactKey.value === entry.artifactKey && runnable(entry)
         const eligible = !!entry.attachment || fullscreen
         entry.visible = eligible && !entry.needsNavigation && ['loading', 'ready'].includes(entry.loadState)
         if (entry.registered) {
+            if (!entry.visible) returnInlineFocus(pool, entry.frameId, previousAttachment || entry.focusAttachment)
             pool.patch(entry.frameId, { visible: entry.visible, zTier: fullscreen ? 'fullscreen' : 'base' })
         }
+        geometry.schedule()
         if (!eligible) cancelProbe(entry)
         if (eligible && entry.needsNavigation && !entry.retryPending && entry.loadState === 'idle') startProbe(entry)
     }
@@ -110,6 +115,7 @@ export function createInlineArtifactRuntime({ viewId, pool, adapter }) {
     }
 
     function invalidate(entry, clearAttachments, closeFullscreen = true) {
+        returnInlineFocus(pool, entry.frameId, entry.attachment || entry.focusAttachment)
         cancelProbe(entry)
         entry.generation++
         entry.loadState = 'idle'
@@ -142,17 +148,29 @@ export function createInlineArtifactRuntime({ viewId, pool, adapter }) {
                     loadState: 'idle', error: null, needsNavigation: true, retryPending: false,
                     documentUrl: null, brokerConfig: null, bindingKey: null,
                     requestedVisible: false, visible: false, attachment: null,
-                    height: descriptor.height,
+                    height: Math.max(160, Math.min(900, descriptor.height || 360)),
+                    inlineHeight: Math.max(160, Math.min(900, descriptor.height || 360)), focusAttachment: null,
+                    geometryRect: null, geometryClipRect: null, geometryVisible: false,
                 })
                 entries.set(key, entry)
                 attachments.set(key, new Map())
+                geometry.attach(entry.frameId, {
+                    getAttachment: () => entry.attachment || entry.focusAttachment,
+                    isVisible: () => entry.visible || entry.loadState === 'error' && !!entry.attachment,
+                    onGeometry: fields => {
+                        entry.geometryVisible = fields.visible
+                        if (fields.rect) entry.geometryRect = fields.rect
+                        if ('clipRect' in fields) entry.geometryClipRect = fields.clipRect
+                    },
+                    isFullscreen: () => active.value && fullscreenArtifactKey.value === key,
+                })
             } else {
                 const publicationChanged = entry.descriptor.publicationKey !== descriptor.publicationKey
                 const codeChanged = entry.descriptor.codeRevision !== descriptor.codeRevision
                 const eligibilityChanged = runnable(entry) !== (descriptor.status === 'ready')
                 if (publicationChanged || codeChanged || eligibilityChanged) {
                     invalidate(entry, publicationChanged)
-                    if (publicationChanged) entry.height = descriptor.height
+                    if (publicationChanged) entry.inlineHeight = entry.height = Math.max(160, Math.min(900, descriptor.height || 360))
                 }
                 entry.descriptor = descriptor
                 entry.present = true
@@ -223,6 +241,7 @@ export function createInlineArtifactRuntime({ viewId, pool, adapter }) {
         if (disposed || !active.value || !entry?.registered || !runnable(entry)
             || !['loading', 'ready'].includes(entry.loadState)) return
         const previous = entries.get(fullscreenArtifactKey.value)
+        entry.focusAttachment = entry.attachment
         fullscreenArtifactKey.value = key
         if (previous && previous !== entry) updateVisibility(previous)
         updateVisibility(entry)
@@ -231,7 +250,11 @@ export function createInlineArtifactRuntime({ viewId, pool, adapter }) {
     function closeFullscreen() {
         const entry = entries.get(fullscreenArtifactKey.value)
         fullscreenArtifactKey.value = null
-        if (entry && !disposed) updateVisibility(entry)
+        if (entry && !disposed) {
+            entry.focusAttachment?.focusConversation?.()
+            updateVisibility(entry)
+            entry.focusAttachment = null
+        }
     }
 
     function documentReady(key, generation) {
@@ -250,13 +273,30 @@ export function createInlineArtifactRuntime({ viewId, pool, adapter }) {
         updateVisibility(entry)
     }
 
+    function reportHeight(key, generation, height) {
+        const entry = entries.get(key)
+        if (disposed || entry?.generation !== generation || entry.loadState !== 'ready'
+            || fullscreenArtifactKey.value === key || !Number.isFinite(height)) return
+        entry.inlineHeight = entry.height = Math.max(160, Math.min(900, Math.ceil(height)))
+        geometry.schedule()
+    }
+
+    function requestEscape(key, generation) {
+        const entry = entries.get(key)
+        if (!disposed && entry?.generation === generation && fullscreenArtifactKey.value === key) closeFullscreen()
+    }
+
     function dispose() {
         if (disposed) return
         disposed = true
+        geometry.dispose()
         fullscreenArtifactKey.value = null
         for (const entry of entries.values()) {
             cancelProbe(entry)
-            if (entry.registered) pool.unregister(entry.frameId)
+            if (entry.registered) {
+                returnInlineFocus(pool, entry.frameId, entry.attachment || entry.focusAttachment)
+                pool.unregister(entry.frameId)
+            }
         }
         loadedEntries.length = 0
         entries.clear()
@@ -266,5 +306,5 @@ export function createInlineArtifactRuntime({ viewId, pool, adapter }) {
 
     return { entries, loadedEntries, fullscreenArtifactKey, active, reconcile, attach,
         setVisible, setActive, reload, openFullscreen, closeFullscreen,
-        documentReady, documentFailed, dispose }
+        documentReady, documentFailed, reportHeight, requestEscape, geometry, dispose }
 }

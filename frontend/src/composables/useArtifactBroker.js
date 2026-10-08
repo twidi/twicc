@@ -86,6 +86,9 @@ export function createArtifactBrokerBinding({ mount = mountBrokerHost,
                 onInlineHeight: config.onInlineHeight ? height => {
                     if (current()) config.onInlineHeight(height)
                 } : undefined,
+                onInlineEscape: config.onInlineEscape ? () => {
+                    if (current()) config.onInlineEscape()
+                } : undefined,
             })
             boundWindow = win
             boundIdentity = identity
@@ -113,11 +116,14 @@ export function inlineArtifactBrokerConfig(entry, runtime, documentBase) {
         documentUrl: new URL(entry.documentUrl, documentBase).href,
         bindingKey: entry.bindingKey,
         inlineGeneration: generation,
+        inlineRequestedHeight: entry.descriptor.height,
+        getInlineMode: () => runtime.fullscreenArtifactKey.value === key ? 'fullscreen' : 'inline',
+        onInlineEscape: () => runtime.requestEscape(key, generation),
         onInlineReady: () => runtime.documentReady(key, generation),
         onInlineError: error => runtime.documentFailed(key, generation, error),
         onInlineHeight: height => {
             if (entry.generation === generation && entry.loadState === 'ready' && Number.isFinite(height)) {
-                entry.height = Math.max(160, Math.min(900, height))
+                runtime.reportHeight(key, generation, height)
             }
         },
     }

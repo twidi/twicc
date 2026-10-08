@@ -336,5 +336,24 @@ export function mountBrokerHost(iframe, opts) {
         remoteWindow: iframe.contentWindow,
         allowedOrigins: ['*'], // same-origin in practice; the window target is the real bound
     })
-    return connect({ messenger, methods: { proxyFetch: (req) => host.proxyFetch(req) } })
+    return connect({ messenger, methods: { proxyFetch: (req) => host.proxyFetch(req), ...createInlineBrokerMethods(opts) } })
+}
+
+/** Optional RPCs share the bound iframe connection, with document generation checks. */
+export function createInlineBrokerMethods(opts) {
+    const current = report => Number.isInteger(opts.inlineGeneration)
+        && report?.inlineGeneration === opts.inlineGeneration
+    const mode = () => opts.getInlineMode?.() ?? 'inline'
+    return {
+        reportInlineReady(report) { if (current(report)) opts.onInlineReady?.() },
+        getInlineState(report) {
+            if (!current(report)) return null
+            return { inlineGeneration: opts.inlineGeneration, mode: mode(), requestedHeight: opts.inlineRequestedHeight ?? 360 }
+        },
+        reportInlineHeight(report) {
+            if (!current(report) || !Number.isFinite(report.height) || report.mode !== 'inline' || mode() !== 'inline') return
+            opts.onInlineHeight?.(report.height)
+        },
+        requestInlineEscape(report) { if (current(report)) opts.onInlineEscape?.() },
+    }
 }

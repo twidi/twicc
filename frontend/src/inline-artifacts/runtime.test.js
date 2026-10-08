@@ -436,3 +436,25 @@ test('a failed document GET after successful HEAD remains an error through ifram
     assert.equal(entry.loadState, 'ready')
     f.runtime.dispose()
 })
+
+test('correction and disposal return focus before removing a focused retained frame', async () => {
+    const f = fixture()
+    f.reconcile()
+    let focuses = 0, iframe
+    const focusConversation = () => { focuses++; iframe.ownerDocument.activeElement = null }
+    f.runtime.attach(key, publication, { ...f.attachment, focusConversation })
+    f.runtime.setVisible(key, true)
+    await f.succeed()
+    const entry = f.entry()
+    iframe = { ownerDocument: { activeElement: null } }
+    iframe.ownerDocument.activeElement = iframe
+    f.pool.setFrameEl(entry.frameId, iframe)
+    f.reconcile(2, descriptor({ publicationKey: '["session-a",20,0,0]' }))
+    assert.equal(focuses, 1)
+    f.runtime.attach(key, '["session-a",20,0,0]', { ...f.attachment, focusConversation })
+    f.runtime.setVisible(key, true)
+    await f.succeed()
+    iframe.ownerDocument.activeElement = iframe
+    f.runtime.dispose()
+    assert.equal(focuses, 2)
+})

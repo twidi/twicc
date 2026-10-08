@@ -1455,6 +1455,7 @@ function onScrollerUpdate({ visibleStartIndex, visibleEndIndex }) {
 
 // A real scroll can retry an unchanged gap after failure without geometry churn.
 function onGapScroll() {
+    inlineContext.value?.runtime.geometry.schedule()
     gapMeasurementRevision.value++
     scheduleGapLoad(true)
 }

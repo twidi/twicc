@@ -86,3 +86,19 @@ test('ensureRegistered patches existing descriptors without replacing frame or D
     assert.equal(frame.remountKey, 0)
     assert.deepEqual(Object.keys(pool.frames), ['inline-a', 'inline-b'])
 })
+
+test('clipping and fullscreen geometry preserve retained frame elements and navigation', () => {
+    const pool = useFramePoolStore()
+    const frame = pool.ensureRegistered('inline', { src: 'document', remountKey: 0 })
+    const iframe = { tag: 'iframe' }, overlay = { tag: 'overlay' }
+    pool.setFrameEl('inline', iframe)
+    pool.setOverlayEl('inline', overlay)
+    pool.patch('inline', { visible: true, rect: { x: 0, y: 44, width: 800, height: 556 }, zTier: 'fullscreen', clipRect: null })
+    pool.patch('inline', { visible: false, rect: { x: 10, y: 20, width: 200, height: 360 }, zTier: 'base',
+        clipRect: { x: 0, y: 0, width: 180, height: 300 } })
+    assert.equal(pool.frames.inline, frame)
+    assert.equal(frame.el, iframe)
+    assert.equal(frame.overlayEl, overlay)
+    assert.equal(frame.src, 'document')
+    assert.equal(frame.remountKey, 0)
+})
