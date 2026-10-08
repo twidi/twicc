@@ -507,6 +507,8 @@ def test_server_owns_title_runner_before_provider_start_and_until_teardown(
             get=lambda provider: SimpleNamespace(adopt_running_hybrid_sessions=adopt)))
         monkeypatch.setattr("twicc.drop_requests_watcher.get_drop_requests_watcher", lambda: SimpleNamespace(start=noop))
         monkeypatch.setattr("twicc.artifacts_watcher.get_artifacts_watcher", lambda: SimpleNamespace(start=noop))
+        monkeypatch.setattr("twicc.inline_artifacts.share_exports.get_inline_export_coordinator",
+                            lambda: SimpleNamespace(start=noop, stop=noop))
         if startup_phase == "provider-failure":
             with pytest.raises(RuntimeError, match="provider startup failed"):
                 await asyncio.wait_for(run.run_server(0), timeout=5)

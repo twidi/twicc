@@ -98,6 +98,7 @@ def test_call_tool_normalizes_datetime_to_json_native(monkeypatch):
 def test_call_tool_share_create_returns_public_result_shape(
         isolated_data_dir, monkeypatch):
     from twicc.core.models import Project, Session
+    from twicc.providers.helpers import get_provider_helpers
 
     async def _passthrough(coro_factory):
         return await coro_factory()
@@ -109,6 +110,7 @@ def test_call_tool_share_create_returns_public_result_shape(
     session = Session.objects.create(
         id="33333333-3333-3333-3333-333333333333", project=project,
         provider="claude_code", file_path="share.jsonl", last_line=7,
+        compute_version=get_provider_helpers("claude_code").current_compute_version,
     )
     monkeypatch.setattr(
         "twicc.synced_settings.read_synced_settings",
