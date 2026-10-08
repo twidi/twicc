@@ -39,11 +39,12 @@ The user confirms these requirements during the design conversation:
 - Exclude Submit to discussion and automatic messages to agents.
 - Support inline widgets in shared conversations.
 - Add an Include inline artifacts option to the session sharing dialog.
+- Enable Include inline artifacts by default, including existing shares without an explicit option value.
 - Include `data/` in an enabled export, matching existing artifact sharing.
 - Serve public artifacts from dedicated copies with strict file confinement.
 
 The remaining operational choices in this spec are proposed defaults for review.
-They include tag syntax, height limits, sharing defaults, and export update timing.
+They include tag syntax, height limits, and export update timing.
 
 ## 3. Existing components
 
@@ -457,8 +458,9 @@ That loss is accepted product behavior.
 Add `include_inline_artifacts` to session share options.
 The dialog label is **Include inline artifacts**.
 
-Default it to `false` for new shares and existing shares without that key.
-Existing public links must not gain access to new file content implicitly.
+Default it to `true` for new shares and existing shares without that key.
+An explicit `false` remains disabled.
+Apply the same default in the dialog, backend validation, public routes, and export coordinator.
 
 When enabled, explain the export scope:
 
@@ -575,6 +577,12 @@ Enabling the option on an existing snapshot exports artifacts within its existin
 It copies their current files, not historical files from that boundary's date.
 Do not imply recovery of an earlier code version.
 
+Existing shares without an option value use the enabled default.
+When their first authorized manifest request finds no export metadata, schedule the initial confined exports.
+Show pending placeholders until those exports complete; never fall back to private source file routes.
+For an existing snapshot, use its existing transcript boundary and the current source folders for that initial copy.
+After the initial export completes, its copies remain frozen until Push update.
+
 Snapshot copies exist for sharing only.
 The private source remains live and has no version history.
 
@@ -689,7 +697,8 @@ It must not relay raw artifact watcher paths or private session manifests.
 
 ## 16. Agent instructions
 
-Document inline artifacts in the existing artifact section of the agent prompt.
+Update the TwiCC system-prompt addendum in `src/twicc/agent/system_prompt.py`.
+Document inline artifacts in its existing artifact section for both Claude Code and Codex.
 Include one single-file example and one folder-with-assets example.
 
 Explain these authoring rules:
@@ -735,6 +744,7 @@ The existing file tools and message text are sufficient.
 - Mirrored provider messages and repeated ingestion do not duplicate a publication.
 - Full recompute and live ingestion produce identical publication identities and active placements.
 - Recompute preserves publications arriving after the rebuild starts.
+- Both providers receive the updated addendum with tag syntax, correction rules, and optional data API guidance.
 
 ### Runtime retention
 
@@ -762,7 +772,8 @@ The existing file tools and message text are sufficient.
 
 ### Sharing and confinement
 
-- Existing shares without the new option expose no inline artifact files.
+- New shares and existing shares without the option use the enabled default.
+- Existing links initialize confined exports before serving inline files; an explicit `false` denies access.
 - An enabled share exports only artifacts selected by its permitted transcript.
 - Exported HTML loads sibling CSS, JavaScript, assets, and saved data.
 - Public inputs remain interactive while data writes are rejected.
