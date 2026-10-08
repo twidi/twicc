@@ -127,3 +127,63 @@ test('old connected shim cannot acknowledge current document; a new SYN reconnec
         globalThis.location = previousLocation
     }
 })
+
+test('iframe capture forwards descendant Escape despite stopped bubbling and disposal removes capture', async () => {
+    const f = await fixture()
+    // Native EventTarget supplies listener execution and stopPropagation state.
+    // The test boundary routes the window capture, descendant, and window bubble phases.
+    const captureTarget = new EventTarget(), bubbleTarget = new EventTarget(), descendant = new EventTarget()
+    const captureListeners = new Map()
+    const win = {
+        location: { href: 'https://example.com/doc.html?_twicc_reload=1' },
+        addEventListener(type, listener, capture = false) {
+            const target = capture ? captureTarget : bubbleTarget
+            target.addEventListener(type, listener)
+            if (capture) {
+                if (!captureListeners.has(type)) captureListeners.set(type, new Set())
+                captureListeners.get(type).add(listener)
+            }
+        },
+        removeEventListener(type, listener, capture = false) {
+            const target = capture ? captureTarget : bubbleTarget
+            target.removeEventListener(type, listener)
+            if (capture) captureListeners.get(type)?.delete(listener)
+        },
+    }
+    let descendantEscapes = 0
+    descendant.addEventListener('keydown', event => {
+        if (event.key !== 'Escape') return
+        descendantEscapes++
+        event.stopPropagation()
+    })
+    const dispatchKey = key => {
+        const event = Object.assign(new Event('keydown', { bubbles: true }), { key })
+        captureTarget.dispatchEvent(event)
+        if (!event.cancelBubble) descendant.dispatchEvent(event)
+        if (!event.cancelBubble) bubbleTarget.dispatchEvent(event)
+    }
+    const document = new EventTarget()
+    document.readyState = 'loading'
+    const observer = createInlineHeightObserver({ document, window: win, getHost: async () => f.methods })
+    try {
+        f.runtime.openFullscreen(f.key)
+        dispatchKey('Enter')
+        await Promise.resolve(); await Promise.resolve()
+        assert.equal(f.runtime.fullscreenArtifactKey.value, f.key)
+        dispatchKey('Escape')
+        await Promise.resolve(); await Promise.resolve()
+        assert.equal(descendantEscapes, 1)
+        assert.equal(f.runtime.fullscreenArtifactKey.value, null)
+        assert.equal(captureListeners.get('keydown')?.size, 1)
+        observer.dispose()
+        assert.equal(captureListeners.get('keydown')?.size, 0)
+        f.runtime.openFullscreen(f.key)
+        dispatchKey('Escape')
+        await Promise.resolve(); await Promise.resolve()
+        assert.equal(descendantEscapes, 2)
+        assert.equal(f.runtime.fullscreenArtifactKey.value, f.key)
+    } finally {
+        observer.dispose()
+        f.runtime.dispose()
+    }
+})

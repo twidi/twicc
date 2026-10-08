@@ -87,7 +87,7 @@ export function createInlineHeightObserver({ document, window, getHost,
         if (event.key !== 'Escape' || inlineGeneration == null) return
         getHost().then(host => { if (!disposed) return host.requestInlineEscape({ inlineGeneration }) }).catch(() => {})
     }
-    window.addEventListener('keydown', keydown)
+    window.addEventListener('keydown', keydown, true)
     window.addEventListener('resize', schedule)
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', observe, { once: true })
     else observe()
@@ -98,7 +98,7 @@ export function createInlineHeightObserver({ document, window, getHost,
         if (pending != null) cancelFrame(pending)
         resizeObserver?.disconnect(); mutationObserver?.disconnect()
         observedChildren.clear()
-        window.removeEventListener('keydown', keydown)
+        window.removeEventListener('keydown', keydown, true)
         window.removeEventListener('resize', schedule)
         document.removeEventListener('DOMContentLoaded', observe)
     }
