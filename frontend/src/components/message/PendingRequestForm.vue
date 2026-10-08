@@ -8,11 +8,12 @@
 // - The isResponding guard + the provider-agnostic respondToPendingRequest dispatch
 //   (triggered by the body's @submit event)
 
-import { ref, computed, watch, useId, nextTick } from 'vue'
+import { ref, computed, watch, useId, nextTick, onBeforeUnmount } from 'vue'
 import { getProviderLabel, respondToPendingRequest } from '../../providers'
 import { useDataStore } from '../../stores/data'
 import { PROVIDER } from '../../constants'
 import { useFooterBlockMotion } from '../../composables/useFooterMotion.js'
+import { AUTO_DENY_DELAY_SECONDS, formatAutoDenyRemaining, isAutoDenyLocked } from '../../utils/autoDeny'
 import AppTooltip from '../ui/AppTooltip.vue'
 import CollapsedBar from './CollapsedBar.vue'
 import ClaudePendingRequestBody from '../session/detail/items/claude_code/PendingRequestBody.vue'
@@ -169,6 +170,45 @@ const headerTitle = computed(() => requestType.value === 'ask_user_question'
     ? `${providerLabel.value} needs your input`
     : 'Tool approval requested')
 
+// ── Auto-deny countdown (bypassPermissions) ──────────────────────────────────
+// The store gives an armed request a local `autoDenyDeadlineMs` (utils/autoDeny.js).
+// A one-second tick drives the label; it runs only while the shown request has
+// a deadline. The lock (less than 1 s left, label "Auto-denying…") reuses the
+// `is-responding` guard of the bodies; onBodySubmit re-checks with Date.now(),
+// never the tick, so the margin holds exactly. Accepted side effects of that
+// reuse (spec §5.2): the draft is discarded, the buttons show their spinner.
+const autoDenyDeadlineMs = computed(() => props.pendingRequest.autoDenyDeadlineMs ?? null)
+const autoDenyNowMs = ref(Date.now())
+const autoDenyBadgeId = useId()
+let autoDenyTicker = null
+
+function stopAutoDenyTicker() {
+    if (autoDenyTicker !== null) {
+        clearInterval(autoDenyTicker)
+        autoDenyTicker = null
+    }
+}
+
+watch(autoDenyDeadlineMs, (deadline) => {
+    stopAutoDenyTicker()
+    if (deadline === null) return
+    autoDenyNowMs.value = Date.now()
+    autoDenyTicker = setInterval(() => { autoDenyNowMs.value = Date.now() }, 1000)
+}, { immediate: true })
+
+onBeforeUnmount(stopAutoDenyTicker)
+
+const autoDenyLocked = computed(() => autoDenyDeadlineMs.value !== null
+    && isAutoDenyLocked(autoDenyDeadlineMs.value, autoDenyNowMs.value))
+
+const autoDenyLabel = computed(() => {
+    if (autoDenyDeadlineMs.value === null) return null
+    if (autoDenyLocked.value) return 'Auto-denying…'
+    return `Auto-deny in ${formatAutoDenyRemaining(autoDenyDeadlineMs.value, autoDenyNowMs.value)}`
+})
+
+const autoDenyTooltip = `Bypass permissions mode: this request is denied automatically when nobody answers within ${AUTO_DENY_DELAY_SECONDS / 60} minutes.`
+
 // Route to the appropriate body component based on provider
 const bodyComponent = computed(() => {
     if (provider.value === PROVIDER.CODEX) return CodexPendingRequestBody
@@ -183,6 +223,9 @@ const bodyComponent = computed(() => {
  */
 function onBodySubmit(payload) {
     if (isResponding.value) return
+    // The backend denies the request in the next instant: an answer sent now
+    // would be discarded (and a late setMode persisted for nothing).
+    if (autoDenyDeadlineMs.value !== null && isAutoDenyLocked(autoDenyDeadlineMs.value, Date.now())) return
     isResponding.value = true
     respondToPendingRequest(
         provider.value,
@@ -232,6 +275,13 @@ watch(() => props.pendingRequest?.request_id, (newId, oldId) => {
         >
             <template #trailing>
                 <span
+                    v-if="autoDenyLabel"
+                    class="auto-deny-badge"
+                    :id="autoDenyBadgeId"
+                    role="timer"
+                >{{ autoDenyLabel }}</span>
+                <AppTooltip v-if="autoDenyLabel" :for="autoDenyBadgeId">{{ autoDenyTooltip }}</AppTooltip>
+                <span
                     v-if="extraPendingCount > 0"
                     class="pending-count-badge"
                     :id="`pending-count-${sessionId}`"
@@ -251,6 +301,13 @@ watch(() => props.pendingRequest?.request_id, (newId, oldId) => {
                 :class="{ 'question-icon': requestType === 'ask_user_question' }"
             ></wa-icon>
             <span class="pending-request-title">{{ headerTitle }}</span>
+            <span
+                v-if="autoDenyLabel"
+                class="auto-deny-badge"
+                :id="autoDenyBadgeId"
+                role="timer"
+            >{{ autoDenyLabel }}</span>
+            <AppTooltip v-if="autoDenyLabel" :for="autoDenyBadgeId">{{ autoDenyTooltip }}</AppTooltip>
             <span
                 v-if="extraPendingCount > 0"
                 class="pending-count-badge"
@@ -292,7 +349,7 @@ watch(() => props.pendingRequest?.request_id, (newId, oldId) => {
             v-if="bodyComponent"
             :session-id="sessionId"
             :pending-request="pendingRequest"
-            :is-responding="isResponding"
+            :is-responding="isResponding || autoDenyLocked"
             @submit="onBodySubmit"
         />
     </div>
@@ -392,6 +449,20 @@ wa-divider {
     color: var(--wa-color-warning-on-loud);
     font-size: var(--wa-font-size-xs);
     font-weight: 600;
+    padding: 2px var(--wa-space-xs);
+    border-radius: var(--wa-border-radius-pill);
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.auto-deny-badge {
+    display: inline-flex;
+    align-items: center;
+    background: var(--wa-color-warning-fill-quiet);
+    color: var(--wa-color-warning-on-quiet);
+    font-size: var(--wa-font-size-xs);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
     padding: 2px var(--wa-space-xs);
     border-radius: var(--wa-border-radius-pill);
     line-height: 1;
