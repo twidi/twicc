@@ -2,7 +2,7 @@
 export function makeShareInlineAdapter({ api, tokenPath, store }) {
     const base = tokenPath.replace(/\/+$/, '')
     const sourceSessionId = store.sharedSessionId
-    let revision = -1, disposed = false, descriptors = new Map()
+    let revision = -1, disposed = false, descriptors = new Map(), refreshRequest = null
     const listeners = new Set(), controllers = new Set()
 
     function acceptManifest(wire) {
@@ -54,12 +54,28 @@ export function makeShareInlineAdapter({ api, tokenPath, store }) {
         return { available: false, error: response.status === 401 ? 'share_password_required'
             : response.status === 403 ? 'share_forbidden' : response.status === 409 ? 'session_not_ready' : 'document_unavailable' }
     }
-    async function refresh() {
-        if (disposed) return null
-        const controller = new AbortController()
-        controllers.add(controller)
-        try { return acceptManifest(await api.fetchInlineManifest({ signal: controller.signal })) }
-        finally { controllers.delete(controller) }
+    function refresh({ signal } = {}) {
+        if (disposed) return Promise.resolve(null)
+        let request = refreshRequest
+        if (!request) {
+            const controller = new AbortController()
+            controllers.add(controller)
+            request = { controller, promise: null }
+            refreshRequest = request
+            request.promise = (async () => {
+                try {
+                    const manifest = await api.fetchInlineManifest({ signal: controller.signal })
+                    return controller.signal.aborted ? null : acceptManifest(manifest)
+                } finally {
+                    controllers.delete(controller)
+                    if (refreshRequest?.controller === controller) refreshRequest = null
+                }
+            })()
+        }
+        const abort = () => request.controller.abort()
+        if (signal?.aborted) abort()
+        else signal?.addEventListener('abort', abort, { once: true })
+        return request.promise.finally(() => signal?.removeEventListener('abort', abort))
     }
     async function retry(descriptor) {
         validate(descriptor, false)

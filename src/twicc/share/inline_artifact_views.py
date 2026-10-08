@@ -82,7 +82,10 @@ async def inline_retry(request, token, source_session_id, artifact_id):
         return response
     try:
         key, _ = await _selected(context, source_session_id, artifact_id)
-        await retry_inline_export(context.share.id, key)
+        entry = (context.share.inline_artifact_exports or {}).get('artifacts', {}).get(key, {})
+        completed_snapshot = context.options.get('mode') == 'snapshot' and entry.get('status') == 'ready'
+        if not completed_snapshot:
+            await retry_inline_export(context.share.id, key)
         context, response = await _context(request, token)
         if response is not None:
             return response

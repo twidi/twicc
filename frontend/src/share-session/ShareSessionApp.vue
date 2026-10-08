@@ -7,6 +7,7 @@ import { useFramePoolStore } from '../stores/framePool.js'
 import { INLINE_ARTIFACT_CONTEXT } from '../inline-artifacts/context.js'
 import { createInlineArtifactRuntime } from '../inline-artifacts/runtime.js'
 import { makeShareInlineAdapter } from './inlineAdapter.js'
+import { createShareInlineCompletion } from './inlineCompletion.js'
 import SharedSubagentView from './SharedSubagentView.vue'
 import GlobalMediaPreview from '../components/media/GlobalMediaPreview.vue'
 import ShareFooter from './ShareFooter.vue'
@@ -81,6 +82,13 @@ watch(() => revoked.value || !ready.value || meta.include_inline_artifacts === f
     suppressed => inlineRuntime?.setActive(!suppressed), { immediate: true, flush: 'sync' })
 let disconnectLive = null, disposed = false
 const focusController = new AbortController()
+const inlineCompletion = inlineAdapter ? createShareInlineCompletion({
+    adapter: inlineAdapter, isSnapshot: () => meta.mode === 'snapshot',
+    accessClosed: () => revoked.value || !ready.value || meta.include_inline_artifacts === false,
+    onAccessClosed: () => { revoked.value = true },
+}) : null
+watch(() => [meta.mode, revoked.value, ready.value, meta.include_inline_artifacts],
+    () => inlineCompletion?.accessChanged(), { flush: 'sync' })
 async function refreshInline() {
     if (!inlineAdapter || disposed || revoked.value) return
     try { await inlineAdapter.refresh() }
@@ -209,6 +217,7 @@ onUnmounted(() => {
     disconnectLive?.()
     window.removeEventListener('popstate', onPopState)
     window.removeEventListener('focus', onWindowFocus)
+    inlineCompletion?.dispose()
     inlineRuntime?.dispose()
     if (inlineRuntime) inlinePool.hostMounted = false
 })

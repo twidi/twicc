@@ -289,11 +289,23 @@ def test_scheduled_legacy_capture_keeps_acceptance_generation(public_case, monke
     asyncio.run(scenario())
 
 
-def test_successful_snapshot_manifest_does_not_supersede_owner_operation(public_case):
+@pytest.mark.parametrize('suffix,method', [('api/inline-artifacts/', 'get'),
+    ('api/inline-artifacts/public-root/widget/retry/', 'post')])
+def test_successful_snapshot_manifest_does_not_supersede_owner_operation(public_case, suffix, method, monkeypatch):
     _, _, share, _ = public_case
     generation = share_exports.reserve_inline_exports(share.id)
-    assert request(public_case, 'api/inline-artifacts/').status_code == 200
+    reservations = []
+    original_reserve = share_exports.reserve_inline_exports
+    def reserve(share_id):
+        reservations.append(share_id)
+        return original_reserve(share_id)
+    monkeypatch.setattr(share_exports, 'reserve_inline_exports', reserve)
+    before = orjson.dumps(share.inline_artifact_exports)
+    assert request(public_case, suffix, method).status_code == 200
+    share.refresh_from_db()
+    assert orjson.dumps(share.inline_artifact_exports) == before
     assert share_exports._generation_current(share.id, generation)
+    assert reservations == []
 
 
 def test_snapshot_error_retry_uses_captured_tag_after_new_owner_tag(public_case):
@@ -322,3 +334,131 @@ def test_auxiliary_html_navigation_has_shim_and_csp(public_case):
     assert response.status_code == 200
     assert b'/_twicc/artifact-broker-shim.js' in response.content
     assert "connect-src 'none'" in response['Content-Security-Policy']
+
+
+def test_actual_public_widget_reload_preserves_ready_snapshot_and_owner_reservation(public_case, monkeypatch):
+    """Run runtime.reload -> public adapter -> share API -> real Django token routes."""
+    import selectors
+    import subprocess
+    from pathlib import Path
+
+    _, _, share, source = public_case
+    manifest = orjson.loads(request(public_case, 'api/inline-artifacts/').content)
+    before = orjson.dumps(share.inline_artifact_exports)
+    generation = share_exports.reserve_inline_exports(share.id)
+    reservations = []
+    original_reserve = share_exports.reserve_inline_exports
+    def reserve(share_id):
+        reservations.append(share_id)
+        return original_reserve(share_id)
+    monkeypatch.setattr(share_exports, 'reserve_inline_exports', reserve)
+    (source / 'index.html').write_text('New private code must not be recaptured')
+    script = r'''
+import { createInterface } from 'node:readline'
+import { createPinia, setActivePinia } from 'pinia'
+import { makeShareApi } from './src/share-session/shims/shareApi.js'
+import { makeShareInlineAdapter } from './src/share-session/inlineAdapter.js'
+import { createInlineArtifactRuntime } from './src/inline-artifacts/runtime.js'
+import { useFramePoolStore } from './src/stores/framePool.js'
+const lines = createInterface({ input: process.stdin })[Symbol.asyncIterator]()
+const receive = async () => JSON.parse((await lines.next()).value)
+const boot = await receive()
+globalThis.fetch = async (url, options = {}) => {
+    console.log(JSON.stringify({ kind: 'request', url, method: options.method || 'GET' }))
+    const response = await receive()
+    return new Response(response.body, { status: response.status, headers: { 'content-type': 'application/json' } })
+}
+setActivePinia(createPinia())
+const pool = useFramePoolStore(), api = makeShareApi(boot.tokenPath)
+const adapter = makeShareInlineAdapter({ api, tokenPath: boot.tokenPath,
+    store: { sharedSessionId: 'public-root', getSession: id => ({ id, type: 'session' }) } })
+const runtime = createInlineArtifactRuntime({ viewId: 'widget', pool, adapter })
+adapter.subscribe(manifest => runtime.reconcile(manifest))
+adapter.acceptManifest(boot.manifest)
+const key = '["public-root","widget"]'
+const entry = runtime.entries.get(key)
+runtime.attach(key, entry.descriptor.publicationKey, { placeholderEl: {}, clipEl: {}, isSuppressed: () => false })
+runtime.setVisible(key, true)
+const wait = async predicate => { while (!predicate()) await new Promise(resolve => setImmediate(resolve)) }
+await wait(() => entry.registered)
+runtime.documentReady(key, entry.generation)
+const frame = pool.frames[entry.frameId], source = frame.src
+await runtime.reload(key) // Exact public widget Reload handler.
+await wait(() => frame.src !== source)
+console.log(JSON.stringify({ kind: 'done', sameFrame: pool.frames[entry.frameId] === frame,
+    codeRevision: entry.descriptor.codeRevision, publicationKey: entry.descriptor.publicationKey, frames: runtime.loadedEntries.length }))
+runtime.dispose()
+process.exit(0)
+'''
+    process = subprocess.Popen(['node', '--input-type=module', '-e', script],
+        cwd=Path(__file__).resolve().parents[1] / 'frontend', stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    requests = []
+    try:
+        process.stdin.write(orjson.dumps({'tokenPath': f'/share/{share.token}', 'manifest': manifest}).decode() + '\n')
+        process.stdin.flush()
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                assert selector.select(timeout=10), 'Public widget client does not finish'
+                line = process.stdout.readline()
+                assert line, process.stderr.read()
+                message = orjson.loads(line)
+                if message['kind'] == 'done':
+                    assert message['sameFrame'] and message['frames'] == 1
+                    assert message['codeRevision'] == manifest['artifacts'][0]['code_revision']
+                    assert message['publicationKey'] == orjson.dumps(manifest['artifacts'][0]['publication']).decode()
+                    break
+                assert message['url'].startswith(f'/share/{share.token}/')
+                requests.append((message['method'], message['url']))
+                suffix = message['url'].removeprefix(f'/share/{share.token}/')
+                response = request(public_case, suffix, message['method'].lower())
+                process.stdin.write(orjson.dumps({'status': response.status_code,
+                    'body': response.content.decode()}).decode() + '\n')
+                process.stdin.flush()
+        assert process.wait(timeout=10) == 0, process.stderr.read()
+    finally:
+        if process.poll() is None:
+            process.kill(); process.wait()
+        process.stdin.close(); process.stdout.close(); process.stderr.close()
+    assert [method for method, _ in requests] == ['HEAD', 'POST', 'HEAD']
+    share.refresh_from_db()
+    assert orjson.dumps(share.inline_artifact_exports) == before
+    assert share_exports._generation_current(share.id, generation)
+    assert reservations == []
+    assert b'Frozen widget' in body(request(public_case, 'inline-artifacts/public-root/widget/index.html'))
+
+
+def test_public_error_retry_reserves_before_waiting_for_copy_lock(public_case, monkeypatch):
+    """Only an actual failed export accepts new work and carries that reservation."""
+    client, _, share, _ = public_case
+    share.inline_artifact_exports['artifacts'][KEY].update(status='error', error='artifact_unavailable', copy_id=None)
+    share.save(update_fields=['inline_artifact_exports'])
+    original_reserve = share_exports.reserve_inline_exports
+    original_prepare = share_exports.prepare_inline_exports
+    reservations, preparations = [], []
+    async def scenario():
+        reserved = asyncio.Event()
+        def reserve(share_id):
+            generation = original_reserve(share_id)
+            reservations.append(generation)
+            reserved.set()
+            return generation
+        async def prepare(*args, **kwargs):
+            preparations.append(kwargs['expected_generation'])
+            return await original_prepare(*args, **kwargs)
+        monkeypatch.setattr(share_exports, 'reserve_inline_exports', reserve)
+        monkeypatch.setattr(share_exports, 'prepare_inline_exports', prepare)
+        lock = share_exports.share_export_lock(share.id)
+        await lock.acquire()
+        pending = asyncio.create_task(client.post(route(share, 'api/inline-artifacts/public-root/widget/retry/')))
+        await asyncio.wait_for(reserved.wait(), timeout=5)
+        assert not pending.done() and preparations == []
+        assert len(reservations) == 1
+        assert share_exports._generation_current(share.id, reservations[0])
+        lock.release()
+        response = await pending
+        assert response.status_code == 200
+        assert orjson.loads(response.content)['artifacts'][0]['status'] == 'ready'
+    asyncio.run(scenario())
+    assert preparations == reservations and len(reservations) == 1
