@@ -51,7 +51,8 @@ def _dir_non_empty(path: Path | str) -> bool:
 
 
 class ArtifactsWatcher:
-    def __init__(self) -> None:
+    def __init__(self, enqueue=None) -> None:
+        self._enqueue = enqueue
         self.directory = Path(get_artifacts_dir())
         # The watched dir may itself be a symlink (worktree mode points
         # <worktree>/artifacts at the main data dir). awatch can report event
@@ -129,6 +130,14 @@ class ArtifactsWatcher:
                     paths.add(rel)
 
             for session_id, rel_paths in touched.items():
+                # Enqueue even the first transition and unknown ORM sessions.
+                # The coordinator resolves shares/readiness outside this watcher.
+                if self._enqueue is None:
+                    from twicc.inline_artifacts.share_exports import get_inline_export_coordinator
+                    enqueue = get_inline_export_coordinator().files_changed
+                else:
+                    enqueue = self._enqueue
+                enqueue(session_id, sorted(rel_paths) or ['inline-artifacts'])
                 if session_id not in self._sessions:
                     # First sighting of this session's subtree. Confirm the dir is
                     # actually non-empty (the change could be a deletion, or the

@@ -276,6 +276,9 @@ async def run_server(port: int):
     # Start before provider watchers can submit live requests. The runner owns
     # no boot scan; initial sync does not request automatic title checks.
     title_auto_task = asyncio.create_task(start_title_auto_task(shutdown_event))
+    from twicc.inline_artifacts.share_exports import get_inline_export_coordinator
+    inline_exports = get_inline_export_coordinator()
+    await inline_exports.start()
     try:
         await orchestrators.start_all(shutdown_event, search_index_ready)
 
@@ -504,6 +507,7 @@ async def run_server(port: int):
             # down — their blocking shutdown() guarantees no producer thread or
             # subprocess is still alive, so nothing is left pushing onto the
             # shared queues.
+            await inline_exports.stop()
             await stop_db_writer()
 
             # Finally tear down the search index itself. Done after the

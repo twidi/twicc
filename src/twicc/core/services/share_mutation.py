@@ -191,14 +191,32 @@ def remove_snapshot(share_id: str) -> None:
 async def broadcast_share_updated(share) -> None:
     from twicc.core.serializers import serialize_share
 
+    payload = await sync_to_async(serialize_share)(share)
+    from twicc.core.models import SessionType
+    from twicc.inline_artifacts.share_exports import get_inline_export_coordinator
+    get_inline_export_coordinator().register_share(
+        share.id, share.session_id, share.options,
+        supported=share.kind == 'session' and bool(share.session_id) and share.session.type == SessionType.SESSION,
+        active=share.is_active(),
+    )
     layer = get_channel_layer()
     if layer is None:
         return
-    payload = await sync_to_async(serialize_share)(share)
     await layer.group_send("updates", {
         "type": "broadcast",
         "data": {"type": "share_updated", "share": payload},
     })
+    if (share.kind == 'session' and share.session.type == SessionType.SESSION
+            and (share.options or {}).get('mode', 'live') == 'live'
+            and (share.inline_artifact_exports or {}).get('initialized')):
+        from twicc.inline_artifacts.share_selection import SelectionNotReady, public_inline_manifest
+        try:
+            manifest = await sync_to_async(public_inline_manifest)(share)
+        except SelectionNotReady:
+            return
+        await layer.group_send('updates', {'type': 'broadcast', 'data': {
+            'type': 'share_inline_artifacts', 'share_id': share.id, 'manifest': manifest,
+        }})
 
 
 async def broadcast_share_removed(share_id: str) -> None:

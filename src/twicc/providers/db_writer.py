@@ -2127,6 +2127,9 @@ async def _process_compute_message(msg: dict) -> None:
     if result.outcome != "applied":
         return
 
+    from twicc.inline_artifacts.share_exports import get_inline_export_coordinator
+    get_inline_export_coordinator().publication_changed(msg["session_id"])
+
     try:
         await broadcast_session_updated(msg["session_id"])
         # A subagent's compute may have folded plan-doc entries into its

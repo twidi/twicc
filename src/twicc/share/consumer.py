@@ -59,6 +59,8 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
         self.descendant_ids = await self._load_descendants()
         await self.channel_layer.group_add("updates", self.channel_name)
         await self.accept()
+        from twicc.inline_artifacts.share_exports import get_inline_export_coordinator
+        get_inline_export_coordinator().request_reconcile(self.session_id)
         # Seed the current assistant state so a viewer landing mid-turn sees the
         # "is thinking" indicator immediately (process_state is edge-triggered).
         await self._send_current_assistant_state()
@@ -152,6 +154,11 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
         """Server-side filter: forward only this share's traffic."""
         data = event["data"]
         mtype = data.get("type")
+
+        if mtype == "share_inline_artifacts":
+            if data.get("share_id") == self.share_id:
+                await self._send_inline_manifest()
+            return
 
         if mtype == "session_items_added":
             sid = data.get("session_id")
@@ -319,3 +326,26 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
         if share is None or not share.is_active():
             return None
         return await sync_to_async(serialize_share_public_meta)(share)
+
+    async def _send_inline_manifest(self):
+        """Reload access and manifest; never forward an event's private payload."""
+        from twicc.core.models import SessionType, Share
+        from twicc.inline_artifacts.share_selection import SelectionNotReady, public_inline_manifest
+
+        share = await sync_to_async(
+            lambda: Share.objects.select_related('session').filter(id=self.share_id).first()
+        )()
+        if (share is None or not share.is_active() or share.kind != 'session'
+                or share.session_id != self.session_id or share.session.type != SessionType.SESSION
+                or (share.options or {}).get('mode', 'live') != 'live'):
+            return
+        if share.password_hash:
+            session = self.scope.get('session')
+            grants = await sync_to_async(lambda: session.get(SHARE_GRANTS_SESSION_KEY, {}))() if session else {}
+            if grants.get(share.id) != password_fingerprint(share.password_hash):
+                return
+        try:
+            manifest = await sync_to_async(public_inline_manifest)(share)
+        except SelectionNotReady:
+            return
+        await self.send_json({'type': 'share_inline_artifacts', 'share_id': share.id, 'manifest': manifest})

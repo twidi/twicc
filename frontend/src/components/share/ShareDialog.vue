@@ -46,6 +46,8 @@ const form = reactive({
     mode: 'live', max_display_mode: 'normal', include_subagents: true, include_inline_artifacts: true,
     show_timestamps: true, show_title: true,
 })
+const inlineDataErrors = computed(() =>
+    (shares.shares[props.edit?.id] || props.edit)?.inline_artifact_data_errors || [])
 const error = ref('')
 const createdUrl = ref('')
 // The link to copy: the freshly-created one, or the existing share's when editing.
@@ -221,6 +223,9 @@ function onHide(e) { if (e.target === dialogRef.value) emit('close') }
                @wa-after-show="onAfterShow" @wa-hide="onHide">
         <form :id="formId" @submit.prevent="handleSave">
             <wa-callout v-if="error" variant="danger">{{ error }}</wa-callout>
+            <wa-callout v-for="failure in inlineDataErrors" :key="failure.artifact_id" variant="warning">
+                Saved data export failed for {{ failure.artifact_id }}. The share keeps its last complete saved data.
+            </wa-callout>
 
             <wa-callout v-if="!sharingEnabled" variant="warning">
                 No share host configured. Set one in Settings → Sharing before creating links.

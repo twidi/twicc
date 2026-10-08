@@ -142,9 +142,11 @@ def open_export_asset(export_root: Path, asset_path: str) -> BinaryIO:
         raise InlineArtifactUnavailable() from None
 
 
-def _copy_directory(source_fd: int, destination_fd: int, remaining_bytes: int) -> int:
+def _copy_directory(source_fd: int, destination_fd: int, remaining_bytes: int, *, exclude=()) -> int:
     copied = 0
     for name in sorted(os.listdir(source_fd)):
+        if name in exclude:
+            continue
         metadata = os.stat(name, dir_fd=source_fd, follow_symlinks=False)
         if stat.S_ISDIR(metadata.st_mode):
             with _directory_at(source_fd, [name]) as child_source:
@@ -215,4 +217,41 @@ def copy_source_artifact(session_id: str, publication: dict, destination: Path, 
             finally:
                 os.close(destination_fd)
     except (OSError, ValueError, KeyError, TypeError):
+        raise InlineArtifactUnavailable() from None
+
+
+def copy_export_with_source_data(
+    export_root: Path, session_id: str, artifact_id: str, destination: Path, remaining_bytes: int,
+) -> int:
+    """Keep published code/assets and replace only optional source data.
+
+    Both trees use pinned no-follow handles. The caller owns staging cleanup
+    and holds a lease on the published copy until this worker finishes.
+    """
+    try:
+        if remaining_bytes < 0:
+            raise InlineArtifactUnavailable()
+        published_fd = _open_directory(export_root)
+        try:
+            destination.mkdir()
+            destination_fd = _open_directory(destination)
+            try:
+                copied = _copy_directory(published_fd, destination_fd, remaining_bytes, exclude=('data',))
+                with source_artifact_directory(session_id, artifact_id) as source_fd:
+                    try:
+                        metadata = os.stat('data', dir_fd=source_fd, follow_symlinks=False)
+                    except FileNotFoundError:
+                        return copied
+                    if not stat.S_ISDIR(metadata.st_mode):
+                        raise InlineArtifactUnavailable()
+                    with _directory_at(source_fd, ['data']) as data_fd:
+                        os.mkdir('data', dir_fd=destination_fd)
+                        with _directory_at(destination_fd, ['data']) as target_fd:
+                            copied += _copy_directory(data_fd, target_fd, remaining_bytes - copied)
+                return copied
+            finally:
+                os.close(destination_fd)
+        finally:
+            os.close(published_fd)
+    except (OSError, ValueError):
         raise InlineArtifactUnavailable() from None

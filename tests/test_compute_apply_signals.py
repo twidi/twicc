@@ -180,3 +180,32 @@ def test_session_updated_broadcast_exposes_latest_inline_descriptor():
     event = asyncio.run(scenario())
     assert event['data']['type'] == 'session_updated'
     assert event['data']['session']['inline_artifacts'] == {'preferences': {**RECORD, 'line_num': 87}}
+
+
+@pytest.mark.parametrize('outcome', ['applied', 'superseded', 'missing'])
+def test_inline_coordinator_notified_only_after_accepted_apply(monkeypatch, outcome):
+    from twicc.inline_artifacts import share_exports
+    calls = []
+    class Coordinator:
+        def publication_changed(self, session_id):
+            calls.append(session_id)
+    monkeypatch.setattr(share_exports, 'get_inline_export_coordinator', lambda: Coordinator())
+    monkeypatch.setattr(BaseSessionCompute, 'apply_session_complete',
+                        staticmethod(lambda msg: ComputeApplyResult(outcome)))
+    async def broadcast(session_id):
+        assert calls == [session_id]
+    monkeypatch.setattr(db_writer, 'broadcast_session_updated', broadcast)
+    async def scenario():
+        db_writer.start_compute_executor()
+        run_id, _ = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0)
+        try:
+            await db_writer._process_compute_message({
+                'type': 'session_complete', 'provider': Provider.CODEX.value,
+                'run_id': run_id, 'session_id': 'root-inline',
+            })
+        finally:
+            db_writer._compute_states.pop(run_id, None)
+            db_writer._compute_done_events.pop(run_id, None)
+            await db_writer.stop_compute_executor()
+    asyncio.run(scenario())
+    assert calls == (['root-inline'] if outcome == 'applied' else [])

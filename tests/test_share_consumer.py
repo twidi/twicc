@@ -584,3 +584,31 @@ def test_relay_seeded_with_links_whose_agent_has_no_session_row(session):
         await comm.disconnect()
 
     _run(scenario())
+
+
+def test_inline_event_uses_fresh_sanitized_manifest(session):
+    from asgiref.sync import sync_to_async
+    share = _share(session, options={'mode': 'live'})
+    async def scenario():
+        comm = _communicator(share.token)
+        assert (await comm.connect())[0]
+        layer = get_channel_layer()
+        await layer.group_send('updates', {'type': 'broadcast', 'data': {
+            'type': 'share_inline_artifacts', 'share_id': share.id,
+            'manifest': {'private_path': '/secret', 'copy_id': 'secret'}, 'paths': ['/secret'],
+        }})
+        result = await comm.receive_json_from(timeout=2)
+        assert result == {'type': 'share_inline_artifacts', 'share_id': share.id,
+                          'manifest': {'enabled': True, 'revision': 1, 'artifacts': []}}
+        await sync_to_async(Share.objects.filter(id=share.id).update)(options={'mode': 'live',
+                                                                           'include_inline_artifacts': False})
+        await layer.group_send('updates', {'type': 'broadcast', 'data': {
+            'type': 'share_inline_artifacts', 'share_id': share.id}})
+        result = await comm.receive_json_from(timeout=2)
+        assert result['manifest']['enabled'] is False
+        await sync_to_async(Share.objects.filter(id=share.id).update)(revoked_at=djtz.now())
+        await layer.group_send('updates', {'type': 'broadcast', 'data': {
+            'type': 'share_inline_artifacts', 'share_id': share.id}})
+        assert await comm.receive_nothing(timeout=.1)
+        await comm.disconnect()
+    _run(scenario())

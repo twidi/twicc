@@ -25,6 +25,7 @@ from twicc.inline_artifacts.files import (
     MAX_INLINE_EXPORT_BYTES,
     InlineArtifactUnavailable,
     copy_source_artifact,
+    copy_export_with_source_data,
     open_export_asset,
 )
 from twicc.inline_artifacts.share_selection import (
@@ -343,7 +344,10 @@ async def commit_inline_exports(share_id: str, expected_revision: int, prepared:
         return await sync_to_async(_commit_prepared)(share_id, expected_revision, prepared, options)
     try:
         previous = await sync_to_async(_load_share)(share_id)
-        return await run_under_db_write_lock(commit)
+        committed = await run_under_db_write_lock(commit)
+        if committed:
+            await broadcast_inline_exports(share_id)
+        return committed
     finally:
         # The shielded writer can commit before raising outer cancellation.
         # Durable references decide which new and old trees can retire.
@@ -412,6 +416,12 @@ def lease_inline_asset(share_id: str, artifact_key: str, asset_path: str) -> Inl
                 or artifact_key not in state.get('selected', {}) or share.session.type != SessionType.SESSION):
             raise InlineArtifactUnavailable()
         record = state['selected'][artifact_key]
+        try:
+            current = prepare_share_selection(share)
+        except SelectionNotReady:
+            raise InlineArtifactUnavailable() from None
+        if current.get('selected', {}).get(artifact_key) != record:
+            raise InlineArtifactUnavailable()
         if artifact_key != orjson.dumps([share.session_id, record['artifact_id']]).decode():
             raise InlineArtifactUnavailable()
         entry = state.get('artifacts', {}).get(artifact_key, {})
@@ -560,7 +570,10 @@ async def publish_inline_export_error(
                 return True
         return await sync_to_async(commit)()
     try:
-        return await run_under_db_write_lock(publish)
+        committed = await run_under_db_write_lock(publish)
+        if committed:
+            await broadcast_inline_exports(share_id)
+        return committed
     finally:
         await _settle_inline_exports(share_id, _copy_ids(previous))
 
@@ -625,3 +638,288 @@ async def reconcile_inline_exports() -> None:
             active = {cid for path, cid in _preparing if path == str(inline)}
         await retire_inline_exports(share.id, [entry.name for entry in inline.iterdir()
                                              if entry.name not in active])
+
+
+async def broadcast_inline_exports(share_id: str) -> None:
+    """Send committed owner metadata and sanitized public manifest events."""
+    from twicc.core.services.share_mutation import broadcast_share_updated
+
+    share = await sync_to_async(_load_share)(share_id)
+    if share is not None and share.is_active():
+        await broadcast_share_updated(share)
+
+
+def _metadata_preparation(share, state, generation):
+    previous = share.inline_artifact_exports or {}
+    return PreparedInlineExports(state, (), tuple(_copy_ids(state)), 0, 0, generation,
+                                 previous.get('revision', 0), deepcopy(share.options), False)
+
+
+async def refresh_export_data(share_id: str, artifact_key: str, paths: list[str]) -> None:
+    """Replace complete saved data without reading unpublished source code.
+
+    Failure keeps the ready copy runnable and records an owner-only data_error.
+    Relevant paths are an enqueue hint; copying always reconciles the data tree.
+    A new copy pointer changes the manifest revision, never the code revision.
+    """
+    generation = reserve_inline_exports(share_id)
+    async with share_export_lock(share_id):
+        await _refresh_data_locked(share_id, artifact_key, generation)
+
+
+async def _refresh_data_locked(share_id, artifact_key, generation):
+    if not _generation_current(share_id, generation):
+        return
+    share = await sync_to_async(_load_share)(share_id)
+    if (share is None or not share.is_active() or share.kind != 'session'
+            or (share.options or {}).get('mode', 'live') != 'live'
+            or not include_inline_artifacts(share.options or {})):
+        return
+    previous = deepcopy(share.inline_artifact_exports or {})
+    record = previous.get('selected', {}).get(artifact_key)
+    entry = previous.get('artifacts', {}).get(artifact_key, {})
+    if not record or entry.get('status') != 'ready' or not entry.get('copy_id'):
+        return
+    # The lease pins the complete old tree, including assets not yet opened.
+    try:
+        lease = await sync_to_async(lease_inline_asset)(share_id, artifact_key, record['src'].rsplit('/', 1)[1])
+    except InlineArtifactUnavailable:
+        return
+    lease.file.close()
+    cid = uuid.uuid4().hex
+    root = inline_export_root(share_id)
+    with _guard:
+        _preparing.add((_root_key(share_id), cid))
+    try:
+        retained_ids = _copy_ids(previous) - {lease.copy_id}
+        retained_bytes = await asyncio.to_thread(lambda: sum(_tree_bytes(root / item) for item in retained_ids))
+        worker = asyncio.create_task(asyncio.to_thread(
+            copy_export_with_source_data, root / lease.copy_id, share.session_id, record['artifact_id'],
+            root / cid, MAX_INLINE_EXPORT_BYTES - retained_bytes,
+        ))
+        try:
+            cancelled = False
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    cancelled = True
+            if cancelled:
+                try:
+                    worker.result()
+                except Exception:
+                    pass
+                raise asyncio.CancelledError()
+            size = worker.result()
+        except InlineArtifactUnavailable:
+            state = deepcopy(previous)
+            state['artifacts'][artifact_key]['data_error'] = 'export_failed'
+            state['revision'] = previous.get('revision', 0) + 1
+            prepared = _metadata_preparation(share, state, generation)
+        else:
+            state = deepcopy(previous)
+            state['artifacts'][artifact_key].update(copy_id=cid, byte_size=size)
+            state['artifacts'][artifact_key].pop('data_error', None)
+            state['revision'] = previous.get('revision', 0) + 1
+            prepared = _metadata_preparation(share, state, generation)._replace(
+                new_copy_ids=(cid,), retained_copy_ids=tuple(retained_ids), copied_bytes=size,
+                retained_bytes=retained_bytes,
+            )
+        await commit_inline_exports(share_id, prepared.base_revision, prepared, share.options)
+    finally:
+        lease.release()
+        await _settle_inline_exports(share_id, [cid])
+
+
+class InlineExportCoordinator:
+    """One process-local serial worker with bounded, coalesced source events.
+
+    Overflow collapses into a Share-row sweep, never a transcript scan. Dirty
+    events invalidate current preparations synchronously and queue another pass.
+    The artifact watcher does not query ORM or wait for compute readiness.
+    """
+
+    MAX_PENDING_SESSIONS = 256
+    MAX_PENDING_PATHS = 256
+
+    def __init__(self):
+        self._pending = {}
+        self._shares = {}
+        self._wake = asyncio.Event()
+        self._worker = None
+        self._accepting = True
+        self._sweep = False
+        self._reservations = {}
+        self._signatures = {}
+        self._missed_data = set()
+
+    async def start(self):
+        if self._worker is not None:
+            return
+        self._accepting = True
+        # Frozen initialization recovery and orphan cleanup never refresh data.
+        await reconcile_inline_exports()
+        await self._load_live_shares()
+        self._sweep = True
+        for ids in self._shares.values():
+            for share_id in ids:
+                self._reservations[share_id] = reserve_inline_exports(share_id)
+        self._wake.set()
+        self._worker = asyncio.create_task(self._run(), name='inline-export-coordinator')
+
+    async def stop(self):
+        self._accepting = False
+        self._wake.set()
+        if self._worker is not None:
+            await self._worker
+            self._worker = None
+
+    def publication_changed(self, session_id: str):
+        self._enqueue(session_id, None if session_id in self._missed_data else set())
+
+    def files_changed(self, session_id: str, paths: list[str]):
+        relevant = {path for path in paths if path == 'inline-artifacts' or path.startswith('inline-artifacts/')}
+        if relevant:
+            self._enqueue(session_id, relevant)
+
+    def _enqueue(self, session_id, paths):
+        if not self._accepting:
+            return
+        for share_id in self._shares.get(session_id, ()):
+            self._reservations[share_id] = reserve_inline_exports(share_id)
+        if session_id not in self._pending and len(self._pending) >= self.MAX_PENDING_SESSIONS:
+            self._sweep = True
+        else:
+            previous = self._pending.get(session_id, set())
+            combined = None if paths is None or previous is None else previous | paths
+            self._pending[session_id] = None if combined is None or len(combined) > self.MAX_PENDING_PATHS else combined
+        self._wake.set()
+
+    async def _load_live_shares(self):
+        rows = await sync_to_async(list)(Share.objects.filter(
+            kind='session', session__type=SessionType.SESSION,
+        ).values_list('id', 'session_id', 'options', 'revoked_at', 'expires_at'))
+        shares = {}
+        from django.utils import timezone
+        for share_id, session_id, options, revoked, expires in rows:
+            active = not revoked and (expires is None or expires > timezone.now())
+            signature = self._signature(session_id, options, active)
+            self._signatures[share_id] = signature
+            if active and (options or {}).get('mode', 'live') == 'live' and include_inline_artifacts(options or {}):
+                shares.setdefault(session_id, set()).add(share_id)
+        self._shares = shares
+
+    @staticmethod
+    def _signature(session_id, options, active):
+        options = options or {}
+        return (session_id, active, options.get('mode', 'live'), include_inline_artifacts(options),
+                options.get('max_display_mode', 'normal'), options.get('frozen_at_line'))
+
+    def register_share(self, share_id, session_id, options, *, supported, active):
+        """Register committed effective options without ORM or filesystem work."""
+        previous = self._signatures.get(share_id)
+        signature = self._signature(session_id, options, active and supported)
+        self._signatures[share_id] = signature
+        for ids in self._shares.values():
+            ids.discard(share_id)
+        eligible = supported and active and signature[2] == 'live' and signature[3]
+        if eligible:
+            self._shares.setdefault(session_id, set()).add(share_id)
+        if previous == signature or self._worker is None or not self._accepting:
+            return
+        # Initial registration reconciles source events that predate the row.
+        # Only effective inline option/access changes supersede queued work.
+        invalidate_inline_exports(share_id)
+        if eligible:
+            self._enqueue(session_id, None)
+
+    def request_reconcile(self, session_id):
+        """Reconnect queues whole-data reconciliation only in the live server."""
+        if self._worker is not None:
+            self._enqueue(session_id, None)
+
+    async def _run(self):
+        import logging
+        logger = logging.getLogger(__name__)
+        while self._accepting or self._pending or self._sweep:
+            await self._wake.wait()
+            self._wake.clear()
+            await self._load_live_shares()
+            pending, self._pending = self._pending, {}
+            reservations, self._reservations = self._reservations, {}
+            if self._sweep:
+                self._sweep = False
+                pending.update({sid: None for sid in self._shares})
+            for session_id, paths in pending.items():
+                for share_id in tuple(self._shares.get(session_id, ())):
+                    try:
+                        generation = reservations.get(share_id)
+                        if generation is None:
+                            generation = reserve_inline_exports(share_id)
+                        await self._reconcile(share_id, paths, expected_generation=generation)
+                        self._missed_data.discard(session_id)
+                    except SelectionNotReady:
+                        # An accepted compute/live apply retries missed boot data.
+                        self._missed_data.add(session_id)
+                    except InlineExportFailure:
+                        # Source/access invalidation supersedes this operation.
+                        pass
+                    except Exception:
+                        logger.exception('Inline export reconciliation failed for share %s', share_id)
+
+    async def reconcile(self, share_id: str):
+        """Reconcile current live publications and ready data after reconnect."""
+        await self._reconcile(share_id, None)
+
+    async def _reconcile(self, share_id, paths, *, expected_generation=None):
+        generation = reserve_inline_exports(share_id) if expected_generation is None else expected_generation
+        async with share_export_lock(share_id):
+            share = await sync_to_async(_load_share)(share_id)
+            if (share is None or not share.is_active() or share.kind != 'session'
+                    or not share.session or share.session.type != SessionType.SESSION
+                    or (share.options or {}).get('mode', 'live') != 'live'
+                    or not include_inline_artifacts(share.options or {})):
+                return
+            if not _generation_current(share_id, generation):
+                return
+            previous = deepcopy(share.inline_artifact_exports or {})
+            selection = await sync_to_async(prepare_share_selection)(share)
+            if selection != previous:
+                # Publish placement as pending before the copy. Existing code
+                # revisions remain monotonic across new finalized publications.
+                for key, entry in selection.get('artifacts', {}).items():
+                    if entry.get('status') == 'pending':
+                        entry['code_revision'] = previous.get('artifacts', {}).get(key, {}).get('code_revision')
+                prepared = _metadata_preparation(share, selection, generation)
+                if not await commit_inline_exports(share_id, prepared.base_revision, prepared, share.options):
+                    return
+            fresh = await sync_to_async(_load_share)(share_id)
+            for key, entry in fresh.inline_artifact_exports.get('artifacts', {}).items():
+                if not _generation_current(share_id, generation):
+                    return
+                if entry.get('status') in {'pending', 'error'}:
+                    artifact_id = fresh.inline_artifact_exports.get('selected', {}).get(key, {}).get('artifact_id')
+                    relevant = paths is None or not paths or any(
+                        path == 'inline-artifacts' or path == f'inline-artifacts/{artifact_id}'
+                        or path.startswith(f'inline-artifacts/{artifact_id}/') for path in paths)
+                    if relevant:
+                        await _retry_locked(share_id, key, initial=entry['status'] == 'pending',
+                                            expected_generation=generation)
+                elif entry.get('status') == 'ready':
+                    artifact_id = fresh.inline_artifact_exports.get('selected', {}).get(key, {}).get('artifact_id')
+                    relevant = paths is None or any(
+                        path in ('inline-artifacts', f'inline-artifacts/{artifact_id}',
+                                 f'inline-artifacts/{artifact_id}/data')
+                        or path.startswith(f'inline-artifacts/{artifact_id}/data/') for path in paths)
+                    if relevant:
+                        await _refresh_data_locked(share_id, key, generation)
+
+
+_coordinator = None
+
+
+def get_inline_export_coordinator() -> InlineExportCoordinator:
+    global _coordinator
+    if _coordinator is None:
+        _coordinator = InlineExportCoordinator()
+    return _coordinator

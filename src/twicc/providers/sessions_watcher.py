@@ -829,6 +829,8 @@ class BaseSessionsWatcher:
             result = await run_compute_sync(_sync_live_session_items, compute, session.id, path, LiveSyncLimits(limit))
             log_slow('slice', result.elapsed_ms, lines=result.lines_processed,
                      bytes=result.bytes_consumed, backlog=result.has_more)
+        from twicc.inline_artifacts.share_exports import get_inline_export_coordinator
+        get_inline_export_coordinator().publication_changed(session.id)
         updates = result.updates
         if bounded and result.has_more:
             if result.elapsed_ms > 100:

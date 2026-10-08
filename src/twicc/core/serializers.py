@@ -432,6 +432,12 @@ def serialize_share(share):
     }
     if share.kind == ShareKind.SESSION.value:
         data["options"].setdefault("include_inline_artifacts", True)
+        state = share.inline_artifact_exports or {}
+        data["inline_artifact_data_errors"] = [
+            {"artifact_id": record["artifact_id"], "error": "export_failed"}
+            for key, record in state.get("selected", {}).items()
+            if state.get("artifacts", {}).get(key, {}).get("data_error")
+        ]
         data["session_id"] = share.session_id
         sess = share.session if share.session_id else None
         data["project_id"] = sess.project_id if sess else None
