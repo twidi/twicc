@@ -1,0 +1,1233 @@
+[
+  {
+    "name": "single line defaults",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 88,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "multiline attributes",
+    "text": "<twicc:inline-artifact\n  id=\"preferences\"\n  src=\"inline-artifacts/preferences/index.html\"\n/>",
+    "expected": [
+      {
+        "start": 0,
+        "end": 92,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "reordered unknown attributes",
+    "text": "<twicc:inline-artifact extra=\"ignored\" height=\"420\" title=\"Preferences\" src=\"inline-artifacts/preferences/index.html\" id=\"preferences\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 137,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "Preferences",
+          "height": 420
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "emoji source offsets",
+    "text": "😀 title\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 9,
+        "end": 97,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "CRLF source offsets",
+    "text": "😀 title\r\n\r\n<twicc:inline-artifact\r\n id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 11,
+        "end": 101,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "bare CR source offsets",
+    "text": "😀 title\r\r<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 9,
+        "end": 97,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "three space indentation",
+    "text": "   <twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />  \n",
+    "expected": [
+      {
+        "start": 3,
+        "end": 91,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "htm suffix",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/report.htm\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 88,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/report.htm",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "literal percent path",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/report%20name.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 96,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/report%20name.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "encoded traversal is literal",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/%2e%2e.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 89,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/%2e%2e.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "space filename",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/my report.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 92,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/my report.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "plain text title",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" title=\"<b>Bob’s &quot;preferences&quot; & data</b>\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 140,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "<b>Bob’s &quot;preferences&quot; & data</b>",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "apostrophe title",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" title=\"Bob's preferences\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 114,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "Bob's preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "title length boundary",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" title=\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 297,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "empty title",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" title=\"\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 97,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "height 159",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" height=\"159\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 101,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 160
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "height 160",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" height=\"160\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 101,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 160
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "height 900",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" height=\"900\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 101,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 900
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "height 901",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" height=\"901\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 101,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 900
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "height 0",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" height=\"0\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 99,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 160
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "height -5",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" height=\"-5\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 100,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 160
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "height +420",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" height=\"+420\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 102,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 420
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "height 000360",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" height=\"000360\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 104,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "height 9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" height=\"9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 198,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 900
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "invalid height 360.5",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" height=\"360.5\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 103,
+        "descriptor": null,
+        "error": "invalid_height"
+      }
+    ]
+  },
+  {
+    "name": "invalid height 3e2",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" height=\"3e2\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 101,
+        "descriptor": null,
+        "error": "invalid_height"
+      }
+    ]
+  },
+  {
+    "name": "invalid height NaN",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" height=\"NaN\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 101,
+        "descriptor": null,
+        "error": "invalid_height"
+      }
+    ]
+  },
+  {
+    "name": "invalid height ",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" height=\"\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 98,
+        "descriptor": null,
+        "error": "invalid_height"
+      }
+    ]
+  },
+  {
+    "name": "invalid height  360",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" height=\" 360\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 102,
+        "descriptor": null,
+        "error": "invalid_height"
+      }
+    ]
+  },
+  {
+    "name": "invalid height 360px",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" height=\"360px\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 103,
+        "descriptor": null,
+        "error": "invalid_height"
+      }
+    ]
+  },
+  {
+    "name": "invalid height ٣٦٠",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" height=\"٣٦٠\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 101,
+        "descriptor": null,
+        "error": "invalid_height"
+      }
+    ]
+  },
+  {
+    "name": "duplicate id",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" id=\"other\" id=\"again\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 110,
+        "descriptor": null,
+        "error": "invalid_attributes"
+      }
+    ]
+  },
+  {
+    "name": "duplicate src",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" src=\"other\" src=\"again\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 112,
+        "descriptor": null,
+        "error": "invalid_attributes"
+      }
+    ]
+  },
+  {
+    "name": "duplicate extra",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" extra=\"other\" extra=\"again\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 116,
+        "descriptor": null,
+        "error": "invalid_attributes"
+      }
+    ]
+  },
+  {
+    "name": "single quoted attributes",
+    "text": "<twicc:inline-artifact id='preferences' src='inline-artifacts/preferences/index.html' />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 88,
+        "descriptor": null,
+        "error": "invalid_attributes"
+      }
+    ]
+  },
+  {
+    "name": "unquoted attributes",
+    "text": "<twicc:inline-artifact id=preferences src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 86,
+        "descriptor": null,
+        "error": "invalid_attributes"
+      }
+    ]
+  },
+  {
+    "name": "missing id",
+    "text": "<twicc:inline-artifact src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 71,
+        "descriptor": null,
+        "error": "missing_id"
+      }
+    ]
+  },
+  {
+    "name": "missing src",
+    "text": "<twicc:inline-artifact id=\"preferences\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 42,
+        "descriptor": null,
+        "error": "missing_src"
+      }
+    ]
+  },
+  {
+    "name": "invalid id ",
+    "text": "<twicc:inline-artifact id=\"\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 77,
+        "descriptor": null,
+        "error": "invalid_id"
+      }
+    ]
+  },
+  {
+    "name": "invalid id Preferences",
+    "text": "<twicc:inline-artifact id=\"Preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 88,
+        "descriptor": null,
+        "error": "invalid_id"
+      }
+    ]
+  },
+  {
+    "name": "invalid id 1preferences",
+    "text": "<twicc:inline-artifact id=\"1preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 89,
+        "descriptor": null,
+        "error": "invalid_id"
+      }
+    ]
+  },
+  {
+    "name": "invalid id a.b",
+    "text": "<twicc:inline-artifact id=\"a.b\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 80,
+        "descriptor": null,
+        "error": "invalid_id"
+      }
+    ]
+  },
+  {
+    "name": "invalid id a/b",
+    "text": "<twicc:inline-artifact id=\"a/b\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 80,
+        "descriptor": null,
+        "error": "invalid_id"
+      }
+    ]
+  },
+  {
+    "name": "invalid id aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "text": "<twicc:inline-artifact id=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 142,
+        "descriptor": null,
+        "error": "invalid_id"
+      }
+    ]
+  },
+  {
+    "name": "invalid id é",
+    "text": "<twicc:inline-artifact id=\"é\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 78,
+        "descriptor": null,
+        "error": "invalid_id"
+      }
+    ]
+  },
+  {
+    "name": "id length boundary",
+    "text": "<twicc:inline-artifact id=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" src=\"inline-artifacts/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 194,
+        "descriptor": {
+          "artifact_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "src": "inline-artifacts/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/index.html",
+          "title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "invalid src ''",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 49,
+        "descriptor": null,
+        "error": "invalid_src"
+      }
+    ]
+  },
+  {
+    "name": "invalid src '/inline-artifacts/preferences/index.html'",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"/inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 89,
+        "descriptor": null,
+        "error": "invalid_src"
+      }
+    ]
+  },
+  {
+    "name": "invalid src 'https://example.com/index.html'",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"https://example.com/index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 79,
+        "descriptor": null,
+        "error": "invalid_src"
+      }
+    ]
+  },
+  {
+    "name": "invalid src 'inline-artifacts/preferences/index.html?x=1'",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html?x=1\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 92,
+        "descriptor": null,
+        "error": "invalid_src"
+      }
+    ]
+  },
+  {
+    "name": "invalid src 'inline-artifacts/preferences/index.html#x'",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html#x\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 90,
+        "descriptor": null,
+        "error": "invalid_src"
+      }
+    ]
+  },
+  {
+    "name": "invalid src 'inline-artifacts\\\\preferences\\\\index.html'",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts\\preferences\\index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 88,
+        "descriptor": null,
+        "error": "invalid_src"
+      }
+    ]
+  },
+  {
+    "name": "invalid src 'inline-artifacts/preferences/../index.html'",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/../index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 91,
+        "descriptor": null,
+        "error": "invalid_src"
+      }
+    ]
+  },
+  {
+    "name": "invalid src 'inline-artifacts/preferences/./index.html'",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/./index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 90,
+        "descriptor": null,
+        "error": "invalid_src"
+      }
+    ]
+  },
+  {
+    "name": "invalid src 'inline-artifacts/preferences/sub/index.html'",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/sub/index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 92,
+        "descriptor": null,
+        "error": "invalid_src"
+      }
+    ]
+  },
+  {
+    "name": "invalid src 'inline-artifacts/other/index.html'",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/other/index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 82,
+        "descriptor": null,
+        "error": "invalid_src"
+      }
+    ]
+  },
+  {
+    "name": "invalid src 'inline-artifacts/preferences/index.svg'",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.svg\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 87,
+        "descriptor": null,
+        "error": "invalid_src"
+      }
+    ]
+  },
+  {
+    "name": "invalid src 'inline-artifacts/preferences/.html'",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 83,
+        "descriptor": null,
+        "error": "invalid_src"
+      }
+    ]
+  },
+  {
+    "name": "invalid src 'inline-artifacts/preferences/index.HTML'",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.HTML\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 88,
+        "descriptor": null,
+        "error": "invalid_src"
+      }
+    ]
+  },
+  {
+    "name": "invalid src 'inline-artifacts/preferences/index\\x00.html'",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index\u0000.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 89,
+        "descriptor": null,
+        "error": "invalid_src"
+      }
+    ]
+  },
+  {
+    "name": "title over limit",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" title=\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 298,
+        "descriptor": null,
+        "error": "invalid_title"
+      }
+    ]
+  },
+  {
+    "name": "ordinary text",
+    "text": "Hello",
+    "expected": []
+  },
+  {
+    "name": "inline text",
+    "text": "Before <twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" /> after",
+    "expected": []
+  },
+  {
+    "name": "prose preceding without blank",
+    "text": "Before\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "prose following without blank",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />\nafter",
+    "expected": []
+  },
+  {
+    "name": "inline code",
+    "text": "`<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />`",
+    "expected": []
+  },
+  {
+    "name": "multiline inline code",
+    "text": "`text\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />\ntext`",
+    "expected": []
+  },
+  {
+    "name": "fence",
+    "text": "```html\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />\n```",
+    "expected": []
+  },
+  {
+    "name": "tilde fence",
+    "text": "~~~\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />\n~~~",
+    "expected": []
+  },
+  {
+    "name": "unclosed fence",
+    "text": "```\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "indented code",
+    "text": "    <twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "tab code",
+    "text": "\t<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "blockquote",
+    "text": "> <twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "lazy quote continuation",
+    "text": "> text\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "list item",
+    "text": "- <twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "nested list",
+    "text": "- parent\n  - <twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "lazy list continuation",
+    "text": "- text\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "ordered list",
+    "text": "1. <twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "container",
+    "text": "::: note\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />\n:::",
+    "expected": []
+  },
+  {
+    "name": "unclosed container",
+    "text": "::: note\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "long container",
+    "text": ":::: note\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />\n::::",
+    "expected": []
+  },
+  {
+    "name": "comment",
+    "text": "<!-- <twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" /> -->",
+    "expected": []
+  },
+  {
+    "name": "multiline comment",
+    "text": "<!--\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />\n\n-->",
+    "expected": []
+  },
+  {
+    "name": "unclosed comment",
+    "text": "<!--\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "inline spanning comment",
+    "text": "text <!--\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />\n\n--> tail",
+    "expected": []
+  },
+  {
+    "name": "incomplete tag",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" ",
+    "expected": []
+  },
+  {
+    "name": "non self closing",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\">",
+    "expected": []
+  },
+  {
+    "name": "tag prefix",
+    "text": "<twicc:inline-artifacts id=\"preferences\" src=\"inline-artifactss/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "two tags one paragraph",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "heading",
+    "text": "# <twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "escaped tag",
+    "text": "\\<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "trailing content",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" /> trailing",
+    "expected": []
+  },
+  {
+    "name": "after fence",
+    "text": "```\nexample\n```\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 17,
+        "end": 105,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "after comment",
+    "text": "<!-- example -->\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 18,
+        "end": 106,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "after container",
+    "text": "::: note\nexample\n:::\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 22,
+        "end": 110,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "comment text in title",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" title=\"<!-- literal title -->\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 119,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "<!-- literal title -->",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "long zero padded height",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" height=\"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000360\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 5101,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "comment opener inside code",
+    "text": "`<!--`\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 8,
+        "end": 96,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "comment opener inside fence",
+    "text": "```\n<!--\n```\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 14,
+        "end": 102,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "comment opener inside indented code",
+    "text": "    <!--\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 10,
+        "end": 98,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "heading before without blank",
+    "text": "# heading\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "fence after without blank",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />\n```\ncode\n```",
+    "expected": []
+  },
+  {
+    "name": "comment before without blank",
+    "text": "<!-- hidden -->\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "container before without blank",
+    "text": "::: note\ntext\n:::\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "escaped backtick before comment",
+    "text": "\\`<!--\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  },
+  {
+    "name": "newline in id",
+    "text": "<twicc:inline-artifact id=\"preferences\n\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 89,
+        "descriptor": null,
+        "error": "invalid_id"
+      }
+    ]
+  },
+  {
+    "name": "newline in height",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" height=\"360\n\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 102,
+        "descriptor": null,
+        "error": "invalid_height"
+      }
+    ]
+  },
+  {
+    "name": "newline in filename",
+    "text": "<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\n\" />",
+    "expected": [
+      {
+        "start": 0,
+        "end": 89,
+        "descriptor": null,
+        "error": "invalid_src"
+      }
+    ]
+  },
+  {
+    "name": "escaped comment opener",
+    "text": "\\<!--\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 7,
+        "end": 95,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "escaped backtick pair before comment",
+    "text": "\\`<!-- `\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
+  }
+]

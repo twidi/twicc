@@ -226,6 +226,11 @@ export async function renderMarkdown(source, env) {
     return DOMPurify.sanitize(rawHtml, DOMPURIFY_CONFIG)
 }
 
+/** Return syntax tokens without rendering or enabling raw HTML. */
+export function parseMarkdownTokens(source) {
+    return md.parse(source, {})
+}
+
 /**
  * Split a markdown document into its top-level blocks, using markdown-it's own
  * tokenization. Each root block token carries a `.map = [startLine, endLine]`
