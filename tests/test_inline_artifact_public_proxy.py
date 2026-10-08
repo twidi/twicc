@@ -5,7 +5,10 @@ import pytest
 from twicc.artifacts import proxy
 from twicc.artifacts.proxy import ProxyResult, ResolvedTarget
 from twicc.core.models import ArtifactBookmark
-from tests.test_inline_artifact_public_routes import public_case, request
+from tests import test_inline_artifact_public_routes
+from tests.test_inline_artifact_public_routes import request
+
+public_case = test_inline_artifact_public_routes.public_case
 
 
 @pytest.mark.parametrize('bookmarked', [False, True])

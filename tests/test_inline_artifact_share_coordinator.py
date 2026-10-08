@@ -7,11 +7,14 @@ from threading import Event
 import pytest
 from asgiref.sync import sync_to_async
 
-from tests.test_inline_artifact_share_exports import (KEY, case, create, leased_bytes, publication, set_publications,
+from tests import test_inline_artifact_share_exports
+from tests.test_inline_artifact_share_exports import (KEY, create, leased_bytes, publication, set_publications,
                                                      write_source)
 from twicc.core.models import Share
 from twicc.inline_artifacts import share_exports as exports
 from twicc.inline_artifacts.share_selection import public_inline_manifest
+
+case = test_inline_artifact_share_exports.case
 
 
 def read_asset(share, name):

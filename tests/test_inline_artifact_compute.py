@@ -1,12 +1,15 @@
 """Canonical publication catalogs remain identical across compute paths."""
 
+import base64
 import queue
+import subprocess
+from pathlib import Path
 
 import orjson
 import pytest
 
 from twicc.core.enums import Provider
-from twicc.core.models import Project, Session, SessionType, Share
+from twicc.core.models import Project, Session, SessionItem, SessionType, Share
 from twicc.core.serializers import serialize_session, serialize_share_public_meta
 from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
 from twicc.providers.codex.compute import CodexSessionCompute
@@ -183,6 +186,80 @@ def test_screenshot_normalization_offsets_use_persisted_text(case):
                            'tag_offset': 31}
     rebuilt = capture(compute, session)
     assert rebuilt['session_fields']['inline_artifacts'] == session.inline_artifacts
+
+
+@pytest.mark.parametrize('slice_bytes', [256, 4096])
+def test_persisted_screenshot_publication_matches_actual_frontend_source(case, monkeypatch, tmp_path, slice_bytes):
+    """Cross the provider rewrite, DB, catalog, and actual JS renderer boundary."""
+    from twicc import paths
+
+    provider, session, compute, path = case
+    data_dir = tmp_path / 'isolated-data'
+    monkeypatch.setattr(paths, 'get_data_dir', lambda: data_dir)
+    image = b'\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR'
+    encoded = base64.b64encode(image).decode()
+    timestamp = '2026-10-08T10:00:00Z'
+    if provider == Provider.CLAUDE_CODE:
+        tool_result = {'type': 'user', 'timestamp': timestamp, 'message': {'role': 'user', 'content': [
+            {'type': 'tool_result', 'tool_use_id': 'capture', 'content': [
+                {'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png', 'data': encoded}}]}]}}
+    else:
+        tool_result = {'type': 'response_item', 'timestamp': timestamp, 'payload': {
+            'type': 'function_call_output', 'call_id': 'capture', 'output': [
+                {'type': 'input_image', 'image_url': 'data:image/png;base64,' + encoded}]}}
+    source = ' \r\n😀\r\n\r\n<twicc:insert-screenshot title="Capture" />\r\n\r\n' + TAG + '\r\n '
+    frozen = 'Existing user-owned addendum. No inline instructions.'
+    session.system_prompt_addendum = frozen
+    session.save(update_fields=['system_prompt_addendum'])
+    ingest(compute, session, path, [tool_result, assistant(provider, source)], slice_bytes=slice_bytes)
+    persisted = orjson.loads(SessionItem.objects.get(session=session, line_num=2).content)
+    index = 1 if provider == Provider.CLAUDE_CODE else 0
+    content = persisted['message']['content'] if provider == Provider.CLAUDE_CODE else persisted['payload']['item']['content']
+    normalized = content[index]['text']
+    filename = '2026-10-08-10-00-00-capture-off0.png'
+    expected_text = ' \r\n😀\r\n\r\n![Capture](/artifacts/s/' + filename + ')\r\n\r\n' + TAG + '\r\n '
+    assert normalized == expected_text
+    assert (data_dir / 'artifacts' / session.id / filename).read_bytes() == image
+    publication = session.inline_artifacts['publications'][0]
+    assert publication == {**RECORD, 'line_num': 2, 'text_block_index': index,
+                           'tag_offset': expected_text.index(TAG)}
+
+    # Consume the DB value, not a hand-written frontend normalization fixture.
+    javascript = '''
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import { assistantTextBlocks } from './frontend/src/providers/codex/canonical.js';
+import { createInlineTextContext, displayInlineText } from './frontend/src/inline-artifacts/rendering.js';
+import { splitMarkdownBlocks } from './frontend/src/utils/markdown.js';
+import { publicationKey } from './frontend/src/inline-artifacts/publications.js';
+const { record, provider, publication } = JSON.parse(fs.readFileSync(0, 'utf8'));
+const textBlocks = provider === 'codex' ? assistantTextBlocks(record) : record.message.content.flatMap((b, i) =>
+    b.type === 'text' ? [{textBlockIndex: i, text: b.text}] : []);
+const context = createInlineTextContext({sessionId: 's', lineNum: 2, finalized: true, publicationAllowed: true}, textBlocks);
+const display = displayInlineText(textBlocks.map(b => b.text).join(''), context);
+const blocks = splitMarkdownBlocks(display.source, {inlineArtifacts: true, ...display.inlineContext}).blocks;
+const widgets = blocks.filter(b => b.type === 'inline-artifact');
+assert.equal(widgets.length, 1);
+const span = widgets[0].span;
+assert.equal(span.textBlockIndex, publication.text_block_index);
+assert.equal(span.tag_offset, publication.tag_offset);
+assert.equal(span.descriptor.artifact_id, publication.artifact_id);
+const actual = {line_num: 2, text_block_index: span.textBlockIndex, tag_offset: span.tag_offset};
+assert.equal(publicationKey('s', actual), publicationKey('s', publication));
+'''
+    result = subprocess.run(
+        ['node', '--input-type=module', '--eval', javascript],
+        cwd=Path(__file__).resolve().parents[1],
+        input=orjson.dumps({'record': persisted, 'provider': provider.value, 'publication': publication}),
+        capture_output=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    assert result.stdout == b''
+    compute.apply_session_complete(capture(compute, session))
+    session.refresh_from_db()
+    assert session.inline_artifacts['publications'] == [publication]
+    assert session.system_prompt_addendum == frozen
+    assert orjson.loads(SessionItem.objects.get(session=session, line_num=2).content) == persisted
 
 
 def test_claude_string_text_uses_block_zero(db, tmp_path):

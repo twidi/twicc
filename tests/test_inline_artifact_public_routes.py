@@ -11,7 +11,6 @@ from twicc import paths
 from twicc.auth.hashers import hash_password
 from twicc.core.models import Project, Session, SessionItem, SessionType, Share
 from twicc.core.services import share_mutation
-from twicc.core.services.share_tokens import mint_token
 from twicc.inline_artifacts import share_exports
 from twicc.providers.helpers import get_provider_helpers
 
@@ -29,8 +28,10 @@ def public_case(transactional_db, tmp_path, monkeypatch, settings):
     root = Session.objects.create(id='public-root', project=Project.objects.create(id='public-project'),
         provider='claude_code', file_path='root.jsonl', last_line=10,
         compute_version=get_provider_helpers('claude_code').current_compute_version,
-        inline_artifacts={'schema': 1, 'publications': [dict(artifact_id='widget', line_num=10,
-            text_block_index=0, tag_offset=2, src='inline-artifacts/widget/index.html', title='Widget', height=360)]})
+        inline_artifacts={'schema': 1, 'publications': [{
+            'artifact_id': 'widget', 'line_num': 10, 'text_block_index': 0, 'tag_offset': 2,
+            'src': 'inline-artifacts/widget/index.html', 'title': 'Widget', 'height': 360,
+        }]})
     SessionItem.objects.create(session=root, line_num=10, content='{}', display_level=1)
     source = tmp_path / 'artifacts' / root.id / 'inline-artifacts' / 'widget'
     (source / 'data').mkdir(parents=True)
@@ -312,8 +313,8 @@ def test_snapshot_error_retry_uses_captured_tag_after_new_owner_tag(public_case)
     _, root, share, source = public_case
     share.inline_artifact_exports['artifacts'][KEY].update(status='error', error='artifact_unavailable', copy_id=None)
     share.save(update_fields=['inline_artifact_exports'])
-    root.inline_artifacts['publications'].append(dict(artifact_id='widget', line_num=11, text_block_index=0,
-        tag_offset=0, src='inline-artifacts/widget/new.html', title='New tag', height=600))
+    root.inline_artifacts['publications'].append({'artifact_id': 'widget', 'line_num': 11, 'text_block_index': 0,
+        'tag_offset': 0, 'src': 'inline-artifacts/widget/new.html', 'title': 'New tag', 'height': 600})
     root.last_line = 11; root.save(update_fields=['inline_artifacts', 'last_line'])
     SessionItem.objects.create(session=root, line_num=11, content='{}', display_level=1)
     (source / 'new.html').write_text('New private tag')

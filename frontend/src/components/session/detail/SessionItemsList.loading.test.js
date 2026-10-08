@@ -16,11 +16,11 @@ function mount(t, { height = 140 } = {}) {
     const suspended = Vue.ref(false), calls = [], requests = [], corrections = []
     const viewport = { height, top: 400 - height, scrollHeight: 400, revision: 0 }
     const scroller = { suspended, getScrollState: () => ({ clientHeight: viewport.height, scrollTop: viewport.top, scrollHeight: viewport.scrollHeight }), isAtBottom: () => true, getScrollRevision: () => viewport.revision }
-    const scrollerRef = Vue.ref(scroller)
+    const scrollerRef = Vue.ref(scroller), inlineContext = Vue.shallowRef(null)
     const store = { loadSessionItemsRanges(...args) { calls.push(args); const request = deferred(); requests.push(request); return request.promise } }
     let api
     const dependencies = { ...Vue, ...helpers, hasContent, props, visualItems, sessionActive,
-        scrollerRef, store, LOAD_BUFFER: 50, LOAD_DEBOUNCE_MS: 150,
+        scrollerRef, inlineContext, store, LOAD_BUFFER: 50, LOAD_DEBOUNCE_MS: 150,
         scrollToBottomUntilStable: () => corrections.push(true) }
     const app = renderer.createApp({ setup() {
         api = new Function(...Object.keys(dependencies), `${block}; return { onScrollerUpdate, executePendingLoad, onGapScroll }`)(...Object.values(dependencies))
@@ -28,10 +28,21 @@ function mount(t, { height = 140 } = {}) {
     } })
     app.mount(root)
     t.after(() => app.unmount())
-    return { viewport, props, visualItems, sessionActive, suspended, calls, requests, corrections, api, app }
+    return { viewport, props, visualItems, sessionActive, suspended, calls, requests, corrections, inlineContext, api, app }
 }
 const range = { startIndex: 0, endIndex: 2, visibleStartIndex: 0, visibleEndIndex: 1 }
 async function debounce() { await new Promise(resolve => setTimeout(resolve, 180)); await flush() }
+
+test('gap scroll schedules the current inline geometry owner', async t => {
+    const v = mount(t)
+    let scheduled = 0
+    v.inlineContext.value = { runtime: { geometry: { schedule() { scheduled++ } } } }
+    v.api.onGapScroll()
+    assert.equal(scheduled, 1)
+    v.inlineContext.value = null
+    v.api.onGapScroll()
+    assert.equal(scheduled, 1)
+})
 
 test('actual gap watcher loads equal-index replacement and content removal without geometry events', async t => {
     const v = mount(t)

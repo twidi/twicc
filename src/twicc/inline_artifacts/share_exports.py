@@ -12,9 +12,10 @@ import shutil
 import threading
 import uuid
 import weakref
+from collections.abc import Callable
 from copy import copy, deepcopy
 from pathlib import Path
-from typing import BinaryIO, Callable, NamedTuple
+from typing import BinaryIO, NamedTuple
 
 import orjson
 from asgiref.sync import sync_to_async
@@ -220,7 +221,7 @@ async def prepare_inline_exports(
                     raise InlineExportFailure('export_too_large')
                 prior_revision = previous.get('artifacts', {}).get(key, {}).get('code_revision')
                 revision = prior_revision + 1 if type(prior_revision) is int else 1
-                state['artifacts'][key] = dict(status='ready', copy_id=cid, code_revision=revision, byte_size=size)
+                state['artifacts'][key] = {'status': 'ready', 'copy_id': cid, 'code_revision': revision, 'byte_size': size}
         if new_ids:
             state['revision'] = max(state.get('revision', 0), previous.get('revision', 0) + 1)
         return PreparedInlineExports(state, tuple(new_ids), tuple(sorted(retained)), copied, retained_bytes,
@@ -566,7 +567,9 @@ async def publish_inline_export_error(
                     return False
                 state = deepcopy(selection)
                 prior_revision = previous.get('artifacts', {}).get(artifact_key, {}).get('code_revision')
-                state['artifacts'][artifact_key] = dict(status='error', code_revision=prior_revision, copy_id=None, error=code)
+                state['artifacts'][artifact_key] = {
+                    'status': 'error', 'code_revision': prior_revision, 'copy_id': None, 'error': code,
+                }
                 state['revision'] = max(state.get('revision', 0), previous.get('revision', 0)) + 1
                 share.inline_artifact_exports = state
                 share.save(update_fields=['inline_artifact_exports', 'updated_at'])

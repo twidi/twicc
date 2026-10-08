@@ -18,8 +18,10 @@ KEY = '["main","widget"]'
 
 
 def publication(line=10, artifact_id='widget', filename='index.html'):
-    return dict(artifact_id=artifact_id, line_num=line, text_block_index=0, tag_offset=0,
-                src=f'inline-artifacts/{artifact_id}/{filename}', title=artifact_id, height=360)
+    return {
+        'artifact_id': artifact_id, 'line_num': line, 'text_block_index': 0, 'tag_offset': 0,
+        'src': f'inline-artifacts/{artifact_id}/{filename}', 'title': artifact_id, 'height': 360,
+    }
 
 
 @pytest.fixture
@@ -440,7 +442,7 @@ def test_reenable_failure_preserves_disabled_capture(case):
 def test_live_retry_uses_current_publication_instead_of_stale_failed_tag(case):
     share = create(case, mode='live')
     state = deepcopy(share.inline_artifact_exports)
-    state['artifacts'][KEY] = dict(status='error', copy_id=None, code_revision=None, error='export_failed')
+    state['artifacts'][KEY] = {'status': 'error', 'copy_id': None, 'code_revision': None, 'error': 'export_failed'}
     share.inline_artifact_exports = state
     share.save(update_fields=['inline_artifact_exports'])
     set_publications(case, publication(), publication(15, filename='current.html'))
@@ -561,7 +563,7 @@ def test_revoke_restore_before_preparation_does_not_refresh_operation_generation
         share = create(case, mode='live' if operation == 'live_retry' else 'snapshot')
         if 'retry' in operation:
             state = deepcopy(share.inline_artifact_exports)
-            state['artifacts'][KEY] = dict(status='error', copy_id=None, code_revision=None, error='export_failed')
+            state['artifacts'][KEY] = {'status': 'error', 'copy_id': None, 'code_revision': None, 'error': 'export_failed'}
             share.inline_artifact_exports = state
             share.save(update_fields=['inline_artifact_exports'])
     write_source(case, b'stale-operation')
@@ -600,7 +602,7 @@ def test_revoke_restore_during_preparation_loading_keeps_original_generation(cas
     share = create(case, mode='live' if operation == 'live_retry' else 'snapshot')
     if 'retry' in operation:
         state = deepcopy(share.inline_artifact_exports)
-        state['artifacts'][KEY] = dict(status='error', copy_id=None, code_revision=None, error='export_failed')
+        state['artifacts'][KEY] = {'status': 'error', 'copy_id': None, 'code_revision': None, 'error': 'export_failed'}
         share.inline_artifact_exports = state
         share.save(update_fields=['inline_artifact_exports'])
     before = deepcopy(share.inline_artifact_exports)
@@ -681,7 +683,7 @@ def test_operation_waiting_for_share_lock_cannot_reserve_after_revoke_restore(ca
         share = create(case, mode='live' if operation == 'live_retry' else 'snapshot')
         if 'retry' in operation:
             state = deepcopy(share.inline_artifact_exports)
-            state['artifacts'][KEY] = dict(status='error', copy_id=None, code_revision=None, error='export_failed')
+            state['artifacts'][KEY] = {'status': 'error', 'copy_id': None, 'code_revision': None, 'error': 'export_failed'}
             share.inline_artifact_exports = state
             share.save(update_fields=['inline_artifact_exports'])
     before = deepcopy(share.inline_artifact_exports)

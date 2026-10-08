@@ -186,6 +186,37 @@ def test_existing_thread_gets_work_dirs_in_first_resume(monkeypatch) -> None:
     assert agent.context_reset is True
 
 
+def test_frozen_addendum_reaches_start_verbatim_and_is_not_replayed_on_resume(monkeypatch) -> None:
+    from twicc.pending_session_attributes import pop_pending_session_attributes, set_pending_session_attributes
+
+    codex, _ = _install_factory_fakes(monkeypatch, [])
+    frozen = 'Original user-owned developer instructions.\r\nNo inline artifact retrofit.\n'
+    set_pending_session_attributes('frozen-draft', system_prompt_addendum=frozen)
+    set_pending_session_attributes('canonical-id', system_prompt_addendum='Do not replay this new value.')
+
+    async def scenario():
+        manager = CodexAgentManager()
+        await manager._create_agent(
+            'frozen-draft', 'project-id', '/project', resume=False,
+            settings=AgentSettings(permission_mode='yolo'),
+        )
+        await manager._create_agent(
+            'canonical-id', 'project-id', '/project', resume=True,
+            settings=AgentSettings(permission_mode='yolo'),
+        )
+
+    try:
+        asyncio.run(scenario())
+        assert codex.start_calls[0]['developer_instructions'] == frozen
+        assert len(codex.resume_calls) == 1
+        resume_config = codex.resume_calls[0][1]
+        assert 'developer_instructions' not in resume_config
+        assert 'developer_instructions' not in resume_config['config']
+    finally:
+        pop_pending_session_attributes('frozen-draft')
+        pop_pending_session_attributes('canonical-id')
+
+
 def test_resumed_standard_thread_forwards_default_service_tier(monkeypatch) -> None:
     codex, _ = _install_factory_fakes(monkeypatch, [])
 
