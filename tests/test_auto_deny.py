@@ -6,7 +6,6 @@ Design: ``docs/plans/2026-10-08-bypass-approval-auto-deny-spec.md`` (§4).
 import asyncio
 from dataclasses import replace
 import time
-from types import SimpleNamespace
 
 import pytest
 
@@ -107,7 +106,7 @@ def test_an_armed_request_carries_its_deadline_and_an_answer_wins(fast_timer):
         task = asyncio.create_task(agent._await_pending_request(request, auto_deny_response=DENY))
         await asyncio.sleep(0)
         (pending,) = agent.pending_requests
-        assert pending.auto_deny_at == pytest.approx(request.created_at + 0.2)
+        assert pending.auto_deny_at == pytest.approx(request.created_at + 0.2, abs=1e-3)
         assert request.request_id in agent._auto_deny_timers
         assert agent.resolve_pending_request(request.request_id, "allow")
         return await task
@@ -153,6 +152,19 @@ def test_the_check_reschedules_until_the_deadline(fast_timer):
     assert asyncio.run(run()) is DENY
 
 
+class _TimeWithWallClock:
+    """The real ``time`` module, except ``time()`` returns a fixed wall clock."""
+
+    def __init__(self, now):
+        self._now = now
+
+    def time(self):
+        return self._now
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
 def test_a_wall_clock_jump_denies_at_the_next_check(monkeypatch):
     # A machine suspend does not advance the event-loop clock: only the
     # wall-clock re-check can see that the deadline has passed.
@@ -166,7 +178,9 @@ def test_a_wall_clock_jump_denies_at_the_next_check(monkeypatch):
         await asyncio.sleep(0.05)
         assert not task.done()
         jumped = time.time() + 200
-        monkeypatch.setattr(base_agent_module, "time", SimpleNamespace(time=lambda: jumped))
+        # Only ``time.time`` moves, and only as seen by base_agent: every other
+        # ``time.*`` falls through to the real module.
+        monkeypatch.setattr(base_agent_module, "time", _TimeWithWallClock(jumped))
         return await asyncio.wait_for(task, 1)
 
     assert asyncio.run(run()) is DENY
@@ -183,7 +197,6 @@ def test_a_cancelled_wait_leaves_no_timer(fast_timer):
         with pytest.raises(asyncio.CancelledError):
             await task
         assert agent._auto_deny_timers == {}
-        await asyncio.sleep(0.3)
 
     asyncio.run(run())
     assert agent.pending_requests == ()

@@ -147,6 +147,26 @@ def test_an_allow_that_enters_bypass_arms_the_next_prompts(monkeypatch):
     asyncio.run(run())
 
 
+def test_the_last_session_set_mode_of_an_allow_wins(monkeypatch):
+    agent = _make_agent(monkeypatch)
+
+    async def run():
+        task, pending = await _ask(agent, "Bash", DANGEROUS)
+        agent.resolve_pending_request(
+            pending.request_id,
+            PermissionResultAllow(
+                updated_permissions=[
+                    PermissionUpdate(type="setMode", mode="default", destination="session"),
+                    PermissionUpdate(type="setMode", mode="acceptEdits", destination="session"),
+                ],
+            ),
+        )
+        await task
+        assert agent.agent_settings.permission_mode == "acceptEdits"
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("destination", ["userSettings", "projectSettings", "localSettings"])
 def test_a_set_mode_for_another_destination_is_not_mirrored(monkeypatch, destination):
     agent = _make_agent(monkeypatch)
