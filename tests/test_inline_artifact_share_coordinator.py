@@ -715,3 +715,71 @@ def test_direct_ensure_preserves_data_queued_before_worker_consumption(case, mon
     asyncio.run(scenario())
     assert read_asset(share, 'data/value') == b'new'
     assert leased_bytes(share) == b'published'
+
+
+@pytest.mark.parametrize('stage', ['overflow', 'startup'])
+@pytest.mark.parametrize('operation', ['ensure', 'retry'])
+def test_direct_api_preserves_sweep_only_data_obligations(case, monkeypatch, stage, operation):
+    set_publications(case, publication(), publication(15, 'other'))
+    source = write_source(case, b'published widget')
+    write_source(case, b'published other', artifact_id='other')
+    data = source.parent / 'data' / 'value'
+    data.parent.mkdir()
+    data.write_bytes(b'old')
+    share = create(case, mode='live')
+    frozen = create(case, mode='snapshot')
+    frozen_state = deepcopy(frozen.inline_artifact_exports)
+    set_publications(case, publication(), publication(18, 'other', 'replacement.html'))
+    asyncio.run(exports.InlineExportCoordinator().reconcile(share.id))
+    share.refresh_from_db()
+    code_revision = share.inline_artifact_exports['artifacts'][KEY]['code_revision']
+    reservations = []
+    async def scenario():
+        startup_done = asyncio.Event()
+        original_reconcile = exports.InlineExportCoordinator._reconcile
+        async def observed(*args, **kwargs):
+            result = await original_reconcile(*args, **kwargs)
+            startup_done.set()
+            return result
+        monkeypatch.setattr(exports.InlineExportCoordinator, '_reconcile', observed)
+        coordinator = exports.InlineExportCoordinator()
+        coordinator.MAX_PENDING_SESSIONS = 1
+        monkeypatch.setattr(exports, 'get_inline_export_coordinator', lambda: coordinator)
+        await coordinator.start()
+        if stage == 'overflow':
+            await asyncio.wait_for(startup_done.wait(), 5)
+            coordinator.files_changed('overflow-filler', ['inline-artifacts/widget/data/value'])
+            coordinator.files_changed(case.id, ['inline-artifacts/widget/data/value'])
+            assert len(coordinator._pending) == 1
+        # Startup reserves a full sweep before the first worker consumption.
+        assert coordinator._sweep
+        assert case.id not in coordinator._pending
+        assert case.id not in coordinator._active_paths
+        prior_generation = coordinator._reservations[share.id]
+        data.write_bytes(b'new')
+        source.write_bytes(b'unpublished widget')
+        write_source(case, b'published retry', artifact_id='other', filename='replacement.html')
+        original_reserve = exports.reserve_inline_exports
+        def reserved(share_id):
+            generation = original_reserve(share_id)
+            reservations.append(generation)
+            return generation
+        monkeypatch.setattr(exports, 'reserve_inline_exports', reserved)
+        if operation == 'ensure':
+            await exports.ensure_inline_exports(share.id)
+        else:
+            await exports.retry_inline_export(share.id, '["main","other"]')
+        assert reservations == [prior_generation + 1]
+        assert len(coordinator._pending) <= coordinator.MAX_PENDING_SESSIONS
+        await coordinator.stop()
+    asyncio.run(scenario())
+    share.refresh_from_db()
+    frozen.refresh_from_db()
+    assert len(reservations) == 1
+    assert read_asset(share, 'data/value') == b'new'
+    assert leased_bytes(share) == b'published widget'
+    assert share.inline_artifact_exports['artifacts'][KEY]['code_revision'] == code_revision
+    assert frozen.inline_artifact_exports == frozen_state
+    assert read_asset(frozen, 'data/value') == b'old'
+    if operation == 'retry':
+        assert share.inline_artifact_exports['artifacts']['["main","other"]']['status'] == 'ready'

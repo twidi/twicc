@@ -805,7 +805,7 @@ class InlineExportCoordinator:
         self._wake.set()
 
     def preserve_unfinished_data(self, share_id: str, expected_generation: int) -> None:
-        """Replay queued or active data under a direct API's reservation.
+        """Replay queued, active, or sweep data under a direct API's reservation.
 
         Call synchronously after ensure/retry reserves, before its first await.
         No ORM, new reservation, or snapshot work occurs in this callback.
@@ -818,7 +818,9 @@ class InlineExportCoordinator:
                 continue
             active = self._active_paths.get(session_id, set())
             pending = self._pending.get(session_id, set())
-            paths = None if active is None or pending is None else active | pending
+            # Startup and overflow sweeps retain whole-data obligations even
+            # when no active or pending path entry exists for this source.
+            paths = None if self._sweep or active is None or pending is None else active | pending
             if paths is not None:
                 paths = {path for path in paths if path == 'inline-artifacts'
                          or len(path.split('/')) == 2 or path.split('/')[2:3] == ['data']}
