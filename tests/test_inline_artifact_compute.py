@@ -22,14 +22,14 @@ RECORD = {
 }
 
 
-def assistant(provider, text=TEXT):
+def assistant(provider, text=TEXT, *, source_id='message-1'):
     if provider == Provider.CLAUDE_CODE:
-        return {'type': 'assistant', 'uuid': 'message-1', 'timestamp': '2026-10-08T10:00:00Z',
+        return {'type': 'assistant', 'uuid': source_id, 'timestamp': '2026-10-08T10:00:00Z',
                 'message': {'id': 'msg-1', 'role': 'assistant', 'content': [
                     {'type': 'thinking', 'thinking': TAG}, {'type': 'text', 'text': text}]}}
     return {'type': 'event_msg', 'timestamp': '2026-10-08T10:00:00Z', 'payload': {
         'type': 'item_completed', 'thread_id': 's', 'turn_id': 't', 'item': {
-            'type': 'AgentMessage', 'id': 'msg-1', 'phase': 'commentary', 'content': [
+            'type': 'AgentMessage', 'id': source_id, 'phase': 'commentary', 'content': [
                 {'type': 'Image', 'url': 'x'}, {'type': 'Text', 'text': text}]}}}
 
 
@@ -46,12 +46,12 @@ def capture(compute, session):
     return orjson.loads(results.get_nowait())
 
 
-def ingest(compute, session, path, records, *, append=False):
+def ingest(compute, session, path, records, *, append=False, slice_bytes=256):
     with path.open('ab' if append else 'wb') as stream:
         for record in records:
             stream.write(orjson.dumps(record) + b'\n')
     while True:
-        result = compute.sync_session_slice(session.id, path, limits=LiveSyncLimits(max_bytes=256))
+        result = compute.sync_session_slice(session.id, path, limits=LiveSyncLimits(max_bytes=slice_bytes))
         if not result.has_more:
             break
     session.refresh_from_db()
@@ -67,8 +67,10 @@ def case(request, db, tmp_path):
 
 def test_live_and_full_publish_identical_catalog(case):
     provider, session, compute, path = case
-    ingest(compute, session, path, [assistant(provider), mirror(provider), assistant(provider, TAG)])
+    ingest(compute, session, path, [assistant(provider), mirror(provider), assistant(provider, TAG, source_id='message-2')])
     expected = {'schema': 1, 'publications': [RECORD, {**RECORD, 'line_num': 3, 'tag_offset': 0}]}
+    if provider == Provider.CLAUDE_CODE:
+        expected['source_messages'] = {'message-1': 1, 'message-2': 3}
     assert session.inline_artifacts == expected
     rebuilt = capture(compute, session)
     assert rebuilt['session_fields']['inline_artifacts'] == expected
@@ -83,8 +85,8 @@ def test_live_and_full_publish_identical_catalog(case):
 def test_finalized_text_publishes_before_turn_end_and_invalid_tag_keeps_latest(case):
     provider, session, compute, path = case
     ingest(compute, session, path, [assistant(provider)])
-    assert session.inline_artifacts == {'schema': 1, 'publications': [RECORD]}
-    ingest(compute, session, path, [assistant(provider, TAG.replace('index.html', 'index.js'))], append=True)
+    assert session.inline_artifacts['publications'] == [RECORD]
+    ingest(compute, session, path, [assistant(provider, TAG.replace('index.html', 'index.js'), source_id='message-2')], append=True)
     assert serialize_session(session)['inline_artifacts'] == {'preferences': RECORD}
     # No files exist. Catalog validity depends only on finalized text.
     assert not (path.parent / 'inline-artifacts').exists()
@@ -99,7 +101,7 @@ def test_reingestion_and_recompute_keep_source_identity(case):
     compute.sync_session_slice(session.id, path, limits=LiveSyncLimits())
     compute.apply_session_complete(capture(compute, session))
     session.refresh_from_db()
-    assert session.inline_artifacts == {'schema': 1, 'publications': [RECORD]}
+    assert session.inline_artifacts['publications'] == [RECORD]
 
 
 @pytest.mark.parametrize('copied_parent', [False, True])
@@ -239,3 +241,66 @@ def test_generated_migration_initializes_existing_rows(tmp_path, django_db_block
     finally:
         connection.close()
         delattr(connections._connections, alias)
+
+
+@pytest.mark.parametrize('restart', [False, True])
+def test_claude_compaction_replay_does_not_move_publication(db, tmp_path, restart):
+    session = Session.objects.create(id='replay', file_path='replay.jsonl',
+                                    project=Project.objects.create(id='replay-p'), provider=Provider.CLAUDE_CODE)
+    compute = ClaudeCodeSessionCompute()
+    source = assistant(Provider.CLAUDE_CODE)
+    path = tmp_path / 'replay.jsonl'
+    ingest(compute, session, path, [source])
+    original = session.inline_artifacts
+    if restart:
+        compute = ClaudeCodeSessionCompute()
+    ingest(compute, session, path, [source], append=True)
+    assert session.inline_artifacts == original
+    assert serialize_session(session)['inline_artifacts'] == {'preferences': RECORD}
+    assert capture(compute, session)['session_fields']['inline_artifacts'] == original
+
+
+@pytest.mark.parametrize('restart', [False, True])
+def test_claude_old_replay_cannot_supersede_real_correction(db, tmp_path, restart):
+    session = Session.objects.create(id='correction', file_path='correction.jsonl',
+                                    project=Project.objects.create(id='correction-p'), provider=Provider.CLAUDE_CODE)
+    compute = ClaudeCodeSessionCompute()
+    source = assistant(Provider.CLAUDE_CODE)
+    correction = assistant(Provider.CLAUDE_CODE, TAG.replace('index.html', 'corrected.html'), source_id='message-2')
+    path = tmp_path / 'correction.jsonl'
+    ingest(compute, session, path, [source, correction])
+    corrected = session.inline_artifacts
+    if restart:
+        compute = ClaudeCodeSessionCompute()
+    ingest(compute, session, path, [source], append=True)
+    assert session.inline_artifacts == corrected
+    assert serialize_session(session)['inline_artifacts'] == {'preferences': {
+        **RECORD, 'line_num': 2, 'tag_offset': 0, 'src': 'inline-artifacts/preferences/corrected.html'}}
+    assert capture(compute, session)['session_fields']['inline_artifacts'] == corrected
+
+
+def test_claude_distinct_uuids_with_same_api_message_id_publish_independently(db, tmp_path):
+    session = Session.objects.create(id='blocks', file_path='blocks.jsonl',
+                                    project=Project.objects.create(id='blocks-p'), provider=Provider.CLAUDE_CODE)
+    first = assistant(Provider.CLAUDE_CODE)
+    second = assistant(Provider.CLAUDE_CODE, source_id='message-2')
+    compute = ClaudeCodeSessionCompute()
+    ingest(compute, session, tmp_path / 'blocks.jsonl', [first, second])
+    assert session.inline_artifacts['publications'] == [RECORD, {**RECORD, 'line_num': 2}]
+    assert session.inline_artifacts['source_messages'] == {'message-1': 1, 'message-2': 2}
+    assert capture(compute, session)['session_fields']['inline_artifacts'] == session.inline_artifacts
+    wire = serialize_session(session)['inline_artifacts']['preferences']
+    assert set(wire) == {'artifact_id', 'line_num', 'text_block_index', 'tag_offset', 'src', 'title', 'height'}
+
+
+def test_claude_same_slice_replay_keeps_first_source_occurrence(db, tmp_path):
+    session = Session.objects.create(id='same-slice', file_path='same-slice.jsonl',
+                                    project=Project.objects.create(id='same-slice-p'), provider=Provider.CLAUDE_CODE)
+    compute = ClaudeCodeSessionCompute()
+    source = assistant(Provider.CLAUDE_CODE)
+    correction = assistant(Provider.CLAUDE_CODE, TAG, source_id='message-2')
+    ingest(compute, session, tmp_path / 'same-slice.jsonl', [source, correction, source], slice_bytes=4096)
+    expected = {'schema': 1, 'publications': [RECORD, {**RECORD, 'line_num': 2, 'tag_offset': 0}],
+                'source_messages': {'message-1': 1, 'message-2': 2}}
+    assert session.inline_artifacts == expected
+    assert capture(compute, session)['session_fields']['inline_artifacts'] == expected

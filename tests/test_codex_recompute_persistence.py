@@ -341,7 +341,7 @@ def test_stale_recompute_does_not_erase_live_inline_correction(codex_session, tm
     path = tmp_path / 'catalog.jsonl'
     ingest(compute, codex_session, path, [assistant(Provider.CODEX, TAG)])
     rebuilt = capture(compute, codex_session)
-    ingest(compute, codex_session, path, [assistant(Provider.CODEX, TAG)], append=True)
+    ingest(compute, codex_session, path, [assistant(Provider.CODEX, TAG, source_id='message-2')], append=True)
     result = compute.apply_session_complete(rebuilt)
     codex_session.refresh_from_db()
     assert result.outcome == 'superseded'

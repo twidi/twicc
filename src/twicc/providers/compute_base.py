@@ -1199,6 +1199,30 @@ class BaseSessionCompute:
         """Determine the :class:`ItemKind` for a parsed JSONL line, or ``None``."""
         raise NotImplementedError
 
+    def extract_inline_artifact_source_id(self, parsed_json: dict) -> str | None:
+        """Return a finalized row identity that survives provider history replay."""
+        return None
+
+    def _collect_inline_artifact_publications(
+        self, session_id: str, line_num: int, parsed_json: dict, source_messages: dict[str, int],
+    ) -> list[dict]:
+        """Keep the first finalized source occurrence across slices and restarts."""
+        source_id = self.extract_inline_artifact_source_id(parsed_json)
+        if source_id is not None and source_id in source_messages:
+            return []
+        publications = self.build_inline_artifact_publications(session_id, line_num, parsed_json)
+        if publications and source_id is not None:
+            source_messages[source_id] = line_num
+        return publications
+
+    @staticmethod
+    def _merge_inline_artifact_catalog(catalog: dict, publications: list[dict], source_messages: dict[str, int]) -> dict:
+        merged = merge_publications(catalog, publications)
+        if merged and source_messages:
+            # Internal provenance never enters Publication records or wire descriptors.
+            merged['source_messages'] = dict(source_messages)
+        return merged
+
     def extract_inline_artifact_texts(self, parsed_json: dict) -> list[tuple[int, str]]:
         """Return original block indices and canonical finalized assistant text.
 
@@ -2967,6 +2991,7 @@ class BaseSessionCompute:
         plan_doc_events: list[tuple[DocEditEvent, datetime | None]] = []
         is_main_session = session.type == SessionType.SESSION
         inline_publications: list[dict] = []
+        inline_source_messages: dict[str, int] = {}
         # Goal lifecycle history, folded from every goal line across the whole
         # session (authoritative full rebuild — starts empty).
         goals: list[dict] = []
@@ -3049,8 +3074,8 @@ class BaseSessionCompute:
                 content_overrides.append({'id': item.id, 'content': new_content})
 
             if is_main_session:
-                inline_publications.extend(self.build_inline_artifact_publications(
-                    session_id, item.line_num, parsed,
+                inline_publications.extend(self._collect_inline_artifact_publications(
+                    session_id, item.line_num, parsed, inline_source_messages,
                 ))
 
             # Single-pass content analysis (avoids redundant traversals)
@@ -3514,7 +3539,7 @@ class BaseSessionCompute:
                 # Full recompute is authoritative for the whole file: reset to
                 # {} when no JSONL state exists; apply preserves SDK-only state.
                 'tasks': last_tasks_snapshot if last_tasks_snapshot is not None else {},
-                'inline_artifacts': merge_publications({}, inline_publications),
+                'inline_artifacts': self._merge_inline_artifact_catalog({}, inline_publications, inline_source_messages),
                 # Authoritative too — [] when no plan-doc was ever touched.
                 'plan_paths': plan_paths,
                 # Authoritative for the whole file too — [] when no goal ever set.
@@ -4099,6 +4124,7 @@ class BaseSessionCompute:
         plan_doc_events: list[tuple[DocEditEvent, datetime | None]] = []
         is_main_session = session.type == SessionType.SESSION
         inline_publications: list[dict] = []
+        inline_source_messages = dict(session.inline_artifacts.get('source_messages', {})) if is_main_session else {}
         # Goal history folded incrementally onto the persisted list: start from
         # the stored state and apply only this batch's transitions.
         goals = copy.deepcopy(session.goals) if session.goals else []
@@ -4190,8 +4216,8 @@ class BaseSessionCompute:
                     )
 
             if is_main_session:
-                inline_publications.extend(self.build_inline_artifact_publications(
-                    session.id, current_line_num, parsed,
+                inline_publications.extend(self._collect_inline_artifact_publications(
+                    session.id, current_line_num, parsed, inline_source_messages,
                 ))
 
             # Current-batch evidence is published before the next transform,
@@ -4562,7 +4588,9 @@ class BaseSessionCompute:
         if subagent_lifecycle_changed:
             session_update_fields.append("last_stopped_at")
         # A native subagent must also clear any catalog from older compute rules.
-        inline_catalog = merge_publications(session.inline_artifacts, inline_publications) if is_main_session else {}
+        inline_catalog = self._merge_inline_artifact_catalog(
+            session.inline_artifacts, inline_publications, inline_source_messages,
+        ) if is_main_session else {}
         if inline_catalog != session.inline_artifacts:
             session.inline_artifacts = inline_catalog
             session_update_fields.append("inline_artifacts")

@@ -1694,6 +1694,12 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
 
         return orjson.dumps(parsed_json).decode('utf-8')
 
+    def extract_inline_artifact_source_id(self, parsed_json: dict) -> str | None:
+        # API message IDs span distinct assistant rows; only the row UUID
+        # identifies the verbatim copies Claude retains during compaction.
+        uuid = parsed_json.get('uuid')
+        return uuid if parsed_json.get('type') == 'assistant' and isinstance(uuid, str) and uuid else None
+
     def extract_inline_artifact_texts(self, parsed_json: dict) -> list[tuple[int, str]]:
         if (
             parsed_json.get('type') != 'assistant'

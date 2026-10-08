@@ -566,6 +566,8 @@ class Session(models.Model):
     tasks = models.JSONField(default=dict, blank=True)
     # Canonical finalized assistant publications; native subagents always keep {}.
     # Full compute rebuilds all occurrences; live compute merges source identities.
+    # Optional source_messages maps finalized Claude UUIDs to first publication
+    # lines. It deduplicates history replay and stays outside wire descriptors.
     inline_artifacts = models.JSONField(default=dict, blank=True)
     # Plan-like documents this session touched (plans, specs, handoffs, design
     # notes...), append-ordered — the frontend sorts by ``updated_at``. Each
