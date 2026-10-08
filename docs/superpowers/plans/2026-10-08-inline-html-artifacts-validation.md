@@ -7,7 +7,10 @@ The record distinguishes PASS observations from PARTIAL coverage and unverified 
 It does not claim overall Task 12 completion or an entirely passing browser matrix.
 The browser matrix contains **16 PASS and 1 PARTIAL row** after the focus, scroll-anchor, and B1 follow-up.
 
-Actual parent-window-focus reconciliation passes. Forced WebSocket outage/reconnection and transient pending timing remain unverified.
+Actual parent-window-focus reconciliation passes. Authorized A3 outage/reconnection **fails on `836715ea`**.
+The reconnect correction passes mounted automated checks. Its actual production-browser retest remains pending.
+
+Transient live pending timing remains unobserved.
 Read-only browser tools cannot compare retained DOM object identity across calls.
 Attached iframe observations, document nonce/counter, inputs, and scroll establish retained browsing state instead.
 
@@ -22,6 +25,7 @@ Attached iframe observations, document nonce/counter, inputs, and scroll establi
 | Full-suite fixture compatibility fix | `8daaa2020431df4daedeae60e859128576033098` |
 | Snapshot transcript boundary fix B1 | `427adc8cce9bdf59eac926f784f4e13ab6fbbe2a` |
 | R3-I1 pending reactivation correction base | `4805dc0e50c03de4d35d8e9c063f7f81c1cee1d8` |
+| A3-I1 reconnect correction base / actual failing browser state | `836715ea6b58ea5f4c28f658c09b52154dc38dee` |
 | Host | Linux `7.0.0-31-generic`, Ubuntu SMP PREEMPT_DYNAMIC |
 | Python / Django / pytest | `3.13.14` / `6.0.4` / `9.0.3` |
 | Node | `v22.22.1` |
@@ -33,7 +37,8 @@ Attached iframe observations, document nonce/counter, inputs, and scroll establi
 | Browser evidence | Controller DOM reads, UI actions, document diagnostics, and browser-tool screenshots |
 | Detailed evidence | Ignored `.superpowers/sdd/2026-10-08-inline-html-artifacts/` reports and logs |
 
-The user authorizes isolated startup. The controller starts the instance with `devctl.py start --fresh-providers`.
+The user authorizes isolated startup and the later A3 backend outage/restart.
+The controller starts the instance with `devctl.py start --fresh-providers` and performs the authorized outage/restart.
 Devctl owns dependency preparation and startup migrations. The implementer runs no server, installation, or manual instance migration command.
 Database, artifacts, scratch, and provider homes resolve inside the authorized worktree before fixture writes.
 Native provider JSONL passes through the normal watcher and canonical compute. No LLM launches to prepare fixtures.
@@ -73,11 +78,15 @@ Public checks use the built standalone share-session bundle served by the backen
 | R3-I1 pending reactivation RED / GREEN | Mounted completion accepts publication267 while the successful store boundary stays263. The owning RED fails at that runtime assertion. After correction, all seven owning tests pass; 5.660s. |
 | R3-I1 meta503 preservation RED / GREEN | An intermediate gate stops pending completion after fetchMeta503. A second owning RED fails. The final gate preserves polling at the reconciled boundary. |
 | R3-I1 covering public component/adapter/completion/runtime | **44 passed, 0 failed/skipped; 5.817s; exit 0** |
+| A3-I1 mounted reconnect RED | Two failures reproduce premature WS placement and an unchanged successful transcript boundary. |
+| A3-I1 aborted-manifest ownership RED | A newer reconnect waits for the canceled request instead of accepting its current manifest. |
+| A3-I1 affected component/adapter/completion/runtime/store/API/live-WS checks | **77 passed, 0 failed/skipped; 24.451s; exit 0**. Includes all 18 owning mounted tests. |
 | Required Ruff scope, plus I1 serializer/projection files | All checks passed |
 | Fixture compatibility Ruff scope | Five unchanged findings reproduce on original sources: four F811 fixture redefinitions and one PIE807 lambda. No added-line finding. |
 | SPA, broker shim, artifact shell, browser companion, share-session build | All five initial bundles build before I1. All five rebuild after B1; the actual B1 browser retest uses the new production share bundle. |
 | R2-I1 standalone public share-session build | Production bundle builds successfully; 17.13s; exit 0. Browser validation has not yet loaded this correction. |
 | R3-I1 standalone public share-session build | Final production bundle builds successfully; 17.01s; exit 0. No browser check loads this correction. |
+| A3-I1 standalone public share-session build | Production bundle builds successfully; 17.01s; exit 0. Actual reconnect retest remains pending. |
 | Fullscreen runtime/geometry investigation | 3 targeted tests pass; no production change |
 
 The post-I1 selected backend command is:
@@ -102,6 +111,10 @@ The later R3-I1 correction also uses only affected frontend tests and the standa
 R3-I1 logs: `task-12-r4-red.log`, `task-12-r4-meta-red.log`, `task-12-r4-green.log`, and `task-12-r4-covering-frontend.log`.
 Final standalone build log: `task-12-r4-share-build.log`. It contains no warning; the covering log also contains no warning.
 No backend or full frontend suite repeats. Earlier full-suite results precede both focus-handler corrections.
+The A3-I1 correction runs only affected frontend checks and the standalone share-session build.
+Logs: `task-12-r5-red.log`, `task-12-r5-aborted-manifest-red.log`, and `task-12-r5-covering-frontend.log`.
+Build log: `task-12-r5-share-build.log`. It contains no warning.
+The covering log contains one existing Node MockTimers ExperimentalWarning. All 77 assertions pass.
 
 The initial full frontend log contains **five Node ExperimentalWarning messages for the MockTimers API**.
 Those warnings are not failed assertions. Existing SPA mixed-import and large-chunk warnings also remain recorded.
@@ -158,8 +171,47 @@ Failed fetchMeta does not stop completion at a still-reconciled boundary.
 Generation and disposal guards preserve ownership before pause changes and row mutations.
 Mounted evidence covers disable/manifest503, slow and failed reactivation metadata, recovery, automatic pending completion, and latest typed placement.
 Existing B1, immediate exclusion, failed-boundary retry, disposal, and newer-focus cases remain passing.
-No actual-browser R3-I1 check occurs. A fresh scoped review remains pending.
-A3 preparation remains unexecuted. Actual live pending remains unobserved. Task12 acceptance stays incomplete.
+No actual-browser R3-I1 check occurs. The round4 scoped review passes.
+Actual A3 now reveals a separate reconnect defect. Task12 acceptance stays incomplete.
+
+## Actual A3 outage and reconnect correction
+
+The controller stops and starts only the isolated backend through `devctl.py`.
+While stopped, the guarded fixture updates Calculator code, optional saved data, and finalized Codex publication268→269.
+The browser keeps Calculator version1, nonce `10540cba`, counter3, and unsaved text `a3-unsaved-before-outage` during the outage.
+
+No page refresh or widget Reload occurs.
+
+Normal startup compute reaches source269 before the WebSocket reconnects.
+The socket initially receives403 while compute remains unready. It later opens without browser intervention.
+The automatic inline manifest GET returns200, revision35, Calculator publication269/code revision2.
+
+Public meta and filtered item metadata also contain269.
+
+The retained transcript still ends at268. GoLast cannot reach269.
+The old Calculator block disappears, and the retained frame hides. The replacement remains inaccessible.
+
+This actual result is **FAIL**, captured on `836715ea`. Saved-data reads after reconnect remain unexecuted.
+
+The root callback previously fetches only the manifest. The consumer does not replay offline-computed transcript rows.
+The correction fetches current root metadata and advances its successful boundary before releasing reconnect placement.
+
+The adapter buffers HTTP and WS manifests during that work. It releases only the newest revision after source rows exist.
+Concurrent publications beyond the HTTP snapshot trigger another reconciliation attempt.
+
+Transient metadata/manifest failures retry automatically. New connections, disposal, and access loss invalidate older work.
+Delayed HTTP metadata cannot undo a newer channel exclusion. Disabled manifests still close access immediately.
+
+An aborted manifest request cannot block the next connection's fresh request.
+
+Mounted checks preserve cached transcript rows, scroll position, unchanged frame memory, and all earlier snapshot regressions.
+Changed publication/code navigates the same retained frame once. Duplicate and saved-data-only revisions do not reload it.
+
+These checks use the real app, list, Pinia store, API, live transport, adapter, completion, and runtime.
+HTTP responses, WebSocket endpoints, row DOM, and scroller DOM remain controlled test boundaries.
+They do not establish actual iframe retention or corrected production-browser A3 acceptance.
+
+Actual A3 retest and transient live pending timing remain open. Independent scoped review also remains pending.
 
 ## Fixture diagnostics and browser limits
 
@@ -209,7 +261,7 @@ Nonce prefixes below identify diagnostic document instances, not session IDs or 
 | Unpublished code, saved data, independent Artifacts viewer | **PASS** | Unpublished version 2 leaves private/live version 1 and counters unchanged. Artifacts preview alone reloads version 2/counter 2. Its memory is independent; Explicit Load reads shared saved choices. Live data PUT refreshes copied data without reloading version 1/counter 1. |
 | Reload, refresh, eviction, and conditional archive teardown | **PASS** | Codex Reload resets RAM at counter 2; Explicit Load restores saved codex-before-reload. Browser refresh resets RAM. Cache limit 1 removes Codex frames; return recreates nonce 4e132960/counter 4/defaults. Archive/unarchive succeeds; active/cached views may survive archive. Older cached frames can linger during limit changes; no exact global cache count is claimed. |
 | Height, viewport-dependent content, narrow/mobile | **PASS** | Narrow 271.8px and mobile 390×844 viewport clamp height 900. Tall content grows 170→1100; exit fullscreen clamps 900. Header/composer clipping remains correct. No ResizeObserver warning/error is observed. |
-| Live tag/data changes, no-viewer interval, reconnect | **PARTIAL** | Real-time correction reloads once. Data changes preserve nonce/counter/RAM. Fresh viewer after no-viewer changes loads published version 3 rather than unpublished version 4 and reads after-no-viewer data. A real 78.125 MiB fixture reaches ready versions 1→4, once per finalized publication. Transient pending is NOT OBSERVED because copy completion beats the tool observation window. The test driver delays only publication; the exporter has no artificial delay. Forced WebSocket outage/reconnect is NOT RUN; automated adapter coverage remains. |
+| Live tag/data changes, no-viewer interval, reconnect | **PARTIAL; A3 reconnect FAIL** | Real-time correction reloads once. Data changes preserve nonce/counter/RAM. Fresh viewer after no-viewer changes loads published version 3 rather than unpublished version 4 and reads after-no-viewer data. A real 78.125 MiB fixture reaches ready versions 1→4, once per finalized publication. Transient pending is NOT OBSERVED because copy completion beats the tool observation window. The test driver delays only publication; the exporter has no artificial delay. Actual authorized backend outage preserves nonce10540cba/counter3/unsaved input while stopped. After accepted WS reconnect, ready Calculator269 replaces its manifest binding while retained rows still end268. The old block disappears; the new block remains inaccessible. This fails on836715ea. The code correction has mounted automated coverage; actual production retest and saved-data reads after reconnect remain pending. |
 | Snapshot Push without new tag | **PASS** | Actual iframe input focus retains version 5/counter 2 while normal same-publication Push copies version 6. Bound Escape returns parent-window focus and automatically loads version 6/counter 3 without Reload. The counter stays 3 after several minutes. B1 retest also advances frozen boundary 267→268: parent focus adds Correction version 7 and exactly one latest widget, nonce 26869aeb/counter 4→7b5036af/counter 5. No page refresh, Reload, or GoLast occurs during that retest. |
 | Native tag and Include subagents changes | **PASS** | Child literal tag remains ordinary text. Actual related-child HTTP checks keep root publication/code/manifest revisions unchanged for inclusion false/true. Child transcript access follows the option. |
 | Legacy failed initial export; repair and error Reload | **PASS** | Initial calculator ready/preferences error at revision 3/frozenline 3. Creating only missing entry leaves manifest unchanged. Error Reload recovers preferences/counter 1 at revision 4. Calculator copy ID/code revision/captured/selected placement remain unchanged. |
@@ -244,7 +296,8 @@ Detailed reports: `browser-observations.md`, `task-12-browser-followup-observati
 
 - Task 10 M1: failed startup can bypass coordinator stop-and-drain before the serving cleanup block.
 - Metadata mode-transition handling remains a named final-review risk.
-- Forced WebSocket outage/reconnect remains NOT RUN. Transient pending browser timing remains NOT OBSERVED.
+- Actual A3 outage/reconnect fails on836715ea. The corrected production-browser retest remains pending.
+- Saved-data reads after actual reconnection remain unexecuted. Transient pending browser timing remains NOT OBSERVED.
 - Exact cross-call retained DOM object identity is unobservable. Nonce/counter/state and attached-frame observations prove browsing-context retention.
 - Five Node MockTimers ExperimentalWarning messages and existing SPA build warnings remain recorded.
 - Six CLI slim/full projection failures reproduce against unchanged baseline. They are not labeled passing.

@@ -3,11 +3,19 @@ export function makeShareInlineAdapter({ api, tokenPath, store }) {
     const base = tokenPath.replace(/\/+$/, '')
     const sourceSessionId = store.sharedSessionId
     let revision = -1, disposed = false, descriptors = new Map(), refreshRequest = null
+    let manifestsPaused = false, pendingManifest = null
     const listeners = new Set(), controllers = new Set()
 
     function acceptManifest(wire) {
         if (disposed || !Number.isInteger(wire?.revision) || wire.revision <= revision) return null
+        // Reconnect must restore source rows before replacing their retained bindings.
+        // A disabled manifest still closes access immediately.
+        if (manifestsPaused && wire.enabled !== false) {
+            if (!pendingManifest || wire.revision > pendingManifest.revision) pendingManifest = wire
+            return null
+        }
         revision = wire.revision
+        if (pendingManifest?.revision <= revision) pendingManifest = null
         const normalized = []
         for (const item of wire.artifacts || []) {
             const occurrence = item.publication
@@ -57,7 +65,7 @@ export function makeShareInlineAdapter({ api, tokenPath, store }) {
     function refresh({ signal } = {}) {
         if (disposed) return Promise.resolve(null)
         let request = refreshRequest
-        if (!request) {
+        if (!request || request.controller.signal.aborted) {
             const controller = new AbortController()
             controllers.add(controller)
             request = { controller, promise: null }
@@ -89,7 +97,19 @@ export function makeShareInlineAdapter({ api, tokenPath, store }) {
         } finally { controllers.delete(controller) }
     }
     return { acceptManifest, refresh, documentUrl, brokerConfig, probe, retry,
+        pauseManifests() { manifestsPaused = true },
+        resumeManifests(canAccept = () => true) {
+            if (disposed || pendingManifest && !canAccept(pendingManifest)) return false
+            manifestsPaused = false
+            const pending = pendingManifest
+            pendingManifest = null
+            if (pending) acceptManifest(pending)
+            return true
+        },
         subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener) },
-        dispose() { disposed = true; controllers.forEach(controller => controller.abort()); controllers.clear(); listeners.clear() },
+        dispose() {
+            disposed = true; pendingManifest = null
+            controllers.forEach(controller => controller.abort()); controllers.clear(); listeners.clear()
+        },
     }
 }

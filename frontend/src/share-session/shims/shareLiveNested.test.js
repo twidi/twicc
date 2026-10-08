@@ -186,7 +186,8 @@ test('share viewer: include_subagents turned off live disables run states for go
     store.getSession = id => store.sessions[id] || null
     store.setSession = session => { store.sessions[session.id] = session }
     const meta = { session_id: 'root', include_subagents: true }
-    const { onMeta } = new Function('meta', 'store', 'settings', 'clampMode', `return { ${source.slice(from, to)} }`)(
+    const { onMeta } = new Function('meta', 'store', 'settings', 'clampMode',
+        `let liveMetaGeneration = 0; return { ${source.slice(from, to)} }`)(
         meta, store, { setDisplayMode() {}, displayMode: 'normal' }, m => m)
     const token = beginAgentFetch(store, 'root')
     onMeta({ include_subagents: true, last_started_at: '2026-09-07T00:00:00Z', last_stopped_at: null })

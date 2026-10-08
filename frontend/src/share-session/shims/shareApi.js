@@ -24,8 +24,8 @@ export function makeShareApi(tokenPath) {
             jget(`${base}/api/inline-artifacts/${encodeURIComponent(sourceSessionId)}/${encodeURIComponent(artifactId)}/retry/`,
                 { ...options, method: 'POST' }),
         fetchMeta: (options = {}) => jget(`${base}/api/meta/`, options),
-        fetchItemsMetadata: (subagentId = null) =>
-            jget(subagentId ? `${base}/api/subagent/${subagentId}/items/metadata/` : `${base}/api/items/metadata/`),
+        fetchItemsMetadata: (subagentId = null, options = {}) =>
+            jget(subagentId ? `${base}/api/subagent/${subagentId}/items/metadata/` : `${base}/api/items/metadata/`, options),
         fetchItems: (rangesQS, subagentId = null) =>
             jget(subagentId ? `${base}/api/subagent/${subagentId}/items/?${rangesQS}` : `${base}/api/items/?${rangesQS}`),
         fetchToolResults: (lineNum, toolId, subagentId = null) =>

@@ -84,6 +84,7 @@ let disconnectLive = null, disposed = false
 let snapshotFocusGeneration = 0
 const snapshotRowsReady = ref(true)
 const focusController = new AbortController()
+let reconnectOwner = null, reconnectTimer = null, liveMetaGeneration = 0
 const inlineCompletion = inlineAdapter ? createShareInlineCompletion({
     adapter: inlineAdapter, isSnapshot: () => meta.mode === 'snapshot',
     accessClosed: () => revoked.value || !ready.value || meta.include_inline_artifacts === false || !snapshotRowsReady.value,
@@ -125,6 +126,64 @@ async function onWindowFocus() {
         await refreshInline()
     } catch (error) {
         if (!disposed && generation === snapshotFocusGeneration && [401, 403, 404].includes(error.status)) revoked.value = true
+    }
+}
+
+function stopReconnect() {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+    reconnectOwner?.controller.abort()
+    reconnectOwner = null
+}
+function onReconnect() {
+    if (disposed || revoked.value) return
+    stopReconnect()
+    inlineAdapter?.pauseManifests()
+    const owner = { controller: new AbortController() }
+    reconnectOwner = owner
+    reconcileReconnect(owner)
+}
+async function reconcileReconnect(owner) {
+    const current = () => !disposed && !revoked.value && reconnectOwner === owner && !owner.controller.signal.aborted
+    if (!current()) return
+    const retry = () => {
+        if (current()) reconnectTimer = setTimeout(() => {
+            reconnectTimer = null
+            reconcileReconnect(owner)
+        }, 1000)
+    }
+    try {
+        const metaGeneration = liveMetaGeneration
+        const fresh = await api.fetchMeta({ signal: owner.controller.signal })
+        if (!current()) return
+        const { last_line: lastLine, ...freshState } = fresh
+        // A newer channel access decision must not be undone by an older HTTP response.
+        if (metaGeneration === liveMetaGeneration) Object.assign(meta, freshState)
+        if (fresh.ready === false) { retry(); return }
+        const metadata = await api.fetchItemsMetadata(null, { signal: owner.controller.signal })
+        if (!current()) return
+        store.initSessionItemsFromMetadata(meta.session_id, metadata)
+        // Metadata can include rows computed after the preceding meta request.
+        const boundary = metadata.reduce((line, row) => Math.max(line, row.line_num), lastLine)
+        store.setSession({ ...store.getSession(meta.session_id), last_line: boundary })
+        meta.last_line = boundary
+        await inlineAdapter?.refresh({ signal: owner.controller.signal })
+        if (!current()) return
+        const resumed = inlineAdapter?.resumeManifests(wire => (wire.artifacts || []).every(item => {
+            const publication = item.publication
+            if (item.source_session_id !== meta.session_id || !Array.isArray(publication) || publication.length !== 4
+                || publication[0] !== meta.session_id || !publication.slice(1).every(Number.isInteger)) return true
+            return publication[1] <= boundary && !!store.getSessionItem(meta.session_id, publication[1])
+        })) ?? true
+        // A concurrent manifest can name a row newer than this HTTP snapshot.
+        if (!resumed) { retry(); return }
+        reconnectOwner = null
+    } catch (error) {
+        if (!current()) return
+        if ([401, 403, 404].includes(error.status)) {
+            revoked.value = true
+            stopReconnect()
+        } else retry()
     }
 }
 
@@ -191,12 +250,13 @@ onMounted(() => {
             tokenPath: props.tokenPath, sessionId: meta.session_id,
             // The consumer forwards subagent traffic too — route by the message's
             // own session_id, never assume the root.
-            onInlineArtifacts: manifest => inlineAdapter?.acceptManifest(manifest),
-            onReconnect: refreshInline,
+            onInlineArtifacts: manifest => { if (!disposed && !revoked.value) inlineAdapter?.acceptManifest(manifest) },
+            onReconnect,
             onItems: (items, sid) => store.addSessionItems(sid || meta.session_id, items),
             // Fresh meta can carry a TIGHTENED max_display_mode: re-clamp the
             // viewer's current mode so the select never sits on a now-invalid value.
             onMeta: (m) => {
+                liveMetaGeneration++
                 Object.assign(meta, m)
                 // include_subagents turned off live: no run state is relayed any
                 // more, so stop reading the stored ones (never back on before reload).
@@ -224,13 +284,14 @@ onMounted(() => {
                 store.addAgentLink(meta.session_id, link)
                 seedAgentSession(link.agent_id, link.agent_slug)
             },
-            onClosed: () => { revoked.value = true; store.setLiveAssistantTurn(meta.session_id, false) },
+            onClosed: () => { revoked.value = true; stopReconnect(); store.setLiveAssistantTurn(meta.session_id, false) },
         })
     }
 })
 onUnmounted(() => {
     disposed = true
     focusController.abort()
+    stopReconnect()
     disconnectLive?.()
     window.removeEventListener('popstate', onPopState)
     window.removeEventListener('focus', onWindowFocus)

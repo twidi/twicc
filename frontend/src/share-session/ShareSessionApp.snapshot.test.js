@@ -15,6 +15,7 @@ import { createInlineTextContext, inlineArtifactPlacement } from '../inline-arti
 import { makeShareInlineAdapter } from './inlineAdapter.js'
 import { createShareInlineCompletion } from './inlineCompletion.js'
 import * as shareApi from './shims/shareApi.js'
+import { connectShareLive } from './shims/shareLive.js'
 import { compileComponent, makeRenderer, descendants, flush, deferred } from '../../tests/helpers/scrollerComponentHarness.js'
 import * as chatBlocks from '../utils/chatBlocks.js'
 import { splitMarkdownBlocks } from '../utils/markdown.js'
@@ -38,6 +39,14 @@ const manifest = line => ({ enabled: true, revision: line, artifacts: ['calculat
     title: id, height: 360, entry_filename: 'index.html', status: 'ready', code_revision: id === 'calculator' ? 1 : line,
 })) })
 
+async function waitFor(predicate) {
+    for (let attempt = 0; attempt < 100 && !predicate(); attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 5))
+        await flush()
+    }
+    assert.ok(predicate(), 'expected asynchronous reconnect state')
+}
+
 function realStore(settings) {
     const source = readFileSync(new URL('./shims/dataStoreShim.js', import.meta.url), 'utf8')
     const body = source.replace(/^import .+ from .+\n/gm, '').replace('export const useDataStore', 'const useDataStore')
@@ -46,12 +55,17 @@ function realStore(settings) {
     return new Function(...Object.keys(deps), `${body}; return useDataStore`)(...Object.values(deps))
 }
 
-async function mount(t, { initialManifest = manifest(263) } = {}) {
+async function mount(t, { initialManifest = manifest(263), mode = 'snapshot' } = {}) {
     const previous = { window: globalThis.window, location: globalThis.location, history: globalThis.history,
-        fetch: globalThis.fetch, getComputedStyle: globalThis.getComputedStyle }
-    const events = new Map()
+        fetch: globalThis.fetch, getComputedStyle: globalThis.getComputedStyle, WebSocket: globalThis.WebSocket }
+    const events = new Map(), sockets = []
+    globalThis.WebSocket = class {
+        constructor(url) { this.url = url; sockets.push(this) }
+        close() { this.closed = true; this.onclose?.() }
+        sendMessage(message) { this.onmessage({ data: JSON.stringify(message) }) }
+    }
     globalThis.window = { addEventListener: (name, fn) => events.set(name, fn), removeEventListener: name => events.delete(name) }
-    globalThis.location = { pathname: '/share/test/', search: '', hash: '' }
+    globalThis.location = { origin: 'http://share.test', pathname: '/share/test/', search: '', hash: '' }
     globalThis.history = { replaceState() {} }
     globalThis.getComputedStyle = () => ({ scrollPaddingTop: '0' })
     const requests = [], items = [item(2, tag('calculator')), item(10, 'History marker 010', 'user_message'), item(263, tag('preferences'))]
@@ -59,13 +73,17 @@ async function mount(t, { initialManifest = manifest(263) } = {}) {
     globalThis.fetch = async (url, options = {}) => {
         requests.push(String(url))
         if (options.method === 'HEAD') return new Response(null, { status: 200 })
-        if (url.endsWith('/api/meta/')) return Response.json(metaReply ? await metaReply() : meta(boundary))
+        if (url.endsWith('/api/meta/')) {
+            const reply = metaReply ? await metaReply(options) : { ...meta(boundary), mode }
+            return reply instanceof Response ? reply : Response.json(reply)
+        }
         if (url.endsWith('/api/inline-artifacts/')) {
             const reply = manifestReply ? await manifestReply() : boundary === 263 ? initialManifest : manifest(boundary)
             return reply instanceof Response ? reply : Response.json(reply)
         }
         if (url.endsWith('/items/metadata/')) {
-            const rows = metadataReply ? await metadataReply() : items
+            const rows = metadataReply ? await metadataReply(options) : items
+            if (rows instanceof Response) return rows
             return Response.json(rows.map(({ content, ...row }) => row))
         }
         if (url.includes('/api/items/?')) {
@@ -138,11 +156,11 @@ async function mount(t, { initialManifest = manifest(263) } = {}) {
         '../components/media/GlobalMediaPreview.vue': empty, './ShareFooter.vue': empty,
         '../stores/data': { useDataStore }, '../stores/settings': { useSettingsStore: () => settings },
         '../providers': { getProviderIcon: () => null }, '../components/ui/ProviderIcon.vue': empty,
-        './shims/shareApi': shareApi, './shims/shareLive': { connectShareLive() { throw Error('Snapshot must not connect live') } },
+        './shims/shareApi': shareApi, './shims/shareLive': { connectShareLive },
         './viewerPrefs': { loadViewerPrefs: () => ({ showTimestamps: false }) },
     })
     const { renderer, root } = makeRenderer(140, node => { node.style = {} })
-    const app = renderer.createApp(component, { tokenPath: '/share/test/', meta: meta(263) })
+    const app = renderer.createApp(component, { tokenPath: '/share/test/', meta: { ...meta(263), mode } })
     t.after(() => { app.unmount(); Object.assign(globalThis, previous) })
     app.use(pinia); app.mount(root)
     await flush()
@@ -151,7 +169,15 @@ async function mount(t, { initialManifest = manifest(263) } = {}) {
     requests.length = 0
     return { store, requests, scroller, app, root, runtime: () => runtime,
         focus: () => events.get('focus')(),
-        advance(line = 267) { boundary = line; items.push(item(line, tag('preferences'))) },
+        open: () => sockets.at(-1).onopen(),
+        message: message => sockets.at(-1).sendMessage(message),
+        async reconnect() {
+            sockets.at(-1).onclose()
+            await new Promise(resolve => setTimeout(resolve, 1010))
+            sockets.at(-1).onopen()
+            await flush()
+        },
+        advance(line = 267, id = 'preferences') { boundary = line; items.push(item(line, tag(id))) },
         metadata(fn) { metadataReply = fn }, meta(fn) { metaReply = fn }, manifest(fn) { manifestReply = fn },
     }
 }
@@ -193,7 +219,7 @@ test('snapshot focus extends real transcript metadata and reaches the latest typ
 test('failed snapshot metadata refresh keeps the cached boundary and retries on the next focus', async t => {
     const f = await mount(t)
     f.advance()
-    f.metadata(() => { throw Object.assign(new Error('metadata unavailable'), { status: 503 }) })
+    f.metadata(() => new Response(null, { status: 503 }))
     await f.focus(); await flush()
     assert.equal(f.store.getSession('root').last_line, 263)
     assert.equal(f.requests.filter(url => url.endsWith('/api/inline-artifacts/')).length, 0)
@@ -331,4 +357,217 @@ test('a later snapshot focus owns metadata when an older request settles last', 
     assert.equal(f.store.getSession('root').last_line, 268)
     assert.equal(f.store.getSessionItem('root', 267), null)
     assert.ok(f.store.getSessionVisualItems('root').some(row => row.lineNum === 268))
+})
+
+test('live reconnect restores missed root rows before accepting HTTP and concurrent WS placements', async t => {
+    const f = await mount(t, { mode: 'live' }), runtime = f.runtime()
+    f.open(); await flush()
+    const key = '["root","calculator"]'
+    runtime.attach(key, '["root",2,0,0]', { placeholderEl: {}, clipEl: {}, isSuppressed: () => false })
+    runtime.setVisible(key, true); await flush()
+    const entry = runtime.entries.get(key), frame = useFramePoolStore().frames[entry.frameId]
+    const src = frame.src, generation = entry.generation, marker = f.store.getSessionItem('root', 10)
+    frame.fixtureMemory = 'unsaved reconnect input'
+    const pending = deferred()
+    f.advance(269, 'calculator')
+    f.metadata(() => pending.promise)
+    await f.reconnect()
+    const corrected = manifest(269)
+    corrected.revision = 270
+    corrected.artifacts[0].publication = ['root', 269, 0, 0]
+    corrected.artifacts[0].code_revision = 2
+    corrected.artifacts[1].publication = ['root', 263, 0, 0]
+    corrected.artifacts[1].code_revision = 263
+    f.manifest(() => ({ ...corrected, revision: 269 }))
+    f.message({ type: 'share_inline_artifacts', manifest: corrected })
+    await flush()
+    assert.equal(entry.descriptor.publicationKey, '["root",2,0,0]', 'reconnect must retain old placement until its replacement row exists')
+    assert.equal(entry.generation, generation)
+    assert.equal(frame.src, src)
+    assert.equal(frame.fixtureMemory, 'unsaved reconnect input')
+    pending.resolve([item(269, tag('calculator'))])
+    await waitFor(() => entry.descriptor.publicationKey === '["root",269,0,0]')
+    assert.equal(f.store.getSession('root').last_line, 269, 'reconnect must advance the successful transcript boundary')
+    assert.ok(f.store.getSessionVisualItems('root').some(row => row.lineNum === 269))
+    assert.equal(entry.descriptor.publicationKey, '["root",269,0,0]')
+    assert.equal(descendants(f.root, node => node.props['data-last'])[0].props.disabled, false)
+    assert.equal(f.store.getSessionItem('root', 10), marker)
+    assert.equal(f.scroller.mounts, 1)
+    assert.equal(f.scroller.top.value, 3310)
+    await f.store.loadSessionItemsRanges('share', 'root', [[269, 269]])
+    runtime.attach(key, '["root",269,0,0]', { placeholderEl: {}, clipEl: {}, isSuppressed: () => false })
+    runtime.setVisible(key, true)
+    await waitFor(() => frame.src !== src)
+    assert.equal(descendants(f.root, node => node.props['data-publication'] === '["root",269,0,0]').length, 1)
+    assert.equal(useFramePoolStore().frames[entry.frameId], frame)
+    assert.notEqual(frame.src, src, 'changed code must navigate the retained frame once')
+    assert.equal(entry.generation, generation + 1, 'HTTP and WS must coalesce into one code replacement')
+    const correctedSrc = frame.src
+    f.message({ type: 'share_inline_artifacts', manifest: corrected })
+    f.message({ type: 'share_inline_artifacts', manifest: { ...corrected, revision: 271 } })
+    await flush()
+    assert.equal(frame.src, correctedSrc, 'duplicate and saved-data-only revisions must not reload code')
+})
+
+test('live reconnect HTTP placement waits for rows and retains unchanged frame memory', async t => {
+    const f = await mount(t, { mode: 'live' }), runtime = f.runtime(), pending = deferred()
+    f.open(); await flush()
+    const key = '["root","calculator"]'
+    runtime.attach(key, '["root",2,0,0]', { placeholderEl: {}, clipEl: {}, isSuppressed: () => false })
+    runtime.setVisible(key, true); await flush()
+    const frame = useFramePoolStore().frames[runtime.entries.get(key).frameId], src = frame.src
+    frame.fixtureMemory = 'unsaved calculator'
+    f.advance(269); f.metadata(() => pending.promise)
+    f.manifest(() => {
+        assert.equal(f.store.getSession('root').last_line, 269, 'rows must precede the reconnect HTTP manifest')
+        return manifest(269)
+    })
+    await f.reconnect()
+    assert.equal(runtime.entries.get('["root","preferences"]').descriptor.publicationKey, '["root",263,0,0]')
+    pending.resolve([item(269, tag('preferences'))])
+    await waitFor(() => runtime.entries.get('["root","preferences"]').descriptor.publicationKey === '["root",269,0,0]')
+    assert.equal(f.store.getSession('root').last_line, 269)
+    assert.equal(runtime.entries.get('["root","preferences"]').descriptor.publicationKey, '["root",269,0,0]')
+    assert.equal(useFramePoolStore().frames[runtime.entries.get(key).frameId], frame)
+    assert.equal(frame.src, src)
+    assert.equal(frame.fixtureMemory, 'unsaved calculator')
+})
+
+test('live reconnect retries failed metadata without releasing a concurrent newer placement', async t => {
+    const f = await mount(t, { mode: 'live' }), runtime = f.runtime()
+    f.open(); await flush()
+    f.advance(269)
+    f.metadata(() => new Response(null, { status: 503 }))
+    await f.reconnect()
+    f.message({ type: 'share_inline_artifacts', manifest: manifest(269) })
+    await flush()
+    const entry = runtime.entries.get('["root","preferences"]'), generation = entry.generation
+    assert.equal(entry.descriptor.publicationKey, '["root",263,0,0]')
+    assert.equal(f.store.getSession('root').last_line, 263)
+    assert.equal(f.store.getSessionItem('root', 269), null)
+    f.metadata(null)
+    await new Promise(resolve => setTimeout(resolve, 1100))
+    await waitFor(() => entry.descriptor.publicationKey === '["root",269,0,0]')
+    assert.equal(f.store.getSession('root').last_line, 269)
+    assert.equal(entry.generation, generation + 1)
+})
+
+test('live reconnect retries when a concurrent manifest is newer than the HTTP transcript snapshot', async t => {
+    const f = await mount(t, { mode: 'live' }), pending = deferred(), runtime = f.runtime()
+    f.open(); await flush()
+    f.advance(269); f.metadata(() => pending.promise)
+    await f.reconnect()
+    f.advance(270)
+    f.message({ type: 'share_inline_artifacts', manifest: manifest(270) })
+    f.manifest(() => manifest(269))
+    pending.resolve([item(269, tag('preferences'))]); await flush()
+    await waitFor(() => f.store.getSession('root').last_line === 269)
+    const entry = runtime.entries.get('["root","preferences"]'), generation = entry.generation
+    assert.equal(entry.descriptor.publicationKey, '["root",263,0,0]', 'a newer publication must wait for its own source row')
+    f.metadata(null)
+    await new Promise(resolve => setTimeout(resolve, 1100))
+    await waitFor(() => entry.descriptor.publicationKey === '["root",270,0,0]')
+    assert.equal(f.store.getSession('root').last_line, 270)
+    assert.ok(f.store.getSessionVisualItems('root').some(row => row.lineNum === 270))
+    assert.equal(entry.generation, generation + 1, 'only the newest coalesced publication replaces the old binding')
+})
+
+test('live reconnect retains its placement through manifest503 and retries automatically', async t => {
+    const f = await mount(t, { mode: 'live' }), runtime = f.runtime()
+    f.open(); await flush()
+    f.advance(269)
+    let calls = 0
+    f.manifest(() => ++calls === 1 ? new Response(null, { status: 503 }) : manifest(269))
+    await f.reconnect()
+    await waitFor(() => calls === 1)
+    assert.equal(f.store.getSession('root').last_line, 269)
+    assert.equal(runtime.entries.get('["root","preferences"]').descriptor.publicationKey, '["root",263,0,0]')
+    await new Promise(resolve => setTimeout(resolve, 1100))
+    await waitFor(() => runtime.entries.get('["root","preferences"]').descriptor.publicationKey === '["root",269,0,0]')
+    assert.equal(calls, 2)
+})
+
+test('live exclusion stays immediate while an older reconnect meta response is pending', async t => {
+    const f = await mount(t, { mode: 'live' }), runtime = f.runtime(), pending = deferred()
+    f.open(); await flush()
+    f.advance(269); f.meta(() => pending.promise)
+    await f.reconnect()
+    f.message({ type: 'share_meta', meta: { ...meta(269), mode: 'live', include_inline_artifacts: false } })
+    assert.equal(runtime.active.value, false)
+    const disabled = { ...manifest(270), enabled: false }
+    f.message({ type: 'share_inline_artifacts', manifest: disabled })
+    assert.equal(runtime.entries.get('["root","preferences"]').descriptor.status, 'not_included')
+    pending.resolve({ ...meta(269), mode: 'live' })
+    await waitFor(() => f.store.getSession('root').last_line === 269)
+    await flush()
+    assert.equal(runtime.active.value, false, 'older HTTP metadata must not undo newer channel exclusion')
+    assert.equal(runtime.entries.get('["root","preferences"]').descriptor.status, 'not_included')
+})
+
+test('new live connection owns root metadata when an older reconnect response settles last', async t => {
+    const f = await mount(t, { mode: 'live' }), pending = deferred()
+    f.open(); await flush()
+    f.advance(269)
+    let calls = 0, oldSignal
+    f.metadata(options => {
+        if (++calls === 1) { oldSignal = options.signal; return pending.promise }
+        return [item(270, tag('preferences'))]
+    })
+    await f.reconnect()
+    f.advance(270)
+    await f.reconnect()
+    await waitFor(() => f.store.getSession('root').last_line === 270)
+    assert.equal(oldSignal.aborted, true)
+    pending.resolve([item(269, tag('preferences'))]); await flush()
+    assert.equal(f.store.getSession('root').last_line, 270)
+    assert.equal(f.store.getSessionItem('root', 269), null)
+    assert.equal(f.runtime().entries.get('["root","preferences"]').descriptor.publicationKey, '["root",270,0,0]')
+})
+
+for (const action of ['unmount', 'share_closed']) {
+    test(`live reconnect ignores delayed metadata after ${action}`, async t => {
+        const f = await mount(t, { mode: 'live' }), pending = deferred()
+        f.open(); await flush()
+        f.advance(269)
+        let signal
+        f.metadata(options => { signal = options.signal; return pending.promise })
+        await f.reconnect()
+        const manifests = f.requests.filter(url => url.endsWith('/api/inline-artifacts/')).length
+        if (action === 'unmount') f.app.unmount()
+        else f.message({ type: 'share_closed' })
+        assert.equal(signal.aborted, true)
+        pending.resolve([item(269, tag('preferences'))]); await flush()
+        assert.equal(f.store.getSession('root').last_line, 263)
+        assert.equal(f.store.getSessionItem('root', 269), null)
+        assert.equal(f.requests.filter(url => url.endsWith('/api/inline-artifacts/')).length, manifests)
+        if (action === 'share_closed') assert.equal(f.runtime().active.value, false)
+    })
+}
+
+test('live reconnect authorization failure closes retained access and does not retry', async t => {
+    const f = await mount(t, { mode: 'live' }), runtime = f.runtime()
+    f.open(); await flush()
+    f.meta(() => new Response(null, { status: 401 }))
+    await f.reconnect()
+    await waitFor(() => !runtime.active.value)
+    const requests = f.requests.length
+    await new Promise(resolve => setTimeout(resolve, 1100)); await flush()
+    assert.equal(f.requests.length, requests)
+    assert.equal(f.store.getSession('root').last_line, 263)
+})
+
+test('a newer reconnect replaces an aborted manifest request without waiting for its old response', async t => {
+    const f = await mount(t, { mode: 'live' }), pending = deferred()
+    f.open(); await flush()
+    f.advance(269)
+    let calls = 0
+    f.manifest(() => ++calls === 1 ? pending.promise : manifest(270))
+    await f.reconnect()
+    await waitFor(() => calls === 1)
+    f.advance(270)
+    await f.reconnect()
+    await waitFor(() => f.runtime().entries.get('["root","preferences"]').descriptor.publicationKey === '["root",270,0,0]')
+    pending.resolve(manifest(269)); await flush()
+    assert.equal(f.store.getSession('root').last_line, 270)
+    assert.equal(f.runtime().entries.get('["root","preferences"]').descriptor.publicationKey, '["root",270,0,0]')
 })
