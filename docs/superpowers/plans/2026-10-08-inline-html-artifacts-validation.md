@@ -7,10 +7,13 @@ The record distinguishes PASS observations from PARTIAL coverage and unverified 
 It does not claim overall Task 12 completion or an entirely passing browser matrix.
 The browser matrix contains **16 PASS and 1 PARTIAL row** after the focus, scroll-anchor, and B1 follow-up.
 
-Actual parent-window-focus reconciliation passes. Authorized A3 outage/reconnection **fails on `836715ea`**.
-The reconnect correction passes mounted automated checks. Its actual production-browser retest remains pending.
+Actual parent-window-focus reconciliation passes. Historical R4 A3 outage/reconnection **FAILS on `836715ea`**.
+The later actual R5 A3 retest **PASSES on `e0b91199`**, including copied saved data and data-only RAM retention.
+The separate old-R4 viewer stalls in Loading after serialized pending65→ready66. Its root cause remains unproved.
 
-Transient live pending timing remains unobserved.
+Current-build automatic live pending completion remains **OPEN**.
+The final source fix is `750bae9932bad34ab7d6ab4363335e8a9dcb5fc4`.
+Its affected automated checks and public build pass. The controller still owns broad suites and actual pending acceptance.
 Read-only browser tools cannot compare retained DOM object identity across calls.
 Attached iframe observations, document nonce/counter, inputs, and scroll establish retained browsing state instead.
 
@@ -26,6 +29,8 @@ Attached iframe observations, document nonce/counter, inputs, and scroll establi
 | Snapshot transcript boundary fix B1 | `427adc8cce9bdf59eac926f784f4e13ab6fbbe2a` |
 | R3-I1 pending reactivation correction base | `4805dc0e50c03de4d35d8e9c063f7f81c1cee1d8` |
 | A3-I1 reconnect correction base / actual failing browser state | `836715ea6b58ea5f4c28f658c09b52154dc38dee` |
+| Actual R5 A3 PASS / final fix base | `e0b911997699ab88d46351ff1cde57c2e6cc63bb` |
+| Final tested source correction | `750bae9932bad34ab7d6ab4363335e8a9dcb5fc4` |
 | Host | Linux `7.0.0-31-generic`, Ubuntu SMP PREEMPT_DYNAMIC |
 | Python / Django / pytest | `3.13.14` / `6.0.4` / `9.0.3` |
 | Node | `v22.22.1` |
@@ -86,7 +91,7 @@ Public checks use the built standalone share-session bundle served by the backen
 | SPA, broker shim, artifact shell, browser companion, share-session build | All five initial bundles build before I1. All five rebuild after B1; the actual B1 browser retest uses the new production share bundle. |
 | R2-I1 standalone public share-session build | Production bundle builds successfully; 17.13s; exit 0. Browser validation has not yet loaded this correction. |
 | R3-I1 standalone public share-session build | Final production bundle builds successfully; 17.01s; exit 0. No browser check loads this correction. |
-| A3-I1 standalone public share-session build | Production bundle builds successfully; 17.01s; exit 0. Actual reconnect retest remains pending. |
+| A3-I1 standalone public share-session build | Production bundle builds successfully; 17.01s; exit 0. Later actual R5 A3 retest passes on this source. |
 | Fullscreen runtime/geometry investigation | 3 targeted tests pass; no production change |
 
 The post-I1 selected backend command is:
@@ -174,7 +179,7 @@ Existing B1, immediate exclusion, failed-boundary retry, disposal, and newer-foc
 No actual-browser R3-I1 check occurs. The round4 scoped review passes.
 Actual A3 now reveals a separate reconnect defect. Task12 acceptance stays incomplete.
 
-## Actual A3 outage and reconnect correction
+## Historical R4 A3 outage and reconnect correction
 
 The controller stops and starts only the isolated backend through `devctl.py`.
 While stopped, the guarded fixture updates Calculator code, optional saved data, and finalized Codex publication268→269.
@@ -191,7 +196,7 @@ Public meta and filtered item metadata also contain269.
 The retained transcript still ends at268. GoLast cannot reach269.
 The old Calculator block disappears, and the retained frame hides. The replacement remains inaccessible.
 
-This actual result is **FAIL**, captured on `836715ea`. Saved-data reads after reconnect remain unexecuted.
+This historical R4 result is **FAIL**, captured on `836715ea`. That checkpoint contains no saved-data read after reconnect.
 
 The root callback previously fetches only the manifest. The consumer does not replay offline-computed transcript rows.
 The correction fetches current root metadata and advances its successful boundary before releasing reconnect placement.
@@ -209,9 +214,35 @@ Changed publication/code navigates the same retained frame once. Duplicate and s
 
 These checks use the real app, list, Pinia store, API, live transport, adapter, completion, and runtime.
 HTTP responses, WebSocket endpoints, row DOM, and scroller DOM remain controlled test boundaries.
-They do not establish actual iframe retention or corrected production-browser A3 acceptance.
+These automated tests alone do not establish actual iframe retention or corrected production-browser A3 acceptance.
+The later actual R5 observations below establish that separate A3 acceptance.
+Current-build automatic live pending completion remains open.
 
-Actual A3 retest and transient live pending timing remain open. Independent scoped review also remains pending.
+### Later actual R5 A3 retest
+
+The controller intentionally reloads the page before the second outage to load the R5 production bundle.
+No page or widget Reload occurs during or after that outage.
+Calculator HTML2/publication269 retains its nonce, counter4, unsaved input, range25, and tabOne while the backend stops.
+A normal native publication advances source271→272 and Calculator HTML2→3 while stopped.
+After startup, the actual socket reconnects and requests meta, root metadata, inline manifest, and row272 content.
+The new row becomes reachable through GoLast. Exactly one Calculator placement shows HTML3 and counter5.
+The correction loads its document once. Saved-data Load reads `a3-retest-offline-choice`/81/Two.
+A later normal owner data PUT and explicit Load retain the nonce, counter5, HTML3, and unsaved input/range/tab.
+
+**Actual A3 PASS on `e0b911997699ab88d46351ff1cde57c2e6cc63bb`.**
+Evidence: `task-12-a3-retest-observations.md` and `task-12-acceptance-final-checkpoint.md`.
+The earlier R4 FAIL remains historical evidence. This A3 PASS does not close live pending completion.
+
+### Separate old-R4 pending observation
+
+A normal pending-copy HTML5→6 publication270→271 reaches serialized pending65 then ready66.
+The retained old-R4 viewer shows Loading after durable ready and remains stalled without new HEAD/GET.
+No delivered or accepted ready66 revision is recorded. Loading alone cannot identify the failing boundary.
+The read-only serializer proves public descriptor state, rather than actual socket delivery.
+The actual-block control passes pending→ready under its controlled observer/renderer boundary.
+The final review proves a separate skipped-terminal-delivery defect; it does not prove this stall uses that path.
+Current-build automatic HEAD/GET and visible corrected content remain unexecuted by the final-fix worker.
+Evidence: `task-12-pending-browser-observations.md` and `task-12-pending-diagnosis.md`.
 
 ## Fixture diagnostics and browser limits
 
@@ -261,7 +292,7 @@ Nonce prefixes below identify diagnostic document instances, not session IDs or 
 | Unpublished code, saved data, independent Artifacts viewer | **PASS** | Unpublished version 2 leaves private/live version 1 and counters unchanged. Artifacts preview alone reloads version 2/counter 2. Its memory is independent; Explicit Load reads shared saved choices. Live data PUT refreshes copied data without reloading version 1/counter 1. |
 | Reload, refresh, eviction, and conditional archive teardown | **PASS** | Codex Reload resets RAM at counter 2; Explicit Load restores saved codex-before-reload. Browser refresh resets RAM. Cache limit 1 removes Codex frames; return recreates nonce 4e132960/counter 4/defaults. Archive/unarchive succeeds; active/cached views may survive archive. Older cached frames can linger during limit changes; no exact global cache count is claimed. |
 | Height, viewport-dependent content, narrow/mobile | **PASS** | Narrow 271.8px and mobile 390×844 viewport clamp height 900. Tall content grows 170→1100; exit fullscreen clamps 900. Header/composer clipping remains correct. No ResizeObserver warning/error is observed. |
-| Live tag/data changes, no-viewer interval, reconnect | **PARTIAL; A3 reconnect FAIL** | Real-time correction reloads once. Data changes preserve nonce/counter/RAM. Fresh viewer after no-viewer changes loads published version 3 rather than unpublished version 4 and reads after-no-viewer data. A real 78.125 MiB fixture reaches ready versions 1→4, once per finalized publication. Transient pending is NOT OBSERVED because copy completion beats the tool observation window. The test driver delays only publication; the exporter has no artificial delay. Actual authorized backend outage preserves nonce10540cba/counter3/unsaved input while stopped. After accepted WS reconnect, ready Calculator269 replaces its manifest binding while retained rows still end268. The old block disappears; the new block remains inaccessible. This fails on836715ea. The code correction has mounted automated coverage; actual production retest and saved-data reads after reconnect remain pending. |
+| Live tag/data changes, no-viewer interval, reconnect | **PARTIAL; later R5 A3 PASS, pending OPEN** | Real-time correction reloads once. Data changes preserve nonce/counter/RAM. Fresh viewer after no-viewer changes loads published version 3 rather than unpublished version 4 and reads after-no-viewer data. A real 78.125 MiB fixture reaches ready versions 1→4, once per finalized publication. Transient pending is NOT OBSERVED because copy completion beats the tool observation window. The test driver delays only publication; the exporter has no artificial delay. Actual authorized backend outage preserves nonce10540cba/counter3/unsaved input while stopped. After accepted WS reconnect, ready Calculator269 replaces its manifest binding while retained rows still end268. The old block disappears; the new block remains inaccessible. This historical failure occurs on836715ea. Actual R5 retest on e0b91199 restores row272 before placement, loads Calculator HTML3 once with counter4→5, reads copied saved data, and preserves RAM/counter during a later data-only update. The separate old-R4 pending-copy viewer stalls after serialized ready66. Current-build automatic pending completion remains OPEN. |
 | Snapshot Push without new tag | **PASS** | Actual iframe input focus retains version 5/counter 2 while normal same-publication Push copies version 6. Bound Escape returns parent-window focus and automatically loads version 6/counter 3 without Reload. The counter stays 3 after several minutes. B1 retest also advances frozen boundary 267→268: parent focus adds Correction version 7 and exactly one latest widget, nonce 26869aeb/counter 4→7b5036af/counter 5. No page refresh, Reload, or GoLast occurs during that retest. |
 | Native tag and Include subagents changes | **PASS** | Child literal tag remains ordinary text. Actual related-child HTTP checks keep root publication/code/manifest revisions unchanged for inclusion false/true. Child transcript access follows the option. |
 | Legacy failed initial export; repair and error Reload | **PASS** | Initial calculator ready/preferences error at revision 3/frozenline 3. Creating only missing entry leaves manifest unchanged. Error Reload recovers preferences/counter 1 at revision 4. Calculator copy ID/code revision/captured/selected placement remain unchanged. |
@@ -294,10 +325,13 @@ Detailed reports: `browser-observations.md`, `task-12-browser-followup-observati
 
 ## Remaining review risks and user prerequisites
 
-- Task 10 M1: failed startup can bypass coordinator stop-and-drain before the serving cleanup block.
-- Metadata mode-transition handling remains a named final-review risk.
-- Actual A3 outage/reconnect fails on836715ea. The corrected production-browser retest remains pending.
-- Saved-data reads after actual reconnection remain unexecuted. Transient pending browser timing remains NOT OBSERVED.
+- Final source fixes I1/I2/I3/M1 have affected automated coverage at750bae9932bad34ab7d6ab4363335e8a9dcb5fc4.
+- Independent final scoped review remains pending.
+- Historical R4 A3 FAIL and later actual R5 A3 PASS remain separate evidence.
+- Actual R5 copied saved-data reads and data-only RAM retention pass.
+- The old-R4 pending viewer stalls after serialized ready66. Its observed root cause remains unproved.
+- Current-build automatic pending completion remains OPEN until the controller runs the retained-viewer test.
+- Current-source full frontend/backend suites remain controller work. Earlier broad results do not label this source fully passing.
 - Exact cross-call retained DOM object identity is unobservable. Nonce/counter/state and attached-frame observations prove browsing-context retention.
 - Five Node MockTimers ExperimentalWarning messages and existing SPA build warnings remain recorded.
 - Six CLI slim/full projection failures reproduce against unchanged baseline. They are not labeled passing.
@@ -311,4 +345,59 @@ The target checkout requires the declared Python dependency and migration `0154_
 The user runs `uv sync` as needed and restarts their target instance through `devctl.py`.
 Devctl applies pending migrations at startup. The authorized isolated validation instance already completes that startup.
 Validation does not authorize deployment, merge, remote push, or CHANGELOG edits.
-Overall Task12 remains pending independent acceptance review.
+Overall integrated acceptance remains incomplete until independent review and current-build pending acceptance finish.
+
+
+## Final review correction: exact source and affected verification
+
+Tested source: **`750bae9932bad34ab7d6ab4363335e8a9dcb5fc4`**.
+Base: `e0b911997699ab88d46351ff1cde57c2e6cc63bb`.
+No product source or tests change after these checks. This validation update changes documentation only.
+
+| Finding / check | Result and qualification |
+| --- | --- |
+| I1 terminal delivery | Producer preserves an obligation when serialization is unready. Consumer reloads fresh authorization and a sanitized manifest on root readiness. One boolean coalesces delivery; success clears it. No live completion polling is added. |
+| I2 completion / retry | Focus, pending completion, mode adoption, and missing-row retry responses use owned transcript reconciliation. Source rows and the successful boundary precede publication acceptance. |
+| I3 both mode transitions | Reactive transport starts one live connection or stops it for snapshot adoption. Active snapshot metadata remains readable; revoke/expire still close access immediately. |
+| M1 failed startup | Outer ownership includes partial coordinator startup. Stop-and-drain executes on provider failure, adoption cancellation, and coordinator failure. Normal order stays coordinator-before-DB-writer. |
+| Final owning backend RED | 5 failed, 1 passed, 66 deselected; 5.16s; exit1. Missing delivery times out; mode and lifecycle assertions fail. No compile/import error occurs. |
+| Final owning backend GREEN | 6 passed, 66 deselected; 3.86s; exit0. |
+| Final affected frontend | **81 passed, 0 failed/skipped; 29.053s; exit0**. Includes22 mounted cases. One existing MockTimers ExperimentalWarning. |
+| Final affected backend / coordinator | **109 passed; 12.50s; exit0**. |
+| Additional mutation / public-route checks | **106 passed; 9.90s; exit0**. |
+| Reviewer reproductions / actual-block control | **3 passed; 2.437s; exit0**. Controlled HTTP, observer, and renderer. No actual iframe-browser claim. |
+| Reviewer relay reproduction | Exit0; skipped terminal inline delivery recovers after root readiness. Controlled reads; no ORM/fixture/socket claim for this script. The shipping regression uses actual Django/Channels test boundaries. |
+| Final standalone public build | Vite7.3.1;4662 modules;18.24s;exit0. CSS294.02kB/gzip45.06kB;JS16190.29kB/gzip3334.09kB. No build warning. |
+| Final whitespace check | `git diff --check` exits0. |
+| Earlier full frontend at e0b91199 | 2965 passed,0 failed/skipped;33.832s;exit0. This predates final source changes. |
+| Earlier qualified broad backend | 9814 passed,26 skipped,6 established baseline CLI cases deselected,75 warnings;378.03s;exit0. This predates final backend changes. |
+
+The six excluded baseline cases remain `tests/test_session_projection.py::test_slim_and_full_are_mutually_exclusive[argv0]` through `[argv5]`.
+No unfiltered backend pass or current-source broad suite pass is claimed.
+The controller starts current-source broad suites at750bae99 after the product commit. Results remain pending at this documentation commit.
+Existing device-node, Ruff, SPA-build, MockTimers, and inherited VIRTUAL_ENV qualifications remain recorded above.
+
+Commands, from the explicit worktree:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/feature-inline-html-artifacts && node --test frontend/src/share-session/ShareSessionApp.snapshot.test.js frontend/src/share-session/inlineAdapter.test.js frontend/src/share-session/inlineCompletion.test.js frontend/src/inline-artifacts/runtime.test.js frontend/src/share-session/ShareItemsList.loading.test.js frontend/src/share-session/shims/shareApi.test.js frontend/src/share-session/shims/shareLive.test.js frontend/src/share-session/shims/shareLiveNested.test.js frontend/src/share-session/shims/noPrivateApi.test.js
+```
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/feature-inline-html-artifacts && TWICC_DATA_DIR=$PWD uv run --no-sync pytest tests/test_inline_artifact_share_selection.py tests/test_share_consumer.py tests/test_title_auto_task.py tests/test_inline_artifact_share_coordinator.py -q
+```
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/feature-inline-html-artifacts && TWICC_DATA_DIR=$PWD uv run --no-sync pytest tests/test_share_mutation.py tests/test_inline_artifact_public_routes.py -q
+```
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/feature-inline-html-artifacts/frontend && ./node_modules/.bin/vite build --config vite.config.share.js
+```
+
+The final-fix worker runs no server, browser, fixture action, package installation, or manual instance migration.
+Bounded ignored tooling prepares only pending-copy6→7 after source272 with exact source/page/data/share guards.
+The producer uses a ten-second driver delay. The query-only ORM observer stops within25seconds.
+Both actions remain **NOT EXECUTED BY WORKER**. Existing padding remains unchanged.
+The controller intentionally loads this new bundle before the retained-viewer pending test, without an outage.
+Actual pending acceptance stays **OPEN**. A fresh page or the accepted A3 reconnect cannot replace that evidence.
