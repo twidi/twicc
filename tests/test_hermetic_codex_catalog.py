@@ -1,4 +1,7 @@
 import copy
+import fcntl
+import subprocess
+import sys
 import threading
 
 import orjson
@@ -239,3 +242,69 @@ def test_non_dict_model_entry_raises_catalog(tmp_path, monkeypatch):
     with pytest.raises(HermeticConfigError) as info:
         cat.ensure_catalog(tmp_path / "codex", "gpt-6-luna", cache_dir=tmp_path)
     assert info.value.reason == "catalog"
+
+
+def test_cleanup_removes_unused_hermetic_files_and_preserves_active_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(cat.subprocess, "run", FakeRun())
+    obsolete = tmp_path / "hermetic-codex-catalog-0.159.0-gpt-6-luna-production-old-v1.json"
+    obsolete.write_text("old")
+    orphan = tmp_path / "hermetic-codex-catalog-0.159.0-gpt-6-luna-neutral-old-v1.lease"
+    orphan.touch()
+    protected = tmp_path / "hermetic-codex-catalog-0.158.0-gpt-6-luna-production-active-v1.json"
+    protected.write_text("active")
+    unrelated = tmp_path / "interactive-codex-catalog-0.161.0-other-v1.json"
+    unrelated.write_text("keep")
+    with protected.with_suffix(".lease").open("a+b") as handle:
+        fcntl.flock(handle, fcntl.LOCK_SH)
+        current = cat.ensure_catalog(tmp_path / "codex", "gpt-6-luna", cache_dir=tmp_path)
+        assert not obsolete.exists()
+        assert not orphan.exists()
+        assert protected.read_text() == "active"
+        assert unrelated.read_text() == "keep"
+        assert current.exists()
+    cat.ensure_catalog(tmp_path / "codex", "gpt-6-luna", cache_dir=tmp_path)
+    assert not protected.exists()
+    assert not protected.with_suffix(".lease").exists()
+
+
+def test_cleanup_preserves_all_models_and_variants_used_by_this_backend(tmp_path, monkeypatch):
+    monkeypatch.setattr(cat.subprocess, "run", FakeRun(models=[ENTRY, {**ENTRY, "slug": "other-model"}]))
+    production = cat.ensure_catalog(tmp_path / "codex", "gpt-6-luna", cache_dir=tmp_path)
+    neutral = cat.ensure_catalog(tmp_path / "codex", "gpt-6-luna", "neutral", cache_dir=tmp_path)
+    other = cat.ensure_catalog(tmp_path / "codex", "other-model", cache_dir=tmp_path)
+    assert all(path.exists() for path in (production, neutral, other))
+    assert all(path.with_suffix(".lease").exists() for path in (production, neutral, other))
+
+
+def test_cleanup_waits_for_another_hermetic_backend_to_exit(tmp_path, monkeypatch):
+    script = """
+import sys
+from pathlib import Path
+import orjson
+from twicc.providers.codex import hermetic_catalog as catalog
+entry = orjson.loads(sys.argv[2])
+catalog.bundled_catalog = lambda binary: ("codex-cli 0.159.0", {"models": [entry]})
+path = catalog.ensure_catalog(Path("old-codex"), "gpt-6-luna", cache_dir=Path(sys.argv[1]))
+print(path.name, flush=True)
+sys.stdin.readline()
+"""
+    # Do not patch subprocess.run: the child process must use the real OS API.
+    monkeypatch.setattr(cat, "bundled_catalog", lambda binary: ("codex-cli 0.161.0", {"models": [ENTRY]}))
+    with subprocess.Popen(
+        [sys.executable, "-u", "-c", script, str(tmp_path), orjson.dumps(ENTRY).decode()],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    ) as process:
+        try:
+            filename = process.stdout.readline().strip()
+            assert filename.startswith("hermetic-codex-catalog-0.159.0-")
+            old = tmp_path / filename
+            current = cat.ensure_catalog(tmp_path / "codex", "gpt-6-luna", cache_dir=tmp_path)
+            assert old.exists()
+            assert current.exists()
+        finally:
+            process.communicate(input="\n", timeout=10)
+        assert process.returncode == 0
+    cat.ensure_catalog(tmp_path / "codex", "gpt-6-luna", cache_dir=tmp_path)
+    assert not old.exists()
+    assert not old.with_suffix(".lease").exists()
+    assert current.exists()

@@ -40,8 +40,15 @@ their `.lease` sidecars. A backend holds a shared OS file lock for every catalog
 it uses until it exits. Cleanup takes a nonblocking exclusive lock and skips
 catalogues retained by any running backend, including idle agents. A directory
 lock serializes lease acquisition, atomic writes, and cleanup across processes.
-Other cache files, including hermetic catalogues, are untouched. After an older
+Interactive cleanup leaves hermetic catalogues and other cache files untouched. After an older
 backend exits, its files become eligible for cleanup on the next agent launch.
+
+Hermetic calls use the same lease and cleanup implementation in `catalog_cache.py`,
+with a separate directory lock and the `hermetic-codex-catalog-*` filename family.
+Each call checks the cache and removes unused hermetic files and orphan `.lease`
+sidecars, including when it reuses a valid cached catalogue. Every model and
+variant used by a running backend remains protected until that backend exits.
+The next hermetic call can then remove those files. Interactive files are untouched.
 
 The process-level `model_catalog_json` override applies to new and resumed
 interactive agents and their native subagents. It does not modify provider

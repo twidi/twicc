@@ -18,6 +18,8 @@ import orjson
 
 from twicc.providers.hermetic import HermeticConfigError
 
+from .catalog_cache import catalog_cache
+
 TRANSFORM_VERSION = 1
 # Keys of the bundled entry when TRANSFORM_VERSION was last reviewed; the diagnostic (O2) warns on new ones.
 KNOWN_ENTRY_KEYS = frozenset({
@@ -218,14 +220,24 @@ def ensure_catalog(binary: Path, model: str, variant: str = "production", cache_
     except OSError as exc:
         raise HermeticConfigError("catalog", f"Cannot create the catalogue cache directory {cache_dir}: {exc}") from exc
     path = cache_dir / catalog_cache_name(version, model, variant, entry_hash)
+    try:
+        with catalog_cache(path, prefix="hermetic-codex-catalog"):
+            _ensure_catalog_file(path, source, model, variant)
+    except OSError as exc:
+        raise HermeticConfigError("catalog", f"Cannot prepare the catalogue cache {path}: {exc}") from exc
+    return path
+
+
+def _ensure_catalog_file(path: Path, source: dict, model: str, variant: str) -> None:
+    """Validate or atomically write the file while holding its family directory lock."""
     if path.exists() and _file_problem(path, model, variant) is None:
-        return path   # a damaged cache file falls through and is regenerated, without a failure log line
+        return   # a damaged cache file falls through and is regenerated, without a failure log line
     content = {"models": [transform_entry(source, variant=variant)]}
     validate_catalog(content, model=model, variant=variant)
     try:
-        fd, tmp_name = tempfile.mkstemp(dir=cache_dir, prefix=path.name + ".", suffix=".tmp")
+        fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
     except OSError as exc:
-        raise HermeticConfigError("catalog", f"Cannot write the catalogue file in {cache_dir}: {exc}") from exc
+        raise HermeticConfigError("catalog", f"Cannot write the catalogue file in {path.parent}: {exc}") from exc
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(orjson.dumps(content))
@@ -235,4 +247,3 @@ def ensure_catalog(binary: Path, model: str, variant: str = "production", cache_
         if isinstance(exc, OSError):
             raise HermeticConfigError("catalog", f"Cannot write the catalogue file {path}: {exc}") from exc
         raise
-    return path

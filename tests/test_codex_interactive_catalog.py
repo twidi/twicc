@@ -54,6 +54,7 @@ def test_cache_repairs_corruption_and_changes_with_source_and_version(tmp_path, 
     version = "codex-cli 0.161.0"
     monkeypatch.setattr(interactive_catalog, "bundled_catalog", lambda binary: (version, source))
     first = interactive_catalog.ensure_catalog(tmp_path / "codex", cache_dir=tmp_path)
+    assert first.name.startswith("interactive-codex-catalog-0.161.0-")
     assert orjson.loads(first.read_bytes())["models"][0]["experimental_supported_tools"] == [
         "request_user_input", "future_tool",
     ]
@@ -148,7 +149,7 @@ sys.stdin.readline()
     ) as process:
         try:
             filename = process.stdout.readline().strip()
-            assert filename.startswith("interactive-codex-catalog-codex-cli_0.161.0-")
+            assert filename.startswith("interactive-codex-catalog-0.161.0-")
             old = tmp_path / filename
             current = interactive_catalog.ensure_catalog(tmp_path / "codex", cache_dir=tmp_path)
             assert old.exists()
