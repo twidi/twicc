@@ -14,7 +14,7 @@ const props = defineProps({
 const expandPreviewHost = inject('expandPreviewHost', null)
 const host = installInlineRuntimeHost({ runtime: props.runtime, window, expandPreviewHost })
 const failedEntries = computed(() => [...props.runtime.entries.values()].filter(entry =>
-    props.runtime.active.value && entry.loadState === 'error' && entry.attachment && entry.geometryVisible
+    props.runtime.active.value && (entry.loadState === 'error' || entry.descriptor.status === 'error') && entry.attachment && entry.geometryVisible
     && props.runtime.fullscreenArtifactKey.value !== entry.artifactKey))
 function errorStyle(entry) {
     const rect = entry.geometryRect

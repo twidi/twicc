@@ -469,13 +469,13 @@ async def remove_inline_share_exports(share_id: str) -> None:
     await asyncio.to_thread(remove)
 
 
-async def ensure_inline_exports(share_id: str) -> None:
+async def ensure_inline_exports(share_id: str, *, initialized=None, expected_generation=None) -> None:
     """Capture legacy metadata before copying; failures are per artifact.
 
     Initialized snapshot captures and successful copies never recapture.
     Later authorized ensure/retry calls recover interrupted pending captures.
     """
-    generation = reserve_inline_exports(share_id)
+    generation = reserve_inline_exports(share_id) if expected_generation is None else expected_generation
     get_inline_export_coordinator().preserve_unfinished_data(share_id, generation)
     async with share_export_lock(share_id):
         if not _generation_current(share_id, generation):
@@ -498,6 +498,8 @@ async def ensure_inline_exports(share_id: str) -> None:
                     return list(state['selected'])
             return await sync_to_async(commit)()
         keys = await run_under_db_write_lock(initialize)
+        if initialized is not None:
+            initialized()
         if keys is None:
             await recover_snapshot_initialization(share_id, expected_generation=generation)
             return
@@ -755,6 +757,7 @@ class InlineExportCoordinator:
         self._reservations = {}
         self._signatures = {}
         self._missed_data = set()
+        self._public_tasks = {}
 
     async def start(self):
         if self._worker is not None:
@@ -773,6 +776,8 @@ class InlineExportCoordinator:
     async def stop(self):
         self._accepting = False
         self._wake.set()
+        if self._public_tasks:
+            await asyncio.gather(*(task for task, _ in self._public_tasks.values()), return_exceptions=True)
         if self._worker is not None:
             await self._worker
             self._worker = None
@@ -911,11 +916,57 @@ class InlineExportCoordinator:
                         logger.exception('Inline export reconciliation failed for share %s', share_id)
             self._active_paths = {}
 
+    async def schedule_public_reconcile(self, share_id: str):
+        """Coalesce viewer work. Wait only for its durable pending capture."""
+        if not self._accepting:
+            return
+        current = self._public_tasks.get(share_id)
+        if current is None:
+            generation = reserve_inline_exports(share_id)
+            self.preserve_unfinished_data(share_id, generation)
+            barrier = asyncio.get_running_loop().create_future()
+            def initialized():
+                if not barrier.done():
+                    barrier.set_result(None)
+            async def run():
+                try:
+                    share = await sync_to_async(_load_share)(share_id)
+                    if share is None:
+                        initialized()
+                    elif not (share.inline_artifact_exports or {}).get('initialized'):
+                        await ensure_inline_exports(share_id, initialized=initialized, expected_generation=generation)
+                    elif (share.options or {}).get('mode', 'live') == 'live':
+                        await self._reconcile(share_id, None, initialized=initialized, expected_generation=generation)
+                    elif any(entry.get('status') == 'pending' for entry in
+                             share.inline_artifact_exports.get('artifacts', {}).values()):
+                        await ensure_inline_exports(share_id, initialized=initialized, expected_generation=generation)
+                    else:
+                        initialized()
+                except BaseException as error:
+                    if not barrier.done():
+                        barrier.set_exception(error)
+                    raise
+                finally:
+                    initialized()
+            task = asyncio.create_task(run(), name=f'inline-public-{share_id}')
+            self._public_tasks[share_id] = (task, barrier)
+            def completed(done):
+                self._public_tasks.pop(share_id, None)
+                if not done.cancelled():
+                    error = done.exception()
+                    if error is not None and not isinstance(error, (SelectionNotReady, InlineExportFailure)):
+                        import logging
+                        logging.getLogger(__name__).error('Public inline reconciliation failed for share %s',
+                                                          share_id, exc_info=error)
+            task.add_done_callback(completed)
+            current = task, barrier
+        await asyncio.shield(current[1])
+
     async def reconcile(self, share_id: str):
         """Reconcile current live publications and ready data after reconnect."""
         await self._reconcile(share_id, None)
 
-    async def _reconcile(self, share_id, paths, *, expected_generation=None):
+    async def _reconcile(self, share_id, paths, *, expected_generation=None, initialized=None):
         generation = reserve_inline_exports(share_id) if expected_generation is None else expected_generation
         async with share_export_lock(share_id):
             share = await sync_to_async(_load_share)(share_id)
@@ -937,6 +988,8 @@ class InlineExportCoordinator:
                 prepared = _metadata_preparation(share, selection, generation)
                 if not await commit_inline_exports(share_id, prepared.base_revision, prepared, share.options):
                     return
+            if initialized is not None:
+                initialized()
             fresh = await sync_to_async(_load_share)(share_id)
             for key, entry in fresh.inline_artifact_exports.get('artifacts', {}).items():
                 if not _generation_current(share_id, generation):

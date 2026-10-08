@@ -1,6 +1,12 @@
 <script setup>
-import { ref, reactive, provide, onMounted, onUnmounted, computed } from 'vue'
+import { ref, reactive, provide, onMounted, onUnmounted, computed, watch } from 'vue'
 import ShareItemsList from './ShareItemsList.vue'
+import FrameHost from '../components/frames/FrameHost.vue'
+import InlineArtifactRuntimeHost from '../inline-artifacts/InlineArtifactRuntimeHost.vue'
+import { useFramePoolStore } from '../stores/framePool.js'
+import { INLINE_ARTIFACT_CONTEXT } from '../inline-artifacts/context.js'
+import { createInlineArtifactRuntime } from '../inline-artifacts/runtime.js'
+import { makeShareInlineAdapter } from './inlineAdapter.js'
 import SharedSubagentView from './SharedSubagentView.vue'
 import GlobalMediaPreview from '../components/media/GlobalMediaPreview.vue'
 import ShareFooter from './ShareFooter.vue'
@@ -18,6 +24,7 @@ const api = makeShareApi(props.tokenPath); setShareApi(api)
 provide('shareApi', api)
 
 const store = useDataStore()
+store.sharedSessionId = props.meta.session_id
 const settings = useSettingsStore()
 const meta = reactive({ ...props.meta })
 const revoked = ref(false)
@@ -26,6 +33,7 @@ const ready = computed(() => meta.ready !== false)
 // Seed a session-ish object the reused components read via getSession.
 store.setSession({
     id: meta.session_id, provider: meta.provider, project_id: 'share',
+    type: meta.inline_artifacts_supported === true ? 'session' : 'subagent',
     title: meta.title || 'Shared session',
     last_line: meta.last_line, git_directory: null, cwd: null, artifacts_dir: null,
     created_at: meta.created_at, last_updated_at: meta.last_updated_at,
@@ -58,6 +66,42 @@ const providerIcon = computed(() => getProviderIcon(meta.provider))
 // (#agent=<id>[,<nested>…]) through the History API — the share bundle has no
 // router — so browser Back closes the drawer instead of leaving the share page.
 const subagentStack = ref([])
+const inlinePool = useFramePoolStore()
+const inlineAdapter = meta.inline_artifacts_supported === true
+    ? makeShareInlineAdapter({ api, tokenPath: props.tokenPath, store }) : null
+const inlineRuntime = inlineAdapter ? createInlineArtifactRuntime({
+    viewId: `share:${props.tokenPath}`, pool: inlinePool, adapter: inlineAdapter,
+}) : null
+if (inlineRuntime) {
+    inlinePool.hostMounted = true
+    inlineAdapter.subscribe(manifest => inlineRuntime.reconcile(manifest))
+}
+provide(INLINE_ARTIFACT_CONTEXT, inlineRuntime ? { sourceSessionId: meta.session_id, runtime: inlineRuntime } : null)
+watch(() => revoked.value || !ready.value || meta.include_inline_artifacts === false || subagentStack.value.length > 0,
+    suppressed => inlineRuntime?.setActive(!suppressed), { immediate: true, flush: 'sync' })
+let disconnectLive = null, disposed = false
+const focusController = new AbortController()
+async function refreshInline() {
+    if (!inlineAdapter || disposed || revoked.value) return
+    try { await inlineAdapter.refresh() }
+    catch (error) {
+        if (!disposed && [401, 403, 404].includes(error.status)) {
+            revoked.value = true
+            inlineRuntime.setActive(false)
+        }
+    }
+}
+async function onWindowFocus() {
+    if (meta.mode !== 'snapshot' || disposed) return
+    try {
+        const fresh = await api.fetchMeta({ signal: focusController.signal })
+        if (disposed) return
+        Object.assign(meta, fresh)
+        await refreshInline()
+    } catch (error) {
+        if (!disposed && [401, 403, 404].includes(error.status)) revoked.value = true
+    }
+}
 
 function seedAgentSession(id, slug = null) {
     // Seed the subagent as a store session so the reused SessionItem dispatch can
@@ -66,7 +110,7 @@ function seedAgentSession(id, slug = null) {
     // UnknownEntry ("Unhandled event").
     store.setSession({
         ...store.getSession(id),
-        id, provider: meta.provider, slug: slug || store.getSession(id)?.slug || null,
+        id, type: 'subagent', provider: meta.provider, slug: slug || store.getSession(id)?.slug || null,
         project_id: 'share', title: null, last_line: 0,
         git_directory: null, cwd: null, artifacts_dir: null,
     })
@@ -108,6 +152,8 @@ provide('transcriptFrozen', computed(() => meta.mode !== 'live' || revoked.value
 
 onMounted(() => {
     window.addEventListener('popstate', onPopState)
+    window.addEventListener('focus', onWindowFocus)
+    refreshInline()
     // Anchor a base history entry (stack empty), then re-open any agents encoded in
     // the URL on load/reload — so Back from a deep-linked agent returns to the session.
     const hash = /#agent=([^&]*)/.exec(location.hash)
@@ -116,10 +162,12 @@ onMounted(() => {
         for (const id of hash[1].split(',').filter(Boolean)) openSubagent(id)
     }
     if (ready.value && meta.mode === 'live') {
-        connectShareLive({
+        disconnectLive = connectShareLive({
             tokenPath: props.tokenPath, sessionId: meta.session_id,
             // The consumer forwards subagent traffic too — route by the message's
             // own session_id, never assume the root.
+            onInlineArtifacts: manifest => inlineAdapter?.acceptManifest(manifest),
+            onReconnect: refreshInline,
             onItems: (items, sid) => store.addSessionItems(sid || meta.session_id, items),
             // Fresh meta can carry a TIGHTENED max_display_mode: re-clamp the
             // viewer's current mode so the select never sits on a now-invalid value.
@@ -155,7 +203,15 @@ onMounted(() => {
         })
     }
 })
-onUnmounted(() => window.removeEventListener('popstate', onPopState))
+onUnmounted(() => {
+    disposed = true
+    focusController.abort()
+    disconnectLive?.()
+    window.removeEventListener('popstate', onPopState)
+    window.removeEventListener('focus', onWindowFocus)
+    inlineRuntime?.dispose()
+    if (inlineRuntime) inlinePool.hostMounted = false
+})
 </script>
 
 <template>
@@ -217,6 +273,8 @@ onUnmounted(() => window.removeEventListener('popstate', onPopState))
                 :stack="subagentStack" @close="closeSubagent" @clear="clearSubagents" />
         </Transition>
 
+        <InlineArtifactRuntimeHost v-if="inlineRuntime" :runtime="inlineRuntime" :pool="inlinePool" :fullscreen-z-index="19" />
+        <FrameHost v-if="inlineRuntime" :z-tiers="{ base: 2, overlay: 11, fullscreen: 18 }" />
         <GlobalMediaPreview />
         <ShareFooter class="glass-sticky" />
     </div>
@@ -232,7 +290,7 @@ html, body { height: 100%; margin: 0; }
 /* Dynamic viewport so the pinned footer stays within the visible area even as
    mobile browser chrome shows/hides (matches the HTML-artifact share shell). */
 #app { height: 100vh; height: 100dvh; }
-.share-shell { max-width: 60rem; margin: 0 auto; padding: 0 1rem; height: 100%;
+.share-shell { position: relative; max-width: 60rem; margin: 0 auto; padding: 0 1rem; height: 100%;
     display: flex; flex-direction: column; }
 .share-header { flex: 0 0 auto; display: flex; justify-content: space-between;
     align-items: center; gap: 1rem; }

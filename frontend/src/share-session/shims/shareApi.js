@@ -5,8 +5,8 @@ export function isSessionNotReadyError(error) {
 
 export function makeShareApi(tokenPath) {
     const base = tokenPath.replace(/\/+$/, '')
-    async function jget(url) {
-        const res = await fetch(url, { credentials: 'same-origin' })
+    async function jget(url, options = {}) {
+        const res = await fetch(url, { credentials: 'same-origin', ...options })
         if (!res.ok) {
             let code = null
             try { code = (await res.json())?.error || null } catch { /* non-JSON error */ }
@@ -19,7 +19,11 @@ export function makeShareApi(tokenPath) {
     }
     return {
         base,
-        fetchMeta: () => jget(`${base}/api/meta/`),
+        fetchInlineManifest: (options = {}) => jget(`${base}/api/inline-artifacts/`, options),
+        retryInlineArtifact: (sourceSessionId, artifactId, options = {}) =>
+            jget(`${base}/api/inline-artifacts/${encodeURIComponent(sourceSessionId)}/${encodeURIComponent(artifactId)}/retry/`,
+                { ...options, method: 'POST' }),
+        fetchMeta: (options = {}) => jget(`${base}/api/meta/`, options),
         fetchItemsMetadata: (subagentId = null) =>
             jget(subagentId ? `${base}/api/subagent/${subagentId}/items/metadata/` : `${base}/api/items/metadata/`),
         fetchItems: (rangesQS, subagentId = null) =>

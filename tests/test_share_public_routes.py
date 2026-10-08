@@ -426,3 +426,20 @@ def test_share_artifact_data_listing_is_404(artifact_share):
         headers={"x-twicc-artifact-doc": f"/share/{artifact_share.token}/__twicc_doc__"},
     ))
     assert resp.status_code == 404
+
+
+@pytest.mark.parametrize('native', [False, True])
+def test_public_metadata_only_exposes_inline_support_boolean(client, session, native):
+    session.inline_artifacts = {'schema': 1, 'publications': [{
+        'artifact_id': 'private', 'src': '/private/absolute/path', 'copy_id': 'private-copy',
+    }]}
+    if native:
+        session.type = SessionType.SUBAGENT
+    session.save(update_fields=['inline_artifacts', 'type'])
+    share = _share(session, options={'mode': 'live'})
+    response = _run(client.get(f'/share/{share.token}/api/meta/'))
+    assert response.status_code == 200
+    metadata = orjson.loads(response.content)
+    assert metadata['inline_artifacts_supported'] is (not native)
+    assert 'inline_artifacts' not in metadata and 'inline_artifact_exports' not in metadata
+    assert b'/private/absolute/path' not in response.content and b'private-copy' not in response.content

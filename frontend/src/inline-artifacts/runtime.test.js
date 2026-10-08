@@ -458,3 +458,14 @@ test('correction and disposal return focus before removing a focused retained fr
     f.runtime.dispose()
     assert.equal(focuses, 2)
 })
+
+test('public export errors keep a visible retry placement without probing or allocating a frame', () => {
+    const f = fixture()
+    f.reconcile(1, descriptor({ status: 'error' }))
+    f.runtime.attach(key, publication, f.attachment)
+    f.runtime.setVisible(key, true)
+    assert.equal(f.entry().attachment, f.attachment)
+    assert.equal(f.probes.length, 0)
+    assert.deepEqual(Object.keys(f.pool.frames), [])
+    f.runtime.dispose()
+})

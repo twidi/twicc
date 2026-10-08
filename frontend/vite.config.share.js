@@ -16,6 +16,8 @@ export default defineConfig({
     define: { 'process.env.NODE_ENV': JSON.stringify('production') },
     resolve: {
         alias: [
+            { find: /^\.\/useWebSocket(\.js)?$/, replacement: r('src/share-session/shims/noWebSocket.js') },
+            { find: /.*\/utils\/api(\.js)?$/, replacement: r('src/share-session/shims/noPrivateApi.js') },
             { find: /.*\/stores\/data(\.js)?$/, replacement: r('src/share-session/shims/dataStoreShim.js') },
             { find: /.*\/stores\/settings(\.js)?$/, replacement: r('src/share-session/shims/settingsStoreShim.js') },
             { find: /.*\/stores\/codeComments(\.js)?$/, replacement: r('src/share-session/shims/codeCommentsShim.js') },

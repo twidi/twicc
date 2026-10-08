@@ -4,6 +4,7 @@
 // WebSocket layer. (Enumerated from every `from '…/composables/useWebSocket'` import.)
 import { ref } from 'vue'
 
+export function killProcess() {}
 export function sendWsMessage() {}
 export function stopSubagent() {}
 export function interruptSession() {}

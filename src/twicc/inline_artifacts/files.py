@@ -129,6 +129,19 @@ def open_source_asset(session_id: str, artifact_id: str, asset_path: str) -> Bin
         raise InlineArtifactUnavailable() from None
 
 
+@contextmanager
+def export_artifact_directory(export_root: Path) -> Iterator[int]:
+    """Pin a leased immutable copy directory without following its symlink."""
+    try:
+        root_fd = _open_directory(export_root)
+        try:
+            yield root_fd
+        finally:
+            os.close(root_fd)
+    except (OSError, ValueError):
+        raise InlineArtifactUnavailable() from None
+
+
 def open_export_asset(export_root: Path, asset_path: str) -> BinaryIO:
     """Return a confined export handle without following nested symlinks."""
     _require_safe_handles()

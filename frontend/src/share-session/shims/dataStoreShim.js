@@ -28,6 +28,7 @@ function rangesToQS(ranges) {
 export const useDataStore = defineStore('shareData', {
     state: () => ({
         // The single shared session (plus subagents keyed by id).
+        sharedSessionId: null,    // fixed regular root for public inline adapters
         sessions: {},            // id -> session-ish meta
         sessionItems: {},        // id -> [{ line_num, content, display_level, group_head, group_tail, kind, timestamp }]
         visualItems: {},         // id -> stabilized visual items

@@ -7,6 +7,7 @@ from .inline_artifacts.views import inline_artifact_asset
 from .core.services.attachments import views as composer_attachment_views
 from .auth import views as auth_views
 from .rpc import views as rpc_views
+from .share import inline_artifact_views as share_inline_views
 from .share import artifact_views as share_artifact_views
 from .share import owner_views as share_owner_views
 from .share import password_views as share_password_views
@@ -184,6 +185,10 @@ urlpatterns = [
     # Public share surface (design §6). Order: password page, kind-specific API,
     # then root + bottom catch (LAST so it can't shadow the API routes).
     path("share/<str:token>/auth", share_password_views.share_auth),
+    path("share/<str:token>/api/inline-artifacts/", share_inline_views.inline_manifest),
+    path("share/<str:token>/api/inline-artifacts/<str:source_session_id>/<str:artifact_id>/retry/", share_inline_views.inline_retry),
+    path("share/<str:token>/api/inline-artifacts/<str:source_session_id>/<str:artifact_id>/proxy/", share_inline_views.inline_proxy),
+    path("share/<str:token>/inline-artifacts/<str:source_session_id>/<str:artifact_id>/<path:asset_path>", share_inline_views.inline_asset),
     path("share/<str:token>/api/meta/", share_session_views.api_meta),
     path("share/<str:token>/api/items/metadata/", share_session_views.api_items_metadata),
     path("share/<str:token>/api/items/", share_session_views.api_items),

@@ -30,7 +30,7 @@ export function createInlineArtifactRuntime({ viewId, pool, adapter }) {
     }
 
     function chooseAttachment(entry) {
-        if (!active.value || !runnable(entry)) return null
+        if (!active.value || !entry.present || !['ready', 'error'].includes(entry.descriptor.status)) return null
         for (const attachment of attachments.get(entry.artifactKey)?.values() || []) {
             const visible = attachment.isVisible ? attachment.isVisible() : entry.requestedVisible
             if (!attachment.isSuppressed?.() && visible) return attachment
@@ -156,7 +156,7 @@ export function createInlineArtifactRuntime({ viewId, pool, adapter }) {
                 attachments.set(key, new Map())
                 geometry.attach(entry.frameId, {
                     getAttachment: () => entry.attachment || entry.focusAttachment,
-                    isVisible: () => entry.visible || entry.loadState === 'error' && !!entry.attachment,
+                    isVisible: () => entry.visible || (entry.loadState === 'error' || entry.descriptor.status === 'error') && !!entry.attachment,
                     onGeometry: fields => {
                         entry.geometryVisible = fields.visible
                         if (fields.rect) entry.geometryRect = fields.rect

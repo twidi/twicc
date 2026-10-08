@@ -1,5 +1,6 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, provide } from 'vue'
+import { INLINE_ARTIFACT_CONTEXT } from '../inline-artifacts/context.js'
 import ShareItemsList from './ShareItemsList.vue'
 import { useDataStore } from '../stores/data'
 import { getAgentDisplay } from '../utils/agentLabel'
@@ -7,6 +8,7 @@ import { getAgentDisplay } from '../utils/agentLabel'
 const props = defineProps({ stack: { type: Array, required: true } })
 const emit = defineEmits(['close', 'clear'])
 const store = useDataStore()
+provide(INLINE_ARTIFACT_CONTEXT, null)
 const current = computed(() => props.stack[props.stack.length - 1])
 // Same label as the owner's subagent tabs: the session slug, else the short id.
 const agentLabel = (id) => {

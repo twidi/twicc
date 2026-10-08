@@ -926,3 +926,20 @@ def test_unrecognizable_invalid_settings_disable_without_quarantine(set_origins)
     _assert_serves_app(_gate, "app.example")
     _assert_serves_app(_gate, "tunnel.example")
     _assert_disabled_surfaces(_gate, "tunnel.example")
+
+
+@pytest.mark.parametrize('path', [
+    '/share/tok/api/inline-artifacts/',
+    '/share/tok/inline-artifacts/root/widget/index.html',
+    '/share/tok/inline-artifacts/root/widget/data/',
+    '/share/tok/api/inline-artifacts/root/widget/retry/',
+    '/share/tok/api/inline-artifacts/root/widget/proxy/',
+])
+def test_inline_routes_require_dedicated_share_host(set_origins, path):
+    set_origins(public='https://app.example.com', share='https://share.example.com')
+    gate, full = _gate()
+    sent = _run(_drive(gate, _http(path, 'app.example.com')))
+    _assert_plain_404(sent)
+    assert not full.called
+    sent = _run(_drive(gate, _http(path, 'share.example.com')))
+    assert _status(sent) == 200 and full.called
