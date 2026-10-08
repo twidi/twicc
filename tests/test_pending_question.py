@@ -211,6 +211,23 @@ class TestTheEntryShape:
                               "tool_name", "actions"}
         assert entry["actions"] == []
 
+    def test_an_auto_deniable_entry_says_when_it_clears(self):
+        pending = claude_question(request_type="tool_approval", tool_name="Bash",
+                                  tool_input={"command": "rm -rf /tmp/x"},
+                                  auto_deny_at=time.time() + 60)
+        entry = claude_pq.normalize_pending_request(pending)
+        assert entry["kind"] == "out_of_scope"
+        assert entry["auto_deny_at"].endswith("+00:00")
+        assert 59 <= entry["auto_deny_in_seconds"] <= 60
+        assert entry["actions"] == []
+
+    def test_a_passed_deadline_reads_zero_not_negative(self):
+        pending = claude_question(request_type="tool_approval", tool_name="Bash",
+                                  tool_input={"command": "rm -rf /tmp/x"},
+                                  auto_deny_at=time.time() - 3)
+        entry = claude_pq.normalize_pending_request(pending)
+        assert entry["auto_deny_in_seconds"] == 0.0
+
     def test_raw_covers_a_question_entry(self):
         pending = claude_question()
         entry = claude_pq.normalize_pending_request(pending, raw=True)

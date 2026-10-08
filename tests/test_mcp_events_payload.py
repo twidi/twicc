@@ -11,7 +11,8 @@ from twicc.mcp.events.catalog import MAX_BODY_BYTES, PAYLOAD_SCHEMA, event_id
 from twicc.mcp.events.delivery import build_occurrence, fit_body
 
 TICK = datetime(2026, 10, 4, tzinfo=UTC)
-REQUEST = SimpleNamespace(request_id="request-1", request_type="tool_approval", created_at=TICK.timestamp() - 60)
+REQUEST = SimpleNamespace(request_id="request-1", request_type="tool_approval",
+                          created_at=TICK.timestamp() - 60, auto_deny_at=None)
 
 
 def occurrence(outcome="replied", *, text="answer", line=7, numbering=2, last_line=8, **fields):
@@ -39,9 +40,20 @@ def test_exact_data_schema_and_text_presence(outcome, text, line):
     assert ("request_type" in data) == (outcome == "awaiting_user_input")
     if outcome == "awaiting_user_input":
         assert data["request_type"] == REQUEST.request_type
+    assert "auto_deny_at" not in data
     assert event["cursor"] is None
     assert event["name"] == "session.concluded"
     assert "text_truncated" not in orjson.loads(fit_body(event))["data"]["reply"]
+
+
+def test_an_auto_deniable_request_carries_its_deadline():
+    armed = SimpleNamespace(**{**vars(REQUEST), "auto_deny_at": TICK.timestamp() + 60})
+    reply = {"outcome": "awaiting_user_input", "line_num": None, "is_final": None,
+             "since_line_num": 3, "waited_seconds": 1.0}
+    event = build_occurrence("sub_a", "session-a", None, reply, numbering=2, last_line=8,
+                             tick_started_at=TICK, pending_request=armed)
+    validate(event["data"], PAYLOAD_SCHEMA)
+    assert event["data"]["auto_deny_at"] == (TICK + timedelta(seconds=60)).isoformat()
 
 
 @pytest.mark.parametrize("outcome", ["replied", "provider_error", "ended"])

@@ -96,6 +96,10 @@ EVENT_DEFINITION = {
                 "type": "string",
                 "description": "Only for awaiting_user_input: ask_user_question, tool_approval or hybrid_terminal.",
             },
+            "auto_deny_at": {
+                "type": "string",
+                "description": "ISO 8601 deadline; present only for an auto-deniable awaiting_user_input.",
+            },
             "reply": {
                 "type": "object",
                 "properties": {

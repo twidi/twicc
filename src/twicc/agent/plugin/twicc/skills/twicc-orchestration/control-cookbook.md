@@ -54,7 +54,10 @@ $TWICC sessions stop <LOSER_ID>... --timeout 30
 `--wait-first` also stops on `awaiting_user_input`: declare a winner only on
 `outcome == "replied"`. When the first conclusion is `awaiting_user_input`,
 answer that session and wait again, or wait again naming only the other ids —
-the same call returns the blocked session at once. The default cursor returns
+the same call returns the blocked session at once. A blocked session whose
+`pending-requests` entry has `auto_deny_at` clears itself then: wait on the
+other ids meanwhile, and include it again once `auto_deny_in_seconds` has
+passed. The default cursor returns
 a winner that finished before the call (except while a session's compute is not current — e.g. right after a TwiCC restart: then pass `--since` an instant before the spawn or the send).
 
 If you tagged losers after validation:

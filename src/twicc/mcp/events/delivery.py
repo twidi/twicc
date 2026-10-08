@@ -104,6 +104,10 @@ def build_data(session_id: str, session_title: str | None, reply: dict, *, pendi
     data = {"session_id": session_id, "session_title": session_title, "reply": block}
     if reply["outcome"] == "awaiting_user_input":
         data["request_type"] = pending_request.request_type
+        # An auto-deniable request clears itself at this instant
+        # (docs/plans/2026-10-08-bypass-approval-auto-deny-spec.md §6.3).
+        if pending_request.auto_deny_at is not None:
+            data["auto_deny_at"] = created_at_iso(pending_request.auto_deny_at)
     return data
 
 

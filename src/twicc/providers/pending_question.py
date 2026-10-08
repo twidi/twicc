@@ -13,6 +13,7 @@ Design: ``docs/plans/2026-09-18-question-cli-design.md`` §3 and §5.
 from __future__ import annotations
 
 from datetime import datetime, UTC
+import time
 
 
 #: The two ``tool_name`` values that carry a question. Everything else is a
@@ -154,16 +155,26 @@ def out_of_scope_entry(pending, *, raw: bool = False) -> dict:
     """The minimal entry for something waiting that this command cannot answer.
 
     It exists to say *"something is waiting and it is not mine"*, so it stops at
-    what that sentence needs. No ``age_seconds``, no questions, no payload.
+    what that sentence needs. No ``age_seconds``, no questions, no payload — but
+    an auto-deniable request (``twicc.agent.auto_deny``) also says when it
+    clears itself, so a waiting agent does not ask a human for nothing.
     """
-    return _with_raw({
+    entry = {
         "request_id": pending.request_id,
         "created_at": created_at_iso(pending.created_at),
         "kind": "out_of_scope",
         "reason": out_of_scope_reason(pending),
         "tool_name": pending.tool_name,
-        "actions": [],
-    }, pending, raw=raw)
+    }
+    if pending.auto_deny_at is not None:
+        # Imported lazily: a module-level import would load the whole
+        # ``twicc.agent`` package (its ``__init__``) with this light module.
+        from twicc.agent.auto_deny import auto_deny_remaining
+
+        entry["auto_deny_at"] = created_at_iso(pending.auto_deny_at)
+        entry["auto_deny_in_seconds"] = auto_deny_remaining(pending, time.time())
+    entry["actions"] = []
+    return _with_raw(entry, pending, raw=raw)
 
 
 def question_entry(pending, questions: list[dict], *, raw: bool = False) -> dict:

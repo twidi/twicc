@@ -32,6 +32,11 @@ from twicc.mcp.events.catalog import (
     subscription_id,
 )
 
+AUTO_DENY_AT_SCHEMA = {
+    "type": "string",
+    "description": "ISO 8601 deadline; present only for an auto-deniable awaiting_user_input.",
+}
+
 
 def test_event_contract():
     assert EVENT_NAME == "session.concluded"
@@ -255,6 +260,9 @@ def test_complete_catalog_matches_authoritative_spec_json():
     payload = spec.split("### 6.3 `payloadSchema`", 1)[1].split("```json\n", 1)[1].split("```", 1)[0]
     expected = orjson.loads(listing)["events"][0]
     expected["payloadSchema"] = orjson.loads(payload)
+    # Added after that spec by docs/plans/2026-10-08-bypass-approval-auto-deny-spec.md
+    # (§6.3); the historical spec is never edited, so the addition is declared here.
+    expected["payloadSchema"]["properties"]["auto_deny_at"] = AUTO_DENY_AT_SCHEMA
     assert EVENT_DEFINITION == expected
     assert INPUT_SCHEMA == expected["inputSchema"]
     assert PAYLOAD_SCHEMA == expected["payloadSchema"]

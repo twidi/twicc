@@ -37,7 +37,8 @@ Lists **every** pending request, including the ones you cannot answer: a session
 }
 ```
 
-- `kind` — `question`, or `out_of_scope`: something is waiting and it is not yours. An out-of-scope entry has only `request_id`, `created_at`, `kind`, `reason` and `tool_name`, and an empty `actions`. `reason` is `tool_approval`, `mcp_tool_approval`, `elicitation`, `terminal_only` or `choice`.
+- `kind` — `question`, or `out_of_scope`: something is waiting and it is not yours. An out-of-scope entry has `request_id`, `created_at`, `kind`, `reason`, `tool_name` and an empty `actions` — plus, when TwiCC denies it by itself, the two keys below. `reason` is `tool_approval`, `mcp_tool_approval`, `elicitation`, `terminal_only` or `choice`.
+- `auto_deny_at`, `auto_deny_in_seconds` — only on an out-of-scope tool approval that TwiCC denies by itself (a dangerous action in Claude `bypassPermissions`): the instant (ISO 8601) and the seconds left. Do not ask a human. Do not call `wait-reply` in a loop meanwhile: it returns `awaiting_user_input` at once while the request is pending. Let `auto_deny_in_seconds` pass, then wait again.
 - `actions[].action` — the sub-command that performs it. **Read it before answering.** A question whose only action is `cancel-questions` cannot be answered here: no questions, a secret one, one without an id, or two sharing an id. The last two earn `missing_answers` on every attempt: `--choice` names questions by id. Cancel it, or answer it in the web UI.
 - `--raw` — adds each request's untouched `tool_input`, on every entry (a pending patch comes back whole). **Never needed to answer**: the plain read has the ids, options and flags. Use it only to describe an out-of-scope entry to a human.
 - Nothing pending: exit 0, empty list. No agent: exit 0, `agent_state: "dead"`.
