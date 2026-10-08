@@ -9,6 +9,7 @@ import re
 from typing import NamedTuple
 
 from markdown_it import MarkdownIt
+from markdown_it.rules_inline import backtick
 
 
 class ArtifactBlock(NamedTuple):
@@ -88,11 +89,38 @@ def _comment_block(state, start_line, end_line, silent):
     return False
 
 
+def _comment_inline(state, silent):
+    """Match the frontend inline comment rule before native backtick parsing."""
+    start = state.pos
+    if state.src[start : start + 4] != "<!--":
+        return False
+    close = state.src.find("-->", start + 4)
+    if close < 0 or close + 3 > state.posMax:
+        return False
+    if not silent:
+        state.push("html_comment", "", 0).hidden = True
+    state.pos = close + 3
+    return True
+
+
+def _backtick_source_span(state, silent):
+    start = state.pos
+    token_count = len(state.tokens)
+    matched = backtick(state, silent)
+    if not silent and len(state.tokens) > token_count:
+        token = state.tokens[-1]
+        if token.type == "code_inline":
+            token.meta["source_span"] = (start, state.pos)
+    return matched
+
+
 _MARKDOWN = MarkdownIt("default", {"html": False})
 _MARKDOWN.block.ruler.before(
     "fence", "colon_block", _colon_block, {"alt": ["paragraph", "reference", "blockquote", "list"]}
 )
 _MARKDOWN.block.ruler.before("paragraph", "html_comment", _comment_block)
+_MARKDOWN.inline.ruler.before("html_inline", "html_comment", _comment_inline)
+_MARKDOWN.inline.ruler.at("backticks", _backtick_source_span)
 
 
 def _line_offsets(text):
@@ -114,7 +142,7 @@ def _comment_ranges(text, tokens, offsets):
     """Find comment boundaries outside Markdown code spans and code blocks.
 
     Comment scopes can cross paragraph boundaries, including blank lines and
-    unterminated comments. Block maps bound the small inline backtick scan.
+    unterminated comments. Native inline parsing owns code delimiter boundaries.
     """
     code_ranges = []
     for token in tokens:
@@ -127,22 +155,12 @@ def _comment_ranges(text, tokens, offsets):
             if _TAG.fullmatch(text[start:end].strip()):
                 code_ranges.append((start, end))
                 continue
-            if not any(child.type == "code_inline" for child in token.children or []):
-                continue
-            # Match exact backtick-run lengths, as Markdown code spans do.
-            runs = list(re.finditer(r"`+", text[start:end]))
-            index = 0
-            while index < len(runs):
-                opener = runs[index]
-                if _is_escaped(text, start + opener.start()):
-                    index += 1
-                    continue
-                closing = next((i for i in range(index + 1, len(runs)) if len(runs[i][0]) == len(opener[0])), None)
-                if closing is None:
-                    index += 1
-                else:
-                    code_ranges.append((start + opener.start(), start + runs[closing].end()))
-                    index = closing + 1
+            children = []
+            _MARKDOWN.inline.parse(text[start:end], _MARKDOWN, {}, children)
+            for child in children:
+                if child.type == "code_inline" and "source_span" in child.meta:
+                    left, right = child.meta["source_span"]
+                    code_ranges.append((start + left, start + right))
     code_ranges.sort()
     ranges = []
     pos = 0

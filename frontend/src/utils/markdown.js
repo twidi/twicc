@@ -3,6 +3,7 @@
 // Mermaid diagrams are rendered post-parse by the MarkdownContent component.
 
 import MarkdownItAsync from 'markdown-it-async'
+import backtick from 'markdown-it/lib/rules_inline/backticks.mjs'
 import { fromAsyncCodeToHtml } from '@shikijs/markdown-it/async'
 import { codeToHtml } from 'shiki'
 import DOMPurify from 'dompurify'
@@ -161,6 +162,19 @@ function htmlCommentInline(state, silent) {
 }
 md.inline.ruler.before('html_inline', 'html_comment', htmlCommentInline)
 
+// Syntax inspection records the native code rule's consumed source span.
+// Ordinary renders delegate without adding metadata or changing parser options.
+md.inline.ruler.at('backticks', (state, silent) => {
+    const start = state.pos
+    const tokenCount = state.tokens.length
+    const matched = backtick(state, silent)
+    if (state.env.recordInlineSourceSpans && !silent && state.tokens.length > tokenCount) {
+        const token = state.tokens.at(-1)
+        if (token.type === 'code_inline') token.meta = { sourceSpan: [start, state.pos] }
+    }
+    return matched
+})
+
 md.renderer.rules.html_comment = () => ''
 
 // Wrapper around codeToHtml that falls back to 'text' (plain) for unknown languages.
@@ -226,9 +240,29 @@ export async function renderMarkdown(source, env) {
     return DOMPurify.sanitize(rawHtml, DOMPURIFY_CONFIG)
 }
 
-/** Return syntax tokens without rendering or enabling raw HTML. */
+/**
+ * Return syntax tokens without rendering or enabling raw HTML.
+ * Inline tokens carry `meta.sourceCodeRanges`: original-source UTF-16 spans.
+ * Replaying their raw mapped source preserves CRLF and nested block prefixes.
+ */
 export function parseMarkdownTokens(source) {
-    return md.parse(source, {})
+    const tokens = md.parse(source, {})
+    const offsets = [0]
+    for (const match of source.matchAll(/\r\n|\r|\n/g)) offsets.push(match.index + match[0].length)
+    offsets.push(source.length)
+    for (const token of tokens) {
+        if (token.type !== 'inline' || !token.map) continue
+        const [start, end] = token.map.map(line => offsets[line])
+        const children = []
+        md.inline.parse(source.slice(start, end), md, { recordInlineSourceSpans: true }, children)
+        token.meta = {
+            ...token.meta,
+            sourceCodeRanges: children
+                .filter(child => child.type === 'code_inline' && child.meta?.sourceSpan)
+                .map(child => child.meta.sourceSpan.map(position => start + position)),
+        }
+    }
+    return tokens
 }
 
 /**

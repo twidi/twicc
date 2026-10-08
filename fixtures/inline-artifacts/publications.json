@@ -1229,5 +1229,27 @@
     "name": "escaped backtick pair before comment",
     "text": "\\`<!-- `\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
     "expected": []
+  },
+  {
+    "name": "comment backtick does not delimit later code",
+    "text": "<!-- ` --> `<!-- `\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": [
+      {
+        "start": 20,
+        "end": 108,
+        "descriptor": {
+          "artifact_id": "preferences",
+          "src": "inline-artifacts/preferences/index.html",
+          "title": "preferences",
+          "height": 360
+        },
+        "error": null
+      }
+    ]
+  },
+  {
+    "name": "similar tag name does not hide a comment opener",
+    "text": "<twicc:inline-artifacts title=\"<!--\" />\n\n<twicc:inline-artifact id=\"preferences\" src=\"inline-artifacts/preferences/index.html\" />",
+    "expected": []
   }
 ]

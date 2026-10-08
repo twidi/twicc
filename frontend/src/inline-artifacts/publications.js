@@ -2,7 +2,7 @@
 import { parseMarkdownTokens } from '../utils/markdown.js'
 
 const TAG = /^<twicc:inline-artifact(?=\s|\/>)([^]*?)\/>$/
-const COMPLETE_TAG = /^<twicc:inline-artifact(?:[^"<>]|"[^"]*")*\/>$/
+const COMPLETE_TAG = /^<twicc:inline-artifact(?=\s|\/>)(?:[^"<>]|"[^"]*")*\/>$/
 const ATTRIBUTE = /\s+([A-Za-z_:][A-Za-z0-9_:.-]*)\s*=\s*"([^"]*)"/y
 
 function lineOffsets(text) {
@@ -31,24 +31,7 @@ function commentRanges(text, tokens, offsets) {
                 codeRanges.push([start, end])
                 continue
             }
-            if (!token.children?.some(child => child.type === 'code_inline')) continue
-            // A code span closes with a backtick run of exactly the opening length.
-            const runs = [...text.slice(start, end).matchAll(/`+/g)]
-            let index = 0
-            while (index < runs.length) {
-                const opener = runs[index]
-                if (isEscaped(text, start + opener.index)) {
-                    index++
-                    continue
-                }
-                const closing = runs.findIndex((run, i) => i > index && run[0].length === opener[0].length)
-                if (closing < 0) {
-                    index++
-                } else {
-                    codeRanges.push([start + opener.index, start + runs[closing].index + runs[closing][0].length])
-                    index = closing + 1
-                }
-            }
+            codeRanges.push(...(token.meta?.sourceCodeRanges || []))
         }
     }
     codeRanges.sort((a, b) => a[0] - b[0])
