@@ -66,10 +66,13 @@ Public checks use the built standalone share-session bundle served by the backen
 | Fresh full frontend after I1, before B1 | **2947 passed, 0 failed/skipped; 24.1046s; exit 0** |
 | B1 mounted public-component RED / GREEN | Three initial cases fail before the fix. Four final cases pass after the fix; 1.017s. |
 | B1 covering frontend | **269 passed, 0 failed/skipped; 5.173s; exit 0** |
-| Fresh full frontend after B1 | **2951 passed, 0 failed/skipped; 22.0428s; exit 0** |
+| Fresh full frontend after B1, before R2-I1 | **2951 passed, 0 failed/skipped; 22.0428s; exit 0** |
+| R2-I1 authoritative exclusion RED / GREEN | Mounted snapshot exclusion fails before correction: active runtime survives metadata503. After correction, all five owning component tests pass; 1.031s. |
+| R2-I1 covering public component/adapter/completion/runtime | **42 passed, 0 failed/skipped; 1.184s; exit 0** |
 | Required Ruff scope, plus I1 serializer/projection files | All checks passed |
 | Fixture compatibility Ruff scope | Five unchanged findings reproduce on original sources: four F811 fixture redefinitions and one PIE807 lambda. No added-line finding. |
 | SPA, broker shim, artifact shell, browser companion, share-session build | All five initial bundles build before I1. All five rebuild after B1; the actual B1 browser retest uses the new production share bundle. |
+| R2-I1 standalone public share-session build | Production bundle builds successfully; 17.13s; exit 0. Browser validation has not yet loaded this correction. |
 | Fullscreen runtime/geometry investigation | 3 targeted tests pass; no production change |
 
 The post-I1 selected backend command is:
@@ -87,7 +90,9 @@ The post-fixture backend run excludes only the six established baseline CLI case
 B1 changes only frontend source and its regression. No additional backend suite is justified for that correction.
 B1 logs: `task-12-b1-red.log`, `task-12-b1-green.log`, `task-12-b1-covering-frontend.log`, and `task-12-b1-build.log`.
 The controller's fresh full frontend result is in `branch-full-frontend-after-b1.log`.
-The implementer repeats no suite or build for this documentation update.
+The later R2-I1 correction uses only affected frontend tests and a standalone production share-session rebuild.
+No backend or full frontend suite repeats for that correction.
+R2-I1 logs: `task-12-r3-red.log`, `task-12-r3-green.log`, `task-12-r3-covering-frontend.log`, and `task-12-r3-share-build.log`.
 
 The initial full frontend log contains **five Node ExperimentalWarning messages for the MockTimers API**.
 Those warnings are not failed assertions. Existing SPA mixed-import and large-chunk warnings also remain recorded.
@@ -124,6 +129,16 @@ B1 refreshes authorized root item metadata before reconciling changed-boundary i
 It retains the mounted transcript, loaded rows, scroll position, and unrelated frame.
 Generation/disposal checks reject stale async responses; failed metadata can retry on the next focus.
 Mounted SFC/store regressions and an actual production-browser retest close B1.
+
+Independent round2 review finds R2-I1 in the new focus handler.
+Fresh exclusion previously waits behind a changed-boundary item-metadata request.
+When that request fails, retained inline frames remain active despite the successful exclusion response.
+Backend routes still deny excluded artifacts. This finding concerns stale visible runtime state.
+The correction applies fresh share state immediately while retaining the last successful transcript boundary.
+Only successful root metadata loading advances that boundary and permits the explicit inline refresh.
+Mounted regression evidence covers pending metadata, repeated HTTP503 failures, hidden retained frames, and recovery with exclusion preserved.
+Existing retry, disposal, newer-focus, cache, and latest typed-placement tests also pass.
+No actual-browser metadata503 test occurs. A fresh scoped review remains pending.
 
 ## Fixture diagnostics and browser limits
 

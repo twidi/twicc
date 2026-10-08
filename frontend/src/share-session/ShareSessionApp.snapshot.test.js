@@ -200,6 +200,39 @@ test('failed snapshot metadata refresh keeps the cached boundary and retries on 
     assert.ok(f.store.getSessionVisualItems('root').some(row => row.lineNum === 267))
 })
 
+test('snapshot exclusion hides retained frames before changed-boundary metadata settles or fails', async t => {
+    const f = await mount(t), pending = deferred(), runtime = f.runtime()
+    const key = '["root","calculator"]'
+    runtime.attach(key, '["root",2,0,0]', { placeholderEl: {}, clipEl: {}, isSuppressed: () => false })
+    runtime.setVisible(key, true)
+    await flush()
+    const entry = runtime.entries.get(key), frame = useFramePoolStore().frames[entry.frameId]
+    assert.ok(frame)
+    assert.equal(runtime.active.value, true)
+    f.advance()
+    f.meta(() => ({ ...meta(267), include_inline_artifacts: false }))
+    f.metadata(() => pending.promise)
+    const focus = f.focus(); await flush()
+    const activeBeforeMetadata = runtime.active.value
+    pending.reject(Object.assign(new Error('metadata unavailable'), { status: 503 }))
+    await focus; await flush()
+    assert.equal(runtime.active.value, false, 'fresh exclusion must survive metadata failure')
+    assert.equal(activeBeforeMetadata, false, 'exclusion must apply while metadata is still pending')
+    assert.equal(frame.visible, false)
+    assert.equal(f.store.getSession('root').last_line, 263)
+    assert.equal(f.store.getSessionItem('root', 267), null)
+    assert.equal(f.requests.filter(url => url.endsWith('/api/inline-artifacts/')).length, 0)
+    f.metadata(() => { throw Object.assign(new Error('metadata unavailable'), { status: 503 }) })
+    await f.focus(); await flush()
+    assert.equal(runtime.active.value, false, 'repeated metadata failure must not undo exclusion')
+    assert.equal(f.store.getSession('root').last_line, 263)
+    f.metadata(null)
+    await f.focus(); await flush()
+    assert.equal(f.store.getSession('root').last_line, 267)
+    assert.ok(f.store.getSessionVisualItems('root').some(row => row.lineNum === 267))
+    assert.equal(runtime.active.value, false, 'metadata recovery must preserve authoritative exclusion')
+})
+
 test('unmounted snapshot ignores delayed root metadata and inline refresh', async t => {
     const f = await mount(t), pending = deferred()
     f.advance(); f.metadata(() => pending.promise)

@@ -106,6 +106,9 @@ async function onWindowFocus() {
     try {
         const fresh = await api.fetchMeta({ signal: focusController.signal })
         if (disposed || generation !== snapshotFocusGeneration) return
+        const { last_line: lastLine, ...freshState } = fresh
+        // Access changes take effect even if transcript metadata is unavailable.
+        Object.assign(meta, freshState)
         if (fresh.ready !== false && fresh.last_line !== store.getSession(meta.session_id)?.last_line) {
             // Push can move the latest publication beyond the cached transcript.
             // Extend its rows before accepting that publication's new binding.
@@ -114,7 +117,7 @@ async function onWindowFocus() {
             store.initSessionItemsFromMetadata(meta.session_id, metadata)
             store.setSession({ ...store.getSession(meta.session_id), last_line: fresh.last_line })
         }
-        Object.assign(meta, fresh)
+        meta.last_line = lastLine
         await refreshInline()
     } catch (error) {
         if (!disposed && generation === snapshotFocusGeneration && [401, 403, 404].includes(error.status)) revoked.value = true
