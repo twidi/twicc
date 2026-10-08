@@ -989,7 +989,7 @@ export function createComposerAttachments(deps) {
      * @param {File} file
      * @returns {Promise<object>} the record
      */
-    async function addAttachment(sessionId, file) {
+    async function addAttachment(sessionId, file, { onUploadStarted = null } = {}) {
         const id = uuid()
         const owner = resolveOwner(sessionId)
         const draftRecords = owner !== sessionId ? Object.values(records[sessionId] || {}) : []
@@ -1033,6 +1033,7 @@ export function createComposerAttachments(deps) {
             await storage.saveDraftAttachment(current).catch(error =>
                 console.warn('Failed to save rehomed attachment record:', error))
         }
+        onUploadStarted?.(findRecord(id))
         await startAttempt(findRecord(id))
         return record
     }

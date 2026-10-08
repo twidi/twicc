@@ -705,10 +705,10 @@ function captureScreenshot() {
 
 // dataUrl → File → composer attachment, through the same `addAttachment`
 // entry point as a file the user picks (staged upload, chip in the composer).
-async function attachScreenshot(dataUrl) {
+async function attachScreenshot(dataUrl, options = {}) {
     const blob = await (await fetch(dataUrl)).blob()
     const file = new File([blob], `browser-capture-${Date.now()}.png`, { type: 'image/png' })
-    await store.addAttachment(props.sessionId, file)
+    return store.addAttachment(props.sessionId, file, options)
 }
 
 // ── Comment widget: reuses the text-selection comment window for two sources —
@@ -1246,6 +1246,7 @@ async function makeDefaultSavedUrl(opt) {
                 :clear-source-selection="() => {}"
                 :capture-screenshot="commentAllowScreenshot ? captureScreenshot : null"
                 :attach-screenshot="commentAllowScreenshot ? attachScreenshot : null"
+                @send-prepared="isFullscreen = false"
                 @close="commentPosition = null"
             />
         </Teleport>

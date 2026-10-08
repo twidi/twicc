@@ -569,3 +569,38 @@ test('ownership matrix: every cleanup caller uses its required operation', () =>
     const popover = read('../components/message/AgentSettingsPopover.vue')
     assert.doesNotMatch(popover, /forgetAttachments|releaseAttachments|attachmentRecords/)
 })
+
+test('upload-start notification follows persistence and precedes unresolved upload staging', async () => {
+    const env = createEnv()
+    const openSaves = env.gateSaves()
+    let openUpload
+    const uploadGate = new Promise(resolve => { openUpload = resolve })
+    const originalStart = env.uploads.startUploads
+    env.uploads.startUploads = async args => { await uploadGate; return originalStart(args) }
+    const notified = []
+    let completed = false
+    const adding = env.actions.addAttachment('s1', new File(['shot'], 'shot.png', { type: 'image/png' }), {
+        onUploadStarted: record => notified.push(record.id),
+    }).then(record => { completed = true; return record })
+    await flush()
+    assert.deepEqual(notified, [])
+    openSaves()
+    await flush()
+    assert.equal(notified.length, 1)
+    assert.equal(completed, false)
+    openUpload()
+    const record = await adding
+    assert.equal(notified[0], record.id)
+    await env.actions.retryAttachment(record.id)
+    assert.equal(notified.length, 1)
+})
+
+test('persistence failure does not notify upload-start', async () => {
+    const env = createEnv()
+    env.storage.saveDraftAttachment = async () => { throw Error('storage unavailable') }
+    let notified = false
+    await assert.rejects(env.actions.addAttachment('s1', new File(['shot'], 'shot.png'), {
+        onUploadStarted: () => { notified = true },
+    }), /storage unavailable/)
+    assert.equal(notified, false)
+})

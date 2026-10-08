@@ -542,12 +542,12 @@ function captureElementScreenshot() {
 // entry point as a file the user picks (staged upload, chip in the composer).
 // Uses the resolved composer session id (NOT props.sessionId — null in the
 // Artifacts tab).
-async function attachElementScreenshot(dataUrl) {
+async function attachElementScreenshot(dataUrl, options = {}) {
     const sessionId = composerSessionId.value
     if (!sessionId) throw new Error('no session to attach to')
     const blob = await (await fetch(dataUrl)).blob()
     const file = new File([blob], `artifact-capture-${Date.now()}.png`, { type: 'image/png' })
-    await dataStore.addAttachment(sessionId, file)
+    return dataStore.addAttachment(sessionId, file, options)
 }
 
 // The non-scrolling wrapper around whichever preview is active. Declared here
@@ -2074,6 +2074,7 @@ function goToNextDiff() {
                 :position="textSelectionPosition"
                 :metadata="textSelectionMetadata"
                 :clear-source-selection="clearSourceSelection"
+                @send-prepared="isPreviewFullscreen = false"
                 @close="closeTextSelectionComment"
             />
         </Teleport>
@@ -2092,6 +2093,7 @@ function goToNextDiff() {
                 :clear-source-selection="() => {}"
                 :capture-screenshot="captureElementScreenshot"
                 :attach-screenshot="attachElementScreenshot"
+                @send-prepared="isPreviewFullscreen = false"
                 @close="elementCommentPosition = null"
             />
         </Teleport>

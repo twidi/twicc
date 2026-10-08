@@ -9,6 +9,7 @@ import { setAttachmentPayloadFields, sendComposerMessage, snapshotAttachments, s
 
 const record = (id, bucket = 'b1') => ({ id, bucket, sessionId: 's', position: 0, name: `${id}.png`, size: 3, mimeType: 'image/png', kind: 'image' })
 const attachmentDeps = (records = []) => ({
+    sendInProgress: { value: false }, selectionCommentSendController: { cancel() {} },
     composerRecords: { value: records }, legacyAttachmentCount: { value: 0 }, attachmentsReady: { value: true },
     composerAttachmentsReady: () => true, setAttachmentPayloadFields, sendComposerMessage, snapshotAttachments,
 })

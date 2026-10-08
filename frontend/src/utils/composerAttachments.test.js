@@ -1315,8 +1315,8 @@ test('entry points: every file is accepted, the paperclip always shows, screensh
 
     const list = readSource('../components/session/detail/SessionItemsList.vue')
     assert.match(list, /store\.addAttachment\(props\.sessionId, file\)/)
-    assert.match(readSource('../components/browser/BrowserPane.vue'), /store\.addAttachment\(props\.sessionId, file\)/)
-    assert.match(readSource('../components/files/FilePane.vue'), /dataStore\.addAttachment\(sessionId, file\)/)
+    assert.match(readSource('../components/browser/BrowserPane.vue'), /store\.addAttachment\(props\.sessionId, file, options\)/)
+    assert.match(readSource('../components/files/FilePane.vue'), /dataStore\.addAttachment\(sessionId, file, options\)/)
 
     const data = readSource('../stores/data.js')
     assert.doesNotMatch(data, /removeNonImageAttachments/)

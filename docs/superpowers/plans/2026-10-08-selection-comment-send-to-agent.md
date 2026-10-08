@@ -10,7 +10,7 @@
 
 **Spec:** `docs/plans/2026-10-08-selection-comment-send-to-agent-spec.md`
 
-**Status:** Adversarial implementation-plan review complete; awaiting user review and execution choice.
+**Status:** Implemented with Native execution; independent code review and automated verification pass.
 
 ## Global Constraints
 
@@ -89,7 +89,7 @@ Read these existing paths before editing:
 - `state` uses existing `ATTACHMENT_STATE` values. An absent state is not ready.
 - Expose a read-only `controller.pending` boolean.
 
-- [ ] **Step 1: Write failing operation tests.** Name and assert these behaviors:
+- [x] **Step 1: Write failing operation tests.** Name and assert these behaviors:
 
 ```js
 // start_without_screenshot_inserts_before_prepared_before_send
@@ -111,11 +111,11 @@ Test disposal: timers and late attachment callbacks cannot insert, notify, or se
 These cancellation assertions apply before normal send handoff; they do not cancel a send already accepted by `handleSend`.
 Test `onPrepared` completion does not wait for screenshot readiness.
 
-- [ ] **Step 2: Run the tests and confirm the intended missing-module failure.**
+- [x] **Step 2: Run the tests and confirm the intended missing-module failure.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && node --test src/utils/selectionCommentSend.test.js`.
 
-- [ ] **Step 3: Implement the controller.**
+- [x] **Step 3: Implement the controller.**
 
 Reserve ownership synchronously before the first await. Use a monotonically increasing operation token to reject stale continuations.
 Keep the pending reservation through insertion, preparation, upload waiting, and the normal send attempt.
@@ -133,8 +133,8 @@ The cancellable automatic-wait phase ends when `attemptSend` enters the normal s
 After that boundary, normal trust-dialog, staging, dispatch, and recovery behavior remain authoritative.
 Do not add cancellation semantics to an already-entered or committed normal send.
 
-- [ ] **Step 4: Run the targeted tests.** Expected: all tests pass.
-- [ ] **Step 5: Check the task diff.** Commit only this task's files if execution includes commits.
+- [x] **Step 4: Run the targeted tests.** Expected: all tests pass.
+- [x] **Step 5: Check the task diff.** Commit only this task's files if execution includes commits.
 
 ## Task 2: Integrate the Controller into MessageInput
 
@@ -153,7 +153,7 @@ Create `MessageInput.selectionSend.test.js` beside the component; extend `fronte
 - The optional callback runs once after successful persistence, immediately before the first `startAttempt(record)` call.
 - Existing two-argument attachment calls and retry behavior stay unchanged; retries do not repeat this notification.
 
-- [ ] **Step 1: Write failing component-script tests.** Extend the repository's compiled-SFC testing approach without adding a test framework.
+- [x] **Step 1: Write failing component-script tests.** Extend the repository's compiled-SFC testing approach without adding a test framework.
 
 Test exact content insertion with existing text and selected caret range, and appending when collapsed.
 Verify `focus:false` for this action and no textarea focus on touch.
@@ -168,11 +168,11 @@ Make `startAttempt` publish failure before `addAttachment` resolves: preserve in
 Test screenshot failure/removal, text clearing then replacement in one tick, and normal manual-send success during deferred waiting.
 Test a manual-send/automatic-send race across asynchronous trust and question staging: one dispatch only.
 
-- [ ] **Step 2: Run the targeted tests and confirm behavioral failures.**
+- [x] **Step 2: Run the targeted tests and confirm behavioral failures.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && node --test src/components/message/MessageInput.selectionSend.test.js`.
 
-- [ ] **Step 3: Wire composer ownership and screenshot observation.**
+- [x] **Step 3: Wire composer ownership and screenshot observation.**
 
 Create the controller once per mounted composer. It survives tab hiding and KeepAlive deactivation.
 Use reactive observation of `store.getComposerAttachments(props.sessionId)` and `localState.attachmentRuntime[record.id]`.
@@ -187,7 +187,7 @@ Apply text/removal cancellation during the upload wait, before normal send hando
 On component unmount, dispose the controller. Do not cancel merely on session deactivation.
 Disposal prevents future automatic attempts; it does not replace existing behavior of an already-entered normal send.
 
-- [ ] **Step 4: Wire the normal send path without a parallel sender.**
+- [x] **Step 4: Wire the normal send path without a parallel sender.**
 
 Reuse the same disabled conditions as the current Send button after insertion; classify commands and async answers normally.
 Unavailable sending shows this exact copy once:
@@ -203,8 +203,8 @@ For plain messages, use successful dispatch. For async questions, use the existi
 This hook also invalidates the current operation token when its own send succeeds; it must not trigger a second attempt.
 Preserve the existing failed-send and async-question recovery code and payload generation.
 
-- [ ] **Step 5: Run component and controller tests.** Expected: all pass, including the asynchronous race tests.
-- [ ] **Step 6: Check the task diff.** Commit only this task's files if execution includes commits.
+- [x] **Step 5: Run component and controller tests.** Expected: all pass, including the asynchronous race tests.
+- [x] **Step 6: Check the task diff.** Commit only this task's files if execution includes commits.
 
 ## Task 3: Provide the Session Bridge and Early Navigation
 
@@ -221,7 +221,7 @@ Preserve the existing failed-send and async-question recovery code and payload g
 - `showChat()` uses `SessionView`'s existing `switchToTab('main')` without a focus helper.
 - Provide the bridge in `SessionView` as `selectionCommentSend`.
 
-- [ ] **Step 1: Write failing bridge tests.**
+- [x] **Step 1: Write failing bridge tests.**
 
 Assert insertion precedes preparation, preparation initiates navigation, and navigation precedes any upload wait or send attempt.
 Assert already-on-Chat is a no-op navigation and does not focus the composer.
@@ -230,11 +230,11 @@ Assert completion never calls `showChat` a second time.
 Assert an absent composer reports unavailable and cannot lose text through a silently ignored insertion.
 Assert availability remains true during temporary send blocks; pending state follows the owning composer.
 
-- [ ] **Step 2: Run and confirm the intended missing-module failure.**
+- [x] **Step 2: Run and confirm the intended missing-module failure.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && node --test src/utils/selectionCommentBridge.test.js`.
 
-- [ ] **Step 3: Implement the thin bridge and forwarding.**
+- [x] **Step 3: Implement the thin bridge and forwarding.**
 
 Use Task 2's method; do not copy insertion or send logic.
 Invoke the form's `onPrepared` and initiate `showChat` immediately after composer insertion.
@@ -245,8 +245,8 @@ Do not use `focusChatPrimary`, `gotoChatFooterPanel`, or the tab-navigation help
 Availability checks use the mounted `MessageInput` facade. Parent/subagent and ephemeral views without a composer hide the action.
 Do not add mutual static imports between stores, composables, components, or the router.
 
-- [ ] **Step 4: Run bridge and earlier tests.** Expected: all pass.
-- [ ] **Step 5: Check the task diff.** Commit only this task's files if execution includes commits.
+- [x] **Step 4: Run bridge and earlier tests.** Expected: all pass.
+- [x] **Step 5: Check the task diff.** Commit only this task's files if execution includes commits.
 
 ## Task 4: Add the Form Button and Screenshot Record Handoff
 
@@ -261,7 +261,7 @@ Do not add mutual static imports between stores, composables, components, or the
 - `Send to Agent` passes the formatted text plus newline to `bridge.send`, with an optional callback accepting `{ onUploadStarted }`.
 - Pass `onPrepared: close` so the form closes after insertion, before the deferred wait.
 
-- [ ] **Step 1: Write failing form tests.**
+- [x] **Step 1: Write failing form tests.**
 
 Execute component methods through the existing SFC harness.
 Assert the new action uses the same formatted text and metadata as `Add to message`.
@@ -273,11 +273,11 @@ Assert `Add to message` still uses `insertTextAtCursor` and preserves desktop/to
 Assert Ctrl/Meta+Enter still invokes only `Add to message`.
 Use compiled-template tests or rendered inspection to verify button availability and pending disabling; avoid relying only on string matches.
 
-- [ ] **Step 2: Run and confirm the new behavior fails.**
+- [x] **Step 2: Run and confirm the new behavior fails.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && node --test src/components/session/detail/TextSelectionComment.test.js`.
 
-- [ ] **Step 3: Implement the third button and shared preparation.**
+- [x] **Step 3: Implement the third button and shared preparation.**
 
 Keep `Cancel` and `Add to message`; append `Send to Agent` with the exact label.
 Show it only when `bridge.available` is true.
@@ -289,8 +289,8 @@ Forward `{ onUploadStarted }` to `store.addAttachment`; existing Add to message 
 Keep all consumers on the shared form; no changes to their trigger or selection detection are required.
 Use existing wrapping actions CSS so three buttons fit the mobile form width.
 
-- [ ] **Step 4: Run form, bridge, controller, and composer tests.** Expected: all pass.
-- [ ] **Step 5: Check the task diff.** Commit only this task's files if execution includes commits.
+- [x] **Step 4: Run form, bridge, controller, and composer tests.** Expected: all pass.
+- [x] **Step 5: Check the task diff.** Commit only this task's files if execution includes commits.
 
 ## Task 5: Verify the Complete User Flow
 
@@ -298,12 +298,12 @@ Use existing wrapping actions CSS so three buttons fit the mobile form width.
 
 **Interfaces:** Consume Tasks 1–4's completed integration.
 
-- [ ] **Step 1: Run all frontend tests.**
+- [x] **Step 1: Run all frontend tests.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && npm test`.
 Expected: exit code 0. Investigate new failures; identify existing failures separately.
 
-- [ ] **Step 2: Build the frontend.**
+- [x] **Step 2: Build the frontend.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && npm run build`.
 Expected: exit code 0; all existing bundle targets build. Do not install dependencies to run this command without permission.
@@ -315,7 +315,7 @@ Verify sessionless artifact and composerless views do not expose the new action.
 Verify existing draft insertion, early Chat navigation, normal send payload, blocked-send toast, and existing recovery.
 If no instance is available, report that limitation; do not start or restart one without a user request.
 
-- [ ] **Step 4: Verify upload waiting and cancellation.**
+- [x] **Step 4: Verify upload waiting and cancellation.**
 
 Use a controlled slow upload in the browser or integration harness.
 Check no toast before 3000 ms, one toast after 3000 ms, and one send when ready.
@@ -323,12 +323,12 @@ Check failure, removal, clearing then replacing text, opening another form, and 
 Switch session and dock focus while waiting; ensure only the originating composer is affected and no completion navigation occurs.
 Confirm a later manual upload retry does not resume automatic sending.
 
-- [ ] **Step 5: Verify mobile layout and focus.**
+- [x] **Step 5: Verify mobile layout and focus.**
 
 Use a 375 px viewport and touch settings.
 Check all three buttons remain accessible, sending does not open the keyboard, and the existing Add shortcut/focus behavior remains intact.
 
-- [ ] **Step 6: Inspect the final diff and report results.**
+- [x] **Step 6: Inspect the final diff and report results.**
 
 Run: `cd /home/twidi/dev/twicc-poc && git diff --check`.
 Expected: no whitespace errors. Confirm no changelog, backend, dependency, or unrelated changes.
@@ -352,3 +352,22 @@ Two independent internal reviewers complete two rounds of plan review.
 The corrections add early screenshot identity, preserve insertion after staging failure, and define the normal-send cancellation boundary.
 Both reviewers report no substantive blockers in the second round.
 The author checks spec coverage, interface consistency, task granularity, review-focus tests, and plan proportion.
+
+
+## Implementation Verification
+
+- Frontend suite: `npm test` passes all **2757 tests**.
+- Production bundles: `npm run build` exits successfully.
+- Independent code reviewer: no Critical, Important, or Minor findings; **115 targeted tests** pass independently.
+- Browser: the Plan preview selection opens the shared form with all three actions.
+- Mobile viewport override: all three actions fit, wrapping `Send to Agent` onto a second row.
+- `git diff --check` passes.
+- Full live interaction across every pane and real agent sending remain untested in the browser.
+- Automated integration tests verify dispatch, upload waiting, blocked sends, cancellation, and send races.
+
+Implementation decisions:
+
+- Work stays in the existing checkout, per local instructions.
+- Composer tests execute actual SFC declarations with real Vue reactivity and a stubbed transport.
+- `send-prepared` exits Browser/FilePane preview fullscreen before navigating, so Chat is visible.
+- Existing send guards and the void send contract stay authoritative after deferred handoff.

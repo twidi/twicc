@@ -18,6 +18,7 @@ import { shouldRequestAutomaticTitle } from '../utils/sessionTitle.js'
 import SessionItemsList from '../components/session/detail/SessionItemsList.vue'
 import SessionContent from '../components/session/detail/SessionContent.vue'
 import FilesPanel from '../components/files/FilesPanel.vue'
+import { createSelectionCommentBridge } from '../utils/selectionCommentBridge.js'
 import GitPanel from '../components/git/GitPanel.vue'
 import TerminalPanel from '../components/terminal/TerminalPanel.vue'
 import OrchestrationPanel from '../components/orchestration/OrchestrationPanel.vue'
@@ -307,6 +308,10 @@ function insertTextAtCursor(text, options) {
     sessionItemsListRef.value?.insertTextAtCursor(text, options)
 }
 provide('insertTextAtCursor', insertTextAtCursor)
+provide('selectionCommentSend', createSelectionCommentBridge({
+    getComposer: () => sessionItemsListRef.value,
+    showChat: () => switchToTab('main'),
+}))
 
 // Current session from route params
 // IMPORTANT: sessionId is captured at creation time (not a reactive computed

@@ -28,6 +28,7 @@ import {
     snapshotAttachments,
 } from '../../utils/composerAttachments'
 import { toast } from '../../composables/useToast'
+import { createSelectionCommentSendController } from '../../utils/selectionCommentSend.js'
 import { useCodeCommentsStore, formatAllComments } from '../../stores/codeComments'
 import { getParsedContent } from '../../utils/parsedContent'
 import { generateUUID } from '../../utils/crypto'
@@ -1572,6 +1573,49 @@ function removeAllAttachments() {
     store.releaseComposerAttachments(props.sessionId)
 }
 
+// The composer owns the combined action, including after its floating form closes.
+const selectionCommentSendPending = ref(false)
+const selectionScreenshotId = ref(null)
+const sendInProgress = ref(false)
+const selectionCommentSendAvailable = computed(() => true)
+const selectionCommentSendController = createSelectionCommentSendController({
+    insert: text => insertTextAtCursor(text, { focus: false }),
+    attemptSend: attemptSelectionCommentSend,
+    onPendingChange: pending => { selectionCommentSendPending.value = pending },
+    onScreenshotChange: id => { selectionScreenshotId.value = id },
+    notifyUploadWait: () => toast.info('Screenshot upload in progress. Your message will send when the upload completes.'),
+})
+const selectionScreenshotState = computed(() => {
+    const id = selectionScreenshotId.value
+    if (!id) return null
+    return {
+        id,
+        present: store.getComposerAttachments(props.sessionId).some(record => record.id === id),
+        state: store.localState.attachmentRuntime[id]?.state,
+    }
+})
+function observeSelectionScreenshot(state) {
+    if (state) selectionCommentSendController.observeScreenshot(state)
+}
+watch(selectionScreenshotState, observeSelectionScreenshot, { flush: 'sync' })
+watch(messageText, text => {
+    if (!text.trim() && selectionCommentSendController.waiting) selectionCommentSendController.cancel()
+}, { flush: 'sync' })
+onBeforeUnmount(() => selectionCommentSendController.dispose())
+
+function startSelectionCommentSend(text, options) {
+    return selectionCommentSendController.start(text, options)
+}
+
+async function attemptSelectionCommentSend() {
+    if (sendInProgress.value || props.sendingLocked || isDisabled.value || attachmentsBlockSend.value
+        || !asyncQuestionSendClassification.value.canSend) {
+        toast.warning('Cannot send right now. Your message is in the composer. Send it when sending becomes available.')
+        return
+    }
+    await handleSend()
+}
+
 /**
  * Send the message via WebSocket.
  * Backend handles both new and existing sessions with the same message type.
@@ -1586,210 +1630,221 @@ function removeAllAttachments() {
  * carries empty text plus the attachment refs (see canSendAttachmentsOnly).
  */
 async function handleSend() {
-    // Sending is locked while a pending request shares the footer: the composer
-    // is for *preparing* only. Guards both the click and the keyboard shortcut.
-    if (props.sendingLocked) return
-    const rawText = messageText.value
-    const text = rawText.trim()
-    const classification = asyncQuestionSendClassification.value
-    if (classification.commandBlocked) {
-        toast.warning('Use a normal message or clear your question answers before sending a command.')
-        return
-    }
-    // Attachments alone make a real message, so they take precedence over the
-    // settings-only interpretation of an empty composer.
-    const attachmentsOnly = !text && canSendAttachmentsOnly.value
-    // A staged hybrid switch is an unapplied change too — committed below.
-    const hasStagedHybrid = isHybridStaged.value
-    const isSettingsOnlyUpdate = classification.settingsOnly
-
-    // Need text, attachments, a settings change, or a staged hybrid switch
-    if (!classification.canSend || isDisabled.value) return
-    // A message with attachments waits for every upload (D6): never queued.
-    if (!isSettingsOnlyUpdate && !attachmentsReady.value) return
-
-    // Trust gate for drafts whose project is still unresolved — e.g. a draft
-    // hydrated from before the trust system existed, or one created while the
-    // gate could not settle the state. Settle it before the first start so the
-    // dialog shows when needed and the backend clamp sees a settled state.
-    // When the gate settles on trusted and the draft still carries the
-    // automatic untrusted permission seed, re-seed it to the now-resolved
-    // default (an explicit identical user pick is indistinguishable — rare and
-    // visible in the popover, so acceptable).
-    if (isDraft.value && props.projectId
-        && resolveProjectTrust(props.projectId, store.projects).state == null) {
-        const gate = await ensureProjectTrust(props.projectId)
-        if (!gate) return // user cancelled the trust dialog → don't send
-        if (gate.state === true
-            && selectedPermissionMode.value === settings.providerStore.value?.defaultUntrustedPermissionMode) {
-            selectedPermissionMode.value = settings.resolvedDefaults.value.permission_mode
-        }
-    }
-
-    // Staged attachments (spec 2026-10-03 §9.4): the frame carries their
-    // ordered refs; the server plans and prepares each file. No client
-    // resize. Read after the trust dialog, so a chip added meanwhile is
-    // either sent ready or blocks the send (before any frame goes out).
-    const records = isSettingsOnlyUpdate ? [] : [...composerRecords.value]
-    const legacyCount = isSettingsOnlyUpdate ? 0 : legacyAttachmentCount.value
-    if (!composerAttachmentsReady(records, store.localState.attachmentRuntime, legacyCount)) return
-
-    // Commit a staged hybrid switch FIRST. The WS consumer processes frames in
-    // order, so the backend flips ``session.hybrid`` (killing the SDK agent)
-    // before it handles the send_message, and ``_create_agent`` then launches
-    // the CLI to receive it. With no message, the switch alone is applied and
-    // the CLI starts on the next message — we don't send an empty settings
-    // update that would launch it now; any other staged setting rides the next
-    // real message.
-    if (hasStagedHybrid) {
-        sendWsMessage({ type: 'set_session_hybrid', session_id: props.sessionId })
-        store.setStagedHybrid(props.sessionId, false)
-        if (!text && !attachmentsOnly && !classification.hasAnswers) return
-    }
-
-    const outgoing = prepareAsyncQuestionSend({
-        snapshot: isSettingsOnlyUpdate || isComposerCommand.value
-            ? null : asyncQuestionSnapshot.value,
-        questionDraft: asyncQuestionDraft.value || {}, rawText,
-        pendingQuestionIds: store.getPendingAsyncQuestionIds(props.sessionId),
-    })
-    const questionSend = !!outgoing.asyncQuestions
-    const requestId = generateUUID()
-    if (questionSend && !store.reserveAsyncQuestionSend(props.sessionId, requestId, outgoing)) return
-
-    // Build the message payload
-    // For context_max: when the auto-force-to-1M rule is active we send 1M
-    // explicitly instead of the user's null/200K choice — the UI shows
-    // "Forced to 1M" so it would be inconsistent to start the process at 200K.
-    const payload = {
-        type: 'send_message',
-        session_id: props.sessionId,
-        project_id: props.projectId,
-        provider: session.value?.provider,
-        text: questionSend ? rawText : text,
-        // Settings: null = use global default, explicit value = forced for this session
-        permission_mode: selectedPermissionMode.value,
-        selected_model: selectedModel.value,
-        effort: selectedEffort.value,
-        thinking_enabled: selectedThinking.value,
-        claude_in_chrome: selectedClaudeInChrome.value,
-        fast_mode: selectedFastMode.value,
-        context_max: isContextMaxForced.value
-            ? store.getEffectiveContextMax(props.sessionId, selectedModel.value ?? settings.providerStore.value?.defaultModel)
-            : selectedContextMax.value,
-    }
-
-    if (questionSend) payload.async_questions = outgoing.asyncQuestions
-
-    // For draft sessions with a title, include it
-    if (isDraft.value && session.value?.title) {
-        payload.title = session.value.title
-    }
-
-    store.applyCreationSendMode(payload)
-
-    // For draft sessions without a title, open the rename dialog (non-blocking)
-    // The message is still sent, allowing the agent to start working
-    if (isDraft.value && !session.value?.title) {
-        emit('needs-title')
-    }
-
-    // Staged attachments ride as ordered refs, never as legacy images or
-    // documents (mutually exclusive on the frame, spec §8). The refs are read
-    // above, after the trust dialog.
-    setAttachmentPayloadFields(payload, records)
-
-    // Keep the reservation's identity through staging and dispatch.
-    payload.request_id = requestId
-
-    // Plain path: only after a successful dispatch. Question path: once the staging commits
-    // (`onStaged`; a failed dispatch restores them). Snapshot the send (refs and metadata)
-    // + optimistic bubble + optimistic starting state, THEN forget exactly the
-    // sent records locally (the server owns their entries now; an attachment
-    // added after this send stays). A failed dispatch keeps the draft: the
-    // text, the answers and every attachment record. Legacy medias never reach
-    // this point (attachmentsReady).
-    const forgetSent = ids => store.forgetAttachments(props.sessionId, { ids }).catch(err =>
-        console.warn('Failed to forget sent attachments:', err))
-    const sentAttachments = snapshotAttachments(records).map(attachment => ({
-        ...attachment,
-        previewUrl: store.getAttachmentPreviewUrl(attachment.id) || null,
-    }))
-    let success
-    if (questionSend) {
-        try {
-            success = await store.sendAsyncQuestionMessage(props.sessionId, props.projectId, requestId, payload, {
-                ...outgoing, attachments: sentAttachments, medias: [],
-            }, {
-                // Forgotten as soon as the staging commits (like the plain path's synchronous
-                // forget): a second Send or a reload in the dispatch window cannot re-send them.
-                // A staging failure never reaches this hook; a dispatch failure restores them.
-                onStaged: () => { if (records.length) forgetSent(records.map(record => record.id)) },
-            })
-        } catch (error) {
-            console.warn('Failed to save the question send:', error?.name || 'Error')
-            toast.error('Failed to save the question send. Your message remains available for recovery.')
+    // Cover trust resolution and question staging for every send entry point.
+    if (sendInProgress.value) return
+    sendInProgress.value = true
+    try {
+        // Sending is locked while a pending request shares the footer: the composer
+        // is for *preparing* only. Guards both the click and the keyboard shortcut.
+        if (props.sendingLocked) return
+        const rawText = messageText.value
+        const text = rawText.trim()
+        const classification = asyncQuestionSendClassification.value
+        if (classification.commandBlocked) {
+            toast.warning('Use a normal message or clear your question answers before sending a command.')
             return
         }
-    } else {
-        success = sendComposerMessage({
-            payload,
-            records,
-            send: sendWsMessage,
-            previewUrlFor: id => store.getAttachmentPreviewUrl(id),
-            register: isSettingsOnlyUpdate ? null : attachments => {
-                store.registerOutgoingSend(props.sessionId, props.projectId, requestId, {
-                    text,
-                    attachments,
-                })
-            },
-            forget: forgetSent,
+        // Attachments alone make a real message, so they take precedence over the
+        // settings-only interpretation of an empty composer.
+        const attachmentsOnly = !text && canSendAttachmentsOnly.value
+        // A staged hybrid switch is an unapplied change too — committed below.
+        const hasStagedHybrid = isHybridStaged.value
+        const isSettingsOnlyUpdate = classification.settingsOnly
+
+        // Need text, attachments, a settings change, or a staged hybrid switch
+        if (!classification.canSend || isDisabled.value) return
+        // A message with attachments waits for every upload (D6): never queued.
+        if (!isSettingsOnlyUpdate && !attachmentsReady.value) return
+
+        // Trust gate for drafts whose project is still unresolved — e.g. a draft
+        // hydrated from before the trust system existed, or one created while the
+        // gate could not settle the state. Settle it before the first start so the
+        // dialog shows when needed and the backend clamp sees a settled state.
+        // When the gate settles on trusted and the draft still carries the
+        // automatic untrusted permission seed, re-seed it to the now-resolved
+        // default (an explicit identical user pick is indistinguishable — rare and
+        // visible in the popover, so acceptable).
+        if (isDraft.value && props.projectId
+            && resolveProjectTrust(props.projectId, store.projects).state == null) {
+            const gate = await ensureProjectTrust(props.projectId)
+            if (!gate) return // user cancelled the trust dialog → don't send
+            if (gate.state === true
+                && selectedPermissionMode.value === settings.providerStore.value?.defaultUntrustedPermissionMode) {
+                selectedPermissionMode.value = settings.resolvedDefaults.value.permission_mode
+            }
+        }
+
+        // Staged attachments (spec 2026-10-03 §9.4): the frame carries their
+        // ordered refs; the server plans and prepares each file. No client
+        // resize. Read after the trust dialog, so a chip added meanwhile is
+        // either sent ready or blocks the send (before any frame goes out).
+        const records = isSettingsOnlyUpdate ? [] : [...composerRecords.value]
+        const legacyCount = isSettingsOnlyUpdate ? 0 : legacyAttachmentCount.value
+        if (!composerAttachmentsReady(records, store.localState.attachmentRuntime, legacyCount)) return
+
+        // Commit a staged hybrid switch FIRST. The WS consumer processes frames in
+        // order, so the backend flips ``session.hybrid`` (killing the SDK agent)
+        // before it handles the send_message, and ``_create_agent`` then launches
+        // the CLI to receive it. With no message, the switch alone is applied and
+        // the CLI starts on the next message — we don't send an empty settings
+        // update that would launch it now; any other staged setting rides the next
+        // real message.
+        if (hasStagedHybrid) {
+            sendWsMessage({ type: 'set_session_hybrid', session_id: props.sessionId })
+            store.setStagedHybrid(props.sessionId, false)
+            if (!text && !attachmentsOnly && !classification.hasAnswers) return
+        }
+
+        const outgoing = prepareAsyncQuestionSend({
+            snapshot: isSettingsOnlyUpdate || isComposerCommand.value
+                ? null : asyncQuestionSnapshot.value,
+            questionDraft: asyncQuestionDraft.value || {}, rawText,
+            pendingQuestionIds: store.getPendingAsyncQuestionIds(props.sessionId),
         })
-        // The frame did not leave (socket closed or failing): the text and the attachments are
-        // still in the composer. The question path restores its own draft on a failed dispatch.
-        if (!success) toast.error('Message not sent: the connection is unavailable. Your message is still in the composer.')
-    }
+        const questionSend = !!outgoing.asyncQuestions
+        const requestId = generateUUID()
+        if (questionSend && !store.reserveAsyncQuestionSend(props.sessionId, requestId, outgoing)) return
 
-    if (success) {
-        // Sync active values to match what was just sent to the backend.
-        // This makes the "Update..." button disappear immediately.
-        activeModel.value = selectedModel.value
-        activePermissionMode.value = selectedPermissionMode.value
-        activeEffort.value = selectedEffort.value
-        activeThinking.value = selectedThinking.value
-        activeClaudeInChrome.value = selectedClaudeInChrome.value
-        activeFastMode.value = selectedFastMode.value
-        activeContextMax.value = selectedContextMax.value
-
-        // For settings-only updates, nothing else to clean up
-        if (isSettingsOnlyUpdate) return
-
-        // Clear draft message from store (and IndexedDB)
-        if (!questionSend) store.clearDraftMessage(props.sessionId)
-
-        // Clear draft session from IndexedDB only (if this was a draft session)
-        // Keep in store so session stays visible until backend confirms with session_updated
-        if (isDraft.value) {
-            store.deleteDraftSession(props.sessionId, { keepInStore: true })
+        // Build the message payload
+        // For context_max: when the auto-force-to-1M rule is active we send 1M
+        // explicitly instead of the user's null/200K choice — the UI shows
+        // "Forced to 1M" so it would be inconsistent to start the process at 200K.
+        const payload = {
+            type: 'send_message',
+            session_id: props.sessionId,
+            project_id: props.projectId,
+            provider: session.value?.provider,
+            text: questionSend ? rawText : text,
+            // Settings: null = use global default, explicit value = forced for this session
+            permission_mode: selectedPermissionMode.value,
+            selected_model: selectedModel.value,
+            effort: selectedEffort.value,
+            thinking_enabled: selectedThinking.value,
+            claude_in_chrome: selectedClaudeInChrome.value,
+            fast_mode: selectedFastMode.value,
+            context_max: isContextMaxForced.value
+                ? store.getEffectiveContextMax(props.sessionId, selectedModel.value ?? settings.providerStore.value?.defaultModel)
+                : selectedContextMax.value,
         }
 
-        // Clear the textarea on successful send.
-        // Force-clear the Web Component's value property directly: Vue may skip
-        // re-pushing "" via :value.prop if it already pushed "" on a previous send
-        // (Vue's template binding deduplicates identical prop values).
-        messageText.value = questionSend ? (store.getDraftMessage(props.sessionId)?.message || '') : ''
-        if (textareaRef.value) {
-            // Force-clear both the Web Component property and its internal <textarea>.
-            // Setting wa.value alone may be ignored by the Lit setter's dedup check
-            // (if _value is already ""), and even when accepted, the Lit re-render
-            // with live() can be skipped if Vue's binding already pushed the same value.
-            // Directly clearing the inner textarea ensures the DOM is always updated.
-            textareaRef.value.value = messageText.value
-            const inner = textareaRef.value.shadowRoot?.querySelector('textarea')
-            if (inner) inner.value = messageText.value
-            await nextTick()
-            adjustTextareaHeight()
+        if (questionSend) payload.async_questions = outgoing.asyncQuestions
+
+        // For draft sessions with a title, include it
+        if (isDraft.value && session.value?.title) {
+            payload.title = session.value.title
         }
+
+        store.applyCreationSendMode(payload)
+
+        // For draft sessions without a title, open the rename dialog (non-blocking)
+        // The message is still sent, allowing the agent to start working
+        if (isDraft.value && !session.value?.title) {
+            emit('needs-title')
+        }
+
+        // Staged attachments ride as ordered refs, never as legacy images or
+        // documents (mutually exclusive on the frame, spec §8). The refs are read
+        // above, after the trust dialog.
+        setAttachmentPayloadFields(payload, records)
+
+        // Keep the reservation's identity through staging and dispatch.
+        payload.request_id = requestId
+
+        // Plain path: only after a successful dispatch. Question path: once the staging commits
+        // (`onStaged`; a failed dispatch restores them). Snapshot the send (refs and metadata)
+        // + optimistic bubble + optimistic starting state, THEN forget exactly the
+        // sent records locally (the server owns their entries now; an attachment
+        // added after this send stays). A failed dispatch keeps the draft: the
+        // text, the answers and every attachment record. Legacy medias never reach
+        // this point (attachmentsReady).
+        const forgetSent = ids => store.forgetAttachments(props.sessionId, { ids }).catch(err =>
+            console.warn('Failed to forget sent attachments:', err))
+        const sentAttachments = snapshotAttachments(records).map(attachment => ({
+            ...attachment,
+            previewUrl: store.getAttachmentPreviewUrl(attachment.id) || null,
+        }))
+        let success
+        if (questionSend) {
+            try {
+                success = await store.sendAsyncQuestionMessage(props.sessionId, props.projectId, requestId, payload, {
+                    ...outgoing, attachments: sentAttachments, medias: [],
+                }, {
+                    // Forgotten as soon as the staging commits (like the plain path's synchronous
+                    // forget): a second Send or a reload in the dispatch window cannot re-send them.
+                    // A staging failure never reaches this hook; a dispatch failure restores them.
+                    onStaged: () => {
+                        selectionCommentSendController.cancel()
+                        if (records.length) forgetSent(records.map(record => record.id))
+                    },
+                })
+            } catch (error) {
+                console.warn('Failed to save the question send:', error?.name || 'Error')
+                toast.error('Failed to save the question send. Your message remains available for recovery.')
+                return
+            }
+        } else {
+            success = sendComposerMessage({
+                payload,
+                records,
+                send: sendWsMessage,
+                previewUrlFor: id => store.getAttachmentPreviewUrl(id),
+                register: isSettingsOnlyUpdate ? null : attachments => {
+                    store.registerOutgoingSend(props.sessionId, props.projectId, requestId, {
+                        text,
+                        attachments,
+                    })
+                },
+                forget: forgetSent,
+            })
+            // The frame did not leave (socket closed or failing): the text and the attachments are
+            // still in the composer. The question path restores its own draft on a failed dispatch.
+            if (!success) toast.error('Message not sent: the connection is unavailable. Your message is still in the composer.')
+        }
+
+        if (success) {
+            selectionCommentSendController.cancel()
+            // Sync active values to match what was just sent to the backend.
+            // This makes the "Update..." button disappear immediately.
+            activeModel.value = selectedModel.value
+            activePermissionMode.value = selectedPermissionMode.value
+            activeEffort.value = selectedEffort.value
+            activeThinking.value = selectedThinking.value
+            activeClaudeInChrome.value = selectedClaudeInChrome.value
+            activeFastMode.value = selectedFastMode.value
+            activeContextMax.value = selectedContextMax.value
+
+            // For settings-only updates, nothing else to clean up
+            if (isSettingsOnlyUpdate) return
+
+            // Clear draft message from store (and IndexedDB)
+            if (!questionSend) store.clearDraftMessage(props.sessionId)
+
+            // Clear draft session from IndexedDB only (if this was a draft session)
+            // Keep in store so session stays visible until backend confirms with session_updated
+            if (isDraft.value) {
+                store.deleteDraftSession(props.sessionId, { keepInStore: true })
+            }
+
+            // Clear the textarea on successful send.
+            // Force-clear the Web Component's value property directly: Vue may skip
+            // re-pushing "" via :value.prop if it already pushed "" on a previous send
+            // (Vue's template binding deduplicates identical prop values).
+            messageText.value = questionSend ? (store.getDraftMessage(props.sessionId)?.message || '') : ''
+            if (textareaRef.value) {
+                // Force-clear both the Web Component property and its internal <textarea>.
+                // Setting wa.value alone may be ignored by the Lit setter's dedup check
+                // (if _value is already ""), and even when accepted, the Lit re-render
+                // with live() can be skipped if Vue's binding already pushed the same value.
+                // Directly clearing the inner textarea ensures the DOM is always updated.
+                textareaRef.value.value = messageText.value
+                const inner = textareaRef.value.shadowRoot?.querySelector('textarea')
+                if (inner) inner.value = messageText.value
+                await nextTick()
+                adjustTextareaHeight()
+            }
+        }
+    } finally {
+        sendInProgress.value = false
     }
 }
 
@@ -2017,7 +2072,7 @@ function getSessionGateState() {
     }
 }
 
-defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSessionGateState, collapse, expand, requestFocus, hybridToggle })
+defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selectionCommentSendAvailable, insertTextAtCursor, getSessionSetting, setSessionSetting, getSessionGateState, collapse, expand, requestFocus, hybridToggle })
 </script>
 
 <template>
@@ -2359,7 +2414,7 @@ defineExpose({ insertTextAtCursor, getSessionSetting, setSessionSetting, getSess
                     v-if="!sendingLocked || sendingLockedPresentation === 'disabled'"
                     :id="sendingLocked ? sendingLockedId : undefined"
                     variant="brand"
-                    :disabled="sendingLocked || isDisabled || attachmentsBlockSend || !asyncQuestionSendClassification.canSend"
+                    :disabled="sendInProgress || sendingLocked || isDisabled || attachmentsBlockSend || !asyncQuestionSendClassification.canSend"
                     @click="handleSend"
                     size="small"
                     class="send-button"

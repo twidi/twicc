@@ -6477,9 +6477,9 @@ export const useDataStore = defineStore('data', {
          * @param {File} file - The file to add
          * @returns {Promise<Object>} The attachment record
          */
-        async addAttachment(sessionId, file) {
+        async addAttachment(sessionId, file, options = {}) {
             const composer = await composerAttachmentsFor(this)
-            return composer.addAttachment(sessionId, file)
+            return composer.addAttachment(sessionId, file, options)
         },
 
         /**

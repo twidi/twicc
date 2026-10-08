@@ -51,9 +51,12 @@ const props = defineProps({
     focusComposerOnAdd: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'send-prepared'])
 
 const insertTextAtCursor = inject('insertTextAtCursor', null)
+const selectionCommentSend = inject('selectionCommentSend', null)
+const canSendToAgent = computed(() => !!selectionCommentSend?.available)
+const selectionSendPending = computed(() => !!selectionCommentSend?.pending)
 const settingsStore = useSettingsStore()
 
 const placeholderText = computed(() => {
@@ -262,25 +265,8 @@ function openShotPreview() {
     openMediaPreview([{ type: 'image', src: screenshotDataUrl.value, name: 'Screenshot' }])
 }
 
-/** @param {{fromKeyboard?: boolean}} [options] - `fromKeyboard` when ⌘↵ triggered
- *  the add, as opposed to a tap/click on the button. See the focus rule below. */
-async function addToMessage({ fromKeyboard = false } = {}) {
-    if (!canAdd.value || screenshotLoading.value) return
-
-    submitting.value = true
-    // Attach first: a rejected attachment (size cap, etc.) must not leave the
-    // text inserted with no image — keep the widget open so the user can react.
-    try {
-        if (screenshotDataUrl.value && props.attachScreenshot) {
-            await props.attachScreenshot(screenshotDataUrl.value)
-        }
-    } catch (e) {
-        submitting.value = false
-        toast.error(`Couldn't attach screenshot: ${e?.message || e}`)
-        return
-    }
-
-    const formatted = formatComment(
+function getFormattedComment() {
+    return formatComment(
         {
             lineText: props.selectedText,
             content: commentText.value,
@@ -296,6 +282,49 @@ async function addToMessage({ fromKeyboard = false } = {}) {
             lang: props.metadata?.lang ?? null,
         },
     )
+}
+
+async function sendToAgent() {
+    if (!canSendToAgent.value || selectionSendPending.value || submitting.value || screenshotLoading.value) return
+    submitting.value = true
+    const screenshot = screenshotDataUrl.value
+    const attach = props.attachScreenshot
+    try {
+        await selectionCommentSend.send(getFormattedComment() + '\n', {
+            attachScreenshot: screenshot && attach ? options => attach(screenshot, options) : null,
+            onPrepared: () => {
+                emit('send-prepared')
+                close()
+            },
+        })
+    } catch (error) {
+        toast.error(screenshot && attach
+            ? `Couldn't attach screenshot: ${error?.message || error}`
+            : `Couldn't send selection: ${error?.message || error}`)
+    } finally {
+        submitting.value = false
+    }
+}
+
+/** @param {{fromKeyboard?: boolean}} [options] - `fromKeyboard` when ⌘↵ triggered
+ *  the add, as opposed to a tap/click on the button. See the focus rule below. */
+async function addToMessage({ fromKeyboard = false } = {}) {
+    if (!canAdd.value || screenshotLoading.value || submitting.value) return
+
+    submitting.value = true
+    // Attach first: a rejected attachment (size cap, etc.) must not leave the
+    // text inserted with no image — keep the widget open so the user can react.
+    try {
+        if (screenshotDataUrl.value && props.attachScreenshot) {
+            await props.attachScreenshot(screenshotDataUrl.value)
+        }
+    } catch (e) {
+        submitting.value = false
+        toast.error(`Couldn't attach screenshot: ${e?.message || e}`)
+        return
+    }
+
+    const formatted = getFormattedComment()
     // Focus only in the chat pane: the composer is right there, and keeping the
     // focus lets the user send with a second ⌘↵. Elsewhere the composer may sit
     // behind a docked-pane overlay. The text lands in the draft either way.
@@ -441,6 +470,15 @@ defineExpose({ isExpanded: expanded })
                     @click="addToMessage()"
                 >
                     Add to message
+                </wa-button>
+                <wa-button
+                    v-if="canSendToAgent"
+                    size="small"
+                    variant="brand"
+                    :disabled="screenshotLoading || submitting || selectionSendPending"
+                    @click="sendToAgent"
+                >
+                    Send to Agent
                 </wa-button>
             </div>
         </div>
