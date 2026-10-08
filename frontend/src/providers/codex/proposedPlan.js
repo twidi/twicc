@@ -25,10 +25,13 @@ const CLOSE_TAG_RE = /^[ \t]*<\/proposed_plan>[ \t]*$/
  * that case). A tag mentioned inline (not on its own line) does not trigger.
  *
  * @param {string} text - The assistant message text.
+ * @param {object} options - Original eligible canonical source context, when available.
+ * @param {Array} options.recognizedSpans - Complete valid/invalid artifact spans; start/end count source code points.
+ * @param {number} options.sourceOffset - Code-point start of text within the original joined source.
  * @returns {{before: string, plan: string, after: string, beforeOffset: number, planOffset: number, afterOffset: number} | null} The trimmed
  *   segments, or ``null`` when the message carries no plan block.
  */
-export function splitProposedPlan(text) {
+export function splitProposedPlan(text, { recognizedSpans = [], sourceOffset = 0 } = {}) {
     if (typeof text !== 'string' || !text || !text.includes('<proposed_plan>')) return null
     const lines = [...text.matchAll(/[^\r\n]*(?:\r\n|\r|\n|$)/g)].filter(match => match[0])
     const tokens = parseMarkdownTokens(text)
@@ -40,11 +43,19 @@ export function splitProposedPlan(text) {
         }
         return token.meta?.sourceCodeRanges || []
     })
+    // Only supplied original recognition protects artifacts. Contextless/native calls keep ordinary Markdown behavior.
+    const characters = recognizedSpans.length ? Array.from(text) : []
+    const artifactRanges = recognizedSpans.flatMap(span => {
+        const start = span.start - sourceOffset, end = span.end - sourceOffset
+        if (start < 0 || end > characters.length) return []
+        return [[characters.slice(0, start).join('').length, characters.slice(0, end).join('').length]]
+    })
+    const protectedRanges = [...codeRanges, ...artifactRanges]
     const comments = []
     let cursor = 0
     while (cursor < text.length) {
-        const code = codeRanges.find(([start, end]) => start <= cursor && cursor < end)
-        if (code) { cursor = code[1]; continue }
+        const protectedRange = protectedRanges.find(([start, end]) => start <= cursor && cursor < end)
+        if (protectedRange) { cursor = protectedRange[1]; continue }
         if (text.startsWith('<!--', cursor)) {
             let preceding = cursor - 1
             while (preceding >= 0 && text[preceding] === '\\') preceding--
@@ -58,7 +69,7 @@ export function splitProposedPlan(text) {
         }
         cursor++
     }
-    const excludedRanges = [...codeRanges, ...comments]
+    const excludedRanges = [...protectedRanges, ...comments]
     const outsideExample = position => !excludedRanges.some(([start, end]) => start <= position && position < end)
     const openLine = lines.findIndex((line, index) => OPEN_TAG_RE.test(line[0].replace(/[\r\n]+$/, ''))
         && eligibleLine(index) && outsideExample(line.index))

@@ -243,3 +243,73 @@ test('catalog removal hides a retained entry without an obsolete loading placeho
 test('ordinary CRLF Markdown keeps existing exact block source and cache identities', () => {
     assert.deepEqual(splitMarkdownBlocks('first\r\n\r\nsecond').blocks.map(block => block.src), ['first\r', 'second'])
 })
+
+for (const invalid of [false, true]) {
+    test(`eligible ${invalid ? 'invalid' : 'valid'} artifact title cannot become a plan delimiter`, () => {
+        const title = 'Example\n<proposed_plan>\nTitle'
+        const source = `<twicc:inline-artifact id="a" ${invalid ? '' : 'src="inline-artifacts/a/index.html" '}title="${title}" />`
+        const c = context(source)
+        assert.equal(c.recognizedSpans.length, 1)
+        assert.equal(splitProposedPlan(source, c), null)
+        const blocks = splitMarkdownBlocks(source, { inlineArtifacts: true, ...c }).blocks
+        assert.equal(blocks.length, 1)
+        assert.equal(blocks[0].type, 'inline-artifact')
+        if (invalid) assert.equal(blocks[0].span.error, 'missing_src')
+        else assert.equal(blocks[0].span.descriptor.title, title)
+    })
+}
+
+test('an eligible artifact before a real plan remains a complete typed block', () => {
+    const title = '😀 Example\r\n<proposed_plan>\r\n<!-- literal comment\r\nTitle'
+    const artifact = `<twicc:inline-artifact id="a" src="inline-artifacts/a/index.html" title="${title}" />`
+    const source = artifact + '\r\n\r\n<proposed_plan>\r\nreal plan\r\n</proposed_plan>'
+    const c = context(source)
+    const plan = splitProposedPlan(source, c)
+    assert.equal(plan.before, artifact)
+    assert.equal(plan.plan, 'real plan')
+    assert.equal(plan.planOffset, cp(source.slice(0, source.indexOf('real plan'))))
+    const blocks = splitMarkdownBlocks(plan.before, { inlineArtifacts: true, ...rendering.segmentInlineTextContext(c, plan.beforeOffset) }).blocks
+    assert.equal(blocks.length, 1)
+    assert.equal(blocks[0].type, 'inline-artifact')
+    assert.equal(blocks[0].span.descriptor.title, title)
+})
+
+test('eligible plan body keeps an artifact title containing a closing delimiter', () => {
+    const title = 'Example\n</proposed_plan>\nTitle'
+    const artifact = `<twicc:inline-artifact id="a" src="inline-artifacts/a/index.html" title="${title}" />`
+    const source = '<proposed_plan>\n\n' + artifact + '\n\nreal plan\n\n</proposed_plan>\n\nafter'
+    const c = context(source), plan = splitProposedPlan(source, c)
+    assert.equal(plan.plan, artifact + '\n\nreal plan')
+    assert.equal(plan.after, 'after')
+    const blocks = splitMarkdownBlocks(plan.plan, { inlineArtifacts: true, ...rendering.segmentInlineTextContext(c, plan.planOffset) }).blocks
+    assert.equal(blocks.filter(block => block.type === 'inline-artifact').length, 1)
+})
+
+test('contextless and native proposed-plan calls keep their existing ordinary behavior', () => {
+    const source = '<twicc:inline-artifact id="a" src="inline-artifacts/a/index.html" title="Example\n<proposed_plan>\nTitle" />'
+    assert.equal(splitProposedPlan(source)?.plan, 'Title" />')
+    assert.equal(splitProposedPlan(source, { recognizedSpans: [] })?.plan, 'Title" />')
+})
+
+test('actual AssistantMessage passes original eligible spans before proposed-plan segmentation', () => {
+    const source = readFileSync(new URL('../components/session/detail/items/codex/AssistantMessage.vue', import.meta.url), 'utf8')
+    const start = source.indexOf('const segments ='), end = source.indexOf('const dataStore =', start)
+    const text = '<twicc:inline-artifact id="a" src="inline-artifacts/a/index.html" title="Example\n<proposed_plan>\nTitle" />'
+    const props = { text, inlineContext: context(text) }
+    const read = () => new Function('props', 'computed', 'splitProposedPlan', source.slice(start, end) + '\nreturn segments.value;')(props, computed, splitProposedPlan)
+    assert.equal(read(), null)
+    props.inlineContext = null
+    assert.equal(read().plan, 'Title" />')
+})
+
+test('protected plan spans convert original code-point offsets after a source segment starts', () => {
+    const prefix = '😀 before\r\n\r\n'
+    const title = '😀'.repeat(20) + '\r\n<proposed_plan>\r\nTitle'
+    const artifact = `<twicc:inline-artifact id="a" src="inline-artifacts/a/index.html" title="${title}" />`
+    const c = context(prefix + artifact)
+    const segmentContext = rendering.segmentInlineTextContext(c, cp(prefix))
+    assert.equal(splitProposedPlan(artifact, segmentContext), null)
+    const blocks = splitMarkdownBlocks(artifact, { inlineArtifacts: true, ...segmentContext }).blocks
+    assert.equal(blocks.length, 1)
+    assert.equal(blocks[0].span.descriptor.title, title)
+})

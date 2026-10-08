@@ -28,7 +28,7 @@ const props = defineProps({
 // Codex Plan-mode final answers carry a ``<proposed_plan>`` block — see
 // ``providers/codex/proposedPlan.js`` for the tag contract and the split
 // semantics (streaming-tolerant). No block → plain assistant text, untouched.
-const segments = computed(() => splitProposedPlan(props.text))
+const segments = computed(() => splitProposedPlan(props.text, props.inlineContext ?? {}))
 
 const dataStore = useDataStore()
 
