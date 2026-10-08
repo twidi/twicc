@@ -1,8 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { ref, reactive, computed, watch, nextTick, effectScope, onScopeDispose } from 'vue'
+import { ref, reactive, computed, watch, unref, nextTick, effectScope, onScopeDispose } from 'vue'
 import { createMarkdownRenderCoordinator, MARKDOWN_RENDER_CANCELLED } from '../../utils/markdownRenderCoordinator.js'
+import { INLINE_ARTIFACT_CONTEXT } from '../../inline-artifacts/context.js'
+import { inlineArtifactPlacement } from '../../inline-artifacts/rendering.js'
 import { markdownReferenceContextKey, markdownBlockCacheKey } from '../../utils/markdownRenderCache.js'
 
 const source = readFileSync(process.env.TWICC_MARKDOWN_TEST_SOURCE ?? new URL('./MarkdownContent.vue', import.meta.url), 'utf8')
@@ -14,15 +16,15 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no }); return { promise, resolve, reject } }
 
 function harness(t, options = {}) {
-    const props = reactive({ source: '', tagSlashCommand: false, showToc: false })
+    const props = reactive({ source: '', tagSlashCommand: false, showToc: false, inlineContext: null })
     const settingsStore = reactive({ _effectiveColorScheme: 'light' })
     const eligible = ref(true)
     const calls = [], errors = [], emitted = [], reports = []
     const scope = effectScope()
     const document = options.document ?? { createElement: () => ({ innerHTML: '', querySelectorAll: () => [] }) }
     const dependencies = {
-        ref, computed, watch, nextTick, onScopeDispose, props, settingsStore, document,
-        inject: () => options.rowContext ?? null, STREAMING_ROW_CONTEXT: Symbol(),
+        ref, computed, watch, unref, nextTick, onScopeDispose, props, settingsStore, document,
+        inject: key => key === INLINE_ARTIFACT_CONTEXT ? options.inlineRuntime ?? null : options.rowContext ?? null, INLINE_ARTIFACT_CONTEXT, inlineArtifactPlacement, STREAMING_ROW_CONTEXT: Symbol(),
         getCurrentInstance: () => ({ proxy: 'component-proxy', appContext: { config: { errorHandler: options.errorHandler ?? ((...args) => reports.push(args)) } } }),
         console: { error: (...args) => reports.push(args) },
         useMarkdownRenderEligibility: () => ({ eligible }),
@@ -36,7 +38,7 @@ function harness(t, options = {}) {
         getMermaid: options.getMermaid ?? (() => { throw Error('unexpected Mermaid') }),
         applyMermaidTheme: text => text,
     }
-    const setup = new Function(...Object.keys(dependencies), `${extracted}\nreturn { blocks, renderCache, coordinator, container, renderOneBlock, renderNestedMarkdown, renderMermaidIn, toolOwnership, applyCodeRendered, handleCodeToolsAction, restoreCodeToolsState, codeToolsState };`)
+    const setup = new Function(...Object.keys(dependencies), `${extracted}\nreturn { blocks, artifactPlacement: typeof artifactPlacement === 'function' ? artifactPlacement : undefined, renderCache, coordinator, container, renderOneBlock, renderNestedMarkdown, renderMermaidIn, toolOwnership, applyCodeRendered, handleCodeToolsAction, restoreCodeToolsState, codeToolsState };`)
     const component = scope.run(() => setup(...Object.values(dependencies)))
     t.after(() => scope.stop())
     return { ...component, props, eligible, calls, errors, emitted, settingsStore, scope, reports }
@@ -325,4 +327,47 @@ test('disposed unpublished Markdown releases its height reservation', async t =>
     h.eligible.value = false; h.props.source = 'pending'; await flush()
     assert.equal(reserved, 1)
     h.scope.stop(); assert.equal(reserved, 0)
+})
+
+
+test('typed artifact blocks bypass HTML rendering and remain reactive to latest placement', async t => {
+    const span = { start: 0, end: 10, textBlockIndex: 2, tag_offset: 5,
+        descriptor: { artifact_id: 'a', title: '<img onerror="bad">' }, error: null }
+    const entry = reactive({ present: true, descriptor: { publicationKey: '["s",42,2,5]', status: 'ready' } })
+    const runtime = { entries: reactive(new Map([['["s","a"]', entry]])) }
+    const h = harness(t, { inlineRuntime: ref({ sourceSessionId: 's', runtime }),
+        split: (text, options) => ({ env: {}, blocks: options?.inlineArtifacts ? [{ type: 'inline-artifact', span }] : [{ src: text, hash: text }] }) })
+    h.props.inlineContext = { sessionId: 's', lineNum: 42, sourceOffset: 0, publicationAllowed: true, finalized: true, recognizedSpans: [span] }
+    h.props.source = 'publication'; await flush()
+    assert.equal(h.blocks.value[0].type, 'inline-artifact')
+    assert.equal(h.blocks.value[0].html, undefined)
+    assert.equal(h.calls.includes('publication'), false)
+    assert.equal(h.artifactPlacement(h.blocks.value[0]).status, 'ready')
+    entry.descriptor.publicationKey = '["s",87,2,5]'
+    assert.equal(h.artifactPlacement(h.blocks.value[0]).status, 'superseded')
+    assert.equal(h.blocks.value[0].span.descriptor.title, '<img onerror="bad">')
+})
+
+test('context alone cannot enable widgets; runtime source and finalization must match', async t => {
+    const calls = []
+    const h = harness(t, { inlineRuntime: ref({ sourceSessionId: 'other', runtime: { entries: new Map() } }),
+        split: (text, options) => { calls.push(options?.inlineArtifacts); return { env: {}, blocks: [{ src: text, hash: text }] } } })
+    h.props.inlineContext = { sessionId: 's', finalized: true, publicationAllowed: true, recognizedSpans: [] }
+    h.props.source = 'ordinary'; await flush()
+    assert.equal(calls.at(-1), false)
+    h.props.inlineContext = { sessionId: 'other', finalized: false, publicationAllowed: true, recognizedSpans: [] }
+    await flush()
+    assert.equal(calls.at(-1), false)
+    assert.equal(h.blocks.value[0].html, '<p>ordinary</p>')
+})
+
+test('same Markdown source with changed occurrence context replaces typed identity', async t => {
+    const span = { start: 0, end: 10, textBlockIndex: 0, tag_offset: 0, descriptor: { artifact_id: 'a' } }
+    const h = harness(t, { inlineRuntime: ref({ sourceSessionId: 's', runtime: { entries: new Map() } }),
+        split: () => ({ env: {}, blocks: [{ type: 'inline-artifact', span }] }) })
+    h.props.inlineContext = { sessionId: 's', lineNum: 42, finalized: true, publicationAllowed: true, recognizedSpans: [span] }
+    h.props.source = 'publication'; await flush()
+    assert.equal(h.blocks.value[0]?.key, '["s",42,0,0]')
+    h.props.inlineContext = { ...h.props.inlineContext, lineNum: 87 }; await flush()
+    assert.equal(h.blocks.value[0]?.key, '["s",87,0,0]')
 })

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, inject, watch, onScopeDispose, nextTick, getCurrentInstance } from 'vue'
+import { ref, computed, inject, watch, onScopeDispose, nextTick, getCurrentInstance, unref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
     splitMarkdownBlocks,
@@ -11,6 +11,9 @@ import { createMarkdownRenderCoordinator, MARKDOWN_RENDER_CANCELLED } from '../.
 import { markdownReferenceContextKey, markdownBlockCacheKey } from '../../utils/markdownRenderCache.js'
 import { STREAMING_ROW_CONTEXT } from '../../composables/streamPublicationKeys.js'
 import { useMarkdownRenderEligibility } from '../../composables/useMarkdownRenderEligibility.js'
+import { INLINE_ARTIFACT_CONTEXT } from '../../inline-artifacts/context.js'
+import { inlineArtifactPlacement } from '../../inline-artifacts/rendering.js'
+import InlineArtifactBlock from '../../inline-artifacts/InlineArtifactBlock.vue'
 import { hashString } from '../../utils/hash.js'
 import { useSettingsStore } from '../../stores/settings'
 import { vHighlight } from '../../directives/vHighlight.js'
@@ -23,6 +26,7 @@ import 'github-markdown-css/github-markdown.css'
 import '../../styles/github-markdown-themes.css'
 
 const props = defineProps({
+    inlineContext: { type: Object, default: null },
     source: {
         type: String,
         required: true
@@ -66,6 +70,18 @@ const fileLinks = inject('markdownFileLinks', null)
 const rewriteContentMediaUrl = inject('rewriteContentMediaUrl', null)
 
 const blocks = ref([])
+const providedInlineContext = inject(INLINE_ARTIFACT_CONTEXT, null)
+const inlineRenderingContext = computed(() => {
+    const context = props.inlineContext
+    const provided = unref(providedInlineContext)
+    return context?.finalized && context.publicationAllowed && provided?.runtime
+        && provided.sourceSessionId === context.sessionId ? context : null
+})
+const inlineContextKey = computed(() => inlineRenderingContext.value ? JSON.stringify(inlineRenderingContext.value) : undefined)
+function artifactPlacement(block) {
+    const runtime = unref(providedInlineContext)?.runtime
+    return runtime ? inlineArtifactPlacement(block.inlineContext, block.span, runtime) : { status: 'superseded' }
+}
 // An unpublished offscreen document must not collapse a row whose geometry is retained.
 const rowContext = inject(STREAMING_ROW_CONTEXT, null)
 const releaseInitialHeight = rowContext?.reserveInitialHeight?.() ?? (() => {})
@@ -522,13 +538,20 @@ function mermaidTheme() {
 
 async function renderDocument(input, { isCurrent }) {
     if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
-    const { blocks: raw, env } = splitMarkdownBlocks(input.source)
+    const { blocks: raw, env } = splitMarkdownBlocks(input.source, { inlineArtifacts: !!input.inlineContext, ...input.inlineContext })
     const referenceContext = markdownReferenceContextKey(env.references)
     const cacheEntries = new Map()
     const occurrences = new Map()
     const result = []
     for (const [i, block] of raw.entries()) {
         if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
+        if (block.type === 'inline-artifact') {
+            const span = block.span
+            const context = input.inlineContext
+            const key = JSON.stringify([context.sessionId, context.lineNum, span.textBlockIndex, span.tag_offset])
+            result.push({ type: 'inline-artifact', key, span, inlineContext: context })
+            continue
+        }
         const html = await renderOneBlock(block.src, env, input.theme, input.slashTag && i === 0,
             referenceContext, cacheEntries, isCurrent)
         if (!isCurrent() || html === MARKDOWN_RENDER_CANCELLED) return MARKDOWN_RENDER_CANCELLED
@@ -561,9 +584,9 @@ const coordinator = createMarkdownRenderCoordinator({
         else console.error(error)
     },
 })
-watch([() => props.source, mermaidTheme, () => props.tagSlashCommand], ([source, theme, slashTag]) => {
+watch([() => props.source, mermaidTheme, () => props.tagSlashCommand, inlineContextKey], ([source, theme, slashTag, inlineContextKey]) => {
     toolRevision++
-    coordinator.request({ source, theme, slashTag })
+    coordinator.request({ source, theme, slashTag, inlineContext: inlineRenderingContext.value, inlineContextKey })
 }, { immediate: true, flush: 'sync' })
 watch(eligible, value => {
     if (!value) toolRevision++
@@ -826,12 +849,18 @@ function handleLinkClick(event) {
             v-highlight="highlightTerms"
             @click="handleLinkClick"
         >
-            <div
-                v-for="block in blocks"
-                :key="block.key"
-                class="markdown-block"
-                v-html="block.html"
-            ></div>
+            <template v-for="block in blocks" :key="block.key">
+                <template v-if="block.type === 'inline-artifact'">
+                    <div v-if="artifactPlacement(block).status === 'invalid'" class="inline-artifact-error" role="status">
+                        Inline artifact invalid: {{ block.span.error }}
+                    </div>
+                    <InlineArtifactBlock
+                        v-else-if="artifactPlacement(block).status !== 'superseded'"
+                        v-bind="artifactPlacement(block)"
+                    />
+                </template>
+                <div v-else class="markdown-block" v-html="block.html"></div>
+            </template>
         </div>
     </div>
 </template>

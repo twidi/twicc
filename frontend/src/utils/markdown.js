@@ -300,22 +300,36 @@ export function parseMarkdownTokens(source) {
  * a reference defined in one block resolves when used in another block.
  *
  * @param {string} source - Raw markdown text
- * @returns {{ blocks: Array<{src: string, hash: string}>, env: object }}
+ * Supplied recognized spans retain complete canonical-source eligibility.
+ * Sliced Markdown never determines publication eligibility.
+ *
+ * @returns {{ blocks: Array<{src?: string, hash?: string, type?: string, span?: object}>, env: object }}
  */
-export function splitMarkdownBlocks(source) {
+export function splitMarkdownBlocks(source, { inlineArtifacts = false, sourceOffset = 0, recognizedSpans = [] } = {}) {
     const env = {}
     if (!source) return { blocks: [], env }
     const tokens = md.parse(source, env)
-    const lines = source.split('\n')
-    const blocks = []
-    for (const token of tokens) {
-        // Root-level block tokens (level 0) carry a source line range in `.map`.
-        // Closing tokens (paragraph_close, etc.) are level 0 too but have no map.
-        if (token.level === 0 && token.map) {
+    function markdownBlocks(text, parsedTokens = md.parse(text, env)) {
+        const lines = text.split('\n')
+        return parsedTokens.filter(token => token.level === 0 && token.map).map(token => {
             const src = lines.slice(token.map[0], token.map[1]).join('\n')
-            blocks.push({ src, hash: hashString(src) })
-        }
+            return { src, hash: hashString(src) }
+        })
     }
+    if (!inlineArtifacts || !recognizedSpans.length) return { blocks: markdownBlocks(source, tokens), env }
+    const characters = Array.from(source)
+    const spans = recognizedSpans.filter(span => span.start >= sourceOffset && span.end <= sourceOffset + characters.length)
+        .sort((a, b) => a.start - b.start)
+    const blocks = []
+    let offset = 0
+    for (const span of spans) {
+        const start = span.start - sourceOffset
+        const end = span.end - sourceOffset
+        blocks.push(...markdownBlocks(characters.slice(offset, start).join('')))
+        blocks.push({ type: 'inline-artifact', span })
+        offset = end
+    }
+    blocks.push(...markdownBlocks(characters.slice(offset).join('')))
     return { blocks, env }
 }
 

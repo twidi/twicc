@@ -12,8 +12,10 @@
 // (``codex/PlanImplementationBody.vue``), which re-reads the latest plan off
 // the session items.
 
-const OPEN_TAG_RE = /(?:^|\n)[ \t]*<proposed_plan>[ \t]*(?:\n|$)/
-const CLOSE_TAG_RE = /(?:^|\n)[ \t]*<\/proposed_plan>[ \t]*(?:\n|$)/
+import { parseMarkdownTokens } from '../../utils/markdown.js'
+
+const OPEN_TAG_RE = /^[ \t]*<proposed_plan>[ \t]*$/
+const CLOSE_TAG_RE = /^[ \t]*<\/proposed_plan>[ \t]*$/
 
 /**
  * Split an assistant message around its ``<proposed_plan>`` block.
@@ -23,17 +25,57 @@ const CLOSE_TAG_RE = /(?:^|\n)[ \t]*<\/proposed_plan>[ \t]*(?:\n|$)/
  * that case). A tag mentioned inline (not on its own line) does not trigger.
  *
  * @param {string} text - The assistant message text.
- * @returns {{before: string, plan: string, after: string} | null} The trimmed
+ * @returns {{before: string, plan: string, after: string, beforeOffset: number, planOffset: number, afterOffset: number} | null} The trimmed
  *   segments, or ``null`` when the message carries no plan block.
  */
 export function splitProposedPlan(text) {
-    if (typeof text !== 'string' || !text) return null
-    const openMatch = text.match(OPEN_TAG_RE)
-    if (!openMatch) return null
-    const before = text.slice(0, openMatch.index)
-    const rest = text.slice(openMatch.index + openMatch[0].length)
-    const closeMatch = rest.match(CLOSE_TAG_RE)
-    const plan = closeMatch ? rest.slice(0, closeMatch.index) : rest
-    const after = closeMatch ? rest.slice(closeMatch.index + closeMatch[0].length) : ''
-    return { before: before.trim(), plan: plan.trim(), after: after.trim() }
+    if (typeof text !== 'string' || !text || !text.includes('<proposed_plan>')) return null
+    const lines = [...text.matchAll(/[^\r\n]*(?:\r\n|\r|\n|$)/g)].filter(match => match[0])
+    const tokens = parseMarkdownTokens(text)
+    const eligibleLine = index => tokens.some(token => token.type === 'paragraph_open' && token.level === 0
+        && token.map?.[0] <= index && index < token.map[1])
+    const codeRanges = tokens.flatMap(token => {
+        if (token.type === 'fence' || token.type === 'code_block') {
+            return [[lines[token.map[0]].index, lines[token.map[1]]?.index ?? text.length]]
+        }
+        return token.meta?.sourceCodeRanges || []
+    })
+    const comments = []
+    let cursor = 0
+    while (cursor < text.length) {
+        const code = codeRanges.find(([start, end]) => start <= cursor && cursor < end)
+        if (code) { cursor = code[1]; continue }
+        if (text.startsWith('<!--', cursor)) {
+            let preceding = cursor - 1
+            while (preceding >= 0 && text[preceding] === '\\') preceding--
+            if ((cursor - preceding - 1) % 2 === 0) {
+                const close = text.indexOf('-->', cursor + 4)
+                const end = close < 0 ? text.length : close + 3
+                comments.push([cursor, end])
+                cursor = end
+                continue
+            }
+        }
+        cursor++
+    }
+    const excludedRanges = [...codeRanges, ...comments]
+    const outsideExample = position => !excludedRanges.some(([start, end]) => start <= position && position < end)
+    const openLine = lines.findIndex((line, index) => OPEN_TAG_RE.test(line[0].replace(/[\r\n]+$/, ''))
+        && eligibleLine(index) && outsideExample(line.index))
+    if (openLine < 0) return null
+    const planStart = lines[openLine].index + lines[openLine][0].length
+    const closeLine = lines.findIndex((line, index) => index > openLine
+        && CLOSE_TAG_RE.test(line[0].replace(/[\r\n]+$/, '')) && eligibleLine(index) && outsideExample(line.index))
+    const planEnd = closeLine < 0 ? text.length : lines[closeLine].index
+    const afterStart = closeLine < 0 ? text.length : lines[closeLine].index + lines[closeLine][0].length
+    const segment = (start, end) => {
+        const raw = text.slice(start, end)
+        const trimmedStart = start + raw.length - raw.trimStart().length
+        return { text: raw.trim(), offset: Array.from(text.slice(0, trimmedStart)).length }
+    }
+    const before = segment(0, lines[openLine].index)
+    const plan = segment(planStart, planEnd)
+    const after = segment(afterStart, text.length)
+    return { before: before.text, plan: plan.text, after: after.text,
+        beforeOffset: before.offset, planOffset: plan.offset, afterOffset: after.offset }
 }

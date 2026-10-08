@@ -46,6 +46,12 @@ export function userMessageAttachmentCount(data) {
     return userMessageImages(data).length
 }
 
+/** Original canonical Text entries, with content-array identities preserved. */
+export function assistantTextBlocks(data) {
+    return contentOfType(data, 'AgentMessage').flatMap((entry, textBlockIndex) =>
+        entry?.type === 'Text' && typeof entry.text === 'string' ? [{ textBlockIndex, text: entry.text }] : [])
+}
+
 export function agentMessageText(data) {
     const text = contentOfType(data, 'AgentMessage')
         .filter(entry => entry?.type === 'Text' && typeof entry.text === 'string')

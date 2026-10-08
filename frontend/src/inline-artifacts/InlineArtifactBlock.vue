@@ -15,7 +15,12 @@ const props = defineProps({
 const provided = inject(INLINE_ARTIFACT_CONTEXT, null)
 const runtime = computed(() => unref(provided)?.runtime ?? null)
 const entry = computed(() => runtime.value?.entries.get(props.artifactKey))
-const current = computed(() => entry.value?.descriptor.publicationKey === props.publicationKey)
+const current = computed(() => entry.value?.present && entry.value.descriptor.publicationKey === props.publicationKey)
+const frameStatus = computed(() => {
+    if (props.status === 'not_included') return 'Inline artifact not included'
+    if (props.status === 'error' || entry.value?.loadState === 'error') return 'Inline artifact unavailable'
+    return 'Loading inline artifact'
+})
 const placeholder = ref(null)
 const intersecting = ref(false)
 let detach = null, intersectionObserver = null, resizeObserver = null
@@ -68,11 +73,11 @@ onBeforeUnmount(() => {
     <div
         ref="placeholder"
         class="inline-artifact-block"
-        :style="{ height: `${current ? entry.inlineHeight : 160}px` }"
+        :style="{ height: `${status === 'not_included' || status === 'error' || entry?.loadState === 'error' ? 160 : current ? entry.inlineHeight : 160}px` }"
         :aria-label="title || entry?.descriptor.title"
     >
         <span v-if="!current || status !== 'ready' || entry?.loadState !== 'ready'" class="inline-artifact-state">
-            <slot :entry="entry">{{ entry?.loadState === 'error' ? 'Inline artifact unavailable' : 'Loading inline artifact' }}</slot>
+            <slot :entry="entry">{{ frameStatus }}</slot>
         </span>
     </div>
 </template>

@@ -1,10 +1,11 @@
 <script setup>
 import { computed } from 'vue'
 import MarkdownContent from '../../../ui/MarkdownContent.vue'
-import { commandToText } from '../../../../utils/command'
+import { displayInlineText } from '../../../../inline-artifacts/rendering.js'
 import { LEADING_SLASH_COMMAND_RE } from '../../../../utils/markdown'
 
 const props = defineProps({
+    inlineContext: { type: Object, default: null },
     text: {
         type: String,
         required: true
@@ -16,10 +17,8 @@ const props = defineProps({
     }
 })
 
-const displayText = computed(() => {
-    const trimmed = props.text.trim()
-    return commandToText(trimmed) ?? trimmed
-})
+const display = computed(() => displayInlineText(props.text, props.inlineContext))
+const displayText = computed(() => display.value.source)
 
 // User messages starting with a slash command (a real command converted by
 // commandToText, or free text typed with a leading /word) get the command
@@ -31,7 +30,7 @@ const tagSlashCommand = computed(() =>
 
 <template>
     <div class="text-content" :role="role">
-        <MarkdownContent :source="displayText" :tag-slash-command="tagSlashCommand" />
+        <MarkdownContent :source="displayText" :inline-context="display.inlineContext" :tag-slash-command="tagSlashCommand" />
     </div>
 </template>
 

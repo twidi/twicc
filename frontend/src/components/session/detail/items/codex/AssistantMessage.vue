@@ -2,11 +2,13 @@
 import { computed, ref, nextTick, onMounted } from 'vue'
 import { useDataStore } from '../../../../../stores/data'
 import { useDetailsClosing } from '../../../../../composables/useDetailsClosing'
+import { segmentInlineTextContext } from '../../../../../inline-artifacts/rendering.js'
 import { splitProposedPlan } from '../../../../../providers/codex/proposedPlan'
 import TextContent from '../TextContent.vue'
 import MarkdownContent from '../../../../ui/MarkdownContent.vue'
 
 const props = defineProps({
+    inlineContext: { type: Object, default: null },
     text: {
         type: String,
         required: true
@@ -71,7 +73,7 @@ function onAfterHide() {
 
 <template>
     <div v-if="segments" class="assistant-message-with-plan">
-        <TextContent v-if="segments.before" :text="segments.before" role="assistant" />
+        <TextContent v-if="segments.before" :text="segments.before" :inline-context="segmentInlineTextContext(inlineContext, segments.beforeOffset)" role="assistant" />
         <wa-details
             :open="isOpen"
             :style="instantOpen ? { '--show-duration': '0ms', '--hide-duration': '0ms' } : null"
@@ -85,12 +87,12 @@ function onAfterHide() {
                 <strong class="items-details-summary-name">Proposed plan</strong>
             </span>
             <div v-if="isOpen || isClosing()" class="proposed-plan-body">
-                <MarkdownContent :source="segments.plan" />
+                <MarkdownContent :source="segments.plan" :inline-context="segmentInlineTextContext(inlineContext, segments.planOffset)" />
             </div>
         </wa-details>
-        <TextContent v-if="segments.after" :text="segments.after" role="assistant" />
+        <TextContent v-if="segments.after" :text="segments.after" :inline-context="segmentInlineTextContext(inlineContext, segments.afterOffset)" role="assistant" />
     </div>
-    <TextContent v-else :text="text" role="assistant" />
+    <TextContent v-else :text="text" :inline-context="inlineContext" role="assistant" />
 </template>
 
 <style scoped>

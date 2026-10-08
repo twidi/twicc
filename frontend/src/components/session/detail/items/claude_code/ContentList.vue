@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { createInlineTextContext } from '../../../../../inline-artifacts/rendering.js'
 import { useDataStore } from '../../../../../stores/data'
 import { useCodeCommentsStore } from '../../../../../stores/codeComments'
 import { DISPLAY_MODE } from '../../../../../constants'
@@ -20,6 +21,7 @@ const codeCommentsStore = useCodeCommentsStore()
 const isSimplifiedMode = computed(() => store.getEffectiveDisplayMode(props.sessionId) === DISPLAY_MODE.SIMPLIFIED)
 
 const props = defineProps({
+    inlineContext: { type: Object, default: null },
     items: {
         type: Array,
         required: true
@@ -82,6 +84,10 @@ const props = defineProps({
         default: () => []
     }
 })
+
+const textContexts = computed(() => props.items.map((item, textBlockIndex) =>
+    props.role === 'assistant' && item.type === 'text'
+        ? createInlineTextContext(props.inlineContext, [{ textBlockIndex, text: item.text }]) : null))
 
 const emit = defineEmits(['toggle-suffix'])
 
@@ -289,6 +295,7 @@ const parentRangeCommentsCount = computed(() => {
             <TextContent
                 v-if="entry.item.type === 'text'"
                 :text="entry.item.text"
+                :inline-context="textContexts[entry.index]"
                 :role="role"
             />
             <!-- First image or document: render every one of them as one attachment strip -->

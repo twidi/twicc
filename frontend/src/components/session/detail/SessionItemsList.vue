@@ -1155,6 +1155,8 @@ function resolveStability() {
  * Used to detect when items have finished resizing for scroll stability detection.
  */
 function onItemResized() {
+    // Row height changes also move retained frames below the resized row.
+    inlineContext.value?.runtime.geometry.schedule()
     // If we're waiting for stability, reset the debounce timer
     if (onStabilizedCallback) {
         // Clear existing timeout

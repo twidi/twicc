@@ -6,9 +6,11 @@ import { emptyAssistantMessageMarkdown, showEmptyAssistantNotice } from '../../.
 import { interAgentTaskMarkdown } from '../../../../../providers/codex/interAgentTask'
 import {
     agentMessageText,
+    assistantTextBlocks,
     userMessageContent,
     userMessageText,
 } from '../../../../../providers/codex/canonical'
+import { createInlineTextContext } from '../../../../../inline-artifacts/rendering.js'
 import { messageAttachmentLayout } from '../../../../../utils/attachmentStrip'
 import { useAttachmentStripContext } from '../../../../../composables/useAttachmentStripContext'
 import UserMessage from './UserMessage.vue'
@@ -17,6 +19,7 @@ import Reasoning from './Reasoning.vue'
 import WorkingAssistantMessage from '../WorkingAssistantMessage.vue'
 
 const props = defineProps({
+    inlineContext: { type: Object, default: null },
     // Parsed JSONL line. Two shapes are supported:
     //  - Real Codex line: ``{ timestamp, type: 'event_msg', payload: { type:
     //    'item_completed', item: { type: 'UserMessage' | 'AgentMessage',
@@ -102,6 +105,9 @@ const text = computed(() => {
         : (agentMessageText(props.data) || '')
 })
 
+const publicationContext = computed(() => props.kind === 'assistant_message' && !props.data.syntheticKind
+    ? createInlineTextContext(props.inlineContext, assistantTextBlocks(props.data)) : null)
+
 const dataStore = useDataStore()
 
 // Codex sometimes ends a turn with an ``agent_message`` carrying an empty
@@ -178,6 +184,7 @@ const nativeContent = computed(() => {
     <AssistantMessage
         v-else-if="kind === 'assistant_message' && assistantText !== null"
         :text="assistantText"
+        :inline-context="publicationContext"
         :session-id="sessionId"
         :line-num="lineNum"
     />

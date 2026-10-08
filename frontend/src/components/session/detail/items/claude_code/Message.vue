@@ -10,6 +10,7 @@ import ContentList from './ContentList.vue'
 import WorkingAssistantMessage from '../WorkingAssistantMessage.vue'
 
 const props = defineProps({
+    inlineContext: { type: Object, default: null },
     data: {
         type: Object,
         required: true
@@ -96,6 +97,10 @@ const contentItems = computed(() => {
     return []
 })
 
+const publicationContext = computed(() => props.role === 'assistant' && !props.parentSessionId
+    && props.data?.type === 'assistant' && !props.data.syntheticKind && !props.data.isApiErrorMessage
+    && !props.data.isMeta && !('twiccOriginalContent' in props.data) ? props.inlineContext : null)
+
 const dataStore = useDataStore()
 
 // Attachments of a user message (spec 2026-10-03 §10.2): one ordered strip
@@ -156,6 +161,7 @@ const displayItems = computed(() => {
         />
         <ContentList
             :items="displayItems"
+            :inline-context="publicationContext"
             :role="role"
             :project-id="projectId"
             :session-id="sessionId"

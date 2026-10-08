@@ -1,5 +1,6 @@
 <script setup>
-import { computed, ref, provide } from 'vue'
+import { computed, ref, provide, inject, unref } from 'vue'
+import { INLINE_ARTIFACT_CONTEXT } from '../../../inline-artifacts/context.js'
 import { STREAMING_BLOCK_CONTEXT } from '../../../composables/streamPublicationKeys.js'
 import { useStreamingPublication } from '../../../composables/useStreamingPublication.js'
 import { PROVIDER, SYNTHETIC_ITEM, DISPLAY_MODE } from '../../../constants'
@@ -146,6 +147,18 @@ const entryType = computed(() => props.content?.type || 'unknown')
 
 const sessionProvider = computed(() => dataStore.getSession(props.sessionId)?.provider)
 
+// Only persisted assistant rows from the owning regular session carry publication coordinates.
+const providedInlineContext = inject(INLINE_ARTIFACT_CONTEXT, null)
+const inlineContext = computed(() => {
+    const context = unref(providedInlineContext)
+    if (!context?.runtime || context.sourceSessionId !== props.sessionId || props.parentSessionId
+        || dataStore.getSession(props.sessionId)?.type !== 'session'
+        || props.kind !== 'assistant_message' || props.syntheticKind || props.content?.syntheticKind
+        || !Number.isInteger(props.lineNum) || props.lineNum < 1) return null
+    return { sessionId: props.sessionId, lineNum: props.lineNum, sourceOffset: 0,
+        finalized: true, publicationAllowed: true, recognizedSpans: [] }
+})
+
 // Whether this item's session renders in debug mode (global mode or the
 // per-session dev-mode override) — drives the "show JSON" toggle visibility.
 const isEffectiveDebug = computed(() => dataStore.getEffectiveDisplayMode(props.sessionId) === DISPLAY_MODE.DEBUG)
@@ -256,6 +269,7 @@ function toggleJsonView() {
                     v-if="kind === 'user_message' || kind === 'assistant_message'"
                     :data="content"
                     :role="kind === 'user_message' ? 'user' : 'assistant'"
+                    :inline-context="inlineContext"
                     :project-id="projectId"
                     :session-id="sessionId"
                     :parent-session-id="parentSessionId"
@@ -305,6 +319,7 @@ function toggleJsonView() {
                     v-if="kind === 'user_message' || kind === 'assistant_message'"
                     :data="content"
                     :kind="kind"
+                    :inline-context="inlineContext"
                     :session-id="sessionId"
                     :line-num="lineNum"
                     :is-block-start="isBlockStart"

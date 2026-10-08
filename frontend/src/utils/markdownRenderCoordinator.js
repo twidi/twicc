@@ -2,6 +2,7 @@ export const MARKDOWN_RENDER_CANCELLED = Symbol('markdownRenderCancelled')
 
 const sameInput = (left, right) => left && right
     && left.source === right.source && left.theme === right.theme && left.slashTag === right.slashTag
+    && left.inlineContextKey === right.inlineContextKey
 
 /** Own one document operation and one replaceable latest request. */
 export function createMarkdownRenderCoordinator({ render, commit, onError, onState, schedule = queueMicrotask }) {
@@ -66,6 +67,10 @@ export function createMarkdownRenderCoordinator({ render, commit, onError, onSta
     function request(input) {
         if (disposed) return
         const snapshot = { source: input.source, theme: input.theme, slashTag: input.slashTag }
+        if (input.inlineContext) {
+            snapshot.inlineContext = input.inlineContext
+            snapshot.inlineContextKey = input.inlineContextKey
+        }
         if (sameInput(snapshot, latest)) return
         latest = snapshot
         revision++
