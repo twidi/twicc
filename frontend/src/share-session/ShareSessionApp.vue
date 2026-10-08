@@ -81,6 +81,7 @@ provide(INLINE_ARTIFACT_CONTEXT, inlineRuntime ? { sourceSessionId: meta.session
 watch(() => revoked.value || !ready.value || meta.include_inline_artifacts === false || subagentStack.value.length > 0,
     suppressed => inlineRuntime?.setActive(!suppressed), { immediate: true, flush: 'sync' })
 let disconnectLive = null, disposed = false
+let snapshotFocusGeneration = 0
 const focusController = new AbortController()
 const inlineCompletion = inlineAdapter ? createShareInlineCompletion({
     adapter: inlineAdapter, isSnapshot: () => meta.mode === 'snapshot',
@@ -101,13 +102,22 @@ async function refreshInline() {
 }
 async function onWindowFocus() {
     if (meta.mode !== 'snapshot' || disposed) return
+    const generation = ++snapshotFocusGeneration
     try {
         const fresh = await api.fetchMeta({ signal: focusController.signal })
-        if (disposed) return
+        if (disposed || generation !== snapshotFocusGeneration) return
+        if (fresh.ready !== false && fresh.last_line !== store.getSession(meta.session_id)?.last_line) {
+            // Push can move the latest publication beyond the cached transcript.
+            // Extend its rows before accepting that publication's new binding.
+            const metadata = await api.fetchItemsMetadata()
+            if (disposed || generation !== snapshotFocusGeneration) return
+            store.initSessionItemsFromMetadata(meta.session_id, metadata)
+            store.setSession({ ...store.getSession(meta.session_id), last_line: fresh.last_line })
+        }
         Object.assign(meta, fresh)
         await refreshInline()
     } catch (error) {
-        if (!disposed && [401, 403, 404].includes(error.status)) revoked.value = true
+        if (!disposed && generation === snapshotFocusGeneration && [401, 403, 404].includes(error.status)) revoked.value = true
     }
 }
 
