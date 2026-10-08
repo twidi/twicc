@@ -43,6 +43,20 @@ def _tree_size(data_root: str) -> int:
     return total
 
 
+def validate_data_write(size: int, existing: int, used: int) -> tuple[dict, int] | None:
+    """Shared quota decision for pathname and confined descriptor writers."""
+    if size > MAX_DATA_FILE_BYTES:
+        return {"error": "too_large", "max_bytes": MAX_DATA_FILE_BYTES, "size": size}, 413
+    if used - existing + size > MAX_DATA_TREE_BYTES:
+        return {
+            "error": "quota_exceeded",
+            "max_bytes": MAX_DATA_TREE_BYTES,
+            "used_bytes": used - existing,
+            "size": size,
+        }, 413
+    return None
+
+
 def write_data_file(data_root: str, target: str, body: bytes) -> tuple[dict, int]:
     """Create or overwrite ``target`` atomically (temp file + ``os.replace``).
 
@@ -50,21 +64,18 @@ def write_data_file(data_root: str, target: str, body: bytes) -> tuple[dict, int
     explicit payload when the body exceeds the per-file cap or would push the
     tree over its quota (the replaced file's current size is reclaimed first).
     """
-    if len(body) > MAX_DATA_FILE_BYTES:
-        return {"error": "too_large", "max_bytes": MAX_DATA_FILE_BYTES, "size": len(body)}, 413
+    refusal = validate_data_write(len(body), 0, 0)
+    if refusal is not None:
+        return refusal
     existing = 0
     try:
         existing = os.path.getsize(target)
     except OSError:
         pass
     used = _tree_size(data_root) if os.path.isdir(data_root) else 0
-    if used - existing + len(body) > MAX_DATA_TREE_BYTES:
-        return {
-            "error": "quota_exceeded",
-            "max_bytes": MAX_DATA_TREE_BYTES,
-            "used_bytes": used - existing,
-            "size": len(body),
-        }, 413
+    refusal = validate_data_write(len(body), existing, used)
+    if refusal is not None:
+        return refusal
     try:
         os.makedirs(os.path.dirname(target), exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=os.path.dirname(target), prefix=".twicc-data-")

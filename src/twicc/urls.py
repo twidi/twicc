@@ -3,6 +3,7 @@ from django.urls import path, re_path
 from . import views
 from .artifacts.proxy import artifact_proxy
 from .browser_probe import browser_frame_check
+from .inline_artifacts.views import inline_artifact_asset
 from .core.services.attachments import views as composer_attachment_views
 from .auth import views as auth_views
 from .rpc import views as rpc_views
@@ -35,6 +36,7 @@ urlpatterns = [
     path("api/sessions/bulk-archive/", views.bulk_archive_sessions),
     path("api/sessions/<str:session_id>/", views.session_by_id),
     path("api/sessions/<str:session_id>/plan/", views.session_plan_content),
+    path("api/sessions/<str:session_id>/inline-artifacts/<str:artifact_id>/<path:asset_path>", inline_artifact_asset),
     path("api/search/", views.search_sessions),
     path("api/usage-history/", views.usage_history),
     path("api/external-notifications/test/", views.external_notifications_test),
