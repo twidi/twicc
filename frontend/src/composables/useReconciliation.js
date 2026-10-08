@@ -232,7 +232,7 @@ export function useReconciliation() {
                         // auto-open (auto-open-diffs) like real-time ones — but
                         // only where the user is looking, and never on first
                         // connect (which would open every historical diff).
-                        await loadNewItems(currentSessionId, isReconnection)
+                        await loadNewItems(currentSessionId, isReconnection, true)
                     } catch (error) {
                         console.error(`Failed to load items for current session:`, error)
                         failedSessions.push({ projectId: currentProjectId, sessionId: currentSessionId })
@@ -349,7 +349,7 @@ export function useReconciliation() {
      *   live (store.markNewTailItemsLive) so auto-open-diffs opens edits made
      *   during the outage. Set only on a real reconnect, for the focused session.
      */
-    async function loadNewItems(sessionId, markNewLive = false) {
+    async function loadNewItems(sessionId, markNewLive = false, loadUnfetched = false) {
         const session = store.getSession(sessionId)
         if (!session) return
 
@@ -359,7 +359,7 @@ export function useReconciliation() {
         // store.markNewTailItemsLive). Active session only (caller's flag).
         if (markNewLive) store.markNewTailItemsLive(sessionId)
 
-        const ok = await store.ensureSessionItemsCoverage(sessionId)
+        const ok = await store.ensureSessionItemsCoverage(sessionId, { loadUnfetched })
         if (!ok) {
             throw new Error(`Failed to load missing items for session ${sessionId}`)
         }

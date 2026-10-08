@@ -4,7 +4,7 @@ import { computed, watch, ref, reactive, provide, nextTick, inject, onMounted, o
 import { useRouter } from 'vue-router'
 import { collectMissingScrollerLines, sameScrollerLoadCandidates } from '../../../utils/scrollerLoadWindow.js'
 import { useDataStore } from '../../../stores/data'
-import { INITIAL_ITEMS_COUNT, DISPLAY_MODE } from '../../../constants'
+import { DISPLAY_MODE } from '../../../constants'
 import { useSettingsStore } from '../../../stores/settings'
 import { toast } from '../../../composables/useToast'
 import { apiFetch } from '../../../utils/api'
@@ -751,74 +751,14 @@ async function loadSubagentSession() {
  * Items at the top will be lazy-loaded when the user scrolls up.
  */
 async function loadSessionData(lastLine) {
-    const sId = props.sessionId
-
-    // Mark as fetched first (before async operations to avoid race conditions)
-    if (!store.localState.sessions[sId]) {
-        store.localState.sessions[sId] = {}
-    }
-    store.localState.sessions[sId].itemsFetched = true
-    store.localState.sessions[sId].itemsLoading = true
-
-    try {
-        // Build range for initial content.
-        // Parent sessions open at the bottom → load last N items.
-        // Subagent sessions open at the top → load first N items.
-        const ranges = []
-        if (lastLine <= INITIAL_ITEMS_COUNT) {
-            // Small session: load everything
-            ranges.push([1, lastLine])
-        } else if (props.parentSessionId) {
-            // Subagent: load first N items (opens at the top)
-            ranges.push([1, INITIAL_ITEMS_COUNT])
-        } else {
-            // Large session: load only last N items
-            ranges.push([lastLine - INITIAL_ITEMS_COUNT + 1, lastLine])
-        }
-
-        // Build range params for items endpoint
-        const params = new URLSearchParams()
-        for (const [min, max] of ranges) {
-            params.append('range', `${min}:${max}`)
-        }
-
-        // Fetch BOTH in parallel
-        const [metadataResult, itemsResult] = await Promise.all([
-            store.loadSessionMetadata(props.projectId, sId, props.parentSessionId),
-            fetch(`${apiBaseUrl.value}/items/?${params}`)
-                .then(res => res.ok ? res.json() : null)
-                .catch(() => null)
-        ])
-
-        // Check for errors
-        if (!metadataResult || !itemsResult) {
-            store.localState.sessions[sId].itemsLoadingError = true
-            return
-        }
-
-        // Process results
-        store.initSessionItemsFromMetadata(sId, metadataResult)
-        store.updateSessionItemsContent(sId, itemsResult)
-
-        // Success
-        store.localState.sessions[sId].itemsLoadingError = false
-
-        // Session opening = audit point for sends whose outcome was lost
-        // with a previous WebSocket/tab (send-failure recovery). This is the
-        // REAL opening path — data.js's loadSessionItems is not called here.
-        store.auditInflightSends(sId)
-
-    } catch (error) {
-        console.error('Failed to load session data:', error)
-        store.localState.sessions[sId].itemsLoadingError = true
-    } finally {
-        store.localState.sessions[sId].itemsLoading = false
-    }
+    return store.loadSessionHistory(props.projectId, props.sessionId, lastLine, props.parentSessionId)
 }
 
 // A server snapshot can promote a draft while preserving the session object.
-// One watcher owns promotion and compute readiness, which can arrive together.
-watch([() => props.sessionId, session, () => session.value?.draft, () => session.value?.compute_version_up_to_date],
+// One watcher owns promotion, compute readiness, and the arrival of the first
+// lines. Watching whether lines exist avoids waking it for every later append.
+watch([() => props.sessionId, session, () => session.value?.draft, () => session.value?.compute_version_up_to_date,
+    () => (session.value?.last_line || 0) > 0],
     async ([newSessionId, newSession, , ready], [oldSessionId, , , oldReady] = []) => {
     if (!newSessionId) return
     const sessionChanged = newSessionId !== oldSessionId

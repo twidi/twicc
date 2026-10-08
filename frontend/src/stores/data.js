@@ -155,8 +155,9 @@ const debouncedSaves = new Map()
 // reconciliation relies on the returned ids to know which sessions to reload.
 const sessionsLoadInFlight = new Map() // projectId -> Promise<Set<sessionId>>
 
-// Sessions with an ensureSessionItemsCoverage pass in flight (coalescing guard).
-const itemsCoverageInFlight = new Set() // sessionId
+// Shared by the conversation's first load and reconnect recovery.
+const sessionHistoryInFlight = new Map() // sessionId -> Promise<boolean>
+const itemsCoverageInFlight = new Map() // sessionId -> Promise<boolean>
 
 /**
  * Coalesce ascending 1-based line numbers into [min, max] ranges.
@@ -2802,6 +2803,70 @@ export const useDataStore = defineStore('data', {
             delete this.artifactBookmarks[id]
         },
         /**
+         * Load complete metadata and the opening content window. Both the
+         * conversation and reconnect recovery await this same initial load.
+         * Subagents open at the top; parent sessions open at the bottom.
+         * @returns {Promise<boolean>} false when either request failed.
+         */
+        async loadSessionHistory(projectId, sessionId, lastLine, parentSessionId = null) {
+            const existing = sessionHistoryInFlight.get(sessionId)
+            if (existing) return existing
+            if (!lastLine || isLaunchedEphemeral(this.sessions[sessionId])) return true
+
+            this.localState.sessions[sessionId] ||= {}
+            // Read back through Vue: the assignment above returns the raw
+            // object on a first visit, while later store reads return its proxy.
+            const local = this.localState.sessions[sessionId]
+            const wasFetched = !!local.itemsFetched
+            // Register before publishing loading state: a watcher or live item
+            // may start coverage while this opening request is still pending.
+            const pending = Promise.resolve().then(async () => {
+                local.itemsFetched = true
+                local.itemsLoading = true
+                const first = parentSessionId ? 1 : Math.max(1, lastLine - INITIAL_ITEMS_COUNT + 1)
+                const last = parentSessionId ? Math.min(lastLine, INITIAL_ITEMS_COUNT) : lastLine
+                const baseUrl = parentSessionId
+                    ? `/api/projects/${projectId}/sessions/${parentSessionId}/subagent/${sessionId}`
+                    : `/api/projects/${projectId}/sessions/${sessionId}`
+                try {
+                    const [metadata, items] = await Promise.all([
+                        this.loadSessionMetadata(projectId, sessionId, parentSessionId),
+                        apiFetch(`${baseUrl}/items/?range=${first}:${last}`)
+                            .then(res => res.ok ? res.json() : null),
+                    ])
+                    // An unloaded session must not be populated by an old load.
+                    if (this.localState.sessions[sessionId] !== local || !local.itemsFetched) return false
+                    if (!metadata || !items) throw new Error('Failed to load session history')
+
+                    // Keep live lines delivered during a first load, including
+                    // lines beyond the REST snapshots' bounds.
+                    const liveItems = wasFetched ? [] : (this.sessionItems[sessionId] || []).filter(hasContent)
+                    this.initSessionItemsFromMetadata(sessionId, metadata)
+                    this.updateSessionItemsContent(sessionId, items)
+                    if (liveItems.length) this.addSessionItems(sessionId, liveItems)
+                    local.itemsLoadingError = false
+                    this.auditInflightSends(sessionId)
+                    return true
+                } catch (error) {
+                    console.error('Failed to load session history:', error)
+                    if (this.localState.sessions[sessionId] === local && local.itemsFetched) {
+                        local.itemsFetched = wasFetched
+                        local.itemsLoadingError = true
+                    }
+                    return false
+                } finally {
+                    if (this.localState.sessions[sessionId] === local) local.itemsLoading = false
+                }
+            })
+            sessionHistoryInFlight.set(sessionId, pending)
+            try {
+                return await pending
+            } finally {
+                sessionHistoryInFlight.delete(sessionId)
+            }
+        },
+
+        /**
          * Load all items for a session from the API.
          * @param {string} projectId
          * @param {string} sessionId
@@ -2953,22 +3018,34 @@ export const useDataStore = defineStore('data', {
          * making that comparison read as up-to-date while the outage lines are
          * still missing.
          *
-         * Concurrent calls per session coalesce: the second call returns true
-         * immediately, the in-flight one is doing the work.
+         * Concurrent calls await the same result. After success, a waiting
+         * caller checks again in case last_line advanced during the fetch.
          *
          * @param {string} sessionId
+         * @param {Object} options
+         * @param {boolean} options.loadUnfetched - Recover the focused session's
+         *   initial load. Other known sessions remain lazy.
          * @returns {Promise<boolean>} false if a needed fetch failed (lines are still missing).
          */
-        async ensureSessionItemsCoverage(sessionId) {
+        async ensureSessionItemsCoverage(sessionId, { loadUnfetched = false } = {}) {
+            const existing = itemsCoverageInFlight.get(sessionId)
+            if (existing) {
+                if (!await existing) return false
+                return this.ensureSessionItemsCoverage(sessionId, { loadUnfetched })
+            }
             const session = this.sessions[sessionId]
-            // Only meaningful for sessions whose items are (supposedly) loaded.
-            if (!session || isLaunchedEphemeral(session) || !this.localState.sessions[sessionId]?.itemsFetched) return true
-            const serverLastLine = session.last_line || 0
-            if (!serverLastLine) return true
+            if (!session || isLaunchedEphemeral(session)) return true
 
-            if (itemsCoverageInFlight.has(sessionId)) return true
-            itemsCoverageInFlight.add(sessionId)
-            try {
+            const pending = Promise.resolve().then(async () => {
+                const opening = sessionHistoryInFlight.get(sessionId)
+                if (opening && !await opening) return false
+                if (!this.localState.sessions[sessionId]?.itemsFetched) {
+                    if (!loadUnfetched || session.draft || session.compute_version_up_to_date === false) return true
+                    if (!await this.loadSessionHistory(session.project_id, sessionId, session.last_line,
+                        session.parent_session_id || null)) return false
+                }
+                const serverLastLine = session.last_line || 0
+                if (!serverLastLine) return true
                 const projectId = session.project_id
                 const parentSessionId = session.parent_session_id || null
                 const items = this.sessionItems[sessionId] || []
@@ -3008,6 +3085,10 @@ export const useDataStore = defineStore('data', {
                     }
                 }
                 return ok
+            })
+            itemsCoverageInFlight.set(sessionId, pending)
+            try {
+                return await pending
             } finally {
                 itemsCoverageInFlight.delete(sessionId)
             }
