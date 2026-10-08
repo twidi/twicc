@@ -2,7 +2,7 @@
 
 Date: 2026-10-08
 
-Status: Written spec for user review. Implementation has not started.
+Status: Adversarial spec review complete. Awaiting user review. Implementation has not started.
 
 Scope: Private conversations and shared conversations, for Claude Code and Codex.
 
@@ -211,38 +211,9 @@ The new occurrence requests a reload of the current source files.
 
 ## 6. Computed publication index
 
-Add a derived `Session.inline_artifacts` JSON field, with `{}` as its empty value.
-Store compact publication records, grouped by artifact ID.
-
-Example internal shape:
-
-```json
-{
-  "schema": 1,
-  "artifacts": {
-    "preferences": {
-      "publications": [
-        {
-          "line": 42,
-          "text_block": 0,
-          "offset": 18,
-          "src": "inline-artifacts/preferences/index.html",
-          "title": "Preferences",
-          "height": 360
-        },
-        {
-          "line": 87,
-          "text_block": 0,
-          "offset": 31,
-          "src": "inline-artifacts/preferences/index.html",
-          "title": "Preferences",
-          "height": 360
-        }
-      ]
-    }
-  }
-}
-```
+Maintain a derived publication index for each session.
+Records identify the artifact, source occurrence, entry path, title, and requested height.
+The implementation plan selects the storage representation and internal schema.
 
 These records index tag occurrences already present in the transcript.
 They contain no HTML payloads, file copies, JavaScript state, or code versions.
@@ -250,7 +221,7 @@ They contain no HTML payloads, file copies, JavaScript state, or code versions.
 Keep earlier occurrence metadata to resolve shares with a frozen transcript boundary.
 A latest-only index cannot identify the last publication before that boundary.
 
-The normal provider compute paths own this field:
+The normal provider compute paths own this index:
 
 - Full recompute rebuilds it authoritatively.
 - Live compute merges records by publication identity.
@@ -478,11 +449,24 @@ Public file and proxy routes refuse access, even when old copies still exist on 
 
 Build the public manifest from publications whose messages are accessible under that share.
 Apply the existing display ceiling, frozen line, and subagent visibility rules.
-Choose the last permitted publication independently for each artifact identity.
+For live shares, choose the last permitted publication independently for each artifact identity.
+
+For snapshots, capture that selection when preparing the initial export or an explicit snapshot update.
+After publication, the captured manifest determines widget positions until Push update or a share mode change.
+Do not reselect publications merely because permitted subagent transcripts continue to grow.
+
+Changes to the display ceiling or subagent inclusion preserve captured publications and copies that remain permitted.
+Newly included artifacts get a selected publication and a corresponding initial copy.
+If a captured publication becomes excluded, remove its widget and deny its export routes.
+Do not substitute an earlier tag or a newer child tag automatically.
+Push update can capture another permitted publication for that artifact.
+Changes to titles or timestamps do not reselect publications or replace copies.
 
 For the root of a snapshot share, ignore publications after `frozen_at_line`.
 For subagents, retain the existing share policy for permitted subagents and their transcript boundaries.
 Do not create a new subagent visibility policy for artifacts.
+Their later text can remain visible under that existing policy.
+Their later artifact tags do not replace captured widgets or introduce additional widgets into the existing snapshot.
 
 The viewer's local choice to collapse details does not grant or revoke file access.
 The server's share ceiling and source-session authorization determine access.
@@ -570,18 +554,29 @@ When creating an enabled snapshot share:
 Later source changes do not update that snapshot's files or data.
 Later tags do not change its artifact positions.
 
-**Push update** advances the transcript boundary and rebuilds the eligible exports from current source folders.
-The refreshed export replaces the previous one without storing its history.
+**Push update** prepares a new transcript boundary, selected manifest, and copies from current source folders.
+On success, all three replace the previous snapshot together, without storing its history.
+On failure, all three retain their previous published state and the owner sees an error.
+
+An open snapshot viewer adopts the new manifest and exports when it reloads or reconciles share metadata.
+When it discovers a replaced export, reload that widget once even if its selected tag identity remains unchanged.
+This reload can lose the widget's in-memory state, like an ordinary Reload action.
+Do not require a live update channel for snapshot viewers.
 
 Enabling the option on an existing snapshot exports artifacts within its existing transcript boundary.
 It copies their current files, not historical files from that boundary's date.
 Do not imply recovery of an earlier code version.
 
-Existing shares without an option value use the enabled default.
+Existing snapshot shares without an option value use the enabled default.
 When their first authorized manifest request finds no export metadata, schedule the initial confined exports.
+Capture their selected publications once for that initialization.
 Show pending placeholders until those exports complete; never fall back to private source file routes.
 For an existing snapshot, use its existing transcript boundary and the current source folders for that initial copy.
-After the initial export completes, its copies remain frozen until Push update.
+A failed export changes its placeholder from pending to error at its captured location.
+The rest of the conversation and successfully exported artifacts remain usable.
+Reload can retry a failed initial export for its captured publication.
+It does not recopy artifacts whose initial snapshot exports already succeed.
+Successful copies and captured placements remain frozen until an explicit snapshot update.
 
 Snapshot copies exist for sharing only.
 The private source remains live and has no version history.
@@ -589,6 +584,9 @@ The private source remains live and has no version history.
 ### 14.2 Live session shares
 
 Creating or enabling a live share copies the current eligible artifact folders.
+An existing default-on live share without export metadata initializes copies through the same live selection rules.
+Its already-published conversation remains usable while exports initialize or fail.
+Initial artifact failures use the live error and recovery behavior below.
 
 A new finalized eligible tag requests a replacement export for that artifact.
 Do not copy code or assets on every intermediate agent file write.
@@ -617,6 +615,16 @@ Manual Reload in the public viewer reloads its published copy, not unpublished p
 Initial share creation fails if any requested export cannot complete.
 Enabling exports on an existing share fails without applying the option when the initial copy fails.
 
+Owner actions requiring replacement or additional snapshot exports are all-or-nothing.
+This includes Push update, mode changes, and option changes that introduce new snapshot exports.
+Failure preserves the previously published options, root transcript boundary, manifest, and copies.
+Report the failure to the owner without exposing partial replacements.
+
+Legacy default-on snapshot initialization is separate because its conversation link already exists.
+Its captured manifest remains stable when an individual initial export fails.
+Show an artifact error instead of an indefinite pending state.
+Only failed initial exports can retry through Reload; successful snapshot copies remain unchanged.
+
 A later live export failure affects only that artifact.
 Its latest location shows an error and does not execute a stale export as the new publication.
 Other exported widgets and the conversation remain usable.
@@ -630,17 +638,23 @@ Retry failed live exports after relevant source changes, a new publication, or s
 Do not perform filesystem copies while holding the SQLite write lock or blocking the event loop.
 
 Reconnect refreshes the public manifest and export readiness.
-It does not reload a frame whose active publication has not changed.
+It does not reload a frame when both its selected publication and published export remain unchanged.
+Reconciliation reloads a replaced code export once, even when its selected publication is unchanged.
+Data-only updates in a live share remain excluded from document reloads.
 Backend restart can rebuild pending live work from current share and publication metadata.
 Snapshot exports are never rebuilt automatically from changed source files.
 
 Changing the share mode rebuilds a coherent initial export set from the current permitted sources.
 It then starts live updates or freezes those copies according to the selected mode.
 Changing the display ceiling or subagent inclusion updates eligible artifact selection.
-Retain existing eligible snapshot copies and copy current files only for newly eligible snapshot artifacts.
+For snapshots, retain both the captured publication and its copy when that publication remains permitted.
+Copy current files only for newly included snapshot artifacts, using their newly selected publications.
+An excluded captured publication has no fallback widget until an explicit snapshot update selects one.
 Excluded artifact routes become unavailable immediately, before asynchronous copy cleanup.
 
-Disabling the option immediately closes public inline frames and denies all inline routes.
+Disabling the option immediately denies all inline routes.
+Live viewers close their inline frames when they receive that option update.
+Snapshot viewers close them on their next metadata reconciliation or page reload.
 Removing export files can finish after access is denied.
 Revocation, expiration, deletion, and password changes retain existing share authorization behavior.
 Deleting a share removes its inline export copies through the existing snapshot cleanup path.
@@ -785,6 +799,12 @@ The existing file tools and message text are sufficient.
 - Missing files, oversized copies, and replacement failures do not expose partial exports.
 - A live publication updates its copy and placement; a data change updates only copied data without reload.
 - A snapshot remains unchanged until Push update; enabling it later copies current files at its existing tag placement.
+- Later permitted subagent text remains visible without replacing a snapshot's captured widget positions.
+- Selection-affecting option changes retain both the captured tag and copy for widgets that remain permitted.
+- Excluding a captured tag removes its widget without substituting another tag or serving an incompatible copy.
+- A successful Push update can replace a copy without another tag; viewer reconciliation reloads that copy once.
+- A failed Push update preserves the prior root boundary, manifest, options, and all published copies.
+- A failed legacy initial export shows an error; retry leaves successful snapshot copies and captured positions unchanged.
 - Disabling inclusion or revoking the share prevents HTTP and live-channel access immediately.
 - Password and expiration checks apply to HTML, assets, data, manifests, and proxy requests.
 - Unbookmarked public widgets have no outbound grants; bookmarked widgets use the existing server-enforced public permissions.
@@ -803,3 +823,21 @@ No product implementation or runtime validation forms part of this spec-writing 
 
 After user review, create the implementation plan from this spec.
 Spec approval does not itself start implementation.
+
+## 20. Adversarial spec review
+
+Two independent internal reviewers assess product behavior and public sharing across three review rounds.
+They review spec-level contradictions and missing outcomes, without requiring implementation details.
+Both final verdicts are **READY**, after a final verification of the snapshot-disable correction.
+
+The review resolves these issues:
+
+- Freeze snapshot widget selection even when permitted subagent transcripts continue to grow.
+- Preserve matching captured publications and copies through visibility-option changes.
+- Keep snapshot updates atomic on export failure, with separate recovery for existing default-on links.
+- Reload replaced public code copies during reconciliation, even when their tag stays unchanged.
+- Distinguish immediate route denial from viewer closure after a notification or metadata reconciliation.
+- Leave the publication index's internal storage schema to the implementation plan.
+
+The shared system-prompt addendum update remains required by section 16.
+Product implementation and runtime checks remain outside this review.
