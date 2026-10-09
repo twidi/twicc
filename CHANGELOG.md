@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Bypass permissions** — Claude Code can still ask approval for commands it considers dangerous. When nobody answers within two minutes, TwiCC now denies the request and the agent carries on (mimics the Claude Code CLI behavior).
 - **Automatic cleanup** — Temporary files from archived or hidden sessions are removed after 30 days of inactivity to free disk space.
 - **Claude Agent SDK** — Upgrade from 0.2.164 to 0.2.165 (bundled Claude Code CLI: 2.1.292 → 2.1.294)
+- **Codex runtime** — Update from v0.161.0 to v0.162.0.
 
 ### Fixed
 
