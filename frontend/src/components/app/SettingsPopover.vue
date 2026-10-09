@@ -1965,7 +1965,6 @@ function onChangelogClose() {
                                     :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
                                 >
                                     {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.LUNA] }} for every session
-                                    <span class="radio-note">(much faster than Haiku)</span>
                                     <span
                                         v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
                                         class="radio-note"
