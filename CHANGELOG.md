@@ -8,10 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Inline artifacts** — Agents can show interactive pages right in the conversation, on request or on their own when it makes an explanation clearer. Open them full screen or in the Artifacts tab; shared sessions include them.
 - **Selection comments** — Use “Send to Agent” to send a selection and your comment directly to the agent.
 
 ### Changed
 
+- **Artifact style** — Agents now build HTML artifacts in TwiCC’s style by default, following its light or dark theme and your font size. Ask for another look anytime.
 - **Bypass permissions** — Claude Code can still ask approval for commands it considers dangerous. When nobody answers within two minutes, TwiCC now denies the request and the agent carries on (mimics the Claude Code CLI behavior).
 - **Automatic cleanup** — Temporary files from archived or hidden sessions are removed after 30 days of inactivity to free disk space.
 
