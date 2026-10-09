@@ -10,6 +10,7 @@ from twicc.artifacts.broker_html import (
     ARTIFACT_INNER_DOC_PATH,
     ARTIFACT_SHELL_CSS_URL,
     ARTIFACT_SHELL_JS_URL,
+    ARTIFACT_THEME_URL,
     BROKER_SHIM_URL,
     artifact_html_response,
     artifact_shell_response,
@@ -18,6 +19,7 @@ from twicc.artifacts.broker_html import (
 )
 
 _TAG = f'<script src="{BROKER_SHIM_URL}"></script>'.encode()
+_THEME = f'<link rel="stylesheet" href="{ARTIFACT_THEME_URL}">'.encode()
 
 
 def test_inject_as_first_child_of_head():
@@ -25,6 +27,13 @@ def test_inject_as_first_child_of_head():
     assert _TAG in out
     # First child of <head>: before any existing head content (the <title>).
     assert out.index(_TAG) < out.index(b"<title>")
+
+
+def test_inject_adds_theme_link_right_after_the_shim():
+    # The tokens load before the page's own styles, which can override them.
+    out = inject_broker_shim(b"<html><head><style>:root{}</style></head></html>")
+    assert out.index(_TAG) + len(_TAG) == out.index(_THEME)
+    assert out.index(_THEME) < out.index(b"<style>")
 
 
 def test_inject_handles_head_attributes_and_case():

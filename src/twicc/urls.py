@@ -72,6 +72,7 @@ urlpatterns = [
     path("api/browser-frame-check/", browser_frame_check),
     path("_twicc/artifact-broker-shim.js", views.artifact_broker_shim),
     path("_twicc/artifact-shell/<str:asset>", views.artifact_shell_asset),
+    path("_twicc/artifact-theme/<str:asset>", views.artifact_theme_asset),
     path("_twicc/browser-companion.js", views.browser_companion_script),
     path("api/projects/", views.project_list),
     path("api/projects/<str:project_id>/", views.project_detail),

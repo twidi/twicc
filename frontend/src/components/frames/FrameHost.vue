@@ -131,13 +131,13 @@ watch(() => pool.geometryEpoch, () => hostRect.update(), { flush: 'post' })
 /* Inline artifacts blend into the chat. A page that does not declare the dark
    scheme still gets an opaque white canvas from the browser in dark mode. In
    full screen the frame covers the conversation, so it falls back to the
-   app surface when the page keeps a transparent background. */
+   app's page background when the page keeps a transparent background. */
 .frame-iframe[data-twicc-display="inline"] {
     background: transparent;
 }
 
 .frame-iframe[data-twicc-display="fullscreen"] {
-    background: var(--wa-color-surface-default);
+    background: var(--canvas-background);
 }
 
 /* Owner chrome teleported over the iframe (preview actions, route callout).

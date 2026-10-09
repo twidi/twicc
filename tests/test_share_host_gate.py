@@ -424,6 +424,8 @@ def test_share_host_allows_shared_assets(set_origins):
     gate, full = _gate()
     sent = _run(_drive(gate, _http("/_twicc/artifact-shell/shell.js", "share.example.com")))
     assert _status(sent) == 200
+    sent = _run(_drive(gate, _http("/_twicc/artifact-theme/theme.css", "share.example.com")))
+    assert _status(sent) == 200
 
 
 def test_share_host_favicon_204(set_origins):

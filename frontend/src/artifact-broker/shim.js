@@ -9,6 +9,7 @@
 import { BatchInterceptor } from '@mswjs/interceptors'
 import browserInterceptors from '@mswjs/interceptors/presets/browser'
 import { WindowMessenger, connect } from 'penpal'
+import { createAppPreferencesMirror } from './appPreferences.js'
 import { createDisplayMirror } from '../inline-artifacts/displayMirror.js'
 import { createInlineHeightObserver } from '../inline-artifacts/heightObserver.js'
 
@@ -160,9 +161,11 @@ function main() {
     // Start connecting immediately so the host binds as early as possible; nothing
     // awaits the result until a request needs it.
     if (!isTopLevel) {
+        const preferences = createAppPreferencesMirror({ document, window })
         const displayMirror = createDisplayMirror({ document, window })
         const observer = createInlineHeightObserver({ document, window, getHost })
         window.addEventListener('pagehide', () => {
+            preferences.dispose()
             displayMirror.dispose()
             observer.dispose()
         }, { once: true })

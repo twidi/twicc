@@ -4330,6 +4330,24 @@ async def artifact_shell_asset(request, asset):
     return response
 
 
+async def artifact_theme_asset(request, asset):
+    """Serve the built artifact theme stylesheets from ``static/artifact-theme/``:
+    ``theme.css`` (TwiCC design tokens, injected into every artifact document) and
+    ``kit.css`` (opt-in base styles an artifact links itself). Public (non-secret
+    CSS, same origin as the artifact); 404 until ``npm run build`` produced them.
+    The route captures a single path segment; confine defensively."""
+    if request.method not in ("GET", "HEAD"):
+        return HttpResponseNotAllowed(["GET", "HEAD"])
+    base = (settings.PACKAGE_DIR / "static" / "artifact-theme").resolve()
+    target = (base / asset).resolve()
+    if not str(target).startswith(str(base) + os.sep):
+        raise Http404("Not found")
+    response = await asyncio.to_thread(_raw_file_response, str(target))
+    if response is None:
+        raise Http404("Artifact theme not built")
+    return response
+
+
 async def browser_companion_script(request):
     """Serve the browser-companion bundle (built by vite.config.companion.js).
 

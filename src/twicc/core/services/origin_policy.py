@@ -20,15 +20,16 @@ from typing import NamedTuple
 
 from twicc.core.services.public_origin import _TRIM_CHARS, canonicalize_hostname
 
-# Served on the share host. /_twicc/artifact-shell/ and the broker shim are
-# shared with the working app's own artifact preview, so they are allowed on
-# the share host but must NOT be hidden on the working origin — only /share/
-# and /_twicc/share/ are share-exclusive.
+# Served on the share host. /_twicc/artifact-shell/, the broker shim and the
+# artifact theme stylesheets are shared with the working app's own artifact
+# preview, so they are allowed on the share host but must NOT be hidden on the
+# working origin — only /share/ and /_twicc/share/ are share-exclusive.
 SHARE_ONLY_PREFIXES = (
     "/share/",
     "/_twicc/share/",
     "/_twicc/artifact-shell/",
     "/_twicc/artifact-broker-shim.js",
+    "/_twicc/artifact-theme/",
 )
 # Share-exclusive: hidden (404) on any non-share routing authority.
 SHARE_EXCLUSIVE_PREFIXES = ("/share/", "/_twicc/share/")

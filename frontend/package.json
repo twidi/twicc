@@ -5,7 +5,7 @@
   "scripts": {
     "test": "node --test",
     "dev": "vite",
-    "build": "vite build && vite build --config vite.config.shim.js && vite build --config vite.config.shell.js && vite build --config vite.config.companion.js && vite build --config vite.config.share.js",
+    "build": "vite build && vite build --config vite.config.shim.js && vite build --config vite.config.artifact-theme.js && vite build --config vite.config.shell.js && vite build --config vite.config.companion.js && vite build --config vite.config.share.js",
     "preview": "vite preview"
   },
   "type": "module",

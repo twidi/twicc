@@ -87,6 +87,7 @@ def test_ready_manifest_and_wrapped_html(public_case):
     response = request(public_case, 'inline-artifacts/public-root/widget/index.html', headers={'Sec-Fetch-Dest': 'iframe'})
     assert response.status_code == 200
     assert b'Frozen widget' in response.content and b'/_twicc/artifact-broker-shim.js' in response.content
+    assert b'/_twicc/artifact-theme/theme.css' in response.content
     assert "connect-src 'none'" in response['Content-Security-Policy']
     assert response['Cache-Control'] == 'no-store'
     assert response['X-Robots-Tag'] == 'noindex, nofollow'

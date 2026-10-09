@@ -6,6 +6,8 @@ sub-assets), per design 2026-06-18 §7 (CSP) + §8.3 (shim injection):
 1. Inject the broker shim ``<script>`` as the first child of ``<head>`` so it
    runs before any artifact script and transparently routes ``fetch``/XHR
    through the host (the shim is DX; the CSP below is the real boundary).
+   The TwiCC theme stylesheet follows it: ``--twicc-*`` custom properties only,
+   so it never changes how a page renders until the page uses them.
 2. Set the strict Content-Security-Policy **response header** — page-immutable,
    covers WebSockets — that makes ``connect-src`` the iframe's egress lock.
 """
@@ -21,6 +23,10 @@ from django.utils.cache import add_never_cache_headers
 # Stable same-origin URL the injected tag points at; the built shim bundle is
 # served here (route + bundle: phase 3c).
 BROKER_SHIM_URL = "/_twicc/artifact-broker-shim.js"
+
+# The TwiCC design tokens (`--twicc-*`), injected right after the shim. Built by
+# vite.config.artifact-theme.js; the opt-in kit.css sits next to it.
+ARTIFACT_THEME_URL = "/_twicc/artifact-theme/theme.css"
 
 # The dedicated artifact page (`/artifacts/<id>/`) serves a trusted *shell*
 # (below) that iframes the artifact at this sentinel sub-path and serves its
@@ -76,14 +82,14 @@ def is_artifact_document_request(sec_fetch_dest: str | None) -> bool:
 
 
 def inject_broker_shim(html: bytes) -> bytes:
-    """Insert the shim ``<script>`` as the first child of ``<head>``.
+    """Insert the shim ``<script>`` and the theme ``<link>`` as the first children of ``<head>``.
 
     Falls back to right after ``<html>`` (browsers synthesize a ``<head>``), or
     prepends to the document when neither tag is present. Byte-level so it never
     re-encodes the artifact's payload. A missed insertion is harmless — the CSP
     still blocks that artifact's direct egress (the shim is DX, not the boundary).
     """
-    tag = f'<script src="{BROKER_SHIM_URL}"></script>'.encode()
+    tag = f'<script src="{BROKER_SHIM_URL}"></script><link rel="stylesheet" href="{ARTIFACT_THEME_URL}">'.encode()
     match = _HEAD_RE.search(html) or _HTML_RE.search(html)
     if match:
         return html[: match.end()] + tag + html[match.end() :]

@@ -1,0 +1,144 @@
+/* TwiCC design tokens for HTML artifacts, served at /_twicc/artifact-theme/theme.css and
+   injected into every artifact document next to the broker shim. The app's own theme
+   sources are imported as-is, then flattened by flattenTheme.js into custom properties
+   on :root (dark values under prefers-color-scheme), so the values never drift from the
+   app. The --twicc-* names below are the public contract documented in the
+   twicc-artifact-authoring skill: rename one only with the skill. */
+@import '@awesome.me/webawesome/dist/styles/themes/default.css';
+@import '@awesome.me/webawesome/dist/styles/color/variants/brand.css';
+@import '../styles/neutral-tint.css';
+@import '../styles/depth.css';
+@import '../styles/glass.css';
+@import '../styles/motion.css';
+@import '../styles/glow.css';
+@import '../styles/surfaces.css';
+
+/* Mirrors the dark override in App.vue's global style (not importable from a SFC). */
+.wa-dark {
+    --wa-color-brand-border-loud: var(--wa-color-brand-50);
+}
+
+:root {
+    /* Surfaces */
+    /* The page colour, opaque. --canvas-flat is translucent in dark (its auras are) and the
+       app lays it over --canvas-color; this composites it the same way. 72.1% is its alpha in
+       dark (0.30 x 0.49 + 0.70 x (0.40 x 0.55 + 0.60), surfaces.css); in light it is opaque
+       and equal to --canvas-color, so the mix changes nothing. */
+    --twicc-canvas: color-mix(in srgb, oklch(from var(--canvas-flat) l c h / 1) 72.1%, var(--canvas-color));
+    --twicc-canvas-background: var(--canvas-background);
+    --twicc-surface: var(--wa-color-surface-default);
+    --twicc-surface-raised: var(--wa-color-surface-raised);
+    --twicc-surface-lowered: var(--wa-color-surface-lowered);
+    --twicc-border: var(--wa-color-surface-border);
+    --twicc-overlay: var(--wa-color-overlay-modal);
+
+    /* Text */
+    --twicc-text: var(--wa-color-text-normal);
+    --twicc-text-quiet: var(--wa-color-text-quiet);
+    --twicc-text-link: var(--wa-color-text-link);
+
+    /* Roles: fill (background), on (text on that fill), border; loud / normal / quiet */
+    --twicc-accent-fill-loud: var(--wa-color-brand-fill-loud);
+    --twicc-accent-fill-normal: var(--wa-color-brand-fill-normal);
+    --twicc-accent-fill-quiet: var(--wa-color-brand-fill-quiet);
+    --twicc-accent-on-loud: var(--wa-color-brand-on-loud);
+    --twicc-accent-on-normal: var(--wa-color-brand-on-normal);
+    --twicc-accent-on-quiet: var(--wa-color-brand-on-quiet);
+    --twicc-accent-border-loud: var(--wa-color-brand-border-loud);
+    --twicc-accent-border-normal: var(--wa-color-brand-border-normal);
+    --twicc-accent-border-quiet: var(--wa-color-brand-border-quiet);
+
+    --twicc-neutral-fill-loud: var(--wa-color-neutral-fill-loud);
+    --twicc-neutral-fill-normal: var(--wa-color-neutral-fill-normal);
+    --twicc-neutral-fill-quiet: var(--wa-color-neutral-fill-quiet);
+    --twicc-neutral-on-loud: var(--wa-color-neutral-on-loud);
+    --twicc-neutral-on-normal: var(--wa-color-neutral-on-normal);
+    --twicc-neutral-on-quiet: var(--wa-color-neutral-on-quiet);
+    --twicc-neutral-border-loud: var(--wa-color-neutral-border-loud);
+    --twicc-neutral-border-normal: var(--wa-color-neutral-border-normal);
+    --twicc-neutral-border-quiet: var(--wa-color-neutral-border-quiet);
+
+    --twicc-success-fill-loud: var(--wa-color-success-fill-loud);
+    --twicc-success-fill-normal: var(--wa-color-success-fill-normal);
+    --twicc-success-fill-quiet: var(--wa-color-success-fill-quiet);
+    --twicc-success-on-loud: var(--wa-color-success-on-loud);
+    --twicc-success-on-normal: var(--wa-color-success-on-normal);
+    --twicc-success-on-quiet: var(--wa-color-success-on-quiet);
+    --twicc-success-border-loud: var(--wa-color-success-border-loud);
+    --twicc-success-border-normal: var(--wa-color-success-border-normal);
+    --twicc-success-border-quiet: var(--wa-color-success-border-quiet);
+
+    --twicc-warning-fill-loud: var(--wa-color-warning-fill-loud);
+    --twicc-warning-fill-normal: var(--wa-color-warning-fill-normal);
+    --twicc-warning-fill-quiet: var(--wa-color-warning-fill-quiet);
+    --twicc-warning-on-loud: var(--wa-color-warning-on-loud);
+    --twicc-warning-on-normal: var(--wa-color-warning-on-normal);
+    --twicc-warning-on-quiet: var(--wa-color-warning-on-quiet);
+    --twicc-warning-border-loud: var(--wa-color-warning-border-loud);
+    --twicc-warning-border-normal: var(--wa-color-warning-border-normal);
+    --twicc-warning-border-quiet: var(--wa-color-warning-border-quiet);
+
+    --twicc-danger-fill-loud: var(--wa-color-danger-fill-loud);
+    --twicc-danger-fill-normal: var(--wa-color-danger-fill-normal);
+    --twicc-danger-fill-quiet: var(--wa-color-danger-fill-quiet);
+    --twicc-danger-on-loud: var(--wa-color-danger-on-loud);
+    --twicc-danger-on-normal: var(--wa-color-danger-on-normal);
+    --twicc-danger-on-quiet: var(--wa-color-danger-on-quiet);
+    --twicc-danger-border-loud: var(--wa-color-danger-border-loud);
+    --twicc-danger-border-normal: var(--wa-color-danger-border-normal);
+    --twicc-danger-border-quiet: var(--wa-color-danger-border-quiet);
+
+    /* Form controls and focus */
+    --twicc-field-bg: var(--wa-form-control-background-color);
+    --twicc-field-border: var(--wa-form-control-border-color);
+    --twicc-field-text: var(--wa-form-control-value-color);
+    --twicc-field-placeholder: var(--wa-form-control-placeholder-color);
+    --twicc-field-height: var(--wa-form-control-height);
+    --twicc-field-radius: var(--wa-form-control-border-radius);
+    --twicc-focus: var(--wa-color-focus);
+    --twicc-focus-ring: var(--wa-focus-ring);
+
+    /* Typography */
+    --twicc-font: var(--wa-font-family-body);
+    --twicc-font-heading: var(--wa-font-family-heading);
+    --twicc-font-mono: var(--wa-font-family-code);
+    --twicc-font-size-2xs: var(--wa-font-size-2xs);
+    --twicc-font-size-xs: var(--wa-font-size-xs);
+    --twicc-font-size-s: var(--wa-font-size-s);
+    --twicc-font-size-m: var(--wa-font-size-m);
+    --twicc-font-size-l: var(--wa-font-size-l);
+    --twicc-font-size-xl: var(--wa-font-size-xl);
+    --twicc-font-size-2xl: var(--wa-font-size-2xl);
+    --twicc-font-size-3xl: var(--wa-font-size-3xl);
+    --twicc-font-weight-light: var(--wa-font-weight-light);
+    --twicc-font-weight-normal: var(--wa-font-weight-normal);
+    --twicc-font-weight-semibold: var(--wa-font-weight-semibold);
+    --twicc-font-weight-bold: var(--wa-font-weight-bold);
+    --twicc-line-height-condensed: var(--wa-line-height-condensed);
+    --twicc-line-height: var(--wa-line-height-normal);
+    --twicc-line-height-expanded: var(--wa-line-height-expanded);
+
+    /* Spacing */
+    --twicc-space-3xs: var(--wa-space-3xs);
+    --twicc-space-2xs: var(--wa-space-2xs);
+    --twicc-space-xs: var(--wa-space-xs);
+    --twicc-space-s: var(--wa-space-s);
+    --twicc-space-m: var(--wa-space-m);
+    --twicc-space-l: var(--wa-space-l);
+    --twicc-space-xl: var(--wa-space-xl);
+    --twicc-space-2xl: var(--wa-space-2xl);
+    --twicc-space-3xl: var(--wa-space-3xl);
+
+    /* Shape, depth, motion */
+    --twicc-radius-s: var(--wa-border-radius-s);
+    --twicc-radius-m: var(--wa-border-radius-m);
+    --twicc-radius-l: var(--wa-border-radius-l);
+    --twicc-radius-pill: var(--wa-border-radius-pill);
+    --twicc-border-width: var(--wa-border-width-s);
+    --twicc-shadow-s: var(--wa-shadow-s);
+    --twicc-shadow-m: var(--wa-shadow-m);
+    --twicc-shadow-l: var(--wa-shadow-l);
+    --twicc-transition-fast: var(--wa-transition-fast);
+    --twicc-transition-normal: var(--wa-transition-normal);
+    --twicc-easing: var(--wa-transition-easing);
+}

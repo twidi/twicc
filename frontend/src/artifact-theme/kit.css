@@ -1,0 +1,233 @@
+/* Opt-in base styles for HTML artifacts, served at /_twicc/artifact-theme/kit.css. A page
+   links it to look like TwiCC without styling every element itself. Built on the --twicc-*
+   tokens of theme.css (always injected). Every selector sits in :where(), so any rule of
+   the page wins over the kit whatever its specificity. */
+
+:where(:root) {
+    /* The user's font size setting in TwiCC (set by the shim), so rem-based tokens follow it. */
+    font-size: var(--twicc-root-font-size, 100%);
+    color-scheme: light dark;
+    background: var(--twicc-canvas);
+    color: var(--twicc-text);
+    font-family: var(--twicc-font);
+    line-height: var(--twicc-line-height);
+    -webkit-font-smoothing: antialiased;
+}
+
+/* In the chat the conversation shows through; in full screen and elsewhere the page has
+   its own background. */
+:where(:root[data-twicc-display="inline"]) {
+    background: transparent;
+}
+
+:where(*, *::before, *::after) {
+    box-sizing: border-box;
+}
+
+/* Body text size on body, not on the root: on the root, rem resolves against the browser
+   default and would override the user's font size set above. */
+:where(body) {
+    font-size: var(--twicc-font-size-m);
+    margin: 0;
+    padding: var(--twicc-space-m);
+}
+
+:where(h1, h2, h3, h4, h5, h6) {
+    margin: 0 0 var(--twicc-space-s);
+    font-family: var(--twicc-font-heading);
+    font-weight: var(--twicc-font-weight-semibold);
+    line-height: var(--twicc-line-height-condensed);
+}
+:where(h1) { font-size: var(--twicc-font-size-2xl); }
+:where(h2) { font-size: var(--twicc-font-size-xl); }
+:where(h3) { font-size: var(--twicc-font-size-l); }
+:where(h4, h5, h6) { font-size: var(--twicc-font-size-m); }
+
+:where(p, ul, ol, dl, table, pre, blockquote, figure) {
+    margin: 0 0 var(--twicc-space-m);
+}
+
+:where(a) {
+    color: var(--twicc-text-link);
+}
+
+:where(small, .twicc-quiet) {
+    color: var(--twicc-text-quiet);
+}
+
+:where(hr) {
+    margin: var(--twicc-space-l) 0;
+    border: none;
+    border-top: var(--twicc-border-width) solid var(--twicc-border);
+}
+
+:where(code, kbd, samp, pre) {
+    font-family: var(--twicc-font-mono);
+    font-size: 0.9em;
+}
+:where(code, kbd) {
+    padding: 0.1em 0.35em;
+    border-radius: var(--twicc-radius-s);
+    background: var(--twicc-neutral-fill-quiet);
+}
+:where(pre) {
+    overflow: auto;
+    padding: var(--twicc-space-s) var(--twicc-space-m);
+    border: var(--twicc-border-width) solid var(--twicc-border);
+    border-radius: var(--twicc-radius-m);
+    background: var(--twicc-surface-lowered);
+}
+:where(pre code) {
+    padding: 0;
+    background: none;
+}
+
+:where(blockquote) {
+    padding: var(--twicc-space-xs) var(--twicc-space-m);
+    border-left: 0.1875rem solid var(--twicc-accent-border-normal);
+    color: var(--twicc-text-quiet);
+}
+
+/* Tables */
+:where(table) {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+}
+:where(th, td) {
+    padding: var(--twicc-space-xs) var(--twicc-space-s);
+    border-bottom: var(--twicc-border-width) solid var(--twicc-border);
+    text-align: left;
+}
+:where(th) {
+    color: var(--twicc-text-quiet);
+    font-weight: var(--twicc-font-weight-semibold);
+}
+
+/* Buttons: neutral by default, .twicc-accent / .twicc-danger for emphasis */
+:where(button, .twicc-button) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--twicc-space-2xs);
+    min-height: var(--twicc-field-height);
+    padding: 0 var(--twicc-space-m);
+    border: var(--twicc-border-width) solid var(--twicc-neutral-border-normal);
+    border-radius: var(--twicc-field-radius);
+    background: var(--twicc-neutral-fill-quiet);
+    color: var(--twicc-neutral-on-quiet);
+    font: inherit;
+    font-weight: var(--twicc-font-weight-semibold);
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color var(--twicc-transition-fast) var(--twicc-easing),
+        border-color var(--twicc-transition-fast) var(--twicc-easing);
+}
+:where(button, .twicc-button):hover {
+    background: var(--twicc-neutral-fill-normal);
+}
+:where(button.twicc-accent, .twicc-button.twicc-accent) {
+    border-color: var(--twicc-accent-fill-loud);
+    background: var(--twicc-accent-fill-loud);
+    color: var(--twicc-accent-on-loud);
+}
+:where(button.twicc-accent, .twicc-button.twicc-accent):hover {
+    background: color-mix(in oklab, var(--twicc-accent-fill-loud), black 10%);
+}
+:where(button.twicc-danger, .twicc-button.twicc-danger) {
+    border-color: var(--twicc-danger-fill-loud);
+    background: var(--twicc-danger-fill-loud);
+    color: var(--twicc-danger-on-loud);
+}
+:where(button.twicc-danger, .twicc-button.twicc-danger):hover {
+    background: color-mix(in oklab, var(--twicc-danger-fill-loud), black 10%);
+}
+:where(button:disabled) {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Form controls */
+:where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]), select, textarea) {
+    min-height: var(--twicc-field-height);
+    padding: 0 var(--twicc-space-s);
+    border: var(--twicc-border-width) solid var(--twicc-field-border);
+    border-radius: var(--twicc-field-radius);
+    background: var(--twicc-field-bg);
+    color: var(--twicc-field-text);
+    font: inherit;
+}
+:where(textarea) {
+    padding-block: var(--twicc-space-xs);
+}
+:where(input, select, textarea)::placeholder {
+    color: var(--twicc-field-placeholder);
+}
+:where(input[type="checkbox"], input[type="radio"], input[type="range"], progress) {
+    accent-color: var(--twicc-accent-fill-loud);
+}
+:where(label) {
+    font-weight: var(--twicc-font-weight-semibold);
+}
+:where(button, input, select, textarea, a, [tabindex]):focus-visible {
+    outline: var(--twicc-focus-ring);
+    outline-offset: 0.125rem;
+}
+
+/* Layout helpers */
+:where(.twicc-card) {
+    padding: var(--twicc-space-m);
+    border: var(--twicc-border-width) solid var(--twicc-border);
+    border-radius: var(--twicc-radius-l);
+    background: var(--twicc-surface-raised);
+    box-shadow: var(--twicc-shadow-s);
+}
+:where(.twicc-stack) {
+    display: flex;
+    flex-direction: column;
+    gap: var(--twicc-space-s);
+}
+:where(.twicc-row) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--twicc-space-s);
+}
+
+/* Status callouts and badges */
+:where(.twicc-callout) {
+    padding: var(--twicc-space-s) var(--twicc-space-m);
+    border: var(--twicc-border-width) solid var(--twicc-neutral-border-quiet);
+    border-radius: var(--twicc-radius-m);
+    background: var(--twicc-neutral-fill-quiet);
+    color: var(--twicc-neutral-on-quiet);
+}
+:where(.twicc-badge) {
+    display: inline-block;
+    padding: 0.1em 0.6em;
+    border-radius: var(--twicc-radius-pill);
+    background: var(--twicc-neutral-fill-normal);
+    color: var(--twicc-neutral-on-normal);
+    font-size: var(--twicc-font-size-xs);
+    font-weight: var(--twicc-font-weight-semibold);
+}
+:where(.twicc-callout, .twicc-badge):where(.twicc-accent) {
+    border-color: var(--twicc-accent-border-quiet);
+    background: var(--twicc-accent-fill-quiet);
+    color: var(--twicc-accent-on-quiet);
+}
+:where(.twicc-callout, .twicc-badge):where(.twicc-success) {
+    border-color: var(--twicc-success-border-quiet);
+    background: var(--twicc-success-fill-quiet);
+    color: var(--twicc-success-on-quiet);
+}
+:where(.twicc-callout, .twicc-badge):where(.twicc-warning) {
+    border-color: var(--twicc-warning-border-quiet);
+    background: var(--twicc-warning-fill-quiet);
+    color: var(--twicc-warning-on-quiet);
+}
+:where(.twicc-callout, .twicc-badge):where(.twicc-danger) {
+    border-color: var(--twicc-danger-border-quiet);
+    background: var(--twicc-danger-fill-quiet);
+    color: var(--twicc-danger-on-quiet);
+}

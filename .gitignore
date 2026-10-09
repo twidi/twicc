@@ -124,6 +124,7 @@ frontend/dist/
 src/twicc/static/frontend/
 src/twicc/static/artifact-broker/
 src/twicc/static/artifact-shell/
+src/twicc/static/artifact-theme/
 src/twicc/static/browser-companion/
 src/twicc/static/share-session/
 src/twicc/staticfiles/
