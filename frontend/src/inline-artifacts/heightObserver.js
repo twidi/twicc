@@ -1,4 +1,5 @@
 import { INLINE_ARTIFACT_RELOAD_QUERY } from './context.js'
+import { createInlineScrollForwarder } from './scrollForwarder.js'
 
 /** Ignore body/root height: they often have a minimum of the iframe viewport. */
 export function intrinsicInlineHeight(document, window) {
@@ -87,6 +88,7 @@ export function createInlineHeightObserver({ document, window, getHost,
         if (event.key !== 'Escape' || inlineGeneration == null) return
         getHost().then(host => { if (!disposed) return host.requestInlineEscape({ inlineGeneration }) }).catch(() => {})
     }
+    const scrollForwarder = createInlineScrollForwarder({ document, window, getHost, inlineGeneration })
     window.addEventListener('keydown', keydown, true)
     window.addEventListener('resize', schedule)
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', observe, { once: true })
@@ -98,6 +100,7 @@ export function createInlineHeightObserver({ document, window, getHost,
         if (pending != null) cancelFrame(pending)
         resizeObserver?.disconnect(); mutationObserver?.disconnect()
         observedChildren.clear()
+        scrollForwarder.dispose()
         window.removeEventListener('keydown', keydown, true)
         window.removeEventListener('resize', schedule)
         document.removeEventListener('DOMContentLoaded', observe)

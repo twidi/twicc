@@ -187,3 +187,30 @@ test('iframe capture forwards descendant Escape despite stopped bubbling and dis
         f.runtime.dispose()
     }
 })
+
+test('relayed scroll reaches the chat scroller only for the bound, inline, ready document', async () => {
+    const f = await fixture()
+    const events = []
+    const clip = { isConnected: true, scrollTop: 100, scrollHeight: 5000, clientHeight: 800,
+        scrollBy({ top }) { this.scrollTop += top }, dispatchEvent: event => { events.push(event.type); return true },
+        addEventListener() {}, removeEventListener() {} }
+    f.runtime.attach(f.key, 'p', { isVisible: () => true, clipEl: clip })
+    const relay = (report, generation = 1) => f.methods.forwardInlineScroll({ inlineGeneration: generation, ...report })
+    relay({ kind: 'wheel', deltaY: 120, deltaMode: 0 })
+    assert.equal(clip.scrollTop, 220)
+    relay({ kind: 'touchmove', deltaY: 30 })
+    assert.equal(clip.scrollTop, 250)
+    assert.deepEqual(events, ['wheel', 'touchmove'])
+    for (const bad of [{ kind: 'wheel', deltaY: NaN, deltaMode: 0 }, { kind: 'wheel', deltaY: 5, deltaMode: 9 },
+        { kind: 'touchmove', deltaY: Infinity }, { kind: 'unknown', deltaY: 5 }, null]) relay(bad)
+    relay({ kind: 'wheel', deltaY: 50, deltaMode: 0 }, 0) // stale document
+    assert.equal(clip.scrollTop, 250)
+    f.runtime.openFullscreen(f.key)
+    relay({ kind: 'wheel', deltaY: 50, deltaMode: 0 }) // fullscreen owns its own scroll
+    assert.equal(clip.scrollTop, 250)
+    f.runtime.closeFullscreen()
+    clip.isConnected = false
+    relay({ kind: 'wheel', deltaY: 50, deltaMode: 0 }) // row unmounted: no scroller to drive
+    assert.equal(clip.scrollTop, 250)
+    f.runtime.dispose()
+})

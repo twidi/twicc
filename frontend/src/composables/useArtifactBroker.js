@@ -89,6 +89,9 @@ export function createArtifactBrokerBinding({ mount = mountBrokerHost,
                 onInlineEscape: config.onInlineEscape ? () => {
                     if (current()) config.onInlineEscape()
                 } : undefined,
+                onInlineScroll: config.onInlineScroll ? report => {
+                    if (current()) config.onInlineScroll(report)
+                } : undefined,
             })
             boundWindow = win
             boundIdentity = identity
@@ -119,6 +122,7 @@ export function inlineArtifactBrokerConfig(entry, runtime, documentBase) {
         inlineRequestedHeight: entry.descriptor.height,
         getInlineMode: () => runtime.fullscreenArtifactKey.value === key ? 'fullscreen' : 'inline',
         onInlineEscape: () => runtime.requestEscape(key, generation),
+        onInlineScroll: report => runtime.forwardScroll(key, generation, report),
         onInlineReady: () => runtime.documentReady(key, generation),
         onInlineError: error => runtime.documentFailed(key, generation, error),
         onInlineHeight: height => {

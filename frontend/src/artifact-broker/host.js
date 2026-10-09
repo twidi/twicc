@@ -355,5 +355,6 @@ export function createInlineBrokerMethods(opts) {
             opts.onInlineHeight?.(report.height)
         },
         requestInlineEscape(report) { if (current(report)) opts.onInlineEscape?.() },
+        forwardInlineScroll(report) { if (current(report)) opts.onInlineScroll?.(report) },
     }
 }

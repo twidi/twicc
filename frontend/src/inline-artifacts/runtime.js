@@ -1,6 +1,7 @@
 import { shallowReactive, shallowRef } from 'vue'
 import { createInlineGeometryScheduler, returnInlineFocus } from './geometry.js'
 import { artifactKey, INLINE_ARTIFACT_RELOAD_QUERY } from './context.js'
+import { createScrollDriver } from './scrollDriver.js'
 
 /** A cached view owns frames. Rows own disposable geometry attachments only. */
 export function createInlineArtifactRuntime({ viewId, pool, adapter }) {
@@ -286,10 +287,30 @@ export function createInlineArtifactRuntime({ viewId, pool, adapter }) {
         if (!disposed && entry?.generation === generation && fullscreenArtifactKey.value === key) closeFullscreen()
     }
 
+    // Gestures the artifact cannot consume scroll the chat that owns the placeholder.
+    const scrollDrivers = new Map()
+    function forwardScroll(key, generation, report) {
+        const entry = entries.get(key)
+        if (disposed || entry?.generation !== generation || entry.loadState !== 'ready'
+            || fullscreenArtifactKey.value === key) return
+        const clip = [...attachments.get(key)?.values() || []].map(attachment => attachment.clipEl)
+            .find(element => element?.isConnected)
+        if (!clip) return
+        let driver = scrollDrivers.get(clip)
+        if (!driver) scrollDrivers.set(clip, driver = createScrollDriver(clip))
+        const finite = Number.isFinite(report?.deltaY)
+        if (report?.kind === 'wheel' && finite && [0, 1, 2].includes(report.deltaMode)) driver.wheel(report.deltaY, report.deltaMode)
+        else if (report?.kind === 'touchstart') driver.touchStart()
+        else if (report?.kind === 'touchmove' && finite) driver.touchMove(report.deltaY)
+        else if (report?.kind === 'touchend' && Number.isFinite(report.velocity)) driver.touchEnd(report.velocity)
+    }
+
     function dispose() {
         if (disposed) return
         disposed = true
         geometry.dispose()
+        for (const driver of scrollDrivers.values()) driver.dispose()
+        scrollDrivers.clear()
         fullscreenArtifactKey.value = null
         for (const entry of entries.values()) {
             cancelProbe(entry)
@@ -306,5 +327,5 @@ export function createInlineArtifactRuntime({ viewId, pool, adapter }) {
 
     return { entries, loadedEntries, fullscreenArtifactKey, active, reconcile, attach,
         setVisible, setActive, reload, openFullscreen, closeFullscreen,
-        documentReady, documentFailed, reportHeight, requestEscape, geometry, dispose }
+        documentReady, documentFailed, reportHeight, requestEscape, forwardScroll, geometry, dispose }
 }
