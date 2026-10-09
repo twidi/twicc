@@ -947,6 +947,9 @@ function handleLinkClick(event) {
 .markdown-body > .markdown-block {
     display: contents;
 }
+.markdown-body > .inline-artifact-block {
+    margin-block: 1lh;
+}
 /* Re-apply github-markdown-css's first/last-child margin reset one level deeper:
    `.markdown-body > *:first-child` now matches the (box-less) wrapper, not the
    block element inside it. */
