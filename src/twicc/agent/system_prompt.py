@@ -128,6 +128,11 @@ wall of code or text.
   self-contained file may stay at the top level.
 - Reference assets and other files with **relative** paths (they load);
   root-absolute (`/style.css`) do NOT. Scripts execute (sandboxed, same origin).
+- **Light and dark:** inside TwiCC, `prefers-color-scheme` follows the app's
+  current scheme, live. Declare `:root { color-scheme: light dark; }` and style
+  both modes (`light-dark()` or `@media (prefers-color-scheme: dark)`; in JS,
+  `matchMedia('(prefers-color-scheme: dark)')` and its `change` event), with
+  explicit background and text colors for each.
 - **Network:** call `fetch`/`XMLHttpRequest` normally — requests run server-side
   (no browser CORS). First contact with a host prompts the user to approve.
 - **Persistence:** an HTML artifact can save files under its own `data/`
@@ -198,6 +203,15 @@ Then publish:
 - `title` is optional plain text, at most 200 characters; its default is the ID.
   `height` is optional, defaults to 360, and stays within 160–900 CSS pixels.
   Automatic height also stays within these limits. Controls are Full screen and Reload.
+- Blend into the chat: support light and dark (see the Artifacts tab rules above),
+  and keep `html` and `body` transparent while the root carries
+  `data-twicc-display="inline"`. It switches to `"fullscreen"` in Full screen and is
+  absent elsewhere (Artifacts tab, browser tab): paint your own background there.
+
+  ```css
+  :root { color-scheme: light dark; background: light-dark(#fff, #1b1c1f); }
+  :root[data-twicc-display="inline"] { background: transparent; }
+  ```
 - Input values and page state stay in iframe memory during scrolling, cached
   session switches, and dock changes. Memory is lost on
   refresh, Reload, code correction, cache eviction, or view teardown.

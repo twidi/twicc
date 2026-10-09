@@ -318,12 +318,15 @@ test('fullscreen retains the same frame after row detach and hides on close or d
     await f.succeed()
     const frame = f.pool.frames[f.entry().frameId]
     const src = frame.src
+    assert.equal(frame.attrs['data-twicc-display'], 'inline')
     f.runtime.openFullscreen(key)
     detach()
     assert.equal(frame.visible, true)
     assert.equal(frame.zTier, 'fullscreen')
+    assert.equal(frame.attrs['data-twicc-display'], 'fullscreen')
     f.runtime.closeFullscreen()
     assert.equal(frame.visible, false)
+    assert.equal(frame.attrs['data-twicc-display'], 'inline')
     assert.equal(frame.src, src)
     f.runtime.attach(key, publication, f.attachment)
     f.runtime.setVisible(key, true)

@@ -128,6 +128,18 @@ watch(() => pool.geometryEpoch, () => hostRect.update(), { flush: 'post' })
     background: #fff;
 }
 
+/* Inline artifacts blend into the chat. A page that does not declare the dark
+   scheme still gets an opaque white canvas from the browser in dark mode. In
+   full screen the frame covers the conversation, so it falls back to the
+   app surface when the page keeps a transparent background. */
+.frame-iframe[data-twicc-display="inline"] {
+    background: transparent;
+}
+
+.frame-iframe[data-twicc-display="fullscreen"] {
+    background: var(--wa-color-surface-default);
+}
+
 /* Owner chrome teleported over the iframe (preview actions, route callout).
    NO generic `> *` re-enable rule here: it would tie (0-2-0 specificity, bundle
    source order decides) with owner rules like FilesPanel's

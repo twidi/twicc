@@ -18,8 +18,12 @@ export function createInlineArtifactRuntime({ viewId, pool, adapter }) {
     const runnable = entry => entry.present && entry.descriptor.status === 'ready'
     const frameId = key => JSON.stringify(['inline-artifact', viewId, key])
     // Match the existing HTML artifact preview's document capabilities.
-    const frameAttrs = descriptor => ({
+    // `data-twicc-display` drives the iframe background (FrameHost) and is
+    // mirrored on the document root by the broker shim, so the page can stay
+    // transparent in the chat and paint its own background in full screen.
+    const frameAttrs = (descriptor, fullscreen = false) => ({
         sandbox: 'allow-scripts allow-same-origin allow-forms', title: descriptor.title,
+        'data-twicc-display': fullscreen ? 'fullscreen' : 'inline',
     })
 
     function cancelProbe(entry) {
@@ -47,7 +51,10 @@ export function createInlineArtifactRuntime({ viewId, pool, adapter }) {
         entry.visible = eligible && !entry.needsNavigation && ['loading', 'ready'].includes(entry.loadState)
         if (entry.registered) {
             if (!entry.visible) returnInlineFocus(pool, entry.frameId, previousAttachment || entry.focusAttachment)
-            pool.patch(entry.frameId, { visible: entry.visible, zTier: fullscreen ? 'fullscreen' : 'base' })
+            pool.patch(entry.frameId, {
+                visible: entry.visible, zTier: fullscreen ? 'fullscreen' : 'base',
+                attrs: frameAttrs(entry.descriptor, fullscreen),
+            })
         }
         geometry.schedule()
         if (!eligible) cancelProbe(entry)
@@ -130,7 +137,7 @@ export function createInlineArtifactRuntime({ viewId, pool, adapter }) {
         }
         if (closeFullscreen && fullscreenArtifactKey.value === entry.artifactKey) fullscreenArtifactKey.value = null
         entry.visible = false
-        if (entry.registered) pool.patch(entry.frameId, { visible: false, zTier: 'base' })
+        if (entry.registered) pool.patch(entry.frameId, { visible: false, zTier: 'base', attrs: frameAttrs(entry.descriptor) })
     }
 
     function reconcile(manifest) {
@@ -175,7 +182,6 @@ export function createInlineArtifactRuntime({ viewId, pool, adapter }) {
                 }
                 entry.descriptor = descriptor
                 entry.present = true
-                if (entry.registered) pool.patch(entry.frameId, { attrs: frameAttrs(descriptor) })
             }
             updateVisibility(entry)
         }

@@ -9,6 +9,7 @@
 import { BatchInterceptor } from '@mswjs/interceptors'
 import browserInterceptors from '@mswjs/interceptors/presets/browser'
 import { WindowMessenger, connect } from 'penpal'
+import { createDisplayMirror } from '../inline-artifacts/displayMirror.js'
 import { createInlineHeightObserver } from '../inline-artifacts/heightObserver.js'
 
 // Arbitrary bytes <-> base64 (btoa/atob only handle binary strings). Bodies
@@ -159,8 +160,12 @@ function main() {
     // Start connecting immediately so the host binds as early as possible; nothing
     // awaits the result until a request needs it.
     if (!isTopLevel) {
+        const displayMirror = createDisplayMirror({ document, window })
         const observer = createInlineHeightObserver({ document, window, getHost })
-        window.addEventListener('pagehide', () => observer.dispose(), { once: true })
+        window.addEventListener('pagehide', () => {
+            displayMirror.dispose()
+            observer.dispose()
+        }, { once: true })
     }
 
     // Armed SYNCHRONOUSLY, before any artifact script runs (the shim is injected
