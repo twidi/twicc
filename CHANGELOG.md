@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - **Inline artifacts** — Agents can show interactive pages right in the conversation, on request or on their own when it makes an explanation clearer. Open them full screen or in the Artifacts tab; shared sessions include them.
+- **Claude Haiku 5.5** — Haiku is now available when creating Claude Code sessions, with version 5.5 only.
 - **Selection comments** — Use “Send to Agent” to send a selection and your comment directly to the agent.
 
 ### Changed
