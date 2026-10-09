@@ -12,6 +12,7 @@
 @import '../styles/motion.css';
 @import '../styles/glow.css';
 @import '../styles/surfaces.css';
+@import '../styles/scrollbars.css';
 
 /* Mirrors the dark override in App.vue's global style (not importable from a SFC). */
 .wa-dark {
@@ -138,6 +139,9 @@
     --twicc-shadow-s: var(--wa-shadow-s);
     --twicc-shadow-m: var(--wa-shadow-m);
     --twicc-shadow-l: var(--wa-shadow-l);
+    --twicc-scrollbar-thumb: var(--scrollbar-thumb);
+    --twicc-scrollbar-thumb-hover: var(--scrollbar-thumb-hover);
+    --twicc-scrollbar-track: var(--scrollbar-track);
     --twicc-transition-fast: var(--wa-transition-fast);
     --twicc-transition-normal: var(--wa-transition-normal);
     --twicc-easing: var(--wa-transition-easing);

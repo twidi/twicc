@@ -231,3 +231,35 @@
     background: var(--twicc-danger-fill-quiet);
     color: var(--twicc-danger-on-quiet);
 }
+
+/* Scrollbars, as in the app (styles/scrollbars.css): thin, in its colours, with a visible track.
+   Chrome and Safari use the WebKit pseudo-elements (and ignore them once a standard property is
+   set, hence the two exclusive branches); Firefox has only the standard properties. */
+@supports selector(::-webkit-scrollbar) {
+    :where(*)::-webkit-scrollbar {
+        width: 0.5rem;
+        height: 0.5rem;
+    }
+    :where(*)::-webkit-scrollbar-track {
+        background: var(--twicc-scrollbar-track);
+    }
+    :where(*)::-webkit-scrollbar-thumb {
+        background-color: var(--twicc-scrollbar-thumb);
+        background-clip: padding-box;
+        border: 0.125rem solid transparent;
+        border-radius: var(--twicc-radius-pill);
+    }
+    :where(*)::-webkit-scrollbar-thumb:hover {
+        background-color: var(--twicc-scrollbar-thumb-hover);
+    }
+    :where(*)::-webkit-scrollbar-corner {
+        background: transparent;
+    }
+}
+
+@supports not selector(::-webkit-scrollbar) {
+    :where(*) {
+        scrollbar-width: thin;
+        scrollbar-color: var(--twicc-scrollbar-thumb) var(--twicc-scrollbar-track);
+    }
+}

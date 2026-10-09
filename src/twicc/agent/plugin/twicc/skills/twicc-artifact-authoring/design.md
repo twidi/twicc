@@ -23,10 +23,11 @@ Make every HTML artifact look like TwiCC: use its design tokens instead of hard-
 - Fields: `--twicc-field-bg`, `--twicc-field-border`, `--twicc-field-text`, `--twicc-field-placeholder`, `--twicc-field-height`, `--twicc-field-radius`, `--twicc-focus`, `--twicc-focus-ring` (a full `outline` value).
 - Type: `--twicc-font`, `--twicc-font-heading`, `--twicc-font-mono`, `--twicc-font-size-{2xs|xs|s|m|l|xl|2xl|3xl}`, `--twicc-font-weight-{light|normal|semibold|bold}`, `--twicc-line-height`, `--twicc-line-height-condensed`, `--twicc-line-height-expanded`.
 - Space, shape, depth, motion: `--twicc-space-{3xs|2xs|xs|s|m|l|xl|2xl|3xl}`, `--twicc-radius-{s|m|l|pill}`, `--twicc-border-width`, `--twicc-shadow-{s|m|l}`, `--twicc-transition-fast`, `--twicc-transition-normal`, `--twicc-easing`.
+- Scrollbars: `--twicc-scrollbar-thumb`, `--twicc-scrollbar-thumb-hover`, `--twicc-scrollbar-track`.
 
 For ready-made styles, link the kit: `<link rel="stylesheet" href="/_twicc/artifact-theme/kit.css">`.
 
-- It styles the page root (font size setting, font, text, background, `color-scheme: light dark`, transparent while inline), headings, links, code, tables, buttons, inputs, selects, and textareas.
+- It styles the page root (font size setting, font, text, background, `color-scheme: light dark`, transparent while inline), headings, links, code, tables, buttons, inputs, selects, textareas, and scrollbars (thin, in TwiCC's colors).
 - Classes: `twicc-accent` or `twicc-danger` on a button; `twicc-card`, `twicc-stack` (vertical flex), `twicc-row` (wrapping flex); `twicc-callout` and `twicc-badge`, with `twicc-accent`, `twicc-success`, `twicc-warning`, or `twicc-danger`; `twicc-quiet` for secondary text.
 - Every kit rule has zero specificity: any rule of the page overrides it.
 
