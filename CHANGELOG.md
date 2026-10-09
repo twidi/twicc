@@ -76,7 +76,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **New design and logo** — TwiCC gets its own visual identity: a new style that replaces the theme choice, and a new logo. To turn off heavy effects on a slower device, use **Reduce effects** (Settings → General). — [See the presentation video](https://youtu.be/Lxm1kitM5rc)
+- **New design and logo** — TwiCC gets its own visual identity: a new style that replaces the theme choice, and a new logo. To turn off heavy effects on a slower device, use **Reduce effects** (Settings → General). — [See the presentation video](https://youtu.be/3WJ5ZF5MHtI)
 - **Claude Sonnet 5.5** — support for Anthropic's new Sonnet model, now the latest Sonnet (Sonnet 5 remains selectable).
 - **GPT-6.1 Sol** — support for OpenAI's new Sol model, now the latest Sol (GPT-6 Sol remains selectable).
 - **File upload** — Upload files into any folder of the Files or Artifacts tab from its context menu, handy from a phone or another computer.
