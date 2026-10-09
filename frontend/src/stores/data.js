@@ -1173,12 +1173,17 @@ export const useDataStore = defineStore('data', {
         },
 
         /**
-         * Count sessions with unread content across all projects.
-         * Same logic as getProjectUnreadCount but without project filter.
+         * Count sessions with unread content across all visible projects
+         * (archived ones only when "show archived projects" is on). Feeds the favicon.
          * @returns {number} The number of unread sessions
          */
         getGlobalUnreadCount() {
-            return getProjectActivityIndex(this).totalUnread()
+            // Archived projects are out of sight unless the user chose to show
+            // them: their sessions must not light the favicon nobody can trace.
+            const showArchived = useSettingsStore().isShowArchivedProjects
+            return getProjectActivityIndex(this).totalUnread(
+                id => showArchived || !this.projects[id]?.archived
+            )
         },
 
         // Startup progress getters — aggregate per-phase across every

@@ -62,7 +62,14 @@ export function getProjectActivityIndex(store) {
         unread(projectIds) {
             return [...new Set(projectIds)].reduce((total, id) => total + (unreadCounts.value.get(id) || 0), 0)
         },
-        totalUnread() { return [...unreadCounts.value.values()].reduce((total, count) => total + count, 0) },
+        /** Sum over all projects, or only those accepted by `includeProject(projectId)`. */
+        totalUnread(includeProject) {
+            let total = 0
+            for (const [id, count] of unreadCounts.value) {
+                if (!includeProject || includeProject(id)) total += count
+            }
+            return total
+        },
     }
     indexes.set(store, index)
     return index
