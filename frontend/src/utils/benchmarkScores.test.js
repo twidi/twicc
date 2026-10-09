@@ -280,14 +280,14 @@ const data = JSON.parse(readFileSync(new URL('../data/modelBenchmarks.json', imp
 // Appendix B of the design doc (tolerance 4, square penalty, 2^-d score); the
 // values below follow the tuned model (tolerance 2, 4th-power penalty,
 // 100 / (1 + log2(1 + d)) score) and were computed by an independent script
-// on the 2026-09-30 snapshot.
+// on the 2026-10-09 snapshot.
 const REFERENCE_CASES = [
-    ['general', 'cost', 0, 20.92, ['codex gpt-6-luna low', 100], ['codex gpt-5.6-luna low', 48]],
-    ['general', 'cost', 50, 45.99, ['codex gpt-6.1-sol medium', 100], ['codex gpt-6.1-sol high', 66]],
+    ['general', 'cost', 0, 21.01, ['codex gpt-6-luna low', 100], ['codex gpt-5.6-luna low', 48]],
+    ['general', 'cost', 50, 46.02, ['codex gpt-6.1-sol medium', 100], ['codex gpt-6.1-sol high', 66]],
     ['general', 'cost', 100, 57.62, ['claude_code claude-opus-5-5 xhigh', 100], ['claude_code claude-opus-5-5 max', 84]],
-    ['general', 'speed', 50, 45.99, ['codex gpt-6-astra low', 100], ['claude_code claude-sonnet-5-5 high', 59]],
+    ['general', 'speed', 50, 46.02, ['codex gpt-6-astra low', 100], ['claude_code claude-sonnet-5-5 high', 65]],
     ['coding', 'cost', 50, 50.51, ['codex gpt-6.1-sol medium', 100], ['codex gpt-6.1-sol high', 66]],
-    ['office', 'cost', 100, 53.23, ['claude_code claude-opus-5-5 xhigh', 100], ['claude_code claude-opus-5-5 max', 54]],
+    ['office', 'cost', 100, 53.40, ['claude_code claude-opus-5-5 xhigh', 100], ['claude_code claude-sonnet-5-5 max', 59]],
     ['knowledge', 'speed', 0, 42.65, ['claude_code claude-sonnet-5 low', 100], ['claude_code claude-sonnet-5 medium', 48]],
     ['longdocs', 'cost', 100, 85.30, ['claude_code claude-opus-5-5 xhigh', 100], ['claude_code claude-opus-5-5 max', 81]],
 ]

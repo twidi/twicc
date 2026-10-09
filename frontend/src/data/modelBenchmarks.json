@@ -1,7 +1,7 @@
 {
   "source": "Artificial Analysis",
   "url": "https://artificialanalysis.ai/",
-  "retrieved_at": "2026-09-30",
+  "retrieved_at": "2026-10-09",
   "rows": [
     {
       "provider": "claude_code",
@@ -12,52 +12,52 @@
         "terminalbench_4_0": {
           "score": 0.52,
           "cost_usd": 11.6,
-          "time_s": 1320
+          "time_s": 1340
         },
         "scicode": {
           "score": 0.587,
           "cost_usd": 0.0891,
-          "time_s": 12.4
+          "time_s": 12.6
         },
         "aa_briefcase": {
-          "score": 1590,
+          "score": 1580,
           "cost_usd": 11.4,
-          "time_s": 1170
+          "time_s": 1180
         },
         "gdpval_aa": {
-          "score": 1620,
+          "score": 1640,
           "cost_usd": 3.48,
-          "time_s": 451
+          "time_s": 457
         },
         "gdp_pdf": {
           "score": 0.268,
           "cost_usd": 2.02,
-          "time_s": 64.5
+          "time_s": 65.4
         },
         "automationbench_aa": {
           "score": 0.553,
           "cost_usd": 1.77,
-          "time_s": 222
+          "time_s": 225
         },
         "humanitys_last_exam": {
           "score": 0.559,
           "cost_usd": 0.397,
-          "time_s": 93.9
+          "time_s": 95.1
         },
         "critpt": {
           "score": 0.303,
           "cost_usd": 2.75,
-          "time_s": 627
+          "time_s": 636
         },
         "aa_omniscience": {
           "score": 40.8,
           "cost_usd": 0.0207,
-          "time_s": 4.58
+          "time_s": 4.64
         },
         "aa_lcr": {
           "score": 0.837,
           "cost_usd": 1.48,
-          "time_s": 10.7
+          "time_s": 10.8
         }
       }
     },
@@ -70,52 +70,52 @@
         "terminalbench_4_0": {
           "score": 0.404,
           "cost_usd": 7.32,
-          "time_s": 846
+          "time_s": 772
         },
         "scicode": {
           "score": 0.567,
           "cost_usd": 0.069,
-          "time_s": 8.73
+          "time_s": 7.97
         },
         "aa_briefcase": {
-          "score": 1490,
+          "score": 1480,
           "cost_usd": 6.72,
-          "time_s": 795
+          "time_s": 726
         },
         "gdpval_aa": {
-          "score": 1450,
+          "score": 1470,
           "cost_usd": 1.43,
-          "time_s": 216
+          "time_s": 197
         },
         "gdp_pdf": {
           "score": 0.28,
           "cost_usd": 1.92,
-          "time_s": 45.2
+          "time_s": 41.3
         },
         "automationbench_aa": {
           "score": 0.522,
           "cost_usd": 1.52,
-          "time_s": 200
+          "time_s": 183
         },
         "humanitys_last_exam": {
           "score": 0.489,
           "cost_usd": 0.124,
-          "time_s": 31.2
+          "time_s": 28.5
         },
         "critpt": {
           "score": 0.277,
           "cost_usd": 1.26,
-          "time_s": 308
+          "time_s": 281
         },
         "aa_omniscience": {
           "score": 34.1,
           "cost_usd": 0.00864,
-          "time_s": 1.85
+          "time_s": 1.69
         },
         "aa_lcr": {
           "score": 0.823,
           "cost_usd": 1.47,
-          "time_s": 8.59
+          "time_s": 7.84
         }
       }
     },
@@ -128,52 +128,52 @@
         "terminalbench_4_0": {
           "score": 0.52,
           "cost_usd": 19.2,
-          "time_s": 1740
+          "time_s": 1730
         },
         "scicode": {
           "score": 0.631,
           "cost_usd": 0.659,
-          "time_s": 112
+          "time_s": 111
         },
         "aa_briefcase": {
-          "score": 1680,
+          "score": 1670,
           "cost_usd": 22.7,
-          "time_s": 1710
+          "time_s": 1690
         },
         "gdpval_aa": {
-          "score": 1730,
+          "score": 1760,
           "cost_usd": 9.77,
-          "time_s": 961
+          "time_s": 953
         },
         "gdp_pdf": {
           "score": 0.262,
           "cost_usd": 2.77,
-          "time_s": 186
+          "time_s": 184
         },
         "automationbench_aa": {
           "score": 0.594,
           "cost_usd": 2.61,
-          "time_s": 283
+          "time_s": 281
         },
         "humanitys_last_exam": {
           "score": 0.591,
           "cost_usd": 1.59,
-          "time_s": 292
+          "time_s": 289
         },
         "critpt": {
           "score": 0.297,
           "cost_usd": 5.71,
-          "time_s": 1030
+          "time_s": 1020
         },
         "aa_omniscience": {
           "score": 43.5,
           "cost_usd": 0.268,
-          "time_s": 48.9
+          "time_s": 48.5
         },
         "aa_lcr": {
           "score": 0.853,
           "cost_usd": 1.58,
-          "time_s": 27.7
+          "time_s": 27.4
         }
       }
     },
@@ -186,52 +186,52 @@
         "terminalbench_4_0": {
           "score": 0.449,
           "cost_usd": 9.12,
-          "time_s": 1000
+          "time_s": 960
         },
         "scicode": {
           "score": 0.564,
           "cost_usd": 0.0756,
-          "time_s": 9.62
+          "time_s": 9.24
         },
         "aa_briefcase": {
-          "score": 1540,
+          "score": 1530,
           "cost_usd": 8.58,
-          "time_s": 917
+          "time_s": 880
         },
         "gdpval_aa": {
-          "score": 1540,
+          "score": 1550,
           "cost_usd": 2.18,
-          "time_s": 298
+          "time_s": 286
         },
         "gdp_pdf": {
           "score": 0.268,
           "cost_usd": 1.96,
-          "time_s": 50.9
+          "time_s": 48.9
         },
         "automationbench_aa": {
           "score": 0.547,
           "cost_usd": 1.64,
-          "time_s": 207
+          "time_s": 198
         },
         "humanitys_last_exam": {
           "score": 0.538,
           "cost_usd": 0.225,
-          "time_s": 54.2
+          "time_s": 52
         },
         "critpt": {
           "score": 0.291,
           "cost_usd": 1.8,
-          "time_s": 416
+          "time_s": 399
         },
         "aa_omniscience": {
           "score": 37.6,
           "cost_usd": 0.0153,
-          "time_s": 3.35
+          "time_s": 3.21
         },
         "aa_lcr": {
           "score": 0.847,
           "cost_usd": 1.48,
-          "time_s": 9.48
+          "time_s": 9.09
         }
       }
     },
@@ -244,7 +244,7 @@
         "terminalbench_4_0": {
           "score": 0.551,
           "cost_usd": 15.8,
-          "time_s": 1610
+          "time_s": 1600
         },
         "scicode": {
           "score": 0.609,
@@ -252,14 +252,14 @@
           "time_s": 41
         },
         "aa_briefcase": {
-          "score": 1670,
+          "score": 1660,
           "cost_usd": 17.8,
-          "time_s": 1540
+          "time_s": 1530
         },
         "gdpval_aa": {
-          "score": 1720,
+          "score": 1730,
           "cost_usd": 7.22,
-          "time_s": 798
+          "time_s": 797
         },
         "gdp_pdf": {
           "score": 0.262,
@@ -274,12 +274,12 @@
         "humanitys_last_exam": {
           "score": 0.587,
           "cost_usd": 1.03,
-          "time_s": 210
+          "time_s": 209
         },
         "critpt": {
           "score": 0.311,
           "cost_usd": 4.53,
-          "time_s": 907
+          "time_s": 906
         },
         "aa_omniscience": {
           "score": 42.4,
@@ -302,37 +302,37 @@
         "terminalbench_4_0": {
           "score": 0.424,
           "cost_usd": 34.9,
-          "time_s": 2030
+          "time_s": 2040
         },
         "scicode": {
           "score": 0.61,
           "cost_usd": 0.268,
-          "time_s": 44.9
+          "time_s": 45.1
         },
         "aa_briefcase": {
           "score": 1540,
           "cost_usd": 22.3,
-          "time_s": 1300
+          "time_s": 1310
         },
         "gdpval_aa": {
-          "score": 1600,
+          "score": 1610,
           "cost_usd": 7.75,
-          "time_s": 692
+          "time_s": 696
         },
         "gdp_pdf": {
           "score": 0.24,
           "cost_usd": 2.24,
-          "time_s": 101
+          "time_s": 102
         },
         "automationbench_aa": {
           "score": 0.541,
           "cost_usd": 2.8,
-          "time_s": 313
+          "time_s": 314
         },
         "humanitys_last_exam": {
           "score": 0.555,
           "cost_usd": 0.934,
-          "time_s": 180
+          "time_s": 181
         },
         "critpt": {
           "score": 0.286,
@@ -342,12 +342,12 @@
         "aa_omniscience": {
           "score": 43.3,
           "cost_usd": 0.0698,
-          "time_s": 13
+          "time_s": 13.1
         },
         "aa_lcr": {
           "score": 0.823,
           "cost_usd": 1.57,
-          "time_s": 30.9
+          "time_s": 31.1
         }
       }
     },
@@ -360,52 +360,52 @@
         "terminalbench_4_0": {
           "score": 0.217,
           "cost_usd": 18.1,
-          "time_s": 2850
+          "time_s": 2770
         },
         "scicode": {
           "score": 0.544,
           "cost_usd": 0.266,
-          "time_s": 107
+          "time_s": 104
         },
         "aa_briefcase": {
           "score": 1320,
           "cost_usd": 8.26,
-          "time_s": 1360
+          "time_s": 1320
         },
         "gdpval_aa": {
-          "score": 1440,
+          "score": 1460,
           "cost_usd": 4.34,
-          "time_s": 931
+          "time_s": 905
         },
         "gdp_pdf": {
           "score": 0.228,
           "cost_usd": 1.22,
-          "time_s": 148
+          "time_s": 144
         },
         "automationbench_aa": {
           "score": 0.456,
           "cost_usd": 2.48,
-          "time_s": 624
+          "time_s": 606
         },
         "humanitys_last_exam": {
           "score": 0.487,
           "cost_usd": 0.823,
-          "time_s": 354
+          "time_s": 344
         },
         "critpt": {
           "score": 0.209,
           "cost_usd": 1.94,
-          "time_s": 823
+          "time_s": 800
         },
         "aa_omniscience": {
           "score": 28.8,
           "cost_usd": 0.0247,
-          "time_s": 10.3
+          "time_s": 9.96
         },
         "aa_lcr": {
           "score": 0.777,
           "cost_usd": 0.798,
-          "time_s": 42.1
+          "time_s": 40.9
         }
       }
     },
@@ -418,52 +418,52 @@
         "terminalbench_4_0": {
           "score": 0.566,
           "cost_usd": 5.12,
-          "time_s": 832
+          "time_s": 801
         },
         "scicode": {
           "score": 0.604,
           "cost_usd": 0.0402,
-          "time_s": 10.9
+          "time_s": 10.5
         },
         "aa_briefcase": {
-          "score": 1700,
+          "score": 1690,
           "cost_usd": 6.27,
-          "time_s": 940
+          "time_s": 905
         },
         "gdpval_aa": {
-          "score": 1690,
+          "score": 1710,
           "cost_usd": 1.54,
-          "time_s": 322
+          "time_s": 310
         },
         "gdp_pdf": {
           "score": 0.288,
           "cost_usd": 0.825,
-          "time_s": 49.6
+          "time_s": 47.7
         },
         "automationbench_aa": {
           "score": 0.632,
           "cost_usd": 0.699,
-          "time_s": 137
+          "time_s": 132
         },
         "humanitys_last_exam": {
           "score": 0.556,
           "cost_usd": 0.104,
-          "time_s": 42.4
+          "time_s": 40.8
         },
         "critpt": {
           "score": 0.309,
           "cost_usd": 0.53,
-          "time_s": 212
+          "time_s": 204
         },
         "aa_omniscience": {
           "score": 40.6,
           "cost_usd": 0.00853,
-          "time_s": 3.26
+          "time_s": 3.14
         },
         "aa_lcr": {
           "score": 0.827,
           "cost_usd": 0.592,
-          "time_s": 7.33
+          "time_s": 7.05
         }
       }
     },
@@ -476,52 +476,52 @@
         "terminalbench_4_0": {
           "score": 0.313,
           "cost_usd": 2.08,
-          "time_s": 324
+          "time_s": 319
         },
         "scicode": {
           "score": 0.586,
           "cost_usd": 0.0264,
-          "time_s": 6.01
+          "time_s": 5.91
         },
         "aa_briefcase": {
           "score": 1280,
           "cost_usd": 1.15,
-          "time_s": 229
+          "time_s": 226
         },
         "gdpval_aa": {
-          "score": 1220,
+          "score": 1240,
           "cost_usd": 0.214,
-          "time_s": 58
+          "time_s": 57.1
         },
         "gdp_pdf": {
           "score": 0.256,
           "cost_usd": 0.764,
-          "time_s": 24.9
+          "time_s": 24.5
         },
         "automationbench_aa": {
           "score": 0.529,
           "cost_usd": 0.493,
-          "time_s": 102
+          "time_s": 100
         },
         "humanitys_last_exam": {
           "score": 0.483,
           "cost_usd": 0.0286,
-          "time_s": 11.5
+          "time_s": 11.3
         },
         "critpt": {
           "score": 0.177,
           "cost_usd": 0.124,
-          "time_s": 45.4
+          "time_s": 44.7
         },
         "aa_omniscience": {
           "score": 38.9,
           "cost_usd": 0.00577,
-          "time_s": 2.18
+          "time_s": 2.14
         },
         "aa_lcr": {
           "score": 0.807,
           "cost_usd": 0.587,
-          "time_s": 5.34
+          "time_s": 5.25
         }
       }
     },
@@ -534,52 +534,52 @@
         "terminalbench_4_0": {
           "score": 0.596,
           "cost_usd": 13.1,
-          "time_s": 1740
+          "time_s": 1660
         },
         "scicode": {
           "score": 0.669,
           "cost_usd": 0.469,
-          "time_s": 155
+          "time_s": 148
         },
         "aa_briefcase": {
-          "score": 1820,
+          "score": 1810,
           "cost_usd": 21,
-          "time_s": 2330
+          "time_s": 2220
         },
         "gdpval_aa": {
-          "score": 1850,
+          "score": 1870,
           "cost_usd": 8.92,
-          "time_s": 1290
+          "time_s": 1230
         },
         "gdp_pdf": {
           "score": 0.262,
           "cost_usd": 1.55,
-          "time_s": 291
+          "time_s": 278
         },
         "automationbench_aa": {
           "score": 0.695,
           "cost_usd": 1.43,
-          "time_s": 283
+          "time_s": 270
         },
         "humanitys_last_exam": {
           "score": 0.614,
           "cost_usd": 0.718,
-          "time_s": 246
+          "time_s": 235
         },
         "critpt": {
           "score": 0.317,
           "cost_usd": 2.19,
-          "time_s": 746
+          "time_s": 712
         },
         "aa_omniscience": {
           "score": 46.4,
           "cost_usd": 0.161,
-          "time_s": 55.1
+          "time_s": 52.6
         },
         "aa_lcr": {
           "score": 0.847,
           "cost_usd": 0.677,
-          "time_s": 35.2
+          "time_s": 33.6
         }
       }
     },
@@ -592,52 +592,52 @@
         "terminalbench_4_0": {
           "score": 0.525,
           "cost_usd": 4.04,
-          "time_s": 640
+          "time_s": 606
         },
         "scicode": {
           "score": 0.593,
           "cost_usd": 0.0355,
-          "time_s": 9.33
+          "time_s": 8.83
         },
         "aa_briefcase": {
-          "score": 1640,
+          "score": 1630,
           "cost_usd": 4.4,
-          "time_s": 706
+          "time_s": 668
         },
         "gdpval_aa": {
-          "score": 1580,
+          "score": 1590,
           "cost_usd": 0.856,
-          "time_s": 198
+          "time_s": 187
         },
         "gdp_pdf": {
           "score": 0.256,
           "cost_usd": 0.795,
-          "time_s": 37.8
+          "time_s": 35.7
         },
         "automationbench_aa": {
           "score": 0.612,
           "cost_usd": 0.638,
-          "time_s": 127
+          "time_s": 121
         },
         "humanitys_last_exam": {
           "score": 0.547,
           "cost_usd": 0.0619,
-          "time_s": 25.5
+          "time_s": 24.1
         },
         "critpt": {
           "score": 0.277,
           "cost_usd": 0.345,
-          "time_s": 138
+          "time_s": 130
         },
         "aa_omniscience": {
           "score": 40.3,
           "cost_usd": 0.00755,
-          "time_s": 2.9
+          "time_s": 2.75
         },
         "aa_lcr": {
           "score": 0.843,
           "cost_usd": 0.59,
-          "time_s": 6.72
+          "time_s": 6.36
         }
       }
     },
@@ -655,22 +655,22 @@
         "scicode": {
           "score": 0.65,
           "cost_usd": 0.0676,
-          "time_s": 20.4
+          "time_s": 20.5
         },
         "aa_briefcase": {
-          "score": 1780,
+          "score": 1770,
           "cost_usd": 12.3,
           "time_s": 1530
         },
         "gdpval_aa": {
-          "score": 1820,
+          "score": 1840,
           "cost_usd": 4.21,
-          "time_s": 712
+          "time_s": 715
         },
         "gdp_pdf": {
           "score": 0.266,
           "cost_usd": 0.964,
-          "time_s": 99.5
+          "time_s": 99.8
         },
         "automationbench_aa": {
           "score": 0.65,
@@ -680,22 +680,22 @@
         "humanitys_last_exam": {
           "score": 0.575,
           "cost_usd": 0.241,
-          "time_s": 92
+          "time_s": 92.3
         },
         "critpt": {
           "score": 0.317,
           "cost_usd": 1.17,
-          "time_s": 443
+          "time_s": 445
         },
         "aa_omniscience": {
           "score": 42.6,
           "cost_usd": 0.0135,
-          "time_s": 4.92
+          "time_s": 4.94
         },
         "aa_lcr": {
           "score": 0.847,
           "cost_usd": 0.599,
-          "time_s": 9.55
+          "time_s": 9.58
         }
       }
     },
@@ -708,52 +708,52 @@
         "terminalbench_4_0": {
           "score": 0.46,
           "cost_usd": 13.1,
-          "time_s": 1530
+          "time_s": 1590
         },
         "scicode": {
           "score": 0.554,
           "cost_usd": 0.0481,
-          "time_s": 13.7
+          "time_s": 14.3
         },
         "aa_briefcase": {
-          "score": 1570,
+          "score": 1560,
           "cost_usd": 10.4,
-          "time_s": 1290
+          "time_s": 1350
         },
         "gdpval_aa": {
-          "score": 1580,
+          "score": 1600,
           "cost_usd": 3.03,
-          "time_s": 543
+          "time_s": 565
         },
         "gdp_pdf": {
           "score": 0.196,
           "cost_usd": 1.03,
-          "time_s": 69.5
+          "time_s": 72.3
         },
         "automationbench_aa": {
           "score": 0.536,
           "cost_usd": 1.07,
-          "time_s": 208
+          "time_s": 217
         },
         "humanitys_last_exam": {
           "score": 0.528,
           "cost_usd": 0.352,
-          "time_s": 159
+          "time_s": 166
         },
         "critpt": {
           "score": 0.283,
           "cost_usd": 1.99,
-          "time_s": 897
+          "time_s": 932
         },
         "aa_omniscience": {
           "score": 33.7,
           "cost_usd": 0.0094,
-          "time_s": 3.89
+          "time_s": 4.05
         },
         "aa_lcr": {
           "score": 0.79,
           "cost_usd": 0.746,
-          "time_s": 12.7
+          "time_s": 13.2
         }
       }
     },
@@ -766,52 +766,52 @@
         "terminalbench_4_0": {
           "score": 0.263,
           "cost_usd": 5.18,
-          "time_s": 634
+          "time_s": 622
         },
         "scicode": {
           "score": 0.492,
           "cost_usd": 0.0287,
-          "time_s": 6.37
+          "time_s": 6.25
         },
         "aa_briefcase": {
           "score": 1210,
           "cost_usd": 1.78,
-          "time_s": 341
+          "time_s": 335
         },
         "gdpval_aa": {
-          "score": 1290,
+          "score": 1300,
           "cost_usd": 0.582,
-          "time_s": 149
+          "time_s": 146
         },
         "gdp_pdf": {
           "score": 0.172,
           "cost_usd": 0.954,
-          "time_s": 34.8
+          "time_s": 34.2
         },
         "automationbench_aa": {
           "score": 0.518,
           "cost_usd": 0.827,
-          "time_s": 159
+          "time_s": 156
         },
         "humanitys_last_exam": {
           "score": 0.434,
           "cost_usd": 0.0625,
-          "time_s": 29.4
+          "time_s": 28.9
         },
         "critpt": {
           "score": 0.231,
           "cost_usd": 0.72,
-          "time_s": 340
+          "time_s": 333
         },
         "aa_omniscience": {
           "score": 28.6,
           "cost_usd": 0.00397,
-          "time_s": 1.52
+          "time_s": 1.49
         },
         "aa_lcr": {
           "score": 0.813,
           "cost_usd": 0.731,
-          "time_s": 6.31
+          "time_s": 6.2
         }
       }
     },
@@ -824,52 +824,52 @@
         "terminalbench_4_0": {
           "score": 0.49,
           "cost_usd": 19.3,
-          "time_s": 2300
+          "time_s": 2470
         },
         "scicode": {
           "score": 0.564,
           "cost_usd": 0.118,
-          "time_s": 43.7
+          "time_s": 47
         },
         "aa_briefcase": {
-          "score": 1670,
+          "score": 1660,
           "cost_usd": 17.8,
-          "time_s": 1910
+          "time_s": 2050
         },
         "gdpval_aa": {
-          "score": 1710,
+          "score": 1720,
           "cost_usd": 6.77,
-          "time_s": 1090
+          "time_s": 1170
         },
         "gdp_pdf": {
           "score": 0.216,
           "cost_usd": 1.09,
-          "time_s": 91.4
+          "time_s": 98.3
         },
         "automationbench_aa": {
           "score": 0.566,
           "cost_usd": 1.32,
-          "time_s": 271
+          "time_s": 291
         },
         "humanitys_last_exam": {
           "score": 0.549,
           "cost_usd": 0.674,
-          "time_s": 301
+          "time_s": 324
         },
         "critpt": {
           "score": 0.291,
           "cost_usd": 2.88,
-          "time_s": 1280
+          "time_s": 1380
         },
         "aa_omniscience": {
           "score": 37.1,
           "cost_usd": 0.0259,
-          "time_s": 11.2
+          "time_s": 12.1
         },
         "aa_lcr": {
           "score": 0.793,
           "cost_usd": 0.761,
-          "time_s": 19.5
+          "time_s": 20.9
         }
       }
     },
@@ -882,52 +882,52 @@
         "terminalbench_4_0": {
           "score": 0.343,
           "cost_usd": 9.18,
-          "time_s": 1060
+          "time_s": 1080
         },
         "scicode": {
           "score": 0.515,
           "cost_usd": 0.0369,
-          "time_s": 9.34
+          "time_s": 9.49
         },
         "aa_briefcase": {
           "score": 1440,
           "cost_usd": 5.25,
-          "time_s": 779
+          "time_s": 792
         },
         "gdpval_aa": {
-          "score": 1480,
+          "score": 1490,
           "cost_usd": 1.36,
-          "time_s": 287
+          "time_s": 292
         },
         "gdp_pdf": {
           "score": 0.2,
           "cost_usd": 0.993,
-          "time_s": 52.1
+          "time_s": 52.9
         },
         "automationbench_aa": {
           "score": 0.543,
           "cost_usd": 0.952,
-          "time_s": 184
+          "time_s": 187
         },
         "humanitys_last_exam": {
           "score": 0.513,
           "cost_usd": 0.187,
-          "time_s": 87.2
+          "time_s": 88.5
         },
         "critpt": {
           "score": 0.269,
           "cost_usd": 1.4,
-          "time_s": 649
+          "time_s": 659
         },
         "aa_omniscience": {
           "score": 31,
           "cost_usd": 0.00617,
-          "time_s": 2.51
+          "time_s": 2.55
         },
         "aa_lcr": {
           "score": 0.82,
           "cost_usd": 0.738,
-          "time_s": 9.47
+          "time_s": 9.62
         }
       }
     },
@@ -940,52 +940,52 @@
         "terminalbench_4_0": {
           "score": 0.465,
           "cost_usd": 17.4,
-          "time_s": 2160
+          "time_s": 2140
         },
         "scicode": {
           "score": 0.557,
           "cost_usd": 0.0723,
-          "time_s": 26
+          "time_s": 25.7
         },
         "aa_briefcase": {
-          "score": 1650,
+          "score": 1640,
           "cost_usd": 14.3,
-          "time_s": 1760
+          "time_s": 1740
         },
         "gdpval_aa": {
-          "score": 1680,
+          "score": 1690,
           "cost_usd": 4.96,
-          "time_s": 894
+          "time_s": 883
         },
         "gdp_pdf": {
           "score": 0.21,
           "cost_usd": 1.05,
-          "time_s": 80.4
+          "time_s": 79.4
         },
         "automationbench_aa": {
           "score": 0.532,
           "cost_usd": 1.15,
-          "time_s": 251
+          "time_s": 248
         },
         "humanitys_last_exam": {
           "score": 0.544,
           "cost_usd": 0.517,
-          "time_s": 251
+          "time_s": 248
         },
         "critpt": {
           "score": 0.277,
           "cost_usd": 2.46,
-          "time_s": 1180
+          "time_s": 1170
         },
         "aa_omniscience": {
           "score": 35.4,
           "cost_usd": 0.0143,
-          "time_s": 6.54
+          "time_s": 6.46
         },
         "aa_lcr": {
           "score": 0.803,
           "cost_usd": 0.753,
-          "time_s": 17.1
+          "time_s": 16.9
         }
       }
     },
@@ -998,52 +998,52 @@
         "terminalbench_4_0": {
           "score": 0.0303,
           "cost_usd": 13.3,
-          "time_s": 4230
+          "time_s": 3460
         },
         "scicode": {
           "score": 0.501,
           "cost_usd": 0.15,
-          "time_s": 164
+          "time_s": 134
         },
         "aa_briefcase": {
           "score": 1060,
           "cost_usd": 2.41,
-          "time_s": 1120
+          "time_s": 914
         },
         "gdpval_aa": {
-          "score": 1220,
+          "score": 1230,
           "cost_usd": 1.94,
-          "time_s": 1010
+          "time_s": 829
         },
         "gdp_pdf": {
           "score": 0.158,
           "cost_usd": 0.606,
-          "time_s": 329
+          "time_s": 269
         },
         "automationbench_aa": {
           "score": 0.201,
           "cost_usd": 1.18,
-          "time_s": 725
+          "time_s": 593
         },
         "humanitys_last_exam": {
           "score": 0.336,
           "cost_usd": 0.915,
-          "time_s": 1060
+          "time_s": 863
         },
         "critpt": {
           "score": 0.0314,
           "cost_usd": 3.5,
-          "time_s": 4040
+          "time_s": 3300
         },
         "aa_omniscience": {
           "score": 12.2,
           "cost_usd": 0.044,
-          "time_s": 50.4
+          "time_s": 41.2
         },
         "aa_lcr": {
           "score": 0.8,
           "cost_usd": 0.385,
-          "time_s": 82.7
+          "time_s": 67.6
         }
       }
     },
@@ -1056,52 +1056,52 @@
         "terminalbench_4_0": {
           "score": 0.0505,
           "cost_usd": 9.4,
-          "time_s": 1530
+          "time_s": 1510
         },
         "scicode": {
           "score": 0.543,
           "cost_usd": 0.0255,
-          "time_s": 17.1
+          "time_s": 16.9
         },
         "aa_briefcase": {
           "score": 1180,
           "cost_usd": 3.76,
-          "time_s": 763
+          "time_s": 752
         },
         "gdpval_aa": {
-          "score": 1250,
+          "score": 1260,
           "cost_usd": 1.02,
-          "time_s": 324
+          "time_s": 320
         },
         "gdp_pdf": {
           "score": 0.094,
           "cost_usd": 0.42,
-          "time_s": 62.2
+          "time_s": 61.3
         },
         "automationbench_aa": {
           "score": 0.321,
           "cost_usd": 0.573,
-          "time_s": 246
+          "time_s": 243
         },
         "humanitys_last_exam": {
           "score": 0.357,
           "cost_usd": 0.174,
-          "time_s": 160
+          "time_s": 158
         },
         "critpt": {
           "score": 0.151,
           "cost_usd": 0.799,
-          "time_s": 732
+          "time_s": 721
         },
         "aa_omniscience": {
           "score": -3.68,
           "cost_usd": 0.00196,
-          "time_s": 1.5
+          "time_s": 1.48
         },
         "aa_lcr": {
           "score": 0.767,
           "cost_usd": 0.302,
-          "time_s": 16.3
+          "time_s": 16
         }
       }
     },
@@ -1114,52 +1114,52 @@
         "terminalbench_4_0": {
           "score": 0.0253,
           "cost_usd": 2.66,
-          "time_s": 623
+          "time_s": 597
         },
         "scicode": {
           "score": 0.501,
           "cost_usd": 0.0132,
-          "time_s": 6.58
+          "time_s": 6.3
         },
         "aa_briefcase": {
-          "score": 923,
+          "score": 926,
           "cost_usd": 0.817,
-          "time_s": 295
+          "time_s": 282
         },
         "gdpval_aa": {
-          "score": 1060,
+          "score": 1070,
           "cost_usd": 0.26,
-          "time_s": 130
+          "time_s": 124
         },
         "gdp_pdf": {
           "score": 0.094,
           "cost_usd": 0.367,
-          "time_s": 27.9
+          "time_s": 26.7
         },
         "automationbench_aa": {
           "score": 0.199,
           "cost_usd": 0.305,
-          "time_s": 129
+          "time_s": 123
         },
         "humanitys_last_exam": {
           "score": 0.219,
           "cost_usd": 0.0256,
-          "time_s": 25.3
+          "time_s": 24.2
         },
         "critpt": {
           "score": 0.0457,
           "cost_usd": 0.232,
-          "time_s": 229
+          "time_s": 219
         },
         "aa_omniscience": {
           "score": -8.23,
           "cost_usd": 0.000658,
-          "time_s": 0.323
+          "time_s": 0.309
         },
         "aa_lcr": {
           "score": 0.673,
           "cost_usd": 0.292,
-          "time_s": 4.78
+          "time_s": 4.58
         }
       }
     },
@@ -1172,52 +1172,52 @@
         "terminalbench_4_0": {
           "score": 0.141,
           "cost_usd": 19.7,
-          "time_s": 2650
+          "time_s": 2460
         },
         "scicode": {
           "score": 0.543,
           "cost_usd": 0.192,
-          "time_s": 148
+          "time_s": 137
         },
         "aa_briefcase": {
           "score": 1360,
           "cost_usd": 14.4,
-          "time_s": 1680
+          "time_s": 1560
         },
         "gdpval_aa": {
-          "score": 1450,
+          "score": 1470,
           "cost_usd": 4.7,
-          "time_s": 967
+          "time_s": 896
         },
         "gdp_pdf": {
           "score": 0.132,
           "cost_usd": 0.615,
-          "time_s": 211
+          "time_s": 196
         },
         "automationbench_aa": {
           "score": 0.365,
           "cost_usd": 1,
-          "time_s": 456
+          "time_s": 422
         },
         "humanitys_last_exam": {
           "score": 0.413,
           "cost_usd": 1.02,
-          "time_s": 820
+          "time_s": 760
         },
         "critpt": {
           "score": 0.169,
           "cost_usd": 2.31,
-          "time_s": 1850
+          "time_s": 1720
         },
         "aa_omniscience": {
           "score": 16.4,
           "cost_usd": 0.029,
-          "time_s": 23.1
+          "time_s": 21.4
         },
         "aa_lcr": {
           "score": 0.82,
           "cost_usd": 0.368,
-          "time_s": 65
+          "time_s": 60.2
         }
       }
     },
@@ -1230,52 +1230,52 @@
         "terminalbench_4_0": {
           "score": 0.0202,
           "cost_usd": 5.53,
-          "time_s": 1140
+          "time_s": 1090
         },
         "scicode": {
           "score": 0.516,
           "cost_usd": 0.0171,
-          "time_s": 10.4
+          "time_s": 9.92
         },
         "aa_briefcase": {
           "score": 1060,
           "cost_usd": 1.73,
-          "time_s": 473
+          "time_s": 452
         },
         "gdpval_aa": {
-          "score": 1140,
+          "score": 1160,
           "cost_usd": 0.529,
-          "time_s": 217
+          "time_s": 207
         },
         "gdp_pdf": {
           "score": 0.116,
           "cost_usd": 0.395,
-          "time_s": 42.6
+          "time_s": 40.6
         },
         "automationbench_aa": {
           "score": 0.279,
           "cost_usd": 0.431,
-          "time_s": 188
+          "time_s": 180
         },
         "humanitys_last_exam": {
           "score": 0.3,
           "cost_usd": 0.0847,
-          "time_s": 84.8
+          "time_s": 81
         },
         "critpt": {
           "score": 0.0857,
           "cost_usd": 0.469,
-          "time_s": 465
+          "time_s": 445
         },
         "aa_omniscience": {
           "score": -6.87,
           "cost_usd": 0.00104,
-          "time_s": 0.709
+          "time_s": 0.677
         },
         "aa_lcr": {
           "score": 0.737,
           "cost_usd": 0.296,
-          "time_s": 8.56
+          "time_s": 8.17
         }
       }
     },
@@ -1288,226 +1288,52 @@
         "terminalbench_4_0": {
           "score": 0.0707,
           "cost_usd": 12.8,
-          "time_s": 1970
+          "time_s": 1940
         },
         "scicode": {
           "score": 0.541,
           "cost_usd": 0.0399,
-          "time_s": 30.6
+          "time_s": 30.2
         },
         "aa_briefcase": {
           "score": 1270,
           "cost_usd": 7.56,
-          "time_s": 1270
+          "time_s": 1250
         },
         "gdpval_aa": {
-          "score": 1340,
+          "score": 1360,
           "cost_usd": 2.14,
-          "time_s": 600
+          "time_s": 591
         },
         "gdp_pdf": {
           "score": 0.126,
           "cost_usd": 0.445,
-          "time_s": 86.2
+          "time_s": 85
         },
         "automationbench_aa": {
           "score": 0.345,
           "cost_usd": 0.715,
-          "time_s": 330
+          "time_s": 326
         },
         "humanitys_last_exam": {
           "score": 0.39,
           "cost_usd": 0.272,
-          "time_s": 253
+          "time_s": 250
         },
         "critpt": {
           "score": 0.154,
           "cost_usd": 1.16,
-          "time_s": 1080
+          "time_s": 1060
         },
         "aa_omniscience": {
           "score": 3.18,
           "cost_usd": 0.00428,
-          "time_s": 3.68
+          "time_s": 3.63
         },
         "aa_lcr": {
           "score": 0.767,
           "cost_usd": 0.316,
-          "time_s": 27
-        }
-      }
-    },
-    {
-      "provider": "codex",
-      "model": "gpt-5.5",
-      "effort": "high",
-      "intelligence_index": 36.98,
-      "evals": {
-        "terminalbench_4_0": {
-          "score": 0.0909,
-          "cost_usd": 5.59,
-          "time_s": 423
-        },
-        "scicode": {
-          "score": 0.561,
-          "cost_usd": 0.107,
-          "time_s": 35.3
-        },
-        "aa_briefcase": {
-          "score": 1090,
-          "cost_usd": 3.3,
-          "time_s": 317
-        },
-        "gdpval_aa": {
-          "score": 1320,
-          "cost_usd": 1.41,
-          "time_s": 192
-        },
-        "gdp_pdf": {
-          "score": 0.226,
-          "cost_usd": 0.926,
-          "time_s": 75.4
-        },
-        "automationbench_aa": {
-          "score": 0.443,
-          "cost_usd": 1.81,
-          "time_s": 153
-        },
-        "humanitys_last_exam": {
-          "score": 0.45,
-          "cost_usd": 0.227,
-          "time_s": 84.6
-        },
-        "critpt": {
-          "score": 0.254,
-          "cost_usd": 0.92,
-          "time_s": 342
-        },
-        "aa_omniscience": {
-          "score": 18.8,
-          "cost_usd": 0.0859,
-          "time_s": 31.8
-        },
-        "aa_lcr": {
-          "score": 0.843,
-          "cost_usd": 0.508,
-          "time_s": 13.6
-        }
-      }
-    },
-    {
-      "provider": "codex",
-      "model": "gpt-5.5",
-      "effort": "medium",
-      "intelligence_index": 33.8,
-      "evals": {
-        "terminalbench_4_0": {
-          "score": 0.0505,
-          "cost_usd": 2.99,
-          "time_s": 255
-        },
-        "scicode": {
-          "score": 0.545,
-          "cost_usd": 0.0622,
-          "time_s": 19.3
-        },
-        "aa_briefcase": {
-          "score": 1000,
-          "cost_usd": 1.92,
-          "time_s": 212
-        },
-        "gdpval_aa": {
-          "score": 1220,
-          "cost_usd": 0.808,
-          "time_s": 128
-        },
-        "gdp_pdf": {
-          "score": 0.206,
-          "cost_usd": 0.884,
-          "time_s": 44.3
-        },
-        "automationbench_aa": {
-          "score": 0.401,
-          "cost_usd": 1.33,
-          "time_s": 116
-        },
-        "humanitys_last_exam": {
-          "score": 0.424,
-          "cost_usd": 0.126,
-          "time_s": 48.5
-        },
-        "critpt": {
-          "score": 0.186,
-          "cost_usd": 0.294,
-          "time_s": 107
-        },
-        "aa_omniscience": {
-          "score": 18.1,
-          "cost_usd": 0.0373,
-          "time_s": 14.4
-        },
-        "aa_lcr": {
-          "score": 0.83,
-          "cost_usd": 0.493,
-          "time_s": 8.38
-        }
-      }
-    },
-    {
-      "provider": "codex",
-      "model": "gpt-5.5",
-      "effort": "xhigh",
-      "intelligence_index": 38.36,
-      "evals": {
-        "terminalbench_4_0": {
-          "score": 0.146,
-          "cost_usd": 11.6,
-          "time_s": 640
-        },
-        "scicode": {
-          "score": 0.558,
-          "cost_usd": 0.168,
-          "time_s": 56.3
-        },
-        "aa_briefcase": {
-          "score": 1140,
-          "cost_usd": 5.15,
-          "time_s": 411
-        },
-        "gdpval_aa": {
-          "score": 1340,
-          "cost_usd": 2.19,
-          "time_s": 254
-        },
-        "gdp_pdf": {
-          "score": 0.212,
-          "cost_usd": 1.06,
-          "time_s": 103
-        },
-        "automationbench_aa": {
-          "score": 0.473,
-          "cost_usd": 2.33,
-          "time_s": 190
-        },
-        "humanitys_last_exam": {
-          "score": 0.458,
-          "cost_usd": 0.38,
-          "time_s": 137
-        },
-        "critpt": {
-          "score": 0.271,
-          "cost_usd": 1.61,
-          "time_s": 582
-        },
-        "aa_omniscience": {
-          "score": 20.5,
-          "cost_usd": 0.152,
-          "time_s": 54.6
-        },
-        "aa_lcr": {
-          "score": 0.843,
-          "cost_usd": 0.52,
-          "time_s": 17.5
+          "time_s": 26.6
         }
       }
     },
@@ -1520,52 +1346,52 @@
         "terminalbench_4_0": {
           "score": 0.0253,
           "cost_usd": 0.106,
-          "time_s": 309
+          "time_s": 287
         },
         "scicode": {
           "score": 0.516,
           "cost_usd": 0.00293,
-          "time_s": 19.4
+          "time_s": 18
         },
         "aa_briefcase": {
           "score": 1170,
           "cost_usd": 0.117,
-          "time_s": 299
+          "time_s": 278
         },
         "gdpval_aa": {
-          "score": 1320,
+          "score": 1330,
           "cost_usd": 0.045,
-          "time_s": 163
+          "time_s": 152
         },
         "gdp_pdf": {
           "score": 0.222,
           "cost_usd": 0.0404,
-          "time_s": 64
+          "time_s": 59.4
         },
         "automationbench_aa": {
           "score": 0.356,
           "cost_usd": 0.0562,
-          "time_s": 136
+          "time_s": 126
         },
         "humanitys_last_exam": {
           "score": 0.334,
           "cost_usd": 0.00951,
-          "time_s": 75.3
+          "time_s": 69.9
         },
         "critpt": {
           "score": 0.166,
           "cost_usd": 0.019,
-          "time_s": 146
+          "time_s": 135
         },
         "aa_omniscience": {
           "score": -12,
           "cost_usd": 0.0025,
-          "time_s": 19.7
+          "time_s": 18.3
         },
         "aa_lcr": {
           "score": 0.803,
           "cost_usd": 0.0196,
-          "time_s": 5.55
+          "time_s": 5.15
         }
       }
     },
@@ -1578,52 +1404,52 @@
         "terminalbench_4_0": {
           "score": 0,
           "cost_usd": 0.0118,
-          "time_s": 48.5
+          "time_s": 46.8
         },
         "scicode": {
           "score": 0.461,
           "cost_usd": 0.00147,
-          "time_s": 7.45
+          "time_s": 7.18
         },
         "aa_briefcase": {
-          "score": 741,
+          "score": 739,
           "cost_usd": 0.0125,
-          "time_s": 41.6
+          "time_s": 40.1
         },
         "gdpval_aa": {
-          "score": 981,
+          "score": 997,
           "cost_usd": 0.00816,
-          "time_s": 38.1
+          "time_s": 36.8
         },
         "gdp_pdf": {
           "score": 0.142,
           "cost_usd": 0.0341,
-          "time_s": 13.1
+          "time_s": 12.6
         },
         "automationbench_aa": {
           "score": 0.117,
           "cost_usd": 0.0171,
-          "time_s": 43
+          "time_s": 41.4
         },
         "humanitys_last_exam": {
           "score": 0.198,
           "cost_usd": 0.00144,
-          "time_s": 10.6
+          "time_s": 10.2
         },
         "critpt": {
           "score": 0.0257,
           "cost_usd": 0.00367,
-          "time_s": 23.3
+          "time_s": 22.5
         },
         "aa_omniscience": {
           "score": -14.7,
           "cost_usd": 0.000491,
-          "time_s": 3.58
+          "time_s": 3.45
         },
         "aa_lcr": {
           "score": 0.7,
           "cost_usd": 0.0191,
-          "time_s": 2.17
+          "time_s": 2.09
         }
       }
     },
@@ -1636,52 +1462,52 @@
         "terminalbench_4_0": {
           "score": 0.116,
           "cost_usd": 0.849,
-          "time_s": 1130
+          "time_s": 1180
         },
         "scicode": {
           "score": 0.536,
           "cost_usd": 0.00927,
-          "time_s": 61.5
+          "time_s": 63.7
         },
         "aa_briefcase": {
           "score": 1340,
           "cost_usd": 0.395,
-          "time_s": 660
+          "time_s": 684
         },
         "gdpval_aa": {
-          "score": 1440,
+          "score": 1460,
           "cost_usd": 0.11,
-          "time_s": 289
+          "time_s": 299
         },
         "gdp_pdf": {
           "score": 0.24,
           "cost_usd": 0.0568,
-          "time_s": 173
+          "time_s": 179
         },
         "automationbench_aa": {
           "score": 0.502,
           "cost_usd": 0.0912,
-          "time_s": 196
+          "time_s": 204
         },
         "humanitys_last_exam": {
           "score": 0.395,
           "cost_usd": 0.0293,
-          "time_s": 206
+          "time_s": 214
         },
         "critpt": {
           "score": 0.206,
           "cost_usd": 0.0633,
-          "time_s": 418
+          "time_s": 434
         },
         "aa_omniscience": {
           "score": -10.3,
           "cost_usd": 0.011,
-          "time_s": 77.2
+          "time_s": 80.1
         },
         "aa_lcr": {
           "score": 0.837,
           "cost_usd": 0.0209,
-          "time_s": 14.5
+          "time_s": 15
         }
       }
     },
@@ -1694,52 +1520,52 @@
         "terminalbench_4_0": {
           "score": 0.00505,
           "cost_usd": 0.0251,
-          "time_s": 74.3
+          "time_s": 75.2
         },
         "scicode": {
           "score": 0.468,
           "cost_usd": 0.0018,
-          "time_s": 9.78
+          "time_s": 9.9
         },
         "aa_briefcase": {
-          "score": 935,
+          "score": 934,
           "cost_usd": 0.0293,
-          "time_s": 85
+          "time_s": 86
         },
         "gdpval_aa": {
-          "score": 1120,
+          "score": 1130,
           "cost_usd": 0.0148,
-          "time_s": 62.5
+          "time_s": 63.3
         },
         "gdp_pdf": {
           "score": 0.152,
           "cost_usd": 0.0353,
-          "time_s": 20
+          "time_s": 20.3
         },
         "automationbench_aa": {
           "score": 0.231,
           "cost_usd": 0.0291,
-          "time_s": 69.2
+          "time_s": 70
         },
         "humanitys_last_exam": {
           "score": 0.258,
           "cost_usd": 0.0029,
-          "time_s": 21.3
+          "time_s": 21.5
         },
         "critpt": {
           "score": 0.0486,
           "cost_usd": 0.00659,
-          "time_s": 44.5
+          "time_s": 45
         },
         "aa_omniscience": {
           "score": -13.2,
           "cost_usd": 0.000817,
-          "time_s": 5.96
+          "time_s": 6.03
         },
         "aa_lcr": {
           "score": 0.75,
           "cost_usd": 0.0193,
-          "time_s": 2.89
+          "time_s": 2.93
         }
       }
     },
@@ -1752,52 +1578,52 @@
         "terminalbench_4_0": {
           "score": 0.0354,
           "cost_usd": 0.3,
-          "time_s": 557
+          "time_s": 537
         },
         "scicode": {
           "score": 0.505,
           "cost_usd": 0.00447,
-          "time_s": 31.1
+          "time_s": 30
         },
         "aa_briefcase": {
           "score": 1270,
           "cost_usd": 0.213,
-          "time_s": 464
+          "time_s": 447
         },
         "gdpval_aa": {
-          "score": 1380,
+          "score": 1400,
           "cost_usd": 0.0723,
-          "time_s": 233
+          "time_s": 224
         },
         "gdp_pdf": {
           "score": 0.238,
           "cost_usd": 0.0465,
-          "time_s": 123
+          "time_s": 118
         },
         "automationbench_aa": {
           "score": 0.426,
           "cost_usd": 0.0721,
-          "time_s": 169
+          "time_s": 163
         },
         "humanitys_last_exam": {
           "score": 0.37,
           "cost_usd": 0.0167,
-          "time_s": 130
+          "time_s": 126
         },
         "critpt": {
           "score": 0.206,
           "cost_usd": 0.0395,
-          "time_s": 300
+          "time_s": 290
         },
         "aa_omniscience": {
           "score": -10.8,
           "cost_usd": 0.00502,
-          "time_s": 39
+          "time_s": 37.6
         },
         "aa_lcr": {
           "score": 0.817,
           "cost_usd": 0.0199,
-          "time_s": 8.23
+          "time_s": 7.94
         }
       }
     },
@@ -1810,52 +1636,52 @@
         "terminalbench_4_0": {
           "score": 0.207,
           "cost_usd": 2.22,
-          "time_s": 443
+          "time_s": 484
         },
         "scicode": {
           "score": 0.578,
           "cost_usd": 0.0353,
-          "time_s": 17
+          "time_s": 18.6
         },
         "aa_briefcase": {
           "score": 1370,
           "cost_usd": 2.06,
-          "time_s": 425
+          "time_s": 465
         },
         "gdpval_aa": {
-          "score": 1480,
+          "score": 1500,
           "cost_usd": 1.11,
-          "time_s": 281
+          "time_s": 307
         },
         "gdp_pdf": {
           "score": 0.278,
           "cost_usd": 0.7,
-          "time_s": 65.2
+          "time_s": 71.3
         },
         "automationbench_aa": {
           "score": 0.553,
           "cost_usd": 0.741,
-          "time_s": 165
+          "time_s": 180
         },
         "humanitys_last_exam": {
           "score": 0.46,
           "cost_usd": 0.0828,
-          "time_s": 53.8
+          "time_s": 58.8
         },
         "critpt": {
           "score": 0.257,
           "cost_usd": 0.245,
-          "time_s": 153
+          "time_s": 167
         },
         "aa_omniscience": {
           "score": 20.4,
           "cost_usd": 0.018,
-          "time_s": 11.6
+          "time_s": 12.7
         },
         "aa_lcr": {
           "score": 0.817,
           "cost_usd": 0.386,
-          "time_s": 5.67
+          "time_s": 6.2
         }
       }
     },
@@ -1868,52 +1694,52 @@
         "terminalbench_4_0": {
           "score": 0.0101,
           "cost_usd": 0.524,
-          "time_s": 128
+          "time_s": 134
         },
         "scicode": {
           "score": 0.564,
           "cost_usd": 0.0241,
-          "time_s": 9.86
+          "time_s": 10.3
         },
         "aa_briefcase": {
           "score": 1040,
           "cost_usd": 0.419,
-          "time_s": 114
+          "time_s": 118
         },
         "gdpval_aa": {
-          "score": 1290,
+          "score": 1300,
           "cost_usd": 0.268,
-          "time_s": 99.1
+          "time_s": 103
         },
         "gdp_pdf": {
           "score": 0.21,
           "cost_usd": 0.63,
-          "time_s": 19.8
+          "time_s": 20.7
         },
         "automationbench_aa": {
           "score": 0.41,
           "cost_usd": 0.47,
-          "time_s": 109
+          "time_s": 113
         },
         "humanitys_last_exam": {
           "score": 0.394,
           "cost_usd": 0.0224,
-          "time_s": 14.5
+          "time_s": 15.1
         },
         "critpt": {
           "score": 0.149,
           "cost_usd": 0.0751,
-          "time_s": 42.7
+          "time_s": 44.5
         },
         "aa_omniscience": {
           "score": 18.9,
           "cost_usd": 0.00589,
-          "time_s": 3.7
+          "time_s": 3.86
         },
         "aa_lcr": {
           "score": 0.78,
           "cost_usd": 0.382,
-          "time_s": 2.98
+          "time_s": 3.11
         }
       }
     },
@@ -1926,52 +1752,52 @@
         "terminalbench_4_0": {
           "score": 0.399,
           "cost_usd": 8.09,
-          "time_s": 942
+          "time_s": 1030
         },
         "scicode": {
           "score": 0.571,
           "cost_usd": 0.0797,
-          "time_s": 43
+          "time_s": 47.1
         },
         "aa_briefcase": {
-          "score": 1490,
+          "score": 1480,
           "cost_usd": 4.02,
-          "time_s": 710
+          "time_s": 778
         },
         "gdpval_aa": {
-          "score": 1590,
+          "score": 1610,
           "cost_usd": 2.81,
-          "time_s": 497
+          "time_s": 544
         },
         "gdp_pdf": {
           "score": 0.272,
           "cost_usd": 0.929,
-          "time_s": 173
+          "time_s": 190
         },
         "automationbench_aa": {
           "score": 0.601,
           "cost_usd": 0.972,
-          "time_s": 204
+          "time_s": 224
         },
         "humanitys_last_exam": {
           "score": 0.495,
           "cost_usd": 0.268,
-          "time_s": 163
+          "time_s": 179
         },
         "critpt": {
           "score": 0.323,
           "cost_usd": 0.859,
-          "time_s": 517
+          "time_s": 566
         },
         "aa_omniscience": {
           "score": 22,
           "cost_usd": 0.0854,
-          "time_s": 51.9
+          "time_s": 56.9
         },
         "aa_lcr": {
           "score": 0.84,
           "cost_usd": 0.402,
-          "time_s": 14.9
+          "time_s": 16.3
         }
       }
     },
@@ -1984,52 +1810,52 @@
         "terminalbench_4_0": {
           "score": 0.146,
           "cost_usd": 1.64,
-          "time_s": 312
+          "time_s": 330
         },
         "scicode": {
           "score": 0.574,
           "cost_usd": 0.0285,
-          "time_s": 12.8
+          "time_s": 13.6
         },
         "aa_briefcase": {
           "score": 1240,
           "cost_usd": 0.968,
-          "time_s": 232
+          "time_s": 246
         },
         "gdpval_aa": {
-          "score": 1400,
+          "score": 1420,
           "cost_usd": 0.595,
-          "time_s": 182
+          "time_s": 193
         },
         "gdp_pdf": {
           "score": 0.262,
           "cost_usd": 0.653,
-          "time_s": 35.3
+          "time_s": 37.4
         },
         "automationbench_aa": {
           "score": 0.513,
           "cost_usd": 0.601,
-          "time_s": 145
+          "time_s": 153
         },
         "humanitys_last_exam": {
           "score": 0.422,
           "cost_usd": 0.043,
-          "time_s": 28.6
+          "time_s": 30.3
         },
         "critpt": {
           "score": 0.229,
           "cost_usd": 0.126,
-          "time_s": 77
+          "time_s": 81.5
         },
         "aa_omniscience": {
           "score": 19.4,
           "cost_usd": 0.0102,
-          "time_s": 6.69
+          "time_s": 7.08
         },
         "aa_lcr": {
           "score": 0.803,
           "cost_usd": 0.383,
-          "time_s": 3.9
+          "time_s": 4.13
         }
       }
     },
@@ -2042,52 +1868,52 @@
         "terminalbench_4_0": {
           "score": 0.247,
           "cost_usd": 3.46,
-          "time_s": 638
+          "time_s": 673
         },
         "scicode": {
           "score": 0.571,
           "cost_usd": 0.0449,
-          "time_s": 22.8
+          "time_s": 24.1
         },
         "aa_briefcase": {
           "score": 1440,
           "cost_usd": 3.08,
-          "time_s": 588
+          "time_s": 621
         },
         "gdpval_aa": {
-          "score": 1550,
+          "score": 1570,
           "cost_usd": 1.7,
-          "time_s": 386
+          "time_s": 408
         },
         "gdp_pdf": {
           "score": 0.276,
           "cost_usd": 0.782,
-          "time_s": 112
+          "time_s": 119
         },
         "automationbench_aa": {
           "score": 0.553,
           "cost_usd": 0.811,
-          "time_s": 181
+          "time_s": 191
         },
         "humanitys_last_exam": {
           "score": 0.473,
           "cost_usd": 0.142,
-          "time_s": 90.6
+          "time_s": 95.7
         },
         "critpt": {
           "score": 0.286,
           "cost_usd": 0.437,
-          "time_s": 269
+          "time_s": 285
         },
         "aa_omniscience": {
           "score": 21,
           "cost_usd": 0.0331,
-          "time_s": 21
+          "time_s": 22.2
         },
         "aa_lcr": {
           "score": 0.823,
           "cost_usd": 0.388,
-          "time_s": 7.53
+          "time_s": 7.95
         }
       }
     },
@@ -2100,52 +1926,52 @@
         "terminalbench_4_0": {
           "score": 0.0152,
           "cost_usd": 0.628,
-          "time_s": 281
+          "time_s": 263
         },
         "scicode": {
           "score": 0.524,
           "cost_usd": 0.0232,
-          "time_s": 19.1
+          "time_s": 17.9
         },
         "aa_briefcase": {
           "score": 1200,
           "cost_usd": 0.861,
-          "time_s": 314
+          "time_s": 295
         },
         "gdpval_aa": {
-          "score": 1360,
+          "score": 1380,
           "cost_usd": 0.532,
-          "time_s": 264
+          "time_s": 248
         },
         "gdp_pdf": {
           "score": 0.208,
           "cost_usd": 0.354,
-          "time_s": 50.3
+          "time_s": 47.1
         },
         "automationbench_aa": {
           "score": 0.42,
           "cost_usd": 0.404,
-          "time_s": 136
+          "time_s": 127
         },
         "humanitys_last_exam": {
           "score": 0.385,
           "cost_usd": 0.0619,
-          "time_s": 63.6
+          "time_s": 59.6
         },
         "critpt": {
           "score": 0.229,
           "cost_usd": 0.174,
-          "time_s": 173
+          "time_s": 162
         },
         "aa_omniscience": {
           "score": -3.47,
           "cost_usd": 0.00975,
-          "time_s": 9.87
+          "time_s": 9.25
         },
         "aa_lcr": {
           "score": 0.777,
           "cost_usd": 0.193,
-          "time_s": 4.36
+          "time_s": 4.09
         }
       }
     },
@@ -2158,52 +1984,52 @@
         "terminalbench_4_0": {
           "score": 0.0152,
           "cost_usd": 0.243,
-          "time_s": 109
+          "time_s": 101
         },
         "scicode": {
           "score": 0.499,
           "cost_usd": 0.0119,
-          "time_s": 7.52
+          "time_s": 6.93
         },
         "aa_briefcase": {
           "score": 1010,
           "cost_usd": 0.3,
-          "time_s": 124
+          "time_s": 115
         },
         "gdpval_aa": {
-          "score": 1100,
+          "score": 1110,
           "cost_usd": 0.102,
-          "time_s": 63.6
+          "time_s": 58.7
         },
         "gdp_pdf": {
           "score": 0.176,
           "cost_usd": 0.346,
-          "time_s": 23.7
+          "time_s": 21.9
         },
         "automationbench_aa": {
           "score": 0.291,
           "cost_usd": 0.269,
-          "time_s": 85.3
+          "time_s": 78.7
         },
         "humanitys_last_exam": {
           "score": 0.292,
           "cost_usd": 0.0142,
-          "time_s": 14.3
+          "time_s": 13.2
         },
         "critpt": {
           "score": 0.0943,
           "cost_usd": 0.0434,
-          "time_s": 38.9
+          "time_s": 35.9
         },
         "aa_omniscience": {
           "score": -6.83,
           "cost_usd": 0.00285,
-          "time_s": 2.75
+          "time_s": 2.54
         },
         "aa_lcr": {
           "score": 0.713,
           "cost_usd": 0.191,
-          "time_s": 2.17
+          "time_s": 2
         }
       }
     },
@@ -2216,52 +2042,52 @@
         "terminalbench_4_0": {
           "score": 0.354,
           "cost_usd": 6.39,
-          "time_s": 1380
+          "time_s": 1190
         },
         "scicode": {
           "score": 0.55,
           "cost_usd": 0.114,
-          "time_s": 95.2
+          "time_s": 82.4
         },
         "aa_briefcase": {
           "score": 1330,
           "cost_usd": 2.83,
-          "time_s": 679
+          "time_s": 587
         },
         "gdpval_aa": {
-          "score": 1430,
+          "score": 1450,
           "cost_usd": 1.24,
-          "time_s": 428
+          "time_s": 370
         },
         "gdp_pdf": {
           "score": 0.24,
           "cost_usd": 0.589,
-          "time_s": 232
+          "time_s": 201
         },
         "automationbench_aa": {
           "score": 0.596,
           "cost_usd": 0.73,
-          "time_s": 221
+          "time_s": 192
         },
         "humanitys_last_exam": {
           "score": 0.429,
           "cost_usd": 0.228,
-          "time_s": 198
+          "time_s": 171
         },
         "critpt": {
           "score": 0.3,
           "cost_usd": 0.608,
-          "time_s": 503
+          "time_s": 435
         },
         "aa_omniscience": {
           "score": 0.05,
           "cost_usd": 0.0703,
-          "time_s": 61
+          "time_s": 52.8
         },
         "aa_lcr": {
           "score": 0.83,
           "cost_usd": 0.213,
-          "time_s": 21.2
+          "time_s": 18.3
         }
       }
     },
@@ -2274,52 +2100,52 @@
         "terminalbench_4_0": {
           "score": 0.0101,
           "cost_usd": 0.341,
-          "time_s": 162
+          "time_s": 136
         },
         "scicode": {
           "score": 0.505,
           "cost_usd": 0.015,
-          "time_s": 11
+          "time_s": 9.29
         },
         "aa_briefcase": {
           "score": 1040,
           "cost_usd": 0.384,
-          "time_s": 157
+          "time_s": 132
         },
         "gdpval_aa": {
-          "score": 1250,
+          "score": 1270,
           "cost_usd": 0.204,
-          "time_s": 122
+          "time_s": 102
         },
         "gdp_pdf": {
           "score": 0.17,
           "cost_usd": 0.349,
-          "time_s": 27.8
+          "time_s": 23.4
         },
         "automationbench_aa": {
           "score": 0.335,
           "cost_usd": 0.301,
-          "time_s": 103
+          "time_s": 86.4
         },
         "humanitys_last_exam": {
           "score": 0.333,
           "cost_usd": 0.0255,
-          "time_s": 27
+          "time_s": 22.7
         },
         "critpt": {
           "score": 0.174,
           "cost_usd": 0.0696,
-          "time_s": 68
+          "time_s": 57.2
         },
         "aa_omniscience": {
           "score": -5.13,
           "cost_usd": 0.00466,
-          "time_s": 4.79
+          "time_s": 4.03
         },
         "aa_lcr": {
           "score": 0.74,
           "cost_usd": 0.191,
-          "time_s": 2.93
+          "time_s": 2.47
         }
       }
     },
@@ -2332,52 +2158,52 @@
         "terminalbench_4_0": {
           "score": 0.101,
           "cost_usd": 1.57,
-          "time_s": 578
+          "time_s": 502
         },
         "scicode": {
           "score": 0.523,
           "cost_usd": 0.0325,
-          "time_s": 27.4
+          "time_s": 23.8
         },
         "aa_briefcase": {
-          "score": 1340,
+          "score": 1330,
           "cost_usd": 1.81,
-          "time_s": 573
+          "time_s": 498
         },
         "gdpval_aa": {
-          "score": 1430,
+          "score": 1450,
           "cost_usd": 0.804,
-          "time_s": 354
+          "time_s": 307
         },
         "gdp_pdf": {
           "score": 0.246,
           "cost_usd": 0.416,
-          "time_s": 109
+          "time_s": 94.4
         },
         "automationbench_aa": {
           "score": 0.471,
           "cost_usd": 0.528,
-          "time_s": 170
+          "time_s": 148
         },
         "humanitys_last_exam": {
           "score": 0.419,
           "cost_usd": 0.0957,
-          "time_s": 93.8
+          "time_s": 81.5
         },
         "critpt": {
           "score": 0.271,
           "cost_usd": 0.291,
-          "time_s": 279
+          "time_s": 243
         },
         "aa_omniscience": {
           "score": -2.98,
           "cost_usd": 0.0162,
-          "time_s": 15.7
+          "time_s": 13.7
         },
         "aa_lcr": {
           "score": 0.79,
           "cost_usd": 0.195,
-          "time_s": 6.07
+          "time_s": 5.28
         }
       }
     },
@@ -2390,52 +2216,52 @@
         "terminalbench_4_0": {
           "score": 0.54,
           "cost_usd": 4.05,
-          "time_s": 646
+          "time_s": 699
         },
         "scicode": {
           "score": 0.554,
           "cost_usd": 0.0696,
-          "time_s": 19.9
+          "time_s": 21.6
         },
         "aa_briefcase": {
           "score": 1510,
           "cost_usd": 4.76,
-          "time_s": 682
+          "time_s": 738
         },
         "gdpval_aa": {
           "score": 1480,
           "cost_usd": 2.43,
-          "time_s": 396
+          "time_s": 429
         },
         "gdp_pdf": {
           "score": 0.31,
           "cost_usd": 1.79,
-          "time_s": 68.3
+          "time_s": 74
         },
         "automationbench_aa": {
           "score": 0.666,
           "cost_usd": 1.3,
-          "time_s": 195
+          "time_s": 211
         },
         "humanitys_last_exam": {
           "score": 0.531,
           "cost_usd": 0.162,
-          "time_s": 67.3
+          "time_s": 72.9
         },
         "critpt": {
           "score": 0.289,
           "cost_usd": 0.434,
-          "time_s": 169
+          "time_s": 183
         },
         "aa_omniscience": {
           "score": 43.7,
           "cost_usd": 0.0272,
-          "time_s": 11
+          "time_s": 11.9
         },
         "aa_lcr": {
           "score": 0.8,
           "cost_usd": 0.96,
-          "time_s": 6.95
+          "time_s": 7.53
         }
       }
     },
@@ -2448,52 +2274,52 @@
         "terminalbench_4_0": {
           "score": 0.419,
           "cost_usd": 2.25,
-          "time_s": 329
+          "time_s": 345
         },
         "scicode": {
           "score": 0.541,
           "cost_usd": 0.0425,
-          "time_s": 8.94
+          "time_s": 9.39
         },
         "aa_briefcase": {
           "score": 1260,
           "cost_usd": 1.44,
-          "time_s": 219
+          "time_s": 230
         },
         "gdpval_aa": {
           "score": 1370,
           "cost_usd": 0.855,
-          "time_s": 148
+          "time_s": 155
         },
         "gdp_pdf": {
           "score": 0.304,
           "cost_usd": 1.7,
-          "time_s": 27.6
+          "time_s": 29
         },
         "automationbench_aa": {
           "score": 0.591,
           "cost_usd": 0.999,
-          "time_s": 134
+          "time_s": 141
         },
         "humanitys_last_exam": {
           "score": 0.492,
           "cost_usd": 0.0389,
-          "time_s": 15.8
+          "time_s": 16.6
         },
         "critpt": {
           "score": 0.263,
           "cost_usd": 0.145,
-          "time_s": 49.4
+          "time_s": 51.9
         },
         "aa_omniscience": {
           "score": 40.5,
           "cost_usd": 0.00696,
-          "time_s": 2.53
+          "time_s": 2.66
         },
         "aa_lcr": {
           "score": 0.8,
           "cost_usd": 0.95,
-          "time_s": 2.99
+          "time_s": 3.14
         }
       }
     },
@@ -2506,52 +2332,52 @@
         "terminalbench_4_0": {
           "score": 0.591,
           "cost_usd": 8.5,
-          "time_s": 1460
+          "time_s": 1600
         },
         "scicode": {
           "score": 0.565,
           "cost_usd": 0.232,
-          "time_s": 80.9
+          "time_s": 88.4
         },
         "aa_briefcase": {
           "score": 1570,
           "cost_usd": 9.5,
-          "time_s": 1330
+          "time_s": 1450
         },
         "gdpval_aa": {
           "score": 1540,
           "cost_usd": 4.53,
-          "time_s": 772
+          "time_s": 844
         },
         "gdp_pdf": {
           "score": 0.31,
           "cost_usd": 2.08,
-          "time_s": 179
+          "time_s": 195
         },
         "automationbench_aa": {
           "score": 0.685,
           "cost_usd": 1.6,
-          "time_s": 249
+          "time_s": 272
         },
         "humanitys_last_exam": {
           "score": 0.547,
           "cost_usd": 0.378,
-          "time_s": 145
+          "time_s": 158
         },
         "critpt": {
           "score": 0.317,
           "cost_usd": 1.17,
-          "time_s": 436
+          "time_s": 477
         },
         "aa_omniscience": {
           "score": 43.4,
           "cost_usd": 0.097,
-          "time_s": 37
+          "time_s": 40.4
         },
         "aa_lcr": {
           "score": 0.807,
           "cost_usd": 0.997,
-          "time_s": 20.8
+          "time_s": 22.8
         }
       }
     },
@@ -2564,52 +2390,52 @@
         "terminalbench_4_0": {
           "score": 0.495,
           "cost_usd": 4.43,
-          "time_s": 649
+          "time_s": 726
         },
         "scicode": {
           "score": 0.542,
           "cost_usd": 0.0509,
-          "time_s": 12.3
+          "time_s": 13.8
         },
         "aa_briefcase": {
           "score": 1460,
           "cost_usd": 3.94,
-          "time_s": 578
+          "time_s": 647
         },
         "gdpval_aa": {
           "score": 1470,
           "cost_usd": 1.82,
-          "time_s": 283
+          "time_s": 317
         },
         "gdp_pdf": {
           "score": 0.304,
           "cost_usd": 1.72,
-          "time_s": 37.6
+          "time_s": 42.1
         },
         "automationbench_aa": {
           "score": 0.646,
           "cost_usd": 1.18,
-          "time_s": 171
+          "time_s": 192
         },
         "humanitys_last_exam": {
           "score": 0.527,
           "cost_usd": 0.101,
-          "time_s": 42.6
+          "time_s": 47.7
         },
         "critpt": {
           "score": 0.291,
           "cost_usd": 0.285,
-          "time_s": 109
+          "time_s": 122
         },
         "aa_omniscience": {
           "score": 42.2,
           "cost_usd": 0.015,
-          "time_s": 6.03
+          "time_s": 6.75
         },
         "aa_lcr": {
           "score": 0.797,
           "cost_usd": 0.953,
-          "time_s": 4.34
+          "time_s": 4.86
         }
       }
     },
@@ -2622,52 +2448,52 @@
         "terminalbench_4_0": {
           "score": 0.596,
           "cost_usd": 5.86,
-          "time_s": 887
+          "time_s": 1000
         },
         "scicode": {
           "score": 0.557,
           "cost_usd": 0.122,
-          "time_s": 40.4
+          "time_s": 45.6
         },
         "aa_briefcase": {
           "score": 1540,
           "cost_usd": 6.56,
-          "time_s": 916
+          "time_s": 1030
         },
         "gdpval_aa": {
           "score": 1520,
           "cost_usd": 3.04,
-          "time_s": 492
+          "time_s": 557
         },
         "gdp_pdf": {
           "score": 0.322,
           "cost_usd": 1.91,
-          "time_s": 114
+          "time_s": 129
         },
         "automationbench_aa": {
           "score": 0.672,
           "cost_usd": 1.41,
-          "time_s": 211
+          "time_s": 239
         },
         "humanitys_last_exam": {
           "score": 0.546,
           "cost_usd": 0.253,
-          "time_s": 102
+          "time_s": 116
         },
         "critpt": {
           "score": 0.314,
           "cost_usd": 0.798,
-          "time_s": 312
+          "time_s": 352
         },
         "aa_omniscience": {
           "score": 43.4,
           "cost_usd": 0.0502,
-          "time_s": 20.1
+          "time_s": 22.7
         },
         "aa_lcr": {
           "score": 0.8,
           "cost_usd": 0.97,
-          "time_s": 10.9
+          "time_s": 12.3
         }
       }
     },
@@ -2675,57 +2501,57 @@
       "provider": "codex",
       "model": "gpt-6-luna",
       "effort": "high",
-      "intelligence_index": 32.15,
+      "intelligence_index": 32.93,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.0455,
           "cost_usd": 0.12,
-          "time_s": 596
+          "time_s": 650
         },
         "scicode": {
           "score": 0.503,
           "cost_usd": 0.00098,
-          "time_s": 12.3
+          "time_s": 13.4
         },
         "aa_briefcase": {
-          "score": 1180,
+          "score": 1190,
           "cost_usd": 0.0622,
-          "time_s": 341
+          "time_s": 372
         },
         "gdpval_aa": {
-          "score": 1290,
-          "cost_usd": 0.0321,
-          "time_s": 204
+          "score": 1340,
+          "cost_usd": 0.0319,
+          "time_s": 219
         },
         "gdp_pdf": {
-          "score": 0.138,
-          "cost_usd": 0.0189,
-          "time_s": 45.1
+          "score": 0.182,
+          "cost_usd": 0.0188,
+          "time_s": 47.1
         },
         "automationbench_aa": {
           "score": 0.478,
           "cost_usd": 0.0207,
-          "time_s": 134
+          "time_s": 146
         },
         "humanitys_last_exam": {
           "score": 0.329,
           "cost_usd": 0.00304,
-          "time_s": 48.3
+          "time_s": 52.7
         },
         "critpt": {
           "score": 0.154,
           "cost_usd": 0.00576,
-          "time_s": 87.7
+          "time_s": 95.6
         },
         "aa_omniscience": {
           "score": -5.5,
           "cost_usd": 0.000583,
-          "time_s": 9.16
+          "time_s": 9.99
         },
         "aa_lcr": {
           "score": 0.793,
           "cost_usd": 0.0097,
-          "time_s": 4.35
+          "time_s": 4.74
         }
       }
     },
@@ -2733,57 +2559,57 @@
       "provider": "codex",
       "model": "gpt-6-luna",
       "effort": "low",
-      "intelligence_index": 20.92,
+      "intelligence_index": 21.53,
       "evals": {
         "terminalbench_4_0": {
           "score": 0,
           "cost_usd": 0.00545,
-          "time_s": 29.4
+          "time_s": 30.2
         },
         "scicode": {
           "score": 0.469,
           "cost_usd": 0.000511,
-          "time_s": 4.69
+          "time_s": 4.8
         },
         "aa_briefcase": {
-          "score": 725,
+          "score": 741,
           "cost_usd": 0.00609,
-          "time_s": 34.3
+          "time_s": 35.2
         },
         "gdpval_aa": {
-          "score": 992,
-          "cost_usd": 0.00384,
-          "time_s": 32.4
+          "score": 1040,
+          "cost_usd": 0.00379,
+          "time_s": 33.8
         },
         "gdp_pdf": {
-          "score": 0.064,
+          "score": 0.09,
           "cost_usd": 0.0166,
-          "time_s": 7.56
+          "time_s": 7.63
         },
         "automationbench_aa": {
           "score": 0.12,
           "cost_usd": 0.00588,
-          "time_s": 25.8
+          "time_s": 26.4
         },
         "humanitys_last_exam": {
           "score": 0.203,
           "cost_usd": 0.000522,
-          "time_s": 7.8
+          "time_s": 8
         },
         "critpt": {
           "score": 0.0257,
           "cost_usd": 0.00118,
-          "time_s": 14.6
+          "time_s": 15
         },
         "aa_omniscience": {
           "score": -9.17,
           "cost_usd": 0.000175,
-          "time_s": 2.6
+          "time_s": 2.66
         },
         "aa_lcr": {
           "score": 0.74,
           "cost_usd": 0.00956,
-          "time_s": 2.03
+          "time_s": 2.09
         }
       }
     },
@@ -2791,57 +2617,57 @@
       "provider": "codex",
       "model": "gpt-6-luna",
       "effort": "max",
-      "intelligence_index": 37.26,
+      "intelligence_index": 38.12,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.126,
           "cost_usd": 0.236,
-          "time_s": 1010
+          "time_s": 1140
         },
         "scicode": {
           "score": 0.546,
           "cost_usd": 0.00368,
-          "time_s": 49.5
+          "time_s": 55.6
         },
         "aa_briefcase": {
-          "score": 1300,
+          "score": 1340,
           "cost_usd": 0.17,
-          "time_s": 789
+          "time_s": 886
         },
         "gdpval_aa": {
-          "score": 1370,
-          "cost_usd": 0.0904,
-          "time_s": 452
+          "score": 1430,
+          "cost_usd": 0.0894,
+          "time_s": 492
         },
         "gdp_pdf": {
-          "score": 0.204,
+          "score": 0.228,
           "cost_usd": 0.0285,
-          "time_s": 178
+          "time_s": 200
         },
         "automationbench_aa": {
           "score": 0.532,
           "cost_usd": 0.0364,
-          "time_s": 244
+          "time_s": 274
         },
         "humanitys_last_exam": {
           "score": 0.385,
           "cost_usd": 0.0118,
-          "time_s": 169
+          "time_s": 190
         },
         "critpt": {
           "score": 0.194,
           "cost_usd": 0.0266,
-          "time_s": 376
+          "time_s": 423
         },
         "aa_omniscience": {
           "score": 0.65,
           "cost_usd": 0.00252,
-          "time_s": 36
+          "time_s": 40.5
         },
         "aa_lcr": {
           "score": 0.833,
           "cost_usd": 0.0102,
-          "time_s": 10.8
+          "time_s": 12.2
         }
       }
     },
@@ -2849,7 +2675,7 @@
       "provider": "codex",
       "model": "gpt-6-luna",
       "effort": "medium",
-      "intelligence_index": 29.46,
+      "intelligence_index": 29.93,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.0253,
@@ -2862,18 +2688,18 @@
           "time_s": null
         },
         "aa_briefcase": {
-          "score": 1060,
+          "score": 1100,
           "cost_usd": 0.0331,
           "time_s": null
         },
         "gdpval_aa": {
-          "score": 1220,
-          "cost_usd": 0.0177,
+          "score": 1260,
+          "cost_usd": 0.0169,
           "time_s": null
         },
         "gdp_pdf": {
-          "score": 0.14,
-          "cost_usd": 0.0175,
+          "score": 0.138,
+          "cost_usd": 0.0174,
           "time_s": null
         },
         "automationbench_aa": {
@@ -2907,57 +2733,57 @@
       "provider": "codex",
       "model": "gpt-6-luna",
       "effort": "xhigh",
-      "intelligence_index": 33.88,
+      "intelligence_index": 34.56,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.0808,
           "cost_usd": 0.198,
-          "time_s": 782
+          "time_s": 883
         },
         "scicode": {
           "score": 0.517,
           "cost_usd": 0.00144,
-          "time_s": 18.3
+          "time_s": 20.6
         },
         "aa_briefcase": {
-          "score": 1220,
+          "score": 1240,
           "cost_usd": 0.0825,
-          "time_s": 430
+          "time_s": 485
         },
         "gdpval_aa": {
-          "score": 1300,
-          "cost_usd": 0.0448,
-          "time_s": 244
+          "score": 1360,
+          "cost_usd": 0.0457,
+          "time_s": 275
         },
         "gdp_pdf": {
-          "score": 0.168,
-          "cost_usd": 0.0206,
-          "time_s": 66.4
+          "score": 0.186,
+          "cost_usd": 0.0207,
+          "time_s": 76.7
         },
         "automationbench_aa": {
           "score": 0.478,
           "cost_usd": 0.0233,
-          "time_s": 150
+          "time_s": 169
         },
         "humanitys_last_exam": {
           "score": 0.343,
           "cost_usd": 0.00509,
-          "time_s": 75.9
+          "time_s": 85.7
         },
         "critpt": {
           "score": 0.174,
           "cost_usd": 0.009,
-          "time_s": 130
+          "time_s": 147
         },
         "aa_omniscience": {
           "score": -1.83,
           "cost_usd": 0.000963,
-          "time_s": 14.3
+          "time_s": 16.1
         },
         "aa_lcr": {
           "score": 0.8,
           "cost_usd": 0.00982,
-          "time_s": 5.76
+          "time_s": 6.5
         }
       }
     },
@@ -2965,57 +2791,57 @@
       "provider": "codex",
       "model": "gpt-6-sol",
       "effort": "high",
-      "intelligence_index": 42.82,
+      "intelligence_index": 42.4,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.263,
           "cost_usd": 1.6,
-          "time_s": 565
+          "time_s": 456
         },
         "scicode": {
           "score": 0.549,
           "cost_usd": 0.013,
-          "time_s": 13.3
+          "time_s": 10.8
         },
         "aa_briefcase": {
-          "score": 1290,
+          "score": 1270,
           "cost_usd": 0.639,
-          "time_s": 274
+          "time_s": 221
         },
         "gdpval_aa": {
-          "score": 1380,
-          "cost_usd": 0.483,
-          "time_s": 234
+          "score": 1390,
+          "cost_usd": 0.459,
+          "time_s": 187
         },
         "gdp_pdf": {
-          "score": 0.28,
+          "score": 0.244,
           "cost_usd": 0.348,
-          "time_s": 37.3
+          "time_s": 29.2
         },
         "automationbench_aa": {
           "score": 0.601,
           "cost_usd": 0.254,
-          "time_s": 128
+          "time_s": 103
         },
         "humanitys_last_exam": {
           "score": 0.441,
           "cost_usd": 0.0331,
-          "time_s": 47.4
+          "time_s": 38.2
         },
         "critpt": {
           "score": 0.254,
           "cost_usd": 0.0866,
-          "time_s": 118
+          "time_s": 95.4
         },
         "aa_omniscience": {
           "score": 26.8,
           "cost_usd": 0.00635,
-          "time_s": 8.89
+          "time_s": 7.18
         },
         "aa_lcr": {
           "score": 0.837,
           "cost_usd": 0.191,
-          "time_s": 3.91
+          "time_s": 3.16
         }
       }
     },
@@ -3023,57 +2849,57 @@
       "provider": "codex",
       "model": "gpt-6-sol",
       "effort": "low",
-      "intelligence_index": 33.9,
+      "intelligence_index": 34.15,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.0909,
           "cost_usd": 0.489,
-          "time_s": 247
+          "time_s": 184
         },
         "scicode": {
           "score": 0.502,
           "cost_usd": 0.00743,
-          "time_s": 5.19
+          "time_s": 3.87
         },
         "aa_briefcase": {
-          "score": 905,
+          "score": 886,
           "cost_usd": 0.127,
-          "time_s": 63.1
+          "time_s": 47.1
         },
         "gdpval_aa": {
-          "score": 1180,
-          "cost_usd": 0.0869,
-          "time_s": 60.5
+          "score": 1200,
+          "cost_usd": 0.0887,
+          "time_s": 45.3
         },
         "gdp_pdf": {
-          "score": 0.218,
+          "score": 0.242,
           "cost_usd": 0.331,
-          "time_s": 12.2
+          "time_s": 8.88
         },
         "automationbench_aa": {
           "score": 0.539,
           "cost_usd": 0.191,
-          "time_s": 93
+          "time_s": 69.3
         },
         "humanitys_last_exam": {
           "score": 0.349,
           "cost_usd": 0.00698,
-          "time_s": 9.5
+          "time_s": 7.09
         },
         "critpt": {
           "score": 0.163,
           "cost_usd": 0.0219,
-          "time_s": 25.1
+          "time_s": 18.7
         },
         "aa_omniscience": {
           "score": 26.5,
           "cost_usd": 0.00156,
-          "time_s": 1.96
+          "time_s": 1.46
         },
         "aa_lcr": {
           "score": 0.793,
           "cost_usd": 0.19,
-          "time_s": 1.99
+          "time_s": 1.49
         }
       }
     },
@@ -3081,57 +2907,57 @@
       "provider": "codex",
       "model": "gpt-6-sol",
       "effort": "max",
-      "intelligence_index": 47.53,
+      "intelligence_index": 47.63,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.439,
           "cost_usd": 4,
-          "time_s": 1280
+          "time_s": 1100
         },
         "scicode": {
           "score": 0.576,
           "cost_usd": 0.0425,
-          "time_s": 50.7
+          "time_s": 43.6
         },
         "aa_briefcase": {
           "score": 1480,
           "cost_usd": 2.62,
-          "time_s": 895
+          "time_s": 769
         },
         "gdpval_aa": {
-          "score": 1490,
-          "cost_usd": 1.32,
-          "time_s": 546
+          "score": 1510,
+          "cost_usd": 1.28,
+          "time_s": 467
         },
         "gdp_pdf": {
-          "score": 0.248,
-          "cost_usd": 0.429,
-          "time_s": 139
+          "score": 0.252,
+          "cost_usd": 0.425,
+          "time_s": 116
         },
         "automationbench_aa": {
           "score": 0.616,
           "cost_usd": 0.358,
-          "time_s": 178
+          "time_s": 153
         },
         "humanitys_last_exam": {
           "score": 0.479,
           "cost_usd": 0.12,
-          "time_s": 156
+          "time_s": 135
         },
         "critpt": {
           "score": 0.309,
           "cost_usd": 0.324,
-          "time_s": 418
+          "time_s": 360
         },
         "aa_omniscience": {
           "score": 27.1,
           "cost_usd": 0.0269,
-          "time_s": 35
+          "time_s": 30.1
         },
         "aa_lcr": {
           "score": 0.837,
           "cost_usd": 0.198,
-          "time_s": 12.5
+          "time_s": 10.8
         }
       }
     },
@@ -3139,7 +2965,7 @@
       "provider": "codex",
       "model": "gpt-6-sol",
       "effort": "medium",
-      "intelligence_index": 39.78,
+      "intelligence_index": 39.81,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.187,
@@ -3152,17 +2978,17 @@
           "time_s": null
         },
         "aa_briefcase": {
-          "score": 1140,
+          "score": 1150,
           "cost_usd": 0.33,
           "time_s": null
         },
         "gdpval_aa": {
-          "score": 1320,
-          "cost_usd": 0.238,
+          "score": 1350,
+          "cost_usd": 0.24,
           "time_s": null
         },
         "gdp_pdf": {
-          "score": 0.254,
+          "score": 0.238,
           "cost_usd": 0.337,
           "time_s": null
         },
@@ -3197,57 +3023,57 @@
       "provider": "codex",
       "model": "gpt-6-sol",
       "effort": "xhigh",
-      "intelligence_index": 44.1,
+      "intelligence_index": 44.24,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.303,
           "cost_usd": 1.91,
-          "time_s": 709
+          "time_s": 622
         },
         "scicode": {
           "score": 0.551,
           "cost_usd": 0.0215,
-          "time_s": 24.4
+          "time_s": 21.4
         },
         "aa_briefcase": {
           "score": 1360,
           "cost_usd": 1.13,
-          "time_s": 449
+          "time_s": 394
         },
         "gdpval_aa": {
-          "score": 1440,
-          "cost_usd": 0.767,
-          "time_s": 350
+          "score": 1460,
+          "cost_usd": 0.742,
+          "time_s": 302
         },
         "gdp_pdf": {
-          "score": 0.238,
-          "cost_usd": 0.372,
-          "time_s": 68.7
+          "score": 0.246,
+          "cost_usd": 0.37,
+          "time_s": 57.8
         },
         "automationbench_aa": {
           "score": 0.617,
           "cost_usd": 0.292,
-          "time_s": 145
+          "time_s": 127
         },
         "humanitys_last_exam": {
           "score": 0.463,
           "cost_usd": 0.0591,
-          "time_s": 81.4
+          "time_s": 71.4
         },
         "critpt": {
           "score": 0.28,
           "cost_usd": 0.154,
-          "time_s": 206
+          "time_s": 181
         },
         "aa_omniscience": {
           "score": 26.7,
           "cost_usd": 0.0117,
-          "time_s": 16
+          "time_s": 14
         },
         "aa_lcr": {
           "score": 0.813,
           "cost_usd": 0.193,
-          "time_s": 6.4
+          "time_s": 5.62
         }
       }
     },
@@ -3255,57 +3081,57 @@
       "provider": "claude_code",
       "model": "claude-sonnet-5-5",
       "effort": "medium",
-      "intelligence_index": 40.74,
+      "intelligence_index": 40.84,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.298,
-          "cost_usd": 2.25,
-          "time_s": 353
+          "cost_usd": 1.58,
+          "time_s": 327
         },
         "scicode": {
           "score": 0.529,
           "cost_usd": 0.0135,
-          "time_s": 4.91
+          "time_s": 4.55
         },
         "aa_briefcase": {
-          "score": 1460,
-          "cost_usd": 1.64,
-          "time_s": 444
+          "score": 1440,
+          "cost_usd": 1.39,
+          "time_s": 454
         },
         "gdpval_aa": {
-          "score": 1290,
-          "cost_usd": 0.29,
-          "time_s": 131
+          "score": 1320,
+          "cost_usd": 0.318,
+          "time_s": 151
         },
         "gdp_pdf": {
           "score": 0.202,
           "cost_usd": 0.381,
-          "time_s": 19.4
+          "time_s": 18
         },
         "automationbench_aa": {
-          "score": 0.529,
-          "cost_usd": 0.289,
-          "time_s": 83.9
+          "score": 0.549,
+          "cost_usd": 0.262,
+          "time_s": 77.4
         },
         "humanitys_last_exam": {
           "score": 0.398,
           "cost_usd": 0.0232,
-          "time_s": 15.2
+          "time_s": 14.1
         },
         "critpt": {
           "score": 0.169,
           "cost_usd": 0.149,
-          "time_s": 95.7
+          "time_s": 88.7
         },
         "aa_omniscience": {
           "score": 20.1,
           "cost_usd": 0.00294,
-          "time_s": 1.77
+          "time_s": 1.64
         },
         "aa_lcr": {
           "score": 0.763,
           "cost_usd": 0.292,
-          "time_s": 3.1
+          "time_s": 2.87
         }
       }
     },
@@ -3313,57 +3139,57 @@
       "provider": "claude_code",
       "model": "claude-sonnet-5-5",
       "effort": "high",
-      "intelligence_index": 46.74,
+      "intelligence_index": 46.75,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.439,
-          "cost_usd": 3.06,
-          "time_s": 502
+          "cost_usd": 2.19,
+          "time_s": 472
         },
         "scicode": {
           "score": 0.537,
           "cost_usd": 0.016,
-          "time_s": 6.14
+          "time_s": 5.78
         },
         "aa_briefcase": {
-          "score": 1630,
-          "cost_usd": 3.95,
-          "time_s": 813
+          "score": 1640,
+          "cost_usd": 3.27,
+          "time_s": 862
         },
         "gdpval_aa": {
-          "score": 1520,
-          "cost_usd": 0.722,
-          "time_s": 230
+          "score": 1550,
+          "cost_usd": 0.688,
+          "time_s": 246
         },
         "gdp_pdf": {
           "score": 0.252,
           "cost_usd": 0.409,
-          "time_s": 36.4
+          "time_s": 34.2
         },
         "automationbench_aa": {
-          "score": 0.591,
-          "cost_usd": 0.344,
-          "time_s": 95.9
+          "score": 0.594,
+          "cost_usd": 0.313,
+          "time_s": 90.5
         },
         "humanitys_last_exam": {
           "score": 0.458,
           "cost_usd": 0.0473,
-          "time_s": 30.4
+          "time_s": 28.6
         },
         "critpt": {
           "score": 0.246,
           "cost_usd": 0.281,
-          "time_s": 177
+          "time_s": 167
         },
         "aa_omniscience": {
           "score": 20.9,
           "cost_usd": 0.00536,
-          "time_s": 3.28
+          "time_s": 3.09
         },
         "aa_lcr": {
           "score": 0.78,
           "cost_usd": 0.294,
-          "time_s": 4.48
+          "time_s": 4.22
         }
       }
     },
@@ -3371,57 +3197,57 @@
       "provider": "claude_code",
       "model": "claude-sonnet-5-5",
       "effort": "xhigh",
-      "intelligence_index": 51.85,
+      "intelligence_index": 51.9,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.571,
-          "cost_usd": 8.87,
-          "time_s": 1130
+          "cost_usd": 6.08,
+          "time_s": 1140
         },
         "scicode": {
           "score": 0.573,
           "cost_usd": 0.0237,
-          "time_s": 9.8
+          "time_s": 9.83
         },
         "aa_briefcase": {
           "score": 1750,
-          "cost_usd": 9.63,
-          "time_s": 1390
+          "cost_usd": 6.98,
+          "time_s": 1430
         },
         "gdpval_aa": {
-          "score": 1720,
-          "cost_usd": 2.47,
-          "time_s": 549
+          "score": 1730,
+          "cost_usd": 1.95,
+          "time_s": 553
         },
         "gdp_pdf": {
           "score": 0.246,
           "cost_usd": 0.46,
-          "time_s": 63.2
+          "time_s": 63.4
         },
         "automationbench_aa": {
-          "score": 0.647,
-          "cost_usd": 0.456,
-          "time_s": 120
+          "score": 0.655,
+          "cost_usd": 0.422,
+          "time_s": 123
         },
         "humanitys_last_exam": {
           "score": 0.5,
           "cost_usd": 0.118,
-          "time_s": 69
+          "time_s": 69.3
         },
         "critpt": {
           "score": 0.311,
           "cost_usd": 0.65,
-          "time_s": 378
+          "time_s": 379
         },
         "aa_omniscience": {
           "score": 23.5,
           "cost_usd": 0.00849,
-          "time_s": 4.81
+          "time_s": 4.82
         },
         "aa_lcr": {
           "score": 0.797,
           "cost_usd": 0.297,
-          "time_s": 5.63
+          "time_s": 5.64
         }
       }
     },
@@ -3429,57 +3255,57 @@
       "provider": "claude_code",
       "model": "claude-sonnet-5-5",
       "effort": "max",
-      "intelligence_index": 55.98,
+      "intelligence_index": 56,
       "evals": {
         "terminalbench_4_0": {
           "score": 0.636,
-          "cost_usd": 18.8,
-          "time_s": 1700
+          "cost_usd": 12.6,
+          "time_s": 1740
         },
         "scicode": {
           "score": 0.61,
           "cost_usd": 0.278,
-          "time_s": 120
+          "time_s": 123
         },
         "aa_briefcase": {
-          "score": 1810,
-          "cost_usd": 29.2,
-          "time_s": 2670
+          "score": 1820,
+          "cost_usd": 20.5,
+          "time_s": 2850
         },
         "gdpval_aa": {
           "score": 1840,
-          "cost_usd": 9.03,
-          "time_s": 1240
+          "cost_usd": 6.84,
+          "time_s": 1300
         },
         "gdp_pdf": {
           "score": 0.258,
           "cost_usd": 0.794,
-          "time_s": 197
+          "time_s": 202
         },
         "automationbench_aa": {
-          "score": 0.713,
-          "cost_usd": 1.09,
-          "time_s": 262
+          "score": 0.718,
+          "cost_usd": 1.03,
+          "time_s": 278
         },
         "humanitys_last_exam": {
           "score": 0.55,
           "cost_usd": 0.544,
-          "time_s": 242
+          "time_s": 248
         },
         "critpt": {
           "score": 0.314,
           "cost_usd": 1.89,
-          "time_s": 838
+          "time_s": 858
         },
         "aa_omniscience": {
           "score": 32.3,
           "cost_usd": 0.147,
-          "time_s": 65.1
+          "time_s": 66.7
         },
         "aa_lcr": {
           "score": 0.827,
           "cost_usd": 0.339,
-          "time_s": 23.3
+          "time_s": 23.8
         }
       }
     },
@@ -3492,52 +3318,52 @@
         "terminalbench_4_0": {
           "score": 0.308,
           "cost_usd": 0.383,
-          "time_s": 256
+          "time_s": 369
         },
         "scicode": {
           "score": 0.532,
           "cost_usd": 0.00842,
-          "time_s": 5.9
+          "time_s": 8.5
         },
         "aa_briefcase": {
           "score": 1120,
           "cost_usd": 0.177,
-          "time_s": 99.1
+          "time_s": 143
         },
         "gdpval_aa": {
           "score": 1300,
           "cost_usd": 0.105,
-          "time_s": 75
+          "time_s": 108
         },
         "gdp_pdf": {
           "score": 0.27,
           "cost_usd": 0.334,
-          "time_s": 16.9
+          "time_s": 24.4
         },
         "automationbench_aa": {
           "score": 0.526,
           "cost_usd": 0.159,
-          "time_s": 80.5
+          "time_s": 116
         },
         "humanitys_last_exam": {
           "score": 0.474,
           "cost_usd": 0.00731,
-          "time_s": 9.85
+          "time_s": 14.2
         },
         "critpt": {
           "score": 0.249,
           "cost_usd": 0.0272,
-          "time_s": 30.6
+          "time_s": 44.1
         },
         "aa_omniscience": {
           "score": 37.6,
           "cost_usd": 0.00145,
-          "time_s": 1.78
+          "time_s": 2.57
         },
         "aa_lcr": {
           "score": 0.84,
           "cost_usd": 0.19,
-          "time_s": 1.86
+          "time_s": 2.68
         }
       }
     },
@@ -3550,52 +3376,52 @@
         "terminalbench_4_0": {
           "score": 0.48,
           "cost_usd": 0.614,
-          "time_s": 520
+          "time_s": 647
         },
         "scicode": {
           "score": 0.532,
           "cost_usd": 0.00931,
-          "time_s": 7.83
+          "time_s": 9.74
         },
         "aa_briefcase": {
           "score": 1360,
           "cost_usd": 0.464,
-          "time_s": 304
+          "time_s": 379
         },
         "gdpval_aa": {
           "score": 1430,
           "cost_usd": 0.231,
-          "time_s": 165
+          "time_s": 205
         },
         "gdp_pdf": {
           "score": 0.3,
           "cost_usd": 0.337,
-          "time_s": 24
+          "time_s": 29.9
         },
         "automationbench_aa": {
           "score": 0.626,
           "cost_usd": 0.196,
-          "time_s": 122
+          "time_s": 152
         },
         "humanitys_last_exam": {
           "score": 0.499,
           "cost_usd": 0.0126,
-          "time_s": 19.5
+          "time_s": 24.3
         },
         "critpt": {
           "score": 0.277,
           "cost_usd": 0.0395,
-          "time_s": 53
+          "time_s": 66
         },
         "aa_omniscience": {
           "score": 40,
           "cost_usd": 0.00222,
-          "time_s": 3.21
+          "time_s": 4
         },
         "aa_lcr": {
           "score": 0.833,
           "cost_usd": 0.19,
-          "time_s": 2.54
+          "time_s": 3.16
         }
       }
     },
@@ -3608,52 +3434,52 @@
         "terminalbench_4_0": {
           "score": 0.515,
           "cost_usd": 0.828,
-          "time_s": 681
+          "time_s": 872
         },
         "scicode": {
           "score": 0.558,
           "cost_usd": 0.013,
-          "time_s": 13.1
+          "time_s": 16.8
         },
         "aa_briefcase": {
           "score": 1470,
           "cost_usd": 0.837,
-          "time_s": 532
+          "time_s": 682
         },
         "gdpval_aa": {
           "score": 1490,
           "cost_usd": 0.428,
-          "time_s": 293
+          "time_s": 375
         },
         "gdp_pdf": {
           "score": 0.32,
           "cost_usd": 0.349,
-          "time_s": 41.7
+          "time_s": 53.4
         },
         "automationbench_aa": {
           "score": 0.645,
           "cost_usd": 0.226,
-          "time_s": 143
+          "time_s": 184
         },
         "humanitys_last_exam": {
           "score": 0.514,
           "cost_usd": 0.0266,
-          "time_s": 40.6
+          "time_s": 52
         },
         "critpt": {
           "score": 0.3,
           "cost_usd": 0.0757,
-          "time_s": 107
+          "time_s": 137
         },
         "aa_omniscience": {
           "score": 41.5,
           "cost_usd": 0.00458,
-          "time_s": 6.76
+          "time_s": 8.66
         },
         "aa_lcr": {
           "score": 0.823,
           "cost_usd": 0.191,
-          "time_s": 4.24
+          "time_s": 5.43
         }
       }
     },
@@ -3666,52 +3492,52 @@
         "terminalbench_4_0": {
           "score": 0.54,
           "cost_usd": 1.03,
-          "time_s": 887
+          "time_s": 1070
         },
         "scicode": {
           "score": 0.557,
           "cost_usd": 0.022,
-          "time_s": 27.2
+          "time_s": 32.9
         },
         "aa_briefcase": {
           "score": 1510,
           "cost_usd": 1.04,
-          "time_s": 678
+          "time_s": 819
         },
         "gdpval_aa": {
           "score": 1510,
           "cost_usd": 0.558,
-          "time_s": 399
+          "time_s": 482
         },
         "gdp_pdf": {
           "score": 0.318,
           "cost_usd": 0.368,
-          "time_s": 70.7
+          "time_s": 85.4
         },
         "automationbench_aa": {
           "score": 0.666,
           "cost_usd": 0.251,
-          "time_s": 166
+          "time_s": 200
         },
         "humanitys_last_exam": {
           "score": 0.526,
           "cost_usd": 0.0428,
-          "time_s": 65.7
+          "time_s": 79.5
         },
         "critpt": {
           "score": 0.317,
           "cost_usd": 0.119,
-          "time_s": 174
+          "time_s": 210
         },
         "aa_omniscience": {
           "score": 40.9,
           "cost_usd": 0.00822,
-          "time_s": 12.4
+          "time_s": 15
         },
         "aa_lcr": {
           "score": 0.797,
           "cost_usd": 0.193,
-          "time_s": 7.49
+          "time_s": 9.05
         }
       }
     },
@@ -3724,52 +3550,400 @@
         "terminalbench_4_0": {
           "score": 0.561,
           "cost_usd": 1.82,
-          "time_s": 1580
+          "time_s": 1940
         },
         "scicode": {
           "score": 0.542,
           "cost_usd": 0.0434,
-          "time_s": 56.8
+          "time_s": 69.7
         },
         "aa_briefcase": {
           "score": 1560,
           "cost_usd": 2.31,
-          "time_s": 1680
+          "time_s": 2060
         },
         "gdpval_aa": {
           "score": 1580,
           "cost_usd": 0.894,
-          "time_s": 671
+          "time_s": 823
         },
         "gdp_pdf": {
           "score": 0.31,
           "cost_usd": 0.42,
-          "time_s": 142
+          "time_s": 174
         },
         "automationbench_aa": {
           "score": 0.649,
           "cost_usd": 0.297,
-          "time_s": 204
+          "time_s": 250
         },
         "humanitys_last_exam": {
           "score": 0.529,
           "cost_usd": 0.0776,
-          "time_s": 113
+          "time_s": 138
         },
         "critpt": {
           "score": 0.317,
           "cost_usd": 0.242,
-          "time_s": 343
+          "time_s": 421
         },
         "aa_omniscience": {
           "score": 41.5,
           "cost_usd": 0.0167,
-          "time_s": 24.1
+          "time_s": 29.6
         },
         "aa_lcr": {
           "score": 0.83,
           "cost_usd": 0.199,
-          "time_s": 15.7
+          "time_s": 19.3
+        }
+      }
+    },
+    {
+      "provider": "claude_code",
+      "model": "claude-haiku-5-5",
+      "effort": "low",
+      "intelligence_index": 29.45,
+      "evals": {
+        "terminalbench_4_0": {
+          "score": 0.126,
+          "cost_usd": 0.119,
+          "time_s": 251
+        },
+        "scicode": {
+          "score": 0.492,
+          "cost_usd": 0.00095,
+          "time_s": 4.29
+        },
+        "aa_briefcase": {
+          "score": 1110,
+          "cost_usd": 0.0472,
+          "time_s": 144
+        },
+        "gdpval_aa": {
+          "score": 1120,
+          "cost_usd": 0.0104,
+          "time_s": 45
+        },
+        "gdp_pdf": {
+          "score": 0.112,
+          "cost_usd": 0.0193,
+          "time_s": 12.2
+        },
+        "automationbench_aa": {
+          "score": 0.229,
+          "cost_usd": 0.0153,
+          "time_s": 46.4
+        },
+        "humanitys_last_exam": {
+          "score": 0.27,
+          "cost_usd": 0.00189,
+          "time_s": 13.2
+        },
+        "critpt": {
+          "score": 0.0914,
+          "cost_usd": 0.00731,
+          "time_s": 48.9
+        },
+        "aa_omniscience": {
+          "score": 3.25,
+          "cost_usd": 0.000266,
+          "time_s": 1.78
+        },
+        "aa_lcr": {
+          "score": 0.72,
+          "cost_usd": 0.0148,
+          "time_s": 2.97
+        }
+      }
+    },
+    {
+      "provider": "claude_code",
+      "model": "claude-haiku-5-5",
+      "effort": "medium",
+      "intelligence_index": 34.46,
+      "evals": {
+        "terminalbench_4_0": {
+          "score": 0.152,
+          "cost_usd": 0.194,
+          "time_s": 414
+        },
+        "scicode": {
+          "score": 0.49,
+          "cost_usd": 0.00117,
+          "time_s": 6.35
+        },
+        "aa_briefcase": {
+          "score": 1370,
+          "cost_usd": 0.133,
+          "time_s": 383
+        },
+        "gdpval_aa": {
+          "score": 1270,
+          "cost_usd": 0.0207,
+          "time_s": 90
+        },
+        "gdp_pdf": {
+          "score": 0.152,
+          "cost_usd": 0.0206,
+          "time_s": 23.3
+        },
+        "automationbench_aa": {
+          "score": 0.286,
+          "cost_usd": 0.0191,
+          "time_s": 65.5
+        },
+        "humanitys_last_exam": {
+          "score": 0.338,
+          "cost_usd": 0.00348,
+          "time_s": 26.7
+        },
+        "critpt": {
+          "score": 0.129,
+          "cost_usd": 0.0136,
+          "time_s": 102
+        },
+        "aa_omniscience": {
+          "score": 4.47,
+          "cost_usd": 0.00033,
+          "time_s": 2.43
+        },
+        "aa_lcr": {
+          "score": 0.773,
+          "cost_usd": 0.0149,
+          "time_s": 3.86
+        }
+      }
+    },
+    {
+      "provider": "claude_code",
+      "model": "claude-haiku-5-5",
+      "effort": "high",
+      "intelligence_index": 37.82,
+      "evals": {
+        "terminalbench_4_0": {
+          "score": 0.217,
+          "cost_usd": 0.331,
+          "time_s": 585
+        },
+        "scicode": {
+          "score": 0.487,
+          "cost_usd": 0.0015,
+          "time_s": 8.06
+        },
+        "aa_briefcase": {
+          "score": 1440,
+          "cost_usd": 0.223,
+          "time_s": 552
+        },
+        "gdpval_aa": {
+          "score": 1420,
+          "cost_usd": 0.0436,
+          "time_s": 164
+        },
+        "gdp_pdf": {
+          "score": 0.172,
+          "cost_usd": 0.0226,
+          "time_s": 35.1
+        },
+        "automationbench_aa": {
+          "score": 0.337,
+          "cost_usd": 0.0227,
+          "time_s": 74.2
+        },
+        "humanitys_last_exam": {
+          "score": 0.373,
+          "cost_usd": 0.00848,
+          "time_s": 59.4
+        },
+        "critpt": {
+          "score": 0.186,
+          "cost_usd": 0.0327,
+          "time_s": 227
+        },
+        "aa_omniscience": {
+          "score": 5.75,
+          "cost_usd": 0.000439,
+          "time_s": 2.97
+        },
+        "aa_lcr": {
+          "score": 0.773,
+          "cost_usd": 0.015,
+          "time_s": 4.31
+        }
+      }
+    },
+    {
+      "provider": "claude_code",
+      "model": "claude-haiku-5-5",
+      "effort": "xhigh",
+      "intelligence_index": 41.25,
+      "evals": {
+        "terminalbench_4_0": {
+          "score": 0.293,
+          "cost_usd": 0.46,
+          "time_s": 764
+        },
+        "scicode": {
+          "score": 0.517,
+          "cost_usd": 0.00268,
+          "time_s": 15.2
+        },
+        "aa_briefcase": {
+          "score": 1530,
+          "cost_usd": 0.366,
+          "time_s": 792
+        },
+        "gdpval_aa": {
+          "score": 1510,
+          "cost_usd": 0.0921,
+          "time_s": 307
+        },
+        "gdp_pdf": {
+          "score": 0.182,
+          "cost_usd": 0.0273,
+          "time_s": 64
+        },
+        "automationbench_aa": {
+          "score": 0.36,
+          "cost_usd": 0.0276,
+          "time_s": 92.3
+        },
+        "humanitys_last_exam": {
+          "score": 0.427,
+          "cost_usd": 0.0191,
+          "time_s": 126
+        },
+        "critpt": {
+          "score": 0.226,
+          "cost_usd": 0.0651,
+          "time_s": 426
+        },
+        "aa_omniscience": {
+          "score": 6.05,
+          "cost_usd": 0.000787,
+          "time_s": 5.08
+        },
+        "aa_lcr": {
+          "score": 0.783,
+          "cost_usd": 0.0153,
+          "time_s": 6.38
+        }
+      }
+    },
+    {
+      "provider": "claude_code",
+      "model": "claude-haiku-5-5",
+      "effort": "max",
+      "intelligence_index": 43.4,
+      "evals": {
+        "terminalbench_4_0": {
+          "score": 0.328,
+          "cost_usd": 0.652,
+          "time_s": 910
+        },
+        "scicode": {
+          "score": 0.55,
+          "cost_usd": 0.0109,
+          "time_s": 55.3
+        },
+        "aa_briefcase": {
+          "score": 1580,
+          "cost_usd": 0.675,
+          "time_s": 1120
+        },
+        "gdpval_aa": {
+          "score": 1620,
+          "cost_usd": 0.222,
+          "time_s": 583
+        },
+        "gdp_pdf": {
+          "score": 0.208,
+          "cost_usd": 0.0527,
+          "time_s": 184
+        },
+        "automationbench_aa": {
+          "score": 0.354,
+          "cost_usd": 0.0423,
+          "time_s": 134
+        },
+        "humanitys_last_exam": {
+          "score": 0.444,
+          "cost_usd": 0.0439,
+          "time_s": 230
+        },
+        "critpt": {
+          "score": 0.189,
+          "cost_usd": 0.0935,
+          "time_s": 488
+        },
+        "aa_omniscience": {
+          "score": 10.7,
+          "cost_usd": 0.00626,
+          "time_s": 32.8
+        },
+        "aa_lcr": {
+          "score": 0.827,
+          "cost_usd": 0.0193,
+          "time_s": 26
+        }
+      }
+    },
+    {
+      "provider": "claude_code",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "intelligence_index": 35.87,
+      "evals": {
+        "terminalbench_4_0": {
+          "score": 0.207,
+          "cost_usd": 1.28,
+          "time_s": 254
+        },
+        "scicode": {
+          "score": 0.491,
+          "cost_usd": 0.0129,
+          "time_s": 4.24
+        },
+        "aa_briefcase": {
+          "score": 1270,
+          "cost_usd": 0.802,
+          "time_s": 288
+        },
+        "gdpval_aa": {
+          "score": 1180,
+          "cost_usd": 0.209,
+          "time_s": 102
+        },
+        "gdp_pdf": {
+          "score": 0.16,
+          "cost_usd": 0.372,
+          "time_s": 12.2
+        },
+        "automationbench_aa": {
+          "score": 0.494,
+          "cost_usd": 0.241,
+          "time_s": 70.5
+        },
+        "humanitys_last_exam": {
+          "score": 0.362,
+          "cost_usd": 0.0128,
+          "time_s": 7.52
+        },
+        "critpt": {
+          "score": 0.114,
+          "cost_usd": 0.0862,
+          "time_s": 48.8
+        },
+        "aa_omniscience": {
+          "score": 19.4,
+          "cost_usd": 0.00274,
+          "time_s": 1.51
+        },
+        "aa_lcr": {
+          "score": 0.76,
+          "cost_usd": 0.291,
+          "time_s": 2.75
         }
       }
     }

@@ -16,13 +16,13 @@ const isNumOrNull = v => v === null || (typeof v === 'number' && Number.isFinite
 test('carries the source metadata', () => {
     assert.equal(data.source, 'Artificial Analysis')
     assert.equal(data.url, 'https://artificialanalysis.ai/')
-    assert.equal(data.retrieved_at, '2026-09-30')
+    assert.equal(data.retrieved_at, '2026-10-09')
 })
 
-test('holds the 65 rows of the snapshot, with unique keys', () => {
-    assert.equal(data.rows.length, 65)
+test('holds the 68 rows of the snapshot, with unique keys', () => {
+    assert.equal(data.rows.length, 68)
     const keys = new Set(data.rows.map(r => `${r.provider} ${r.model} ${r.effort}`))
-    assert.equal(keys.size, 65)
+    assert.equal(keys.size, 68)
     for (const r of data.rows) {
         assert.ok(['claude_code', 'codex'].includes(r.provider), r.provider)
         assert.ok(['low', 'medium', 'high', 'xhigh', 'max'].includes(r.effort), r.effort)
