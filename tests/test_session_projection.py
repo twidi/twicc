@@ -238,13 +238,24 @@ def test_slim_alone_is_accepted_and_ignored(tree):
     ["session", "slim-root", "--slim", "--full"],
     ["whoami", "--slim", "--full"],
 ])
-def test_slim_and_full_are_mutually_exclusive(tree, argv):
+def test_slim_is_a_no_op_with_full(tree, argv, monkeypatch):
     from twicc.rpc.invoker import invoke
 
-    assert cli(*argv).exit_code == 2
+    root = Session.objects.get(id="slim-root")
+    monkeypatch.setattr("twicc.cli._drop_request.whoami.resolve_current_session", lambda: root)
+    full_argv = [arg for arg in argv if arg != "--slim"]
+
+    cli_result = cli(*argv)
+    full_cli_result = cli(*full_argv)
+    assert cli_result.exit_code == 0, cli_result.output
+    assert full_cli_result.exit_code == 0, full_cli_result.output
+    assert orjson.loads(cli_result.stdout) == orjson.loads(full_cli_result.stdout)
+
     result = invoke(argv)
-    assert result.exit_code == 2
-    assert "--slim and --full" in result.error
+    full_result = invoke(full_argv)
+    assert result.exit_code == 0, result.error
+    assert full_result.exit_code == 0, full_result.error
+    assert result.result == full_result.result
 
 
 def test_only_full_reaches_the_schemas():
