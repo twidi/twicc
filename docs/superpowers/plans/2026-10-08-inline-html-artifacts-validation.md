@@ -694,3 +694,59 @@ Their renderer models browser inset layout and ResizeObserver; broker collaborat
 They do not constitute actual browser acceptance or prove iframe state retention by themselves.
 `git diff --check` passes. No broader suite, production build, or server restart runs in this fix wave.
 The controller owns bounded production builds, re-review, and actual browser validation of the stable source.
+
+### Controller completion of the UI follow-up — 2026-10-09
+
+The final product source is `b7a6b25f3c2df913cedae2b0ae7cb4557e1857e3`.
+The scoped re-review passes spec compliance and code quality.
+Both Important findings are addressed; the correction diff introduces no new finding.
+The review covers the UI follow-up and its correction, not a repeated review of the completed original feature.
+
+Production builds run serially in resource-bounded transient services:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/feature-inline-html-artifacts && systemd-run --user --wait --pipe --collect --unit=<unique-unit> -p MemoryMax=3G -p MemorySwapMax=0 -p RuntimeMaxSec=180s -p TasksMax=64 -p LimitCORE=0 --working-directory=/home/twidi/dev/twicc-poc/.worktrees/feature-inline-html-artifacts/frontend node --max-old-space-size=2048 --max-semi-space-size=8 node_modules/vite/bin/vite.js build <config-arguments>
+```
+
+| Final-source build | Unit | Config arguments | Result | Memory peak |
+| --- | --- | --- | --- | --- |
+| SPA | `twicc-inline-ui-spa-final` | None | Exit 0, 28.89s | 2.1G |
+| Public session viewer | `twicc-inline-ui-share-build` | `--config vite.config.share.js` | Exit 0, 17.54s | 1.7G |
+
+The SPA emits Vite's warning about chunks larger than 500kB.
+The public viewer emits no build warning.
+An earlier SPA attempt at `e74bd165` with a 1GiB V8 heap and 2GiB service cap reaches its heap cap.
+It aborts locally at 1.2G peak; it does not trigger another global OOM.
+Its retry with the limits above passes at 2.1G peak.
+The final-source build above passes after the correction commit.
+
+Actual Chrome checks use the existing private Codex fixture and its existing public share.
+They operate through the real UI, without injected application state.
+
+- Private GoLast keeps the clipped default Tools anchor visible at y=97.485.
+- The expanded private menu stays expanded after shrinking the viewport to 636×409.
+  Tools, Reload, and Full screen remain reachable.
+- Closing the menu and resetting the viewport keeps it closed and visible.
+- Private fullscreen and return retain document instance, load counter, input value, and dragged Tools placement.
+- Private Reload replaces the document instance, advances its load counter from 2 to 3, and resets the unsaved input.
+- Public GoLast keeps Tools visible at the clipped top, y=56.
+  Expanding it exposes Reload and Full screen at y=98 and y=140.
+- Public fullscreen and return retain instance `45821867-53fc-4fff-81c2-d4314f8f09b0`, load counter 1,
+  and the unsaved input `public-ui-memory`.
+- Private and public replacement notices use the existing blockquote, with italic text at 16px.
+  This matches normal assistant text in the fixture.
+- No check invokes Explicit Save, data writes, or a new share creation.
+
+The tests cover failed fullscreen geometry and temporary visibility gaps through mounted Vue components.
+Those cases are not separately reproduced in Chrome in this follow-up.
+FilePane's configured actions are inspected in review and covered by the shared component tests.
+They are not a separate browser acceptance run here.
+
+The user explicitly requests a worktree server restart.
+The controller initially adds server memory limits without a user request, then removes them after the user's correction.
+The final `uv run --no-sync ./devctl.py restart all` runs in this worktree.
+Vite runs on port 5174; Django runs on port 3501.
+The former scope reports `MemoryMax=infinity` and `MemorySwapMax=infinity`.
+Neither final server process has `NODE_OPTIONS` in its environment.
+Resource limits remain confined to tests, diagnostics, and builds.
+The main checkout's servers are not restarted.
