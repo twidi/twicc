@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { canChainVertically, allowsVerticalPan, releaseVelocity, createInlineScrollForwarder } from './scrollForwarder.js'
+import { canChainVertically, allowsVerticalPan, releaseVelocity, screenScale, createInlineScrollForwarder } from './scrollForwarder.js'
 
 const el = (props = {}, parent = null) => ({ nodeType: 1, parentElement: parent, scrollTop: 0, scrollHeight: 0,
     clientHeight: 0, style: {}, ...props })
@@ -123,6 +123,34 @@ test('a vertical pan on a non-scrolling artifact is relayed as moves and a fling
     assert.deepEqual(f.sent.map(({ kind, deltaY }) => [kind, deltaY]), [
         ['touchstart', undefined], ['touchmove', 20], ['touchmove', 20], ['touchend', undefined] ])
     assert.equal(f.sent.at(-1).velocity, 1) // 40px over 40ms
+})
+
+test('the iframe moving under the finger does not feed back into the scroll (screen coordinates)', async () => {
+    const f = forwarderFixture()
+    // The finger rises 20 screen px per move. The chat scrolls, so the iframe rises with it:
+    // the finger's clientY inside the iframe grows by the same amount instead of shrinking.
+    const touch = (screen, client) => ({ touches: [{ clientX: 10, clientY: client, screenY: screen }] })
+    f.fire('touchstart', { target: f.p.body, ...touch(600, 300) })
+    f.fire('touchmove', { ...touch(580, 280), timeStamp: 10 }) // decision: the iframe is still
+    f.fire('touchmove', { ...touch(560, 280), timeStamp: 20 }) // iframe moved up 20: clientY unchanged
+    f.fire('touchmove', { ...touch(540, 300), timeStamp: 30 }) // iframe moved up 40 in total
+    f.fire('touchmove', { ...touch(520, 340), timeStamp: 40 })
+    await f.settle()
+    assert.deepEqual(f.sent.filter(r => r.kind === 'touchmove').map(r => r.deltaY), [20, 20, 20])
+})
+
+test('screen coordinates in another unit are converted from the slop travel', async () => {
+    assert.equal(screenScale({ clientY: 300, screenY: 900 }, { clientY: 280, screenY: 840 }), 3)
+    assert.equal(screenScale({ clientY: 300 }, { clientY: 280 }), 1, 'no screenY: client coordinates')
+    assert.equal(screenScale({ clientY: 300, screenY: 5 }, { clientY: 280, screenY: 5 }), 1, 'implausible ratio')
+    assert.equal(screenScale({ clientY: 300, screenY: 900 }, { clientY: 299, screenY: 897 }), 1, 'too little travel')
+    const f = forwarderFixture()
+    const touch = (screen, client) => ({ touches: [{ clientX: 10, clientY: client, screenY: screen }] })
+    f.fire('touchstart', { target: f.p.body, ...touch(900, 300) })
+    f.fire('touchmove', { ...touch(840, 280), timeStamp: 10 })
+    f.fire('touchmove', { ...touch(780, 260), timeStamp: 20 })
+    await f.settle()
+    assert.deepEqual(f.sent.filter(r => r.kind === 'touchmove').map(r => r.deltaY), [20])
 })
 
 test('taps, horizontal pans, scrollable pages and multi-touch stay native', async () => {

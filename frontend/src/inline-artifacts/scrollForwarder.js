@@ -11,6 +11,9 @@
 const TOUCH_SLOP_PX = 8
 /** Only the most recent movement defines the fling velocity. */
 const VELOCITY_WINDOW_MS = 100
+/** Screen/client scale outside this range is not a unit difference: ignore it. */
+const MIN_SCREEN_SCALE = 0.5
+const MAX_SCREEN_SCALE = 4
 /** One pixel of tolerance for fractional scroll positions. */
 const EDGE_TOLERANCE_PX = 1
 
@@ -61,6 +64,24 @@ export function allowsVerticalPan(window, start) {
     return true
 }
 
+/**
+ * Where the finger is on the screen. The iframe moves under the finger while the chat scrolls,
+ * so its own clientY would feed that movement back into the next delta and make the scroll
+ * oscillate, more as the finger goes faster. Screen coordinates do not depend on the iframe.
+ */
+const screenY = touch => Number.isFinite(touch.screenY) ? touch.screenY : touch.clientY
+
+/**
+ * Screen pixels per client pixel, measured on the slop travel, while the iframe is still:
+ * browsers disagree on the unit of screen coordinates.
+ */
+export function screenScale(startTouch, touch) {
+    const client = touch.clientY - startTouch.clientY
+    if (Math.abs(client) < TOUCH_SLOP_PX / 2) return 1
+    const scale = (screenY(touch) - screenY(startTouch)) / client
+    return scale >= MIN_SCREEN_SCALE && scale <= MAX_SCREEN_SCALE ? scale : 1
+}
+
 /** Pixels per millisecond over the last moments of the gesture, positive = scroll down. */
 export function releaseVelocity(samples, endTime) {
     const recent = samples.filter(sample => endTime - sample.time <= VELOCITY_WINDOW_MS)
@@ -100,7 +121,8 @@ export function createInlineScrollForwarder({ document, window, getHost, inlineG
             return
         }
         const touch = event.touches[0]
-        gesture = { state: 'pending', x: touch.clientX, y: touch.clientY, target: event.target, samples: [] }
+        gesture = { state: 'pending', start: { clientY: touch.clientY, screenY: touch.screenY },
+            x: touch.clientX, y: touch.clientY, target: event.target, samples: [] }
         // A finger landing on the artifact stops a fling still running on the chat.
         send({ kind: 'touchstart' })
     }
@@ -117,10 +139,11 @@ export function createInlineScrollForwarder({ document, window, getHost, inlineG
                 && canChainVertically(window, document, gesture.target, dy < 0 ? 1 : -1)
             if (!relay) { gesture.state = 'native'; return }
             gesture.state = 'forward'
-            gesture.y = touch.clientY // the slop travel is not replayed
+            gesture.scale = screenScale(gesture.start, touch)
+            gesture.y = screenY(touch) // the slop travel is not replayed
         }
-        const delta = gesture.y - touch.clientY
-        gesture.y = touch.clientY
+        const delta = (gesture.y - screenY(touch)) / gesture.scale
+        gesture.y = screenY(touch)
         gesture.samples.push({ time: event.timeStamp, delta })
         if (event.cancelable) event.preventDefault()
         if (delta) send({ kind: 'touchmove', deltaY: delta })
