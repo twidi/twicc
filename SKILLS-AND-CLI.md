@@ -326,6 +326,10 @@ List bookmarked artifacts (viewable files saved from a session's Artifacts tab),
 - Both writes require the live server (broadcast so open UIs refresh) and take `--timeout`; shared mutation service with the REST endpoints (`core/services/artifact_bookmark_mutation.py`).
 - Skill: [`twicc-artifacts`](src/twicc/agent/plugin/twicc/skills/twicc-artifacts/SKILL.md).
 
+### Authoring artifacts (no CLI command)
+How an agent writes the artifacts TwiCC renders: inline images, Artifacts-tab documents and HTML pages (light/dark support, brokered network, `data/` persistence), and inline HTML artifacts published in the chat with `<twicc:inline-artifact … />`. The system-prompt addendum only lists what artifacts are for and tells the agent to load this skill before writing one.
+- Skill: [`twicc-artifact-authoring`](src/twicc/agent/plugin/twicc/skills/twicc-artifact-authoring/SKILL.md).
+
 ## Sharing
 
 Read-only public links to a session transcript or a bookmarked artifact, served under `/share/<token>/` on a **dedicated share host** (a hostname distinct from the working origin; set it in Settings → Sharing — `shareBaseUrl`). The token is the credential; per-link password / expiry / revoke are separate. Agents can use the full share surface (skill [`twicc-share`](src/twicc/agent/plugin/twicc/skills/twicc-share/SKILL.md) + MCP tools), gated by two synced settings, both off by default: `allowAgentSessionShares` / `allowAgentArtifactShares` (Settings → Sharing). With a kind enabled, an agent may create shares whose target is its own session or a spawn-tree descendant, manage shares created in its own subtree, revoke ANY share of that kind, and read every URL for shares of that kind; with that kind disabled, mutations are refused (`agent_sharing_disabled`) and reads return rows with `token`/`url` null (`"redacted": true`). Agent session shares default to frozen snapshots; `--max-display debug` and password clearing are refused to agents. This gate is a guardrail against an obedient agent, not a security boundary — the CLI, the DB file and the settings themselves are reachable from a session's shell (accepted trust model, design §5.2).

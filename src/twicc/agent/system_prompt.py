@@ -105,127 +105,16 @@ can be grouped into workspaces (a project may be in zero, one, or many). The
 ## Artifacts (visuals, rendered pages & documents)
 
 The per-session artifacts dir `{artifacts_base_dir}/{session_id}/` (already
-created) keeps user-facing deliverables OUT of the repo. Three capabilities:
-
-**1. Inline images.** Write an image to the dir's *top level* and reference it
-`![label](/artifacts/{session_id}/<file>)` — TwiCC serves it inline in the
-conversation. Constraints: images only (`png`, `jpg`, `jpeg`, `webp`, `gif`,
-`svg`); one flat filename, **no subdirectories**; ASCII starting with
-alphanumeric or `_`. Anything else → 404. A `YYYY-MM-DD-HH-MM-SS-` prefix is
-good practice.
-
-**2. The Artifacts tab** browses this folder as a tree and *renders* **images**
-(incl. SVG), **PDFs**, **audio/video**, **Markdown**, **Mermaid** (`.mmd`), and
-**HTML** (sandboxed iframe). Use it for something visual or interactive — chart,
-dashboard, playground, demo, mockup, data table, formatted report — instead of a
-wall of code or text.
-
-- Build it as files in the dir. A page with assets, or one that writes `data/`,
-  MUST live in its **own subfolder** with an `index.html` entry point: that
-  folder is the unit TwiCC bookmarks and shares, and the only thing that keeps
-  the page's assets and `data/` separate from every other artifact. A page left
-  at the top level shares one `data/` with every other top-level page. A single
-  self-contained file may stay at the top level.
-- Reference assets and other files with **relative** paths (they load);
-  root-absolute (`/style.css`) do NOT. Scripts execute (sandboxed, same origin).
-- **Light and dark:** inside TwiCC, `prefers-color-scheme` follows the app's
-  current scheme, live. Declare `:root { color-scheme: light dark; }` and style
-  both modes (`light-dark()` or `@media (prefers-color-scheme: dark)`; in JS,
-  `matchMedia('(prefers-color-scheme: dark)')` and its `change` event), with
-  explicit background and text colors for each.
-- **Network:** call `fetch`/`XMLHttpRequest` normally — requests run server-side
-  (no browser CORS). First contact with a host prompts the user to approve.
-- **Persistence:** an HTML artifact can save files under its own `data/`
-  subfolder — `await window.twicc.data.set('config.json', obj)` / `.get` /
-  `.list()` / `.remove` (or plain `fetch('data/x.json', {method:'PUT', body})`).
-  Use it to let the user make choices you read back later: seed
-  `<artifact dir>/data/config.json` yourself, have the page load it, edit it,
-  save — then Read the file. This turns an artifact into a rich form for
-  decisions, settings, selections on ANY topic: hand the user the link, ask
-  them to tell you when they're done, then read their choices from `data/`.
-  Writes are silent, confined to `data/`, capped (10 MB/file, 100 MB total).
-  The user sees the files in the Artifacts tab.
-- Give the user a **clickable Markdown link**, e.g.
-  `[Open the demo](/artifacts/{session_id}/demo/index.html)`: TwiCC intercepts it
-  and opens the rendered page in the tab. It's an in-app link (for HTML and
-  subfolder files), not a URL to paste in a browser. Same for a Markdown doc
-  (`report.md`).
-- Don't overuse it: if a short answer or Markdown reply does the job, just
-  answer. A Mermaid diagram renders natively in your reply — keep it there,
-  don't build an HTML page. Use an artifact only when rendering or interactivity
-  genuinely helps.
-
-**3. Inline HTML artifacts.** Publish an interactive HTML page directly in a
-regular session's conversation when this helps the user.
-
-Only the main session agent creates and publishes inline artifacts.
-Do not delegate inline artifact generation or publication to native subagents.
-If you are a native subagent, do not create or publish inline artifacts.
-Native subagent tags remain ordinary text. A separately spawned regular TwiCC
-session owns its own artifacts; it cannot publish into another session.
-
-- Write files first under `{artifacts_base_dir}/{session_id}/inline-artifacts/<id>/`.
-  Every inline page needs its own folder, including a single self-contained file.
-  The entry is a direct child of that folder, with `.html` or `.htm` extension.
-  Use relative asset paths. The Artifacts tab also exposes this folder.
-- IDs match `[a-z][a-z0-9_-]{0,63}` and identify the folder in this session.
-  Use distinct IDs for independent widgets.
-  Use the same ID and folder for corrections, then insert the tag again.
-  The latest valid tag replaces the previous placement. File edits alone do
-  not reload an inline page. Its Reload control reloads the current files.
-- Insert the tag in a finalized assistant reply as a standalone top-level Markdown block.
-  Use double-quoted attributes. Do not put the publication tag in a code fence,
-  list, blockquote, tool result, reasoning block, or HTML comment.
-  The fenced examples below show syntax; remove the fences when publishing.
-
-Single self-contained page: write
-`inline-artifacts/calculator/calculator.html`, then publish:
-
-```text
-<twicc:inline-artifact id="calculator" src="inline-artifacts/calculator/calculator.html" />
-```
-
-Page with assets: write `inline-artifacts/preferences/index.html`,
-`inline-artifacts/preferences/app.js`, and `inline-artifacts/preferences/style.css`.
-Then publish:
-
-```text
-<twicc:inline-artifact
-  id="preferences"
-  src="inline-artifacts/preferences/index.html"
-  title="Preferences"
-  height="360"
-/>
-```
-
-- `src` is relative to this session's artifacts root and must match the ID folder.
-  Do not use URLs, absolute paths, traversal, backslashes, query strings, or fragments.
-- `title` is optional plain text, at most 200 characters; its default is the ID.
-  `height` is optional, defaults to 360, and stays within 160–900 CSS pixels.
-  Automatic height also stays within these limits. Controls are Full screen and Reload.
-- Blend into the chat: support light and dark (see the Artifacts tab rules above),
-  and keep `html` and `body` transparent while the root carries
-  `data-twicc-display="inline"`. It switches to `"fullscreen"` in Full screen and is
-  absent elsewhere (Artifacts tab, browser tab): paint your own background there.
-
-  ```css
-  :root { color-scheme: light dark; background: light-dark(#fff, #1b1c1f); }
-  :root[data-twicc-display="inline"] { background: transparent; }
-  ```
-- Input values and page state stay in iframe memory during scrolling, cached
-  session switches, and dock changes. Memory is lost on
-  refresh, Reload, code correction, cache eviction, or view teardown.
-  Opening the same page in the Artifacts tab uses independent iframe memory.
-  Both views access the same files and optional saved data.
-- Use window.twicc.data only when saved data serves the widget.
-  For example, `await window.twicc.data.set('config.json', choices)` writes
-  `inline-artifacts/<id>/data/config.json`; `.get`, `.list()`, and `.remove` also work.
-  Saved data is separate from iframe memory and survives a page reload.
-  Do not save every interface change automatically.
-  Do not add a Submit to discussion control.
-
-Your session id (for these paths) is in the `Context` block, or arrives in a
-`<twicc:context>` block with the first user message; else use `twicc-whoami`.
+created) keeps user-facing deliverables OUT of the repo. TwiCC renders what you
+write there: images inline in your reply; images, PDFs, audio/video, Markdown,
+Mermaid and interactive HTML pages in the Artifacts tab; and interactive HTML
+pages inline in the conversation. Use one when rendering or interactivity
+genuinely helps — chart, dashboard, demo, mockup, data table, report, or a form
+that collects the user's choices — not when a Markdown reply does the job.
+Before you write any artifact file or publication tag, you MUST load the
+`twicc-artifact-authoring` skill; do not load it otherwise. Only the main
+session agent publishes inline HTML artifacts: never delegate them to native
+subagents.
 
 ## Showing an image returned in a tool result
 

@@ -1,7 +1,8 @@
-"""New provider addenda teach the main-session inline authoring contract."""
+"""The authoring skill holds the artifact contract; the addendum only routes to it."""
 
 import asyncio
 import re
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -16,6 +17,10 @@ from twicc.pending_agent_settings import pop_pending_agent_settings
 from twicc.pending_session_attributes import get_pending_session_attributes, pop_pending_session_attributes
 from twicc.providers.helpers import AgentSettings
 
+SKILL = (
+    Path(__file__).resolve().parents[1] / "src/twicc/agent/plugin/twicc/skills/twicc-artifact-authoring/SKILL.md"
+).read_text()
+
 
 @pytest.fixture(params=[Provider.CLAUDE_CODE, Provider.CODEX])
 def provider_addendum(request, db):
@@ -25,6 +30,14 @@ def provider_addendum(request, db):
         resolved_settings=AgentSettings(),
         session_id="inline-prompt-session" if request.param == Provider.CLAUDE_CODE else None,
     )
+
+
+def test_both_provider_addenda_route_artifact_authoring_to_the_skill(provider_addendum):
+    # The addendum keeps what and when, the delegation ban, and the mandatory skill load.
+    assert "you MUST load the\n`twicc-artifact-authoring` skill" in provider_addendum
+    assert "never delegate them to native\nsubagents" in provider_addendum
+    assert "<twicc:inline-artifact" not in provider_addendum
+    assert "window.twicc.data" not in provider_addendum
 
 
 @pytest.mark.parametrize("guidance", [
@@ -37,33 +50,39 @@ def provider_addendum(request, db):
     'Use distinct IDs for independent widgets.',
     'Do not add a Submit to discussion control.',
 ])
-def test_both_provider_addenda_document_inline_publication(provider_addendum, guidance):
+def test_skill_documents_inline_publication(guidance):
     # These sentences are the approved authoring contract, including native exclusion.
-    assert guidance in provider_addendum
+    assert guidance in SKILL
 
 
-def test_examples_publish_single_file_and_folder_with_assets(provider_addendum):
-    samples = re.findall(r"```(?:text)?\n(.*?)\n```", provider_addendum, re.DOTALL)
+def test_examples_publish_single_file_and_folder_with_assets():
+    samples = re.findall(r"```(?:text)?\n(.*?)\n```", SKILL, re.DOTALL)
     descriptors = [block.descriptor for sample in samples for block in parse_inline_artifact_blocks(sample)]
     assert {descriptor["src"] for descriptor in descriptors} == {
         "inline-artifacts/calculator/calculator.html", "inline-artifacts/preferences/index.html",
     }
     assert all(descriptor["height"] == 360 for descriptor in descriptors)
-    assert 'inline-artifacts/preferences/app.js' in provider_addendum
-    assert 'inline-artifacts/preferences/style.css' in provider_addendum
-    assert 'double-quoted' in provider_addendum
-    assert '[a-z][a-z0-9_-]{0,63}' in provider_addendum
-    assert '160–900 CSS pixels' in provider_addendum
-    assert '200 characters' in provider_addendum
+    assert 'inline-artifacts/preferences/app.js' in SKILL
+    assert 'inline-artifacts/preferences/style.css' in SKILL
+    assert 'double-quoted' in SKILL
+    assert '[a-z][a-z0-9_-]{0,63}' in SKILL
+    assert '160–900 CSS pixels' in SKILL
+    assert '200 characters' in SKILL
 
 
-def test_guidance_separates_optional_data_from_retained_memory(provider_addendum):
-    assert 'window.twicc.data.set' in provider_addendum
-    assert 'independent iframe memory' in provider_addendum
-    assert 'refresh, Reload, code correction, cache eviction, or view teardown' in provider_addendum
-    assert 'relative asset paths' in provider_addendum
-    assert 'finalized assistant reply' in provider_addendum
-    assert 'standalone top-level Markdown block' in provider_addendum
+def test_guidance_separates_optional_data_from_retained_memory():
+    assert 'window.twicc.data.set' in SKILL
+    assert 'independent iframe memory' in SKILL
+    assert 'refresh, Reload, code correction, cache eviction, or view teardown' in SKILL
+    assert 'relative asset paths' in SKILL
+    assert 'finalized assistant reply' in SKILL
+    assert 'standalone top-level Markdown block' in SKILL
+
+
+def test_skill_documents_light_dark_and_inline_transparency():
+    assert ':root { color-scheme: light dark; }' in SKILL
+    assert 'data-twicc-display="inline"' in SKILL
+    assert ':root[data-twicc-display="inline"] { background: transparent; }' in SKILL
 
 
 @pytest.mark.django_db(transaction=True)
@@ -83,8 +102,8 @@ def test_new_session_creation_freezes_inline_guidance(provider, tmp_path):
             }))
         assert result.success, result.errors
         frozen = get_pending_session_attributes(draft_id).system_prompt_addendum
-        assert 'Only the main session agent creates and publishes inline artifacts.' in frozen
-        assert '<twicc:inline-artifact id="calculator"' in frozen
+        assert '`twicc-artifact-authoring` skill' in frozen
+        assert 'Only the main\nsession agent publishes inline HTML artifacts' in frozen
     finally:
         pop_pending_agent_settings(draft_id)
         pop_pending_session_attributes(draft_id)
