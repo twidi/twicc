@@ -35,7 +35,8 @@ Page with assets: write `inline-artifacts/preferences/index.html`, `inline-artif
 
 - `src` is relative to this session's artifacts root and must match the ID folder. Do not use URLs, absolute paths, traversal, backslashes, query strings, or fragments.
 - `title` is optional plain text, at most 200 characters; its default is the ID.
-- `height` is optional, defaults to 360, and stays within 160–900 CSS pixels. Automatic height also stays within these limits.
+- The frame sizes itself to its content, between 160–900 CSS pixels; taller content scrolls inside it, and Full screen shows all of it.
+- `height` is optional and defaults to 360. It only sets the size shown before the page measures itself, and the fallback if the page keeps resizing (a layout tied to the frame height, such as `100vh`). Omit it unless you know the size.
 - Controls are Full screen and Reload.
 
 ## Blending into the chat

@@ -19,8 +19,14 @@ export function intrinsicInlineHeight(document, window) {
         range.selectNode(node)
         bottom = Math.max(bottom, range.getBoundingClientRect().bottom)
     }
+    // Everything below the last child counts too: the body's padding, border and margin, and
+    // the root's padding and border. Without them a padded page gets an inner scrollbar.
+    const px = value => parseFloat(value) || 0
     const style = window.getComputedStyle(body)
-    return Math.ceil(bottom - Math.min(0, top) + (parseFloat(style.marginBottom) || 0))
+    const rootStyle = document.documentElement ? window.getComputedStyle(document.documentElement) : {}
+    const below = px(style.paddingBottom) + px(style.borderBottomWidth) + px(style.marginBottom)
+        + px(rootStyle.paddingBottom) + px(rootStyle.borderBottomWidth)
+    return Math.ceil(bottom - Math.min(0, top) + below)
 }
 
 /** Bound document observation; rapid feedback falls back to internal scrolling. */

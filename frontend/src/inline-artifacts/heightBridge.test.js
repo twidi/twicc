@@ -214,3 +214,18 @@ test('relayed scroll reaches the chat scroller only for the bound, inline, ready
     assert.equal(clip.scrollTop, 250)
     f.runtime.dispose()
 })
+
+
+test('intrinsic height includes the body and root edges below the last child', () => {
+    // The kit pads the body: a missing padding left a 24px inner scrollbar on every kit page.
+    const child = { tagName: 'DIV', getBoundingClientRect: () => ({ bottom: 200 }) }
+    const body = { getBoundingClientRect: () => ({ top: 0 }), children: [child], childNodes: [child] }
+    const root = {}
+    const styles = new Map([
+        [child, { marginBottom: '0' }],
+        [body, { paddingBottom: '24px', borderBottomWidth: '1px', marginBottom: '2px' }],
+        [root, { paddingBottom: '4px', borderBottomWidth: '0px' }],
+    ])
+    const win = { getComputedStyle: element => styles.get(element) }
+    assert.equal(intrinsicInlineHeight({ body, documentElement: root }, win), 231)
+})
