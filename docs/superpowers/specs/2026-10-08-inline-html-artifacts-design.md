@@ -259,13 +259,21 @@ It compares that identity with the active manifest.
 | Block state | Rendering |
 | --- | --- |
 | Latest publication | Widget placeholder and controls |
-| Superseded publication | No widget and no replacement banner |
+| Superseded publication | No widget; show the replacement notice at its original location |
 | Complete streaming candidate | Noninteractive pending placeholder |
 | Invalid finalized artifact block | Compact error at that location |
 | Valid publication with unavailable files | Compact load error at the active location |
 
 Preserve surrounding message text and raw-source access.
 Do not edit or remove earlier source JSONL messages.
+
+Superseded finalized publications display this notice in a Markdown blockquote.
+Reuse the existing blockquote styles without a separate callout style.
+Render the notice text in italics at the normal assistant text size:
+"This artifact has been replaced. Its latest version appears later in the conversation."
+Only a present latest publication with a different identity establishes replacement.
+Missing runtime or catalog entries do not display the notice.
+Native subagents remain ordinary Markdown without widgets or replacement notices.
 
 An invalid tag does not supersede an existing valid publication.
 A valid tag with a missing file remains the latest publication and displays a load error.
@@ -360,6 +368,12 @@ Report geometry only through the connection bound to that artifact's `contentWin
 An arbitrary window message cannot resize another artifact.
 
 Provide these controls only:
+
+Use the shared draggable floating tools menu from the Files preview.
+Offer only Reload and Full screen / Exit full screen for inline artifacts.
+Keep the menu on the same frame overlay in both states. Do not add a fullscreen toolbar.
+Keep the Tools anchor reachable while folded or expanded after dragging, resizing, and fullscreen changes.
+Use the same placement and clamping implementation in FilePane and inline artifacts.
 
 - **Full screen**: expand the current frame to the app window.
 - **Reload**: reload the current document and its local assets.

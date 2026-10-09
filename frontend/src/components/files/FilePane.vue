@@ -1,6 +1,5 @@
 <script setup>
 import { ref, watch, computed, nextTick, useId, inject, onMounted, onBeforeUnmount } from 'vue'
-import { useResizeObserver } from '@vueuse/core'
 import { apiFetch } from '../../utils/api'
 import { base64UrlEncode, encodeFilePathSegments } from '../../utils/download'
 import { useArtifactBroker } from '../../composables/useArtifactBroker'
@@ -17,6 +16,7 @@ import TextSelectionComment from '../session/detail/TextSelectionComment.vue'
 import ArtifactBookmarkButton from '../artifacts/ArtifactBookmarkButton.vue'
 import ArtifactBrokerPrompt from '../artifacts/ArtifactBrokerPrompt.vue'
 import PersistentFrame from '../frames/PersistentFrame.vue'
+import FloatingPreviewTools from '../frames/FloatingPreviewTools.vue'
 import SelectAreaToolbar from '../frames/SelectAreaToolbar.vue'
 import ViewportStage from '../frames/ViewportStage.vue'
 import ViewportToolbar from '../frames/ViewportToolbar.vue'
@@ -119,7 +119,6 @@ const htmlPreviewButtonId = useId()
 const htmlPreviewReloadButtonId = useId()
 const responsiveButtonId = useId()
 const selectButtonId = useId()
-const previewToolsButtonId = useId()
 const mermaidPreviewButtonId = useId()
 const viewInFilesButtonId = useId()
 const searchButtonId = useId()
@@ -555,164 +554,27 @@ async function attachElementScreenshot(dataUrl, options = {}) {
 // outside the pooled-frame case); also the focus target of focusContent().
 const previewWrapRef = ref(null)
 
-// --- Floating preview actions: collapsed behind a round "tools" toggle ------
-// With two or more actions offered, the floating row folds behind a single
-// round screwdriver-wrench button (click to unfold) so it doesn't crowd the
-// rendered page. A preview offering only Full screen (markdown, PDF, media…)
-// keeps its direct button — a toggle hiding one action would just add a click.
-const previewActionsExpanded = ref(false)
-
-// Mirrors the v-if of each action button in the template (Full screen is
-// always offered on an active preview).
-const previewActionCount = computed(() => {
-    const html = showHtmlPreview.value && isHtmlFile.value && !props.diffMode
-    return (
-        1 + // Full screen
-        (html && htmlPreviewSrc.value && inSessionContext.value ? 1 : 0) + // responsive
-        (html && htmlPreviewSrc.value && canSelectElement.value ? 1 : 0) + // select
-        (html && artifactBookmark.value ? 1 : 0) // open in new tab
-    )
-})
-const previewActionsCollapsible = computed(() => previewActionCount.value > 1)
-
-// Fold back AND recenter on file switch — both are transient per-page state.
-watch(() => props.filePath, () => {
-    previewActionsExpanded.value = false
-    previewActionsPos.value = null
-    openUpward.value = false
-    previewTooltipPlacement.value = 'left'
-})
-
-// The floating actions can overlap the rendered page; let the user drag them
-// (mouse / touch) out of the way by grabbing the round tools button. Position
-// is null = default (CSS top-right) or an explicit { top, left } in px within
-// the actions' offset parent (the frame-overlay cell when teleported over the
-// pooled HTML frame, else .file-pane-preview). Per-pane, in-memory.
+// One shared menu owns the buttons, drag behavior, and fullscreen action.
 const framePool = useFramePoolStore()
-const previewActionsRef = ref(null)
-const previewActionsPos = ref(null)
-const previewActionsStyle = computed(() =>
-    previewActionsPos.value
-        ? { top: `${previewActionsPos.value.top}px`, left: `${previewActionsPos.value.left}px`, right: 'auto' }
-        : null
-)
-
-// The unfolded actions drop as a column below the tools button, or above it
-// when the button sits too low for the column to fit below (the button never
-// moves — only the drop direction flips). Recomputed when the menu opens and
-// after a drag. ~34px per action button is a rough row height, enough to pick
-// a side; exactness doesn't matter.
-const openUpward = ref(false)
-// Tooltips point inward (left) so they don't run off the right edge where the
-// group lives by default; flipped to the right only when the group is dragged
-// too close to the container's left edge for a left tooltip to fit.
-const previewTooltipPlacement = ref('left')
-
-function computePreviewActionsGeometry() {
-    const el = previewActionsRef.value
-    const parent = el?.offsetParent || el?.parentElement
-    if (!el || !parent) {
-        openUpward.value = false
-        previewTooltipPlacement.value = 'left'
-        return
+const previewActions = computed(() => {
+    const actions = []
+    const html = showHtmlPreview.value && isHtmlFile.value && !props.diffMode
+    if (html && htmlPreviewSrc.value && inSessionContext.value) {
+        actions.push({ id: responsiveButtonId, icon: 'mobile-screen-button', active: responsiveActive.value,
+            label: responsiveActive.value ? 'Exit responsive mode' : 'Responsive mode — preview at a device size',
+            action: () => { responsiveActive.value = !responsiveActive.value } })
     }
-    const r = el.getBoundingClientRect() // the tools-button box (collapsible layout)
-    const pr = parent.getBoundingClientRect()
-    // Vertical: drop the column up when it wouldn't fit below.
-    const needed = previewActionCount.value * 34 + 8
-    const spaceBelow = pr.bottom - r.bottom
-    const spaceAbove = r.top - pr.top
-    openUpward.value = spaceBelow < needed && spaceAbove > spaceBelow
-    // Horizontal: a left tooltip needs ~140px of room on the left of the group.
-    previewTooltipPlacement.value = r.left - pr.left < 140 ? 'right' : 'left'
-}
-// A real drag must not fire the tools button's fold/unfold click. Reset on
-// each pointerdown so a drag that ends off-target (no click) can't wedge it.
-let actionsDrag = null // { pointerId, startX, startY, baseLeft, baseTop, moved }
-let suppressToolsClick = false
-
-function clampActionsPos(left, top) {
-    const el = previewActionsRef.value
-    const parent = el?.offsetParent || el?.parentElement
-    if (!el || !parent) return { left, top }
-    const pr = parent.getBoundingClientRect()
-    return {
-        left: Math.max(0, Math.min(pr.width - el.offsetWidth, left)),
-        top: Math.max(0, Math.min(pr.height - el.offsetHeight, top)),
+    if (html && htmlPreviewSrc.value && canSelectElement.value) {
+        actions.push({ id: selectButtonId, icon: 'arrow-pointer', active: selectModeActive.value,
+            label: selectModeActive.value ? 'Stop selecting an element' : 'Select an element',
+            action: () => setSelectMode(!selectModeActive.value) })
     }
-}
-
-// A dragged position is absolute px in the offset parent, so any shrink of
-// that parent can leave the group outside the visible area — unreachable, with
-// no way to bring it back. Exiting full screen after dragging it to the bottom
-// is the obvious case; a dock/window resize and a sub-toolbar appearing over
-// the frame do it too. Re-clamp on every parent resize (one-way: shrinking then
-// re-expanding does not restore the pre-clamp spot).
-useResizeObserver(
-    () => frameOverlayEl.value ?? previewWrapRef.value,
-    () => {
-        if (!previewActionsPos.value) return // still on its default CSS corner
-        const el = previewActionsRef.value
-        const parent = el?.offsetParent || el?.parentElement
-        // A 0-sized parent is transient (frame hidden, KeepAlive detach) —
-        // clamping against it would slam the group into the top-left corner.
-        if (!parent || parent.clientWidth < 1 || parent.clientHeight < 1) return
-        previewActionsPos.value = clampActionsPos(previewActionsPos.value.left, previewActionsPos.value.top)
-        computePreviewActionsGeometry() // drop side + tooltip side may need to flip
+    if (html && artifactBookmark.value) {
+        actions.push({ id: previewOpenTabButtonId, icon: 'up-right-from-square', label: 'Open in new tab',
+            href: `/artifacts/${artifactBookmark.value.id}/` })
     }
-)
-
-function onToolsPointerDown(event) {
-    if (event.button != null && event.button > 0) return // left / touch / pen only
-    suppressToolsClick = false
-    const el = previewActionsRef.value
-    const parent = el?.offsetParent || el?.parentElement
-    if (!el || !parent) return
-    const r = el.getBoundingClientRect()
-    const pr = parent.getBoundingClientRect()
-    actionsDrag = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        baseLeft: r.left - pr.left,
-        baseTop: r.top - pr.top,
-        moved: false,
-    }
-    event.currentTarget.setPointerCapture(event.pointerId)
-}
-
-function onToolsPointerMove(event) {
-    if (!actionsDrag || event.pointerId !== actionsDrag.pointerId) return
-    const dx = event.clientX - actionsDrag.startX
-    const dy = event.clientY - actionsDrag.startY
-    if (!actionsDrag.moved) {
-        if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return // below the tap/drag threshold
-        actionsDrag.moved = true
-        // Kill pointer-events on pooled iframes for the drag (same reason as the
-        // viewport handles: an iframe swallows moves the pointer crosses).
-        framePool.beginDividerDrag()
-    }
-    previewActionsPos.value = clampActionsPos(actionsDrag.baseLeft + dx, actionsDrag.baseTop + dy)
-}
-
-function onToolsPointerUp(event) {
-    if (!actionsDrag || event.pointerId !== actionsDrag.pointerId) return
-    if (actionsDrag.moved) {
-        framePool.endDividerDrag()
-        suppressToolsClick = true // swallow the click this drag would synthesize
-        computePreviewActionsGeometry() // drop side + tooltip side may need to flip
-    }
-    actionsDrag = null
-}
-
-function onToolsClick() {
-    if (suppressToolsClick) {
-        suppressToolsClick = false
-        return
-    }
-    if (!previewActionsExpanded.value) computePreviewActionsGeometry() // decide the drop side
-    previewActionsExpanded.value = !previewActionsExpanded.value
-}
+    return actions
+})
 
 // --- Edit mode state ---
 const isEditing = ref(false)
@@ -956,7 +818,6 @@ const showOverlay = computed(() => {
 // expanded — see expandPreviewHost. Available for every preview type, including
 // render-only mode (the Artifacts view, no header toolbar), via a floating toggle.
 const isPreviewFullscreen = ref(false)
-const previewFullscreenButtonId = `preview-fullscreen-${useId()}`
 const previewOpenTabButtonId = `preview-open-tab-${useId()}`
 
 // Provided by ProjectView: toggles .main-content--preview-expanded so the
@@ -1251,7 +1112,6 @@ onBeforeUnmount(() => {
     pickerIframe?.removeEventListener('load', onPickerFrameLoad)
     pickerIframe = null
     destroyPicker()
-    if (actionsDrag?.moved) framePool.endDividerDrag() // balance if unmounted mid-drag
 })
 
 // Expose the toggle in the command palette only while this is the active,
@@ -1854,132 +1714,18 @@ function goToNextDiff() {
                     <video :key="filePath" :src="rawFileUrl" controls class="video-preview"></video>
                 </div>
 
-                <!-- Floating actions, top-right of the preview. With two or more
-                     actions they fold behind the round "tools" toggle (see
-                     previewActionsCollapsible); a single-action preview (just
-                     Full screen) keeps its direct button. Teleported over the
-                     pooled HTML frame when active (its z-index can't beat the
-                     FrameHost layer); for every other preview type
-                     frameOverlayEl is null so it renders in place, above the
-                     in-pane preview, as before. -->
+                <!-- The same floating menu serves pooled and in-pane previews. -->
                 <Teleport :to="frameOverlayEl" :disabled="!frameOverlayEl">
-                <div ref="previewActionsRef" class="preview-actions" :style="previewActionsStyle">
-                    <!-- The round "tools" toggle: the anchor (stays put) and the
-                         drag handle for the whole floating group. While folded, a
-                         pulsing brand dot on its corner flags that a sub-mode
-                         (responsive / select) is running. Clicking unfolds the
-                         actions as a column below it (or above, when the button
-                         sits too low — the button itself never moves). -->
-                    <template v-if="previewActionsCollapsible">
-                        <span class="preview-tools-wrap">
-                            <wa-button
-                                :id="previewToolsButtonId"
-                                class="preview-action-btn preview-tools-btn floating-over-text"
-                                :class="{ 'preview-action-btn--active': previewActionsExpanded }"
-                                size="small"
-                                variant="neutral"
-                                appearance="filled"
-                                @click="onToolsClick"
-                                @pointerdown="onToolsPointerDown"
-                                @pointermove="onToolsPointerMove"
-                                @pointerup="onToolsPointerUp"
-                                @pointercancel="onToolsPointerUp"
-                            >
-                                <wa-icon name="screwdriver-wrench"></wa-icon>
-                            </wa-button>
-                            <span
-                                v-if="!previewActionsExpanded && (responsiveActive || selectModeActive)"
-                                class="preview-tools-dot"
-                            ></span>
-                        </span>
-                        <AppTooltip :for="previewToolsButtonId" :placement="previewTooltipPlacement">
-                            {{ previewActionsExpanded ? 'Hide tools' : 'Tools' }}
-                        </AppTooltip>
-                    </template>
-                    <!-- The actions themselves: an inline row when there's no
-                         tools toggle (single-action previews), or a vertical drop
-                         column anchored under/over the tools button when
-                         collapsible + expanded. -->
-                    <div
-                        v-if="!previewActionsCollapsible || previewActionsExpanded"
-                        class="preview-actions-list"
-                        :class="{
-                            'preview-actions-list--menu': previewActionsCollapsible,
-                            'preview-actions-list--up': openUpward,
-                        }"
-                    >
-                        <!-- Responsive-mode toggle (HTML preview, session context
-                             only): exact device-size viewport, same feature as the
-                             Browser pane. Hidden in the sessionless slash-route
-                             Artifacts browser (inSessionContext). -->
-                        <template v-if="showHtmlPreview && isHtmlFile && !diffMode && htmlPreviewSrc && inSessionContext">
-                            <wa-button
-                                :id="responsiveButtonId"
-                                class="preview-action-btn floating-over-text"
-                                :class="{ 'preview-action-btn--active': responsiveActive }"
-                                size="small"
-                                variant="neutral"
-                                appearance="filled"
-                                @click="responsiveActive = !responsiveActive"
-                            >
-                                <wa-icon name="mobile-screen-button"></wa-icon>
-                            </wa-button>
-                            <AppTooltip :for="responsiveButtonId" :placement="previewTooltipPlacement">
-                                {{ responsiveActive ? 'Exit responsive mode' : 'Responsive mode — preview at a device size' }}
-                            </AppTooltip>
-                        </template>
-                        <!-- Select-element toggle (HTML preview, composer reachable):
-                             pick an element in the rendered page and hand its
-                             description — with an optional screenshot — to the agent. -->
-                        <template v-if="showHtmlPreview && isHtmlFile && !diffMode && htmlPreviewSrc && canSelectElement">
-                            <wa-button
-                                :id="selectButtonId"
-                                class="preview-action-btn floating-over-text"
-                                :class="{ 'preview-action-btn--active': selectModeActive }"
-                                size="small"
-                                variant="neutral"
-                                appearance="filled"
-                                @click="setSelectMode(!selectModeActive)"
-                            >
-                                <wa-icon name="arrow-pointer"></wa-icon>
-                            </wa-button>
-                            <AppTooltip :for="selectButtonId" :placement="previewTooltipPlacement">
-                                {{ selectModeActive ? 'Stop selecting an element' : 'Select an element' }}
-                            </AppTooltip>
-                        </template>
-                        <!-- A real link (wa-button renders an <a> when given href), so
-                             middle-click / ctrl-click / "copy link" / "open in new tab"
-                             all work. Bookmarked HTML only — the id-based dedicated URL. -->
-                        <template v-if="showHtmlPreview && isHtmlFile && !diffMode && artifactBookmark">
-                            <wa-button
-                                :id="previewOpenTabButtonId"
-                                class="preview-action-btn floating-over-text"
-                                size="small"
-                                variant="neutral"
-                                appearance="filled"
-                                :href="`/artifacts/${artifactBookmark.id}/`"
-                                target="_blank"
-                                rel="noopener"
-                            >
-                                <wa-icon name="up-right-from-square"></wa-icon>
-                            </wa-button>
-                            <AppTooltip :for="previewOpenTabButtonId" :placement="previewTooltipPlacement">Open in new tab</AppTooltip>
-                        </template>
-                        <wa-button
-                            :id="previewFullscreenButtonId"
-                            class="preview-action-btn floating-over-text"
-                            size="small"
-                            variant="neutral"
-                            appearance="filled"
-                            @click="togglePreviewFullscreen"
-                        >
-                            <wa-icon :name="isPreviewFullscreen ? 'compress' : 'expand'"></wa-icon>
-                        </wa-button>
-                        <AppTooltip :for="previewFullscreenButtonId" :placement="previewTooltipPlacement">
-                            {{ isPreviewFullscreen ? 'Exit full screen' : 'Full screen' }}
-                        </AppTooltip>
-                    </div>
-                </div>
+                    <FloatingPreviewTools
+                        :actions="previewActions"
+                        :fullscreen="isPreviewFullscreen"
+                        :mode-active="responsiveActive || selectModeActive"
+                        :reset-key="filePath"
+                        :container="frameOverlayEl ?? previewWrapRef"
+                        @toggle-fullscreen="togglePreviewFullscreen"
+                        @drag-start="framePool.beginDividerDrag"
+                        @drag-end="framePool.endDividerDrag"
+                    />
                 </Teleport>
 
                 <!-- Floating "scroll to top", bottom-right of the markdown
@@ -2229,62 +1975,15 @@ function goToNextDiff() {
     background: var(--panel-solid);
 }
 
-/* Floating expand/compress toggle, pinned to the preview's top-right corner,
-   above the preview content so it stays clickable over an iframe. Subtle at
-   rest, solid on hover. */
-.preview-actions {
-    position: absolute;
-    top: var(--wa-space-s);
-    right: var(--wa-space-s);
-    z-index: 2;
-    display: flex;
-    gap: var(--wa-space-2xs);
-    /* Re-enable inside the inert frame-overlay layer when teleported over the
-       pooled HTML frame (the layer is pointer-events:none by contract; no
-       generic `> *` re-enable there, to avoid a specificity tie). No-op when
-       rendered in place over a non-pooled preview. */
-    pointer-events: auto;
-}
-
-/* The actions themselves. Inline row for a single-action preview (no tools
-   toggle). When collapsible, they drop as a vertical column anchored to the
-   tools button's right edge — below by default, above when `--up` (the button
-   never moves; only the column flips). */
-.preview-actions-list {
-    display: flex;
-    gap: var(--wa-space-2xs);
-}
-.preview-actions-list--menu {
-    position: absolute;
-    right: 0;
-    top: calc(100% + var(--wa-space-2xs));
-    flex-direction: column;
-    align-items: flex-end;
-}
-.preview-actions-list--menu.preview-actions-list--up {
-    top: auto;
-    bottom: calc(100% + var(--wa-space-2xs));
-    flex-direction: column-reverse;
-}
-
-/* Every one of them also carries the shared .floating-over-text class
-   (styles/transcript-tokens.css): they sit over a document being read, so their
-   surface is a translucent tint instead of an opaque fill. */
-.preview-action-btn {
+.preview-scroll-top-btn {
     opacity: 0.6;
     transition: opacity 0.15s ease;
 }
-.preview-action-btn:hover,
-.file-pane-preview:hover .preview-action-btn,
-/* When teleported into the pooled HTML frame's overlay layer, the hover
-   target is that layer, not .file-pane-preview. */
-.frame-overlay-layer:hover .preview-action-btn {
-    opacity: 1;
-}
+.preview-scroll-top-btn:hover,
+.file-pane-preview:hover .preview-scroll-top-btn { opacity: 1; }
 
 /* Floating "scroll to top": a round FAB pinned to the preview's bottom-right,
-   mirroring the top-right actions' subtle-at-rest / solid-on-hover look
-   (inherited from .preview-action-btn). */
+   mirroring the top-right actions' subtle-at-rest / solid-on-hover look. */
 .preview-scroll-top-btn {
     position: absolute;
     bottom: var(--wa-space-s);
@@ -2297,7 +1996,7 @@ function goToNextDiff() {
     aspect-ratio: 1;
     padding: 0;
 }
-/* Fade in/out on scroll (the rest opacity is 0.6, from .preview-action-btn). */
+/* Fade in/out on scroll (the rest opacity is 0.6). */
 .scroll-top-fade-enter-active,
 .scroll-top-fade-leave-active {
     transition: opacity 0.2s ease;
@@ -2305,56 +2004,6 @@ function goToNextDiff() {
 .scroll-top-fade-enter-from,
 .scroll-top-fade-leave-to {
     opacity: 0 !important;
-}
-
-/* Mode toggles (responsive / select): fully opaque + brand icon while active. */
-.preview-action-btn--active {
-    opacity: 1;
-}
-.preview-action-btn--active wa-icon {
-    color: var(--wa-color-brand-fill-loud);
-}
-
-/* The round "tools" toggle: a circle (square box, no inline padding — the
-   flex part centers the icon). Also the drag handle for the whole floating
-   row: grab cursor, and touch-action:none so a touch-drag moves it instead
-   of scrolling the page. */
-.preview-tools-btn {
-    cursor: grab;
-    touch-action: none;
-}
-.preview-tools-btn:active {
-    cursor: grabbing;
-}
-.preview-tools-btn::part(base) {
-    border-radius: 50%;
-    aspect-ratio: 1;
-    padding: 0;
-}
-
-/* Active-sub-mode indicator: a small brand dot on the folded tools button's
-   top-right corner, with a 1s opacity pulse. The dot sits on the wrapper (not
-   the button), so the button's own rest opacity doesn't dim it. */
-.preview-tools-wrap {
-    position: relative;
-    display: inline-flex;
-}
-
-.preview-tools-dot {
-    position: absolute;
-    top: -1px;
-    right: -1px;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--wa-color-brand-fill-loud);
-    pointer-events: none;
-    animation: pulse 1s ease-in-out infinite;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
 }
 
 .markdown-preview-container {

@@ -565,3 +565,83 @@ Browser cross-call DOM object equality and successful real external upstream for
 Nonce/counter/RAM/attachment observations and owning proxy/header tests provide their separately stated evidence.
 Essential acceptance and verification conclusions remain interpretable here after ignored-workspace cleanup.
 Independent final scoped review still owns its verdict over the complete final commit range.
+
+
+## UI follow-up recovery after the OOM — 2026-10-09
+
+This follow-up replaces the separate inline fullscreen toolbar with the shared Files preview floating menu.
+FilePane and inline artifacts use `FloatingPreviewTools.vue` for buttons, drag placement, and resize clamping.
+The same fullscreen action changes between Full screen and Exit full screen.
+Inline artifacts offer Reload and fullscreen only, including Reload on failed loads.
+The existing runtime and FrameHost retain iframe ownership; fullscreen now uses the whole viewport.
+
+Superseded finalized publications show the requested replacement sentence in `<blockquote><p><em>`.
+The notice uses existing Markdown quote styles and normal inherited assistant text size.
+No notice appears for missing catalog/runtime entries, native subagents, nonfinalized messages, or snapshots without inline context.
+Current ready, pending, unavailable, invalid, and excluded public placements retain their existing rendering.
+
+### OOM cause and recovery evidence
+
+The kernel journal records Node PID1062312 at 2026-10-09 06:59:26 with12593908kB anonymous RSS.
+The original unbounded multi-file run produces only `TAP version 13` before the incident.
+The controller isolates the new floating-menu test under a64MiB V8 heap and256MiB service memory limit.
+The first test alone passes at69.1M peak; the whole file reaches the heap cap at131.8M peak.
+The folded/expanded test alone reaches the heap cap at135M peak.
+A diagnostic assertion wrapper preserves the failure and limits formatting; that run reports line163 at68M peak.
+
+The failed assertion compares a cyclic renderer host div with `undefined`.
+Node's `internal/assert/assertion_error` formats values with `depth:1000`, `getters:true`, `sorted:true`,
+`maxArrayLength:Infinity`, and `customInspect:false`.
+The fixture has parent/children cycles, offsetParent/parentElement getters, and Vue references.
+Formatting traverses this graph; a custom inspection method cannot bypass the disabled `customInspect` option.
+The recovery changes all host-node assertions to Boolean or `Object.is` Boolean comparisons.
+It also makes fixture unmount cleanup idempotent.
+
+With only assertion/cleanup changes, the file reports an ordinary Boolean failure:5/6 pass,70M peak.
+The failed upward-menu expectation remains a real test failure.
+Pointermove updates reactive position; pointercancel reads geometry before Vue patches the DOM.
+The resize callback likewise measures before the clamped position reaches the DOM.
+The shared geometry function now uses the current explicit position, keeping DOM measurements for the default corner.
+Coordinates, clamp bounds, drag threshold, upward-menu rule, tooltip rule, and zero-size-parent guard stay unchanged.
+Coverage checks final drag events, resize tooltip direction, folded/expanded reachability, fullscreen transitions,
+zero-size cached parents, mode/link actions, click suppression, balanced hooks, and the retained fullscreen button.
+
+### Resource-bounded frontend verification
+
+Each test file runs alone and serially with a unique systemd unit:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/feature-inline-html-artifacts && systemd-run --user --wait --pipe --collect --unit=<unique-unit> -p MemoryMax=256M -p MemorySwapMax=0 -p RuntimeMaxSec=30s -p LimitCORE=0 --working-directory=/home/twidi/dev/twicc-poc/.worktrees/feature-inline-html-artifacts node --max-old-space-size=64 --max-semi-space-size=4 --test --test-concurrency=1 <single-test-file>
+```
+
+| Single test file | Unit suffix | Pass | Memory peak |
+| --- | --- | ---: | ---: |
+| `frontend/src/components/frames/FloatingPreviewTools.test.js` | `tools-final-20261009a` |6|69.8M|
+| `frontend/src/components/ui/MarkdownContent.render.test.js` | `markdown-fixed-20261009a` |33|71.2M|
+| `frontend/src/inline-artifacts/brokerLifecycle.test.js` | `suite-20261009a-1` |11|76.5M|
+| `frontend/src/inline-artifacts/fileRelevance.test.js` | `suite-20261009a-2` |2|32.2M|
+| `frontend/src/inline-artifacts/geometry.test.js` | `suite-20261009a-3` |6|57.7M|
+| `frontend/src/inline-artifacts/heightBridge.test.js` | `suite-20261009a-4` |5|53.5M|
+| `frontend/src/inline-artifacts/ownerAdapter.test.js` | `suite-20261009a-5` |4|57.2M|
+| `frontend/src/inline-artifacts/publications.test.js` | `suite-20261009a-6` |118|63.4M|
+| `frontend/src/inline-artifacts/rendering.test.js` | `suite-20261009a-7` |30|58.5M|
+| `frontend/src/inline-artifacts/runtime.test.js` | `suite-20261009a-8` |19|49.2M|
+| `frontend/src/inline-artifacts/shareOptions.test.js` | `suite-20261009a-9` |2|32.4M|
+| `frontend/src/stores/framePool.test.js` | `integration-20261009a-1` |7|56.7M|
+| `frontend/src/share-session/inlineAdapter.test.js` | `integration-20261009a-2` |7|50M|
+| `frontend/src/share-session/inlineCompletion.test.js` | `integration-20261009a-3` |11|52.2M|
+
+Every unit name has the prefix `inline-ui-`. All14 final test files exit0:261 passed,0 failed,0 skipped.
+No recovered test reaches its heap, memory, swap, or time cap.
+The assertions-only RED uses `inline-ui-safe-assert-20261009a` with the same resource flags.
+An unchanged repeated RED uses `inline-ui-tools-fixed-20261009a`; an earlier failed read prevents the planned edit.
+After the edit runs, `inline-ui-tools-fixed-20261009b` passes6/6 at65.6M peak.
+The final tools rerun above follows the final Boolean assertion cleanup.
+
+A separate capped compiler check parses and compiles all five changed Vue SFC scripts and templates.
+The unit `inline-ui-sfc-final-20261009a` exits0 at63.1M peak with the same service/V8 resource limits.
+It uses the repository's `@vue/compiler-sfc`, `compileScript(..., {inlineTemplate:true})`, and existing `wa-*` custom-element handling.
+`git diff --check` passes.
+This SFC check is not a SPA/share production build or browser product acceptance.
+The recovery does not rerun the forbidden unbounded command, build bundles, or restart servers.
+The controller owns the remaining bounded SPA/share builds and independent review after this commit.

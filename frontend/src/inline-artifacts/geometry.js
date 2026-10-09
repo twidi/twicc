@@ -33,7 +33,7 @@ export function createInlineGeometryScheduler({ pool,
             if (!owner.isVisible() || owner.isSuppressed?.()) { hide(id, attachment); continue }
             if (owner.isFullscreen?.()) {
                 patch(id, owner, { visible: true, zTier: 'fullscreen', clipRect: null, cardRect: null,
-                    rect: { x: screen.x, y: screen.y + 44, width: screen.width, height: Math.max(0, screen.height - 44) } })
+                    rect: screen })
                 continue
             }
             if (!attachment || attachment.isSuppressed?.()) { hide(id, attachment); continue }

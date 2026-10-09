@@ -69,7 +69,7 @@ test('detached and background frames have no measurement work; fullscreen surviv
     f.state.visible = true
     f.state.fullscreen = true
     f.scheduler.schedule(); f.flush()
-    assert.deepEqual(f.pool.frames.a.rect, { x: 0, y: 44, width: 800, height: 556 })
+    assert.deepEqual(f.pool.frames.a.rect, { x: 0, y: 0, width: 800, height: 600 })
     assert.equal(f.measures(), 1)
     assert.equal(f.pool.frames.a.clipRect, null)
     assert.equal(f.pool.frames.a.zTier, 'fullscreen')

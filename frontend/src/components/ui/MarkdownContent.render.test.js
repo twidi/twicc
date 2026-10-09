@@ -1,3 +1,6 @@
+import * as Vue from 'vue'
+import { parse, compileTemplate } from '@vue/compiler-sfc'
+import { renderToString } from '@vue/server-renderer'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -371,3 +374,71 @@ test('same Markdown source with changed occurrence context replaces typed identi
     h.props.inlineContext = { ...h.props.inlineContext, lineNum: 87 }; await flush()
     assert.equal(h.blocks.value[0]?.key, '["s",87,0,0]')
 })
+
+
+// Compile the real template. A removed notice branch must change rendered output.
+const template = compileTemplate({ source: parse(source).descriptor.template.content,
+    filename: 'MarkdownContent.vue', id: 'markdown-notice-test',
+    compilerOptions: { isCustomElement: name => name.startsWith('wa-') } })
+assert.deepEqual(template.errors, [])
+const templateCode = template.code.replace(/import \{([^}]+)\} from "vue"/g,
+    (_, names) => `const {${names.replace(/ as /g, ': ')}} = Vue`)
+    .replace('export function render', 'function render')
+const templateRender = new Function('Vue', `${templateCode}; return render`)(Vue)
+async function renderArtifactMarkdown(h) {
+    const app = Vue.createSSRApp({ render: templateRender, setup: () => ({
+        blocks: h.blocks, artifactPlacement: h.artifactPlacement, showRaw: false, showToolbar: false,
+        showTocDetails: false, source: h.props.source, highlightTerms: [], handleLinkClick() {},
+    }) })
+    app.component('InlineArtifactBlock', { props: ['status'], render() { return Vue.h('div', { 'data-artifact-state': this.status }) } })
+    app.directive('highlight', {})
+    return renderToString(app)
+}
+
+test('the old finalized publication renders a replacement notice; current and absent placements do not', async t => {
+    const span = { start: 0, end: 10, textBlockIndex: 0, tag_offset: 0,
+        descriptor: { artifact_id: 'a', title: 'Artifact' } }
+    const entry = reactive({ present: true, descriptor: { publicationKey: '["s",87,0,0]', status: 'ready' } })
+    const provided = ref({ sourceSessionId: 's', runtime: { entries: reactive(new Map([['["s","a"]', entry]])) } })
+    const h = harness(t, { inlineRuntime: provided,
+        split: (text, options) => ({ env: {}, blocks: options?.inlineArtifacts
+            ? [{ type: 'inline-artifact', span }] : [{ src: text, hash: text }] }) })
+    h.props.inlineContext = { sessionId: 's', lineNum: 42, finalized: true, publicationAllowed: true, recognizedSpans: [span] }
+    h.props.source = 'publication'; await flush()
+    const notice = 'This artifact has been replaced. Its latest version appears later in the conversation.'
+    const replacedHtml = await renderArtifactMarkdown(h)
+    assert.ok(replacedHtml.includes(`<p><em>${notice}</em></p>`))
+    assert.match(replacedHtml, /<blockquote class="inline-artifact-replaced" role="status">/)
+    entry.descriptor.publicationKey = '["s",42,0,0]'
+    for (const status of ['ready', 'pending', 'error', 'not_included']) {
+        entry.descriptor.status = status
+        const html = await renderArtifactMarkdown(h)
+        assert.equal(html.includes(notice), false)
+        assert.ok(html.includes(`data-artifact-state="${status}"`))
+    }
+    span.error = 'invalid_source'
+    assert.ok((await renderArtifactMarkdown(h)).includes('Inline artifact invalid: invalid_source'))
+    span.error = null
+    entry.present = false
+    assert.equal((await renderArtifactMarkdown(h)).includes(notice), false)
+    provided.value = null
+    assert.equal(h.artifactPlacement({ inlineContext: h.props.inlineContext, span }).status, 'absent')
+})
+
+for (const context of [
+    { sessionId: 'native-subagent', lineNum: 42, finalized: true, publicationAllowed: false },
+    { sessionId: 's', lineNum: 42, finalized: false, publicationAllowed: true },
+    null,
+]) {
+    test(`excluded Markdown stays ordinary without a replacement notice: ${context?.sessionId ?? 'snapshot'}`, async t => {
+        const h = harness(t, { inlineRuntime: ref({ sourceSessionId: 's', runtime: { entries: new Map() } }),
+            split: (text, options) => ({ env: {}, blocks: options?.inlineArtifacts
+                ? [{ type: 'inline-artifact', span: {} }] : [{ src: text, hash: text }] }) })
+        h.props.inlineContext = context
+        h.props.source = 'ordinary'; await flush()
+        const html = await renderArtifactMarkdown(h)
+        assert.ok(html.includes('<p>ordinary</p>'))
+        assert.equal(html.includes('This artifact has been replaced'), false)
+        assert.equal(html.includes('data-artifact-state'), false)
+    })
+}

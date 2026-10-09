@@ -235,7 +235,7 @@ test('catalog removal hides a retained entry without an obsolete loading placeho
         publicationKey: publicationKey('s', pub), status: 'ready', title: 'a', height: 360 }] })
     assert.equal(rendering.inlineArtifactPlacement(c, span, runtime).status, 'ready')
     runtime.reconcile({ revision: 2, descriptors: [] })
-    assert.equal(rendering.inlineArtifactPlacement(c, span, runtime).status, 'superseded')
+    assert.equal(rendering.inlineArtifactPlacement(c, span, runtime).status, 'absent')
     assert.equal(runtime.entries.has(artifactKey('s', 'a')), true)
     runtime.dispose()
 })
@@ -312,4 +312,13 @@ test('protected plan spans convert original code-point offsets after a source se
     const blocks = splitMarkdownBlocks(artifact, { inlineArtifacts: true, ...segmentContext }).blocks
     assert.equal(blocks.length, 1)
     assert.equal(blocks[0].span.descriptor.title, title)
+})
+
+
+test('missing runtime or descriptor never claims that an artifact has a later replacement', () => {
+    const c = context(tag), span = c.recognizedSpans[0]
+    for (const runtime of [null, { entries: new Map() }, { entries: new Map([[artifactKey('s', 'a'),
+        { present: false, descriptor: { publicationKey: '["s",87,0,0]', status: 'ready' } }]]) }]) {
+        assert.equal(rendering.inlineArtifactPlacement(c, span, runtime).status, 'absent')
+    }
 })

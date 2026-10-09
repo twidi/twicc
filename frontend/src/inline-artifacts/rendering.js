@@ -36,7 +36,8 @@ export function inlineArtifactPlacement(context, span, runtime) {
     const key = artifactKey(context.sessionId, descriptor.artifact_id)
     const placementKey = publicationKey(context.sessionId, { line_num: context.lineNum,
         text_block_index: span.textBlockIndex, tag_offset: span.tag_offset })
-    const entry = runtime.entries.get(key)
-    const status = entry?.present && entry.descriptor.publicationKey === placementKey ? entry.descriptor.status : 'superseded'
+    const entry = runtime?.entries.get(key)
+    const status = !entry?.present ? 'absent'
+        : entry.descriptor.publicationKey === placementKey ? entry.descriptor.status : 'superseded'
     return { status, artifactKey: key, publicationKey: placementKey, title: descriptor.title }
 }

@@ -80,7 +80,7 @@ const inlineRenderingContext = computed(() => {
 const inlineContextKey = computed(() => inlineRenderingContext.value ? JSON.stringify(inlineRenderingContext.value) : undefined)
 function artifactPlacement(block) {
     const runtime = unref(providedInlineContext)?.runtime
-    return runtime ? inlineArtifactPlacement(block.inlineContext, block.span, runtime) : { status: 'superseded' }
+    return inlineArtifactPlacement(block.inlineContext, block.span, runtime)
 }
 // An unpublished offscreen document must not collapse a row whose geometry is retained.
 const rowContext = inject(STREAMING_ROW_CONTEXT, null)
@@ -854,8 +854,11 @@ function handleLinkClick(event) {
                     <div v-if="artifactPlacement(block).status === 'invalid'" class="inline-artifact-error" role="status">
                         Inline artifact invalid: {{ block.span.error }}
                     </div>
+                    <blockquote v-else-if="artifactPlacement(block).status === 'superseded'" class="inline-artifact-replaced" role="status">
+                        <p><em>This artifact has been replaced. Its latest version appears later in the conversation.</em></p>
+                    </blockquote>
                     <InlineArtifactBlock
-                        v-else-if="artifactPlacement(block).status !== 'superseded'"
+                        v-else-if="artifactPlacement(block).status !== 'absent'"
                         v-bind="artifactPlacement(block)"
                     />
                 </template>
@@ -866,6 +869,7 @@ function handleLinkClick(event) {
 </template>
 
 <style>
+
 /* The tinted blocks (blockquotes, `:::` containers, `::` lines) and the quote boxes of the Peer
    inbox and the text-selection comment share styles/quote-card.css. Inlined at the top of this
    block so it keeps its place after github-markdown-css (same specificity). */
