@@ -1948,7 +1948,7 @@ function onChangelogClose() {
                                 @keydown="onTitleSuggestionModelKeydown"
                             >
                                 <wa-radio :value="TITLE_SUGGESTION_MODEL.PROVIDER">
-                                    Match session provider — Haiku for Claude Code, GPT-6 Luna for Codex
+                                    Match session provider — {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.HAIKU] }} for Claude Code, {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.LUNA] }} for Codex
                                 </wa-radio>
                                 <wa-radio
                                     :value="TITLE_SUGGESTION_MODEL.HAIKU"

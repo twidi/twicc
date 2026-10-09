@@ -237,7 +237,7 @@ export function resolveEffectiveTitleSuggestionModel(value, enabledProviders) {
  * and the rename dialog show them.
  */
 export const TITLE_SUGGESTION_MODEL_LABELS = Object.freeze({
-    [TITLE_SUGGESTION_MODEL.HAIKU]: 'Claude Haiku',
+    [TITLE_SUGGESTION_MODEL.HAIKU]: 'Claude Haiku 5.5',
     [TITLE_SUGGESTION_MODEL.LUNA]: 'GPT-6 Luna',
 })
 

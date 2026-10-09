@@ -65,7 +65,7 @@ test('maps each forced model to its provider', () => {
 test('labels the forced title models like the settings options', () => {
     assert.deepEqual(
         { ...constants.TITLE_SUGGESTION_MODEL_LABELS },
-        { haiku: 'Claude Haiku', luna: 'GPT-6 Luna' },
+        { haiku: 'Claude Haiku 5.5', luna: 'GPT-6 Luna' },
     )
 })
 
