@@ -1099,6 +1099,7 @@ defineExpose({
 }
 .session-actions wa-button::part(base) {
     padding-inline: var(--wa-space-xs);
+    color: var(--wa-color-text-normal);
 }
 .session-actions wa-button::part(label) {
     scale: 1;
@@ -1437,7 +1438,7 @@ wa-divider {
 
 /* Unarchive button: same icon as archive, in yellow like the compact archived marker. */
 .archive-button.archive-button--archived {
-    &::part(base) {
+    & wa-icon {
         color: var(--wa-color-yellow-80);
     }
 }
@@ -1453,23 +1454,27 @@ wa-divider {
         transform: rotate(30deg);
     }
     &.pin-button--active {
-        &::part(base) {
+        & wa-icon {
             color: var(--wa-color-yellow-80);
         }
     }
 }
 
 .mute-button.mute-button--active {
-    &::part(base) {
+    & wa-icon {
         color: var(--wa-color-warning-60);
     }
 }
 
-/* Active share links → the button wears the brand colour (no count badge). */
+/* Active share links give the icon the brand colour (no count badge). */
 .share-button--active {
-    &::part(base) {
+    & wa-icon {
         color: var(--wa-color-brand-60);
     }
+}
+
+.debug-button--active wa-icon {
+    color: var(--wa-color-brand-60);
 }
 
 .pending-request-indicator {
