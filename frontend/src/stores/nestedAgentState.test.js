@@ -22,7 +22,8 @@ function action(name) {
 const ACTIONS = [
     'applyAgentRunState(', 'setAgentRunState(', 'setAgentInteraction(', 'async fetchSubagentsState(',
     'setSyntheticProcessState(', 'removeSyntheticProcessState(', '_cleanStaleChildSynthetics(', 'unloadSession(',
-    'updateSession(', 'setActiveProcesses(', 'async refreshAllLoadedToolStates(', 'markAgentStopped(', 'unloadProject(',
+    'updateSession(', 'setActiveProcesses(', 'setProcessState(', '_dropProcessState(',
+    'async refreshAllLoadedToolStates(', 'markAgentStopped(', 'unloadProject(',
 ]
 const PROCESS_STATE = { STARTING: 'starting', ASSISTANT_TURN: 'assistant_turn', USER_TURN: 'user_turn', DEAD: 'dead' }
 
@@ -58,7 +59,7 @@ function makeStore({ fetches = [] } = {}) {
         applyAgentSnapshot, staleSyntheticAgentIds, markAgentIdle, getSessionCutoffMs, jsonValuesEqual, apiFetch, PROCESS_STATE,
         isLaunchedEphemeral: () => false, destroyAllBuffers: () => {}, backgroundWorkStatusKey: () => null,
         sweepPendingRequestDrafts: async () => {}, liveDraftKey: (a, b) => `${a}:${b}`, getToolHelpers: () => null,
-        withAutoDenyDeadlines,
+        withAutoDenyDeadlines, clearBlockInactivityTimer() {}, destroySessionBuffers() {},
     }
     const methods = new Function(...Object.keys(deps), `return { ${ACTIONS.map(action).join('')} }`)(...Object.values(deps))
     const store = Object.assign(methods, {
@@ -73,7 +74,7 @@ function makeStore({ fetches = [] } = {}) {
             streamingBlocks: {},
         },
         sessions: { root: { id: 'root', project_id: 'p', provider: 'claude_code', last_started_at: T0, last_stopped_at: null } },
-        processStates: {},
+        processStates: { root: { state: PROCESS_STATE.ASSISTANT_TURN, started_at: unix(T0) } },
         sessionItems: {},
         $patch(patch) {
             if (typeof patch === 'function') { patch(this); return }
@@ -86,6 +87,7 @@ function makeStore({ fetches = [] } = {}) {
         },
         getAgentLink(owner, tool) { return this.localState.agentLinks[owner]?.[tool] },
         recomputeVisualItems() {},
+        _dropOrphanedStreamingBlocks() {},
         _hydrateSessionLayoutFromPersisted() {},
         tryFinalizePendingBinding() {},
         _tryLinkPeerDelivery() {},
@@ -138,20 +140,59 @@ test('an agent_run_state message re-creates the synthetic state after a stop', (
     assert.ok(synthetic(store, 'child'))
     assert.equal(store.processStates.child.started_at, unix(T3))
 })
-test('Reconnect: setActiveProcesses re-applies run states, also after the snapshot, never over a real process', () => {
+test('Reconnect: run states require a live root before and after the subagents snapshot', async () => {
     const store = makeStore({ fetches: [okResponse([snapshotEntry('child'), snapshotEntry('real')])] })
     store.setAgentRunState(runMsg('live'))
     store.setActiveProcesses([])
-    assert.ok(synthetic(store, 'live'))
-    return store.fetchSubagentsState('p', 'root').then(() => {
-        assert.ok(synthetic(store, 'child'))
-        store.setActiveProcesses([{ session_id: 'real', project_id: 'p', state: 'user_turn' }])
-        assert.ok(synthetic(store, 'child'))
-        // The snapshot, fetched after ``live``'s stamp, no longer lists it.
-        assert.equal(store.processStates.live, undefined)
-        assert.equal(store.processStates.real.state, 'user_turn')
-        assert.equal(store.processStates.real.synthetic, undefined)
-    })
+    assert.equal(store.processStates.live, undefined)
+    await store.fetchSubagentsState('p', 'root')
+    assert.equal(store.processStates.child, undefined)
+    store.setActiveProcesses([
+        { session_id: 'root', project_id: 'p', state: 'user_turn' },
+        { session_id: 'real', project_id: 'p', state: 'user_turn' },
+    ])
+    assert.ok(synthetic(store, 'child'))
+    assert.equal(store.processStates.live, undefined)
+    assert.equal(store.processStates.real.state, 'user_turn')
+    assert.equal(store.processStates.real.synthetic, undefined)
+    store.setActiveProcesses([])
+    assert.equal(store.processStates.child, undefined)
+    assert.equal(store.processStates.real, undefined)
+})
+test('Crash then page load: an open run snapshot cannot create active subagents without a root process', async () => {
+    const store = makeStore({ fetches: [okResponse([snapshotEntry('child'), snapshotEntry('nested', { owner: 'child' })])] })
+    store.setActiveProcesses([])
+    await store.fetchSubagentsState('p', 'root')
+    assert.equal(store.localState.agentRunStates.child.running, true)
+    assert.deepEqual(store.processStates, {})
+    // A delayed live message cannot revive either agent.
+    store.setAgentRunState(runMsg('child', { runStartedAt: T3 }))
+    store.setAgentRunState(runMsg('nested', { runStartedAt: T3 }))
+    assert.deepEqual(store.processStates, {})
+})
+test('Root process transitions apply stored runs and clear every nested agent on death', () => {
+    const store = makeStore()
+    delete store.processStates.root
+    store.setAgentRunState(runMsg('child'))
+    store.setAgentRunState(runMsg('nested'))
+    assert.deepEqual(store.processStates, {})
+    for (const state of ['starting', 'assistant_turn', 'user_turn']) {
+        store.setProcessState('root', 'p', state)
+        assert.ok(synthetic(store, 'child'), state)
+        assert.ok(synthetic(store, 'nested'), state)
+    }
+    store.setProcessState('root', 'p', 'dead')
+    assert.deepEqual(store.processStates, {})
+    // The missing transcript end stays stored but cannot show an active agent.
+    assert.equal(store.localState.agentRunStates.child.running, true)
+})
+test('A synthetic or dead root cannot authorize another synthetic process', () => {
+    for (const rootProcess of [{ state: 'assistant_turn', synthetic: true }, { state: 'dead' }]) {
+        const store = makeStore()
+        store.processStates.root = rootProcess
+        store.setAgentRunState(runMsg('child'))
+        assert.equal(store.processStates.child, undefined)
+    }
 })
 test('Store rules: a root restart removes the robot of a run started before the cutoff and keeps a later one', () => {
     const store = makeStore()
@@ -279,7 +320,7 @@ test('Reconnect: a snapshot in flight when unloadSession(root) runs is not re-is
     assert.deepEqual(store.urls, [SUBAGENTS_URL])
     assert.deepEqual(store.localState.agentRunStates, {})
     assert.deepEqual(store.localState.agentLinkIndex, {})
-    assert.deepEqual(store.processStates, {})
+    assert.deepEqual(Object.keys(store.processStates), ['root'])
 })
 
 test('Store lifetime: unloadSession(root) drops the root run states and interactions', () => {
@@ -361,7 +402,7 @@ test('unloadProject unloads the root first: its agents issue no /subagents/ requ
     assert.deepEqual(store.urls, [])
     assert.deepEqual(store.sessions, {})
     assert.deepEqual(store.localState.agentRunStates, {})
-    assert.deepEqual(store.processStates, {})
+    assert.deepEqual(Object.keys(store.processStates), ['root'])
     assert.equal(store.localState.projects.p.sessionsFetched, false)
 })
 test('unloadSession of an agent whose root items are not loaded fetches nothing', () => {

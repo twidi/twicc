@@ -4732,15 +4732,17 @@ export const useDataStore = defineStore('data', {
         /**
          * Set or remove an agent's synthetic process state from its stored run
          * state and its root's cutoff (design §8.2). Acts only while the root's
-         * items are loaded; otherwise (or with no run state) it removes it. The
-         * synthetic ``started_at`` is the newest run's start, so
+         * items are loaded and its real process is alive. Otherwise it removes
+         * the synthetic state. Its ``started_at`` is the newest run's start, so
          * ``_cleanStaleChildSynthetics`` compares that run with the root cutoff.
          * @param {string} agentId
          */
         applyAgentRunState(agentId) {
             const entry = this.localState.agentRunStates[agentId]
             const root = entry?.rootSessionId
-            if (!entry || !this.localState.sessions[root]?.itemsFetched) {
+            const rootProcess = this.processStates[root]
+            if (!entry || !this.localState.sessions[root]?.itemsFetched
+                || !rootProcess || rootProcess.synthetic || rootProcess.state === PROCESS_STATE.DEAD) {
                 this.removeSyntheticProcessState(agentId)
                 return
             }
@@ -5120,6 +5122,10 @@ export const useDataStore = defineStore('data', {
         _dropProcessState(sessionId) {
             // Remove dead processes from the map
             delete this.processStates[sessionId]
+            // A missing root process cannot keep its subagents alive.
+            for (const [agentId, entry] of Object.entries(this.localState.agentRunStates)) {
+                if (entry.rootSessionId === sessionId) this.applyAgentRunState(agentId)
+            }
             // Clean up any lingering streaming blocks and buffers
             const lingering = this.localState.streamingBlocks[sessionId]
             if (lingering) {
@@ -5247,6 +5253,14 @@ export const useDataStore = defineStore('data', {
                 // transition, repainting without the synthetic block.
                 if (wasAssistantTurn && state !== PROCESS_STATE.ASSISTANT_TURN) {
                     this._dropOrphanedStreamingBlocks(sessionId)
+                }
+            }
+
+            // Run evidence can arrive before the root's process state. Apply it
+            // again when that process becomes available, including USER_TURN.
+            if (state !== PROCESS_STATE.DEAD) {
+                for (const [agentId, entry] of Object.entries(this.localState.agentRunStates)) {
+                    if (entry.rootSessionId === sessionId) this.applyAgentRunState(agentId)
                 }
             }
 
