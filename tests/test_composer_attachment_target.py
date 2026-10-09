@@ -6,7 +6,7 @@ from pathlib import Path
 import orjson
 import pytest
 
-from twicc import provider_homes
+from twicc import provider_homes, synced_settings
 from twicc.core.models import Project
 from twicc.core.services.attachments.target import PLATFORM_FLAGS, resolve_plan_target
 from twicc.core.services.attachments.types import PlanTarget
@@ -34,6 +34,9 @@ class FakeAgent:
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch, provider_home):
     monkeypatch.setenv("TWICC_DATA_DIR", str(tmp_path / "data"))
+    # A new data dir does not invalidate settings cached by earlier tests.
+    monkeypatch.setattr(synced_settings, "_cache", {})
+    monkeypatch.setattr(synced_settings, "_routing_settings_available", True)
     for flag in SIX_FLAGS:
         monkeypatch.delenv(flag, raising=False)
     return provider_home
