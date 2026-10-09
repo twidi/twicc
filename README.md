@@ -10,7 +10,7 @@ One self-hosted web interface for both [Claude Code](https://docs.anthropic.com/
 
 https://github.com/user-attachments/assets/ef29d6b0-2f5b-41b5-84e5-7db9042bf529
 
-▶ No player above? [Watch the demo video on GitHub](https://github.com/twidi/twicc#demo).
+▶ No player above? [Watch the demo video on YouTube](https://youtu.be/3WJ5ZF5MHtI).
 
 [![Crafted with love](https://img.shields.io/badge/crafted_with-love-red?style=social&logo=githubsponsors&logoColor=red)](https://github.com/sponsors/twidi)
 [![PyPI version](https://img.shields.io/pypi/v/twicc?logo=pypi&logoColor=blue&style=social)](https://pypi.org/project/twicc/)
