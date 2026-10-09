@@ -1,6 +1,21 @@
 /** Provided by the owning regular session view; native subagent text never uses it. */
 export const INLINE_ARTIFACT_CONTEXT = Symbol('inlineArtifactContext')
 
+/**
+ * Provided by the transcript list (owner and share): `(lineNum, publicationKey) => Promise`
+ * brings a publication's row into view, then centers its inline artifact block. Used by
+ * the "replaced" notice of a superseded placement to reach the latest one.
+ */
+export const INLINE_ARTIFACT_NAVIGATION = Symbol('inlineArtifactNavigation')
+
+/** Center the placeholder of one publication inside a scroller, once its row is rendered. */
+export function revealInlinePublication(scrollerEl, publicationKey) {
+    const block = [...(scrollerEl?.querySelectorAll('[data-inline-publication]') || [])]
+        .find(el => el.dataset.inlinePublication === publicationKey)
+    block?.scrollIntoView({ block: 'center', behavior: 'instant' })
+    return !!block
+}
+
 // The bound shim reports this document's captured generation with ready/height
 // messages. contentWindow alone cannot distinguish successive navigations.
 export const INLINE_ARTIFACT_RELOAD_QUERY = '_twicc_reload'

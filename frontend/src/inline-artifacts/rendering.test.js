@@ -95,7 +95,11 @@ test('unloaded latest publication suppresses the loaded older widget', () => {
     const pub = { artifact_id: 'a', line_num: 87, text_block_index: 0, tag_offset: 0, src: 'inline-artifacts/a/index.html', title: 'a', height: 360 }
     runtime.reconcile({ revision: 1, descriptors: [{ sourceSessionId: 's', artifactId: 'a', publication: pub, publicationKey: publicationKey('s', pub), status: 'ready', title: 'a', height: 360 }] })
     const older = context(tag)
-    assert.equal(rendering.inlineArtifactPlacement(older, older.recognizedSpans[0], runtime).status, 'superseded')
+    const placement = rendering.inlineArtifactPlacement(older, older.recognizedSpans[0], runtime)
+    assert.equal(placement.status, 'superseded')
+    // The replaced notice links to the latest placement.
+    assert.equal(placement.latestLineNum, 87)
+    assert.equal(placement.latestPublicationKey, publicationKey('s', pub))
     assert.equal(Object.keys(pool.frames).length, 0)
     const latest = { ...older, lineNum: 87 }
     assert.equal(rendering.inlineArtifactPlacement(latest, latest.recognizedSpans[0], runtime).status, 'ready')
@@ -321,4 +325,16 @@ test('missing runtime or descriptor never claims that an artifact has a later re
         { present: false, descriptor: { publicationKey: '["s",87,0,0]', status: 'ready' } }]]) }]) {
         assert.equal(rendering.inlineArtifactPlacement(c, span, runtime).status, 'absent')
     }
+})
+
+
+test('revealing a publication centers its own placeholder only', async () => {
+    const { revealInlinePublication } = await import('./context.js')
+    const calls = []
+    const block = key => ({ dataset: { inlinePublication: key }, scrollIntoView: options => calls.push([key, options]) })
+    const scroller = { querySelectorAll: () => [block('["s",3,0,0]'), block('["s",87,0,0]')] }
+    assert.equal(revealInlinePublication(scroller, '["s",87,0,0]'), true)
+    assert.deepEqual(calls, [['["s",87,0,0]', { block: 'center', behavior: 'instant' }]])
+    assert.equal(revealInlinePublication(scroller, '["s",99,0,0]'), false)
+    assert.equal(revealInlinePublication(null, '["s",87,0,0]'), false)
 })

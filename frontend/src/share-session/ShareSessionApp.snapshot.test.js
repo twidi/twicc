@@ -146,6 +146,7 @@ async function mount(t, { initialManifest = manifest(263), mode = 'snapshot' } =
         '../utils/scrollerLoadWindow.js': await import('../utils/scrollerLoadWindow.js'),
         './shims/shareApi': shareApi,
         '../utils/attachmentStrip': await import('../utils/attachmentStrip.js'),
+        '../inline-artifacts/context.js': await import('../inline-artifacts/context.js'),
     })
     const component = compileComponent(new URL('./ShareSessionApp.vue', import.meta.url), {
         './ShareItemsList.vue': list,

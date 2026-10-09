@@ -73,6 +73,7 @@ onBeforeUnmount(() => {
     <div
         ref="placeholder"
         class="inline-artifact-block"
+        :data-inline-publication="publicationKey"
         :style="{ height: `${status === 'not_included' || status === 'error' || entry?.loadState === 'error' ? 160 : current ? entry.inlineHeight : 160}px` }"
         :aria-label="title || entry?.descriptor.title"
     >

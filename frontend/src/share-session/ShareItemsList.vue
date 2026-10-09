@@ -14,6 +14,7 @@ import { getParsedContent, hasContent } from '../utils/parsedContent'
 import { collectMissingScrollerLines, sameScrollerLoadCandidates } from '../utils/scrollerLoadWindow.js'
 import { isSessionNotReadyError } from './shims/shareApi'
 import { ATTACHMENT_SHARE_MODE } from '../utils/attachmentStrip'
+import { INLINE_ARTIFACT_NAVIGATION, revealInlinePublication } from '../inline-artifacts/context.js'
 
 const props = defineProps({
     projectId: { type: String, default: 'share' },
@@ -228,6 +229,13 @@ async function scrollToItem(lineNum, offset = 0) {
     }
     await scrollerRef.value?.scrollToKey(lineNum, { align: 'start', offset })
 }
+
+// The "replaced" notice of a superseded inline artifact jumps to the latest placement.
+provide(INLINE_ARTIFACT_NAVIGATION, async (lineNum, publicationKey) => {
+    await scrollToItem(lineNum)
+    await nextTick()
+    revealInlinePublication(scrollerRef.value?.$el, publicationKey)
+})
 
 const {
     hasNavigation: navHasNavigation,

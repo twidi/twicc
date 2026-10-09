@@ -385,10 +385,11 @@ const templateCode = template.code.replace(/import \{([^}]+)\} from "vue"/g,
     (_, names) => `const {${names.replace(/ as /g, ': ')}} = Vue`)
     .replace('export function render', 'function render')
 const templateRender = new Function('Vue', `${templateCode}; return render`)(Vue)
-async function renderArtifactMarkdown(h) {
+async function renderArtifactMarkdown(h, navigateToInlinePublication = null) {
     const app = Vue.createSSRApp({ render: templateRender, setup: () => ({
         blocks: h.blocks, artifactPlacement: h.artifactPlacement, showRaw: false, showToolbar: false,
         showTocDetails: false, source: h.props.source, highlightTerms: [], handleLinkClick() {},
+        navigateToInlinePublication,
     }) })
     app.component('InlineArtifactBlock', { props: ['status'], render() { return Vue.h('div', { 'data-artifact-state': this.status }) } })
     app.directive('highlight', {})
@@ -407,8 +408,12 @@ test('the old finalized publication renders a replacement notice; current and ab
     h.props.source = 'publication'; await flush()
     const notice = 'This artifact has been replaced. Its latest version appears later in the conversation.'
     const replacedHtml = await renderArtifactMarkdown(h)
-    assert.ok(replacedHtml.includes(`<p><em>${notice}</em></p>`))
+    assert.ok(replacedHtml.includes(`<em>${notice}</em>`))
     assert.match(replacedHtml, /<blockquote class="inline-artifact-replaced" role="status">/)
+    // The link to the latest placement needs a list that can navigate (owner or share).
+    assert.equal(replacedHtml.includes('inline-artifact-replaced-link'), false)
+    assert.match(await renderArtifactMarkdown(h, () => {}), /<button type="button" class="inline-artifact-replaced-link">Go to the latest version<\/button>/)
+    assert.equal(h.artifactPlacement({ inlineContext: h.props.inlineContext, span }).latestLineNum, 87)
     entry.descriptor.publicationKey = '["s",42,0,0]'
     for (const status of ['ready', 'pending', 'error', 'not_included']) {
         entry.descriptor.status = status

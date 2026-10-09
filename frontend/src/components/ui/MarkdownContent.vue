@@ -11,7 +11,7 @@ import { createMarkdownRenderCoordinator, MARKDOWN_RENDER_CANCELLED } from '../.
 import { markdownReferenceContextKey, markdownBlockCacheKey } from '../../utils/markdownRenderCache.js'
 import { STREAMING_ROW_CONTEXT } from '../../composables/streamPublicationKeys.js'
 import { useMarkdownRenderEligibility } from '../../composables/useMarkdownRenderEligibility.js'
-import { INLINE_ARTIFACT_CONTEXT } from '../../inline-artifacts/context.js'
+import { INLINE_ARTIFACT_CONTEXT, INLINE_ARTIFACT_NAVIGATION } from '../../inline-artifacts/context.js'
 import { inlineArtifactPlacement } from '../../inline-artifacts/rendering.js'
 import InlineArtifactBlock from '../../inline-artifacts/InlineArtifactBlock.vue'
 import { hashString } from '../../utils/hash.js'
@@ -69,6 +69,8 @@ const fileLinks = inject('markdownFileLinks', null)
 // a null return marks the media as not-shared (rendered as a broken placeholder).
 const rewriteContentMediaUrl = inject('rewriteContentMediaUrl', null)
 
+// The "replaced" notice of a superseded inline artifact links to the latest placement.
+const navigateToInlinePublication = inject(INLINE_ARTIFACT_NAVIGATION, null)
 const blocks = ref([])
 const providedInlineContext = inject(INLINE_ARTIFACT_CONTEXT, null)
 const inlineRenderingContext = computed(() => {
@@ -855,7 +857,15 @@ function handleLinkClick(event) {
                         Inline artifact invalid: {{ block.span.error }}
                     </div>
                     <blockquote v-else-if="artifactPlacement(block).status === 'superseded'" class="inline-artifact-replaced" role="status">
-                        <p><em>This artifact has been replaced. Its latest version appears later in the conversation.</em></p>
+                        <p>
+                            <em>This artifact has been replaced. Its latest version appears later in the conversation.</em>
+                            <button
+                                v-if="navigateToInlinePublication"
+                                type="button"
+                                class="inline-artifact-replaced-link"
+                                @click="navigateToInlinePublication(artifactPlacement(block).latestLineNum, artifactPlacement(block).latestPublicationKey)"
+                            >Go to the latest version</button>
+                        </p>
                     </blockquote>
                     <InlineArtifactBlock
                         v-else-if="artifactPlacement(block).status !== 'absent'"
@@ -874,6 +884,19 @@ function handleLinkClick(event) {
    inbox and the text-selection comment share styles/quote-card.css. Inlined at the top of this
    block so it keeps its place after github-markdown-css (same specificity). */
 @import '../../styles/quote-card.css';
+
+/* The "replaced" notice of a superseded inline artifact: a link-like button to the latest one. */
+.markdown-body .inline-artifact-replaced-link {
+    margin-inline-start: 0.35em;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--wa-color-text-link);
+    font: inherit;
+    font-style: normal;
+    text-decoration: underline;
+    cursor: pointer;
+}
 
 /* -------------------------------------------------------------------
    Styles NOT covered by github-markdown-css:

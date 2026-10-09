@@ -1,5 +1,5 @@
 <script setup>
-import { INLINE_ARTIFACT_CONTEXT } from '../../../inline-artifacts/context.js'
+import { INLINE_ARTIFACT_CONTEXT, INLINE_ARTIFACT_NAVIGATION, revealInlinePublication } from '../../../inline-artifacts/context.js'
 import { MARKDOWN_RENDER_VIEW_CONTEXT, STREAMING_VIEW_CONTEXT } from '../../../composables/streamPublicationKeys.js'
 import { computed, watch, ref, reactive, provide, nextTick, inject, onMounted, onBeforeUnmount, onActivated, onDeactivated, unref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -2030,6 +2030,13 @@ function scrollToFirstHighlight(lineNum) {
     // Scroll the mark into view within the scroller container
     mark.scrollIntoView({ block: 'center', behavior: 'instant' })
 }
+
+// The "replaced" notice of a superseded inline artifact jumps to the latest placement.
+provide(INLINE_ARTIFACT_NAVIGATION, async (lineNum, publicationKey) => {
+    if (!await scrollToLineNum(lineNum, { align: 'start', highlight: false })) return
+    await nextTick()
+    revealInlinePublication(scrollerRef.value?.$el, publicationKey)
+})
 
 /**
  * Handle navigate event from the search bar.
