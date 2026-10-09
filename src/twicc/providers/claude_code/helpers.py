@@ -348,12 +348,14 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
             cache_write_5m_price=Decimal("3.75"),
             cache_write_1h_price=Decimal("6.00"),
         ),
+        # Haiku 5.5 pricing (the family's latest; Haiku 4.5 is 1.00 / 5.00). Prompts over 100K
+        # tokens bill higher (0.50 / 2.50), which this flat table cannot express.
         "haiku": FamilyPrices(
-            input_price=Decimal("1.00"),
-            output_price=Decimal("5.00"),
-            cache_read_price=Decimal("0.10"),
-            cache_write_5m_price=Decimal("1.25"),
-            cache_write_1h_price=Decimal("2.00"),
+            input_price=Decimal("0.10"),
+            output_price=Decimal("0.50"),
+            cache_read_price=Decimal("0.01"),
+            cache_write_5m_price=Decimal("0.125"),
+            cache_write_1h_price=Decimal("0.20"),
         ),
     }
 
