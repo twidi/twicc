@@ -404,10 +404,13 @@ watch(() => [session.value?.type, session.value?.inline_artifacts], () => {
     }
     if (!inlineRuntime.value) {
         inlineAdapter = makeOwnerInlineAdapter({ sessionId: inlineSourceSessionId, store, api: apiFetch })
-        inlineRuntime.value = createInlineArtifactRuntime({ viewId: `session:${inlineSourceSessionId}`,
+        const runtime = createInlineArtifactRuntime({ viewId: `session:${inlineSourceSessionId}`,
             pool: inlineFramePool, adapter: inlineAdapter })
-        // The authorized main list exclusively enables this runtime.
-        inlineRuntime.value.setActive(false)
+        // The authorized main list exclusively enables this runtime. Disable it
+        // before publishing it: a list already mounted (a draft that just became
+        // a session) enables it synchronously on publication.
+        runtime.setActive(false)
+        inlineRuntime.value = runtime
     }
     inlineRuntime.value.reconcile(inlineAdapter.manifest())
 }, { immediate: true, deep: true })
