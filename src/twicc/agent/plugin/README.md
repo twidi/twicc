@@ -182,7 +182,7 @@ An agent pays for the whole `SKILL.md` each time it loads the skill. A big skill
 - The skill has sub-commands, or independent topics (`twicc-info` sections, `twicc-create-session` option groups).
 - **And** a single `SKILL.md` would exceed ~16 000 characters (~4 500 tokens). Below that, keep one file.
 
-Split skills today: `twicc-session`, `twicc-sessions`, `twicc-info`, `twicc-create-session`, `twicc-update-session`, `twicc-update-sessions`.
+Split skills today: `twicc-session`, `twicc-sessions`, `twicc-info`, `twicc-create-session`, `twicc-update-session`, `twicc-update-sessions`, `twicc-artifact-authoring` (split by kind of artifact, below the size threshold on purpose: an agent that writes an image or a Markdown file reads the index alone).
 
 ### The index `SKILL.md`
 

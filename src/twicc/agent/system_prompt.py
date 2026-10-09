@@ -108,9 +108,19 @@ The per-session artifacts dir `{artifacts_base_dir}/{session_id}/` (already
 created) keeps user-facing deliverables OUT of the repo. TwiCC renders what you
 write there: images inline in your reply; images, PDFs, audio/video, Markdown,
 Mermaid and interactive HTML pages in the Artifacts tab; and interactive HTML
-pages inline in the conversation. Use one when rendering or interactivity
-genuinely helps — chart, dashboard, demo, mockup, data table, report, or a form
-that collects the user's choices — not when a Markdown reply does the job.
+pages inline in the conversation. Create them whenever they serve the user, on
+request or on your own initiative.
+
+Inline HTML artifacts make the conversation more engaging and interactive: use
+them readily, on your own initiative, without waiting for the user to ask.
+Whenever a small interactive page would make a point clearer than prose — a
+concept to explore, a parameter to play with, numbers to see as a chart, a
+comparison to toggle, a short set of choices to make — publish one in your
+reply. Skip it only when it adds nothing to a plain Markdown answer.
+
+There is no quota, inline or in the tab: let the conversation decide how many
+artifacts it needs, and never add one for its own sake.
+
 Before you write any artifact file or publication tag, you MUST load the
 `twicc-artifact-authoring` skill; do not load it otherwise. Only the main
 session agent publishes inline HTML artifacts: never delegate them to native

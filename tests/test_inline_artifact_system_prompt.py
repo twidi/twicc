@@ -17,9 +17,23 @@ from twicc.pending_agent_settings import pop_pending_agent_settings
 from twicc.pending_session_attributes import get_pending_session_attributes, pop_pending_session_attributes
 from twicc.providers.helpers import AgentSettings
 
-SKILL = (
-    Path(__file__).resolve().parents[1] / "src/twicc/agent/plugin/twicc/skills/twicc-artifact-authoring/SKILL.md"
-).read_text()
+ROOT = Path(__file__).resolve().parents[1]
+SKILL_DIR = ROOT / "src/twicc/agent/plugin/twicc/skills/twicc-artifact-authoring"
+INDEX = (SKILL_DIR / "SKILL.md").read_text()
+TOPICS = {name: (SKILL_DIR / name).read_text() for name in ("html.md", "design.md", "inline.md")}
+# The whole contract, index and topic files together.
+SKILL = "\n".join([INDEX, *TOPICS.values()])
+THEME = (ROOT / "frontend/src/artifact-theme/theme.css").read_text()
+KIT = (ROOT / "frontend/src/artifact-theme/kit.css").read_text()
+
+
+def _expand(name):
+    """Expand the skill's `{a|b}` shorthand into every literal token name."""
+    match = re.search(r"\{([^}]*)\}", name)
+    if not match:
+        return [name]
+    return [n for option in match.group(1).split("|")
+            for n in _expand(name[:match.start()] + option + name[match.end():])]
 
 
 @pytest.fixture(params=[Provider.CLAUDE_CODE, Provider.CODEX])
@@ -56,7 +70,7 @@ def test_skill_documents_inline_publication(guidance):
 
 
 def test_examples_publish_single_file_and_folder_with_assets():
-    samples = re.findall(r"```(?:text)?\n(.*?)\n```", SKILL, re.DOTALL)
+    samples = re.findall(r"```text\n(.*?)\n```", SKILL, re.DOTALL)
     descriptors = [block.descriptor for sample in samples for block in parse_inline_artifact_blocks(sample)]
     assert {descriptor["src"] for descriptor in descriptors} == {
         "inline-artifacts/calculator/calculator.html", "inline-artifacts/preferences/index.html",
@@ -107,3 +121,59 @@ def test_new_session_creation_freezes_inline_guidance(provider, tmp_path):
     finally:
         pop_pending_agent_settings(draft_id)
         pop_pending_session_attributes(draft_id)
+
+
+def test_every_token_the_skill_names_exists_in_the_theme():
+    # The --twicc-* names are a public contract: the skill and theme.css must agree both ways.
+    documented = {n for raw in re.findall(r"--twicc-[a-z0-9{}|-]+", SKILL) for n in _expand(raw)}
+    defined = set(re.findall(r"^\s*(--twicc-[a-z0-9-]+):", THEME, re.MULTILINE))
+    # Set at runtime by the shim from the user's settings (appPreferences.js), not by theme.css.
+    runtime = {"--twicc-root-font-size"}
+    assert documented == defined | runtime
+
+
+def test_every_kit_class_the_skill_names_exists_in_the_kit():
+    look = TOPICS["design.md"].split("## TwiCC look", 1)[1].split("\n## ", 1)[0]
+    classes = set(re.findall(r"`(twicc-[a-z]+)`", look))
+    classes |= {name for value in re.findall(r'class="([^"]+)"', look) for name in value.split()}
+    assert classes
+    for name in classes:
+        assert f".{name}" in KIT, name
+    assert "/_twicc/artifact-theme/kit.css" in SKILL
+
+
+def test_skill_documents_user_preferences():
+    assert "--twicc-root-font-size" in SKILL and "rem" in SKILL
+    assert "data-twicc-reduce-motion" in SKILL and "data-twicc-reduce-effects" in SKILL
+    assert "var(--twicc-root-font-size, 100%)" in KIT
+
+
+def test_kit_root_font_size_is_only_the_user_setting():
+    # A second font-size on the root (e.g. a rem token) resolves against the browser default
+    # and silently overrides the user's setting.
+    root_rule = re.search(r":where\(:root\) \{(.*?)\}", KIT, re.DOTALL).group(1)
+    assert re.findall(r"^\s*font-size:\s*(.+?);", root_rule, re.MULTILINE) == ["var(--twicc-root-font-size, 100%)"]
+
+
+def test_index_routes_html_work_to_the_topic_files():
+    # An agent that only writes an image or Markdown reads the index alone.
+    for name in TOPICS:
+        assert f"`{name}`" in INDEX
+    assert "ALWAYS READ THE TOPIC'S FILE" in INDEX
+    for detail in ("<twicc:inline-artifact", "--twicc-accent", "window.twicc.data.set", "data-twicc-display"):
+        assert detail not in INDEX, detail
+    assert "<twicc:inline-artifact" in TOPICS["inline.md"]
+    assert "--twicc-canvas" in TOPICS["design.md"]
+    assert "window.twicc.data.set" in TOPICS["html.md"]
+
+
+def test_addendum_encourages_inline_artifacts_without_a_quota(provider_addendum):
+    assert "use\nthem readily, on your own initiative, without waiting for the user to ask." in provider_addendum
+    assert "There is no quota" in provider_addendum
+    assert "not when a Markdown reply does the job" not in provider_addendum
+
+
+def test_index_says_where_to_publish():
+    choice = INDEX.split("## Inline or Artifacts tab", 1)[1].split("\n## ", 1)[0]
+    assert "When unsure, publish **inline**" in choice
+    assert "genuinely helps" not in INDEX
