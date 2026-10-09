@@ -198,9 +198,7 @@ watch([() => props.sessionId, () => props.viewActive, sessionActive,
     if (!props.viewActive || !sessionActive.value || props.parentSessionId
         || session.value?.provider !== 'codex' || session.value?.type === 'subagent'
         || session.value?.draft || isLaunchedEphemeral(session.value)) return
-    store.loadAsyncQuestions(props.projectId, props.sessionId).catch(() => {
-        toast.error('Failed to load pending questions.')
-    })
+    store.loadAsyncQuestions(props.projectId, props.sessionId).catch(error => console.warn('Failed to load async questions:', error))
 }, { immediate: true })
 const isEphemeral = computed(() => isLaunchedEphemeral(session.value))
 watch(isEphemeral, (active) => { if (active) showSessionSearch.value = false })

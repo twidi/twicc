@@ -50,7 +50,8 @@ test('4. a code block is the same card in the neutral colour, with its tokens le
 
 test('5. the renderer inlines the stylesheet first, and the quote boxes of the app use the class', () => {
     const md = read('../components/ui/MarkdownContent.vue')
-    assert.match(md, /<style>\n(?:\/\*[\s\S]*?\*\/\n)?@import '\.\.\/\.\.\/styles\/quote-card\.css';/)
+    const rendererStyles = strip(md.match(/<style>([\s\S]*?)<\/style>/)[1]).trimStart()
+    assert.match(rendererStyles, /^@import '\.\.\/\.\.\/styles\/quote-card\.css';/)
     for (const [f, cls] of [['../components/peer/PeerInboxRow.vue', 'pir__message quote-card'], ['../components/peer/PeerMessageReviewDialog.vue', 'pr-quote quote-card'], ['../components/session/detail/TextSelectionComment.vue', 'tsc-quote quote-card']]) {
         const s = read(f)
         assert.ok(s.includes(`class="${cls}"`), `${f}: ${cls}`)
