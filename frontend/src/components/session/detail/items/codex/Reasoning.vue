@@ -5,6 +5,7 @@ import { useStreamingPublication } from '../../../../../composables/useStreaming
 import { useDataStore } from '../../../../../stores/data'
 import { useDetailsClosing } from '../../../../../composables/useDetailsClosing'
 import { isBlankMarkdown } from '../../../../../utils/markdown.js'
+import { extractThinkingTitle } from '../../../../../utils/thinkingTitle.js'
 import MarkdownContent from '../../../../ui/MarkdownContent.vue'
 
 const props = defineProps({
@@ -79,6 +80,11 @@ const streaming = computed(() => extracted.value.streaming)
 // source so the placeholder never flashes before the first tokens land.
 const hasContent = computed(() => !isBlankMarkdown(text.value))
 
+// Summary description: the first line when it is a heading or a bold span —
+// so with several summary entries, the first entry's title. Reads only that
+// line, so it stays cheap while the reasoning streams in.
+const title = computed(() => extractThinkingTitle(text.value))
+
 // Lazy rendering + persisted open state, mirrored from
 // ``claude_code/ThinkingContent.vue``. Initialized from the store so the
 // virtual scroller's mount/unmount cycle doesn't reset the user's choice.
@@ -129,10 +135,18 @@ function onAfterHide(event) {
         @wa-hide="onHide"
         @wa-after-hide="onAfterHide"
     >
-        <span slot="summary" class="items-details-summary">
-            <strong class="items-details-summary-name">Thinking</strong>
-            <wa-spinner v-if="streaming"></wa-spinner>
-        </span>
+        <div slot="summary" class="items-details-summary">
+            <div class="items-details-summary-left">
+                <strong class="items-details-summary-name">Thinking</strong>
+                <template v-if="title">
+                    <span class="items-details-summary-separator"> — </span>
+                    <span class="items-details-summary-description">{{ title }}</span>
+                </template>
+            </div>
+            <div v-if="streaming" class="items-details-summary-right">
+                <wa-spinner></wa-spinner>
+            </div>
+        </div>
         <div v-if="isOpen || isClosing()" class="reasoning-body">
             <MarkdownContent v-if="streaming || hasContent" :source="text" />
             <p v-else class="reasoning-placeholder">No thinking content was provided</p>
@@ -141,12 +155,6 @@ function onAfterHide(event) {
 </template>
 
 <style scoped>
-wa-details {
-    .items-details-summary {
-        justify-content: space-between;
-    }
-}
-
 .reasoning-body {
     word-break: break-word;
 }
