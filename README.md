@@ -86,7 +86,7 @@ See the [`CHANGELOG.md`](CHANGELOG.md) for the full release history.
 - **Slash commands and file references**: `/` for Claude Code, `$` for Codex, `@` for files — from the message input
 - **Snippets and history**: reusable text snippets with placeholders (global or per-project), plus a picker to reuse earlier messages
 - **Drafts**: unsent messages and new sessions are saved locally and survive a reload
-- **Artifacts**: agents produce rendered artifacts — images, reports, interactive HTML playgrounds (with network calls you approve per host, and a per-artifact `data/` store so a page can save your choices for the agent to read back) — shown inside TwiCC in the session's Artifacts tab, and bookmarkable in a dedicated view
+- **Artifacts**: agents produce rendered artifacts — images, reports, interactive HTML playgrounds (with network calls you approve per host, and a per-artifact `data/` store so a page can save your choices for the agent to read back) — shown inside TwiCC in the session's Artifacts tab or, for interactive HTML pages, inline right in the conversation, and bookmarkable in a dedicated view
 - **Public sharing**: publish revocable, read-only links to session transcripts or bookmarked artifacts, with optional password protection, expiry, view controls, and live or frozen modes — see [Sharing](#sharing)
 
 ### Code and files
@@ -121,7 +121,7 @@ See the [`CHANGELOG.md`](CHANGELOG.md) for the full release history.
   - **Terminal** — a full integrated terminal
   - **Tasks** — the session's task/todo list, when it has one
   - **Plan** — the plan-like documents the session touched, read-only
-  - **Artifacts** — the rendered artifacts the agent produced
+  - **Artifacts** — the rendered artifacts the agent produced (interactive HTML pages can also appear inline in the conversation)
   - **Orchestration** — the sessions this one spawned (with a link to the session that spawned it) and its subagents
   - **Workflows** — Claude Code workflow runs, live as they execute
   - **Browser** — an embedded web browser
