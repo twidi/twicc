@@ -645,3 +645,52 @@ It uses the repository's `@vue/compiler-sfc`, `compileScript(..., {inlineTemplat
 This SFC check is not a SPA/share production build or browser product acceptance.
 The recovery does not rerun the forbidden unbounded command, build bundles, or restart servers.
 The controller owns the remaining bounded SPA/share builds and independent review after this commit.
+
+
+### UI follow-up review fixes — 2026-10-09
+
+The first scoped review identifies two Important findings at `e74bd165`.
+Failed fullscreen error overlays retain nonreactive viewport pixel dimensions.
+Shared Tools clamping uses the complete frame and ignores its visible clip.
+The controller's actual GoLast observation confirms the default anchor above the viewport:
+frame y=-326.548,height=873.991,top clip=424.034; Tools y=-314.559,height=37.997.
+
+The shared component now accepts viewport-coordinate `frameRect` and `visibleBounds`.
+It computes their intersection in local coordinates for default and dragged placement.
+FilePane, the normal inline owner, and the failed inline host supply their existing frame/clip geometry.
+A post-render watch handles clip/position changes even when parent dimensions do not change.
+Menu direction and tooltip direction use the same visible bounds.
+The default placement returns to its CSS corner when no clipping adjustment is necessary.
+Dragged placement retains existing one-way clamping behavior.
+Fullscreen error overlays use fixed `inset:0`; CSS tracks viewport resize without reactive entry changes.
+
+Source inspection also identifies transient visibility teardown in the normal inline owner.
+The shared component now owns a `visible` prop and `v-show` on its root.
+Hidden controls stay mounted with `display:none`, preserving expanded/dragged state without a hit area.
+The placement watch runs after reveal; initially hidden controls do not capture zero-size default offsets.
+No iframe element, navigation key, or runtime ownership code changes.
+
+Regression RED results use the same service/V8 limits documented above:
+- `inline-ui-clip-red-20261009a`:6/8 pass,63.4M peak. Default GoLast position is absent; clip shrink retains330px instead of220px.
+- `inline-ui-error-red-20261009a`:0/2 pass,74.8M peak. Fullscreen width stays1000 instead of300; inline error Tools stays112 instead of150.
+- `inline-ui-visibility-red-20261009a`:2/3 pass,70.9M peak. The original owner removes the menu during a visibility gap.
+
+Final scoped verification runs each file serially under a unique unit, with the exact command template above.
+The unit prefix is `inline-ui-fix-final-20261009a-`:
+
+| Suffix | Single test file | Pass | Peak |
+| --- | --- | ---: | ---: |
+|1|`frontend/src/components/frames/FloatingPreviewTools.test.js`|8|64.2M|
+|2|`frontend/src/inline-artifacts/InlineArtifactRuntimeHost.render.test.js`|4|72.9M|
+|3|`frontend/src/inline-artifacts/geometry.test.js`|6|48.6M|
+|4|`frontend/src/inline-artifacts/runtime.test.js`|19|52.3M|
+|5|`frontend/src/stores/framePool.test.js`|7|49.1M|
+
+Final fix verification:44 passed,0 failed,0 skipped. Every unit exits0 without reaching a resource cap.
+The new host tests compile and mount actual RuntimeHost, FrameOwner, and FloatingPreviewTools templates.
+They keep viewport values nonreactive and source geometry unchanged during fullscreen resize.
+They check default/dragged Tools, Reload, retained Exit button identity, clipped error placement, visibility retention, and hidden-first reveal.
+Their renderer models browser inset layout and ResizeObserver; broker collaborators are stubs.
+They do not constitute actual browser acceptance or prove iframe state retention by themselves.
+`git diff --check` passes. No broader suite, production build, or server restart runs in this fix wave.
+The controller owns bounded production builds, re-review, and actual browser validation of the stable source.

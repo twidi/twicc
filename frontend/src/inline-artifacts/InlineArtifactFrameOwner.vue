@@ -28,11 +28,13 @@ const { brokerPrompt, onBrokerDecision } = useArtifactBroker(iframe,
 <template>
     <Teleport :to="overlay || 'body'" :disabled="!overlay">
         <FloatingPreviewTools
-            v-if="runtime.active.value && frameVisible && entry.loadState !== 'error' && entry.descriptor.status !== 'error'"
+            :visible="runtime.active.value && frameVisible && entry.loadState !== 'error' && entry.descriptor.status !== 'error'"
             :actions="actions"
             :fullscreen="fullscreen"
             :reset-key="entry.descriptor.publicationKey"
             :container="overlay"
+            :frame-rect="pool.frames[entry.frameId]?.rect"
+            :visible-bounds="pool.frames[entry.frameId]?.clipRect"
             @toggle-fullscreen="toggleFullscreen"
             @drag-start="pool.beginDividerDrag"
             @drag-end="pool.endDividerDrag"

@@ -1,16 +1,20 @@
 <script setup>
-import { ref, computed, watch, useId, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, useId, onMounted, onBeforeUnmount } from 'vue'
 import { useResizeObserver } from '@vueuse/core'
 import AppTooltip from '../ui/AppTooltip.vue'
 
 // The caller owns the frame pool. Drag events suspend iframe pointer handling.
 const props = defineProps({
     actions: { type: Array, default: () => [] },
+    visible: { type: Boolean, default: true },
     fullscreen: { type: Boolean, default: false },
     fullscreenDisabled: { type: Boolean, default: false },
     modeActive: { type: Boolean, default: false },
     resetKey: { type: String, default: '' },
     container: { type: Object, default: null },
+    // Both rectangles use viewport coordinates. No frame pool dependency.
+    frameRect: { type: Object, default: null },
+    visibleBounds: { type: Object, default: null },
 })
 const emit = defineEmits(['toggle-fullscreen', 'drag-start', 'drag-end'])
 const previewToolsButtonId = `preview-tools-${useId()}`
@@ -29,6 +33,8 @@ const previewActionsCollapsible = computed(() => previewActionCount.value > 1)
 watch(() => props.resetKey, () => {
     previewActionsExpanded.value = false
     previewActionsPos.value = null
+    clippedDefaultPos.value = null
+    defaultOffsets = null
     openUpward.value = false
     previewTooltipPlacement.value = 'left'
 })
@@ -40,9 +46,12 @@ watch(() => props.resetKey, () => {
 // pooled HTML frame, else .file-pane-preview). Per-pane, in-memory.
 const previewActionsRef = ref(null)
 const previewActionsPos = ref(null)
+const clippedDefaultPos = ref(null)
+let defaultOffsets = null
+const effectiveActionsPos = computed(() => previewActionsPos.value ?? clippedDefaultPos.value)
 const previewActionsStyle = computed(() =>
-    previewActionsPos.value
-        ? { top: `${previewActionsPos.value.top}px`, left: `${previewActionsPos.value.left}px`, right: 'auto' }
+    effectiveActionsPos.value
+        ? { top: `${effectiveActionsPos.value.top}px`, left: `${effectiveActionsPos.value.left}px`, right: 'auto' }
         : null
 )
 
@@ -71,49 +80,79 @@ function computePreviewActionsGeometry() {
     const needed = previewActionCount.value * 34 + 8
     // A drag or resize can update position before Vue patches the DOM.
     // Use that position immediately, keeping DOM geometry for the default corner.
-    const top = previewActionsPos.value?.top ?? r.top - pr.top
-    const left = previewActionsPos.value?.left ?? r.left - pr.left
-    const spaceBelow = pr.height - top - r.height
-    const spaceAbove = top
+    const bounds = actionsBounds()
+    const top = effectiveActionsPos.value?.top ?? r.top - pr.top
+    const left = effectiveActionsPos.value?.left ?? r.left - pr.left
+    const spaceBelow = bounds.bottom - top - r.height
+    const spaceAbove = top - bounds.top
     openUpward.value = spaceBelow < needed && spaceAbove > spaceBelow
     // Horizontal: a left tooltip needs ~140px of room on the left of the group.
-    previewTooltipPlacement.value = left < 140 ? 'right' : 'left'
+    previewTooltipPlacement.value = left - bounds.left < 140 ? 'right' : 'left'
 }
 // A real drag must not fire the tools button's fold/unfold click. Reset on
 // each pointerdown so a drag that ends off-target (no click) can't wedge it.
 let actionsDrag = null // { pointerId, startX, startY, baseLeft, baseTop, moved }
 let suppressToolsClick = false
 
-function clampActionsPos(left, top) {
+// Clip changes can move the visible region without resizing the overlay parent.
+// Keep the intersection calculation here for both Files and inline callers.
+function actionsBounds() {
     const el = previewActionsRef.value
     const parent = el?.offsetParent || el?.parentElement
-    if (!el || !parent) return { left, top }
+    if (!parent) return null
     const pr = parent.getBoundingClientRect()
+    const frame = props.frameRect ?? { x: pr.left, y: pr.top, width: pr.width, height: pr.height }
+    const clip = props.visibleBounds
     return {
-        left: Math.max(0, Math.min(pr.width - el.offsetWidth, left)),
-        top: Math.max(0, Math.min(pr.height - el.offsetHeight, top)),
+        left: clip ? Math.max(0, clip.x - frame.x) : 0,
+        top: clip ? Math.max(0, clip.y - frame.y) : 0,
+        right: clip ? Math.min(frame.width, clip.x + clip.width - frame.x) : frame.width,
+        bottom: clip ? Math.min(frame.height, clip.y + clip.height - frame.y) : frame.height,
     }
 }
 
-// A dragged position is absolute px in the offset parent, so any shrink of
-// that parent can leave the group outside the visible area — unreachable, with
-// no way to bring it back. Exiting full screen after dragging it to the bottom
-// is the obvious case; a dock/window resize and a sub-toolbar appearing over
-// the frame do it too. Re-clamp on every parent resize (one-way: shrinking then
-// re-expanding does not restore the pre-clamp spot).
-useResizeObserver(
-    () => props.container ?? previewActionsRef.value?.parentElement,
-    () => {
-        if (!previewActionsPos.value) return // still on its default CSS corner
-        const el = previewActionsRef.value
-        const parent = el?.offsetParent || el?.parentElement
-        // A 0-sized parent is transient (frame hidden, KeepAlive detach) —
-        // clamping against it would slam the group into the top-left corner.
-        if (!parent || parent.clientWidth < 1 || parent.clientHeight < 1) return
-        previewActionsPos.value = clampActionsPos(previewActionsPos.value.left, previewActionsPos.value.top)
-        computePreviewActionsGeometry() // drop side + tooltip side may need to flip
+function clampActionsPos(left, top) {
+    const el = previewActionsRef.value
+    const bounds = actionsBounds()
+    if (!el || !bounds || bounds.right <= bounds.left || bounds.bottom <= bounds.top) return { left, top }
+    return {
+        left: Math.max(bounds.left, Math.min(bounds.right - el.offsetWidth, left)),
+        top: Math.max(bounds.top, Math.min(bounds.bottom - el.offsetHeight, top)),
     }
-)
+}
+
+function reclampActions() {
+    const el = previewActionsRef.value
+    const parent = el?.offsetParent || el?.parentElement
+    // Hidden or detached cached frames must not reset their placement.
+    if (!props.visible || !el || !parent || el.offsetWidth < 1 || el.offsetHeight < 1
+        || parent.clientWidth < 1 || parent.clientHeight < 1) return
+    const bounds = actionsBounds()
+    if (bounds.right <= bounds.left || bounds.bottom <= bounds.top) return
+    if (previewActionsPos.value) {
+        previewActionsPos.value = clampActionsPos(previewActionsPos.value.left, previewActionsPos.value.top)
+    } else if (props.frameRect || props.visibleBounds) {
+        const pr = parent.getBoundingClientRect()
+        if (!defaultOffsets) {
+            const r = el.getBoundingClientRect()
+            defaultOffsets = { top: r.top - pr.top, right: pr.width - (r.left - pr.left) - el.offsetWidth }
+        }
+        const desired = { left: pr.width - defaultOffsets.right - el.offsetWidth, top: defaultOffsets.top }
+        const clamped = clampActionsPos(desired.left, desired.top)
+        clippedDefaultPos.value = clamped.left === desired.left && clamped.top === desired.top ? null : clamped
+    } else {
+        clippedDefaultPos.value = null
+        defaultOffsets = null
+    }
+    computePreviewActionsGeometry()
+}
+
+// A resize clamps dragged positions. A moving clip also clamps the CSS corner.
+useResizeObserver(() => props.container ?? previewActionsRef.value?.parentElement, reclampActions)
+onMounted(reclampActions)
+watch(() => [props.frameRect?.x, props.frameRect?.y, props.frameRect?.width, props.frameRect?.height,
+    props.visibleBounds?.x, props.visibleBounds?.y, props.visibleBounds?.width, props.visibleBounds?.height,
+    props.visible, props.fullscreen, props.resetKey, props.container], reclampActions, { flush: 'post' })
 
 function onToolsPointerDown(event) {
     if (event.button != null && event.button > 0) return // left / touch / pen only
@@ -173,7 +212,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <div ref="previewActionsRef" class="preview-actions" :style="previewActionsStyle">
+    <div v-show="visible" ref="previewActionsRef" class="preview-actions" :style="previewActionsStyle">
         <template v-if="previewActionsCollapsible">
             <span class="preview-tools-wrap">
                 <wa-button

@@ -1722,6 +1722,8 @@ function goToNextDiff() {
                         :mode-active="responsiveActive || selectModeActive"
                         :reset-key="filePath"
                         :container="frameOverlayEl ?? previewWrapRef"
+                        :frame-rect="frameOverlayEl ? framePool.frames[`artifact-html:${instanceId}`]?.rect : null"
+                        :visible-bounds="frameOverlayEl ? framePool.frames[`artifact-html:${instanceId}`]?.clipRect : null"
                         @toggle-fullscreen="togglePreviewFullscreen"
                         @drag-start="framePool.beginDividerDrag"
                         @drag-end="framePool.endDividerDrag"

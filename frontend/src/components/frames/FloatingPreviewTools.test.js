@@ -16,15 +16,16 @@ const script = compiled.replace(/import \{([^}]+)\} from ['"]vue['"]/g,
 const Tools = new Function('Vue', 'useResizeObserver', 'AppTooltip', script)(Vue,
     (target, callback) => { resize = callback }, { props: ['placement', 'for'], render() { return Vue.h('tooltip', { placement: this.placement }, this.$slots.default?.()) } })
 
-function fixture(t, overrides = {}) {
-    const element = type => ({ type, props: {}, children: [], parent: null,
+function fixture(t, overrides = {}, rootGeometry = {}) {
+    const element = type => ({ type, props: {}, children: [], parent: null, style: { display: '' },
         offsetWidth: 30, offsetHeight: 30, clientWidth: 500, clientHeight: 400,
         get offsetParent() { return this.parent },
         get parentElement() { return this.parent },
         getBoundingClientRect() { return this.type === 'root'
-            ? { left: 0, top: 0, bottom: this.clientHeight, width: this.clientWidth, height: this.clientHeight }
-            : { left: parseFloat(this.props.style?.left ?? 450), top: parseFloat(this.props.style?.top ?? 340),
-                bottom: parseFloat(this.props.style?.top ?? 340) + 30, width: 30, height: 30 } },
+            ? { left: this.left ?? 0, top: this.top ?? 0, bottom: (this.top ?? 0) + this.clientHeight, width: this.clientWidth, height: this.clientHeight }
+            : { left: (this.parent?.left ?? 0) + parseFloat(this.props.style?.left ?? this.parent?.defaultLeft ?? 450),
+                top: (this.parent?.top ?? 0) + parseFloat(this.props.style?.top ?? this.parent?.defaultTop ?? 340),
+                bottom: (this.parent?.top ?? 0) + parseFloat(this.props.style?.top ?? this.parent?.defaultTop ?? 340) + 30, width: 30, height: 30 } },
         setPointerCapture() {},
     })
     const renderer = Vue.createRenderer({
@@ -47,7 +48,7 @@ function fixture(t, overrides = {}) {
         onToggleFullscreen: () => { props.fullscreen = !props.fullscreen; events.push('fullscreen') },
         onDragStart: () => events.push('drag-start'), onDragEnd: () => events.push('drag-end'),
     })
-    const root = element('root')
+    const root = Object.assign(element('root'), rootGeometry)
     const app = renderer.createApp({ render: () => Vue.h(Tools, props) })
     for (const tag of ['wa-button', 'wa-icon']) {
         app.component(tag, { inheritAttrs: false, render() { return Vue.h(tag, this.$attrs, this.$slots.default?.()) } })
@@ -182,4 +183,68 @@ test('failed fullscreen keeps Reload and the shared exit button; an unavailable 
     assert.deepEqual(f.actions, ['reload'])
     f.button('Exit full screen').props.onClick(); await Vue.nextTick()
     assert.equal(f.button('Full screen').props.disabled, true)
+})
+
+
+test('the default Tools anchor follows the visible clip after GoLast without parent resize', async t => {
+    const f = fixture(t, { frameRect: { x: 0, y: -326.548, width: 500, height: 873.991 },
+        visibleBounds: { x: 0, y: 97.486, width: 500, height: 461.775 } },
+        { top: -326.548, clientHeight: 873.991, defaultTop: 12 })
+    await Vue.nextTick()
+    const row = f.find(node => node.props?.class === 'preview-actions')
+    assert.equal(row.props.style.top, '424.034px')
+    f.button('Tools').props.onClick(); await Vue.nextTick()
+    assert.equal(Boolean(f.button('Reload')), true)
+    assert.equal(Boolean(f.find(node => node.props?.class?.includes('preview-actions-list--up'))), false)
+    f.props.visibleBounds = { x: 0, y: 200, width: 500, height: 150 }
+    await Vue.nextTick()
+    assert.equal(row.props.style.top, '526.548px')
+    f.props.frameRect = { x: 0, y: 0, width: 500, height: 873.991 }
+    f.props.visibleBounds = null
+    f.root.top = 0
+    await Vue.nextTick()
+    assert.equal(row.props.style, undefined, 'unclipped default placement returns to the CSS corner')
+})
+
+test('dragged Tools stays inside a shrinking clip with unchanged parent dimensions and fullscreen return', async t => {
+    const f = fixture(t, { frameRect: { x: 0, y: 100, width: 500, height: 360 },
+        visibleBounds: { x: 0, y: 100, width: 500, height: 400 } },
+        { top: 100, clientHeight: 360, defaultTop: 12 })
+    await Vue.nextTick()
+    const row = f.find(node => node.props?.class === 'preview-actions')
+    const tools = f.button('Tools')
+    f.pointer(tools, 'down', 450, 112)
+    f.pointer(tools, 'move', 450, 430)
+    f.pointer(tools, 'up', 450, 430)
+    tools.props.onClick(); await Vue.nextTick()
+    assert.equal(row.props.style.top, '330px')
+    f.props.visibleBounds = { x: 0, y: 100, width: 500, height: 250 }
+    await Vue.nextTick()
+    assert.equal(row.props.style.top, '220px')
+    tools.props.onClick(); await Vue.nextTick()
+    assert.equal(Boolean(f.find(node => node.props?.class?.includes('preview-actions-list--up'))), true)
+    f.props.visibleBounds = { x: 100, y: 100, width: 100, height: 100 }
+    await Vue.nextTick()
+    assert.equal(row.props.style.left, '170px')
+    assert.equal(row.props.style.top, '70px')
+    f.button('Full screen').props.onClick()
+    f.root.top = 0; f.root.clientWidth = 800; f.root.clientHeight = 600
+    f.props.frameRect = { x: 0, y: 0, width: 800, height: 600 }; f.props.visibleBounds = null
+    await Vue.nextTick()
+    f.pointer(f.button('Hide tools'), 'down', 170, 70)
+    f.pointer(f.button('Hide tools'), 'move', 760, 560)
+    f.pointer(f.button('Hide tools'), 'up', 760, 560)
+    f.button('Hide tools').props.onClick() // consume the drag's synthetic click
+    await Vue.nextTick()
+    f.button('Exit full screen').props.onClick()
+    f.root.top = 100; f.root.clientWidth = 500; f.root.clientHeight = 360
+    f.props.frameRect = { x: 0, y: 100, width: 500, height: 360 }
+    f.props.visibleBounds = { x: 0, y: 150, width: 500, height: 100 }
+    await Vue.nextTick()
+    assert.equal(row.props.style.left, '470px')
+    assert.equal(row.props.style.top, '120px')
+    assert.equal(Boolean(f.button('Reload')), true)
+    f.button('Hide tools').props.onClick(); await Vue.nextTick()
+    assert.equal(Boolean(f.button('Tools')), true)
+    assert.equal(row.props.style.top, '120px')
 })

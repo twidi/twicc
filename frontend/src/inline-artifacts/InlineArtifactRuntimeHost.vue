@@ -21,10 +21,11 @@ const failedEntries = computed(() => [...props.runtime.entries.values()].filter(
     props.runtime.active.value && (entry.loadState === 'error' || entry.descriptor.status === 'error') && (entry.attachment && entry.geometryVisible || props.runtime.fullscreenArtifactKey.value === entry.artifactKey)))
 function errorStyle(entry) {
     const fullscreen = props.runtime.fullscreenArtifactKey.value === entry.artifactKey
-    const rect = fullscreen ? { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight } : entry.geometryRect
+    // CSS tracks viewport changes even when the source row is detached.
+    if (fullscreen) return { inset: 0, zIndex: props.fullscreenZIndex }
+    const rect = entry.geometryRect
     return { left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.width}px`, height: `${rect.height}px`,
-        clipPath: fullscreen ? null : frameClipPath(rect, entry.geometryClipRect),
-        zIndex: fullscreen ? props.fullscreenZIndex : undefined }
+        clipPath: frameClipPath(rect, entry.geometryClipRect) }
 }
 watch(() => props.runtime.fullscreenArtifactKey.value, host.syncFullscreen, { immediate: true, flush: 'sync' })
 watch(() => props.pool.geometryEpoch, () => props.runtime.geometry.schedule(), { flush: 'post' })
@@ -47,6 +48,8 @@ onBeforeUnmount(host.dispose)
                 :fullscreen="runtime.fullscreenArtifactKey.value === entry.artifactKey"
                 :fullscreen-disabled="true"
                 :reset-key="entry.descriptor.publicationKey"
+                :frame-rect="runtime.fullscreenArtifactKey.value === entry.artifactKey ? null : entry.geometryRect"
+                :visible-bounds="runtime.fullscreenArtifactKey.value === entry.artifactKey ? null : entry.geometryClipRect"
                 @toggle-fullscreen="runtime.closeFullscreen()"
                 @drag-start="pool.beginDividerDrag"
                 @drag-end="pool.endDividerDrag"
