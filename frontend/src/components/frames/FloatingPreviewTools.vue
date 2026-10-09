@@ -9,6 +9,8 @@ const props = defineProps({
     visible: { type: Boolean, default: true },
     fullscreen: { type: Boolean, default: false },
     fullscreenDisabled: { type: Boolean, default: false },
+    // Full screen leads the actions instead of closing them (inline artifacts).
+    fullscreenFirst: { type: Boolean, default: false },
     modeActive: { type: Boolean, default: false },
     resetKey: { type: String, default: '' },
     container: { type: Object, default: null },
@@ -27,6 +29,19 @@ const previewFullscreenButtonId = `preview-fullscreen-${useId()}`
 const previewActionsExpanded = ref(false)
 
 const previewActionCount = computed(() => props.actions.length + 1)
+
+// Full screen joins the caller's actions in one ordered list, so the keyboard order
+// follows the visual order wherever it sits.
+const orderedButtons = computed(() => {
+    const fullscreenButton = {
+        id: previewFullscreenButtonId,
+        icon: props.fullscreen ? 'compress' : 'expand',
+        label: props.fullscreen ? 'Exit full screen' : 'Full screen',
+        disabled: props.fullscreenDisabled && !props.fullscreen,
+        action: () => emit('toggle-fullscreen'),
+    }
+    return props.fullscreenFirst ? [fullscreenButton, ...props.actions] : [...props.actions, fullscreenButton]
+})
 const previewActionsCollapsible = computed(() => previewActionCount.value > 1)
 
 // Fold back AND recenter on file switch — both are transient per-page state.
@@ -239,28 +254,19 @@ onBeforeUnmount(() => {
         </template>
         <div v-if="!previewActionsCollapsible || previewActionsExpanded" class="preview-actions-list"
             :class="{ 'preview-actions-list--menu': previewActionsCollapsible, 'preview-actions-list--up': openUpward }">
-            <template v-for="action in actions" :key="action.id">
+            <template v-for="action in orderedButtons" :key="action.id">
                 <wa-button
                     :id="action.id" class="preview-action-btn floating-over-text"
                     :class="{ 'preview-action-btn--active': action.active }"
                     size="small" variant="neutral" appearance="filled"
                     :aria-label="action.label" :aria-pressed="action.active"
+                    :disabled="action.disabled"
                     :href="action.href" :target="action.href ? '_blank' : undefined"
                     :rel="action.href ? 'noopener' : undefined"
                     @click="action.action?.()"
                 ><wa-icon :name="action.icon"></wa-icon></wa-button>
                 <AppTooltip :for="action.id" :placement="previewTooltipPlacement">{{ action.label }}</AppTooltip>
             </template>
-            <wa-button
-                :id="previewFullscreenButtonId" class="preview-action-btn floating-over-text"
-                size="small" variant="neutral" appearance="filled"
-                :aria-label="fullscreen ? 'Exit full screen' : 'Full screen'"
-                :disabled="fullscreenDisabled && !fullscreen"
-                @click="emit('toggle-fullscreen')"
-            ><wa-icon :name="fullscreen ? 'compress' : 'expand'"></wa-icon></wa-button>
-            <AppTooltip :for="previewFullscreenButtonId" :placement="previewTooltipPlacement">
-                {{ fullscreen ? 'Exit full screen' : 'Full screen' }}
-            </AppTooltip>
         </div>
     </div>
 </template>

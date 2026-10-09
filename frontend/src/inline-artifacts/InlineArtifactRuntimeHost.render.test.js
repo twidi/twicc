@@ -16,7 +16,7 @@ function compileComponent(path, bindings) {
     return new Function('Vue', ...Object.keys(bindings), script)(Vue, ...Object.values(bindings))
 }
 
-function fixture(t, fullscreen = true, ready = false, hidden = false) {
+function fixture(t, fullscreen = true, ready = false, hidden = false, openedInTab = null) {
     const listeners = new Map(), observers = []
     // Plain values deliberately do not trigger Vue rendering on viewport resize.
     const window = { innerWidth: 1000, innerHeight: 800,
@@ -29,7 +29,8 @@ function fixture(t, fullscreen = true, ready = false, hidden = false) {
     const Owner = compileComponent('./InlineArtifactFrameOwner.vue', { FloatingPreviewTools: Tools,
         useArtifactBroker: () => ({ brokerPrompt: Vue.ref(null), onBrokerDecision() {} }),
         inlineArtifactBrokerConfig: () => ({}), location: { href: 'https://viewer.test/' },
-        ArtifactBrokerPrompt: { render() { return null } } })
+        ArtifactBrokerPrompt: { render() { return null } },
+        useDataStore: () => ({ getSession: id => openedInTab && id === 's' ? { artifacts_dir: '/data/artifacts/s' } : null }) })
     const Host = compileComponent('./InlineArtifactRuntimeHost.vue', { window, FloatingPreviewTools: Tools,
         InlineArtifactFrameOwner: Owner, installInlineRuntimeHost, frameClipPath })
     function rect(node) {
@@ -72,7 +73,8 @@ function fixture(t, fullscreen = true, ready = false, hidden = false) {
         parentNode: node => node.parent, nextSibling: node => node.parent?.children[node.parent.children.indexOf(node) + 1] })
     const events = []
     const entry = Vue.reactive({ artifactKey: 'a', frameId: 'frame-a', loadState: ready ? 'ready' : 'error',
-        descriptor: { publicationKey: 'publication-a', status: 'ready' },
+        descriptor: { publicationKey: 'publication-a', status: 'ready', sourceSessionId: 's',
+            publication: { src: 'inline-artifacts/a/index.html' } },
         attachment: fullscreen ? null : {}, geometryVisible: !fullscreen,
         geometryRect: { x: 10, y: 100, width: 500, height: 360 },
         geometryClipRect: { x: 10, y: 150, width: 500, height: 100 } })
@@ -87,6 +89,7 @@ function fixture(t, fullscreen = true, ready = false, hidden = false) {
         endDividerDrag: () => events.push('drag-end'), frameEl: () => iframe, frameOverlayEl: () => overlay,
         frames: Vue.reactive({ 'frame-a': { visible: !hidden, rect: entry.geometryRect, clipRect: entry.geometryClipRect } }) }
     const app = renderer.createApp({ render: () => Vue.h(Host, { runtime, pool }) })
+    if (openedInTab) app.provide('viewFileInFilesTab', path => openedInTab.push(path))
     for (const tag of ['wa-button', 'wa-icon']) {
         app.component(tag, { inheritAttrs: false, render() { return Vue.h(tag, this.$attrs, this.$slots.default?.()) } })
     }
@@ -187,4 +190,26 @@ test('the actual frame owner first mounted hidden computes the default clip plac
     assert.equal(row.style.display, '')
     assert.equal(f.rect(row).top, 150)
     assert.equal(Boolean(f.button('Tools')), true)
+})
+
+
+test('the frame owner opens its page in the Artifacts tab, leaving full screen first', async t => {
+    const opened = []
+    const f = fixture(t, true, true, false, opened)
+    await Vue.nextTick()
+    f.button('Tools').props.onClick(); await Vue.nextTick()
+    const list = f.find(node => String(node.props?.class ?? '').includes('preview-actions-list'))
+    const labels = list.children.filter(node => node.type === 'wa-button').map(node => node.props['aria-label'])
+    assert.deepEqual(labels, ['Exit full screen', 'Reload', 'Open in Artifacts tab'])
+    f.button('Open in Artifacts tab').props.onClick(); await Vue.nextTick()
+    assert.deepEqual(opened, ['/data/artifacts/s/inline-artifacts/a/index.html'])
+    assert.equal(f.events.includes('close-fullscreen'), true)
+})
+
+test('without an Artifacts tab (share viewer) the frame owner offers no Open in Artifacts tab', async t => {
+    const f = fixture(t, true, true)
+    await Vue.nextTick()
+    f.button('Tools').props.onClick(); await Vue.nextTick()
+    assert.equal(Boolean(f.button('Reload')), true)
+    assert.equal(Boolean(f.button('Open in Artifacts tab')), false)
 })

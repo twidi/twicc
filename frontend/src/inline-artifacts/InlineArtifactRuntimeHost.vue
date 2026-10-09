@@ -44,6 +44,7 @@ onBeforeUnmount(host.dispose)
         <div v-for="entry in failedEntries" :key="entry.artifactKey" class="inline-artifact-error" role="status" :style="errorStyle(entry)">
             <span>Inline artifact unavailable</span>
             <FloatingPreviewTools
+                fullscreen-first
                 :actions="errorActions(entry)"
                 :fullscreen="runtime.fullscreenArtifactKey.value === entry.artifactKey"
                 :fullscreen-disabled="true"
