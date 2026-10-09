@@ -176,7 +176,7 @@ AGENT_SETTINGS_DESCRIPTIONS: dict[str, dict] = {
 # needs no entry — it is already a native permission_mode for this provider.
 AGENT_SETTINGS_ALIASES: dict[str, dict[str, str]] = {
     "selected_model": {
-        "min": "sonnet", "fastest": "sonnet", "cheapest": "sonnet",
+        "min": "haiku", "fastest": "haiku", "cheapest": "haiku",
         "medium": "opus", "balanced": "opus",
         "max": "fable", "strongest": "fable",
     },
@@ -210,7 +210,7 @@ AGENT_SETTINGS_ALIASES: dict[str, dict[str, str]] = {
 #
 # The ``selected_model`` value stored in settings and session DB
 # fields uses:
-# - bare alias for latest: ``"fable"``, ``"opus"``, ``"sonnet"``
+# - bare alias for latest: ``"fable"``, ``"opus"``, ``"sonnet"``, ``"haiku"``
 # - versioned alias for non-latest: ``"opus-4.5"``, ``"sonnet-4.5"``
 #
 # When communicating with the SDK, latest aliases are passed as-is
@@ -371,6 +371,18 @@ MODEL_VERSIONS: list[ModelVersion] = [
             supports_1m=False, supports_effort_xhigh=False, supports_effort_max=False,
             supports_fast=False, supports_permission_auto=False,
             supports_highres_images=False, supports_thinking_disabled=True,
+        ),
+    ),
+    ModelVersion(
+        provider=Provider.CLAUDE_CODE,
+        model="haiku", version="5.5", full_name="claude-haiku-5-5",
+        retirement_date=None,
+        latest=True,
+        weight=5,
+        provider_extra=ClaudeCodeModelExtra(
+            supports_1m=True, supports_effort_xhigh=True, supports_effort_max=True,
+            supports_fast=False, supports_permission_auto=True,
+            supports_highres_images=False, supports_thinking_disabled=False,
         ),
     ),
 ]

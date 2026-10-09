@@ -18,8 +18,9 @@ $TWICC info agent-settings [--provider <key>] [--include-disabled-providers]
     "model": {
       "values": [{"value": "fable", "latest": true}, {"value": "fable-5", "latest": false},
                  {"value": "opus", "latest": true}, {"value": "opus-5", "latest": false},
-                 {"value": "sonnet", "latest": true}, {"value": "opus-4.8", "latest": false}],
-      "aliases": {"max": "fable", "strongest": "fable", "medium": "opus", "balanced": "opus", "min": "sonnet", "fastest": "sonnet", "cheapest": "sonnet"}
+                 {"value": "sonnet", "latest": true}, {"value": "haiku", "latest": true},
+                 {"value": "opus-4.8", "latest": false}],
+      "aliases": {"max": "fable", "strongest": "fable", "medium": "opus", "balanced": "opus", "min": "haiku", "fastest": "haiku", "cheapest": "haiku"}
     },
     "effort": {
       "values": [{"value": "low", "restricted_to": null}, {"value": "medium", "restricted_to": null},
