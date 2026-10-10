@@ -62,7 +62,7 @@
     "vue3-calendar-heatmap": "^2.0.5"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^6.0.3",
+    "@vitejs/plugin-vue": "^6.0.10",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
   }
