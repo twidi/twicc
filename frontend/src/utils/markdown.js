@@ -3,8 +3,6 @@
 // Mermaid diagrams are rendered post-parse by the MarkdownContent component.
 
 import MarkdownItAsync from 'markdown-it-async'
-import backtick from 'markdown-it/lib/rules_inline/backticks.mjs'
-import image from 'markdown-it/lib/rules_inline/image.mjs'
 import { fromAsyncCodeToHtml } from '@shikijs/markdown-it/async'
 import { codeToHtml } from 'shiki'
 import DOMPurify from 'dompurify'
@@ -162,6 +160,17 @@ function htmlCommentInline(state, silent) {
     return true
 }
 md.inline.ruler.before('html_inline', 'html_comment', htmlCommentInline)
+
+// The native inline rule registered under `name`, captured before `ruler.at()`
+// replaces it. markdown-it 15 no longer exports its rule modules
+// (`markdown-it/lib/*`), so the ruler is the only place to get them from.
+function nativeInlineRule(name) {
+    const index = md.inline.ruler.__find__(name)
+    if (index === -1) throw new Error(`markdown-it: no native inline rule named "${name}"`)
+    return md.inline.ruler.__rules__[index].fn
+}
+const backtick = nativeInlineRule('backticks')
+const image = nativeInlineRule('image')
 
 // Syntax inspection records the native code rule's consumed source span.
 // Ordinary renders delegate without adding metadata or changing parser options.

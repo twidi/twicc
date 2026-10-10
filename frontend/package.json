@@ -47,7 +47,7 @@
     "dompurify": "^3.4.16",
     "fastpriorityqueue": "^0.8.0",
     "github-markdown-css": "^5.8.1",
-    "markdown-it": "^14.1.0",
+    "markdown-it": "^15.0.2",
     "markdown-it-async": "^2.2.0",
     "mermaid": "^11.12.2",
     "modern-screenshot": "^4.7.0",
@@ -64,5 +64,10 @@
     "@vitejs/plugin-vue": "^6.0.10",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
+  },
+  "overrides": {
+    "markdown-it-async": {
+      "markdown-it": "$markdown-it"
+    }
   }
 }
