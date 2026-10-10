@@ -45,7 +45,7 @@
     "dayjs": "^1.11.23",
     "diff": "^8.0.3",
     "dompurify": "^3.4.16",
-    "fastpriorityqueue": "^0.7.5",
+    "fastpriorityqueue": "^0.8.0",
     "github-markdown-css": "^5.8.1",
     "markdown-it": "^14.1.0",
     "markdown-it-async": "^2.2.0",
