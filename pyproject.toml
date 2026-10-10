@@ -194,6 +194,6 @@ dev = [
     "ipython>=9.10.0",
     # In the default group (not an extra) so `uv run pytest` installs them in every
     # checkout's .venv, worktrees included.
-    "pytest>=8.0.0",
+    "pytest>=9.1.1",
     "pytest-django>=4.8.0",
 ]
