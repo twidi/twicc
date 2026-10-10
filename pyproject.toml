@@ -191,7 +191,7 @@ addopts = "-v --ds=twicc.settings_test"
 [dependency-groups]
 dev = [
     "django-extensions>=4.1",
-    "ipython>=9.10.0",
+    "ipython>=9.17.1",
     # In the default group (not an extra) so `uv run pytest` installs them in every
     # checkout's .venv, worktrees included.
     "pytest>=9.1.1",
