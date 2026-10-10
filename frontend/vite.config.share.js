@@ -25,6 +25,8 @@ export default defineConfig({
             // Cut the app router (and thus the whole SPA views chain) — reused code
             // lazy-imports it, which inlineDynamicImports would otherwise pull in.
             { find: /.*\/router(\.js)?$/, replacement: r('src/share-session/shims/noRouter.js') },
+            // Mermaid's lazily-loaded ELK layout chunk (`./elk-<hash>.mjs`, see the shim).
+            { find: /^\.\/elk-[A-Z0-9]+\.mjs$/, replacement: r('src/share-session/shims/noElkLayout.js') },
         ],
     },
     build: {

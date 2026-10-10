@@ -16,6 +16,10 @@ export async function getMermaid() {
         mermaidModule.initialize({
             startOnLoad: false,
             theme: 'default',
+            // Mermaid 12 switched the defaults to the `neo` look and the ELK
+            // layout. Keep the rendering diagrams had until then.
+            look: 'classic',
+            layout: 'dagre',
             securityLevel: 'loose',
             // Don't inject the "Syntax error" bomb diagram on parse/render
             // failures: during streaming, the markdown is re-rendered repeatedly
