@@ -15,7 +15,7 @@ authors = [
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Web Environment",
-    "Framework :: Django :: 6.0",
+    "Framework :: Django :: 6.1",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
@@ -30,7 +30,7 @@ dependencies = [
     "claude-agent-sdk==0.2.165",
     "cronsim~=2.7",
     "daphne~=4.2.3",
-    "django~=6.0.4",
+    "django~=6.1.2",
     "httpx~=0.28.1",
     "idna~=3.20",
     "json-repair~=0.64.0",
