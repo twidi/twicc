@@ -229,3 +229,20 @@ test('intrinsic height includes the body and root edges below the last child', (
     const win = { getComputedStyle: element => styles.get(element) }
     assert.equal(intrinsicInlineHeight({ body, documentElement: root }, win), 231)
 })
+
+test('destroying the host before the shim handshake leaves no unhandled rejection', async () => {
+    const unhandled = []
+    const onUnhandled = (reason) => unhandled.push(reason)
+    process.on('unhandledRejection', onUnhandled)
+    const previousWindow = globalThis.window
+    globalThis.window = { addEventListener() {}, removeEventListener() {} }
+    try {
+        const host = mountBrokerHost({ contentWindow: { postMessage() {} } }, { documentUrl: 'https://example.com/doc.html' })
+        host.destroy()
+        await new Promise(resolve => setTimeout(resolve, 0))
+        assert.deepEqual(unhandled, [])
+    } finally {
+        process.off('unhandledRejection', onUnhandled)
+        globalThis.window = previousWindow
+    }
+})

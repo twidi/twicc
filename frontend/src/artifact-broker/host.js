@@ -336,7 +336,12 @@ export function mountBrokerHost(iframe, opts) {
         remoteWindow: iframe.contentWindow,
         allowedOrigins: ['*'], // same-origin in practice; the window target is the real bound
     })
-    return connect({ messenger, methods: { proxyFetch: (req) => host.proxyFetch(req), ...createInlineBrokerMethods(opts) } })
+    const connection = connect({ messenger, methods: { proxyFetch: (req) => host.proxyFetch(req), ...createInlineBrokerMethods(opts) } })
+    // The host only serves methods and never awaits the handshake. Penpal 8
+    // rejects `promise` when the connection is destroyed before the shim
+    // answers (the artifact unmounts early): swallow it, nothing waits on it.
+    connection.promise.catch(() => {})
+    return connection
 }
 
 /** Optional RPCs share the bound iframe connection, with document generation checks. */
