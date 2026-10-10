@@ -362,7 +362,7 @@ def delete_session_documents(session_id: str) -> None:
     """
     _check_writer()
     with _writer_lock:
-        _writer.delete_documents("session_id", session_id)
+        _writer.delete_documents_by_term("session_id", session_id)
 
 
 def commit() -> None:
