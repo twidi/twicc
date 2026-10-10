@@ -24,7 +24,7 @@ classifiers = [
     "Topic :: Software Development",
 ]
 dependencies = [
-    "apprise~=1.11",
+    "apprise~=2.0",
     "blacknoise~=1.2.0",
     "channels~=4.3.2",
     "claude-agent-sdk==0.2.165",
