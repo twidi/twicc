@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, provide } from 'vue'
+import { computed, provide, type PropType } from 'vue'
 import { TABLE_CONTEXT_KEY, type TableContextBag } from '../composables/keys'
 import { useGitContext } from '../composables/useGitContext'
 import { useTheme } from '../composables/useTheme'
@@ -13,12 +13,10 @@ import TableRow from './components/TableRow.vue'
 // Props
 // ---------------------------------------------------------------------------
 
-const props = withDefaults(defineProps<{
-  timestampFormat?: string
-  className?: string
-  styles?: GitLogTableStylingProps
-}>(), {
-  timestampFormat: 'YYYY-MM-DD HH:mm:ss',
+const props = defineProps({
+  timestampFormat: { type: String, required: false, default: 'YYYY-MM-DD HH:mm:ss' },
+  className: { type: String, required: false },
+  styles: { type: Object as PropType<GitLogTableStylingProps>, required: false },
 })
 
 // ---------------------------------------------------------------------------

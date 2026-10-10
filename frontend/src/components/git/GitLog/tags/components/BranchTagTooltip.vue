@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, type CSSProperties } from 'vue'
+import { computed, type CSSProperties, type PropType } from 'vue'
 import { useTheme } from '../../composables/useTheme'
 import type { Commit } from '../../types'
 
@@ -7,9 +7,9 @@ import type { Commit } from '../../types'
 // Props
 // ---------------------------------------------------------------------------
 
-const props = defineProps<{
-  commit: Commit
-}>()
+const props = defineProps({
+  commit: { type: Object as PropType<Commit>, required: true },
+})
 
 // ---------------------------------------------------------------------------
 // Context

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, type CSSProperties } from 'vue'
+import { computed, ref, type CSSProperties, type PropType } from 'vue'
 import { useTheme } from '../../composables/useTheme'
 import { pxToRem } from '../../utils/units'
 import { useGitContext } from '../../composables/useGitContext'
@@ -13,11 +13,11 @@ import BranchTagTooltip from './BranchTagTooltip.vue'
 // Props
 // ---------------------------------------------------------------------------
 
-const props = defineProps<{
-  commit: Commit
-  lineRight: number
-  lineWidth: number
-}>()
+const props = defineProps({
+  commit: { type: Object as PropType<Commit>, required: true },
+  lineRight: { type: Number, required: true },
+  lineWidth: { type: Number, required: true },
+})
 
 // ---------------------------------------------------------------------------
 // Context

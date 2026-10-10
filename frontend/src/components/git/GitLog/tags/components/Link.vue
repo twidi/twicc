@@ -4,10 +4,10 @@
 // Props
 // ---------------------------------------------------------------------------
 
-defineProps<{
-  href?: string
-  text: string
-}>()
+defineProps({
+  href: { type: String, required: false },
+  text: { type: String, required: true },
+})
 
 </script>
 

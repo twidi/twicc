@@ -6,10 +6,10 @@ import { useTheme } from '../../composables/useTheme'
 // Props
 // ---------------------------------------------------------------------------
 
-const props = defineProps<{
-  columnColour: string
-  animate: boolean
-}>()
+const props = defineProps({
+  columnColour: { type: String, required: true },
+  animate: { type: Boolean, required: true },
+})
 
 // ---------------------------------------------------------------------------
 // Context

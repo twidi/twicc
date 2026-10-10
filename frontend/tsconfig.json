@@ -15,7 +15,7 @@
     "types": ["vite/client"]
   },
   "include": [
-    "src/components/GitLog/**/*.ts",
-    "src/components/GitLog/**/*.vue"
+    "src/components/git/GitLog/**/*.ts",
+    "src/components/git/GitLog/**/*.vue"
   ]
 }

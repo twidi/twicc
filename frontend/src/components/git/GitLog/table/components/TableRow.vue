@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { CSSProperties } from 'vue'
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
 import { BACKGROUND_HEIGHT_OFFSET } from '../../constants'
 import { pxToRem } from '../../utils/units'
 import { useGitContext } from '../../composables/useGitContext'
@@ -17,14 +17,12 @@ import HashData from './HashData.vue'
 // Props
 // ---------------------------------------------------------------------------
 
-const props = withDefaults(defineProps<{
-  index: number
-  commit: Commit
-  isPlaceholder?: boolean
-  rowStyleOverrides?: CSSProperties
-  dataStyleOverrides?: CSSProperties
-}>(), {
-  isPlaceholder: false,
+const props = defineProps({
+  index: { type: Number, required: true },
+  commit: { type: Object as PropType<Commit>, required: true },
+  isPlaceholder: { type: Boolean, required: false, default: false },
+  rowStyleOverrides: { type: Object as PropType<CSSProperties>, required: false },
+  dataStyleOverrides: { type: Object as PropType<CSSProperties>, required: false },
 })
 
 // ---------------------------------------------------------------------------

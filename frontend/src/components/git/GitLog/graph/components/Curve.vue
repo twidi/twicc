@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, type CSSProperties } from 'vue'
+import { computed, type CSSProperties, type PropType } from 'vue'
 import type { BreakPointTheme } from '../../types'
 import BreakPoint from './BreakPoint.vue'
 
@@ -7,12 +7,12 @@ import BreakPoint from './BreakPoint.vue'
 // Props
 // ---------------------------------------------------------------------------
 
-const props = defineProps<{
-  colour: string
-  direction: 'up' | 'down'
-  showBreakPoint?: boolean
-  isPlaceholder?: boolean
-}>()
+const props = defineProps({
+  colour: { type: String, required: true },
+  direction: { type: String as PropType<'up' | 'down'>, required: true },
+  showBreakPoint: { type: Boolean, required: false },
+  isPlaceholder: { type: Boolean, required: false },
+})
 
 // ---------------------------------------------------------------------------
 // Computed values

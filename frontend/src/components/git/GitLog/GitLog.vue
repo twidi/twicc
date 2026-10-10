@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, provide, ref, useSlots } from 'vue'
+import { computed, provide, ref, useSlots, type PropType } from 'vue'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 
@@ -38,39 +38,27 @@ dayjs.extend(utc)
 // Props
 // ---------------------------------------------------------------------------
 
-const props = withDefaults(defineProps<{
-  entries: GitLogEntry[]
-  currentBranch: string
-  colorScheme?: ColorScheme
-  colours?: ThemeColours | string[]
-  filter?: CommitFilter
-  showGitIndex?: boolean
-  indexStatus?: GitLogIndexStatus
-  headCommitHash?: string
-  urls?: GitLogUrlBuilder
-  onSelectCommit?: (commit?: Commit) => void
-  onPreviewCommit?: (commit?: Commit) => void
-  showHeaders?: boolean
-  rowHeight?: number
-  headerRowHeight?: number
-  nodeSize?: number
-  graphColumnWidth?: number
-  scrollBuffer?: number
-  enableSelectedCommitStyling?: boolean
-  enablePreviewedCommitStyling?: boolean
-  classes?: GitLogStylingProps
-}>(), {
-  colorScheme: 'light',
-  colours: 'rainbow-light',
-  showGitIndex: true,
-  showHeaders: false,
-  rowHeight: DEFAULT_ROW_HEIGHT,
-  headerRowHeight: DEFAULT_HEADER_ROW_HEIGHT,
-  nodeSize: DEFAULT_NODE_SIZE,
-  graphColumnWidth: DEFAULT_GRAPH_COLUMN_WIDTH,
-  scrollBuffer: DEFAULT_SCROLL_BUFFER,
-  enableSelectedCommitStyling: true,
-  enablePreviewedCommitStyling: true,
+const props = defineProps({
+  entries: { type: Array as PropType<GitLogEntry[]>, required: true },
+  currentBranch: { type: String, required: true },
+  colorScheme: { type: String as PropType<ColorScheme>, required: false, default: 'light' },
+  colours: { type: [String, Array] as PropType<ThemeColours | string[]>, required: false, default: 'rainbow-light' },
+  filter: { type: Function as PropType<CommitFilter>, required: false },
+  showGitIndex: { type: Boolean, required: false, default: true },
+  indexStatus: { type: Object as PropType<GitLogIndexStatus>, required: false },
+  headCommitHash: { type: String, required: false },
+  urls: { type: Function as PropType<GitLogUrlBuilder>, required: false },
+  onSelectCommit: { type: Function as PropType<(commit?: Commit) => void>, required: false },
+  onPreviewCommit: { type: Function as PropType<(commit?: Commit) => void>, required: false },
+  showHeaders: { type: Boolean, required: false, default: false },
+  rowHeight: { type: Number, required: false, default: DEFAULT_ROW_HEIGHT },
+  headerRowHeight: { type: Number, required: false, default: DEFAULT_HEADER_ROW_HEIGHT },
+  nodeSize: { type: Number, required: false, default: DEFAULT_NODE_SIZE },
+  graphColumnWidth: { type: Number, required: false, default: DEFAULT_GRAPH_COLUMN_WIDTH },
+  scrollBuffer: { type: Number, required: false, default: DEFAULT_SCROLL_BUFFER },
+  enableSelectedCommitStyling: { type: Boolean, required: false, default: true },
+  enablePreviewedCommitStyling: { type: Boolean, required: false, default: true },
+  classes: { type: Object as PropType<GitLogStylingProps>, required: false },
 })
 
 // ---------------------------------------------------------------------------

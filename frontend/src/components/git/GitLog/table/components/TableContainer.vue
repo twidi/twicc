@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { type CSSProperties } from 'vue'
+import { type CSSProperties, type PropType } from 'vue'
 import { useGitContext } from '../../composables/useGitContext'
 
 
@@ -7,13 +7,11 @@ import { useGitContext } from '../../composables/useGitContext'
 // Props
 // ---------------------------------------------------------------------------
 
-const props = withDefaults(defineProps<{
-  rowQuantity: number
-  className?: string
-  styleOverrides?: CSSProperties
-  hasCustomRow?: boolean
-}>(), {
-  hasCustomRow: false,
+const props = defineProps({
+  rowQuantity: { type: Number, required: true },
+  className: { type: String, required: false },
+  styleOverrides: { type: Object as PropType<CSSProperties>, required: false },
+  hasCustomRow: { type: Boolean, required: false, default: false },
 })
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, useId, type CSSProperties } from 'vue'
+import { computed, ref, useId, type CSSProperties, type PropType } from 'vue'
 import { pxToRem } from '../../utils/units'
 import { useTheme, shiftAlphaChannel } from '../../composables/useTheme'
 import { useSelectCommit } from '../../composables/useSelectCommit'
@@ -14,12 +14,12 @@ import AppTooltip from '../../../../ui/AppTooltip.vue'
 // Props
 // ---------------------------------------------------------------------------
 
-const props = defineProps<{
-  commit: Commit
-  colour: string
-  rowIndex: number
-  columnIndex: number
-}>()
+const props = defineProps({
+  commit: { type: Object as PropType<Commit>, required: true },
+  colour: { type: String, required: true },
+  rowIndex: { type: Number, required: true },
+  columnIndex: { type: Number, required: true },
+})
 
 // ---------------------------------------------------------------------------
 // Context

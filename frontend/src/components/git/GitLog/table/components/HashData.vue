@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { computed, type CSSProperties } from 'vue'
+import { computed, type CSSProperties, type PropType } from 'vue'
 
 
 // ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
 
-const props = defineProps<{
-  commitHash: string
-  isPlaceholder: boolean
-  style?: CSSProperties
-}>()
+const props = defineProps({
+  commitHash: { type: String, required: true },
+  isPlaceholder: { type: Boolean, required: true },
+  style: { type: Object as PropType<CSSProperties>, required: false },
+})
 
 // ---------------------------------------------------------------------------
 // Computed

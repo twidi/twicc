@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, useId, type CSSProperties } from 'vue'
+import { computed, useId, type CSSProperties, type PropType } from 'vue'
 import type { CommitAuthor } from '../../types'
 import AppTooltip from '../../../../ui/AppTooltip.vue'
 
@@ -8,12 +8,12 @@ import AppTooltip from '../../../../ui/AppTooltip.vue'
 // Props
 // ---------------------------------------------------------------------------
 
-const props = defineProps<{
-  index: number
-  author?: CommitAuthor
-  isPlaceholder: boolean
-  style?: CSSProperties
-}>()
+const props = defineProps({
+  index: { type: Number, required: true },
+  author: { type: Object as PropType<CommitAuthor>, required: false },
+  isPlaceholder: { type: Boolean, required: true },
+  style: { type: Object as PropType<CSSProperties>, required: false },
+})
 
 // ---------------------------------------------------------------------------
 // Computed

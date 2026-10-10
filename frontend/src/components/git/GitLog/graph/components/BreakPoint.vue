@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, type CSSProperties } from 'vue'
+import { computed, type CSSProperties, type PropType } from 'vue'
 import { useGraphContext } from '../../composables/useGraphContext'
 import type { BreakPointTheme } from '../../types'
 
@@ -7,11 +7,11 @@ import type { BreakPointTheme } from '../../types'
 // Props
 // ---------------------------------------------------------------------------
 
-const props = defineProps<{
-  position: 'top' | 'bottom'
-  colour: string
-  styleOverrides?: Partial<Record<BreakPointTheme, CSSProperties>>
-}>()
+const props = defineProps({
+  position: { type: String as PropType<'top' | 'bottom'>, required: true },
+  colour: { type: String, required: true },
+  styleOverrides: { type: Object as PropType<Partial<Record<BreakPointTheme, CSSProperties>>>, required: false },
+})
 
 // ---------------------------------------------------------------------------
 // Context

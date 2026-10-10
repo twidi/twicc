@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, useId, type CSSProperties } from 'vue'
+import { computed, useId, type CSSProperties, type PropType } from 'vue'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import relativeTime from 'dayjs/plugin/relativeTime'
@@ -18,12 +18,12 @@ dayjs.extend(relativeTime)
 // Props
 // ---------------------------------------------------------------------------
 
-const props = defineProps<{
-  index: number
-  timestamp: string
-  isPlaceholder: boolean
-  style?: CSSProperties
-}>()
+const props = defineProps({
+  index: { type: Number, required: true },
+  timestamp: { type: String, required: true },
+  isPlaceholder: { type: Boolean, required: true },
+  style: { type: Object as PropType<CSSProperties>, required: false },
+})
 
 // ---------------------------------------------------------------------------
 // Context

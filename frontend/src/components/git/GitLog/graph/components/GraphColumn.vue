@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
 import { useTheme } from '../../composables/useTheme'
 import { useSelectCommit } from '../../composables/useSelectCommit'
 import { useGraphContext } from '../../composables/useGraphContext'
@@ -18,22 +18,22 @@ import Curve from './Curve.vue'
 // Props
 // ---------------------------------------------------------------------------
 
-const props = defineProps<{
+const props = defineProps({
   /** The zero-based index of this column in its row. */
-  index: number
+  index: { type: Number, required: true },
 
   /** The index of the row in which this column belongs to. */
-  rowIndex: number
+  rowIndex: { type: Number, required: true },
 
   /** Details of the commit that is present somewhere on the row. */
-  commit: Commit
+  commit: { type: Object as PropType<Commit>, required: true },
 
   /** Details about what is present in this column. */
-  state: GraphColumnState
+  state: { type: Object as PropType<GraphColumnState>, required: true },
 
   /** The column index of the commit node in this row. */
-  commitNodeIndex: number
-}>()
+  commitNodeIndex: { type: Number, required: true },
+})
 
 // ---------------------------------------------------------------------------
 // Context

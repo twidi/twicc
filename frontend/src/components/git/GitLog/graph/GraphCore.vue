@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, provide, useSlots, watchEffect } from 'vue'
+import { computed, provide, useSlots, watchEffect, type PropType } from 'vue'
 import { useGitContext } from '../composables/useGitContext'
 import { useColumnData } from '../composables/useColumnData'
 import {
@@ -18,19 +18,13 @@ import type {
 // Props
 // ---------------------------------------------------------------------------
 
-const props = withDefaults(defineProps<{
-  nodeTheme?: NodeTheme
-  breakPointTheme?: BreakPointTheme
-  orientation?: GraphOrientation
-  showCommitNodeHashes?: boolean
-  showCommitNodeTooltips?: boolean
-  highlightedBackgroundHeight?: number
-}>(), {
-  nodeTheme: 'default',
-  breakPointTheme: 'dot',
-  orientation: 'normal',
-  showCommitNodeHashes: false,
-  showCommitNodeTooltips: false,
+const props = defineProps({
+  nodeTheme: { type: String as PropType<NodeTheme>, required: false, default: 'default' },
+  breakPointTheme: { type: String as PropType<BreakPointTheme>, required: false, default: 'dot' },
+  orientation: { type: String as PropType<GraphOrientation>, required: false, default: 'normal' },
+  showCommitNodeHashes: { type: Boolean, required: false, default: false },
+  showCommitNodeTooltips: { type: Boolean, required: false, default: false },
+  highlightedBackgroundHeight: { type: Number, required: false },
 })
 
 // ---------------------------------------------------------------------------

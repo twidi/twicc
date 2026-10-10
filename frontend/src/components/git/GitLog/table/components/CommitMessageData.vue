@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useId, inject, type CSSProperties } from 'vue'
+import { useId, inject, type CSSProperties, type PropType } from 'vue'
 import IndexStatus from './IndexStatus.vue'
 import AppTooltip from '../../../../ui/AppTooltip.vue'
 
@@ -8,13 +8,13 @@ import AppTooltip from '../../../../ui/AppTooltip.vue'
 // Props
 // ---------------------------------------------------------------------------
 
-const props = defineProps<{
-  index: number
-  isIndex: boolean
-  commitHash: string
-  commitMessage: string
-  style?: CSSProperties
-}>()
+const props = defineProps({
+  index: { type: Number, required: true },
+  isIndex: { type: Boolean, required: true },
+  commitHash: { type: String, required: true },
+  commitMessage: { type: String, required: true },
+  style: { type: Object as PropType<CSSProperties>, required: false },
+})
 
 const messageId = useId()
 

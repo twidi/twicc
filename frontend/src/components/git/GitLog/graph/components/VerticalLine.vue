@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, type CSSProperties } from 'vue'
+import { computed, type CSSProperties, type PropType } from 'vue'
 import { useGraphContext } from '../../composables/useGraphContext'
 import { useGitContext } from '../../composables/useGitContext'
 import type { Commit, BreakPointTheme } from '../../types'
@@ -10,14 +10,14 @@ import BreakPoint from './BreakPoint.vue'
 // Props
 // ---------------------------------------------------------------------------
 
-const props = defineProps<{
-  state: GraphColumnState
-  columnIndex: number
-  columnColour: string
-  commit: Commit
-  indexCommitNodeBorder: string
-  isIndex: boolean
-}>()
+const props = defineProps({
+  state: { type: Object as PropType<GraphColumnState>, required: true },
+  columnIndex: { type: Number, required: true },
+  columnColour: { type: String, required: true },
+  commit: { type: Object as PropType<Commit>, required: true },
+  indexCommitNodeBorder: { type: String, required: true },
+  isIndex: { type: Boolean, required: true },
+})
 
 // ---------------------------------------------------------------------------
 // Context

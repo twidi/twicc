@@ -4,9 +4,9 @@
 // Props
 // ---------------------------------------------------------------------------
 
-defineProps<{
-  columnColour: string
-}>()
+defineProps({
+  columnColour: { type: String, required: true },
+})
 </script>
 
 <template>

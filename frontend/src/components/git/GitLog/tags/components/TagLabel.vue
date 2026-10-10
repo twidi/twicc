@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
 import { useGitContext } from '../../composables/useGitContext'
 import { formatBranch } from '../../utils/formatBranch'
 import type { Commit } from '../../types'
@@ -10,9 +10,9 @@ import TagIcon from './TagIcon.vue'
 // Props
 // ---------------------------------------------------------------------------
 
-const props = defineProps<{
-  commit: Commit
-}>()
+const props = defineProps({
+  commit: { type: Object as PropType<Commit>, required: true },
+})
 
 // ---------------------------------------------------------------------------
 // Context

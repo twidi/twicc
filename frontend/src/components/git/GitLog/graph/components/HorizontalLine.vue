@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, type CSSProperties } from 'vue'
+import { computed, type CSSProperties, type PropType } from 'vue'
 import { useGraphContext } from '../../composables/useGraphContext'
 import { useTheme } from '../../composables/useTheme'
 import type { GraphColumnState } from '../GraphMatrixBuilder'
@@ -8,12 +8,12 @@ import type { GraphColumnState } from '../GraphMatrixBuilder'
 // Props
 // ---------------------------------------------------------------------------
 
-const props = defineProps<{
-  state: GraphColumnState
-  columnIndex: number
-  commitNodeIndex: number
-  columnColour: string
-}>()
+const props = defineProps({
+  state: { type: Object as PropType<GraphColumnState>, required: true },
+  columnIndex: { type: Number, required: true },
+  commitNodeIndex: { type: Number, required: true },
+  columnColour: { type: String, required: true },
+})
 
 // ---------------------------------------------------------------------------
 // Context

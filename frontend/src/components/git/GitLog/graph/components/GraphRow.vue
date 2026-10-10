@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
 import { useGraphContext } from '../../composables/useGraphContext'
 import type { Commit } from '../../types'
 import type { GraphColumnState } from '../GraphMatrixBuilder/types'
@@ -9,17 +9,15 @@ import GraphColumn from './GraphColumn.vue'
 // Props
 // ---------------------------------------------------------------------------
 
-const props = withDefaults(defineProps<{
+const props = defineProps({
   /** The zero-based row id used for tabIndex and indexing. */
-  id?: number
+  id: { type: Number, required: false, default: 0 },
 
   /** The commit represented by this row. */
-  commit: Commit
+  commit: { type: Object as PropType<Commit>, required: true },
 
   /** The column states for this row. */
-  columns: GraphColumnState[]
-}>(), {
-  id: 0,
+  columns: { type: Array as PropType<GraphColumnState[]>, required: true },
 })
 
 // ---------------------------------------------------------------------------

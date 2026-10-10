@@ -9,11 +9,11 @@ import { useGraphContext } from '../../composables/useGraphContext'
 // Props
 // ---------------------------------------------------------------------------
 
-const props = defineProps<{
-  index: number
-  colour: string
-  commitNodeIndex: number
-}>()
+const props = defineProps({
+  index: { type: Number, required: true },
+  colour: { type: String, required: true },
+  commitNodeIndex: { type: Number, required: true },
+})
 
 // ---------------------------------------------------------------------------
 // Context
