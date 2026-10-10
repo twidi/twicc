@@ -32,7 +32,7 @@
     "@codemirror/merge": "^6.12.2",
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.14",
-    "@mswjs/interceptors": "^0.41.9",
+    "@mswjs/interceptors": "^0.45.7",
     "@panzoom/panzoom": "^4.6.2",
     "@shikijs/markdown-it": "^3.21.0",
     "@uiw/codemirror-theme-github": "^4.25.12",
