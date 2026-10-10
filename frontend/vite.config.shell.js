@@ -30,13 +30,13 @@ export default defineConfig({
             formats: ['es'],
             fileName: () => 'shell.js',
         },
-        rollupOptions: {
+        rolldownOptions: {
             output: {
-                inlineDynamicImports: true,
+                codeSplitting: false,
                 // Stable name for the single stylesheet (referenced from the shell
                 // HTML); any other asset (e.g. fonts) keeps a hashed name.
                 assetFileNames: (info) => {
-                    const name = info.name || (info.names && info.names[0]) || ''
+                    const name = info.names?.[0] || ''
                     return name.endsWith('.css') ? 'shell.css' : 'assets/[name]-[hash][extname]'
                 },
             },

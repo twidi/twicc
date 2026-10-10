@@ -16,7 +16,7 @@ export default defineConfig({
         outDir: '../src/twicc/static/artifact-theme',
         emptyOutDir: true,
         cssCodeSplit: true,
-        rollupOptions: {
+        rolldownOptions: {
             input: {
                 theme: 'src/artifact-theme/theme.css',
                 kit: 'src/artifact-theme/kit.css',

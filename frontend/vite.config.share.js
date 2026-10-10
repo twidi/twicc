@@ -23,7 +23,7 @@ export default defineConfig({
             { find: /.*\/stores\/codeComments(\.js)?$/, replacement: r('src/share-session/shims/codeCommentsShim.js') },
             { find: /.*\/composables\/useWebSocket(\.js)?$/, replacement: r('src/share-session/shims/noWebSocket.js') },
             // Cut the app router (and thus the whole SPA views chain) — reused code
-            // lazy-imports it, which inlineDynamicImports would otherwise pull in.
+            // lazy-imports it, which disabled code splitting would otherwise pull in.
             { find: /.*\/router(\.js)?$/, replacement: r('src/share-session/shims/noRouter.js') },
             // Mermaid's lazily-loaded ELK layout chunk (`./elk-<hash>.mjs`, see the shim).
             { find: /^\.\/elk-[A-Z0-9]+\.mjs$/, replacement: r('src/share-session/shims/noElkLayout.js') },
@@ -34,11 +34,11 @@ export default defineConfig({
         emptyOutDir: true,
         cssCodeSplit: false,
         lib: { entry: 'src/share-session/main.js', formats: ['es'], fileName: () => 'share-session.js' },
-        rollupOptions: {
+        rolldownOptions: {
             output: {
-                inlineDynamicImports: true,
+                codeSplitting: false,
                 assetFileNames: (info) => {
-                    const name = info.name || (info.names && info.names[0]) || ''
+                    const name = info.names?.[0] || ''
                     return name.endsWith('.css') ? 'share-session.css' : 'assets/[name]-[hash][extname]'
                 },
             },

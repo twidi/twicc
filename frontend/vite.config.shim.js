@@ -20,8 +20,8 @@ export default defineConfig({
             name: 'TwiccArtifactBroker',
             fileName: () => 'shim.js',
         },
-        rollupOptions: {
-            output: { inlineDynamicImports: true },
+        rolldownOptions: {
+            output: { codeSplitting: false },
         },
     },
 })

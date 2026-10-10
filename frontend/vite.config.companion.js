@@ -19,8 +19,8 @@ export default defineConfig({
             name: 'TwiccBrowserCompanion',
             fileName: () => 'companion.js',
         },
-        rollupOptions: {
-            output: { inlineDynamicImports: true },
+        rolldownOptions: {
+            output: { codeSplitting: false },
         },
     },
 })
