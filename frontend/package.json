@@ -36,7 +36,7 @@
     "@mswjs/interceptors": "^0.41.9",
     "@panzoom/panzoom": "^4.6.2",
     "@shikijs/markdown-it": "^3.21.0",
-    "@uiw/codemirror-theme-github": "^4.25.8",
+    "@uiw/codemirror-theme-github": "^4.25.12",
     "@vueuse/core": "^14.1.0",
     "@xterm/addon-clipboard": "^0.2.0",
     "@xterm/addon-fit": "^0.11.0",
