@@ -40,6 +40,7 @@ function harness(t, options = {}) {
         renderBlockToHtml: async (text, env) => { calls.push(text); return options.render ? options.render(text, env) : `<p>${text}</p>` },
         getMermaid: options.getMermaid ?? (() => { throw Error('unexpected Mermaid') }),
         applyMermaidTheme: text => text,
+        mermaidThemeFor: scheme => scheme,
     }
     const setup = new Function(...Object.keys(dependencies), `${extracted}\nreturn { blocks, artifactPlacement: typeof artifactPlacement === 'function' ? artifactPlacement : undefined, renderCache, coordinator, container, renderOneBlock, renderNestedMarkdown, renderMermaidIn, toolOwnership, applyCodeRendered, handleCodeToolsAction, restoreCodeToolsState, codeToolsState };`)
     const component = scope.run(() => setup(...Object.values(dependencies)))

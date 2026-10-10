@@ -5,7 +5,7 @@
 // shared mermaid pipeline (lazy-load + per-diagram theme) and usePanZoom.
 import { ref, computed, watch } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
-import { renderMermaidToSvg } from '../../utils/mermaid'
+import { mermaidThemeFor, renderMermaidToSvg } from '../../utils/mermaid'
 import { usePanZoom } from '../../composables/usePanZoom'
 
 const props = defineProps({
@@ -13,8 +13,8 @@ const props = defineProps({
 })
 
 const settingsStore = useSettingsStore()
-// Match MarkdownContent: 'dark' for dark mode, mermaid's 'default' light theme otherwise.
-const theme = computed(() => (settingsStore._effectiveColorScheme === 'dark' ? 'dark' : 'default'))
+// Same theme as MarkdownContent for the current color scheme.
+const theme = computed(() => mermaidThemeFor(settingsStore._effectiveColorScheme))
 
 const svg = ref('')
 const error = ref(null)

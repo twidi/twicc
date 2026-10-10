@@ -15,11 +15,12 @@ export async function getMermaid() {
         mermaidInitialized = true
         mermaidModule.initialize({
             startOnLoad: false,
-            theme: 'default',
-            // Mermaid 12 switched the defaults to the `neo` look and the ELK
-            // layout. Keep the rendering diagrams had until then.
-            look: 'classic',
-            layout: 'dagre',
+            theme: mermaidThemeFor('light'),
+            // Mermaid 12's defaults, pinned so a future default change does not
+            // silently restyle every diagram: the `neo` look, and the ELK layout
+            // (orthogonal edges, tidier subgraphs than dagre).
+            look: 'neo',
+            layout: 'elk',
             securityLevel: 'loose',
             // Don't inject the "Syntax error" bomb diagram on parse/render
             // failures: during streaming, the markdown is re-rendered repeatedly
@@ -41,13 +42,20 @@ export function sourceHasOwnTheme(source) {
     return /%%\{\s*init\s*:[\s\S]*?\btheme\b/i.test(source)
 }
 
-// Make a mermaid source render with the given native theme ('dark' or
-// 'default') by injecting an %%{init: {'theme': ...}}%% directive. The directive
-// overrides the global mermaid config per-diagram, so rendering is stateless (no
-// global re-init race between concurrently rendering blocks) and the SVG is
-// fully determined by (source, theme). Front-matter must stay at the very start
-// of the source, so when present the directive is inserted right after it;
-// otherwise it is prepended.
+// The native mermaid theme for TwiCC's effective color scheme. The redux
+// themes are neutral; their `-color` variants keep subgraph backgrounds
+// visible in both modes.
+export function mermaidThemeFor(colorScheme) {
+    return colorScheme === 'dark' ? 'redux-dark-color' : 'redux-color'
+}
+
+// Make a mermaid source render with the given native theme (see
+// mermaidThemeFor) by injecting an %%{init: {'theme': ...}}%% directive. The
+// directive overrides the global mermaid config per-diagram, so rendering is
+// stateless (no global re-init race between concurrently rendering blocks) and
+// the SVG is fully determined by (source, theme). Front-matter must stay at the
+// very start of the source, so when present the directive is inserted right
+// after it; otherwise it is prepended.
 export function applyMermaidTheme(source, theme) {
     if (sourceHasOwnTheme(source)) return source
     const directive = `%%{init: {'theme': '${theme}'}}%%\n`

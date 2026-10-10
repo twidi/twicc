@@ -19,7 +19,7 @@ import { useSettingsStore } from '../../stores/settings'
 import { vHighlight } from '../../directives/vHighlight.js'
 import { toast } from '../../composables/useToast'
 import { openMediaPreview } from '../../composables/useMediaPreview'
-import { getMermaid, applyMermaidTheme } from '../../utils/mermaid'
+import { getMermaid, applyMermaidTheme, mermaidThemeFor } from '../../utils/mermaid'
 // Uses the combined version that includes both light and dark
 // Then override with our theme file that uses [data-color-scheme] without media queries
 import 'github-markdown-css/github-markdown.css'
@@ -530,12 +530,11 @@ async function renderOneBlock(src, env, theme, slashTag, referenceContext, cache
     return html
 }
 
-// Mermaid's native theme matching the app's current color scheme: 'dark' for
-// dark mode, 'default' (Mermaid's light theme) otherwise. Captured once per
-// render() so the theme used to render and the theme folded into the cache key
+// Mermaid's native theme matching the app's current color scheme (see
+// mermaidThemeFor). Captured once per render() so the theme used to render and the theme folded into the cache key
 // can never diverge mid-render.
 function mermaidTheme() {
-    return settingsStore._effectiveColorScheme === 'dark' ? 'dark' : 'default'
+    return mermaidThemeFor(settingsStore._effectiveColorScheme)
 }
 
 async function renderDocument(input, { isCurrent }) {
