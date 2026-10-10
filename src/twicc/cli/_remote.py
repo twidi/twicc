@@ -36,10 +36,13 @@ import sys
 from typing import NamedTuple
 from urllib.parse import quote
 
-import click
 import httpx
 import orjson
-from click.core import ParameterSource
+import typer
+from typer.core import TyperCommand, TyperGroup
+
+# Typer vendors Click since 0.26 and does not re-export ParameterSource.
+from typer._click.core import ParameterSource
 
 from twicc.cli._drop_request.prompt import (
     PromptError,
@@ -139,19 +142,20 @@ _HOST_BOUND_KEYWORDS = frozenset({"self", "parent"})
 _SESSION_GROUP_FLAG_MISUSE = "--slim / --full apply to `session <id>` alone, not to `{sub}`."
 
 
-def _make_context(cmd: click.Command, args: list[str], parent: click.Context | None) -> click.Context:
+def _make_context(cmd: TyperCommand | TyperGroup, args: list[str], parent: typer.Context | None) -> typer.Context:
     """Parse ``args`` for ``cmd`` in resilient mode (missing args don't raise)."""
     return cmd.make_context(cmd.name or "twicc", list(args), parent=parent, resilient_parsing=True)
 
 
-def _remaining_tokens(ctx: click.Context) -> list[str]:
+def _remaining_tokens(ctx: typer.Context) -> list[str]:
     """Tokens left for a group after parsing its own options/arguments.
 
-    ``protected_args`` holds the (deprecated, Click < 9) reserved subcommand
-    token; ``args`` holds the rest. Concatenating them gives the tokens that
-    the group must resolve into ``<subcommand> <rest…>``.
+    ``_protected_args`` holds the reserved subcommand token; ``args`` holds the
+    rest. Concatenating them gives the tokens that the group must resolve into
+    ``<subcommand> <rest…>`` (``TyperGroup.invoke`` does the same). Typer's
+    vendored Click has no public accessor for the reserved token.
     """
-    return list(ctx.protected_args) + list(ctx.args)
+    return list(ctx._protected_args) + list(ctx.args)
 
 
 def resolve_command(argv: list[str]) -> Resolved:
@@ -212,16 +216,16 @@ def _navigate(argv: list[str]) -> tuple[str, dict, frozenset[str]]:
     semantics rather than silently "fixing" the order.
     """
     root = get_command()
-    cmd: click.Command = root
+    cmd: TyperCommand | TyperGroup = root
     args = list(argv)
-    parent: click.Context | None = None
+    parent: typer.Context | None = None
     path_tokens: list[str] = []
     merged: dict = {}
     explicit: frozenset[str] = frozenset()
 
     while True:
         ctx = _make_context(cmd, args, parent)
-        if not isinstance(cmd, click.Group):
+        if not isinstance(cmd, TyperGroup):
             merged.update(ctx.params)
             explicit = frozenset(
                 name for name in ctx.params if ctx.get_parameter_source(name) is ParameterSource.COMMANDLINE

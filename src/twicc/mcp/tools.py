@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from functools import cache
 
-import click
 from mcp import types as mcp_types
+from typer.core import TyperCommand, TyperGroup
 
 from twicc.cli._local_only import LOCAL_ONLY_COMMANDS
 from twicc.mcp.batch_contract import BATCH_INPUT_SCHEMAS, BATCH_OUTPUT_SCHEMA, BATCH_NAMES
@@ -71,10 +71,10 @@ def tools_by_name() -> dict[str, CommandSpec]:
     return {tool_name_for(p): spec for p, spec in build_mcp_registry().items()}
 
 
-def _click_leaf(path: str) -> click.Command:
-    cmd: click.Command = get_command()
+def _click_leaf(path: str) -> TyperCommand | TyperGroup:
+    cmd: TyperCommand | TyperGroup = get_command()
     for token in path.split("/"):
-        if isinstance(cmd, click.Group) and token in cmd.commands:
+        if isinstance(cmd, TyperGroup) and token in cmd.commands:
             cmd = cmd.commands[token]
     return cmd
 

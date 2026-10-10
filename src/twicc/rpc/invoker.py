@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-import click
 import typer
+from typer.core import TyperCommand, TyperGroup
 
 from twicc.cli import app
 from twicc.cli._output import _Sink, _capture
@@ -26,10 +26,10 @@ class InvocationResult(NamedTuple):
 
 
 # Build the Click command once: this registers the whole Typer tree.
-_command: click.Command = typer.main.get_command(app)
+_command: TyperCommand | TyperGroup = typer.main.get_command(app)
 
 
-def get_command() -> click.Command:
+def get_command() -> TyperCommand | TyperGroup:
     """Return the root Click command (the converted Typer app)."""
     return _command
 
@@ -40,20 +40,20 @@ def invoke(argv: list[str]) -> InvocationResult:
     tok = _capture.set(sink)
     try:
         # With ``standalone_mode=False`` Click never re-raises a ``typer.Exit``
-        # / ``click.exceptions.Exit`` out of ``.main()``: it converts it to the
+        # out of ``.main()``: it converts it to the
         # function's return value (``e.exit_code``). A normal completion returns
         # the command's own return value (typically ``None``). So the exit code
         # is whatever ``.main()`` hands back, not a swallowed exception.
         raw = _command.main(args=argv, prog_name="twicc", standalone_mode=False)
         code = raw if isinstance(raw, int) else 0
-    except (click.exceptions.Exit, SystemExit) as exc:
+    except (typer.Exit, SystemExit) as exc:
         raw = getattr(exc, "exit_code", getattr(exc, "code", 0))
         code = raw if isinstance(raw, int) else (0 if raw is None else 1)
-    except click.exceptions.Abort:
+    except typer.Abort:
         code = 1
         if sink.error is None:
             sink.error = "Aborted."
-    except click.ClickException as exc:
+    except typer.TyperException as exc:
         code = exc.exit_code
         if sink.error is None:
             sink.error = exc.format_message()

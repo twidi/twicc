@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-import click
+from typer.core import TyperCommand, TyperGroup
 
 from twicc.cli._local_only import LOCAL_ONLY_COMMANDS
 from twicc.rpc.invoker import get_command
@@ -35,7 +35,7 @@ class CommandSpec(NamedTuple):
         return json_schema_for(self.params, include_hidden=True)
 
 
-def _split_params(cmd: click.Command) -> tuple[list[ParamSpec], list[ParamSpec]]:
+def _split_params(cmd: TyperCommand | TyperGroup) -> tuple[list[ParamSpec], list[ParamSpec]]:
     args: list[ParamSpec] = []
     opts: list[ParamSpec] = []
     for p in cmd.params:
@@ -46,7 +46,7 @@ def _split_params(cmd: click.Command) -> tuple[list[ParamSpec], list[ParamSpec]]
     return args, opts
 
 
-def _register(registry: dict, chain: list[Level], options: list[ParamSpec], cmd: click.Command) -> None:
+def _register(registry: dict, chain: list[Level], options: list[ParamSpec], cmd: TyperCommand | TyperGroup) -> None:
     tokens = [lvl.token for lvl in chain if lvl.token is not None]
     path = "/".join(tokens)
     if not path:
@@ -62,10 +62,10 @@ def _register(registry: dict, chain: list[Level], options: list[ParamSpec], cmd:
     )
 
 
-def _walk(cmd: click.Command, token: str | None, chain: list[Level], registry: dict, *,
+def _walk(cmd: TyperCommand | TyperGroup, token: str | None, chain: list[Level], registry: dict, *,
           is_root: bool, excluded_roots: frozenset[str]) -> None:
     args, opts = _split_params(cmd)
-    if isinstance(cmd, click.Group):
+    if isinstance(cmd, TyperGroup):
         # Ancestor levels carry the group's ARGUMENTS only (its options default
         # when a subcommand is invoked).
         child_chain = chain if is_root else chain + [Level(token=token, arguments=args)]

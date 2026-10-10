@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-import click
+from typer.core import TyperArgument, TyperOption
 
 
 class ParamSpec(NamedTuple):
@@ -22,17 +22,21 @@ class ParamSpec(NamedTuple):
     hidden: bool = False            # accepted compatibility option, omitted from discovery
 
 
-_TYPE_MAP = {"integer": "integer", "float": "number", "boolean": "boolean"}
+# Keyed by the param type names of the Click copy Typer vendors (``int``, not
+# ``integer``); any other type is sent as a string.
+_TYPE_MAP = {"int": "integer", "float": "number", "boolean": "boolean"}
 
 
-def _base_type(param: click.Parameter) -> tuple[str, tuple[str, ...] | None]:
+def _base_type(param: TyperArgument | TyperOption) -> tuple[str, tuple[str, ...] | None]:
     t = param.type
-    if isinstance(t, click.Choice):
+    # Typer's choice type (enum and Literal parameters) is private: only it
+    # carries ``choices``.
+    if hasattr(t, "choices"):
         return "enum", tuple(str(c) for c in t.choices)
-    return _TYPE_MAP.get(getattr(t, "name", "text"), "string"), None
+    return _TYPE_MAP.get(getattr(t, "name", "str"), "string"), None
 
 
-def param_spec(param: click.Parameter) -> ParamSpec | None:
+def param_spec(param: TyperArgument | TyperOption) -> ParamSpec | None:
     """Translate one Click parameter, or None if it should be skipped."""
     # Skip eager/meta params (--version, --help, --install-completion, ...).
     hidden = bool(getattr(param, "hidden", False))
