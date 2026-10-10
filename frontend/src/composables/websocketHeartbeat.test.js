@@ -21,7 +21,7 @@ class FakeWebSocket {
 }
 globalThis.WebSocket = FakeWebSocket
 
-const { useWebSocket } = await import('@vueuse/core')
+const { useIntervalFn, useWebSocket } = await import('@vueuse/core')
 
 test('server pong reaches onMessage for the visibility liveness probe', async () => {
     const scope = effectScope()
@@ -34,7 +34,7 @@ test('server pong reaches onMessage for the visibility liveness probe', async ()
                 heartbeat: {
                     message: JSON.stringify({ type: 'ping' }),
                     responseMessage: JSON.stringify({ type: 'pong' }),
-                    interval: 30000,
+                    scheduler: (ping) => useIntervalFn(ping, 30000, { immediate: false }),
                     pongTimeout: 5000,
                 },
                 onMessage: (_socket, event) => messages.push(event.data),
@@ -52,6 +52,33 @@ test('server pong reaches onMessage for the visibility liveness probe', async ()
         scope.stop()
         assert.equal(socket.closed, true)
         assert.equal(connection.status.value, 'CLOSED')
+    } finally {
+        connection?.close()
+        scope.stop()
+    }
+})
+
+test('the heartbeat scheduler pings every 30 s, not on the 1 s default', async (t) => {
+    t.mock.timers.enable({ apis: ['setInterval'] })
+    const scope = effectScope()
+    let connection
+    try {
+        scope.run(() => {
+            connection = useWebSocket('ws://localhost/ws/', {
+                heartbeat: {
+                    message: 'ping',
+                    scheduler: (ping) => useIntervalFn(ping, 30000, { immediate: false }),
+                    pongTimeout: 5000,
+                },
+            })
+        })
+        const socket = connection.ws.value
+        socket.onopen()
+        await nextTick()
+        t.mock.timers.tick(1000)
+        assert.deepEqual(socket.sent, [])
+        t.mock.timers.tick(29000)
+        assert.deepEqual(socket.sent, ['ping'])
     } finally {
         connection?.close()
         scope.stop()

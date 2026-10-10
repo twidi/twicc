@@ -3,7 +3,7 @@ import { isLaunchedEphemeral } from '../utils/ephemeralSessions'
 // frontend/src/composables/useWebSocket.js
 
 import { ref, watch, defineAsyncComponent, onScopeDispose } from 'vue'
-import { useWebSocket as useVueWebSocket, useDebounceFn, useThrottleFn } from '@vueuse/core'
+import { useWebSocket as useVueWebSocket, useDebounceFn, useIntervalFn, useThrottleFn } from '@vueuse/core'
 import { useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
 import { applySessionItemsAdded } from './wsSessionItems'
@@ -1043,7 +1043,9 @@ export function useWebSocket() {
         heartbeat: {
             message: JSON.stringify({ type: 'ping' }),
             responseMessage: JSON.stringify({ type: 'pong' }),
-            interval: 30000,
+            // VueUse 15 dropped the `interval` option: a custom scheduler sets
+            // the period (its default pings every second).
+            scheduler: (ping) => useIntervalFn(ping, 30000, { immediate: false }),
             pongTimeout: 5000
         },
         onDisconnected(ws, event) {
