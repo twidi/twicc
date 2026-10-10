@@ -33,7 +33,7 @@ dependencies = [
     "django~=6.0.4",
     "httpx~=0.28.1",
     "idna~=3.20",
-    "json-repair~=0.59.5",
+    "json-repair~=0.64.0",
     "jsonschema>=4.20",
     "keyring~=25.7.0; sys_platform == 'darwin'",
     "markdown-it-py~=4.2",
