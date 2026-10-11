@@ -5,7 +5,7 @@
 // <html>. The styles read `:where(html.compact-height)`.
 import { ref } from 'vue'
 
-export const COMPACT_HEIGHT_REM = 56
+export const COMPACT_HEIGHT_REM = 60
 export const COMPACT_HEIGHT_CLASS = 'compact-height'
 
 // The same fact as a ref, for a component that must switch a class (a glass surface) on it: the

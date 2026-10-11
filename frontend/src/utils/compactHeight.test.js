@@ -8,12 +8,12 @@ import { isCompactHeight, COMPACT_HEIGHT_REM } from './compactHeight.js'
 const src = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 // Visual refresh retouches: the compact header threshold follows the font size setting.
-test('1. the threshold is 56 root rem (896px at 16px, the old 900px), measured against the real root font size', () => {
-    assert.equal(COMPACT_HEIGHT_REM, 56)
-    assert.equal(isCompactHeight(896, 16), true)
-    assert.equal(isCompactHeight(897, 16), false)
-    assert.equal(isCompactHeight(896, 20), true, 'a bigger font makes the same viewport compact')
-    assert.equal(isCompactHeight(700, 12), false, 'a smaller font makes it roomy: 12 x 56 = 672')
+test('1. the threshold is 60 root rem (960px at 16px), measured against the real root font size', () => {
+    assert.equal(COMPACT_HEIGHT_REM, 60)
+    assert.equal(isCompactHeight(960, 16), true)
+    assert.equal(isCompactHeight(961, 16), false)
+    assert.equal(isCompactHeight(960, 20), true, 'a bigger font makes the same viewport compact')
+    assert.equal(isCompactHeight(700, 11), false, 'a smaller font makes it roomy: 11 x 60 = 660')
 })
 
 test('2. no height media query remains: the four compact styles read the class on <html>', () => {
