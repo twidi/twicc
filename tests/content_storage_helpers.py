@@ -1,6 +1,7 @@
 """Content rows for codec tests, independent of reference services."""
 
 import hashlib
+from collections.abc import Sequence
 
 import pytest
 import zstandard
@@ -10,7 +11,9 @@ from twicc.core.models import ContentDictionary, SessionItemContent
 
 @pytest.fixture
 def content_row_factory(db):
-    def create(text: str, compressed: bool, provider: str = "codex") -> SessionItemContent:
+    def create(
+        text: str, compressed: bool, provider: str = "codex", *, session_ids: Sequence[str] = (),
+    ) -> SessionItemContent:
         raw = text.encode("utf-8")
         dictionary = ContentDictionary.objects.get(provider=provider, version=1) if compressed else None
         payload = raw
@@ -19,6 +22,6 @@ def content_row_factory(db):
             payload = zstandard.ZstdCompressor(level=3, dict_data=data).compress(raw)
         return SessionItemContent.objects.create(
             sha256=hashlib.sha256(raw).digest(), payload=payload, codec="zstd" if compressed else "plain",
-            dictionary=dictionary, raw_size=len(raw), dictionary_provider=provider,
+            dictionary=dictionary, raw_size=len(raw), dictionary_provider=provider, session_ids=sorted(set(session_ids)),
         )
     return create
