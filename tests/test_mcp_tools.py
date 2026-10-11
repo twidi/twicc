@@ -98,3 +98,13 @@ def test_mcp_description_overrides_target_exposed_commands():
     assert set(MCP_DESCRIPTIONS) <= set(build_mcp_registry())
     by_name = {t.name: t for t in iter_mcp_tools()}
     assert by_name["session_wait_reply"].description == MCP_DESCRIPTIONS["session/wait-reply"]
+
+
+
+def test_public_contains_discovery_exposes_root_gate_and_alternatives():
+    by_name = {tool.name: tool for tool in iter_mcp_tools()}
+    for name in ('session_content', 'session_messages'):
+        description = by_name[name].input_schema['properties']['contains']['description']
+        assert 'ready hot native root' in description
+        assert 'cold, warming and unresolved ancestry' in description
+        assert 'global full-text search' in description

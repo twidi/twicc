@@ -52,3 +52,25 @@ def read_current(item) -> str:
 
     load_current([item])
     return effective_current(item)
+
+
+def prepare_plaintext_search(session) -> None:
+    """Extract explicit fixture content and publish readiness through the real verifier."""
+    from django.db import transaction
+    from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION
+    from twicc.core.content_storage.references import bind_persisted_items, intern_contents
+    from twicc.core.content_storage.types import ContentBinding
+    from twicc.core.content_storage.state import ensure_storage_incarnation, snapshot_root_storage, verify_plaintext_root
+    from twicc.core.models import Session, SessionItem
+
+    with transaction.atomic():
+        ensure_storage_incarnation(session.id)
+        for item in SessionItem.objects.filter(session=session):
+            if item.current_content_id is None:
+                text = item.content
+                ids = intern_contents([text], session.provider)
+                SessionItem.objects.filter(pk=item.pk).update(content='', current_content_id=ids[text])
+                bind_persisted_items([ContentBinding(item.pk, session.id, ids[text], item.original_content_id)])
+        Session.objects.filter(pk=session.pk).update(content_storage_version=CONTENT_STORAGE_VERSION)
+        snapshot = snapshot_root_storage(session.id)
+        assert verify_plaintext_root(snapshot)

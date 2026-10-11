@@ -725,7 +725,9 @@ def content(
         help=(
             "Case-insensitive substring filter on the raw item content. "
             "Repeatable, AND-combined (an item must contain every term). "
-            "Combinable with a line/range to scope the search."
+            "Combinable with a line/range to scope the search. "
+            "Requires a ready hot native root; cold, warming and unresolved ancestry fail. "
+            "Use global full-text search or read lines without --contains otherwise."
         ),
     ),
     limit: int = typer.Option(None, "--limit", help=limit_help("items", suffix=" Applied after the range and --contains.")),
@@ -750,7 +752,9 @@ def messages(
         help=(
             "Case-insensitive substring filter on the message text. "
             "Repeatable, AND-combined (a message must contain every term). "
-            "Applied before --tail/--limit/--offset."
+            "Applied before --tail/--limit/--offset. "
+            "Requires a ready hot native root; cold, warming and unresolved ancestry fail. "
+            "Use global full-text search or read lines without --contains otherwise."
         ),
     ),
     is_final: list[str] = typer.Option(

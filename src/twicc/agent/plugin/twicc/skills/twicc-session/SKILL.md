@@ -43,8 +43,8 @@ Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never 
 | Sub-command | Purpose | File |
 |---|---|---|
 | *(none)* | The session row: metadata, agent settings, live process state. | `row.md` |
-| `content` | Every raw JSONL item, tool calls included, by line or substring. Provider-specific schema. | `content.md` |
-| `messages` | User/assistant text only, one shape across providers. Use it to read an answer. | `messages.md` |
+| `content` | Every raw JSONL item, tool calls included, by line or substring. Substring search requires a ready hot root. Provider-specific schema. | `content.md` |
+| `messages` | User/assistant text only, one shape across providers. Substring search requires a ready hot root. | `messages.md` |
 | `wait-reply` | Block until the session answers, or blocks on a human. | `wait-reply.md` |
 | `pending-requests` / `answer-questions` / `cancel-questions` | See what the session is waiting on; answer or decline its question. | `questions.md` |
 | `stop` | Stop the live agent, your own included. | `stop.md` |

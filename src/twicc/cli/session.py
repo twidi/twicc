@@ -119,6 +119,16 @@ def main(session_id: str, *, full: bool = False) -> None:
     emit_json(build_session_payload(session, slim=not full))
 
 
+def _require_plaintext_search(session_id: str) -> None:
+    """Keep storage gate failures on the shared CLI/RPC/MCP error path."""
+    from twicc.core.content_storage.state import PlaintextSearchUnavailable, require_plaintext_search
+
+    try:
+        require_plaintext_search(session_id)
+    except PlaintextSearchUnavailable as error:
+        emit_error(f"Error: {error}", code=1)
+
+
 def content(
     session_id: str,
     *,
@@ -136,7 +146,7 @@ def content(
     ``range_str`` scopes the lines, ``contains`` filters within that scope, then
     ``limit``/``offset`` (or ``tail``) window the matches. ``contains`` is a list
     of case-insensitive substrings AND-combined (an item must contain every term)
-    matched against the raw JSONL string stored in ``SessionItem.content`` (so it
+    matched against the effective current raw JSONL string (so it
     also matches JSON keys and sees escaped sequences like ``\\n``).
 
     ``range_str`` and ``limit``/``offset`` answer different questions and are
@@ -149,6 +159,10 @@ def content(
     reaching the last N takes a first call to learn ``last_line`` or ``total``,
     and the session may grow between the two.
 
+    Substring search requires a ready hot native root. Cold, warming and
+    unresolved-ancestry roots fail explicitly. Global full-text search and
+    ordinary line/range reads remain available for these roots.
+
     No match is an empty result, not an error: with a window, running past the
     end is ordinary paging rather than a failure.
     """
@@ -157,7 +171,8 @@ def content(
     django.setup()
 
     from twicc.core.models import SessionItem
-    from twicc.core.content_storage.readers import effective_current, iter_matching_items, load_current
+    from django.db import transaction
+    from twicc.core.content_storage.readers import effective_current, effective_plaintext_expression, load_current
 
     contains = contains or []
 
@@ -169,25 +184,25 @@ def content(
     else:
         limit = resolve_limit(limit)
 
-    _get_session(session_id)
-
-    items = SessionItem.objects.filter(session_id=session_id)
-    if range_str is not None:
-        items = items.filter(**_parse_range_filter(range_str))
-    items = items.order_by("line_num")
-    if contains:
-        # Keep only addresses while counting decoded matches. Retain selected payloads only.
-        lines = [item.line_num for item in iter_matching_items(items, contains)]
-        total = len(lines)
-        selected_lines = _slice_window(lines, total, limit=limit, offset=offset, tail=tail)
-        selected = list(items.filter(line_num__in=selected_lines).defer("content"))
-    else:
+    # Guard, SQL matching, count, page and payload reads share one SQLite snapshot.
+    # A concurrent reference commit either precedes this snapshot (warming) or
+    # follows it; selection cannot combine its new rows with an old ready epoch.
+    with transaction.atomic():
+        _get_session(session_id)
+        if contains:
+            _require_plaintext_search(session_id)
+        items = SessionItem.objects.filter(session_id=session_id)
+        if range_str is not None:
+            items = items.filter(**_parse_range_filter(range_str))
+        items = items.order_by("line_num")
+        if contains:
+            items = items.alias(_plaintext=effective_plaintext_expression())
+            for term in contains:
+                items = items.filter(_plaintext__icontains=term)
         total = items.count()
         selected = list(_slice_window(items.defer("content"), total, limit=limit, offset=offset, tail=tail))
-    load_current(selected)
-
-    # Wrap each item with its line number; parse the raw content string into a real JSON object.
-    data = [{"line_num": item.line_num, "content": orjson.loads(effective_current(item))} for item in selected]
+        load_current(selected)
+        data = [{"line_num": item.line_num, "content": orjson.loads(effective_current(item))} for item in selected]
 
     if tail is not None:
         # Same reading as ``messages``: report the range the window really covers,
@@ -239,6 +254,10 @@ def messages(
     never matches JSON keys or tool noise. Because that text is produced in
     Python, the filter (and, with it, the ``tail``/``limit``/``offset`` window)
     is applied after extraction, on the matching messages.
+
+    Substring search requires a ready hot native root. Cold, warming and
+    unresolved-ancestry roots fail explicitly. Global full-text search and
+    ordinary line/range reads remain available for these roots.
 
     The ``is_final`` argument is the matching filter on that field: a list of
     ``"true"`` / ``"false"`` / ``"null"`` tokens, **OR-combined** (a message
@@ -320,42 +339,47 @@ def messages(
     if range_str is not None:
         filter_kwargs |= _parse_range_filter(range_str)
 
-    qs = SessionItem.objects.filter(**filter_kwargs).order_by("line_num")
-    helpers = get_provider_helpers(session.provider)
+    from django.db import transaction
 
-    if contains or wanted_is_final is not None:
-        # Both filters read what extraction produces — the text for ``contains``,
-        # the ``is_final`` field for the other — so we materialise and extract
-        # everything in range first, filter, then window on the matches.
-        terms = [term.lower() for term in contains]
-        matched = [
-            msg
-            for msg in helpers.get_indexable_messages(list(qs))
-            if all(term in msg.text.lower() for term in terms)
-            and (wanted_is_final is None or msg.is_final in wanted_is_final)
+    with transaction.atomic():
+        if contains:
+            _require_plaintext_search(session_id)
+        qs = SessionItem.objects.filter(**filter_kwargs).order_by("line_num")
+        helpers = get_provider_helpers(session.provider)
+
+        if contains or wanted_is_final is not None:
+            # Both filters read what extraction produces — the text for ``contains``,
+            # the ``is_final`` field for the other — so we materialise and extract
+            # everything in range first, filter, then window on the matches.
+            terms = [term.lower() for term in contains]
+            matched = [
+                msg
+                for msg in helpers.get_indexable_messages(list(qs))
+                if all(term in msg.text.lower() for term in terms)
+                and (wanted_is_final is None or msg.is_final in wanted_is_final)
+            ]
+            # The window sits on the extracted messages, already in memory: the total
+            # is exact and free, no query and no over-fetch.
+            total = len(matched)
+            selected = _slice_window(matched, total, limit=limit, offset=offset, tail=tail)
+        else:
+            # No post-extraction filter: window at the DB level, then extract (existing
+            # behaviour — the window counts raw items, so dropped-empty extractions may
+            # shrink the result).
+            total = qs.count()
+            items = list(_slice_window(qs, total, limit=limit, offset=offset, tail=tail))
+            selected = list(helpers.get_indexable_messages(items))
+
+        data = [
+            {
+                "line_num": msg.line_num,
+                "text": msg.text,
+                "role": msg.from_role,
+                "timestamp": msg.timestamp,
+                "is_final": msg.is_final,
+            }
+            for msg in selected
         ]
-        # The window sits on the extracted messages, already in memory: the total
-        # is exact and free, no query and no over-fetch.
-        total = len(matched)
-        selected = _slice_window(matched, total, limit=limit, offset=offset, tail=tail)
-    else:
-        # No post-extraction filter: window at the DB level, then extract (existing
-        # behaviour — the window counts raw items, so dropped-empty extractions may
-        # shrink the result).
-        total = qs.count()
-        items = list(_slice_window(qs, total, limit=limit, offset=offset, tail=tail))
-        selected = list(helpers.get_indexable_messages(items))
-
-    data = [
-        {
-            "line_num": msg.line_num,
-            "text": msg.text,
-            "role": msg.from_role,
-            "timestamp": msg.timestamp,
-            "is_final": msg.is_final,
-        }
-        for msg in selected
-    ]
 
     if tail is not None:
         # ``--tail`` is a window pinned to the end: report the range it really

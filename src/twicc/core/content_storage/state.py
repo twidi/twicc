@@ -207,3 +207,37 @@ def extract_storage_slice(session_id: str, observed_incarnation: str, observed_e
 
     return extract_storage_slice(session_id, observed_incarnation, observed_epoch,
                                  upper_line, cursor, row_budget, byte_budget)
+
+
+class PlaintextSearchUnavailable(ValueError):
+    """Public substring search cannot use this root's current durable state."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(f'Substring search unavailable: {reason}. '
+                         'Use global full-text search or read specific lines without --contains.')
+
+
+def require_plaintext_search(session_id: str) -> RootStorageSnapshot:
+    """Validate current DB ancestry and readiness inside the caller's read snapshot.
+
+    Persisted cold policy governs this public operation. Runtime activity never
+    overrides it, including in a standalone CLI process. The verified generation
+    certifies complete extraction and both plaintext FK slots across the native
+    tree; ownership and tree writers invalidate it in their mutation transaction.
+    """
+    if not connection.in_atomic_block:
+        raise transaction.TransactionManagementError('Substring search requires a caller-owned read transaction')
+    decision = resolve_root_decision(session_id, timezone.now(), frozenset())
+    if not decision.resolved:
+        raise PlaintextSearchUnavailable('unresolved_ancestry')
+    if decision.is_cold:
+        raise PlaintextSearchUnavailable('cold')
+    fields = Session.objects.filter(pk=decision.root_id).values(
+        'storage_incarnation', 'content_storage_version', 'content_state_epoch', 'plaintext_verified_epoch',
+    ).get()
+    epoch = fields['content_state_epoch']
+    if (not fields['storage_incarnation'] or fields['content_storage_version'] != CONTENT_STORAGE_VERSION
+            or epoch is None or fields['plaintext_verified_epoch'] != epoch):
+        raise PlaintextSearchUnavailable('warming')
+    return RootStorageSnapshot(decision.root_id, fields['storage_incarnation'], epoch)

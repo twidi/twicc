@@ -2,6 +2,13 @@
 
 Every raw JSONL item of a session, tool calls and results included — unlike `messages` and `search`, which see user/assistant text only. MCP tool: `mcp__twicc__session_content`. Read `SKILL.md` first: it resolves `$TWICC`.
 
+`--contains` requires a **ready hot native root**. Native subagents inherit the root state at every depth.
+Cold, warming, and unresolved ancestry return explicit errors: `cold`, `warming`, or `unresolved_ancestry`.
+The gate applies to the root even when the requested range contains plaintext rows.
+Use global full-text search (`search`) or read specific lines/ranges without `--contains`.
+Ordinary reads decode only requested contents. They keep compressed storage unchanged.
+The result's `content` location and pagination shape remain unchanged.
+
 ## Usage
 
 ```bash

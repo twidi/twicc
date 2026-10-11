@@ -18,6 +18,7 @@ import pytest
 import typer
 from django.utils import timezone
 
+from tests.content_storage_helpers import prepare_plaintext_search
 from twicc.cli import session as cli_session
 from twicc.core.enums import ItemKind
 from twicc.core.models import Project, Session, SessionItem, SessionType
@@ -427,6 +428,7 @@ def test_is_final_stacks_with_role_and_contains(project, provider, lines, capsys
     ]
     # AND with --contains: "on it" is in "still on it" too, so the is_final
     # value is what separates them.
+    prepare_plaintext_search(session)
     assert run_messages(
         session, capsysbinary, contains=["on it"], is_final=["false"],
     ) == [("on it", False), ("still on it", False)]

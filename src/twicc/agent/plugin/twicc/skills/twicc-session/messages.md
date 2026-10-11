@@ -2,6 +2,13 @@
 
 User and assistant messages only, one shape across providers: no tool calls, no system noise. The command to read a session's answer. MCP tool: `mcp__twicc__session_messages`. Read `SKILL.md` first: it resolves `$TWICC`.
 
+`--contains` requires a **ready hot native root**. Native subagents inherit the root state at every depth.
+Cold, warming, and unresolved ancestry return explicit errors: `cold`, `warming`, or `unresolved_ancestry`.
+The gate applies to the root even when the requested range contains plaintext rows.
+Use global full-text search (`search`) or read specific lines/ranges without `--contains`.
+Ordinary reads decode only requested contents. They keep compressed storage unchanged.
+The result's message fields and pagination shape remain unchanged.
+
 ## Usage
 
 ```bash

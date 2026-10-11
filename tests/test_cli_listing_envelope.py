@@ -14,6 +14,7 @@ import pytest
 import typer
 from django.utils import timezone
 
+from tests.content_storage_helpers import prepare_plaintext_search
 from twicc.cli import projects as cli_projects
 from twicc.cli import session as cli_session
 from twicc.cli import sessions as cli_sessions
@@ -142,6 +143,7 @@ def test_messages_tail_covering_everything_has_nothing_before_it(project, capsys
 def test_messages_contains_counts_extracted_messages_exactly(project, capsysbinary):
     session = make_sessions(project, 1)[0]
     make_messages(session, 5, empty_from=3)
+    prepare_plaintext_search(session)
     cli_session.messages(session.id, contains=["django"], limit=2)
     payload = read(capsysbinary)
     # The window sits on the extracted messages: the two dropped ones are not
@@ -239,6 +241,7 @@ def test_content_window_ranks_matches_not_lines(project, capsysbinary):
     """The range is an address in the JSONL; the window is a rank in the matches."""
     session = make_sessions(project, 1)[0]
     make_items(session, 20)
+    prepare_plaintext_search(session)
     cli_session.content(session.id, contains=["django"], limit=3)
     rows = items_of(capsysbinary)
     # Every other item matches, so three matches span six lines.
@@ -248,6 +251,7 @@ def test_content_window_ranks_matches_not_lines(project, capsysbinary):
 def test_content_no_match_is_an_empty_list_not_an_error(project, capsysbinary):
     session = make_sessions(project, 1)[0]
     make_items(session, 4)
+    prepare_plaintext_search(session)
     cli_session.content(session.id, contains=["nothing-matches-this"])
     assert items_of(capsysbinary) == []
 
@@ -255,6 +259,7 @@ def test_content_no_match_is_an_empty_list_not_an_error(project, capsysbinary):
 def test_content_envelope_counts_the_matches(project, capsysbinary):
     session = make_sessions(project, 1)[0]
     make_items(session, 20)
+    prepare_plaintext_search(session)
     cli_session.content(session.id, contains=["django"], limit=4)
     payload = read(capsysbinary)
     assert len(payload["items"]) == 4
@@ -327,6 +332,7 @@ def test_content_tail_works_on_a_filtered_result(project, capsysbinary):
     """The point of --tail: the end of a filtered result has no line address."""
     session = make_sessions(project, 1)[0]
     make_items(session, 20)
+    prepare_plaintext_search(session)
     cli_session.content(session.id, contains=["django"], tail=3)
     payload = read(capsysbinary)
     # Every other item matches, so the last three matches are lines 15, 17, 19.
