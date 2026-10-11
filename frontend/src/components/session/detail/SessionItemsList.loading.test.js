@@ -4,11 +4,13 @@ import { readFileSync } from 'node:fs'
 import * as Vue from 'vue'
 import { hasContent, setParsedContent, clearParsedContent } from '../../../utils/parsedContent.js'
 import { makeRenderer, flush, deferred } from '../../../../tests/helpers/scrollerComponentHarness.js'
+import { createVirtualClock } from '../../../../tests/helpers/virtualClock.js'
 import * as helpers from '../../../utils/scrollerLoadWindow.js'
 const source = readFileSync(new URL('./SessionItemsList.vue', import.meta.url), 'utf8')
 const start = source.indexOf('// Gap loading ownership')
 const end = source.indexOf('/**\n * Toggle a group', start)
 const block = source.slice(start, end)
+const LOAD_DEBOUNCE_MS = 150
 function mount(t, { height = 140 } = {}) {
     const { renderer, root } = makeRenderer()
     const props = Vue.reactive({ projectId: 'p', sessionId: 's', parentSessionId: null, viewActive: true })
@@ -19,8 +21,13 @@ function mount(t, { height = 140 } = {}) {
     const scrollerRef = Vue.ref(scroller), inlineContext = Vue.shallowRef(null)
     const store = { loadSessionItemsRanges(...args) { calls.push(args); const request = deferred(); requests.push(request); return request.promise } }
     let api
+    // The block's timers (its gap-load debounce) run on a virtual clock:
+    // `debounce(v)` elapses it instead of sleeping (see tests/helpers/virtualClock.js).
+    const clock = createVirtualClock({ flush })
+    t.after(() => clock.dispose())
     const dependencies = { ...Vue, ...helpers, hasContent, props, visualItems, sessionActive,
-        scrollerRef, inlineContext, store, LOAD_BUFFER: 50, LOAD_DEBOUNCE_MS: 150,
+        scrollerRef, inlineContext, store, LOAD_BUFFER: 50, LOAD_DEBOUNCE_MS,
+        setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
         scrollToBottomUntilStable: () => corrections.push(true) }
     const app = renderer.createApp({ setup() {
         api = new Function(...Object.keys(dependencies), `${block}; return { onScrollerUpdate, executePendingLoad, onGapScroll }`)(...Object.values(dependencies))
@@ -28,10 +35,10 @@ function mount(t, { height = 140 } = {}) {
     } })
     app.mount(root)
     t.after(() => app.unmount())
-    return { viewport, props, visualItems, sessionActive, suspended, calls, requests, corrections, inlineContext, api, app }
+    return { viewport, props, visualItems, sessionActive, suspended, calls, requests, corrections, inlineContext, api, app, clock }
 }
 const range = { startIndex: 0, endIndex: 2, visibleStartIndex: 0, visibleEndIndex: 1 }
-async function debounce() { await new Promise(resolve => setTimeout(resolve, 180)); await flush() }
+async function debounce(v) { await v.clock.elapse(180); await flush() }
 
 test('gap scroll schedules the current inline geometry owner', async t => {
     const v = mount(t)
@@ -47,56 +54,56 @@ test('gap scroll schedules the current inline geometry owner', async t => {
 test('actual gap watcher loads equal-index replacement and content removal without geometry events', async t => {
     const v = mount(t)
     v.visualItems.value.forEach(item => setParsedContent(item, {}))
-    v.api.onScrollerUpdate(range); await debounce(); assert.equal(v.calls.length, 0)
-    v.visualItems.value[1] = { lineNum: 2 }; await debounce()
+    v.api.onScrollerUpdate(range); await debounce(v); assert.equal(v.calls.length, 0)
+    v.visualItems.value[1] = { lineNum: 2 }; await debounce(v)
     assert.deepEqual(v.calls[0], ['p', 's', [[2, 2]], null])
     setParsedContent(v.visualItems.value[1], {}); v.requests[0].resolve(); await flush()
-    clearParsedContent(v.visualItems.value[0]); await debounce()
+    clearParsedContent(v.visualItems.value[0]); await debounce(v)
     assert.deepEqual(v.calls[1][2], [[1, 1]])
     v.requests[1].resolve(); await flush()
 })
 test('same gap coalesces, partial progress reconciles, no progress stops until real scroll', async t => {
     const v = mount(t)
-    v.api.onScrollerUpdate(range); await debounce()
-    v.api.onScrollerUpdate(range); await debounce(); assert.equal(v.calls.length, 1)
-    setParsedContent(v.visualItems.value[0], {}); v.requests[0].resolve(); await debounce()
+    v.api.onScrollerUpdate(range); await debounce(v)
+    v.api.onScrollerUpdate(range); await debounce(v); assert.equal(v.calls.length, 1)
+    setParsedContent(v.visualItems.value[0], {}); v.requests[0].resolve(); await debounce(v)
     assert.deepEqual(v.calls[1][2], [[2, 2]])
-    v.requests[1].resolve(); await debounce(); assert.equal(v.calls.length, 2)
-    v.api.onScrollerUpdate({ ...range, visibleStartIndex: 1 }); await debounce()
+    v.requests[1].resolve(); await debounce(v); assert.equal(v.calls.length, 2)
+    v.api.onScrollerUpdate({ ...range, visibleStartIndex: 1 }); await debounce(v)
     assert.equal(v.calls.length, 3)
     v.requests[2].resolve(); await flush()
 })
 test('hide before debounce blocks fetch; hide during await blocks correction and follow-up', async t => {
     const v = mount(t)
     v.api.onScrollerUpdate(range); v.props.viewActive = false
-    await debounce(); assert.equal(v.calls.length, 0)
-    v.props.viewActive = true; await debounce(); assert.equal(v.calls.length, 1)
+    await debounce(v); assert.equal(v.calls.length, 0)
+    v.props.viewActive = true; await debounce(v); assert.equal(v.calls.length, 1)
     v.suspended.value = true
-    setParsedContent(v.visualItems.value[0], {}); v.requests[0].resolve(); await debounce()
+    setParsedContent(v.visualItems.value[0], {}); v.requests[0].resolve(); await debounce(v)
     assert.equal(v.calls.length, 1); assert.equal(v.corrections.length, 0)
 })
 test('unmount cancels a pending debounce', async t => {
     const v = mount(t); v.api.onScrollerUpdate(range); v.app.unmount()
-    await debounce(); assert.equal(v.calls.length, 0)
+    await debounce(v); assert.equal(v.calls.length, 0)
 })
 test('scope change revokes old request correction', async t => {
-    const v = mount(t); v.api.onScrollerUpdate(range); await debounce()
+    const v = mount(t); v.api.onScrollerUpdate(range); await debounce(v)
     v.props.sessionId = 'other'; v.requests[0].resolve(); await flush()
     assert.equal(v.corrections.length, 0)
 })
 
 test('failure stops until an explicit scroll retry', async t => {
-    const v = mount(t); v.api.onScrollerUpdate(range); await debounce()
-    v.requests[0].reject(new Error('network')); await debounce()
+    const v = mount(t); v.api.onScrollerUpdate(range); await debounce(v)
+    v.requests[0].reject(new Error('network')); await debounce(v)
     assert.equal(v.calls.length, 1)
-    v.api.onGapScroll(); await debounce(); assert.equal(v.calls.length, 2)
+    v.api.onGapScroll(); await debounce(v); assert.equal(v.calls.length, 2)
     v.requests[1].resolve(); await flush()
 })
 test('bounded membership change retries an unchanged missing candidate after no progress', async t => {
-    const v = mount(t); v.api.onScrollerUpdate(range); await debounce()
-    v.requests[0].resolve(); await debounce(); assert.equal(v.calls.length, 1)
+    const v = mount(t); v.api.onScrollerUpdate(range); await debounce(v)
+    v.requests[0].resolve(); await debounce(v); assert.equal(v.calls.length, 1)
     v.visualItems.value = [{ lineNum: 'day', isDaySeparator: true }, ...v.visualItems.value]
-    await debounce(); assert.equal(v.calls.length, 2)
+    await debounce(v); assert.equal(v.calls.length, 2)
     v.requests[1].resolve(); await flush()
 })
 test('equal geometry events neither scan content nor restart the pending debounce', async t => {
@@ -105,31 +112,31 @@ test('equal geometry events neither scan content nor restart the pending debounc
     v.visualItems.value = [{ lineNum: 1, get content() { reads++; return null } }]
     v.api.onScrollerUpdate(range); await flush()
     const initialReads = reads
-    await new Promise(resolve => setTimeout(resolve, 90))
+    await v.clock.elapse(90)
     v.api.onScrollerUpdate({ ...range, endIndex: 100 }); await flush()
     assert.equal(reads, initialReads)
-    await new Promise(resolve => setTimeout(resolve, 90)); await flush()
+    await v.clock.elapse(90); await flush()
     assert.equal(v.calls.length, 1)
     v.requests[0].resolve(); await flush()
 })
 
 test('DOM hides before ResizeObserver delivery: pending gap still cannot start', async t => {
     const v = mount(t); v.api.onScrollerUpdate(range); await flush()
-    v.viewport.height = 0; await debounce(); assert.equal(v.calls.length, 0)
+    v.viewport.height = 0; await debounce(v); assert.equal(v.calls.length, 0)
 })
 
 test('successful gap fill can reload the same key after its content becomes missing again', async t => {
     const v = mount(t)
     v.visualItems.value = [{ lineNum: 1 }]
     const item = v.visualItems.value[0]
-    v.api.onScrollerUpdate(range); await debounce()
+    v.api.onScrollerUpdate(range); await debounce(v)
     assert.deepEqual(v.calls[0][2], [[1, 1]])
     setParsedContent(item, { text: 'loaded' })
-    v.requests[0].resolve(); await debounce()
+    v.requests[0].resolve(); await debounce(v)
     assert.equal(v.calls.length, 1)
-    clearParsedContent(item); await debounce()
+    clearParsedContent(item); await debounce(v)
     assert.deepEqual(v.calls[1]?.[2], [[1, 1]])
-    v.requests[1].resolve(); await debounce()
+    v.requests[1].resolve(); await debounce(v)
     assert.equal(v.calls.length, 2, 'unchanged no-progress settlement must still stop')
 })
 
@@ -138,14 +145,14 @@ for (const opportunity of ['measured update', 'scroll']) {
     test('conversation zero-height readiness recovers on ' + opportunity + ' with unchanged range', async t => {
         const v = mount(t, { height: 0 })
         v.api.onScrollerUpdate(range)
-        await debounce(); assert.equal(v.calls.length, 0)
+        await debounce(v); assert.equal(v.calls.length, 0)
         // DOM dimensions change without invalidating any Vue ref used by the readiness computed.
         v.viewport.height = 421
         if (opportunity === 'measured update') v.api.onScrollerUpdate({ ...range })
         else v.api.onGapScroll()
-        await debounce()
+        await debounce(v)
         assert.equal(v.calls.length, 1, 'a real measured opportunity refreshes cached false readiness')
-        v.requests[0].resolve(); await debounce()
+        v.requests[0].resolve(); await debounce(v)
         assert.equal(v.calls.length, 1, 'no-progress settlement still cannot self-loop')
     })
 }
@@ -153,7 +160,7 @@ for (const opportunity of ['measured update', 'scroll']) {
 for (const navigation of ['user input', 'explicit navigation']) {
     test(`gap settlement does not override ${navigation} during the request`, async t => {
         const v = mount(t)
-        v.api.onScrollerUpdate(range); await debounce()
+        v.api.onScrollerUpdate(range); await debounce(v)
         v.viewport.revision++
         v.viewport.top -= 60
         // The bottom observer deliberately still reports true during its delivery delay.
@@ -164,7 +171,7 @@ for (const navigation of ['user input', 'explicit navigation']) {
 }
 test('gap growth still follows the bottom when no newer scroll intent exists', async t => {
     const v = mount(t)
-    v.api.onScrollerUpdate(range); await debounce()
+    v.api.onScrollerUpdate(range); await debounce(v)
     v.viewport.scrollHeight += 200
     v.requests[0].resolve(true); await flush()
     assert.equal(v.corrections.length, 1)
@@ -172,7 +179,7 @@ test('gap growth still follows the bottom when no newer scroll intent exists', a
 test('a stale bottom observer cannot turn an upper-history gap into bottom navigation', async t => {
     const v = mount(t)
     v.viewport.top = 0
-    v.api.onScrollerUpdate(range); await debounce()
+    v.api.onScrollerUpdate(range); await debounce(v)
     v.requests[0].resolve(true); await flush()
     assert.equal(v.corrections.length, 0)
 })
@@ -181,7 +188,7 @@ test('a stale bottom observer cannot turn an upper-history gap into bottom navig
 test("history loading preserves a reader inside the observer's near-bottom zone", async t => {
     const v = mount(t)
     v.viewport.top -= 50
-    v.api.onScrollerUpdate(range); await debounce()
+    v.api.onScrollerUpdate(range); await debounce(v)
     v.viewport.scrollHeight += 200
     v.requests[0].resolve(true); await flush()
     assert.equal(v.corrections.length, 0)

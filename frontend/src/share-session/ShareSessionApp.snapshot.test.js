@@ -17,6 +17,7 @@ import { createShareInlineCompletion } from './inlineCompletion.js'
 import * as shareApi from './shims/shareApi.js'
 import { connectShareLive } from './shims/shareLive.js'
 import { compileComponent, makeRenderer, descendants, flush, deferred } from '../../tests/helpers/scrollerComponentHarness.js'
+import { createVirtualClock } from '../../tests/helpers/virtualClock.js'
 import * as chatBlocks from '../utils/chatBlocks.js'
 import { splitMarkdownBlocks } from '../utils/markdown.js'
 
@@ -47,6 +48,11 @@ async function waitFor(predicate) {
     assert.ok(predicate(), 'expected asynchronous reconnect state')
 }
 
+// The app retries its reconnection and polls pending completions on 1 s
+// timers: every timer runs on a virtual clock (tests/helpers/virtualClock.js),
+// so a test that waits for a retry elapses it instead of sleeping a second,
+// and the list's 120 ms gap-load debounce keeps its place before a retry.
+
 function realStore(settings) {
     const source = readFileSync(new URL('./shims/dataStoreShim.js', import.meta.url), 'utf8')
     const body = source.replace(/^import .+ from .+\n/gm, '').replace('export const useDataStore', 'const useDataStore')
@@ -58,6 +64,8 @@ function realStore(settings) {
 async function mount(t, { initialManifest = manifest(263), mode = 'snapshot' } = {}) {
     const previous = { window: globalThis.window, location: globalThis.location, history: globalThis.history,
         fetch: globalThis.fetch, getComputedStyle: globalThis.getComputedStyle, WebSocket: globalThis.WebSocket }
+    const clock = createVirtualClock({ flush }), restoreTimers = clock.install()
+    t.after(restoreTimers)
     const events = new Map(), sockets = []
     globalThis.WebSocket = class {
         constructor(url) { this.url = url; sockets.push(this) }
@@ -169,12 +177,13 @@ async function mount(t, { initialManifest = manifest(263), mode = 'snapshot' } =
     await flush()
     requests.length = 0
     return { store, requests, scroller, app, root, sockets, runtime: () => runtime,
+        elapse: clock.elapse,
         focus: () => events.get('focus')(),
         open: () => sockets.at(-1).onopen(),
         message: message => sockets.at(-1).sendMessage(message),
         async reconnect() {
             sockets.at(-1).onclose()
-            await new Promise(resolve => setTimeout(resolve, 1010))
+            await clock.elapse(1010)
             sockets.at(-1).onopen()
             await flush()
         },
@@ -282,7 +291,7 @@ test('snapshot reactivation waits for transcript rows before resuming retained p
     f.metadata(() => pending.promise)
     f.requests.length = 0
     const focus = f.focus(); await flush()
-    await new Promise(resolve => setTimeout(resolve, 1100)); await flush()
+    await f.elapse(1100); await flush()
     const publicationBeforeRows = entry.descriptor.publicationKey
     const generationBeforeRows = entry.generation
     const boundaryBeforeRows = f.store.getSession('root').last_line
@@ -291,7 +300,7 @@ test('snapshot reactivation waits for transcript rows before resuming retained p
     assert.equal(boundaryBeforeRows, 263)
     assert.equal(publicationBeforeRows, '["root",263,0,0]', 'completion must keep the old binding while rows are pending')
     assert.equal(generationBeforeRows, bindingGeneration, 'completion must not invalidate the old binding')
-    await new Promise(resolve => setTimeout(resolve, 1100)); await flush()
+    await f.elapse(1100); await flush()
     assert.equal(entry.descriptor.publicationKey, '["root",263,0,0]', 'failed metadata must not release newer placement')
     assert.equal(f.store.getSession('root').last_line, 263)
     assert.equal(f.store.getSessionItem('root', 267), null)
@@ -312,7 +321,7 @@ test('snapshot reactivation waits for transcript rows before resuming retained p
     assert.equal(entry.descriptor.publicationKey, '["root",267,0,0]')
     assert.equal(entry.descriptor.status, 'pending')
     assert.equal(runtime.active.value, true)
-    await new Promise(resolve => setTimeout(resolve, 1100)); await flush()
+    await f.elapse(1100); await flush()
     assert.equal(entry.descriptor.status, 'ready', 'successful metadata must resume automatic pending completion')
     assert.equal(completionRequests, 2)
     await f.store.loadSessionItemsRanges('share', 'root', [[267, 267]]); await flush()
@@ -327,7 +336,7 @@ test('failed snapshot meta fetch preserves completion at the reconciled transcri
     f.meta(() => { throw Object.assign(new Error('meta unavailable'), { status: 503 }) })
     f.manifest(() => ({ ...manifest(263), revision: 264 }))
     await f.focus(); await flush()
-    await new Promise(resolve => setTimeout(resolve, 1100)); await flush()
+    await f.elapse(1100); await flush()
     const descriptor = runtime.entries.get('["root","preferences"]').descriptor
     assert.equal(descriptor.status, 'ready', 'meta503 must preserve completion while the known boundary stays reconciled')
     assert.equal(descriptor.publicationKey, '["root",263,0,0]')
@@ -447,7 +456,7 @@ test('live reconnect retries failed metadata without releasing a concurrent newe
     assert.equal(f.store.getSession('root').last_line, 263)
     assert.equal(f.store.getSessionItem('root', 269), null)
     f.metadata(null)
-    await new Promise(resolve => setTimeout(resolve, 1100))
+    await f.elapse(1100)
     await waitFor(() => entry.descriptor.publicationKey === '["root",269,0,0]')
     assert.equal(f.store.getSession('root').last_line, 269)
     assert.equal(entry.generation, generation + 1)
@@ -466,7 +475,7 @@ test('live reconnect retries when a concurrent manifest is newer than the HTTP t
     const entry = runtime.entries.get('["root","preferences"]'), generation = entry.generation
     assert.equal(entry.descriptor.publicationKey, '["root",263,0,0]', 'a newer publication must wait for its own source row')
     f.metadata(null)
-    await new Promise(resolve => setTimeout(resolve, 1100))
+    await f.elapse(1100)
     await waitFor(() => entry.descriptor.publicationKey === '["root",270,0,0]')
     assert.equal(f.store.getSession('root').last_line, 270)
     assert.ok(f.store.getSessionVisualItems('root').some(row => row.lineNum === 270))
@@ -483,7 +492,7 @@ test('live reconnect retains its placement through manifest503 and retries autom
     await waitFor(() => calls === 1)
     assert.equal(f.store.getSession('root').last_line, 269)
     assert.equal(runtime.entries.get('["root","preferences"]').descriptor.publicationKey, '["root",263,0,0]')
-    await new Promise(resolve => setTimeout(resolve, 1100))
+    await f.elapse(1100)
     await waitFor(() => runtime.entries.get('["root","preferences"]').descriptor.publicationKey === '["root",269,0,0]')
     assert.equal(calls, 2)
 })
@@ -552,7 +561,7 @@ test('live reconnect authorization failure closes retained access and does not r
     await f.reconnect()
     await waitFor(() => !runtime.active.value)
     const requests = f.requests.length
-    await new Promise(resolve => setTimeout(resolve, 1100)); await flush()
+    await f.elapse(1100); await flush()
     assert.equal(f.requests.length, requests)
     assert.equal(f.store.getSession('root').last_line, 263)
 })
@@ -581,7 +590,7 @@ test('snapshot completion restores Push rows before accepting its publication wi
     const f = await mount(t, { initialManifest }), pending = deferred(), runtime = f.runtime()
     const oldEntry = runtime.entries.get('["root","preferences"]')
     f.advance(267); f.metadata(() => pending.promise)
-    await new Promise(resolve => setTimeout(resolve, 1100)); await flush()
+    await f.elapse(1100); await flush()
     assert.equal(oldEntry.descriptor.publicationKey, '["root",263,0,0]', 'completion must wait for the selected source row')
     assert.equal(f.store.getSessionItem('root', 267), null)
     pending.resolve([item(267, tag('preferences'))])
@@ -601,7 +610,7 @@ test('snapshot adopts live mode and receives later publications through exactly 
     f.advance(267)
     f.message({ type: 'share_items_added', items: [item(267, tag('preferences'))], session_id: 'root' })
     f.message({ type: 'share_inline_artifacts', manifest: manifest(267) })
-    await new Promise(resolve => setTimeout(resolve, 1100))
+    await f.elapse(1100)
     await waitFor(() => f.runtime().entries.get('["root","preferences"]').descriptor.publicationKey === '["root",267,0,0]')
     assert.ok(f.store.getSessionItem('root', 267))
     assert.equal(f.sockets.length, 1)
@@ -621,11 +630,11 @@ test('live adopts snapshot mode and freezes the replacement after row reconcilia
     assert.equal(runtime.entries.get('["root","preferences"]').descriptor.publicationKey, '["root",263,0,0]')
     assert.equal(f.store.getSessionItem('root', 267), null)
     f.metadata(null)
-    await new Promise(resolve => setTimeout(resolve, 1100))
+    await f.elapse(1100)
     await waitFor(() => runtime.entries.get('["root","preferences"]').descriptor.publicationKey === '["root",267,0,0]')
     assert.ok(f.store.getSessionItem('root', 267))
     assert.equal(f.scroller.mounts, 1)
-    await new Promise(resolve => setTimeout(resolve, 1100))
+    await f.elapse(1100)
     assert.equal(f.sockets.length, 1, 'the stopped socket must not reconnect')
 })
 
@@ -668,7 +677,7 @@ test('temporary live compute readiness loss preserves terminal delivery and imme
     assert.equal(entry.descriptor.publicationKey, '["root",263,0,0]')
     assert.ok(useFramePoolStore().frames[entry.frameId])
     assert.equal(f.requests.filter(url => url.includes('/inline-artifacts/root/preferences/index.html')).length, 1)
-    await new Promise(resolve => setTimeout(resolve, 1100)); await flush()
+    await f.elapse(1100); await flush()
     assert.equal(f.sockets.length, 1, 'compute recovery must not replace the retained socket')
     assert.equal(f.requests.filter(url => url.endsWith('/api/inline-artifacts/') || url.endsWith('/api/meta/')).length, 0,
         'retained terminal delivery must not depend on live polling')
