@@ -771,8 +771,12 @@ def test_forced_rebuild_is_discovered_after_older_compute_restores_current_versi
             assert coordinator._prepared[sid].kind == 'replaced'
             assert sid not in coordinator._forced_rebuild
             assert gate_for(sid).locked()
-            actual = [content async for content in SessionItem.objects.filter(session_id=sid)
-                      .order_by('line_num').values_list('content', flat=True)]
+            from twicc.core.content_storage.readers import aload_current, effective_current
+
+            rebuilt_items = [item async for item in SessionItem.objects.filter(session_id=sid)
+                             .order_by('line_num')]
+            await aload_current(rebuilt_items)
+            actual = [effective_current(item) for item in rebuilt_items]
             assert actual == [orjson.dumps(meta).decode(), orjson.dumps(new).decode()]
             await run_compute_sync(compute.compute_session_metadata, sid, result_queue, run_id=0)
             messages = [orjson.loads(result_queue.get_nowait()) for _ in range(result_queue.qsize())]

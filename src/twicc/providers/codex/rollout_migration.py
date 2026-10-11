@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import orjson
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import F
 
 from twicc.core.content_storage.readers import aload_current, effective_current
@@ -366,7 +366,12 @@ def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
 
     from twicc.providers.live_aggregates import apply_contribution_changes, item_contributions, session_contribution
 
+    from twicc.core.content_storage.ingestion import initialize_ingestion_session
+    from twicc.core.content_storage.references import remove_history_memberships
+
     session = Session.objects.select_for_update().get(id=job.session_id)
+    initialize_ingestion_session(session, invalidate=True)
+    remove_history_memberships(session.id)
     before_session = session_contribution(session)
     before_items = item_contributions(SessionItem.objects.filter(session_id=job.session_id))
     # Clear only after deletion commits. A rolled-back replacement keeps retry evidence.
@@ -382,7 +387,7 @@ def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
     SessionItem.objects.filter(session_id=job.session_id).delete()
     Session.objects.filter(id=job.session_id).update(
         last_offset=0, last_line=0, tasks={}, search_version=None, compute_version=None,
-        history_epoch=F("history_epoch") + 1,
+        history_epoch=F("history_epoch") + 1, content_storage_version=None, plaintext_verified_epoch=None,
     )
     session.refresh_from_db()
     apply_contribution_changes(before_items, [], before_sessions=[before_session],
@@ -391,10 +396,19 @@ def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
 
 @transaction.atomic
 def _insert_replace_codex_history_chunk(session_id: str, items: list[tuple[int, str]]) -> int:
-    SessionItem.objects.bulk_create([
-        SessionItem(session_id=session_id, line_num=line_num, content=content)
+    from twicc.core.content_storage.ingestion import initialize_ingestion_session, insert_ingested_items
+
+    session = Session.objects.select_for_update().get(pk=session_id)
+    initialize_ingestion_session(session)
+    line_nums = [line for line, _ in items]
+    if len(set(line_nums)) != len(line_nums) or SessionItem.objects.filter(
+        session=session, line_num__in=line_nums,
+    ).exists():
+        raise IntegrityError('Replacement history contains duplicate line numbers')
+    insert_ingested_items(session, [
+        (SessionItem(session=session, line_num=line_num, content=content), content)
         for line_num, content in items
-    ], batch_size=100)
+    ])
     return len(items)
 
 

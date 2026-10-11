@@ -966,8 +966,12 @@ def test_paginated_replacement_reaches_real_gated_reconstruction_and_release(tmp
             assert path in watcher._replaced_paths
             rebuilt = await Session.objects.aget(id=session.id)
             assert rebuilt.last_offset == path.stat().st_size
-            actual = [content async for content in SessionItem.objects.filter(session_id=session.id)
-                      .order_by('line_num').values_list('content', flat=True)]
+            from twicc.core.content_storage.readers import aload_current, effective_current
+
+            rebuilt_items = [item async for item in SessionItem.objects.filter(session_id=session.id)
+                             .order_by('line_num')]
+            await aload_current(rebuilt_items)
+            actual = [effective_current(item) for item in rebuilt_items]
             assert actual == [record.decode() for record in new_records]
             coordinator.migration_leases[session.id] = prepared.migration_lease
             coordinator._release_lease(session.id)

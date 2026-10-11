@@ -2570,6 +2570,8 @@ def _apply_delete_sessions_payload(payload: DeleteSessionsPayload) -> list[str]:
     """Delete sessions and their descendants with exact aggregate repair."""
     from twicc.providers.live_aggregates import apply_contribution_changes, item_contributions, session_contribution
     from twicc.core.models import Session, SessionItem
+    from twicc.core.content_storage.ingestion import initialize_ingestion_session
+    from twicc.core.content_storage.references import remove_history_memberships
     from twicc.projects import update_project_metadata
 
     if not payload.session_ids:
@@ -2586,6 +2588,9 @@ def _apply_delete_sessions_payload(payload: DeleteSessionsPayload) -> list[str]:
             return []
         before_sessions = [session_contribution(s) for s in Session.objects.filter(id__in=ids)]
         before_items = item_contributions(SessionItem.objects.filter(session_id__in=ids))
+        for session in Session.objects.filter(id__in=ids).iterator(chunk_size=128):
+            initialize_ingestion_session(session, invalidate=True)
+            remove_history_memberships(session.id)
         Session.objects.filter(id__in=ids).delete()
         apply_contribution_changes(before_items, [], before_sessions=before_sessions, after_sessions=[], repair=True)
         for project_id in {s.project_id for s in before_sessions}:

@@ -8,6 +8,7 @@ import orjson
 import pytest
 from django.db import IntegrityError
 
+from tests.content_storage_helpers import read_current
 from twicc.core.enums import Provider
 from twicc.core.models import (
     AgentInteraction,
@@ -201,7 +202,7 @@ def test_replace_history_resets_structure_but_keeps_compute_stale(session):
     assert _apply_replace_codex_history_job(job) == 2
 
     session.refresh_from_db()
-    assert list(session.items.values_list("line_num", "content")) == [(1, contents[0]), (2, contents[1])]
+    assert [(item.line_num, read_current(item)) for item in session.items.order_by("line_num")] == [(1, contents[0]), (2, contents[1])]
     assert not ToolResultLink.objects.filter(session=session).exists()
     assert not AgentLink.objects.filter(session=session).exists()
     assert (session.last_offset, session.last_line, session.mtime) == (555, 2, 99.5)
@@ -282,7 +283,7 @@ def test_replace_history_in_slices_matches_the_one_shot_form(session, monkeypatc
 
     session.refresh_from_db()
     assert count == 7
-    assert list(session.items.order_by("line_num").values_list("content", flat=True)) == contents
+    assert [read_current(item) for item in session.items.order_by("line_num")] == contents
     assert (session.last_offset, session.last_line, session.mtime) == (777, 7, 5.5)
     assert not ToolResultLink.objects.filter(session=session).exists()
 

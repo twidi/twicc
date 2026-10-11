@@ -10,6 +10,7 @@ import orjson
 import pytest
 from django.core.exceptions import FieldDoesNotExist
 
+from tests.content_storage_helpers import read_current
 from twicc.core.enums import Provider
 from twicc.core.models import HistoryFactKind, Project, Session, SessionHistoryFact, SessionItem
 from twicc.providers import db_writer
@@ -129,7 +130,7 @@ def test_codex_rollout_replacement_removes_old_facts_with_old_items(session):
         loop.close()
 
     session.refresh_from_db()
-    assert list(session.items.values_list("content", flat=True)) == ["new"]
+    assert [read_current(item) for item in session.items.order_by("line_num")] == ["new"]
     assert not SessionHistoryFact.objects.filter(session=session).exists()
     assert not history_facts_are_current(session)
 

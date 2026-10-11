@@ -11,6 +11,7 @@ from django.db import transaction
 
 from twicc.core.content_storage.codec import decode_content
 from twicc.core.content_storage.readers import effective_current, load_current
+from tests.content_storage_helpers import read_current
 from twicc.core.enums import Provider
 from twicc.core.models import Project, Session, SessionHistoryFact, SessionItem, SessionItemContent, ToolResultLink
 from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
@@ -285,7 +286,7 @@ def test_raw_history_replacement_invalidates_reservations_only_on_commit(rollbac
             cache.rollback(reserved)
             assert cache.borrow(key, source_line=1) is None
             assert session.id not in compute._process_owners
-            assert list(session.items.values_list("content", flat=True)) == ["{}"]
+            assert [read_current(item) for item in session.items.order_by("line_num")] == ["{}"]
     finally:
         loop.close()
         cache.clear_session(session.id)

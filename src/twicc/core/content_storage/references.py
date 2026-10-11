@@ -163,6 +163,29 @@ def remove_session_memberships(session_id: str, content_ids: Iterable[int]) -> N
         reconcile_session_memberships(session_id, batch)
 
 
+def remove_history_memberships(session_id: str) -> None:
+    """Remove both FK owners before whole-history deletion in the same transaction.
+
+    The caller must delete every item for this session before committing. Distinct
+    FK IDs stream from the item table; content payloads and reverse scans are not
+    needed. Content and dictionary rows remain retained.
+    """
+    _require_transaction()
+    items = SessionItem.objects.filter(session_id=session_id).order_by()
+    current = items.exclude(current_content_id=None).values_list('current_content_id', flat=True)
+    original = items.exclude(original_content_id=None).values_list('original_content_id', flat=True)
+    source = iter(current.union(original).order_by('current_content_id')
+                  .iterator(chunk_size=MEMBERSHIP_BATCH_SIZE))
+    while batch := list(islice(source, MEMBERSHIP_BATCH_SIZE)):
+        rows = list(SessionItemContent.objects.filter(pk__in=batch).only('id', 'session_ids'))
+        changed = []
+        for row in rows:
+            if session_id in row.session_ids:
+                row.session_ids = sorted(set(row.session_ids) - {session_id})
+                changed.append(row)
+        SessionItemContent.objects.bulk_update(changed, ['session_ids'])
+
+
 class SessionReferenceOperation:
     """Connection-local accounting across bounded chunks under one writer lease.
 
