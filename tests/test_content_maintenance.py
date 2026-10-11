@@ -600,3 +600,40 @@ def test_compression_never_queries_reverse_item_ownership(content_row_factory):
         with transaction.atomic():
             assert maintenance.publish_prepared_batch(entries, frozenset()) == 1
     assert not any('core_sessionitem"' in query['sql'] for query in queries)
+
+
+def test_recompression_budget_includes_decoded_input_for_large_compressed_rows(content_row_factory):
+    import hashlib
+    from twicc import content_maintenance_task as maintenance
+    from twicc.core.models import ContentDictionary
+
+    owner = cold('cold')
+    rows = [content_row_factory(str(n) * (5 * 1024 * 1024), True, session_ids=[owner.id]) for n in range(3)]
+    payload = b'new public synthetic dictionary'
+    ContentDictionary.objects.create(provider='codex', version=2, format='raw', payload=payload,
+                                     sha256=hashlib.sha256(payload).digest())
+    cursor, entries, done = maintenance.prepare_compression_batch(0, 500, 8 * 1024 * 1024)
+    assert len(entries) == 1
+    assert cursor == rows[0].id and not done
+
+
+def test_compression_budget_charges_owner_list_bytes_even_for_ineligible_rows(content_row_factory, monkeypatch):
+    from twicc import content_maintenance_task as maintenance
+
+    owners = [f'missing-owner-{n}' for n in range(1000)]
+    first = content_row_factory('first', False, session_ids=owners)
+    content_row_factory('second', False, session_ids=owners)
+    from twicc.core.models import SessionItemContent
+
+    field = SessionItemContent._meta.get_field('session_ids')
+    decode = field.from_db_value
+    decoded_owner_lists = []
+
+    def record_decode(value, expression, connection):
+        decoded_owner_lists.append(len(value.encode()))
+        return decode(value, expression, connection)
+
+    monkeypatch.setattr(field, 'from_db_value', record_decode)
+    cursor, entries, done = maintenance.prepare_compression_batch(0, 500, 1024)
+    assert cursor == first.id and entries == () and not done
+    assert len(decoded_owner_lists) == 1

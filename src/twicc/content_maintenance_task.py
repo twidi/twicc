@@ -11,8 +11,8 @@ import orjson
 
 from channels.db import database_sync_to_async
 from django.db import connections, transaction
-from django.db.models import F, Q
-from django.db.models.functions import Length
+from django.db.models import BinaryField, F, Q
+from django.db.models.functions import Cast, Length
 from django.utils import timezone
 
 from twicc.core.content_storage.codec import ContentIntegrityError, decode_content, encode_cold, encode_plain
@@ -28,7 +28,7 @@ from twicc.core.models import ContentDictionary, Session, SessionItem, SessionIt
 logger = logging.getLogger(__name__)
 INITIAL_DELAY = 1800
 INTERVAL = 86400
-ROW_BUDGET = 500
+ROW_BUDGET = 100
 BYTE_BUDGET = 8 * 1024 * 1024
 START_CURSOR = RootPromotionCursor(None, -1, 1, 0, 0, False)
 _wakeup = None
@@ -253,9 +253,14 @@ def prepare_promotion_batch(snapshot, cursor, row_budget=ROW_BUDGET, byte_budget
     done = True
     verified = True
     for session_id, line, slot, content_id, item_valid in _promotion_keys(snapshot, cursor):
-        length = 0 if content_id is None else SessionItemContent.objects.filter(pk=content_id).annotate(
-            size=Length('payload'),
-        ).values_list('size', flat=True).get()
+        if content_id is None:
+            length = 0
+        else:
+            raw_size, stored_size, owner_size = SessionItemContent.objects.filter(pk=content_id).annotate(
+                size=Length('payload'), owner_size=Length(Cast('session_ids', BinaryField())),
+            ).values_list('raw_size', 'size', 'owner_size').get()
+            # The proof retains stored bytes and owners; promotion retains decoded bytes.
+            length = raw_size + stored_size + owner_size
         if count and (count >= row_budget or size + length > byte_budget):
             done = False
             break
@@ -326,12 +331,15 @@ def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_
     size = 0
     last = after_id
     query = SessionItemContent.objects.filter(pk__gt=after_id).order_by('id')
-    rows = list(query.annotate(stored_size=Length('payload')).values('id', 'stored_size')[:row_budget])
+    rows = list(query.annotate(
+        stored_size=Length('payload'), owner_size=Length(Cast('session_ids', BinaryField())),
+    ).values('id', 'raw_size', 'stored_size', 'owner_size')[:row_budget])
     for metadata in rows:
-        if last != after_id and size + metadata['stored_size'] > byte_budget:
+        cost = metadata['raw_size'] + metadata['stored_size'] + metadata['owner_size']
+        if last != after_id and size + cost > byte_budget:
             break
         last = metadata['id']
-        size += metadata['stored_size']
+        size += cost
         row = SessionItemContent.objects.get(pk=last)
         if not _owners_cold(row, frozenset()):
             continue

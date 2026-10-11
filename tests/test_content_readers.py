@@ -189,3 +189,20 @@ def test_matching_limits_zero_and_negative(owner):
     assert list(readers.iter_matching_items(SessionItem.objects.all(), [], 0)) == []
     with pytest.raises(ValueError):
         list(readers.iter_matching_items(SessionItem.objects.all(), [], -1))
+
+
+@pytest.mark.parametrize('row_budget,byte_budget,expected', [(2, 1000, [2, 2, 1]), (10, 8, [2, 1, 2])])
+def test_direct_loader_bounds_payload_batches(owner, content_row_factory, monkeypatch, row_budget, byte_budget, expected):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    monkeypatch.setattr(readers, 'DEFAULT_ROW_BUDGET', row_budget)
+    monkeypatch.setattr(readers, 'DEFAULT_BYTE_BUDGET', byte_budget)
+    texts = ['aa', 'bb', 'oversized' * 100, 'cc', 'dd'] if byte_budget == 8 else ['aa', 'bb', 'ee', 'cc', 'dd']
+    page = [make_item(owner, n, current=content_row_factory(text, False)) for n, text in enumerate(texts, 1)]
+    with CaptureQueriesContext(connection) as queries:
+        readers.load_current(page)
+    payload_queries = [q['sql'] for q in queries if '"core_sessionitemcontent"."payload"' in q['sql']
+                       and q['sql'].startswith('SELECT') and 'LENGTH(' not in q['sql']]
+    assert [query.split(' IN (')[1].split(')')[0].count(',') + 1 for query in payload_queries] == expected
+    assert [readers.effective_current(item) for item in page] == texts

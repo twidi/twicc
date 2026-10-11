@@ -9,7 +9,8 @@ from contextvars import ContextVar
 from datetime import datetime
 
 from django.db import transaction
-from django.db.models import Max, Q
+from django.db.models import BinaryField, Max, Q
+from django.db.models.functions import Cast, Length
 from django.utils import timezone
 
 from twicc.core.content_storage.codec import ContentIntegrityError, decode_content, encode_cold, encode_plain
@@ -218,7 +219,7 @@ def apply_override_slice(msg, overrides, operation):
         reconcile_session_memberships(msg['session_id'], displaced)
 
 
-def _owners_cold(row):
+def _owners_cold(row, cache=None):
     # Ownership metadata is maintained from both actual FK assignments by the
     # shared reference service. Unknown/deleted owners cannot authorize cold.
     placement = _placement.get()
@@ -227,84 +228,119 @@ def _owners_cold(row):
     # The reference service validates actual persisted bindings at assignment
     # and maintains this complete owner list through both FK slots. Repeating
     # reverse item scans here is quadratic without child FK indexes.
+    cache = {} if cache is None else cache
     for start in range(0, len(row.session_ids), 128):
-        owner_ids = row.session_ids[start:start + 128]
+        owner_ids = [owner for owner in row.session_ids[start:start + 128] if owner not in cache]
+        if not owner_ids:
+            continue
         owners = list(Session.objects.filter(pk__in=owner_ids).values('id', 'content_storage_version'))
         if len(owners) != len(owner_ids) or any(
             owner['id'] != placement['pending_session_id']
             and owner['content_storage_version'] != CONTENT_STORAGE_VERSION for owner in owners
         ):
             return False
-        if not all(cold_placement(owner) for owner in owner_ids):
-            return False
-    return True
+        for owner in owner_ids:
+            cache[owner] = cold_placement(owner)
+    return all(cache.get(owner, False) for owner in row.session_ids)
 
 
 def reconcile_storage_slice(msg, cursor, row_budget=ROW_BUDGET, byte_budget=BYTE_BUDGET):
-    """Prepare requested references outside atomic; revalidate every published representation."""
-    rows, _ = _read_page(msg['session_id'], msg['observed_upper_line'], cursor, row_budget, byte_budget)
+    """Bound payload retention and resume between an item's two content references."""
+    if row_budget <= 0 or byte_budget <= 0:
+        raise ValueError('Storage budgets must be positive')
+    position = msg.get('_storage_reconcile_position', (cursor, 1))
+    line, slot = position
+    query = SessionItem.objects.filter(session_id=msg['session_id'], line_num__lte=msg['observed_upper_line'])
+    query = query.filter(line_num__gte=line) if slot == 0 else query.filter(line_num__gt=line)
+    rows = list(query.order_by('line_num').values_list('line_num', 'current_content_id', 'original_content_id')[:row_budget])
+    ids = {pk for _, current, original in rows for pk in (current, original) if pk is not None}
+    metadata = {row['id']: row for row in SessionItemContent.objects.filter(pk__in=ids).annotate(
+        stored_size=Length('payload'), owner_size=Length(Cast('session_ids', BinaryField())),
+    ).values('id', 'codec', 'raw_size', 'stored_size', 'owner_size')}
     prepared = []
+    visited = []
+    admitted = set()
     size = 0
     last_line = cursor
-    for item in rows:
-        # Stop before fetching another oversized pair, but always advance one item.
-        if last_line != cursor and size >= byte_budget:
-            break
-        for row in SessionItemContent.objects.filter(pk__in={item.current_content_id, item.original_content_id} - {None}):
-            if any(entry[0].id == row.id for entry in prepared):
+    owner_cache = {}
+    dictionaries = {}
+    incoming_cold = cold_placement(msg['session_id'])
+    stopped = False
+    for item_line, current, original in rows:
+        for item_slot, pk in enumerate((current, original)):
+            if item_line == line and item_slot <= slot:
                 continue
-            owners_cold = _owners_cold(row)
-            if not owners_cold and row.codec == 'plain':
-                continue
-            text = decode_content(row)
-            if owners_cold:
-                dictionary = ContentDictionary.objects.filter(provider=row.dictionary_provider).order_by('-version').first()
-                if dictionary is None:
-                    continue
-                policy = compression_policy_version(row.dictionary_provider, dictionary.id)
-                if row.codec == 'zstd' and row.dictionary_id == dictionary.id:
-                    # Retain exact existing compressed bytes; only establish attempt metadata.
-                    from twicc.core.content_storage.types import EncodedContent
+            meta = metadata.get(pk)
+            if pk is not None and meta is None:
+                raise ContentIntegrityError('Missing referenced content')
+            skip = meta is None or pk in admitted or not incoming_cold and meta['codec'] == 'plain'
+            cost = 0 if skip else meta['raw_size'] + meta['stored_size'] + meta['owner_size']
+            if cost and admitted and size + cost > byte_budget:
+                stopped = True
+                break
+            if not skip:
+                admitted.add(pk)
+                size += cost
+                row = SessionItemContent.objects.get(pk=pk)
+                owners_cold = _owners_cold(row, owner_cache)
+                if owners_cold or row.codec != 'plain':
+                    text = decode_content(row)
+                    if owners_cold:
+                        if row.dictionary_provider not in dictionaries:
+                            dictionaries[row.dictionary_provider] = ContentDictionary.objects.filter(
+                                provider=row.dictionary_provider).order_by('-version').first()
+                        dictionary = dictionaries[row.dictionary_provider]
+                        if dictionary is not None:
+                            policy = compression_policy_version(row.dictionary_provider, dictionary.id)
+                            if row.codec == 'zstd' and row.dictionary_id == dictionary.id:
+                                from twicc.core.content_storage.types import EncodedContent
 
-                    encoded = EncodedContent(bytes(row.payload), row.codec, row.dictionary_id, row.raw_size,
-                                             bytes(row.sha256))
-                    no_gain = False
-                elif row.compression_attempt_version == policy and row.compression_no_gain:
-                    continue
-                else:
-                    try:
-                        encoded, no_gain = encode_cold(text, dictionary.id, policy)
-                    except Exception:
-                        logger.warning('Optional initial content compression failed', exc_info=True)
-                        continue
-            else:
-                policy, no_gain = row.compression_attempt_version, row.compression_no_gain
-                encoded = encode_plain(text)
-            prepared.append((row, encoded, policy, no_gain))
-            size += row.raw_size
-        last_line = item.line_num
+                                encoded = EncodedContent(bytes(row.payload), row.codec, row.dictionary_id,
+                                                         row.raw_size, bytes(row.sha256))
+                                prepared.append((row, encoded, policy, False))
+                            elif not (row.compression_attempt_version == policy and row.compression_no_gain):
+                                try:
+                                    encoded, no_gain = encode_cold(text, dictionary.id, policy)
+                                except Exception:
+                                    logger.warning('Optional initial content compression failed', exc_info=True)
+                                else:
+                                    prepared.append((row, encoded, policy, no_gain))
+                    else:
+                        prepared.append((row, encode_plain(text), row.compression_attempt_version,
+                                         row.compression_no_gain))
+            visited.append((item_line, item_slot, pk))
+            position = (item_line, item_slot)
+            if item_slot == 1:
+                last_line = item_line
+        if stopped:
+            break
     with transaction.atomic():
         guard_storage(msg['session_id'], msg.get('observed_incarnation'), msg.get('observed_epoch'),
                       msg.get('observed_upper_line'), msg.get('observed_last_offset'))
-        actual_ids = set()
-        for current, original in SessionItem.objects.filter(session_id=msg['session_id'],
-                                                            line_num__gt=cursor, line_num__lte=last_line).values_list(
-                                                                'current_content_id', 'original_content_id'):
-            actual_ids.update(pk for pk in (current, original) if pk is not None)
+        actual_items = {values[0]: values[1:] for values in SessionItem.objects.filter(
+            session_id=msg['session_id'], line_num__in={entry[0] for entry in visited},
+        ).values_list('line_num', 'current_content_id', 'original_content_id')}
+        if any(item_line not in actual_items or actual_items[item_line][item_slot] != pk
+               for item_line, item_slot, pk in visited):
+            raise SupersededStorageResult('superseded')
+        publication_cache = {}
         for observed, encoded, policy, no_gain in prepared:
             actual = SessionItemContent.objects.get(pk=observed.id)
-            if (actual.id not in actual_ids or actual.codec != observed.codec
-                    or actual.dictionary_id != observed.dictionary_id or actual.session_ids != observed.session_ids):
+            if (actual.codec != observed.codec or actual.dictionary_id != observed.dictionary_id
+                    or actual.session_ids != observed.session_ids or bytes(actual.payload) != bytes(observed.payload)
+                    or actual.raw_size != observed.raw_size or bytes(actual.sha256) != bytes(observed.sha256)):
                 raise SupersededStorageResult('superseded')
-            if encoded.codec == 'zstd' and not _owners_cold(actual):
+            if encoded.codec == 'zstd' and not _owners_cold(actual, publication_cache):
                 continue
             SessionItemContent.objects.filter(pk=actual.id).update(
                 payload=encoded.payload, codec=encoded.codec, dictionary_id=encoded.dictionary_id,
                 compression_attempt_version=policy, compression_no_gain=no_gain,
             )
-    return StorageCursor(last_line, len(rows), size, not SessionItem.objects.filter(
+    msg['_storage_reconcile_position'] = position
+    done = position[1] == 1 and not SessionItem.objects.filter(
         session_id=msg['session_id'], line_num__gt=last_line, line_num__lte=msg['observed_upper_line'],
-    ).exists())
+    ).exists()
+    return StorageCursor(last_line, len({entry[0] for entry in visited}), size, done)
 
 
 def initialize_compute_session(session_id):

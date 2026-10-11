@@ -163,3 +163,16 @@ def test_promotion_counts_empty_session_metadata_within_budget():
         batches.append(batch)
         cursor = maintenance.apply_promotion_batch(batch, frozenset())
     assert len(batches) == 3
+
+
+def test_promotion_budget_includes_prepared_plaintext_for_compressible_large_rows(content_row_factory):
+    from twicc import content_maintenance_task as maintenance
+
+    root = session('root', storage_incarnation='i', content_storage_version=1)
+    for line in range(1, 4):
+        row = content_row_factory(str(line) * (5 * 1024 * 1024), True, session_ids=[root.id])
+        SessionItem.objects.create(session=root, line_num=line, content='', current_content=row)
+    batch = maintenance.prepare_promotion_batch(snapshot(root), START, 500, 8 * 1024 * 1024)
+    assert len(batch.entries) == 1
+    assert batch.cursor.bytes >= 5 * 1024 * 1024
+    assert not batch.cursor.done

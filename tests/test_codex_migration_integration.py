@@ -179,8 +179,10 @@ def test_real_codex_migrates_a_legacy_rollout(provider_home, project):
     assert session.compute_version is None
     assert session.unavailable_reason is None
     kinds = []
-    for item in session.items.order_by("line_num"):
-        record = orjson.loads(item.content)
+    from twicc.core.content_storage.readers import effective_current, iter_current_items
+
+    for item in iter_current_items(session.items.order_by("line_num"), 256, 8 * 1024 * 1024):
+        record = orjson.loads(effective_current(item))
         payload = record["payload"]
         kinds.append((record["type"], payload.get("type"), (payload.get("item") or {}).get("type")))
     assert ("event_msg", "item_completed", "UserMessage") in kinds

@@ -1295,3 +1295,296 @@ Trained dictionaries perform worse than no dictionary on this restricted corpus;
 The public policy is validated. Final immutable release bytes still need generation, versioning, manifest SHA256, packaging and small migration seeding.
 Old dictionary identities remain available while contents reference them. Installed users perform no live training.
 Temporary samples/candidates and separate raw benchmark result files are not retained.
+
+## 12. Integrated implementation validation
+
+This section records the final implementation gates for the integrated storage release.
+The earlier sections preserve the investigation and its historical measurements.
+Task 15 uses the isolated `feature/content-storage-compression` worktree and its authorized database copy.
+No application starts against that database.
+
+### 12.1 Final production inventory
+
+The final search covers every Python file under `src/twicc`, with historical migrations checked separately.
+It searches attribute access, content projections/predicates, SQL writes, item construction, deletion, serialization, and lifecycle/parent mutations.
+The complete search output remains in the ignored task workspace; private payloads never enter these logs.
+
+All remaining live `SessionItem.content` accesses have these explicit purposes:
+
+| Exact path and occurrence | Effective-storage path or exemption |
+|---|---|
+| `core/content_storage/readers.py:120` | Deferred legacy projection executes only for items whose current FK is NULL. FK contents use bounded PK payload reads. |
+| `core/content_storage/readers.py`, `effective_current` | The accessor checks an explicit override, then the loaded current FK identity, then legacy text only when the FK is NULL. It performs no SQL. |
+| `core/content_storage/readers.py`, `effective_plaintext_expression` | Ready-hot SQL chooses CAST(current payload AS TEXT), otherwise legacy text. Public contains first checks root readiness. |
+| `core/content_storage/extraction.py:125,140,149,151,157,160,162` | Bounded extraction reads legacy bytes, checks the observed row, interns only NULL-current items, binds persisted assignments, and clears legacy text. |
+| `core/content_storage/extraction.py:197,212,213` | A legacy override checks its observed digest. Guarded current-FK assignment and clearing share the membership transaction. |
+| `core/content_storage/ingestion.py:65,67` | New persisted items clear inline text and use current/original FKs. Conflict checks precede authoritative ownership binding. |
+| `providers/compute_base.py:3093` | The worker pairs its in-memory assignment with `set_current_override`. Its IPC contains only changed text and the observed input identity. |
+| `providers/compute_base.py:4275,4286` | Live transformations pair in-memory assignments with `set_current_override`. Ingestion receives the separately retained original source. |
+| `providers/compute_base.py:4245`, `providers/db_writer.py:2507,2531`, `providers/codex/rollout_migration.py:409` | Unsaved item construction carries source text into `insert_ingested_items`. These constructors do not persist legacy producer fallbacks. |
+| `context_injection.py:41,159`, `search_indexing_task.py:6,478` | Historical explanatory comments reference the old field name. Executable consumers use explicitly loaded effective current strings. |
+
+Line references identify the final implementation before this validation section changes documentation only.
+The following `.content` occurrences describe different objects and never read a SessionItem:
+
+- HTTP response bytes: `cli/_remote.py:788,877`; `inline_artifacts/views.py:62,63,199,200`; `share/inline_artifact_views.py:70,71,134,135`; `uploads/views.py:160`.
+- Claude SDK messages: `providers/claude_code/hermetic.py:151`; `providers/claude_code/agent/agent.py:1576,1577,1675,1684,1685,1689,1690,1691,1694,1937`.
+- Provider JSON comments: `providers/codex/compute.py:349,4930`; `providers/claude_code/compute.py:1564`.
+
+No live consumer applies `content__contains`, `content__icontains`, or a raw legacy content projection.
+The only legacy string projection is the explicitly NULL-current reader above.
+`references.py` projects both FK IDs for binding validation, session-scoped survivor reconciliation, and whole-history membership removal.
+Its raw SQL creates and updates only connection-local temporary count tables.
+No raw SQL writes the item payload column or changes native ancestry.
+The maintained `session_ids` list authorizes eligibility only after storage completion; compression does not perform per-content reverse item scans.
+
+| Consumer family | Exact implementation paths and loading contract |
+|---|---|
+| REST, WebSocket, shares | `views.py`, `core/session_queries.py`, `core/serializers.py`, `share/session_views.py`: explicit `load_current`/`aload_current`, then `serialize_session_item`/`effective_current`. Raw-string wire content remains unchanged. |
+| CLI/RPC/MCP | `cli/session.py`, `cli/_wait_reply.py`, `core/agent_runs.py`, `mcp/events/prompts.py`, `providers/helpers.py`: requested rows load before parsing. Public contains uses the ready-hot expression and root gate. |
+| Compute and internal predicates | `providers/compute_base.py`, `providers/claude_code/compute.py`, `providers/codex/compute.py`, `providers/history_facts.py`: bounded current readers and decoded matching retain complete fallback candidates and match order. |
+| Watcher tasks and workflows | `providers/claude_code/sessions_watcher.py`, `providers/codex/sessions_watcher.py`, `providers/claude_code/workflow_synthesis.py`: bounded decoded task/image/workflow candidates. |
+| Search | `search.py`, `search_indexing_task.py`: explicitly load requested/indexed items; Tantivy document identity and archive/hidden policy remain unchanged. |
+| Metadata-only queries | `share/display.py`, `share/consumer.py`, `usage.py`, `sync_helpers.py`, `providers/live_aggregates.py`, `mcp/events/runtime.py`, `core/models.py`, `providers/claude_code/agent/hybrid/agent.py`: timestamps, kind, grouping, aggregate, and existence queries need no payload. |
+| Offline dictionary sampling | `scripts/benchmark_public_schema_dictionaries.py`: sampled IDs select current FK bytes, decode immutable dictionaries, validate identity/UTF-8, and reject integrity failures without stale fallback. |
+
+The destructive boundaries remain explicit:
+
+- `providers/db_writer.py::_apply_delete_sessions_payload` computes the actual native cascade and removes memberships inside its deletion transaction.
+- `providers/codex/rollout_migration.py::_begin_replace_codex_history` removes memberships, deletes history, and invalidates the generation atomically.
+- Replacement chunks call `insert_ingested_items`; replacement reuse restores exact final memberships.
+- `core/management/commands/sync.py::Command.handle` resets all Projects and their Session cascades inside one transaction.
+- `Session.project` is nonnullable in `core/models.py:403`; `project_id` has a database NOT NULL constraint.
+- The earlier diagnostic confirmation of nullable Session.project is incorrect. A rejected fixture confirms the NOT NULL constraint.
+- The NULL-project survivor risk is inapplicable. The proposed Collector reset correction is rescinded; reset semantics remain unchanged.
+- Orchestration `spawned_by`/`spawn_root` use SET_NULL and preserve independent sessions. The linked survivor regression verifies retained membership.
+- No content row or dictionary is garbage-collected at these boundaries.
+
+Lifecycle and parent writes use `core/content_storage/lifecycle.py` and ingestion generation initialization.
+The covered mutation boundaries are `core/services/session_update.py`, `core/services/session_visibility.py`, `providers/db_writer.py`, `providers/compute_base.py`, and `providers/sessions_watcher.py`.
+Provider initial-sync modules construct payloads; the serialized DB writer persists them through ingestion.
+`agent/base_manager.py` and provider managers capture active protection under storage admission before lifecycle publication.
+Direct writes to search versions, titles, settings, tasks, costs, offsets, mtime, and orchestration links do not change cold policy or native ancestry.
+Historical migrations keep their original legacy operations and order; frontend `content` fields remain wire names.
+
+### 12.2 Bounded-memory correction and focused acceptance
+
+Task 15 finds an actual retention-budget defect in maintenance preparation.
+An encoded-byte budget admits several highly compressible 5 MiB rows, then retains their decoded promotion candidates together.
+Two focused RED tests observe three candidates where the 8 MiB contract permits one.
+
+Both maintenance selectors now charge:
+
+`raw_size + length(payload) + length(CAST(session_ids AS BLOB))`.
+
+Selectors fetch scalar lengths before parsing an admitted row's owner list.
+The final measured row limit is 100; the byte limit remains 8 MiB.
+Section 12.6 records the measured reduction from the provisional 500-row limit.
+One oversized row advances alone; null metadata traversal remains bounded by the row limit.
+Direct requested loaders retain their existing `raw_size + stored_size` cost and 256-row limit.
+They never fetch owner lists.
+
+A separate RED test shows that two large owner lists bypass the old byte selection.
+The correction admits only the first oversized owner-list row, even when its incomplete owners make compression ineligible.
+The focused promotion/maintenance gate passes 38 tests after both corrections.
+
+Additional final regressions cover direct loader row/byte batches, eleven offline generator integrity-rejection branches, and an independently linked orchestration survivor.
+The count-table test now keeps FK assignments, binding, and membership reconciliation in the same atomic transaction.
+Its name explicitly identifies savepoint rollback; existing ingestion/extraction tests cover real commit failures and retries.
+The existing downloaded Codex 0.162.0 binary passes all five throwaway-home integration tests.
+Its old test consumer reads effective current contents after rollout replacement.
+
+### 12.3 Representative-copy migration gate
+
+The authorized target is `/home/twidi/dev/twicc-poc/.worktrees/feature-content-storage-compression/db/data.sqlite`.
+The original copy comes from devctl's SQLite backup setup; no backend starts or migrates it before this task.
+A first probe incorrectly uses runtime `twicc.settings` directly with `MigrationExecutor`.
+That bypasses the normal migration subprocess's `twicc.settings_migration` selection and triggers Django's standard global FK check.
+The failed assertion and log remain explicit evidence of this probe error, not a product migration measurement.
+
+The controller authorizes refreshing the same target with `source.backup(target, pages=-1)`.
+The source opens read-only at `/home/twidi/.twicc/db/data.sqlite`; an assertion excludes source/target equality.
+All target handles close before refresh; no second 22 GiB copy, reverse migration, or shadow migration is created.
+The refresh takes 500.553 seconds, including SQLite's same-target WAL work.
+The completion log timestamp is `2026-10-11T21:28:24.037322+00:00` (UTC).
+Its handles close and its sidecars disappear before the corrected probe.
+
+The corrected fresh process selects `twicc.settings_migration` and asserts `twicc.db.backends.sqlite3`.
+It prints and asserts the resolved target path before migration execution.
+It checkpoints only the isolated target; the baseline reports `(0, 0, 0)`.
+The pending plan contains only forward `0156_content_storage_schema`.
+Incremental SQL logging and a timed stack dump protect the diagnostic against an unexplained long scan.
+
+| Snapshot measurement | Value |
+|---|---:|
+| SQLite version | 3.53.1 |
+| Database bytes before migration | 22,690,983,936 |
+| SessionItem rows | 3,937,868 |
+| Claude sessions | 11,606 |
+| Codex sessions | 2,849 |
+| Schema migration duration | 0.230572 seconds |
+| Nullable ALTER additions | 6 |
+| Existing Session/SessionItem table rootpage changes | 0 |
+| New SessionItem indexes | 0 |
+| Existing-item global FK checks | 0 |
+| Existing-content conversions | 0 |
+| Seeded Claude/Codex dictionary bytes | 16,384 / 12,496 |
+
+Four ALTER statements add nullable Session state fields.
+Two ALTER statements add nullable, unindexed item content FKs.
+The only FK check is `PRAGMA foreign_key_check("core_sessionitemcontent")`, against the newly created empty dependent table.
+Dictionary seeding reads only the immutable package assets.
+No item-table rebuild, content-data update, column removal, vacuum, or database-wide conversion runs.
+Backup and the first full test run finish before the corrected migration and workload timing.
+The copied database remains in the worktree after validation.
+
+
+### 12.4 Initial reconciliation correction
+
+The measured initial reconciliation repeats owner/root queries for every content row.
+Its previous item-based loop also loads both oversized FK payloads before enforcing a byte limit.
+RED tests confirm both failures and the hot-plain unnecessary payload/owner hydration.
+
+Reconciliation now selects item FK IDs and scalar content lengths in bounded pages.
+Its cost includes raw bytes, stored payload bytes, and UTF-8 owner JSON bytes.
+It fetches owner JSON and payload only after admission.
+One oversized content reference advances; a second oversized reference waits for the next slice.
+An operation-local `(line, slot)` cursor resumes between current and original references.
+The public extraction cursor and worker IPC contract remain unchanged.
+A line completes only after both slots complete; a shared FK decodes once.
+
+A guarded hot or unresolved incoming owner proves that existing plain bytes can remain plain.
+That path performs no owner JSON or payload hydration.
+Cold candidates reuse owner/root eligibility only within one bounded preparation slice.
+Dictionary selection also reuses one lookup per provider within that slice.
+Publication starts a separate, fresh owner/root cache inside one atomic transaction.
+The existing write guard proves root incarnation, epoch, and pending lifecycle before any batch write.
+Each changed row verifies its exact payload, SHA-256, raw size, codec, dictionary, owner list, and item FK assignment.
+SQLite writer ownership prevents a concurrent root change during this transaction.
+No eligibility cache crosses transactions or slices.
+A stale guard rolls back the batch and leaves its cursor unchanged.
+No per-content reverse item scan or persistent cache is added.
+
+Focused tests cover distinct oversized FK resume, shared FK completion, scalar owner-byte admission,
+hot-plain hydration avoidance, bounded cold-owner queries, and epoch rejection before publication.
+The full focused storage selection passes 126 tests in 11.73 seconds after this correction.
+
+### 12.5 Workload instrumentation
+
+All workloads use only the authorized worktree copy and database-only synthetic sessions.
+No provider transformation, live server, or shared filesystem side effect runs.
+The original workload uses `DEBUG=True` plus conversion `tracemalloc`; it is diagnostic evidence only.
+That instrumentation records 161.255 seconds for 20,000 controlled items.
+Its 500-row maintenance publication slices take 2.091 and 1.941 seconds.
+These values are not normal user latency measurements.
+
+Normal latency uses a fresh process with `DEBUG=False` and no conversion tracing.
+A repeated fixture assertion detects accumulated synthetic owners from the earlier probe.
+The corrected probe uses a unique shared string and unique large-history strings per run.
+Both diagnostic logs remain available in the ignored plan workspace.
+Backup and the initial full test suite finish before these measurements.
+Only the focused tests overlap the corrected workload; the final full suite starts after workload measurements.
+
+
+| Normal workload, DEBUG=False, untraced conversion | Measurement |
+|---|---:|
+| Actual Claude sample, 600 rows / 4,753,034 UTF-8 bytes | 1.503 seconds |
+| Actual Codex sample, 600 rows / 1,772,551 UTF-8 bytes | 1.379 seconds |
+| Recent one-row session, before large history | 0.0394 seconds |
+| Unique controlled history, 20,000 items | 9.806 seconds |
+| Unique 20,000-item conversion WAL growth | 98,274,360 bytes |
+| Shared 64-owner workload | 5.400 seconds |
+| Shared 64-owner JSON bytes | 3,457 |
+| Shared workload WAL growth | 7,350,080 bytes |
+| Cold 5,040,035-byte current read | 0.0223 seconds; zero WAL growth |
+| Three 5 MiB rows: promotion entries per slice | 1 |
+| Three 5 MiB rows: root readiness | 3 slices; 0.105–0.109 seconds |
+| Promotion Python allocation peak | 10,544,131 bytes |
+| Recompression Python allocation peak | 15,931,092 bytes |
+
+The large cold read measures 20,175,834 bytes of transient Python allocations.
+Read validation and UTF-8 decoding require transient copies; the persisted representation remains compressed.
+Promotion and recompression peaks use separate `tracemalloc` measurements with `DEBUG=False`.
+A separate traced conversion probe records 18,884,717-byte Claude and 7,227,977-byte Codex Python peaks.
+Its 20,000 unique items take 50.108 seconds under tracing and peak at 2,698,969 Python bytes.
+Tracing therefore changes timing materially; normal latency values use the untraced probe.
+The traced process RSS high-water mark is 167,816 KiB.
+
+The actual ownership-accounting comparison uses 20 repetitions over 200 displaced IDs in a 20,000-item session.
+Grouped accounting takes 0.2366 seconds; temporary counts take 0.0407 seconds plus 0.0229-second initialization.
+The existing threshold remains at least 1,000,000 items and at least two estimated batches.
+No lower threshold is selected from this smaller-session diagnostic.
+Tests and measured service workloads confirm interrupted committed slices, mixed reads, retry,
+native descendants, shared hot reuse, history replacement, and no-gain policy retry.
+Unchanged content remains absent from worker IPC; recent-first discovery and wire tests pass.
+
+### 12.6 Maintenance row-budget tuning
+
+The provisional 500-row budget causes ordinary interactive waits above one second.
+A fresh untraced `DEBUG=False` comparison uses unique 1,200-row fixtures for each candidate limit.
+Each candidate runs actual storage admission, writer ownership, and compute-executor publication.
+An interactive title write queues during every publication and finishes before the next maintenance slice.
+Preparation runs on the separate preparation executor without writer ownership.
+
+| Rows per slice | Total 1,200-row maintenance seconds | Maximum publication seconds | Maximum interactive wait seconds | Median interactive wait seconds |
+|---:|---:|---:|---:|---:|
+| 500 | 8.956 | 1.675 | 1.681 | 1.609 |
+| 128 | 8.466 | 0.470 | 0.471 | 0.418 |
+| 100 | 8.563 | 0.384 | 0.385 | 0.340 |
+
+The final `content_maintenance_task.ROW_BUDGET` is 100.
+It provides more interactive latency headroom than 128 with similar measured throughput.
+Measured total time improves 4.4 percent versus 500 in this run.
+The byte limit remains 8 MiB, with one oversized candidate permitted for progress.
+Initial extraction retains its separate 256-row limit.
+An additional mixed hot/cold scan confirms empty publication slices release the writer between pages.
+Those queued interactive writes take approximately 2 milliseconds.
+Executor queue waits are recorded separately from writer-plus-executor waits in the ignored diagnostic log.
+The first publication includes executor connection initialization; later waits do not.
+No broader metadata-proof optimization is selected from these measurements.
+
+Physical SQLite file shrink is not an acceptance condition.
+The copied database retains legacy columns and free space; WAL growth measures writes, not disk reclamation.
+
+
+The combined payload census after the mixed workload, before the separate traced conversion,
+records only extracted rows; the remaining legacy production-copy items remain unchanged.
+
+| Codec | Extracted rows | Raw bytes | Stored payload bytes | Stored owner JSON bytes |
+|---|---:|---:|---:|---:|
+| plain | 40,307 | 26,324,380 | 26,324,380 | 2,930,370 |
+| zstd | 2,327 | 28,067,114 | 3,538,414 | 311,435 |
+
+This census includes representative records and controlled repeated-content fixtures.
+It does not estimate the compression ratio of all production history.
+The promotion timing uses the probe's known complete three-row native-tree pass proof.
+Production pass-proof and stale-proof tests cover the normal coordinator path.
+
+
+### 12.7 Final verification gate
+
+The final complete backend run executes after all production corrections and measured budget tuning:
+
+`cd /home/twidi/dev/twicc-poc/.worktrees/feature-content-storage-compression && TWICC_DATA_DIR=$PWD uv run pytest -q`
+
+It passes **10,073 tests**, skips 26, and records three unchanged baseline warnings in **313.76 seconds**.
+The pytest process exits with code zero.
+The final focused storage selection passes 126 tests in 11.40 seconds.
+The already-downloaded Codex 0.162.0 runtime passes all five opt-in rollout integration tests in 9.14 seconds.
+Those integration tests use throwaway homes and never access the real Codex home.
+No runtime download occurs.
+
+Ruff passes for every changed Python file across the branch, with exact baseline exemptions.
+BASE `59953ad7` already contains `db/backends/sqlite3/schema.py` UP031.
+BASE also contains four F811 and one PIE807 findings in `tests/test_title_auto_task.py`.
+The final command retains only these file-specific exemptions; no new lint finding is accepted.
+`git diff --check` passes.
+No frontend source changes, so no frontend test run is required.
+Server wire-shape and unchanged-IPC tests run in the complete backend suite.
+
+The unchanged warnings concern AsyncMock calls in `tests/test_codex_sdk_wrappers.py:133,152`
+and `BaseAgent._notify_state_change` in `tests/shell_notice_helpers.py:31`.
+They remain outside this storage task.
+Task-owned temporary probe scripts are removed; evidence logs and the authorized database copy remain.
+The production instance still needs its normal migration and restart through devctl after integration.
+No production migration or restart runs during this validation.

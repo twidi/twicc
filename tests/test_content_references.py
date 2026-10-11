@@ -118,7 +118,7 @@ def test_prepared_requires_guard_and_exact_bytes():
         references.intern_contents([text], 'codex', {encoded.sha256: bad})
 
 
-def test_count_operation_both_slots_rollback_and_retry():
+def test_count_operation_both_slots_savepoint_rollback_and_retry():
     root = session('root')
     with transaction.atomic():
         ids = references.intern_contents(['source', 'result'], 'codex')
@@ -127,9 +127,9 @@ def test_count_operation_both_slots_rollback_and_retry():
     for attempt in range(2):
         with references.session_reference_operation(root.id, item_count=500000, expected_batches=2) as operation:
             assert operation.uses_counts
-            with transaction.atomic(), operation.capture_mutation([rows[0].id]):
-                SessionItem.objects.filter(pk=rows[0].id).update(current_content_id=ids['result'])
             with transaction.atomic():
+                with operation.capture_mutation([rows[0].id]):
+                    SessionItem.objects.filter(pk=rows[0].id).update(current_content_id=ids['result'])
                 rows[0].refresh_from_db()
                 bind(rows[0])
                 references.reconcile_session_memberships(root.id, [ids['source']])

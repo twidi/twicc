@@ -219,3 +219,135 @@ def test_final_apply_failure_preserves_committed_extraction_and_retries(monkeypa
     assert session.content_storage_version is None
     assert session.compute_version != 123
     assert BaseSessionCompute.apply_session_complete(message(session)).outcome == 'applied'
+
+
+def test_reconcile_resumes_between_distinct_oversized_fk_payloads(content_row_factory, monkeypatch):
+    from twicc.core.content_storage import extraction
+
+    owner = make_session()
+    current = content_row_factory('current' * 1500000, True, session_ids=[owner.id])
+    original = content_row_factory('original' * 1500000, True, session_ids=[owner.id])
+    SessionItem.objects.create(session=owner, line_num=1, content='', current_content=current, original_content=original)
+    msg = message(owner)
+    decoded = []
+    decode = extraction.decode_content
+
+    def record(row):
+        decoded.append(row.id)
+        return decode(row)
+
+    monkeypatch.setattr(extraction, 'decode_content', record)
+    cursor = extraction.reconcile_storage_slice(msg, -1)
+    assert decoded == [current.id]
+    assert cursor.line_num == -1 and not cursor.done
+    assert cursor.bytes > extraction.BYTE_BUDGET
+    current.refresh_from_db()
+    original.refresh_from_db()
+    assert current.codec == 'plain' and original.codec == 'zstd'
+    cursor = extraction.reconcile_storage_slice(msg, cursor.line_num)
+    assert decoded == [current.id, original.id]
+    assert cursor.line_num == 1 and cursor.done
+    original.refresh_from_db()
+    assert original.codec == 'plain'
+
+
+def test_reconcile_shared_fk_slots_advance_without_duplicate_payload_decode(content_row_factory, monkeypatch):
+    from twicc.core.content_storage import extraction
+
+    owner = make_session()
+    shared = content_row_factory('shared' * 1500000, True, session_ids=[owner.id])
+    SessionItem.objects.create(session=owner, line_num=1, content='', current_content=shared, original_content=shared)
+    from unittest.mock import patch
+    with patch.object(extraction, 'decode_content', wraps=extraction.decode_content) as decode:
+        cursor = extraction.reconcile_storage_slice(message(owner), -1)
+    assert cursor.done and cursor.line_num == 1
+    assert decode.call_count == 1
+
+
+def test_hot_plain_reconcile_skips_owner_and_payload_loading(content_row_factory, monkeypatch):
+    from twicc.core.content_storage import extraction
+    from twicc.core.models import SessionItemContent
+
+    owner = make_session()
+    for line in range(1, 11):
+        row = content_row_factory(f'plain {line}', False, session_ids=[owner.id])
+        SessionItem.objects.create(session=owner, line_num=line, content='', current_content=row)
+    loaded = []
+    hydrate = SessionItemContent.from_db
+
+    def record(cls, db, fields, values, **kwargs):
+        if 'payload' in fields or 'session_ids' in fields:
+            loaded.append(fields)
+        return hydrate(db, fields, values, **kwargs)
+
+    monkeypatch.setattr(SessionItemContent, 'from_db', classmethod(record))
+    from unittest.mock import patch
+    with patch.object(extraction, '_owners_cold', wraps=extraction._owners_cold) as eligibility:
+        cursor = extraction.reconcile_storage_slice(message(owner), -1)
+    assert cursor.done and eligibility.call_count == 0 and loaded == []
+
+
+def test_cold_reconcile_reuses_owner_metadata_only_within_bounded_slice(content_row_factory, monkeypatch):
+    from datetime import timedelta
+    from unittest.mock import patch
+    from django.utils import timezone
+    from twicc.core.content_storage import extraction
+
+    owner = make_session(archived=True, created_at=timezone.now() - timedelta(days=60))
+    owner.last_line = 50
+    owner.save(update_fields=['last_line'])
+    for line in range(1, 51):
+        row = content_row_factory(f'cold {line} ' + 'schema ' * 50, False, session_ids=[owner.id])
+        SessionItem.objects.create(session=owner, line_num=line, content='', current_content=row)
+    with patch.object(extraction, 'cold_placement', wraps=extraction.cold_placement) as eligibility:
+        extraction.prepare_compute_result(message(owner))
+    assert eligibility.call_count <= 8
+
+
+def test_reconcile_epoch_change_before_publication_rejects_all_candidates(content_row_factory, monkeypatch):
+    from twicc.core.content_storage import extraction
+    from twicc.core.content_storage.state import invalidate_roots
+
+    owner = make_session()
+    stored = content_row_factory('compressed pending ' * 1000, True, session_ids=[owner.id])
+    SessionItem.objects.create(session=owner, line_num=1, content='', current_content=stored)
+    decode = extraction.decode_content
+
+    def invalidate(row):
+        result = decode(row)
+        with transaction.atomic():
+            invalidate_roots([owner.id])
+        return result
+
+    monkeypatch.setattr(extraction, 'decode_content', invalidate)
+    msg = message(owner)
+    with pytest.raises(extraction.SupersededStorageResult):
+        extraction.prepare_compute_result(msg)
+    stored.refresh_from_db()
+    assert stored.codec == 'zstd'
+    assert '_storage_reconcile_position' not in msg
+
+
+def test_reconcile_admits_owner_bytes_before_json_or_payload_loading(content_row_factory, monkeypatch):
+    from twicc.core.content_storage import extraction
+    from twicc.core.models import SessionItemContent
+
+    owner = make_session()
+    rows = []
+    for line in range(1, 4):
+        row = content_row_factory(f'owner budget {line} ' * 200, True,
+                                  session_ids=[owner.id, 'large owner metadata ' * 1000])
+        rows.append(row)
+        SessionItem.objects.create(session=owner, line_num=line, content='', current_content=row)
+    loaded = []
+    hydrate = SessionItemContent.from_db
+
+    def record(cls, db, fields, values, **kwargs):
+        if 'payload' in fields or 'session_ids' in fields:
+            loaded.append(values[fields.index('id')])
+        return hydrate(db, fields, values, **kwargs)
+
+    monkeypatch.setattr(SessionItemContent, 'from_db', classmethod(record))
+    cursor = extraction.reconcile_storage_slice(message(owner), -1, byte_budget=1024)
+    assert cursor.line_num == 1 and not cursor.done
+    assert set(loaded) == {rows[0].id}

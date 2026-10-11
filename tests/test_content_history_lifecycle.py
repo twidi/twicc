@@ -273,3 +273,14 @@ def test_whole_history_removal_streams_distinct_both_slot_ids(monkeypatch):
                      and 'core_sessionitemcontent' in q['sql']]
     assert len(content_reads) == 5
     assert all('"payload"' not in sql for sql in content_reads)
+
+
+def test_deleted_orchestration_parent_preserves_linked_independent_owners():
+    root = session('orchestration-root')
+    independent = session('linked-independent', spawned_by=root, spawn_root=root)
+    row = ingest(root, 'shared orchestration content')
+    ingest(independent, 'shared orchestration content')
+    assert _apply_delete_sessions_payload(DeleteSessionsPayload('codex', [root.id])) == [root.id]
+    independent.refresh_from_db()
+    assert independent.spawned_by_id is None and independent.spawn_root_id is None
+    assert SessionItemContent.objects.get(pk=row.current_content_id).session_ids == [independent.id]

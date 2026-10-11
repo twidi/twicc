@@ -146,3 +146,66 @@ print('Installed wheel dictionaries seed the fresh isolated database')
     result = subprocess.run([sys.executable, '-c', script], cwd=tmp_path, env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert 'Installed wheel dictionaries seed' in result.stdout
+
+
+@pytest.mark.parametrize('failure', ['plain-dictionary', 'missing-dictionary', 'dictionary-format',
+                                     'dictionary-size', 'dictionary-digest', 'frame-size', 'codec',
+                                     'raw-size', 'content-digest', 'utf8', 'corrupt-frame'])
+def test_generator_rejects_invalid_sampled_current_without_legacy_fallback(failure):
+    import importlib.util
+    import sqlite3
+    import zstandard
+
+    spec = importlib.util.spec_from_file_location('public_dictionary_generator_integrity',
+                                                 'scripts/benchmark_public_schema_dictionaries.py')
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+    db = sqlite3.connect(':memory:')
+    db.executescript('''
+        CREATE TABLE core_session (id TEXT, provider TEXT, project_id TEXT);
+        CREATE TABLE core_sessionitem (id INTEGER PRIMARY KEY, session_id TEXT, content TEXT,
+                                       current_content_id INTEGER, original_content_id INTEGER);
+        CREATE TABLE core_sessionitemcontent (id INTEGER PRIMARY KEY, payload BLOB, codec TEXT,
+                                              dictionary_id INTEGER, raw_size INTEGER, sha256 BLOB);
+        CREATE TABLE core_contentdictionary (id INTEGER PRIMARY KEY, payload BLOB, format TEXT, sha256 BLOB);
+        INSERT INTO core_session VALUES ('s', 'codex', 'project');
+        INSERT INTO core_sessionitem VALUES (1, 's', 'VALID STALE LEGACY', 1, NULL);
+    ''')
+    raw = b'public schema payload' * 20
+    dictionary = b'public dictionary'
+    data = zstandard.ZstdCompressionDict(dictionary, dict_type=zstandard.DICT_TYPE_RAWCONTENT)
+    payload = zstandard.ZstdCompressor(level=3, dict_data=data).compress(raw)
+    codec, dictionary_id, size, digest = 'zstd', 1, len(raw), hashlib.sha256(raw).digest()
+    dictionary_format, dictionary_digest = 'raw', hashlib.sha256(dictionary).digest()
+    if failure == 'plain-dictionary':
+        codec, payload = 'plain', raw
+    elif failure == 'missing-dictionary':
+        dictionary_id = 2
+    elif failure == 'dictionary-format':
+        dictionary_format = 'unknown'
+    elif failure == 'dictionary-size':
+        dictionary = b'x' * 16385
+        dictionary_digest = hashlib.sha256(dictionary).digest()
+    elif failure == 'dictionary-digest':
+        dictionary_digest = b'wrong'
+    elif failure == 'frame-size':
+        size += 1
+    elif failure == 'codec':
+        codec = 'unknown'
+    elif failure == 'raw-size':
+        codec, payload, dictionary_id, size = 'plain', raw, None, size + 1
+    elif failure == 'content-digest':
+        digest = b'wrong'
+    elif failure == 'utf8':
+        codec, payload, dictionary_id, size, digest = 'plain', b'\xff', None, 1, hashlib.sha256(b'\xff').digest()
+    elif failure == 'corrupt-frame':
+        payload = b'broken'
+    db.execute('INSERT INTO core_contentdictionary VALUES (1, ?, ?, ?)',
+               (dictionary, dictionary_format, dictionary_digest))
+    db.execute('INSERT INTO core_sessionitemcontent VALUES (1, ?, ?, ?, ?, ?)',
+               (payload, codec, dictionary_id, size, digest))
+    try:
+        with pytest.raises((ValueError, zstandard.ZstdError, UnicodeDecodeError)):
+            list(generator.load_sampled_current_contents(db, [1]))
+    finally:
+        db.close()
