@@ -528,9 +528,16 @@ function onTouchEnd(event) {
     right: 0;
     flex-shrink: 0;
     margin-left: auto;
-    background-color: var(--node-bg-color);
+    /* The row background can be transparent (glass surfaces), so the name would show
+       through the sticky badge: fade it out under the glass tint (nearly opaque, no blur:
+       a blurred patch over text looks dirty). */
+    background-image: linear-gradient(
+        to right,
+        transparent,
+        color-mix(in oklab, var(--glass-tint) 96%, transparent) 1.2rem
+    );
     padding-block: .15rem;
-    padding-inline: .4rem .25rem;
+    padding-inline: 1.5rem .25rem;
 }
 
 </style>
