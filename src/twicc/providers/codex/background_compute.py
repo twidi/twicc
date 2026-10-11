@@ -71,6 +71,7 @@ from twicc.providers.background_compute_task import (
 )
 from twicc.providers.db_writer import (
     ComputeApplied,
+    InitializeComputeStorageJob,
     arm_compute_completion,
     submit_async_job,
 )
@@ -912,6 +913,7 @@ class CodexComputeCoordinator:
                     self._prepared[prepared.session_id] = prepared
                     self.submitted.add(prepared.session_id)
                     self.in_flight = prepared.session_id
+                    await self._submit_job(InitializeComputeStorageJob, prepared.session_id)
                     self.ctx.command_queue.put_nowait({"session_id": prepared.session_id})
                     continue
 

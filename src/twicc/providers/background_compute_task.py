@@ -645,6 +645,11 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
             for session_id in session_ids:
                 if ctx.stop_event.is_set():
                     break
+                from twicc.providers.db_writer import InitializeComputeStorageJob, submit_async_job
+
+                await submit_async_job(InitializeComputeStorageJob(
+                    ctx.provider, session_id, asyncio.get_running_loop().create_future(),
+                ))
                 ctx.command_queue.put({"session_id": session_id})
             ctx.command_queue.put(None)
 

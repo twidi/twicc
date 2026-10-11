@@ -156,3 +156,12 @@ def verify_plaintext_root(
     return bool(Session.objects.filter(
         pk=snapshot.root_id, storage_incarnation=snapshot.incarnation, content_state_epoch=snapshot.epoch,
     ).update(plaintext_verified_epoch=snapshot.epoch))
+
+
+def extract_storage_slice(session_id: str, observed_incarnation: str, observed_epoch: int,
+                          upper_line: int, cursor: int, row_budget: int, byte_budget: int):
+    """Expose the shared bounded extraction interface without an import cycle."""
+    from twicc.core.content_storage.extraction import extract_storage_slice
+
+    return extract_storage_slice(session_id, observed_incarnation, observed_epoch,
+                                 upper_line, cursor, row_budget, byte_budget)

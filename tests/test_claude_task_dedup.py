@@ -111,7 +111,9 @@ def claude_session(db):
 
 
 def _blocks_of(item: SessionItem) -> list[dict]:
-    return orjson.loads(item.content)["message"]["content"]
+    from tests.content_storage_helpers import read_current
+
+    return orjson.loads(read_current(item))["message"]["content"]
 
 
 # ---------------------------------------------------------------------------
@@ -339,12 +341,14 @@ class TestBatchRecompute:
                 uuid="u2",
             ),
         )
-        before = {i.line_num: i.content for i in SessionItem.objects.filter(session=claude_session)}
+        from tests.content_storage_helpers import read_current
+
+        before = {i.line_num: read_current(i) for i in SessionItem.objects.filter(session=claude_session)}
 
         compute = ClaudeCodeSessionCompute()
         result_q = queue.Queue()
         compute.compute_session_metadata(claude_session.id, result_q, run_id=0)
         _apply_compute_results(result_q, compute)
 
-        after = {i.line_num: i.content for i in SessionItem.objects.filter(session=claude_session)}
+        after = {i.line_num: read_current(i) for i in SessionItem.objects.filter(session=claude_session)}
         assert after == before

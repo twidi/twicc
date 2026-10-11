@@ -305,18 +305,24 @@ def test_item_updates_fast_path_stores_the_same_values_as_the_model_layer(sessio
     assert item.cost == Decimal("0.001234")
     assert item.context_usage == 4321
     assert item.timestamp == datetime(2026, 8, 31, 10, 0, 5, 250000, tzinfo=UTC)
-    assert (item.git_directory, item.git_branch, item.content) == ("/repo", "main", "rewritten")
+    from tests.content_storage_helpers import read_current
+
+    assert (item.git_directory, item.git_branch, read_current(item)) == ("/repo", "main", "rewritten")
 
 
 @pytest.mark.django_db(transaction=True)
 def test_db_writer_applies_large_results_in_slices_and_stops_when_superseded(session, monkeypatch):
     from twicc.providers import db_writer
 
-    monkeypatch.setattr(db_writer, "COMPUTE_APPLY_CHUNK_SIZE", 2)
+    from twicc.core.content_storage import extraction
+    from tests.content_storage_helpers import read_current
+
+    monkeypatch.setattr(extraction, "ROW_BUDGET", 2)
     items = [_item(session, n) for n in range(1, 8)]
     Session.objects.filter(id=session.id).update(last_offset=100)
     msg = {
         "session_id": session.id,
+        "history_facts": [],
         "observed_last_offset": 100,
         "item_fields": ["kind"],
         "item_updates": [{"id": it.id, "kind": f"k{it.line_num}"} for it in items],
@@ -328,7 +334,7 @@ def test_db_writer_applies_large_results_in_slices_and_stops_when_superseded(ses
     assert outcome == "ok"
     assert trimmed["item_updates"] == [] and trimmed["content_overrides"] == []
     assert list(session.items.order_by("line_num").values_list("kind", flat=True)) == [f"k{n}" for n in range(1, 8)]
-    assert session.items.get(line_num=1).content == "override"
+    assert read_current(session.items.get(line_num=1)) == "override"
 
     # The watcher moved on (last_offset advanced): the first slice already
     # reports it and nothing more is written.

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import hashlib
 import logging
 import os
 import re
@@ -2900,6 +2901,7 @@ class BaseSessionCompute:
         content_overrides: list[dict] = []
         batch_size = 500
         source_item_count = 0
+        observed_input_upper = session.last_line
 
         def serialize_item(item: SessionItem) -> dict:
             return {
@@ -3066,6 +3068,7 @@ class BaseSessionCompute:
 
         for item in iter_current_items(queryset, batch_size, 8 * 1024 * 1024):
             source_item_count += 1
+            observed_input_upper = max(observed_input_upper, item.line_num)
             # Snapshot original state before any computation, for change detection
             original_serialized[item.id] = serialize_item(item)
 
@@ -3081,13 +3084,19 @@ class BaseSessionCompute:
             # when either fired, else ``None``.
             if session.type == SessionType.SESSION and not session.parent_session_id:
                 async_question_facts.extend(self.extract_async_question_facts(parsed, line=item.line_num))
+            original_current = effective_current(item)
             new_content = self.transform_inline(
                 parsed, session_id=session_id, line_num=item.line_num,
             )
             if new_content is not None and new_content != effective_current(item):
                 item.content = new_content
                 set_current_override(item, new_content)
-                content_overrides.append({'id': item.id, 'content': new_content})
+                content_overrides.append({
+                    'id': item.id, 'content': new_content,
+                    'observed_current_id': item.current_content_id,
+                    'observed_legacy_digest': hashlib.sha256(original_current.encode('utf-8')).hexdigest()
+                    if item.current_content_id is None else None,
+                })
 
             if is_main_session:
                 inline_publications.extend(self._collect_inline_artifact_publications(
@@ -3514,6 +3523,9 @@ class BaseSessionCompute:
             # last_offset has since advanced (watcher live-computed newer
             # lines), so a stale worker result can't clobber fresher data.
             'observed_last_offset': session.last_offset,
+            'observed_incarnation': session.storage_incarnation,
+            'observed_epoch': session.history_epoch,
+            'observed_upper_line': observed_input_upper,
             'source_item_count': source_item_count,
             'history_facts': [fact._asdict() for fact in history.facts],
             'async_question_facts': [fact._asdict() for fact in async_question_facts],
@@ -3598,7 +3610,10 @@ class BaseSessionCompute:
         connection.close()
 
     @staticmethod
-    def guard_compute_revision(session_id: str, observed_last_offset: int | None) -> str:
+    def guard_compute_revision(
+        session_id: str, observed_last_offset: int | None, observed_incarnation: str | None = None,
+        observed_epoch: int | None = None, observed_upper_line: int | None = None,
+    ) -> str:
         """Check that a compute result is still current for ``session_id``.
 
         Returns ``"ok"``, ``"superseded"`` (the watcher advanced ``last_offset``
@@ -3608,14 +3623,18 @@ class BaseSessionCompute:
         write lock up front instead of opening a read snapshot a concurrent
         watcher commit could invalidate.
         """
+        query = Session.objects.filter(id=session_id)
         if observed_last_offset is not None:
-            rows = Session.objects.filter(
-                id=session_id, last_offset__lte=observed_last_offset,
-            ).update(last_offset=F('last_offset'))
-            if rows == 0:
-                return "superseded" if Session.objects.filter(id=session_id).exists() else "missing"
-            return "ok"
-        return "ok" if Session.objects.filter(id=session_id).exists() else "missing"
+            query = query.filter(last_offset__lte=observed_last_offset)
+        if observed_incarnation is not None:
+            query = query.filter(storage_incarnation=observed_incarnation)
+        if observed_epoch is not None:
+            query = query.filter(history_epoch=observed_epoch)
+        if observed_upper_line is not None:
+            query = query.filter(last_line__lte=observed_upper_line)
+        if query.update(last_offset=F('last_offset')) == 0:
+            return "superseded" if Session.objects.filter(id=session_id).exists() else "missing"
+        return "ok"
 
     @staticmethod
     def apply_item_updates(item_fields: list[str], item_updates: list[dict]) -> None:
@@ -3647,16 +3666,22 @@ class BaseSessionCompute:
 
     @staticmethod
     def apply_content_overrides(content_overrides: list[dict]) -> None:
-        """Write the compute-time content rewrites (same fast path as :meth:`apply_item_updates`)."""
-        if not content_overrides:
-            return
-        table = connection.ops.quote_name(SessionItem._meta.db_table)
-        sql = (
-            f"UPDATE {table} SET {connection.ops.quote_name('content')} = %s "
-            f"WHERE {connection.ops.quote_name('id')} = %s"
-        )
-        with connection.cursor() as cursor:
-            cursor.executemany(sql, [[override['content'], override['id']] for override in content_overrides])
+        """Bind bounded current overrides while preserving original provenance."""
+        from twicc.core.content_storage.extraction import ROW_BUDGET, apply_override_slice
+        from twicc.core.content_storage.references import session_reference_operation
+
+        for start in range(0, len(content_overrides), ROW_BUDGET):
+            chunk = content_overrides[start:start + ROW_BUDGET]
+            owners = dict(SessionItem.objects.filter(pk__in=[row['id'] for row in chunk])
+                          .values_list('id', 'session_id'))
+            grouped = {}
+            for override in chunk:
+                if override['id'] not in owners:
+                    raise ValueError('Content override item is missing')
+                grouped.setdefault(owners[override['id']], []).append(override)
+            for session_id, overrides in grouped.items():
+                with session_reference_operation(session_id, item_count=len(overrides), expected_batches=1) as operation:
+                    apply_override_slice({'session_id': session_id}, overrides, operation)
 
     @staticmethod
     @transaction.atomic
@@ -3667,6 +3692,8 @@ class BaseSessionCompute:
         item_updates: list[dict],
         content_overrides: list[dict],
         repaired_activity_buckets: set[tuple] | None = None,
+        observed_incarnation: str | None = None, observed_epoch: int | None = None,
+        observed_upper_line: int | None = None,
     ) -> str:
         """Apply one slice of a compute result's item writes in its own transaction.
 
@@ -3679,7 +3706,9 @@ class BaseSessionCompute:
         session's ``compute_version`` never advances, the next recompute
         rewrites every row.
         """
-        outcome = BaseSessionCompute.guard_compute_revision(session_id, observed_last_offset)
+        outcome = BaseSessionCompute.guard_compute_revision(
+            session_id, observed_last_offset, observed_incarnation, observed_epoch, observed_upper_line,
+        )
         if outcome != "ok":
             return outcome
         session = Session.objects.get(id=session_id)
@@ -3696,8 +3725,22 @@ class BaseSessionCompute:
         return "ok"
 
     @staticmethod
-    @transaction.atomic
     def apply_session_complete(msg: dict) -> ComputeApplyResult:
+        """Apply bounded storage phases before final metadata publication."""
+        from twicc.core.content_storage.extraction import SupersededStorageResult, prepare_compute_result
+
+        try:
+            prepared = prepare_compute_result(msg)
+        except SupersededStorageResult as error:
+            return ComputeApplyResult(str(error))
+        try:
+            return BaseSessionCompute._apply_session_complete_final(prepared)
+        except SupersededStorageResult as error:
+            return ComputeApplyResult(str(error))
+
+    @staticmethod
+    @transaction.atomic
+    def _apply_session_complete_final(msg: dict) -> ComputeApplyResult:
         """
         Apply a ``session_complete`` payload produced by :meth:`compute_session_metadata`.
 
@@ -3732,7 +3775,10 @@ class BaseSessionCompute:
         # include last_offset, so only the watcher advances it — a reliable
         # monotonic revision marker.
         observed_last_offset = msg.get('observed_last_offset')
-        outcome = BaseSessionCompute.guard_compute_revision(session_id, observed_last_offset)
+        outcome = BaseSessionCompute.guard_compute_revision(
+            session_id, observed_last_offset, msg.get('observed_incarnation'),
+            msg.get('observed_epoch'), msg.get('observed_upper_line'),
+        )
         if outcome != "ok":
             logger.info(
                 "apply_session_complete: %s compute result for session %s "
@@ -3911,10 +3957,10 @@ class BaseSessionCompute:
             merge_question_facts(session_id, [QuestionFact(**fact) for fact in msg["async_question_facts"]])
 
         # 5. Update session fields (always includes compute_version)
-        session_fields = msg.get('session_fields', {})
+        session_fields = dict(msg.get('session_fields', {}))
         if session_fields:
             for dt_field in ('created_at', 'last_started_at', 'last_updated_at', 'last_stopped_at'):
-                if dt_field in session_fields and session_fields[dt_field] is not None:
+                if dt_field in session_fields and isinstance(session_fields[dt_field], str):
                     session_fields[dt_field] = datetime.fromisoformat(session_fields[dt_field])
             # The recompute folded ``goals`` from scratch, so a UI-set
             # ``dismissed`` flag (the one non-compute-owned key in that JSON)
@@ -4055,6 +4101,9 @@ class BaseSessionCompute:
         if project_id:
             update_project_metadata(project_id)
 
+        from twicc.core.content_storage.extraction import finish_storage_result
+
+        finish_storage_result(msg)
         return ComputeApplyResult("applied", folded_ancestor_id, title_updated_session_ids)
 
     # ------------------------------------------------------------------

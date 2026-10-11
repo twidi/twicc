@@ -76,7 +76,7 @@ PROJECT_BROADCAST_INTERVAL = 5
 INITIAL_SYNC_QUEUE_MAXSIZE = 200
 COMPUTE_QUEUE_MAXSIZE = 200
 # A compute result carrying more item writes than this is applied in slices
-# of this size, each in its own compute-worker call and transaction. The
+# of this size, each in its own transaction on the compute executor. The
 # writer lease spans the complete message; the event loop remains available.
 COMPUTE_APPLY_CHUNK_SIZE = 2000
 
@@ -185,6 +185,14 @@ class UpdateProjectMetadataPayload(NamedTuple):
     recalc_total_cost: bool
     resolve_git_root: bool
     git_root_directory: str | None
+
+
+class InitializeComputeStorageJob(NamedTuple):
+    """Initialize one legacy identity before dispatching its read-only worker."""
+
+    provider: Provider
+    session_id: str
+    future: asyncio.Future
 
 
 class ResolveProjectGitRootsPayload(NamedTuple):
@@ -1854,6 +1862,13 @@ async def _dispatch_async_job(job) -> None:
         _settle_unhandled_async_job(job, exc)
         return
 
+    if isinstance(job, InitializeComputeStorageJob):
+        from twicc.core.content_storage.extraction import initialize_compute_session
+
+        await _settle_async_job(job, lambda value: initialize_compute_session(value.session_id),
+                                'initialize compute storage')
+        return
+
     if isinstance(job, _AbandonComputeRunJob):
         try:
             await _finalize_abandoned_run(job.run_id, job.provider)
@@ -2032,44 +2047,22 @@ async def _db_writer_loop() -> None:
 
 
 async def _apply_compute_items_in_chunks(msg: dict) -> tuple[dict, str]:
-    """Pre-apply a large result's item writes in slices; return the trimmed message.
+    """Apply bounded item/storage phases for both result-size branches.
 
-    Small results are returned untouched (``apply_session_complete`` writes
-    their items itself). For large ones every slice runs in a separate
-    compute-worker call and transaction, and re-checks the revision guard.
-    The writer lease remains held across all slices. The first non-``ok``
-    outcome stops the apply and is returned so the caller reports it as
-    ``apply_session_complete`` would have.
+    The writer lease remains held. One executor invocation retains temporary
+    reference counts across separately committed transactions. The final apply
+    receives empty item/override lists and verified preparation observations.
     """
-    from twicc.providers.compute_base import BaseSessionCompute
-
-    item_updates = msg.get('item_updates') or []
-    content_overrides = msg.get('content_overrides') or []
-    if len(item_updates) + len(content_overrides) <= COMPUTE_APPLY_CHUNK_SIZE:
+    # The synchronous storage orchestrator preserves connection-local reference
+    # counts across separately committed slices for both result-size branches.
+    if 'history_facts' not in msg:
         return msg, "ok"
+    from twicc.core.content_storage.extraction import SupersededStorageResult, prepare_compute_result
 
-    session_id = msg['session_id']
-    observed_last_offset = msg.get('observed_last_offset')
-    item_fields = msg.get('item_fields') or []
-    for start in range(0, len(item_updates), COMPUTE_APPLY_CHUNK_SIZE):
-        outcome = await run_compute_sync(
-            BaseSessionCompute.apply_session_items_chunk,
-            session_id, observed_last_offset, item_fields,
-            item_updates[start:start + COMPUTE_APPLY_CHUNK_SIZE], [],
-            msg.get('_repaired_activity_buckets'),
-        )
-        if outcome != "ok":
-            return msg, outcome
-    for start in range(0, len(content_overrides), COMPUTE_APPLY_CHUNK_SIZE):
-        outcome = await run_compute_sync(
-            BaseSessionCompute.apply_session_items_chunk,
-            session_id, observed_last_offset, [], [],
-            content_overrides[start:start + COMPUTE_APPLY_CHUNK_SIZE],
-            msg.get('_repaired_activity_buckets'),
-        )
-        if outcome != "ok":
-            return msg, outcome
-    return {**msg, 'item_updates': [], 'content_overrides': []}, "ok"
+    try:
+        return await run_compute_sync(prepare_compute_result, msg, COMPUTE_APPLY_CHUNK_SIZE), "ok"
+    except SupersededStorageResult as error:
+        return msg, str(error)
 
 
 async def _process_compute_message(msg: dict) -> None:
@@ -2132,6 +2125,11 @@ async def _process_compute_message(msg: dict) -> None:
     try:
         from twicc.providers.compute_base import BaseSessionCompute, ComputeApplyResult
 
+        from twicc.agent.registry import get_agent_manager_registry
+
+        msg['_active_session_ids'] = frozenset(
+            info.session_id for info in get_agent_manager_registry().get_active_agents()
+        )
         msg['_repaired_activity_buckets'] = state.repaired_activity_buckets
         line_count = len(msg.get('item_updates', []))
         msg, chunk_outcome = await _apply_compute_items_in_chunks(msg)

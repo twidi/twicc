@@ -275,6 +275,7 @@ def test_worker_dispatches_next_only_after_computed_not_applied(monkeypatch):
         monkeypatch.setattr(background_compute, "stop_background_task", stop_background_task)
         monkeypatch.setattr(background_compute, "stop_compute_worker", lambda _ctx: _async_value(None))
         coordinator.prepare_candidate = prepare
+        coordinator._submit_job = lambda *_args: _async_value(None)
         coordinator._handle_applied = handle_applied
 
         task = asyncio.create_task(coordinator.run())
@@ -754,7 +755,11 @@ def test_forced_rebuild_is_discovered_after_older_compute_restores_current_versi
             )
             assert applied.outcome == 'applied'
             assert (await Session.objects.aget(id=sid)).compute_version == compute.compute_version
-            assert await SessionItem.objects.filter(session_id=sid, content=records[1].decode()).aexists()
+            from tests.content_storage_helpers import read_current
+
+            assert await run_compute_sync(lambda: read_current(
+                SessionItem.objects.get(session_id=sid, line_num=2),
+            )) == records[1].decode()
             await coordinator.events.put(('applied', ComputeApplied(sid, applied.outcome)))
             if not status_before_apply:
                 await _wait_until(lambda: sid in coordinator.applied_before_computed, timeout=5)
