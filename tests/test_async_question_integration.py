@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock
 
 import orjson
 import pytest
+
+from tests.content_storage_helpers import read_current
 from asgiref.sync import sync_to_async
 from django.test import Client
 from openai_codex.errors import JsonRpcError
@@ -196,8 +198,8 @@ def test_recorded_questions_hydrate_and_send_partial_answers_text_and_attachment
     assert [(batch["item_id"], batch["status"]) for batch in ready["batches"]] == [
         (OBSERVED[0][0], "ready"), (OBSERVED[1][0], "ready"),
     ]
-    original = list(SessionItem.objects.filter(session=harness.session).order_by("line_num")
-                    .values_list("content", flat=True))
+    original = [read_current(item) for item in
+                SessionItem.objects.filter(session=harness.session).order_by("line_num")]
     image = {"source": {"type": "base64", "media_type": "image/png", "data": "YWJj"}}
     expected = ("::: Answers to your questions\n\n**Question:** " + OBSERVED[0][1] + "\n\n**Answer:** " + OBSERVED[0][2][0]
                 + "\n\n:::\n\nLimit the tooltip width to 24rem.")
@@ -228,8 +230,8 @@ def test_recorded_questions_hydrate_and_send_partial_answers_text_and_attachment
     assert resolved["batches"] == []
     assert resolved["resolutions"] == {item[0]: {"status": "sent", "request_id": "send-1"} for item in OBSERVED}
     harness.ingest([source_user(expected, request_id="send-1")])
-    assert list(SessionItem.objects.filter(session=harness.session).order_by("line_num")
-                .values_list("content", flat=True))[:-1] == original
+    assert [read_current(item) for item in
+            SessionItem.objects.filter(session=harness.session).order_by("line_num")][:-1] == original
     assert projection(recompute(harness.session)) == projection(resolved)
     data = AsyncQuestionState.objects.get(session=harness.session).state["facts"]["send:send-1"]["data"]
     assert (data["source_item_id"], data["delivery_route"], data["status"]) == ("u1", "start", "accepted")
@@ -471,7 +473,7 @@ def test_disabled_widget_hydration_keeps_canonical_transcript_and_recompute_stat
     assert ready["batches"][0]["status"] == "ready"
     assert harness.hydrate() == ready
     assert projection(recompute(harness.session)) == projection(ready)
-    source = orjson.loads(SessionItem.objects.get(session=harness.session, line_num=1).content)
+    source = orjson.loads(read_current(SessionItem.objects.get(session=harness.session, line_num=1)))
     assert source == canonical_question()
 
 @pytest.mark.parametrize("outcome", ["interrupted", "failed", "unknown"])
@@ -585,6 +587,6 @@ def test_sdk_async_completion_keeps_question_identity_and_native_stream_end(harn
     snapshot = harness.hydrate()
     assert len(snapshot["batches"]) == 1
     assert snapshot["batches"][0]["line"] == 1
-    content = orjson.loads(SessionItem.objects.get(session=harness.session, line_num=1).content)
+    content = orjson.loads(read_current(SessionItem.objects.get(session=harness.session, line_num=1)))
     assert content["payload"]["item"]["id"] == events[-1]["uuid"]
     assert content["payload"]["item"]["delivery"] == "async"

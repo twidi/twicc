@@ -1,8 +1,8 @@
 """
 Provider-agnostic compute primitives for session items.
 
-Each provider stores its native JSONL lines in :class:`~twicc.core.models.SessionItem.content`
-without conversion at ingestion time. This module owns the shared *output*
+Each provider retains native JSONL source strings and effective current strings
+through shared content references. This module owns the shared *output*
 structures every provider produces from those lines (kind, display level,
 group membership, agent / tool-result link records) and the machinery that
 operates on those outputs (group state machine, agent prompt cache, batch
@@ -1035,7 +1035,7 @@ class BaseSessionCompute:
         text (a generic, cross-provider step — see :mod:`twicc.context_injection`),
         then runs the provider's own rewrites (:meth:`_transform_inline_provider`).
         Stripping first means the provider logic and the stored
-        ``SessionItem.content`` only ever see the clean text, regardless of what
+        effective current content only ever see the clean text, regardless of what
         the provider does. Both steps mutate ``parsed_json`` in place, so the
         downstream computation (``analyze_content``, title extraction, ...)
         operates on the cleaned, rewritten item.
@@ -1043,14 +1043,14 @@ class BaseSessionCompute:
         The strip keeps those blocks out of the stored content — and therefore
         out of the UI, full-text search, session title and message browser. The
         agent still saw the block in its turn input and replayed rollout; only
-        the persisted copy is cleaned.
+        the effective current copy is cleaned. Original source content stays intact.
 
         Before that strip, the ``<twicc:attachments>`` manifest is extracted
         from the record's user-message slots only (:meth:`_extract_attachments`),
         and stored as the top-level ``twicc_attachments`` key.
 
         Returns the new serialised JSON string when anything changed (the
-        caller updates ``SessionItem.content``), or ``None`` when the item was
+        caller sets the current override), or ``None`` when the item was
         left untouched.
         """
         extracted = self._extract_attachments(
@@ -4079,6 +4079,11 @@ class BaseSessionCompute:
 
     def _sync_session_slice(self, session: Session, file_path: Path, raw: RawLiveSlice) -> LiveSyncUpdates:
         """Process every selected record through both passes before committing."""
+        from twicc.core.content_storage.ingestion import (
+            initialize_ingestion_session, insert_ingested_items, promote_ingested_items,
+        )
+
+        initialize_ingestion_session(session)
         before_session = session_contribution(session)
         repair_aggregates = needs_repair(session)
         session.last_offset = raw.end_offset
@@ -4098,6 +4103,7 @@ class BaseSessionCompute:
 
         # Create SessionItem objects for bulk insert
         items_to_create: list[tuple[SessionItem, dict]] = []
+        source_texts: dict[int, str] = {}
         current_line_num = session.last_line
         async_question_facts = []
 
@@ -4189,6 +4195,7 @@ class BaseSessionCompute:
                 line_num=current_line_num,
                 content=line,
             )
+            source_texts[current_line_num] = line
             try:
                 parsed = orjson.loads(line)
             except orjson.JSONDecodeError:
@@ -4383,7 +4390,9 @@ class BaseSessionCompute:
 
         # Bulk create all items
         items_only = [item for item, _ in items_to_create]
-        SessionItem.objects.bulk_create(items_only, ignore_conflicts=True, batch_size=50)
+        inserted_line_nums = insert_ingested_items(
+            session, [(item, source_texts[item.line_num]) for item in items_only], promote=False,
+        )
         append_history_facts(session.id, history.facts)
         if async_question_facts:
             from twicc.core.services.async_questions import merge_question_facts
@@ -4391,7 +4400,7 @@ class BaseSessionCompute:
             merge_question_facts(session.id, async_question_facts)
 
         # Track line_nums of new and updated items
-        new_line_nums: set[int] = {item.line_num for item in items_only}
+        new_line_nums: set[int] = inserted_line_nums
         modified_line_nums: set[int] = set()
 
         # Second pass: compute group membership, tool_result links, and update cost/usage/timestamp fields
@@ -4673,6 +4682,9 @@ class BaseSessionCompute:
         stop_step = self._run_live_stop_step(
             session, agent_link_updates, tool_result_updates, agent_run_signals,
         )
+        promote_ingested_items(session, [
+            (item, source_texts[item.line_num]) for item in items_only if item.line_num in inserted_line_nums
+        ])
         # After the stop step: the tree rule then sees every link of the batch.
         agent_interaction_updates = interaction_payloads(
             session.parent_session_id or session.id, agent_run_signals.changed_interactions,

@@ -18,6 +18,8 @@ from pathlib import Path
 
 import orjson
 import pytest
+
+from tests.content_storage_helpers import read_current
 from django.test import AsyncClient
 
 from tests.live_sync_helpers import drain_live_sync
@@ -720,7 +722,7 @@ def _drain(result_queue, compute) -> None:
 
 
 def _stored(session_id: str, line_num: int) -> dict:
-    return orjson.loads(SessionItem.objects.get(session_id=session_id, line_num=line_num).content)
+    return orjson.loads(read_current(SessionItem.objects.get(session_id=session_id, line_num=line_num)))
 
 
 @pytest.mark.parametrize("owner, accepted", [(FORK_PARENT, True), (CODEX_SID, True), (SPAWN_PARENT, False)])
@@ -870,9 +872,9 @@ def test_user_text_readers_never_see_the_block(tmp_path, settings, provider):
     items = list(SessionItem.objects.filter(session=session, kind=ItemKind.USER_MESSAGE).order_by("line_num"))
     assert len(items) == 2
     for item in items:
-        assert "<twicc:attachments>" not in item.content
-        assert "twicc_attachments" in orjson.loads(item.content)
-    first_parsed = orjson.loads(items[0].content)
+        assert "<twicc:attachments>" not in read_current(item)
+        assert "twicc_attachments" in orjson.loads(read_current(item))
+    first_parsed = orjson.loads(read_current(items[0]))
     assert compute.extract_title_from_user_message(first_parsed) == "Please review"
     assert helpers.extract_indexable_text_from_parsed(first_parsed) == "Please review"
     assert helpers.get_first_user_message(session_id) == "Please review"

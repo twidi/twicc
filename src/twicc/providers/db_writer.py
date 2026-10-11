@@ -2448,6 +2448,8 @@ def _apply_create_session_payload(payload: CreateSessionPayload) -> tuple[object
     """
     from twicc.providers.live_aggregates import apply_contribution_changes, session_contribution
     from twicc.core.models import Session, SessionItem
+    from twicc.core.content_storage.ingestion import initialize_ingestion_session, insert_ingested_items
+    from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION
     from twicc.projects import register_project_db_only
 
     parent_id = payload.session.parent_session_id
@@ -2465,16 +2467,23 @@ def _apply_create_session_payload(payload: CreateSessionPayload) -> tuple[object
             directory=payload.new_project_directory,
             stale=payload.new_project_stale,
         )
-        payload.session.save()
+        # A watcher can create this identity after the producer's read.
+        # Retain its user state, enriched references and storage generation.
+        is_new = not Session.objects.filter(pk=payload.session.id).exists()
+        if is_new:
+            payload.session.content_storage_version = CONTENT_STORAGE_VERSION
+            payload.session.save()
+        else:
+            payload.session.refresh_from_db()
+        initialize_ingestion_session(payload.session, invalidate=is_new)
         if payload.items:
-            SessionItem.objects.bulk_create(
-                [SessionItem(session=payload.session, line_num=ln, content=ct)
-                 for ln, ct in payload.items],
-                ignore_conflicts=True, batch_size=50,
-            )
-        payload.session.last_offset = payload.last_offset
-        payload.session.last_line = payload.last_line
-        payload.session.mtime = payload.mtime
+            insert_ingested_items(payload.session, [
+                (SessionItem(session=payload.session, line_num=ln, content=ct), ct)
+                for ln, ct in payload.items
+            ])
+        payload.session.last_offset = max(payload.session.last_offset, payload.last_offset)
+        payload.session.last_line = max(payload.session.last_line, payload.last_line)
+        payload.session.mtime = max(payload.session.mtime, payload.mtime)
         payload.session.save(update_fields=["last_offset", "last_line", "mtime"])
         apply_contribution_changes([], [], before_sessions=[],
             after_sessions=[session_contribution(payload.session)], repair=True)
@@ -2485,16 +2494,17 @@ def _apply_update_session_payload(payload: UpdateSessionPayload) -> None:
     """Append items to an existing session and update tracking fields, atomically."""
     from twicc.providers.live_aggregates import apply_contribution_changes, needs_repair, session_contribution
     from twicc.core.models import SessionItem
+    from twicc.core.content_storage.ingestion import initialize_ingestion_session, insert_ingested_items
 
     with transaction.atomic():
         payload.session.refresh_from_db()
+        initialize_ingestion_session(payload.session)
         before_session = session_contribution(payload.session)
         if payload.items:
-            SessionItem.objects.bulk_create(
-                [SessionItem(session=payload.session, line_num=ln, content=ct)
-                 for ln, ct in payload.items],
-                ignore_conflicts=True, batch_size=50,
-            )
+            insert_ingested_items(payload.session, [
+                (SessionItem(session=payload.session, line_num=ln, content=ct), ct)
+                for ln, ct in payload.items
+            ])
         update_fields = ["last_offset", "last_line", "mtime"]
         payload.session.last_offset = payload.last_offset
         payload.session.last_line = payload.last_line

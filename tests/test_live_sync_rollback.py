@@ -9,8 +9,10 @@ import orjson
 import pytest
 from django.db import transaction
 
+from twicc.core.content_storage.codec import decode_content
+from twicc.core.content_storage.readers import effective_current, load_current
 from twicc.core.enums import Provider
-from twicc.core.models import Project, Session, SessionHistoryFact, SessionItem, ToolResultLink
+from twicc.core.models import Project, Session, SessionHistoryFact, SessionItem, SessionItemContent, ToolResultLink
 from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
 from twicc.providers.codex.compute import CodexSessionCompute
 
@@ -150,6 +152,10 @@ def test_live_retry_preserves_diff_facts_links_and_checkpoint(live_case, monkeyp
     else:
         module.cache_original_files(baseline.id, "call", {"/a": "full old file"})
     drain_live_sync(type(compute)(), baseline, path)
+    storage_before = list(SessionItemContent.objects.order_by("id").values())
+    identity_before = Session.objects.filter(pk=session.id).values(
+        "storage_incarnation", "content_state_epoch", "content_storage_version", "plaintext_verified_epoch",
+    ).get()
     expected_facts, expected_links = _relation_rows(baseline)
     assert expected_facts
     assert len(expected_links) == 1
@@ -191,11 +197,18 @@ def test_live_retry_preserves_diff_facts_links_and_checkpoint(live_case, monkeyp
     assert not SessionItem.objects.filter(session=session).exists()
     assert not SessionHistoryFact.objects.filter(session=session).exists()
     assert not ToolResultLink.objects.filter(session=session).exists()
+    assert list(SessionItemContent.objects.order_by("id").values()) == storage_before
+    assert Session.objects.filter(pk=session.id).values(*identity_before).get() == identity_before
     drain_live_sync(compute, session, path)
     item = SessionItem.objects.get(session=session, line_num=2)
-    assert "full old file" in item.content
+    load_current([item])
+    assert item.content == ""
+    assert decode_content(item.original_content) == orjson.dumps(_records(session.provider)[1]).decode()
+    assert session.id in item.original_content.session_ids
+    assert session.id in item.current_content.session_ids
+    assert "full old file" in effective_current(item)
     if captured:
-        assert orjson.loads(item.content) == orjson.loads(captured[0])
+        assert orjson.loads(effective_current(item)) == orjson.loads(captured[0])
     actual_facts, actual_links = _relation_rows(session)
     assert actual_facts == expected_facts
     assert actual_links == expected_links
@@ -208,9 +221,8 @@ def test_live_retry_preserves_diff_facts_links_and_checkpoint(live_case, monkeyp
 
 def test_live_entry_rejects_caller_transaction(live_case):
     compute, session, path, _module = live_case
-    with transaction.atomic():
-        with pytest.raises(RuntimeError, match="atomic"):
-            drain_live_sync(compute, session, path)
+    with transaction.atomic(), pytest.raises(RuntimeError, match="atomic"):
+        drain_live_sync(compute, session, path)
     assert not SessionItem.objects.filter(session=session).exists()
 
 
@@ -221,13 +233,12 @@ def test_live_state_snapshot_restores_nested_state_for_only_failed_session(compu
     compute.begin_session_compute("s")
     compute.begin_session_compute("other")
     before = copy.deepcopy(vars(compute))
-    with pytest.raises(RuntimeError, match="injected"):
-        with compute.live_state_transaction("s"):
-            for name, mapping in before.items():
-                if isinstance(mapping, dict) and "s" in mapping:
-                    getattr(compute, name)["s"] = {"mutated": [1]}
-                    getattr(compute, name)["other"] = "unrelated progress"
-            raise RuntimeError("injected")
+    with pytest.raises(RuntimeError, match="injected"), compute.live_state_transaction("s"):
+        for name, mapping in before.items():
+            if isinstance(mapping, dict) and "s" in mapping:
+                getattr(compute, name)["s"] = {"mutated": [1]}
+                getattr(compute, name)["other"] = "unrelated progress"
+        raise RuntimeError("injected")
     for name, mapping in before.items():
         if isinstance(mapping, dict) and "s" in mapping:
             restored = getattr(compute, name)["s"]
@@ -286,12 +297,11 @@ def test_nested_replay_mutation_and_new_session_state_are_restored():
     compute = CodexSessionCompute()
     compute._process_owners["s"] = {7: "owner"}
     compute._ended_processes["s"] = {8: 123.0}
-    with pytest.raises(RuntimeError, match="injected"):
-        with compute.live_state_transaction("s"):
-            compute._process_owners["s"].pop(7)
-            compute._ended_processes["s"][9] = 124.0
-            compute._prev_total_tokens["s"] = 100
-            raise RuntimeError("injected")
+    with pytest.raises(RuntimeError, match="injected"), compute.live_state_transaction("s"):
+        compute._process_owners["s"].pop(7)
+        compute._ended_processes["s"][9] = 124.0
+        compute._prev_total_tokens["s"] = 100
+        raise RuntimeError("injected")
     assert compute._process_owners["s"] == {7: "owner"}
     assert compute._ended_processes["s"] == {8: 123.0}
     assert "s" not in compute._prev_total_tokens
@@ -305,10 +315,9 @@ def test_failed_relation_does_not_publish_done_cache_or_remove_cached_prompt():
     key = ("rollback-cache-parent", "rollback-cache-child")
     cache_agent_prompt(*key, "original prompt")
     try:
-        with pytest.raises(RuntimeError, match="injected"):
-            with CodexSessionCompute().live_state_transaction(key[0]):
-                mark_agent_link_done(*key)
-                raise RuntimeError("injected")
+        with pytest.raises(RuntimeError, match="injected"), CodexSessionCompute().live_state_transaction(key[0]):
+            mark_agent_link_done(*key)
+            raise RuntimeError("injected")
         assert key not in AGENTS_LINKS_DONE_CACHE
         assert AGENTS_PROMPT_CACHE[key] == "original prompt"
     finally:
@@ -328,7 +337,10 @@ def test_commit_failure_restores_enrichment_and_caller_checkpoint(live_case, mon
     assert session.last_offset == 0
     assert not session.items.exists()
     drain_live_sync(compute, session, path)
-    assert "full old file" in SessionItem.objects.get(session=session, line_num=2).content
+    item = SessionItem.objects.get(session=session, line_num=2)
+    load_current([item])
+    assert item.content == ""
+    assert "full old file" in effective_current(item)
     assert session.last_offset == path.stat().st_size
 
 
@@ -372,10 +384,12 @@ def test_rollback_only_transaction_cannot_return_success(cache):
     compute = CodexSessionCompute()
     key = ("rollback-only", "call")
     cache.put(key, "evidence")
-    with pytest.raises(transaction.TransactionManagementError, match="rollback"):
-        with compute.live_state_transaction(key[0]):
-            assert compute.borrow_enrichment(cache, key[0], key[1], 1) == "evidence"
-            compute._prev_total_tokens[key[0]] = 42
-            transaction.set_rollback(True)
+    with (
+        pytest.raises(transaction.TransactionManagementError, match="rollback"),
+        compute.live_state_transaction(key[0]),
+    ):
+        assert compute.borrow_enrichment(cache, key[0], key[1], 1) == "evidence"
+        compute._prev_total_tokens[key[0]] = 42
+        transaction.set_rollback(True)
     assert key[0] not in compute._prev_total_tokens
     assert cache.borrow(key, source_line=1).value == "evidence"

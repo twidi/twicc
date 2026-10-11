@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
+from django.db import transaction
 from watchfiles import Change, awatch
 
 from twicc import search
@@ -593,6 +594,7 @@ class BaseSessionsWatcher:
     # Session creation (uses provider/compute_version from the compute)
     # ------------------------------------------------------------------
 
+    @transaction.atomic
     def create_session_sync(
         self,
         parsed: ParsedSessionFile,
@@ -608,22 +610,29 @@ class BaseSessionsWatcher:
         """
         from twicc.pending_session_attributes import pop_pending_session_attributes
 
+        from twicc.core.content_storage.ingestion import initialize_ingestion_session
+        from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION
+
         compute = self.get_compute()
         if parsed.type == SessionType.SUBAGENT:
             if parent_session is None:
                 raise ValueError("parent_session is required for subagents")
-            return Session.objects.create(
+            session = Session.objects.create(
                 id=parsed.session_id,
                 project=project,
                 provider=compute.provider,
                 file_path=parsed.file_path,
                 type=SessionType.SUBAGENT,
                 parent_session=parent_session,
+                content_storage_version=CONTENT_STORAGE_VERSION,
                 compute_version=(
                     compute.compute_version if parsed.compute_ready_on_create else None
                 ),
             )
+            initialize_ingestion_session(session, invalidate=True)
+            return session
         kwargs: dict = {
+            'content_storage_version': CONTENT_STORAGE_VERSION,
             'id': parsed.session_id,
             'project': project,
             'provider': compute.provider,
@@ -655,7 +664,9 @@ class BaseSessionsWatcher:
                 kwargs["hybrid"] = True
             if pending.layout:
                 kwargs["layout"] = pending.layout
-        return Session.objects.create(**kwargs)
+        session = Session.objects.create(**kwargs)
+        initialize_ingestion_session(session, invalidate=True)
+        return session
 
     # ------------------------------------------------------------------
     # Full-text search indexing

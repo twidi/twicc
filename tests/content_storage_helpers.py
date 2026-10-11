@@ -44,3 +44,11 @@ def content_row_factory(db):
             dictionary=dictionary, raw_size=len(raw), dictionary_provider=provider, session_ids=sorted(set(session_ids)),
         )
     return create
+
+
+def read_current(item) -> str:
+    """Explicitly load a persisted item before checking its logical string."""
+    from twicc.core.content_storage.readers import effective_current, load_current
+
+    load_current([item])
+    return effective_current(item)

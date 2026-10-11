@@ -8,6 +8,8 @@ from pathlib import Path
 import orjson
 import pytest
 
+from tests.content_storage_helpers import read_current
+
 from twicc.core.enums import Provider
 from twicc.core.models import Project, Session, SessionItem, SessionType, Share
 from twicc.core.serializers import serialize_session, serialize_share_public_meta
@@ -172,7 +174,7 @@ def test_serialized_identity_reaches_actual_inline_context_and_adapter(case, ses
     session.type = session_type
     session.save(update_fields=['type'])
     ingest(compute, session, path, [assistant(provider)])
-    record = orjson.loads(SessionItem.objects.get(session=session, line_num=1).content)
+    record = orjson.loads(read_current(SessionItem.objects.get(session=session, line_num=1)))
     share = Share.objects.create(kind='session', token='c' * 64, session=session)
     wire = serialize_share_public_meta(share) if public else serialize_session(session)
     javascript = '''
@@ -311,7 +313,7 @@ def test_persisted_screenshot_publication_matches_actual_frontend_source(case, m
     session.system_prompt_addendum = frozen
     session.save(update_fields=['system_prompt_addendum'])
     ingest(compute, session, path, [tool_result, assistant(provider, source)], slice_bytes=slice_bytes)
-    persisted = orjson.loads(SessionItem.objects.get(session=session, line_num=2).content)
+    persisted = orjson.loads(read_current(SessionItem.objects.get(session=session, line_num=2)))
     index = 1 if provider == Provider.CLAUDE_CODE else 0
     content = persisted['message']['content'] if provider == Provider.CLAUDE_CODE else persisted['payload']['item']['content']
     normalized = content[index]['text']
@@ -358,7 +360,7 @@ assert.equal(publicationKey('s', actual), publicationKey('s', publication));
     session.refresh_from_db()
     assert session.inline_artifacts['publications'] == [publication]
     assert session.system_prompt_addendum == frozen
-    assert orjson.loads(SessionItem.objects.get(session=session, line_num=2).content) == persisted
+    assert orjson.loads(read_current(SessionItem.objects.get(session=session, line_num=2))) == persisted
 
 
 def test_claude_string_text_uses_block_zero(db, tmp_path):
