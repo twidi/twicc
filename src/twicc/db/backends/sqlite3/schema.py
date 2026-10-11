@@ -255,6 +255,7 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
             definition += " " + self.sql_create_column_inline_fk % {
                 "to_table": self.quote_name(field.remote_field.model._meta.db_table),
                 "to_column": self.quote_name(field.target_field.column),
+                "on_delete_db": self._create_on_delete_sql(model, field),
             }
         table = model._meta.db_table
         sql = self.sql_create_column % {
