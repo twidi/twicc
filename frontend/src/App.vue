@@ -1038,6 +1038,8 @@ body.sidebar-toggle-floating {
     --diff-removedTextBackground: #FFC4C3;
     --diff-insertedLineBackground: #C0FFD8;
     --diff-insertedTextBackground: #A7E9B8;
+    --diff-insertedMarker: #3fb860;
+    --diff-removedMarker: #e5676a;
     --diff-selectionBackground: var(--selection-bg-color);
 
     /* --wa-font-mono moved to the shared styles/transcript-tokens.css. */
@@ -1107,6 +1109,8 @@ wa-split-panel {
     --diff-removedTextBackground: #5E1B1B;
     --diff-insertedLineBackground: #1B452B;
     --diff-insertedTextBackground: #2A573B;
+    --diff-insertedMarker: #4fa56a;
+    --diff-removedMarker: #c0575a;
     --diff-selectionBackground: var(--selection-bg-color);
 }
 

@@ -734,6 +734,39 @@ html.wa-dark {
     background: var(--panel-solid) !important;
 }
 
+/* Editors of the chat (tool diffs) sit on a tool card (styles/tool-cards.css), not on a panel: the editor
+   shows the card, and the gutter, which must stay opaque over the text scrolling under it, takes the
+   colour the card's gradient has at its left edge. Specificity stays above the dark `!important` rule. */
+:root .tool-diff-body .cm-editor {
+    background: transparent !important;
+}
+:root .tool-diff-body .cm-gutters {
+    --tool-gutter-mix: 15%;
+    background: color-mix(in oklab, var(--tool-c, var(--wa-color-brand-60)) var(--tool-gutter-mix), var(--surface-solid)) !important;
+    border-right: none;
+}
+:root.wa-dark .tool-diff-body .cm-gutters,
+.wa-dark .tool-diff-body .cm-gutters {
+    --tool-gutter-mix: 23%;
+}
+
+/* A changed line's number cell continues the tinted band of its code; the 3px change markers use the app's
+   diff palette instead of the saturated defaults of @codemirror/merge. */
+.diff-editor .cm-lineNumbers .cm-gutterElement.cm-changedLineGutter {
+    background-color: var(--diff-insertedLineBackground);
+}
+.diff-editor .cm-lineNumbers .cm-gutterElement.cm-deletedLineGutter,
+.diff-editor .cm-merge-a .cm-lineNumbers .cm-gutterElement.cm-changedLineGutter {
+    background-color: var(--diff-removedLineBackground);
+}
+.diff-editor .cm-changeGutter .cm-gutterElement.cm-changedLineGutter {
+    background: var(--diff-insertedMarker);
+}
+.diff-editor .cm-changeGutter .cm-gutterElement.cm-deletedLineGutter,
+.diff-editor .cm-merge-a .cm-changeGutter .cm-gutterElement.cm-changedLineGutter {
+    background: var(--diff-removedMarker);
+}
+
 /* The active line's gutter cell: the accent highlight of the app's highlighted rows, in both schemes
    (it was the theme's pale blue in light and the lowered surface in dark). */
 .cm-editor .cm-activeLineGutter {
