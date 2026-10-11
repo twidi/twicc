@@ -14,6 +14,8 @@ from django.conf import settings
 
 from twicc import provider_homes
 
+pytest_plugins = ["tests.content_storage_helpers"]
+
 
 # One counter per directory name prefix, for the whole run (see ``tmp_path``).
 _tmp_path_numbers = defaultdict(itertools.count)

@@ -169,6 +169,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--finalize", type=Path, help="Freeze only sanitized templates_raw_16384 release assets")
     parser.add_argument("--policy", type=Path, default=Path(__file__).with_name("content_dictionary_policy.json"))
     parser.add_argument("--seed", type=int, default=20261014)
     parser.add_argument("--sample-ids", type=int, default=60000)
@@ -225,7 +226,8 @@ def main():
         "policy_sha256": hashlib.sha256(args.policy.read_bytes()).hexdigest(),
         "providers": {},
     }
-    for provider, values in records.items():
+    release_entries = []
+    for provider, values in sorted(records.items()):
         if provider not in policy["providers"]:
             continue
         keys = set(policy["providers"][provider]["keys"])
@@ -290,6 +292,8 @@ def main():
                     (f"trained_weighted_{size}", "trained", (size, weighted)),
                 ]
             )
+        if args.finalize:
+            candidates = [candidate for candidate in candidates if candidate[0] == "templates_raw_16384"]
         for label, fmt, corpus in candidates:
             try:
                 dictionary = (
@@ -334,7 +338,27 @@ def main():
             if dictionary:
                 (args.output / f"{provider}_{label}.dict").write_bytes(dictionary.as_bytes())
             print(provider, label, entry["compressed_bytes"], flush=True)
+        if args.finalize:
+            label = "templates_raw_16384"
+            entry = info["variants"][label]
+            release_entries.append({
+                "provider": provider, "version": 1, "format": "raw", "file": f"{provider}_v1.dict",
+                "sha256": entry["sha256"], "byte_length": entry["dictionary_bytes"],
+                "policy_sha256": results["policy_sha256"], "seed": args.seed,
+            })
         results["providers"][provider] = info
+    if args.finalize:
+        if {entry["provider"] for entry in release_entries} != {"claude_code", "codex"}:
+            raise ValueError("Both provider dictionaries are required for release")
+        args.finalize.mkdir(parents=True, exist_ok=False)
+        for entry in release_entries:
+            payload = (args.output / f"{entry['provider']}_templates_raw_16384.dict").read_bytes()
+            if not 0 < len(payload) <= 16384:
+                raise ValueError("Release dictionary size is invalid")
+            (args.finalize / entry["file"]).write_bytes(payload)
+        (args.finalize / "manifest.json").write_bytes(
+            orjson.dumps({"schema_version": 1, "dictionaries": release_entries}, option=orjson.OPT_INDENT_2)
+        )
     (args.output / "results.json").write_bytes(orjson.dumps(results, option=orjson.OPT_INDENT_2))
     (args.output / "public-source-allowlist.json").write_bytes(orjson.dumps(policy, option=orjson.OPT_INDENT_2))
 

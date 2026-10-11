@@ -1567,3 +1567,17 @@ def test_empty_rebuild_generated_name_collision_rolls_back(connection):
     assert connection.connection.execute("SELECT id FROM new__scope_app_entry").fetchall() == [(7,)]
     assert "scope_app_entry" not in connection.introspection.table_names()
     assert_restored(connection)
+
+
+def test_new_null_incarnation_string_skips_checks_and_preserves_legacy_rows(connection):
+    field = models.CharField(max_length=36, null=True)
+    field.set_attributes_from_name("storage_incarnation")
+    with checks(connection) as statements, connection.schema_editor() as editor:
+        editor.add_field(state().apps.get_model("scope_app", "Child"), field)
+    assert fk_checks(statements) == []
+    assert connection.connection.execute("SELECT parent_id, label, storage_incarnation FROM child").fetchall() == [
+        (1, "child", None),
+    ]
+    assert any('ALTER TABLE "child" ADD COLUMN "storage_incarnation" varchar(36) NULL' in sql for sql in statements)
+    assert not any("CREATE INDEX" in sql or "new__child" in sql for sql in statements)
+    assert_restored(connection)

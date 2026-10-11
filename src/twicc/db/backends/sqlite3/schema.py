@@ -11,7 +11,7 @@ from django.db.backends.base.schema import BaseDatabaseSchemaEditor
 from django.db.backends.ddl_references import Statement
 from django.db.backends.sqlite3.schema import DatabaseSchemaEditor as SQLiteSchemaEditor
 from django.db.backends.utils import strip_quotes
-from django.db.models import ForeignKey, Index, IntegerField, UniqueConstraint
+from django.db.models import CharField, ForeignKey, Index, IntegerField, UniqueConstraint
 
 from twicc.db.migration_logging import log_fk_check
 
@@ -238,7 +238,8 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
         # nested callbacks, and table rebuilds keep the existing global fallback.
         if (
             self.collect_sql or self._null_column is not None
-            or type(field) not in (ForeignKey, IntegerField)
+            or type(field) not in (ForeignKey, IntegerField, CharField)
+            or (type(field) is CharField and field.db_index)
             or not field.null or field.primary_key or field.unique
             or (field.has_default() and field.default is not None) or field.has_db_default()
             or field.db_parameters(self.connection)["check"]

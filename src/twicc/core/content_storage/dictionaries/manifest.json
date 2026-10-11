@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "dictionaries": [
+    {
+      "provider": "claude_code",
+      "version": 1,
+      "format": "raw",
+      "file": "claude_code_v1.dict",
+      "sha256": "9b771b5466acb13aeaa9bc33246f26d83316b839914cff30f8e8a1a7c44983bd",
+      "byte_length": 16384,
+      "policy_sha256": "1036e300ee872cdbce969001b3d8527c0ba4db3ea61368d266c43118bbb9439d",
+      "seed": 20261014
+    },
+    {
+      "provider": "codex",
+      "version": 1,
+      "format": "raw",
+      "file": "codex_v1.dict",
+      "sha256": "e09a9e649bbf941e0b7a5a19dd1aeeefa8bd497ffa26dc35f7e28d5f86011fdd",
+      "byte_length": 12496,
+      "policy_sha256": "1036e300ee872cdbce969001b3d8527c0ba4db3ea61368d266c43118bbb9439d",
+      "seed": 20261014
+    }
+  ]
+}

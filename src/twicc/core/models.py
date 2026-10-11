@@ -3,6 +3,7 @@ from decimal import Decimal
 from functools import cached_property
 from typing import ClassVar, TypeAlias
 
+from django.core.validators import MinLengthValidator
 from django.db import models
 
 import logging
@@ -413,6 +414,10 @@ class Session(models.Model):
     # one JSONL file maps to exactly one session — the unique constraint also covers
     # the path-based lookups done by initial sync and the file watcher.
     file_path = models.CharField(max_length=500, unique=True)
+    content_storage_version = models.IntegerField(null=True)
+    content_state_epoch = models.IntegerField(null=True)
+    plaintext_verified_epoch = models.IntegerField(null=True)
+    storage_incarnation = models.CharField(max_length=36, null=True)
     history_epoch = models.PositiveIntegerField(default=0)
     last_offset = models.PositiveBigIntegerField(default=0)
     last_line = models.PositiveIntegerField(default=0)
@@ -804,6 +809,35 @@ class AsyncQuestionState(models.Model):
     state = models.JSONField(default=dict)
 
 
+class ContentDictionary(models.Model):
+    """Immutable public dictionary identity and exact release bytes."""
+
+    id = models.BigAutoField(primary_key=True)
+    provider = models.CharField(max_length=50)
+    version = models.PositiveIntegerField()
+    format = models.CharField(max_length=16)
+    sha256 = models.BinaryField(max_length=32, unique=True, validators=[MinLengthValidator(32)])
+    payload = models.BinaryField()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["provider", "version"], name="content_dictionary_provider_version")]
+
+
+class SessionItemContent(models.Model):
+    """Exact logical bytes with mutable storage representation and ownership."""
+
+    id = models.BigAutoField(primary_key=True)
+    sha256 = models.BinaryField(max_length=32, unique=True, validators=[MinLengthValidator(32)])
+    payload = models.BinaryField()
+    codec = models.CharField(max_length=8, choices=[("plain", "Plain"), ("zstd", "Zstd")], default="plain")
+    dictionary = models.ForeignKey(ContentDictionary, null=True, on_delete=models.PROTECT)
+    raw_size = models.PositiveBigIntegerField()
+    session_ids = models.JSONField(default=list)
+    dictionary_provider = models.CharField(max_length=50, default="")
+    compression_attempt_version = models.CharField(max_length=255, null=True)
+    compression_no_gain = models.BooleanField(default=False)
+
+
 class SessionItem(models.Model):
     """A session item corresponds to a single line in a JSONL file"""
 
@@ -815,6 +849,12 @@ class SessionItem(models.Model):
     )
     line_num = models.PositiveIntegerField()  # 1-based (first line = 1)
     content = models.TextField()
+    current_content = models.ForeignKey(
+        SessionItemContent, null=True, db_index=False, on_delete=models.PROTECT, related_name="current_items",
+    )
+    original_content = models.ForeignKey(
+        SessionItemContent, null=True, db_index=False, on_delete=models.PROTECT, related_name="original_items",
+    )
 
     # Display metadata fields
     display_level = models.PositiveSmallIntegerField(null=True, blank=True)  # ItemDisplayLevel enum value
