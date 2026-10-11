@@ -1410,8 +1410,8 @@ defineExpose({
 .icon-scan-item {
     /* Reset WebAwesome's native.css form-control sizing on a bare <button>.
        Rendered like the link actions: no background/border, left-aligned. */
-    appearance: none;
     -webkit-appearance: none;
+    appearance: none;
     height: auto;
     min-height: 0;
     line-height: normal;

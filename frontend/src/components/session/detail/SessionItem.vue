@@ -929,8 +929,8 @@ wa-details.item-details {
     }
 
     &::part(header) {
-        user-select: text;
         -webkit-user-select: text;
+        user-select: text;
     }
     &:has(.items-details-summary-right > wa-button) {
         &::part(header) {

@@ -79,8 +79,8 @@ onBeforeUnmount(() => cancel())
     color: var(--wa-color-text-quiet);
     cursor: grab;
     touch-action: none;
-    user-select: none;
     -webkit-user-select: none;
+    user-select: none;
     -webkit-touch-callout: none;
 }
 .reorder-handle wa-icon { margin: 0; }

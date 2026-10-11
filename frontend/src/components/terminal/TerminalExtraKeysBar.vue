@@ -400,8 +400,8 @@ button {
     background: var(--wa-color-surface-lowered);
     border-top: 1px solid var(--wa-color-surface-border);
     padding: var(--wa-space-2xs) var(--wa-space-xs) var(--wa-space-xs);
-    user-select: none;
     -webkit-user-select: none;
+    user-select: none;
 }
 
 /* Only while the floating reopen button is visible, clear the bottom-left. SessionLayout drives the

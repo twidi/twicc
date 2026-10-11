@@ -11,7 +11,9 @@
    so they beat the theme's @layer wa-theme declarations.
 
    Only this file declares backdrop-filter, always through a --glass-*-filter token (so the
-   fallbacks turn every blur off), and only on childless boxes: pseudo-elements, the two
+   fallbacks turn every blur off), the -webkit- alias first: the build's CSS minifier
+   (Lightning CSS) treats both as one property and keeps only the last one when the value
+   is a var(), which would leave Firefox without the standard property. Only on childless boxes: pseudo-elements, the two
    arrow parts and the opt-in glass-listbox-direct list boxes. A non-none backdrop-filter
    makes its element the containing block of its position: fixed descendants (Web
    Awesome's tooltip hover bridge, the submenu safe triangle): surfaces keep their shadow
@@ -219,8 +221,8 @@
     z-index: -1;
     border-radius: inherit;
     background-color: var(--glass-bg);
-    backdrop-filter: var(--glass-filter);
     -webkit-backdrop-filter: var(--glass-filter);
+    backdrop-filter: var(--glass-filter);
     opacity: var(--twicc-reveal, 1);
     pointer-events: none;
 }
@@ -232,8 +234,8 @@
     z-index: -1;
     border-radius: inherit;
     background-color: var(--glass-bg);
-    backdrop-filter: var(--glass-filter);
     -webkit-backdrop-filter: var(--glass-filter);
+    backdrop-filter: var(--glass-filter);
     opacity: var(--twicc-reveal, 1);
     pointer-events: none;
 }
@@ -288,8 +290,8 @@
     background-color: var(--glass-bg);
     border-color: var(--glass-border);
     box-shadow: var(--glass-shadow), var(--glass-highlight);
-    backdrop-filter: var(--glass-filter);
     -webkit-backdrop-filter: var(--glass-filter);
+    backdrop-filter: var(--glass-filter);
     opacity: var(--twicc-reveal, 1);
 }
 
@@ -300,8 +302,8 @@
     /* Web Awesome draws the arrow's bottom/right borders with --wa-color-surface-border,
        resolved outside the glass body: match the body's glass border. */
     border-color: var(--glass-border);
-    backdrop-filter: var(--glass-filter);
     -webkit-backdrop-filter: var(--glass-filter);
+    backdrop-filter: var(--glass-filter);
     opacity: var(--twicc-reveal, 1);
 }
 
@@ -395,8 +397,8 @@
 /* The blurred modal veil. Alone in its rule: a browser without ::part()::backdrop drops
    only this rule (the veil color still applies). */
 :where(wa-dialog)::part(dialog)::backdrop {
-    backdrop-filter: var(--glass-veil-filter);
     -webkit-backdrop-filter: var(--glass-veil-filter);
+    backdrop-filter: var(--glass-veil-filter);
 }
 
 /* Highlighted rows in Web Awesome menus and lists: a translucent accent tint instead of
@@ -429,8 +431,8 @@
     inset: 0;
     z-index: -1;
     background-color: var(--glass-sticky-bg);
-    backdrop-filter: var(--glass-filter);
     -webkit-backdrop-filter: var(--glass-filter);
+    backdrop-filter: var(--glass-filter);
     pointer-events: none;
 }
 
@@ -444,8 +446,8 @@
     inset: 0;
     z-index: -1;
     background-color: var(--glass-veil);
-    backdrop-filter: var(--glass-veil-filter);
     -webkit-backdrop-filter: var(--glass-veil-filter);
+    backdrop-filter: var(--glass-veil-filter);
     opacity: var(--glass-veil-opacity, 1);
     pointer-events: none;
 }
