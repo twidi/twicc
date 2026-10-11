@@ -12,6 +12,7 @@ import orjson
 from django.db import transaction
 from django.db.models import F
 
+from twicc.core.content_storage.readers import aload_current, effective_current
 from twicc.core.enums import Provider
 from twicc.core.models import (
     AgentInteraction,
@@ -164,11 +165,12 @@ def migration_preparation(source: HistoryMode, database: HistoryMode) -> Migrati
 
 
 async def get_db_history_mode(session_id: str) -> HistoryMode:
-    first = await SessionItem.objects.filter(session_id=session_id).order_by("line_num").only("content").afirst()
+    first = await SessionItem.objects.filter(session_id=session_id).order_by("line_num").only("id", "line_num", "current_content").afirst()
     if first is None:
         raise RolloutMigrationError(f"Session {session_id} has no stored first item")
+    await aload_current([first])
     try:
-        parsed = orjson.loads(first.content)
+        parsed = orjson.loads(effective_current(first))
     except (orjson.JSONDecodeError, TypeError) as error:
         raise RolloutMigrationError(f"Session {session_id} has malformed first item") from error
     if not isinstance(parsed, dict) or parsed.get("type") != "session_meta":

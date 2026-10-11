@@ -1,5 +1,6 @@
 """CLI implementation for the ``twicc session`` subcommand."""
 
+
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -156,6 +157,7 @@ def content(
     django.setup()
 
     from twicc.core.models import SessionItem
+    from twicc.core.content_storage.readers import effective_current, iter_matching_items, load_current
 
     contains = contains or []
 
@@ -172,16 +174,20 @@ def content(
     items = SessionItem.objects.filter(session_id=session_id)
     if range_str is not None:
         items = items.filter(**_parse_range_filter(range_str))
-    for term in contains:
-        # Chained filters AND together; each term must appear in the raw content.
-        items = items.filter(content__icontains=term)
     items = items.order_by("line_num")
-
-    total = items.count()
-    selected = _slice_window(items, total, limit=limit, offset=offset, tail=tail)
+    if contains:
+        # Keep only addresses while counting decoded matches. Retain selected payloads only.
+        lines = [item.line_num for item in iter_matching_items(items, contains)]
+        total = len(lines)
+        selected_lines = _slice_window(lines, total, limit=limit, offset=offset, tail=tail)
+        selected = list(items.filter(line_num__in=selected_lines).defer("content"))
+    else:
+        total = items.count()
+        selected = list(_slice_window(items.defer("content"), total, limit=limit, offset=offset, tail=tail))
+    load_current(selected)
 
     # Wrap each item with its line number; parse the raw content string into a real JSON object.
-    data = [{"line_num": item.line_num, "content": orjson.loads(item.content)} for item in selected]
+    data = [{"line_num": item.line_num, "content": orjson.loads(effective_current(item))} for item in selected]
 
     if tail is not None:
         # Same reading as ``messages``: report the range the window really covers,

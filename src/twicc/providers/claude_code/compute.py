@@ -18,8 +18,8 @@ from datetime import datetime, UTC
 from pathlib import Path
 from typing import ClassVar, NamedTuple
 
-from django.db.models import Q
 
+from twicc.core.content_storage.readers import load_current, effective_current, iter_matching_items
 from twicc.context_injection import ATTACHMENTS_KEY, GOAL_CLEAR_ARGS, INSTRUCTION_BLOCK_MARKER
 from twicc.core.services.attachments.types import UserTextSlot
 from twicc.core.enums import ItemKind, Provider
@@ -902,16 +902,16 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
             .filter(
                 session_id=session_id,
                 line_num__lt=current_line_num,
-                content__contains='twiccTasksData',
             )
             .order_by('-line_num')
-            .first()
         )
+        snapshot_item = next(iter_matching_items(snapshot_item, ['twiccTasksData'], limit=1), None)
 
         replay_after_line = 0
         if snapshot_item is not None:
             try:
-                parsed = orjson.loads(snapshot_item.content)
+                load_current([snapshot_item])
+                parsed = orjson.loads(effective_current(snapshot_item))
             except orjson.JSONDecodeError:
                 parsed = None
             snapshot = _extract_tasks_snapshot(parsed) if parsed else None
@@ -938,17 +938,15 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
                 session_id=session_id,
                 line_num__lt=current_line_num,
             )
-            .filter(
-                Q(content__contains='"name":"TaskCreate"')
-                | Q(content__contains='"name":"TaskUpdate"')
-                | Q(content__contains='"name":"TaskGet"')
-                | Q(content__contains='"name":"TaskList"')
-            )
+
             .order_by('line_num')
         )
-        for item in replay_items:
+        for item in iter_matching_items(replay_items, [
+            '"name":"TaskCreate"', '"name":"TaskUpdate"', '"name":"TaskGet"', '"name":"TaskList"',
+        ], match_all=False):
             try:
-                parsed = orjson.loads(item.content)
+                load_current([item])
+                parsed = orjson.loads(effective_current(item))
             except orjson.JSONDecodeError:
                 continue
             for block in _iter_task_tool_use_blocks(parsed):
@@ -1987,10 +1985,11 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
         user_chars = 0
         candidates = SessionItem.objects.filter(
             session_id=session_id, line_num__lt=before_line_num,
-        ).order_by("line_num").only("content")
+        ).order_by("line_num").only("id", "line_num", "current_content")
         for candidate in candidates.iterator(chunk_size=20):
             try:
-                parsed = orjson.loads(candidate.content)
+                load_current([candidate])
+                parsed = orjson.loads(effective_current(candidate))
             except orjson.JSONDecodeError:
                 continue
             if not isinstance(parsed, dict):
@@ -2120,11 +2119,9 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
         # source dict's ``media_type`` always starts with ``image/``).
         # Cheap LIKE pre-filter; iter_tool_result_image_refs handles the
         # final shape check.
-        return SessionItem.objects.filter(
-            session_id=session_id,
-            line_num__lt=before_line_num,
-            content__contains='"media_type":"image/',
-        ).order_by('-line_num')
+        return iter_matching_items(SessionItem.objects.filter(
+            session_id=session_id, line_num__lt=before_line_num,
+        ).order_by('-line_num'), ['"media_type":"image/'])
 
     rebuild_agent_prompt_links = True
 
@@ -2594,10 +2591,9 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
     def agent_tool_candidates_query(self, parent_session_id: str):
         # Pre-filter on the textual marker of an agent-spawning tool_use to
         # avoid scanning every item of the parent session.
-        return SessionItem.objects.filter(
-            Q(content__contains='"name":"Task"') | Q(content__contains='"name":"Agent"'),
+        return iter_matching_items(SessionItem.objects.filter(
             session_id=parent_session_id,
-        ).order_by('-line_num')
+        ).order_by('-line_num'), ['"name":"Task"', '"name":"Agent"'], match_all=False)
 
     def is_session_start_marker(self, parsed_json: dict) -> bool:
         # Claude Code emits a `progress` line whose `data.hookEvent` is

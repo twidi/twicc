@@ -192,8 +192,8 @@ from datetime import datetime
 from typing import ClassVar, NamedTuple
 
 import orjson
-from django.db.models import Q
 
+from twicc.core.content_storage.readers import effective_current, load_current, iter_matching_items
 from twicc.core.enums import ItemKind, Provider
 from twicc.core.models import (
     AgentInteraction,
@@ -3110,7 +3110,8 @@ class CodexSessionCompute(BaseSessionCompute):
         )
         for candidate in candidates:
             try:
-                parsed = orjson.loads(candidate.content)
+                load_current([candidate])
+                parsed = orjson.loads(effective_current(candidate))
             except orjson.JSONDecodeError:
                 continue
             if not isinstance(parsed, dict):
@@ -3121,13 +3122,15 @@ class CodexSessionCompute(BaseSessionCompute):
 
     def _live_fork_fields(self, session_id: str) -> ForkFields:
         """The session's line-1 ``session_meta`` fork fields, read from its ``SessionItem``."""
-        content = SessionItem.objects.filter(
+        item = SessionItem.objects.filter(
             session_id=session_id, line_num=1,
-        ).values_list('content', flat=True).first()
-        if content is None:
+        ).defer('content').first()
+        if item is None:
             return ForkFields(None, None)
+        load_current([item])
         try:
-            parsed = orjson.loads(content)
+            load_current([item])
+            parsed = orjson.loads(effective_current(item))
         except orjson.JSONDecodeError:
             return ForkFields(None, None)
         return fork_fields(parsed) if isinstance(parsed, dict) else ForkFields(None, None)
@@ -3432,7 +3435,8 @@ class CodexSessionCompute(BaseSessionCompute):
         )
         for candidate in candidates:
             try:
-                parsed = orjson.loads(candidate.content)
+                load_current([candidate])
+                parsed = orjson.loads(effective_current(candidate))
             except orjson.JSONDecodeError:
                 continue
             if not isinstance(parsed, dict):
@@ -3469,7 +3473,8 @@ class CodexSessionCompute(BaseSessionCompute):
         )
         for candidate in candidates:
             try:
-                parsed = orjson.loads(candidate.content)
+                load_current([candidate])
+                parsed = orjson.loads(effective_current(candidate))
             except orjson.JSONDecodeError:
                 continue
             if not isinstance(parsed, dict):
@@ -3510,7 +3515,8 @@ class CodexSessionCompute(BaseSessionCompute):
         )
         for candidate in candidates:
             try:
-                parsed = orjson.loads(candidate.content)
+                load_current([candidate])
+                parsed = orjson.loads(effective_current(candidate))
             except orjson.JSONDecodeError:
                 continue
             if not isinstance(parsed, dict):
@@ -3567,7 +3573,8 @@ class CodexSessionCompute(BaseSessionCompute):
         )
         for candidate in candidates:
             try:
-                parsed = orjson.loads(candidate.content)
+                load_current([candidate])
+                parsed = orjson.loads(effective_current(candidate))
             except orjson.JSONDecodeError:
                 continue
             if not isinstance(parsed, dict):
@@ -3615,7 +3622,8 @@ class CodexSessionCompute(BaseSessionCompute):
         )
         for candidate in candidates:
             try:
-                parsed = orjson.loads(candidate.content)
+                load_current([candidate])
+                parsed = orjson.loads(effective_current(candidate))
             except orjson.JSONDecodeError:
                 continue
             if not isinstance(parsed, dict):
@@ -4068,7 +4076,8 @@ class CodexSessionCompute(BaseSessionCompute):
         )
         for candidate in candidates:
             try:
-                parsed = orjson.loads(candidate.content)
+                load_current([candidate])
+                parsed = orjson.loads(effective_current(candidate))
             except orjson.JSONDecodeError:
                 continue
             if not isinstance(parsed, dict):
@@ -4086,7 +4095,8 @@ class CodexSessionCompute(BaseSessionCompute):
             if candidate.line_num <= prev_tc_line:
                 break
             try:
-                parsed = orjson.loads(candidate.content)
+                load_current([candidate])
+                parsed = orjson.loads(effective_current(candidate))
             except orjson.JSONDecodeError:
                 continue
             if not isinstance(parsed, dict):
@@ -4139,7 +4149,8 @@ class CodexSessionCompute(BaseSessionCompute):
         )
         for candidate in context_candidates:
             try:
-                parsed = orjson.loads(candidate.content)
+                load_current([candidate])
+                parsed = orjson.loads(effective_current(candidate))
             except orjson.JSONDecodeError:
                 continue
             if not isinstance(parsed, dict):
@@ -4159,7 +4170,8 @@ class CodexSessionCompute(BaseSessionCompute):
             if candidate.line_num <= context_line:
                 break
             try:
-                parsed = orjson.loads(candidate.content)
+                load_current([candidate])
+                parsed = orjson.loads(effective_current(candidate))
             except orjson.JSONDecodeError:
                 continue
             if not isinstance(parsed, dict):
@@ -4634,7 +4646,8 @@ class CodexSessionCompute(BaseSessionCompute):
         )
         for candidate in candidates:
             try:
-                parsed = orjson.loads(candidate.content)
+                load_current([candidate])
+                parsed = orjson.loads(effective_current(candidate))
             except orjson.JSONDecodeError:
                 continue
             if not isinstance(parsed, dict):
@@ -4952,13 +4965,11 @@ class CodexSessionCompute(BaseSessionCompute):
         # walker's ``[:images_needed]`` slice without ever yielding a
         # hit. Cheap LIKE pre-filters; iter_tool_result_image_refs does
         # the final shape check.
-        return SessionItem.objects.filter(
-            Q(content__contains='"type":"function_call_output"')
-            | Q(content__contains='"type":"custom_tool_call_output"'),
-            session_id=session_id,
-            line_num__lt=before_line_num,
-            content__contains='"type":"input_image"',
-        ).order_by('-line_num')
+        return iter_matching_items(SessionItem.objects.filter(
+            session_id=session_id, line_num__lt=before_line_num,
+        ).order_by('-line_num'), [
+            '"type":"function_call_output"', '"type":"custom_tool_call_output"',
+        ], match_all=False, required_terms=['"type":"input_image"'])
 
     def extract_agent_info_from_tool_result(
         self, parsed_json: dict
@@ -5114,10 +5125,9 @@ class CodexSessionCompute(BaseSessionCompute):
     def agent_tool_candidates_query(self, parent_session_id: str):
         # Pre-filter on the textual marker of a ``spawn_agent`` function_call to
         # avoid scanning every item of the parent session.
-        return SessionItem.objects.filter(
+        return iter_matching_items(SessionItem.objects.filter(
             session_id=parent_session_id,
-            content__contains='"name":"spawn_agent"',
-        ).order_by('-line_num')
+        ).order_by('-line_num'), ['"name":"spawn_agent"'])
 
     def extract_paths_from_tool_uses(self, parsed_json: dict) -> list[str]:
         # Codex only exposes absolute file paths through

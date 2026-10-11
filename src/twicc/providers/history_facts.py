@@ -1,8 +1,10 @@
 """Exact, prior-line readers for computed session history facts and raw items."""
 
+
 from collections.abc import Iterator, Sequence
 from typing import NamedTuple
 
+from twicc.core.content_storage.readers import effective_current, load_current
 from twicc.core.models import HistoryFactKind, Session, SessionHistoryFact, SessionItem
 from twicc.providers.helpers import get_provider_helpers
 
@@ -54,12 +56,13 @@ def iter_history_items(
     while True:
         rows = list(
             SessionItem.objects.filter(session_id=session_id, line_num__lt=cursor)
-            .order_by("-line_num").values_list("line_num", "content")[:page_size]
+            .order_by("-line_num").defer("content")[:page_size]
         )
-        yield from rows
+        load_current(rows)
+        yield from ((item.line_num, effective_current(item)) for item in rows)
         if len(rows) < page_size:
             return
-        cursor = rows[-1][0]
+        cursor = rows[-1].line_num
 
 
 def replace_history_facts(session_id: str, facts: Sequence[HistoryFact]) -> None:
@@ -145,6 +148,7 @@ def iter_resolver_items(
         for line in lines:
             item = SessionItem.objects.filter(session_id=session_id, line_num=line).first()
             if item is not None:
+                load_current([item])
                 yield item
         return
     cursor = before_line
@@ -152,6 +156,7 @@ def iter_resolver_items(
         rows = list(SessionItem.objects.filter(
             session_id=session_id, line_num__lt=cursor,
         ).order_by("-line_num")[:_FACT_PAGE_SIZE])
+        load_current(rows)
         yield from rows
         if len(rows) < _FACT_PAGE_SIZE:
             return
@@ -209,7 +214,7 @@ class HistoryFactContext:
             return
         for item in iter_resolver_items(self.session_id, kind, key, before_line=before_line):
             try:
-                parsed = orjson.loads(item.content)
+                parsed = orjson.loads(effective_current(item))
             except orjson.JSONDecodeError:
                 continue
             if isinstance(parsed, dict):

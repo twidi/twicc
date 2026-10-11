@@ -121,7 +121,9 @@ def test_iter_history_items_pages_backward_across_gaps_and_malformed_content(ses
         (2, '{"line":2}'), (1, '{"line":1}'),
     ]
     selects = [query["sql"].upper() for query in queries if query["sql"].lstrip().upper().startswith("SELECT")]
-    assert len(selects) == 3
+    # Cursor pages stay bounded. Explicit mixed-content payload reads are separate.
+    pages = [sql for sql in selects if "LIMIT 2" in sql]
+    assert len(pages) == 3
     assert all(" OFFSET " not in sql and " LIKE " not in sql for sql in selects)
 
 

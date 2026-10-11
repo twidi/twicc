@@ -26,6 +26,7 @@ import re
 
 import orjson
 
+from twicc.core.content_storage.readers import effective_current, iter_matching_items
 from twicc.core.enums import Provider
 from twicc.provider_homes import claude_projects_dir
 
@@ -176,12 +177,12 @@ def _launch_args(session_id: str, run_id: str):
     """
     from twicc.core.models import SessionItem
 
-    base = SessionItem.objects.filter(session_id=session_id).only("content")
+    base = SessionItem.objects.filter(session_id=session_id).only("id", "line_num", "current_content")
     # 1) run_id → launching tool_use_id (from its tool_result).
     tool_use_id = None
-    for it in base.filter(content__contains=run_id).iterator(chunk_size=20):
+    for it in iter_matching_items(base.order_by("line_num"), [run_id]):
         try:
-            parsed = orjson.loads(it.content)
+            parsed = orjson.loads(effective_current(it))
         except orjson.JSONDecodeError:
             continue
         tur = parsed.get("toolUseResult")
@@ -199,9 +200,9 @@ def _launch_args(session_id: str, run_id: str):
     if not tool_use_id:
         return None
     # 2) tool_use_id → the Workflow tool_use's input.args.
-    for it in base.filter(content__contains=tool_use_id).iterator(chunk_size=20):
+    for it in iter_matching_items(base.order_by("line_num"), [tool_use_id]):
         try:
-            parsed = orjson.loads(it.content)
+            parsed = orjson.loads(effective_current(it))
         except orjson.JSONDecodeError:
             continue
         content = (parsed.get("message") or {}).get("content")

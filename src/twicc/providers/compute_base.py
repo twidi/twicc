@@ -42,8 +42,9 @@ from typing import Any, ClassVar, Literal, NamedTuple
 import orjson
 from django.core.exceptions import MultipleObjectsReturned
 from django.db import connection, transaction
-from django.db.models import F, QuerySet
+from django.db.models import F
 
+from twicc.core.content_storage.readers import load_current, effective_current, iter_current_items, set_current_override
 from twicc.context_injection import (
     ATTACHMENTS_KEY,
     extract_attachments_block,
@@ -1533,25 +1534,25 @@ class BaseSessionCompute:
 
     def image_candidate_queryset(
         self, session_id: str, before_line_num: int
-    ) -> QuerySet[SessionItem]:
-        """Return a queryset of items that may contain a base64 image,
+    ) -> Iterator[SessionItem]:
+        """Return decoded candidates that may contain a base64 image,
         ordered ``line_num`` DESC, strictly before ``before_line_num``.
 
         Used by :meth:`iter_images_backward` to look up images that
         landed in earlier watcher batches (so the row is already in the
         DB). The default returns every prior item — correct but
         unnecessarily expensive on large sessions. Each provider should
-        override with a tight ``content__contains`` filter on a literal
+        override with a decoded SQLite LIKE prefilter on a literal
         that occurs in *every* image-bearing tool_result (e.g. Claude
         Code uses ``'"media_type":"image/'``).
 
-        The caller slices the queryset with ``[:images_needed]`` so
+        The caller limits the decoded iterator after the textual prefilter, so
         providers don't need to limit themselves — they just have to
         keep the ordering and the cheap pre-filter.
         """
-        return SessionItem.objects.filter(
+        return iter_current_items(SessionItem.objects.filter(
             session_id=session_id, line_num__lt=before_line_num,
-        ).order_by('-line_num')
+        ).order_by('-line_num'), 128, 8 * 1024 * 1024)
 
     def iter_images_backward(
         self,
@@ -1570,7 +1571,7 @@ class BaseSessionCompute:
            order — used in live watcher mode where the item carrying the
            image landed in the same JSONL batch as the assistant message
            referencing it and is therefore not yet committed to the DB.
-        2. :meth:`image_candidate_queryset` sliced to ``images_needed``
+        2. :meth:`image_candidate_queryset` limited to ``images_needed``
            rows — handles older items already persisted.
 
         Stops as soon as ``images_needed`` hits have been yielded. A
@@ -1593,10 +1594,13 @@ class BaseSessionCompute:
                     if yielded >= images_needed:
                         return
 
-        qs = self.image_candidate_queryset(session_id, before_line_num)[:images_needed]
+        from itertools import islice
+
+        qs = islice(self.image_candidate_queryset(session_id, before_line_num), images_needed)
         for item in qs:
             try:
-                parsed = orjson.loads(item.content)
+                load_current([item])
+                parsed = orjson.loads(effective_current(item))
             except orjson.JSONDecodeError:
                 continue
             for tool_use_id, media_type, data in self.iter_tool_result_image_refs(parsed):
@@ -1888,19 +1892,21 @@ class BaseSessionCompute:
         """
         raise NotImplementedError
 
-    def agent_tool_candidates_query(self, parent_session_id: str) -> QuerySet[SessionItem]:
+    def agent_tool_candidates_query(self, parent_session_id: str) -> Iterator[SessionItem]:
         """
-        Return a :class:`SessionItem` queryset of items in ``parent_session_id``
+        Return decoded :class:`SessionItem` candidates in ``parent_session_id``
         likely to contain an agent-spawning ``tool_use``, ordered by descending
         ``line_num``.
 
         The base implementation queries every item of the session — fine for
         correctness, expensive on large sessions. Providers override to apply
-        a fast pre-filter (Claude Code uses
-        ``Q(content__contains='"name":"Task"') | Q(content__contains='"name":"Agent"')``)
-        and let the caller verify each candidate by parsing its content.
+        decoded textual prefilters with the provider's original AND/OR rules.
+        The caller validates each candidate after the prefilter.
         """
-        return SessionItem.objects.filter(session_id=parent_session_id).order_by('-line_num')
+        return iter_current_items(
+            SessionItem.objects.filter(session_id=parent_session_id).order_by('-line_num'),
+            128, 8 * 1024 * 1024,
+        )
 
     def is_session_start_marker(self, parsed_json: dict) -> bool:
         """
@@ -2066,7 +2072,8 @@ class BaseSessionCompute:
         # ALWAYS with collapsible suffix = ALWAYS item is the head
         if previous.display_level == ItemDisplayLevel.ALWAYS:
             try:
-                parsed = orjson.loads(previous.content)
+                load_current([previous])
+                parsed = orjson.loads(effective_current(previous))
                 _, has_suffix = self.detect_prefix_suffix(parsed, previous.kind)
                 if has_suffix:
                     return previous.line_num
@@ -2227,7 +2234,8 @@ class BaseSessionCompute:
 
         for candidate in candidates:
             try:
-                candidate_parsed = orjson.loads(candidate.content)
+                load_current([candidate])
+                candidate_parsed = orjson.loads(effective_current(candidate))
             except orjson.JSONDecodeError:
                 continue
             if not isinstance(candidate_parsed, dict):
@@ -2386,7 +2394,8 @@ class BaseSessionCompute:
 
         for candidate in candidates:
             try:
-                candidate_parsed = orjson.loads(candidate.content)
+                load_current([candidate])
+                candidate_parsed = orjson.loads(effective_current(candidate))
             except orjson.JSONDecodeError:
                 continue
             if not isinstance(candidate_parsed, dict):
@@ -2458,7 +2467,8 @@ class BaseSessionCompute:
         matches = []
         for item in iter_resolver_items(owner_id, HistoryFactKind.TOOL_CALL):
             try:
-                parsed = orjson.loads(item.content)
+                load_current([item])
+                parsed = orjson.loads(effective_current(item))
             except orjson.JSONDecodeError:
                 continue
             if not isinstance(parsed, dict):
@@ -2549,9 +2559,10 @@ class BaseSessionCompute:
             info = metas.get(child.id)
             if info and (info.launcher_session_id != owner.id or info.tool_use_id is not None):
                 continue
-            for item in child.items.order_by("line_num").iterator(chunk_size=100):
+            for item in iter_current_items(child.items.order_by("line_num"), 100, 8 * 1024 * 1024):
                 try:
-                    parsed = orjson.loads(item.content)
+                    load_current([item])
+                    parsed = orjson.loads(effective_current(item))
                 except orjson.JSONDecodeError:
                     continue
                 prompt = self.extract_user_message_text(parsed)
@@ -2606,7 +2617,8 @@ class BaseSessionCompute:
                             if item.kind not in (None, ItemKind.ASSISTANT_MESSAGE, ItemKind.CONTENT_ITEMS):
                                 continue
                             try:
-                                parsed = orjson.loads(item.content)
+                                load_current([item])
+                                parsed = orjson.loads(effective_current(item))
                             except orjson.JSONDecodeError:
                                 continue
                             if not isinstance(parsed, dict):
@@ -2621,7 +2633,8 @@ class BaseSessionCompute:
                 if item.kind not in (None, ItemKind.ASSISTANT_MESSAGE, ItemKind.CONTENT_ITEMS):
                     continue
                 try:
-                    parsed = orjson.loads(item.content)
+                    load_current([item])
+                    parsed = orjson.loads(effective_current(item))
                 except orjson.JSONDecodeError:
                     continue
                 if not isinstance(parsed, dict):
@@ -2656,7 +2669,8 @@ class BaseSessionCompute:
         matches = []
         for item in iter_resolver_items(root_id, None):
             try:
-                parsed = orjson.loads(item.content)
+                load_current([item])
+                parsed = orjson.loads(effective_current(item))
             except orjson.JSONDecodeError:
                 continue
             if not isinstance(parsed, dict):
@@ -3050,13 +3064,14 @@ class BaseSessionCompute:
         batch_spawn_candidates: dict[str, list[SessionItem]] = {}
         queue_completions = []
 
-        for item in queryset.iterator(chunk_size=batch_size):
+        for item in iter_current_items(queryset, batch_size, 8 * 1024 * 1024):
             source_item_count += 1
             # Snapshot original state before any computation, for change detection
             original_serialized[item.id] = serialize_item(item)
 
             try:
-                parsed = orjson.loads(item.content)
+                load_current([item])
+                parsed = orjson.loads(effective_current(item))
             except orjson.JSONDecodeError:
                 logger.warning(f"Invalid JSON in item {item.session_id}:{item.line_num}")
                 parsed = {}
@@ -3069,8 +3084,9 @@ class BaseSessionCompute:
             new_content = self.transform_inline(
                 parsed, session_id=session_id, line_num=item.line_num,
             )
-            if new_content is not None and new_content != item.content:
+            if new_content is not None and new_content != effective_current(item):
                 item.content = new_content
+                set_current_override(item, new_content)
                 content_overrides.append({'id': item.id, 'content': new_content})
 
             if is_main_session:
@@ -4198,6 +4214,7 @@ class BaseSessionCompute:
             )
             if new_content is not None:
                 item.content = new_content
+                set_current_override(item, new_content)
 
             # Provider-specific tool_result enrichment from out-of-band caches
             # (e.g. Claude Code injects originalFile from the PreToolUse hook).
@@ -4208,6 +4225,7 @@ class BaseSessionCompute:
                     )
                     if enriched is not None:
                         item.content = enriched
+                        set_current_override(item, enriched)
                 except Exception:
                     logger.exception(
                         "Failed to enrich tool_result with cached data "
@@ -4336,7 +4354,8 @@ class BaseSessionCompute:
                         )
                         if first_user_message is not None:
                             try:
-                                first_parsed = orjson.loads(first_user_message.content)
+                                load_current([first_user_message])
+                                first_parsed = orjson.loads(effective_current(first_user_message))
                             except orjson.JSONDecodeError:
                                 pass
                             else:

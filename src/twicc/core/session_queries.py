@@ -10,10 +10,12 @@ must wrap them in ``sync_to_async``.
 
 from __future__ import annotations
 
+
 from typing import NamedTuple
 
 from django.db.models import Count, Max, Min, Q
 
+from twicc.core.content_storage.readers import load_current
 from twicc.core.enums import Provider
 
 # The four aggregates that define a tool call's completion state. Kept as a single
@@ -114,6 +116,7 @@ def tool_results_payload(session, line_num, tool_id, max_line=None) -> dict:
     if max_line is not None:
         qs = qs.filter(line_num__lte=max_line)
     items = list(qs.order_by("line_num"))
+    load_current(items)
     results = get_provider_helpers(session.provider).get_tool_results(items, tool_id)
     return {"results": results}
 
@@ -203,7 +206,7 @@ def spawn_display_names(links, helpers) -> dict[tuple[str, str], str]:
         condition |= Q(session_id=link.session_id, line_num=link.tool_use_line_num)
     items = {
         (item.session_id, item.line_num): item
-        for item in SessionItem.objects.filter(condition).only("session_id", "line_num", "content")
+        for item in SessionItem.objects.filter(condition).only("session_id", "line_num", "current_content")
     }
     names = {}
     for link in links:

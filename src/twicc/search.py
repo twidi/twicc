@@ -419,7 +419,10 @@ def reindex_session(session_id: str) -> None:
         .filter(session=session, kind__in=[ItemKind.USER_MESSAGE, ItemKind.ASSISTANT_MESSAGE])
         .order_by("line_num")
     )
-    for msg in get_provider_helpers(session.provider).get_indexable_messages(items):
+    from twicc.core.content_storage.readers import iter_current_items
+
+    loaded = iter_current_items(items, 256, 8 * 1024 * 1024)
+    for msg in get_provider_helpers(session.provider).get_indexable_messages(loaded):
         index_document(
             session_id, session.project_id, msg.line_num, msg.text,
             msg.from_role, msg.timestamp, session.archived,

@@ -3,9 +3,11 @@ shared item-query helpers, applying the display ceiling + frozen line."""
 
 from __future__ import annotations
 
+
 from asgiref.sync import sync_to_async
 from django.http import Http404, HttpResponseNotAllowed, JsonResponse
 
+from twicc.core.content_storage.readers import effective_current, aload_current
 from twicc.core.serializers import (
     session_compute_ready,
     serialize_session_item,
@@ -154,6 +156,7 @@ async def _items(request, token, subagent_id=None):
         return _json({"error": "At least one 'range' query parameter is required"}, safe=True)
     qs = filtered_items_qs(session, extra=ranges, **_ceiling_kwargs(ctx, session)).order_by("line_num")
     items = await sync_to_async(list)(qs)
+    await aload_current(items)
     return _json([serialize_session_item(i) for i in items], safe=False)
 
 
@@ -202,7 +205,8 @@ async def _result_items(request, token, tool_id, subagent_id=None):
     if max_line is not None:
         qs = qs.filter(line_num__lte=max_line)
     items = await sync_to_async(list)(qs.order_by("line_num"))
-    out = [serialize_session_item(i) for i in items if len(i.content or "") <= _MAX_BACKEND_PATCH_BYTES]
+    await aload_current(items)
+    out = [serialize_session_item(i) for i in items if len(effective_current(i) or "") <= _MAX_BACKEND_PATCH_BYTES]
     return _json(out, safe=False)
 
 

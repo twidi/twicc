@@ -72,6 +72,7 @@ the idle backstop is the original one.
 
 from __future__ import annotations
 
+
 import os
 import time
 from typing import NamedTuple
@@ -514,6 +515,9 @@ class _SessionWait:
                 for item in new_items:
                     if item.kind != ItemKind.API_ERROR:
                         continue
+                    from twicc.core.content_storage.readers import load_current
+
+                    load_current([item])
                     parsed = helpers.parse_item_content(item)
                     if parsed is None or not parsed.get("isApiErrorMessage"):
                         # A retry the CLI is still working through

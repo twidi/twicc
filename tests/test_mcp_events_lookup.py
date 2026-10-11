@@ -51,7 +51,8 @@ def test_first_prompt_order_and_cursor(session, django_assert_num_queries):
         (5, "later", ItemKind.USER_MESSAGE)]:
         session.items.create(line_num=line, kind=kind,
             content=orjson.dumps({"message": {"content": text}}).decode())
-    with django_assert_num_queries(1):
+    # This legacy page uses one metadata query and two explicit fallback queries.
+    with django_assert_num_queries(3):
         assert first_non_command_prompt(session.id, session.provider, 1).line_num == 4
     assert first_non_command_prompt(session.id, session.provider, 5) is None
 

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import orjson
 from django.conf import settings
 
+from twicc.core.content_storage.readers import effective_current, load_current
 from twicc.core.enums import Provider
 from twicc.pricing import FamilyPrices
 from twicc.providers.helpers import (
@@ -247,7 +248,8 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
         from .compute import AGENT_TOOL_NAMES
 
         try:
-            parsed = orjson.loads(item.content)
+            load_current([item])
+            parsed = orjson.loads(effective_current(item))
         except (orjson.JSONDecodeError, TypeError):
             return None
         if not isinstance(parsed, dict):
@@ -789,7 +791,8 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
         results: list[dict] = []
         for item in items:
             try:
-                parsed = orjson.loads(item.content)
+                load_current([item])
+                parsed = orjson.loads(effective_current(item))
             except orjson.JSONDecodeError:
                 continue
             content_list = get_message_content_list(parsed, "user")

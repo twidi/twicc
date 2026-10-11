@@ -7,6 +7,8 @@ safe to call from async contexts without sync_to_async wrapping, as long as
 the model instance was already fetched from the database.
 """
 
+
+from twicc.core.content_storage.readers import effective_current
 from twicc.inline_artifacts.publications import latest_publications
 from twicc.project_icons import project_own_icon_url, project_repo_icon_url
 from twicc.providers.helpers import AGENT_SETTINGS_HIDDEN_FROM_FRONTEND, AgentSettings, get_provider_helpers
@@ -356,7 +358,7 @@ def serialize_session_item(item):
     """
     return {
         "line_num": item.line_num,
-        "content": item.content,
+        "content": effective_current(item),
         # Display metadata fields
         "display_level": item.display_level,
         "group_head": item.group_head,

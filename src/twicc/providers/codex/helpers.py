@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import orjson
 from django.conf import settings
 
+from twicc.core.content_storage.readers import effective_current, load_current
 from twicc.core.enums import Provider
 from twicc.pricing import FamilyPrices
 from twicc.providers.helpers import (
@@ -172,7 +173,8 @@ class CodexHelpers(BaseProviderHelpers):
         from .compute import _SPAWN_AGENT_FUNCTION_NAME
 
         try:
-            parsed = orjson.loads(item.content)
+            load_current([item])
+            parsed = orjson.loads(effective_current(item))
         except (orjson.JSONDecodeError, TypeError):
             return None
         if not isinstance(parsed, dict):
@@ -814,7 +816,8 @@ class CodexHelpers(BaseProviderHelpers):
         results: list[dict] = []
         for item in items:
             try:
-                parsed = orjson.loads(item.content)
+                load_current([item])
+                parsed = orjson.loads(effective_current(item))
             except orjson.JSONDecodeError:
                 continue
             if not isinstance(parsed, dict):

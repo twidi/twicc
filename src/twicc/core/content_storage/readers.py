@@ -94,6 +94,8 @@ def load_current(items: Sequence[SessionItem]) -> None:
             if 'content' not in state:
                 deferred.append(item)
         else:
+            if state.get('_loaded_current_id', UNLOADED) == item.current_content_id and '_loaded_current' in state:
+                continue
             targets.setdefault(item.current_content_id, []).append(item)
     if deferred:
         by_pk = {}
@@ -216,18 +218,23 @@ def _literal_like_pattern(term: str) -> re.Pattern:
 
 
 def iter_matching_items(
-    queryset: QuerySet, terms: Sequence[str], limit: int | None = None,
+    queryset: QuerySet, terms: Sequence[str], limit: int | None = None, *, match_all: bool = True,
+    required_terms: Sequence[str] = (),
 ) -> Iterator[SessionItem]:
-    """Yield ordered decoded candidates matching every SQLite icontains term."""
+    """Yield ordered decoded candidates with AND (default) or OR SQLite LIKE matching."""
     if limit is not None and limit < 0:
         raise ValueError('Content match limit must not be negative')
     if limit == 0:
         return
     patterns = [_literal_like_pattern(term) for term in terms]
+    required_patterns = [_literal_like_pattern(term) for term in required_terms]
     matched = 0
     for item in iter_current_items(queryset, DEFAULT_ROW_BUDGET, DEFAULT_BYTE_BUDGET):
         text = effective_current(item).split('\x00', 1)[0].translate(_ASCII_LOWER)
-        if all(pattern.fullmatch(text) is not None for pattern in patterns):
+        checks = (pattern.fullmatch(text) is not None for pattern in patterns)
+        if (all(checks) if match_all else any(checks)) and all(
+            pattern.fullmatch(text) is not None for pattern in required_patterns
+        ):
             yield item
             matched += 1
             if limit is not None and matched >= limit:

@@ -30,6 +30,7 @@ from channels.layers import get_channel_layer
 from watchfiles import Change, awatch
 
 from twicc import search
+from twicc.core.content_storage.readers import aload_current, load_current
 from twicc.core.agent_runs import late_tree_rule_payloads
 from twicc.core.enums import ItemKind
 from twicc.core.models import Project, Session, SessionItem, SessionType
@@ -252,6 +253,8 @@ def get_session_items(session: Session, line_nums: list[int]) -> list[dict]:
         session=session,
         line_num__in=line_nums,
     ).order_by("line_num")
+    items = list(items)
+    load_current(items)
     return [serialize_session_item(item) for item in items]
 
 
@@ -680,6 +683,7 @@ class BaseSessionsWatcher:
                 )
             )()
 
+            await aload_current(items)
             helpers = get_provider_helpers(self.get_compute().provider)
             indexed_count = 0
             for item in items:

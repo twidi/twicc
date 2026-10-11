@@ -500,6 +500,9 @@ async def _index_session(session_id: str, buffer: _MarkIndexedBuffer):
         )
     )()
 
+    from twicc.core.content_storage.readers import aload_current
+
+    await aload_current(items)
     helpers = get_provider_helpers(session.provider)
 
     # Delete existing documents for this session (re-indexing case)

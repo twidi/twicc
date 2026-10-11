@@ -22,6 +22,7 @@ from channels.layers import get_channel_layer
 import orjson
 
 from twicc import search
+from twicc.core.content_storage.readers import effective_current, iter_matching_items, aload_current
 from twicc.agent.registry import get_agent_manager_registry
 from twicc.core.enums import ItemKind, Provider
 from twicc.core.models import ArtifactBookmark, ArtifactNetworkDenial, Command, DailyActivity, PinMode, Project, Session, SessionItem, SessionType, ToolResultLink, UsageSnapshot, WeeklyActivity, Workflow
@@ -975,7 +976,7 @@ async def user_messages(request, project_id, session_id):
             "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
             "text": msg.text,
         }
-        for msg in get_provider_helpers(session.provider).get_user_messages(items)
+        for msg in await sync_to_async(get_provider_helpers(session.provider).get_user_messages)(items)
         if not has_sender_header(msg.text)
     ]
 
@@ -1547,6 +1548,7 @@ async def session_items(request, project_id, session_id, parent_session_id=None)
         )
 
     items = await sync_to_async(list)(session.items.filter(q_filter))
+    await aload_current(items)
     data = [serialize_session_item(item) for item in items]
     return JsonResponse(data, safe=False)
 
@@ -1564,11 +1566,11 @@ def _hybrid_attachment_image(session, line_num, reference):
     candidates = session.items.filter(
         line_num__gt=line_num,
         line_num__lte=line_num + _HYBRID_ATTACHMENT_WINDOW,
-        content__contains=f'/{reference}"',
-    ).order_by("line_num")[:5]
+    ).order_by("line_num")
+    candidates = iter_matching_items(candidates, [f'/{reference}"'], limit=5)
     for item in candidates:
         try:
-            record = orjson.loads(item.content)
+            record = orjson.loads(effective_current(item))
         except orjson.JSONDecodeError:
             continue
         attachment = record.get("attachment") if isinstance(record, dict) else None
@@ -1763,12 +1765,12 @@ def _derive_workflow_links(session_id):
     """
     links = []
     seen = set()
-    items = SessionItem.objects.filter(
-        session_id=session_id, content__contains='"runId"'
-    ).only("content")
-    for it in items.iterator(chunk_size=50):
+    items = iter_matching_items(SessionItem.objects.filter(
+        session_id=session_id,
+    ).order_by('line_num'), ['"runId"'])
+    for it in items:
         try:
-            parsed = orjson.loads(it.content)
+            parsed = orjson.loads(effective_current(it))
         except orjson.JSONDecodeError:
             continue
         tool_use_result = parsed.get("toolUseResult")

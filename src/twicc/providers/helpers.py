@@ -17,6 +17,7 @@ Concrete providers live in ``providers/<name>/helpers.py`` and subclass
 
 from __future__ import annotations
 
+
 import logging
 from collections.abc import Iterable
 from datetime import date, datetime
@@ -759,10 +760,13 @@ class BaseProviderHelpers:
         e.g. to fetch only the first user message for title suggestion
         via ``get_user_messages(items, limit=1)``.
         """
+        from twicc.core.content_storage.readers import load_current
+
         out: list[UserMessage] = []
         for item in items:
             if limit is not None and len(out) >= limit:
                 break
+            load_current([item])
             parsed = self.parse_item_content(item)
             if parsed is None:
                 continue
@@ -816,11 +820,11 @@ class BaseProviderHelpers:
         from twicc.core.enums import ItemKind
         from twicc.core.models import SessionItem
 
-        items = (
-            SessionItem.objects
-            .filter(session_id=session_id, kind=ItemKind.USER_MESSAGE)
-            .order_by("line_num")
-            .iterator()
+        from twicc.core.content_storage.readers import iter_current_items
+
+        items = iter_current_items(
+            SessionItem.objects.filter(session_id=session_id, kind=ItemKind.USER_MESSAGE).order_by("line_num"),
+            128, 8 * 1024 * 1024,
         )
         return [message.text for message in self.get_user_messages(items)]
 
@@ -835,8 +839,11 @@ class BaseProviderHelpers:
         adding a field to :class:`IndexableMessage` never costs another
         parse of the same string.
         """
+        from twicc.core.content_storage.readers import load_current
+
         out: list[IndexableMessage] = []
         for item in items:
+            load_current([item])
             parsed = self.parse_item_content(item)
             if parsed is None:
                 continue
@@ -868,8 +875,10 @@ class BaseProviderHelpers:
         :meth:`extract_indexable_text_from_parsed` and
         :meth:`is_final_assistant_message` rather than re-parsing.
         """
+        from twicc.core.content_storage.readers import effective_current
+
         try:
-            parsed = orjson.loads(item.content)
+            parsed = orjson.loads(effective_current(item))
         except (orjson.JSONDecodeError, TypeError):
             return None
         return parsed if isinstance(parsed, dict) else None
@@ -884,6 +893,9 @@ class BaseProviderHelpers:
         message builders above parse once and call
         :meth:`extract_indexable_text_from_parsed` directly.
         """
+        from twicc.core.content_storage.readers import load_current
+
+        load_current([item])
         parsed = self.parse_item_content(item)
         if parsed is None:
             return ""

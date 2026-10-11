@@ -18,6 +18,7 @@ import orjson
 from asgiref.sync import sync_to_async
 from watchfiles import Change
 
+from twicc.core.content_storage.readers import effective_current, iter_current_items
 from twicc.core.models import SessionType, Workflow
 from twicc.core.serializers import serialize_project, serialize_session
 from twicc.projects import compute_project_stale
@@ -656,9 +657,10 @@ class ClaudeCodeSessionsWatcher(BaseSessionsWatcher):
                 rows = (
                     SessionItem.objects
                     .filter(session_id=session_id, line_num__in=new_line_nums)
-                    .values_list("kind", "content")
+                    .order_by("line_num")
                 )
-                for kind, content in rows:
+                for item in iter_current_items(rows, 128, 8 * 1024 * 1024):
+                    kind, content = item.kind, effective_current(item)
                     if kind == ItemKind.USER_MESSAGE:
                         if is_command_message(content):
                             command_message = True

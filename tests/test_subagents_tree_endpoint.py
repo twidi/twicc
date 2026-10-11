@@ -128,13 +128,6 @@ def test_cross_project_owner_and_missing_child_row(tree):
     assert entry["running"] is True
 
 
-class _SpawnItem:
-    """Minimal stand-in for the launcher's ``SessionItem`` (only ``content`` is read)."""
-
-    def __init__(self, content):
-        self.content = content
-
-
 def spawn_call(owner, line, tool, **input_fields):
     """Turn a fixture placeholder item into the real spawning tool_use."""
     SessionItem.objects.filter(session=owner, line_num=line).update(
@@ -173,7 +166,7 @@ def test_display_name_stays_none_without_a_usable_call(tree):
 
 def test_codex_display_name_reads_the_v2_task_name():
     helpers = get_provider_helpers("codex")
-    call = lambda tool, args: _SpawnItem(orjson.dumps({"payload": {  # noqa: E731
+    call = lambda tool, args: SessionItem(content=orjson.dumps({"payload": {  # noqa: E731
         "name": "spawn_agent", "call_id": tool, "arguments": orjson.dumps(args).decode(),
     }}).decode())
     assert helpers.get_spawn_display_name(call("call_1", {"task_name": "frontend_reader"}), "call_1") == "Frontend reader"

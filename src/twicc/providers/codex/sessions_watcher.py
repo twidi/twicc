@@ -32,6 +32,7 @@ import orjson
 from asgiref.sync import sync_to_async
 from watchfiles import Change
 
+from twicc.core.content_storage.readers import effective_current, iter_current_items
 from twicc.core.enums import Provider
 from twicc.core.models import Project, Session, SessionItem, SessionType
 from twicc.providers.helpers import AgentSettings
@@ -398,8 +399,9 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
             ended: list[str] = []
             rows = SessionItem.objects.filter(
                 session_id=session_id, line_num__in=new_line_nums,
-            ).order_by("line_num").values_list("content", flat=True)
-            for content in rows:
+            ).order_by("line_num")
+            for item in iter_current_items(rows, 128, 8 * 1024 * 1024):
+                content = effective_current(item)
                 if not content:
                     continue
                 is_end = '"CommandExecution"' in content
@@ -448,8 +450,9 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
             compute = _get_compute()
             rows = SessionItem.objects.filter(
                 session_id=session_id, line_num__in=new_line_nums,
-            ).values_list("content", flat=True)
-            for content in rows:
+            ).order_by("line_num")
+            for item in iter_current_items(rows, 128, 8 * 1024 * 1024):
+                content = effective_current(item)
                 if not content:
                     continue
                 try:
