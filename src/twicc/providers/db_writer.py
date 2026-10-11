@@ -44,8 +44,8 @@ import queue
 import threading
 from time import perf_counter
 from collections import defaultdict
-from collections.abc import Callable, Coroutine
-from contextlib import suppress
+from collections.abc import AsyncIterator, Callable, Coroutine
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from typing import Any, Literal, NamedTuple, TypeVar
 
@@ -275,6 +275,9 @@ _async_queue: asyncio.Queue | None = None
 # DB writer lifetime so a stray ``get_db_write_lock`` call surfaces a clear
 # RuntimeError instead of silently handing out a stale Lock.
 _db_write_lock: asyncio.Lock | None = None
+# Starts and representation publication share this fence before writer ownership.
+# Its lifetime matches the writer lock; no holder acquires provider manager locks.
+_storage_admission_lock: asyncio.Lock | None = None
 
 # Reentrance marker for the lock runners. ``asyncio.Lock`` is NOT reentrant:
 # a second ``acquire()`` from the same Task self-deadlocks. The runners
@@ -595,7 +598,7 @@ def start_db_writer() -> None:
     """
     global _thread_queue, _subprocess_queue
     global _db_writer_stop_event, _db_writer_task, _async_queue
-    global _db_write_lock
+    global _db_write_lock, _storage_admission_lock
 
     if _db_writer_task is not None:
         raise RuntimeError("DB writer already started")
@@ -613,6 +616,7 @@ def start_db_writer() -> None:
     # lifecycle code, and a stop properly clears the slot (see
     # ``stop_db_writer``).
     _db_write_lock = asyncio.Lock()
+    _storage_admission_lock = asyncio.Lock()
     _db_writer_task = asyncio.create_task(_db_writer_loop())
     logger.info("DB writer started")
 
@@ -655,7 +659,7 @@ async def stop_db_writer() -> None:
     when we ``= None`` it — leaving them serializing on an orphan lock
     that nothing else references.
     """
-    global _db_write_lock, _db_writer_task, _db_writer_stop_event
+    global _db_write_lock, _storage_admission_lock, _db_writer_task, _db_writer_stop_event
     global _thread_queue, _subprocess_queue, _async_queue
 
     if _db_writer_stop_event is not None:
@@ -675,6 +679,17 @@ async def stop_db_writer() -> None:
                     "DB writer task exited with an unexpected exception: %s",
                     exc,
                     exc_info=exc,
+                ),
+            )
+        # Drain admission first. A holder may not have reached the writer yet.
+        # Producers and managers have already stopped before this shutdown.
+        if _storage_admission_lock is not None:
+            admission_drain = asyncio.create_task(_acquire_then_release(_storage_admission_lock))
+            cancelled |= await _shielded_shutdown_wait(
+                admission_drain,
+                external_cancel_log=lambda: logger.warning("Storage admission drain was cancelled externally"),
+                unexpected_exception_log=lambda exc: logger.error(
+                    "Storage admission drain raised: %s", exc, exc_info=exc,
                 ),
             )
         # Drain in-flight external lock holders. The writer task is done by
@@ -721,6 +736,7 @@ async def stop_db_writer() -> None:
         # ``RuntimeError("DB writer not started")`` instead of returning
         # a drained queue or handing out an orphan lock.
         _db_write_lock = None
+        _storage_admission_lock = None
         _db_writer_task = None
         _db_writer_stop_event = None
         _thread_queue = None
@@ -1329,6 +1345,34 @@ async def _drive_inner_loop(inner: asyncio.Task[_T]) -> _T:
     return inner.result()
 
 
+@asynccontextmanager
+async def storage_admission() -> AsyncIterator[None]:
+    """Fence registration and publication before acquiring writer ownership.
+
+    Order: existing manager lock, if any; admission; writer lease; transaction.
+    Never acquire a manager lock inside this context. Snapshot active roots here
+    and pass immutable protection to synchronous publication. Keep candidate CPU
+    outside; compute may hold the fence across one result application.
+
+    This context is not reentrant. Await the cancellation-safe writer runner
+    directly inside it. Its drive finishes executor work before cancellation
+    leaves this context. Never await a child that reacquires writer ownership
+    while the parent holds its lease.
+
+    No stop guard: the writer's final compute drain still needs admission.
+    External writes retain the public writer runner's shutdown checks.
+    """
+    if _lease_admits_current():
+        raise RuntimeError("Storage admission must be acquired before writer ownership")
+    lock = _storage_admission_lock
+    if lock is None:
+        raise RuntimeError("DB writer not started")
+    waiting = perf_counter()
+    async with lock:
+        log_slow('storage_admission', (perf_counter() - waiting) * 1000)
+        yield
+
+
 async def _run_under_db_write_lock(
     coro_factory: Callable[[], Coroutine[Any, Any, _T]],
 ) -> _T:
@@ -1660,7 +1704,8 @@ async def _drain_one() -> bool:
                 sync_timing_context(_provider_from_compute_message(msg), msg.get('session_id')),
             ):
                 try:
-                    await _run_under_db_write_lock(lambda: _process_compute_message(msg))
+                    async with storage_admission():
+                        await _run_under_db_write_lock(lambda: _process_compute_message(msg))
                 except Exception as exc:
                     logger.error(f"Error processing compute message: {exc}", exc_info=True)
 

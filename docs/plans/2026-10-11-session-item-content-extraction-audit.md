@@ -919,19 +919,33 @@ A registry snapshot before CPU compression is insufficient protection at publica
 Acquiring manager locks while already holding the writer lease can deadlock against a start waiting for that lease.
 Do not reuse `work_dirs_cleanup_guard` inside a compute apply or maintenance writer factory without resolving this ordering.
 
-Recommended publication design direction:
+Selected admission design, validated in Task 1:
 
-- Establish active/start protection before writer acquisition, with a consistent manager-before-writer order or an equivalent admission fence.
-- Keep the protected publication section short; never protect candidate encoding or a whole daily pass.
-- Treat a pending start as a reason to skip optional compression and invalidate plaintext readiness.
-- Schedule promotion as part of the durable start/activity transition, before relying on hot substring readiness.
+- Order: existing provider manager lock, when applicable → storage-admission fence → writer lease → DB transaction.
+- `providers/db_writer.py` owns `storage_admission()` and creates its asyncio lock with the writer lifetime.
+- Registration acquires the fence before installing registry state and before requesting writer ownership. Task 11 activates this hook.
+- Compute `_drain_one` acquires the fence before its internal writer runner. It holds admission for one result application.
+- Maintenance prepares candidates outside the fence. Its bounded publication enters the fence before the public writer runner.
+- Fence holders never acquire provider manager locks. Registry snapshots use the existing lock-free `get_active_agents()` access.
+- Snapshot active native roots while holding admission. Pass immutable protection into synchronous publication.
+- Pending start admission excludes stale optional compression. Durable lifecycle transitions invalidate readiness and schedule required promotion.
+- Acquiring admission from an admitted writer-held apply raises `RuntimeError`. Admission is not reentrant.
+- Await the existing cancellation-safe writer runner directly inside admission. Its drive joins executor work before cancellation releases either lock.
+- Never await a background child that reacquires writer ownership under its parent's lease. Await that child after release.
+- Shutdown drains admission before external writer leases, then clears both locks. Final compute drain retains admission access during shutdown.
 
-Initial compute already owns a result-wide writer lease.
-Its direct-compression path needs a separately reviewed admission strategy; inserting a manager-lock acquire into the existing apply is unsafe.
-The plan must choose and verify this strategy before implementing initial compression.
-A race test must hold a start between registry admission and timestamp persistence while compression publication runs.
-A second test must exercise shutdown/cancellation and prove no manager/writer inversion.
-This audit does not claim a selected lock implementation is already validated.
+Deterministic tests pause fake registration before persistence and publication before worker completion.
+Both compute drain and maintenance publication complete without manager/writer inversion.
+Start admission wins the controlled ordering; stale publication skips the active root.
+Cancellation keeps admission and writer ownership until the dedicated compute worker finishes.
+These tests validate scaffolding; Task 11 repeats the scenarios against actual registration and representation publication.
+
+The isolated admission probe compares 5,000 empty result applications.
+Writer-only applications take 60.841 ms; fenced applications take 75.365 ms.
+Added admission cost is 2.905 microseconds per result in this run.
+A controlled 10 ms admission holder adds 10.151 ms wait to a competing publication.
+The fence does not extend across an entire compute run or candidate CPU preparation.
+Result-wide application can still delay starts; transaction chunking alone does not release admission or writer ownership.
 
 ### 11.4 Cold roots and mutation inventory
 
@@ -1009,12 +1023,27 @@ Existing session indexes support step 5. Content-side FK indexes are unnecessary
 Do not run one surviving-reference scan for every content ID.
 Repeated bounded scans of one huge session can still be expensive; this is a measured design concern, not a free lookup.
 Avoid retaining an unbounded full-session Python reference-count map as the default solution.
-The plan should compare grouped reconciliation cost with operation-scoped reference accounting for large override workloads.
+Task 1 selects grouped reconciliation for isolated small batches.
+Large multi-batch overrides use operation-scoped reference accounting when estimated item scans reach 1,000,000 across at least two batches.
+This provisional threshold is an engineering choice from the isolated probe; Task 15 validates and tunes it.
+Estimate item scans as session item count multiplied by expected mutation batch count.
+
+Initialize a connection-local temporary SQLite table of content IDs and reference counts once per logical override.
+Count both FK slots through the session index. Original=current contributes two references, but one membership.
+Keep the existing writer lease across initialization and all mutation deltas; no concurrent writer changes the counted graph.
+Update counts from actual persisted old/new assignments, after conflicts and override guards resolve.
+Count deltas and item/list changes share each existing transaction; rolled-back changes also roll back their deltas.
+Remove membership only when the surviving count reaches zero across both slots.
+Drop the temporary table in `finally`; retry rebuilds counts from the authoritative persisted graph, including committed earlier chunks.
+SQLite temporary storage bounds Python memory. It adds no durable schema or pending-recovery state.
+Do not implement this as an unbounded full-session Python map.
+Task 5 supplies this operation-scoped facility and connects it to bounded override callers.
 
 Entire-history deletion knows that all references from that session disappear.
 Stream its old FK IDs before deletion and remove that membership idempotently, without a final-reference scan per row.
 Repeated IDs can skip an unchanged JSON write once the membership is already absent.
-Retain transaction/rollback coupling or explicit conservative pending-reconciliation state if deletion is split.
+Retain existing transaction/rollback coupling for the complete history removal.
+Streaming bounds memory, not transaction duration. Do not split deletion or add pending-reconciliation state in this release.
 After replacement, new chunks add their actual memberships again, including reused content IDs.
 No payload text is required to maintain membership.
 
@@ -1133,23 +1162,49 @@ New readiness/session fields must retain nullable, no-default additions to avoid
 
 ### 11.12 Narrow probes and limits
 
-A temporary in-memory SQLite experiment uses 100,000 synthetic items and an existing session index.
-One batched query checks three displaced content IDs through both reference columns.
-EXPLAIN selects the session index; 600 matching rows return in 14.43 ms on this run.
-This proves index availability, not production cost or bounded worst-case latency.
-Repeated scans per mutation batch remain a potential large-session cost.
+Task 1 uses isolated synthetic SQLite WAL databases, not a production database copy.
+The ownership fixture has 100,000 items, an existing session index, and both nullable content FK columns.
+It includes 1,200 content rows with 512-byte payloads and two 36-character ownership IDs.
+Current IDs repeat across 1,000 contents. Original IDs repeat as 1, 2, 3, NULL, and 1,001.
+The displaced batch contains IDs 900–1,099; 102 survive through at least one slot.
+No reverse-FK indexes exist. `EXPLAIN QUERY PLAN` uses the session index.
+Queries stream 256 rows per page. Allocation measures peak Python memory with `tracemalloc`.
 
-Synthetic JSON ownership lists occupy 40 bytes for one 36-character ID, 3,901 bytes for 100, and 39,001 bytes for 1,000.
-This confirms ownership metadata can dominate very short shared contents.
-It does not measure SQLite page/WAL amplification for real payload layouts.
-No temporary probe script, database, or result file is retained.
+| Operation | Elapsed | Peak Python allocation | Main WAL | Result |
+|---|---:|---:|---:|---|
+| One grouped 200-ID reconciliation | 85.223 ms | 70,167 bytes | 0 bytes | 102 surviving IDs |
+| 200 per-ID `EXISTS` scans | 1,234.231 ms | 17,992 bytes | 0 bytes | Same 102 IDs |
+| Fifty grouped reconciliation batches | 3,617.830 ms | 47,063 bytes | 0 bytes | Same result per batch |
+| Streamed ownership removal and whole-history deletion, one transaction | 750.621 ms | 87,646 bytes | 11,280,592 bytes | 100,000 items deleted; 1,001 ownership writes |
+| Temporary count-table initialization from both slots | 54.630 ms | 808 bytes | 0 bytes | 1,001 rows; 20,480 SQLite temp page bytes |
+| Fifty indexed count-table lookups | 19.997 ms | 14,042 bytes | 0 bytes | Same 102 IDs per batch |
+
+Grouped reconciliation is approximately 14.5 times faster than per-ID scans on this fixture.
+Repeated whole-session scans dominate large override workloads: count initialization plus fifty lookups takes 74.627 ms.
+The temporary count probe measures initialization and lookups, not subsequent assignment-delta writes.
+Its fixture preserves the same item reference distribution; it omits payload rows because counting never reads payload bytes.
+Use operation-scoped accounting for the large multi-batch case described in section 11.6.
+
+Whole-history removal retains the existing transaction in this release.
+The measured 0.751-second lease and 10.76 MiB WAL are acceptable for this representative fixture.
+This is no latency bound for larger histories, larger ownership lists, or slower disks.
+Repeated originals produce one ownership update per distinct row; surviving unrelated ownership remains intact.
+Read-only scans add no WAL. Membership writes and deletion remain coupled in one commit.
+These observations do not require a replacement durable schema or a recovery-contract change.
+
+Measurements run on the development host while the full test suite runs.
+Python allocation excludes SQLite native memory; temp page bytes report the count-table footprint separately.
+Synthetic rows omit unrelated production item columns and do not establish production WAL amplification.
+Temporary databases and scripts are removed; execution logs remain under the ignored `.superpowers/sdd/` task directory.
+Synthetic JSON ownership sizes remain 40 bytes for one UUID, 3,901 bytes for 100, and 39,001 bytes for 1,000.
+Ownership metadata can dominate very short shared contents.
 
 The existing payload benchmarks already cover small, medium, and multi-megabyte contents.
 Do not repeat codec-level selection merely to start the plan.
 Further focused validation belongs to these design tasks:
 
-- Active admission/publication fencing and cancellation-safe lock ordering.
-- Grouped ownership updates and removals on a representative isolated session database.
+- Repeat the validated admission ordering against real registration and representation publication.
+- Validate persisted reference mutation, transactional removal, and temporary count deltas against the real storage schema.
 - Root generation recovery and a contains request racing a new compressed hot reference.
 - Actual Django CAST/LIKE queries and decoded internal candidate limits.
 - Combined schema migration including dictionary seeds and nullable readiness fields.
