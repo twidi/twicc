@@ -285,7 +285,7 @@ Commit: `feat(storage): add lossless content codecs`.
 - `Session.is_cold` uses explicitly loaded native ancestry/shared predicate; no stored cold column.
 
 - [ ] **Step 1: Write exact boundary and generation tests.**
-30 days exactly qualifies; 29 days does not. Latest of four dates decides. Missing dates, missing parent, cycle and inconsistent ancestry cannot authorize cold placement/readiness. Nested native subagents inherit root flags/dates; independent spawned sessions do not.
+30 days exactly qualifies; 29 days does not. Latest of four dates decides. Missing dates cannot authorize cold placement. Resolved dateless roots may publish readiness after complete plaintext/extraction verification. Missing parents, cycles, and inconsistent ancestry cannot authorize cold placement or readiness. Nested native subagents inherit root flags/dates; independent spawned sessions do not.
 `test_stale_promotion_epoch_cannot_mark_ready`: snapshot epoch N, invalidate to N+1, verify old snapshot returns False.
 `test_tree_change_invalidates_both_roots`: move a native descendant and verify old/new epochs change.
 `test_same_id_new_incarnation_rejects_old_promotion`: delete/recreate with matching epochs; old snapshot cannot complete.

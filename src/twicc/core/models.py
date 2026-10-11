@@ -720,6 +720,15 @@ class Session(models.Model):
         ]
 
     @property
+    def is_cold(self) -> bool:
+        """Use explicitly loaded native ancestry without implicit database queries."""
+        from django.utils import timezone
+
+        from twicc.core.content_storage.policy import cold_from_loaded_session
+
+        return cold_from_loaded_session(self, timezone.now())
+
+    @property
     def cutoff(self) -> datetime | None:
         """The most recent lifecycle boundary: max of last_started_at and last_stopped_at."""
         if self.last_stopped_at is None:
