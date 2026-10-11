@@ -407,6 +407,132 @@ def test_table_rebuild_retains_global_fallback(connection):
     assert_restored(connection)
 
 
+@isolate_apps()
+@pytest.mark.parametrize("new_parent", [False, True])
+@pytest.mark.parametrize("indexed", [False, True])
+@pytest.mark.parametrize("column_count", [1, 2])
+def test_new_null_foreign_keys_skip_checks_with_optional_indexes(connection, new_parent, indexed, column_count):
+    apps = state().apps
+    child = apps.get_model("scope_app", "Child")
+    parent = apps.get_model("scope_app", "Parent")
+    if new_parent:
+        class Content(models.Model):
+            text = models.TextField()
+
+            class Meta:
+                app_label = "scope_app"
+                db_table = "new_content"
+
+        parent = Content
+    with checks(connection) as statements, connection.schema_editor() as editor:
+        if new_parent:
+            editor.create_model(parent)
+        for number in range(column_count):
+            field = models.ForeignKey(parent, null=True, db_index=indexed, on_delete=models.PROTECT)
+            field.set_attributes_from_name(f"content_{number}")
+            editor.add_field(child, field)
+    assert fk_checks(statements) == []
+    assert not any('INSERT INTO "new__' in sql for sql in statements)
+    names = ", ".join(f"content_{number}_id" for number in range(column_count))
+    assert connection.connection.execute(f"SELECT {names} FROM child").fetchall() == [(None,) * column_count]
+    assert len([sql for sql in statements if sql.startswith("CREATE INDEX")]) == (column_count if indexed else 0)
+    assert_restored(connection)
+
+
+def test_new_null_foreign_key_does_not_hide_invalid_data_write(connection):
+    apps = state().apps
+    field = models.ForeignKey(apps.get_model("scope_app", "Parent"), null=True, on_delete=models.PROTECT)
+    field.set_attributes_from_name("content")
+    with checks(connection) as statements, pytest.raises(IntegrityError), connection.schema_editor() as editor:
+        editor.add_field(apps.get_model("scope_app", "Child"), field)
+        editor.execute("UPDATE child SET content_id=999")
+    assert fk_checks(statements) == ['PRAGMA foreign_key_check("child")']
+    assert "content_id" not in [row[1] for row in connection.connection.execute("PRAGMA table_info(child)")]
+    assert_restored(connection)
+
+
+@isolate_apps()
+def test_new_null_foreign_key_does_not_hide_preexisting_reference_to_new_parent(connection):
+    connection.disable_constraint_checking()
+    connection.connection.execute("CREATE TABLE orphan (id integer PRIMARY KEY, parent_id integer REFERENCES new_content(id))")
+    connection.connection.execute("INSERT INTO orphan VALUES (1, 99)")
+    connection.enable_constraint_checking()
+
+    class Content(models.Model):
+        class Meta:
+            app_label = "scope_app"
+            db_table = "new_content"
+
+    field = models.ForeignKey(Content, null=True, on_delete=models.PROTECT)
+    field.set_attributes_from_name("content")
+    with checks(connection) as statements, pytest.raises(IntegrityError), connection.schema_editor() as editor:
+        editor.create_model(Content)
+        editor.add_field(state().apps.get_model("scope_app", "Child"), field)
+    assert fk_checks(statements) == ['PRAGMA foreign_key_check("orphan")']
+    assert "new_content" not in connection.introspection.table_names()
+    assert_restored(connection)
+
+
+def test_new_null_integer_column_with_index_skips_checks(connection):
+    field = models.IntegerField(null=True, db_index=True)
+    field.set_attributes_from_name("storage_version")
+    with checks(connection) as statements, connection.schema_editor() as editor:
+        editor.add_field(state().apps.get_model("scope_app", "Child"), field)
+    assert fk_checks(statements) == []
+    assert connection.connection.execute("SELECT storage_version FROM child").fetchall() == [(None,)]
+    assert any(sql.startswith("CREATE INDEX") for sql in statements)
+    assert_restored(connection)
+
+
+def test_callable_default_keeps_nullable_column_global_fallback(connection):
+    field = models.IntegerField(null=True, default=lambda: None)
+    field.set_attributes_from_name("storage_version")
+    with checks(connection) as statements, connection.schema_editor() as editor:
+        editor.add_field(state().apps.get_model("scope_app", "Child"), field)
+    assert fk_checks(statements) == ["PRAGMA foreign_key_check"]
+    assert_restored(connection)
+
+
+def test_new_null_foreign_key_retains_unknown_schema_fallback(connection):
+    apps = state().apps
+    field = models.ForeignKey(apps.get_model("scope_app", "Parent"), null=True, on_delete=models.PROTECT)
+    field.set_attributes_from_name("content")
+    with checks(connection) as statements, connection.schema_editor() as editor:
+        editor.add_field(apps.get_model("scope_app", "Child"), field)
+        editor.execute("CREATE TABLE unexpected (id integer)")
+    assert fk_checks(statements) == ["PRAGMA foreign_key_check"]
+    assert_restored(connection)
+
+
+def test_custom_nullable_foreign_key_callback_is_not_proved(connection):
+    apps = state().apps
+
+    class CustomForeignKey(models.ForeignKey):
+        def db_parameters(self, connection):
+            connection.connection.execute("UPDATE child SET parent_id=999")
+            return super().db_parameters(connection)
+
+    field = CustomForeignKey(apps.get_model("scope_app", "Parent"), null=True, on_delete=models.PROTECT)
+    field.set_attributes_from_name("content")
+    with checks(connection) as statements, pytest.raises(IntegrityError), connection.schema_editor() as editor:
+        editor.add_field(apps.get_model("scope_app", "Child"), field)
+    assert fk_checks(statements) == ["PRAGMA foreign_key_check"]
+    assert connection.connection.execute("SELECT parent_id FROM child").fetchall() == [(1,)]
+    assert_restored(connection)
+
+
+def test_new_null_foreign_key_to_invalid_parent_key_is_not_proved(connection):
+    apps = state().apps
+    field = models.ForeignKey(
+        apps.get_model("scope_app", "Parent"), to_field="label", null=True, on_delete=models.PROTECT,
+    )
+    field.set_attributes_from_name("content")
+    with pytest.raises(OperationalError), connection.schema_editor() as editor:
+        editor.add_field(apps.get_model("scope_app", "Child"), field)
+    assert "content_id" not in [row[1] for row in connection.connection.execute("PRAGMA table_info(child)")]
+    assert_restored(connection)
+
+
 def test_custom_index_schema_callback_is_not_trusted_by_nested_standard_call(connection):
     model = state().apps.get_model("scope_app", "Child")
 

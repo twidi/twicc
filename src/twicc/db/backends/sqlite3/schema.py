@@ -11,7 +11,7 @@ from django.db.backends.base.schema import BaseDatabaseSchemaEditor
 from django.db.backends.ddl_references import Statement
 from django.db.backends.sqlite3.schema import DatabaseSchemaEditor as SQLiteSchemaEditor
 from django.db.backends.utils import strip_quotes
-from django.db.models import Index, UniqueConstraint
+from django.db.models import ForeignKey, Index, IntegerField, UniqueConstraint
 
 from twicc.db.migration_logging import log_fk_check
 
@@ -36,11 +36,22 @@ class EmptyRebuild(NamedTuple):
     renames: list
 
 
+class NullColumn(NamedTuple):
+    sql: str
+    params: tuple
+    table: str
+    column: str
+    schema: dict
+    columns: list
+    foreign_key: bool
+
+
 class DatabaseSchemaEditor(SQLiteSchemaEditor):
     """Own one observer, immutable statement proofs, and one atomic boundary.
 
     Proofs remove only matched schema authorizations from one execution.
     Independent data effects and unknown reasons always remain observable.
+    Standard nullable column additions also prove that old references stay NULL.
     Only newly created, empty table rebuilds have an additional zero-row proof.
     Other rebuilds and unproved schema statements keep the global fallback.
     """
@@ -64,6 +75,8 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
         self._proofs = []
         self._created_tables = set()
         self._empty_rebuild = None
+        self._null_column = None
+        self._null_foreign_key_columns = set()
         self.observer = EffectObserver()
         self.decision = CheckDecision("none", frozenset(), ())
         self.deferred_sql = []
@@ -115,7 +128,11 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
                 incoming = {
                     key
                     for key, table in after.items()
-                    if key in self._before and any(fk.parent_table in self._created_tables for fk in table.foreign_keys)
+                    if key in self._before and any(
+                        fk.parent_table in self._created_tables
+                        and not any((key, column) in self._null_foreign_key_columns for column in fk.child_columns)
+                        for fk in table.foreign_keys
+                    )
                 }
                 if self.decision.scope != "global" and incoming:
                     self.decision = CheckDecision("tables", self.decision.tables | incoming, self.decision.reasons)
@@ -215,6 +232,94 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
         return self.connection.connection.execute(
             f"SELECT 1 FROM {self.quote_name(table)} LIMIT 1"
         ).fetchone() is None
+
+    def add_field(self, model, field):
+        # Prove only standard nullable columns. Defaults, checks, custom fields,
+        # nested callbacks, and table rebuilds keep the existing global fallback.
+        if (
+            self.collect_sql or self._null_column is not None
+            or type(field) not in (ForeignKey, IntegerField)
+            or not field.null or field.primary_key or field.unique
+            or (field.has_default() and field.default is not None) or field.has_db_default()
+            or field.db_parameters(self.connection)["check"]
+        ):
+            return super().add_field(model, field)
+        definition, params = self.column_sql(model, field, include_default=True)
+        suffix = field.db_type_suffix(connection=self.connection)
+        if suffix:
+            definition += " " + suffix
+        foreign_key = bool(field.remote_field and field.db_constraint)
+        if foreign_key:
+            if not field.target_field.primary_key:
+                return super().add_field(model, field)
+            definition += " " + self.sql_create_column_inline_fk % {
+                "to_table": self.quote_name(field.remote_field.model._meta.db_table),
+                "to_column": self.quote_name(field.target_field.column),
+            }
+        table = model._meta.db_table
+        sql = self.sql_create_column % {
+            "table": self.quote_name(table), "column": self.quote_name(field.column), "definition": definition,
+        }
+        self._null_column = NullColumn(
+            sql, tuple(params), table, field.column, read_schema(self.connection.connection),
+            self._column_metadata(table), foreign_key,
+        )
+        try:
+            with self._operation("field_index", table):
+                return super().add_field(model, field)
+        finally:
+            self._null_column = None
+
+    def _column_metadata(self, table):
+        return self.connection.connection.execute(
+            f"PRAGMA main.table_xinfo({self.quote_name(table)})"
+        ).fetchall()
+
+    def _matches_null_column(self, proof, effects):
+        table = canonical_identifier(proof.table)
+        column = canonical_identifier(proof.column)
+        columns = self._column_metadata(proof.table)
+        if len(columns) != len(proof.columns) + 1 or columns[:-1] != proof.columns:
+            return False
+        added = columns[-1]
+        # cid, name, type, notnull, default, pk, hidden. No row scan is needed:
+        # a new ordinary nullable column with no default reads NULL in old rows.
+        if canonical_identifier(added[1]) != column or added[3:] != (0, None, 0, 0):
+            return False
+        after = read_schema(self.connection.connection)
+        before = proof.schema
+        if table not in before or table not in after or {
+            k: v for k, v in before.items() if k != table
+        } != {k: v for k, v in after.items() if k != table}:
+            return False
+        old, new = before[table], after[table]
+        if old._replace(foreign_keys=new.foreign_keys) != new:
+            return False
+        old_keys, new_keys = set(old.foreign_keys), set(new.foreign_keys)
+        added_keys = new_keys - old_keys
+        if not old_keys <= new_keys or len(added_keys) != int(proof.foreign_key):
+            return False
+        for fk in added_keys:
+            parent = after.get(fk.parent_table)
+            if (
+                fk.child_columns != (column,) or parent is None
+                or len(parent.primary_key) != 1 or fk.parent_columns != parent.primary_key
+            ):
+                return False
+        alters = 0
+        for effect in effects:
+            if effect.source is not None:
+                return False
+            if effect.action == sqlite3.SQLITE_ALTER_TABLE:
+                if effect.arg1 != "main" or canonical_identifier(effect.arg2 or "") != table:
+                    return False
+                alters += 1
+            elif not (
+                effect.action == sqlite3.SQLITE_UPDATE and effect.database == "main"
+                and effect.arg1 == "sqlite_master" and effect.arg2 == "sql"
+            ):
+                return False
+        return alters == 1
 
     def _remake_table(self, model, **kwargs):
         table = model._meta.db_table
@@ -381,7 +486,18 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
         changes = self.connection.connection.total_changes
         result = super().execute(sql, params)
         effects = self.observer.schema_effects[start:]
-        if proof and self._matches(proof, effects):
+        null_column = self._null_column
+        if (
+            null_column is not None and rendered == null_column.sql
+            and tuple(params or ()) == null_column.params
+            and self._matches_null_column(null_column, effects)
+        ):
+            del self.observer.schema_effects[start:]
+            if null_column.foreign_key:
+                self._null_foreign_key_columns.add((
+                    canonical_identifier(null_column.table), canonical_identifier(null_column.column),
+                ))
+        elif proof and self._matches(proof, effects):
             del self.observer.schema_effects[start:]
             if proof.kind == "create":
                 self._created_tables.add(canonical_identifier(proof.table))
