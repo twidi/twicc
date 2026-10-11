@@ -21,6 +21,7 @@ import asyncio
 import logging
 import os
 import shutil
+from itertools import islice
 from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from typing import NamedTuple
@@ -64,7 +65,7 @@ _SESSION_FIELDS = (
 )
 
 
-def _session_state(row: dict, scratch_root: Path, now: datetime) -> SessionDirectoryState:
+def _session_state(row: dict, scratch_root: Path, now: datetime, eligible: bool) -> SessionDirectoryState:
     timestamps = [row[field] for field in _SESSION_FIELDS[1:5] if row[field] is not None]
     reference = max(timestamps) if timestamps else None
     shared = []
@@ -75,8 +76,20 @@ def _session_state(row: dict, scratch_root: Path, now: datetime) -> SessionDirec
     if isinstance(annotated_path, str) and annotated_path and Path(annotated_path).is_absolute():
         shared.append(Path(annotated_path))
     return SessionDirectoryState(
-        reference, bool(row["archived"] or row["hidden"]) and _is_stale(reference, now), tuple(shared),
+        reference, eligible, tuple(shared),
     )
+
+
+def _session_states(rows, scratch_root, now, active_ids):
+    """Apply native-root cold policy in bounded metadata pages."""
+    from twicc.core.content_storage.state import TREE_PAGE_SIZE, resolve_root_decisions
+
+    iterator = iter(rows)
+    while page := list(islice(iterator, TREE_PAGE_SIZE)):
+        decisions = resolve_root_decisions([row["id"] for row in page], now, frozenset(active_ids))
+        for row in page:
+            decision = decisions[row["id"]]
+            yield row["id"], _session_state(row, scratch_root, now, decision.resolved and decision.is_cold)
 
 
 def _uses_folder(shared_path: Path, folder: Path) -> bool:
@@ -94,7 +107,7 @@ def _uses_folder(shared_path: Path, folder: Path) -> bool:
         return True  # An unreadable shared path must not authorize deletion.
 
 
-def _scratch_users(folder: Path, scratch_root: Path, now: datetime) -> dict[str, SessionDirectoryState]:
+def _scratch_users(folder: Path, scratch_root: Path, now: datetime, active_ids) -> dict[str, SessionDirectoryState]:
     """Read current users immediately before removing a scratch folder."""
     from django.db.models import Q
 
@@ -104,10 +117,9 @@ def _scratch_users(folder: Path, scratch_root: Path, now: datetime) -> dict[str,
     rows = Session.objects.filter(
         Q(id=folder.name) | Q(spawn_root_id=folder.name) | Q(annotations__scratch_dir__isnull=False)
     ).values(*_SESSION_FIELDS)
-    for row in rows.iterator(chunk_size=_QUERY_CHUNK):
-        state = _session_state(row, scratch_root, now)
-        if row["id"] == folder.name or any(_uses_folder(path, folder) for path in state.scratch_paths):
-            users[row["id"]] = state
+    for session_id, state in _session_states(rows.iterator(chunk_size=_QUERY_CHUNK), scratch_root, now, active_ids):
+        if session_id == folder.name or any(_uses_folder(path, folder) for path in state.scratch_paths):
+            users[session_id] = state
     return users
 
 
@@ -139,10 +151,9 @@ def _prune_stale_session_dirs() -> tuple[int, int]:
     registry = get_agent_manager_registry()
     active_ids = {info.session_id for info in registry.get_active_agents()}
     active_paths = [Path(path) for path in registry.get_active_work_dirs()]
-    states = {
-        row["id"]: _session_state(row, scratch_root, now)
-        for row in Session.objects.values(*_SESSION_FIELDS).iterator(chunk_size=_QUERY_CHUNK)
-    }
+    states = dict(_session_states(
+        Session.objects.values(*_SESSION_FIELDS).iterator(chunk_size=_QUERY_CHUNK), scratch_root, now, active_ids,
+    ))
     protected_shared = [
         path
         for session_id, state in states.items()
@@ -160,7 +171,7 @@ def _prune_stale_session_dirs() -> tuple[int, int]:
             if state is None or state.eligible:
                 # Re-read ownership and dates so unarchiving or new references
                 # between the initial scan and this folder protect it.
-                users = _scratch_users(path, scratch_root, now)
+                users = _scratch_users(path, scratch_root, now, active_ids)
                 if any(not user.eligible or sid in active_ids for sid, user in users.items()):
                     continue
                 try:

@@ -13,7 +13,9 @@ from django.db.models import Max, Q
 from django.utils import timezone
 
 from twicc.core.content_storage.codec import ContentIntegrityError, decode_content, encode_cold, encode_plain
-from twicc.core.content_storage.policy import COLD_FIELDS, cold_from_fields, compression_policy_version
+from twicc.core.content_storage.policy import (
+    COLD_FIELDS, CONTENT_STORAGE_VERSION, cold_from_fields, compression_policy_version,
+)
 from twicc.core.content_storage.references import (
     bind_persisted_items, intern_contents, prepared_content_guard, reconcile_session_memberships,
 )
@@ -229,7 +231,8 @@ def _owners_cold(row):
         owner_ids = row.session_ids[start:start + 128]
         owners = list(Session.objects.filter(pk__in=owner_ids).values('id', 'content_storage_version'))
         if len(owners) != len(owner_ids) or any(
-            owner['id'] != placement['pending_session_id'] and owner['content_storage_version'] != 1 for owner in owners
+            owner['id'] != placement['pending_session_id']
+            and owner['content_storage_version'] != CONTENT_STORAGE_VERSION for owner in owners
         ):
             return False
         if not all(cold_placement(owner) for owner in owner_ids):

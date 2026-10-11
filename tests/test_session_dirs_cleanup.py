@@ -452,3 +452,62 @@ def test_cleanup_excludes_agent_starts_until_worker_finishes(monkeypatch):
         assert all(not manager._lock.locked() for _, manager in registry.items())
 
     asyncio.run(scenario())
+
+
+def test_native_scratch_user_inherits_hot_root(data_root, project):
+    _, scratch = data_root
+    directory = _session_dir(scratch, 'native-child', empty=False)
+    root = _make_session(project, 'native-root', last_updated=timezone.now())
+    child = _make_session(project, 'native-child', last_updated=timezone.now() - timedelta(days=40))
+    child.type = 'subagent'
+    child.parent_session = root
+    child.archived = True
+    child.save(update_fields=['type', 'parent_session', 'archived'])
+    assert _prune_stale_session_dirs() == (0, 0)
+    assert directory.exists()
+
+
+def test_native_scratch_user_inherits_cold_root(data_root, project):
+    _, scratch = data_root
+    directory = _session_dir(scratch, 'native-child', empty=False)
+    root = _make_session(project, 'native-root', last_updated=timezone.now() - timedelta(days=40))
+    root.archived = True
+    root.save(update_fields=['archived'])
+    child = _make_session(project, 'native-child', last_updated=timezone.now())
+    child.type = 'subagent'
+    child.parent_session = root
+    child.save(update_fields=['type', 'parent_session'])
+    assert _prune_stale_session_dirs() == (0, 1)
+    assert not directory.exists()
+
+
+def test_active_native_child_protects_root_and_sibling_scratch(data_root, project, monkeypatch):
+    from types import SimpleNamespace
+    from twicc.agent.registry import get_agent_manager_registry
+
+    _, scratch = data_root
+    root_folder = _session_dir(scratch, 'native-root', empty=False)
+    sibling_folder = _session_dir(scratch, 'native-sibling', empty=False)
+    independent_folder = _session_dir(scratch, 'independent', empty=False)
+    old = timezone.now() - timedelta(days=40)
+    root = _make_session(project, 'native-root', last_updated=old)
+    root.archived = True
+    root.save(update_fields=['archived'])
+    active = _make_session(project, 'active-native', last_updated=old)
+    active.type = 'subagent'
+    active.parent_session = root
+    active.save(update_fields=['type', 'parent_session'])
+    sibling = _make_session(project, 'native-sibling', last_updated=old)
+    sibling.type = 'subagent'
+    sibling.parent_session = root
+    sibling.save(update_fields=['type', 'parent_session'])
+    independent = _make_session(project, 'independent', last_updated=old)
+    independent.archived = True
+    independent.spawned_by = root
+    independent.save(update_fields=['archived', 'spawned_by'])
+    registry = get_agent_manager_registry()
+    monkeypatch.setattr(registry, 'get_active_agents', lambda: [SimpleNamespace(session_id=active.id)])
+    monkeypatch.setattr(registry, 'get_active_work_dirs', list)
+    assert _prune_stale_session_dirs() == (0, 1)
+    assert root_folder.exists() and sibling_folder.exists()
+    assert not independent_folder.exists()
