@@ -9,7 +9,14 @@ from twicc.core.content_storage.readers import effective_current, iter_matching_
 from twicc.core.models import Project, Session, SessionItem
 from twicc.core.serializers import serialize_session_item, serialize_session_item_metadata
 from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
-from twicc.providers.history_facts import iter_history_items, iter_resolver_items
+from twicc.providers.history_facts import (
+    HistoryFactContext,
+    HistoryFactKind,
+    append_history_facts,
+    history_facts_are_current,
+    iter_history_items,
+    iter_resolver_items,
+)
 from twicc.views import _hybrid_attachment_image
 
 pytestmark = pytest.mark.django_db
@@ -25,7 +32,7 @@ def owner():
 def put(owner, line, raw, factory, codec):
     return SessionItem.objects.create(
         session=owner, line_num=line, content=raw if codec == 'legacy' else 'stale',
-        current_content=None if codec == 'legacy' else factory(raw, codec == 'zstd', 'claude_code'),
+        current_content=None if codec == 'legacy' else factory(raw, codec == 'zstd', owner.provider),
     )
 
 
@@ -78,11 +85,67 @@ def test_attachment_first_five_matching_rows_within_500_lines(owner, content_row
     assert _hybrid_attachment_image(owner, 0, ref) is None
 
 
-def test_stale_history_facts_decode_raw_fallback(owner, content_row_factory):
-    raw = '{"spawn":"complete"}'
-    put(owner, 1, raw, content_row_factory, 'zstd')
-    assert list(iter_history_items(owner.id, before_line=2)) == [(1, raw)]
-    assert [effective_current(i) for i in iter_resolver_items(owner.id, None, before_line=2)] == [raw]
+@pytest.mark.parametrize('kind', [HistoryFactKind.TURN_START, HistoryFactKind.AGENT_SPAWN])
+def test_stale_history_facts_decode_raw_fallback(owner, content_row_factory, settings, kind):
+    from twicc.providers.codex.compute import CodexSessionCompute
+    from twicc.providers.helpers import get_provider_helpers
+
+    provider = CodexSessionCompute()
+    owner.provider = 'codex'
+    current_version = get_provider_helpers(owner.provider).current_compute_version
+    assert current_version is not None
+    owner.compute_version = current_version
+    owner.save(update_fields=['provider', 'compute_version'])
+    history = HistoryFactContext(owner.provider, session_id=owner.id)
+    known_key = 'turn-known' if kind == HistoryFactKind.TURN_START else '/root/reader'
+    missing_key = 'turn-missing' if kind == HistoryFactKind.TURN_START else '/root/missing'
+
+    def record(line, key):
+        if kind == HistoryFactKind.TURN_START:
+            return {'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': key}}
+        return {'type': 'event_msg', 'payload': {'type': 'item_completed', 'item': {
+            'type': 'SubAgentActivity', 'kind': 'started', 'id': f'call-{line}',
+            'agent_thread_id': f'agent-{line}', 'agent_path': key,
+        }}}
+
+    records = {line: record(line, key) for line, key in [
+        (1, known_key), (2, missing_key), (3, known_key), (5, known_key),
+    ]}
+    # Distinct provider evidence is compressed. The last occurrence is beyond the ceiling.
+    raw = {}
+    for line, parsed in records.items():
+        parsed['timestamp'] = f'2026-01-01T00:00:{line:02d}Z'
+        raw[line] = orjson.dumps(parsed).decode()
+        put(owner, line, raw[line], content_row_factory, 'zstd')
+    facts = provider.extract_history_facts(records[1], line_num=1, history=history)
+    assert [(fact.kind, fact.key, fact.line_num) for fact in facts] == [(kind, known_key, 1)]
+    # Only the old occurrence is indexed. The other key has no indexed evidence.
+    append_history_facts(owner.id, facts)
+
+    def resolve(key):
+        if kind == HistoryFactKind.TURN_START:
+            return provider._lookup_task_started_line(owner.id, 5, key)
+        found = provider._lookup_spawn_for_agent_path(owner.id, 5, key)
+        return tuple(found) if found is not None else None
+
+    def expected(line, key):
+        return line if kind == HistoryFactKind.TURN_START else (f'call-{line}', f'agent-{line}', key)
+
+    assert history_facts_are_current(owner)
+    assert resolve(known_key) == expected(1, known_key)
+    assert resolve(missing_key) is None  # Current indexed absence stays authoritative.
+    assert [item.line_num for item in iter_resolver_items(owner.id, kind, missing_key, before_line=5)] == []
+
+    # A real provider compute-version bump makes the persisted partial facts stale.
+    settings.CODEX_COMPUTE_VERSION = current_version + 1
+    assert not history_facts_are_current(owner)
+    assert resolve(known_key) == expected(3, known_key)
+    assert resolve(missing_key) == expected(2, missing_key)
+    candidates = list(iter_resolver_items(owner.id, kind, known_key, before_line=5))
+    assert [(item.line_num, effective_current(item)) for item in candidates] == [
+        (line, raw[line]) for line in [3, 2, 1]
+    ]
+    assert list(iter_history_items(owner.id, before_line=5)) == [(line, raw[line]) for line in [3, 2, 1]]
 
 
 @pytest.mark.parametrize('terms', [
