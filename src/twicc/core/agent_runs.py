@@ -556,9 +556,11 @@ def run_stop_step(root_id: str, affected_agent_ids: Iterable[str], exclude: RunS
             stopped.append(AgentStoppedUpdate(agent_id, None, stamped=False))
             continue
         stopped_at = max(times)
-        rows = Session.objects.filter(id=agent_id).exclude(
+        from twicc.core.content_storage.lifecycle import update_lifecycle
+
+        rows = update_lifecycle(Session.objects.filter(id=agent_id).exclude(
             last_updated_at__gt=stopped_at,
-        ).update(last_stopped_at=stopped_at, last_updated_at=stopped_at)
+        ), last_stopped_at=stopped_at, last_updated_at=stopped_at)
         stopped.append(AgentStoppedUpdate(agent_id, stopped_at, stamped=rows > 0))
     return StopStepResult(payloads, stopped)
 

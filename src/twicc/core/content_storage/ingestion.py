@@ -6,6 +6,7 @@ from itertools import islice
 from django.db import connection, transaction
 from django.utils import timezone
 
+from twicc.core.content_storage.lifecycle import active_session_ids
 from twicc.core.content_storage.readers import effective_current, set_current_override
 from twicc.core.content_storage.references import bind_persisted_items, intern_contents
 from twicc.core.content_storage.state import ensure_storage_incarnation, invalidate_roots, resolve_root_decision
@@ -23,7 +24,7 @@ def _require_transaction() -> None:
 def initialize_ingestion_session(session: Session, *, invalidate: bool = False) -> None:
     """Prepare touched session/root identities without claiming legacy extraction."""
     session.storage_incarnation = ensure_storage_incarnation(session.id)
-    decision = resolve_root_decision(session.id, timezone.now(), frozenset())
+    decision = resolve_root_decision(session.id, timezone.now(), active_session_ids.get())
     if decision.resolved:
         ensure_storage_incarnation(decision.root_id)
         if invalidate:
@@ -79,7 +80,7 @@ def insert_ingested_items(
 def promote_ingested_items(session: Session, items: Sequence[tuple[SessionItem, str]]) -> None:
     """Place only this batch's persisted references in plaintext under final policy."""
     _require_transaction()
-    decision = resolve_root_decision(session.id, timezone.now(), frozenset())
+    decision = resolve_root_decision(session.id, timezone.now(), active_session_ids.get())
     if decision.is_cold:
         return
     source = iter(items)

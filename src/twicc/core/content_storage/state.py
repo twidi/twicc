@@ -22,22 +22,59 @@ def _require_writer_transaction() -> None:
         raise transaction.TransactionManagementError('Content state writes require a caller-owned transaction')
 
 
+def resolve_root_decisions(
+    session_ids: Iterable[str], now: datetime, active_root_ids: frozenset[str],
+) -> dict[str, RootDecision]:
+    """Load native ancestry by metadata batches, including active native descendants."""
+    requested = tuple(set(session_ids))
+    metadata = {}
+    frontier = set(requested) | set(active_root_ids)
+    while frontier:
+        found = {}
+        # Bound SQL parameters and loaded metadata per query.
+        ids = sorted(frontier)
+        for offset in range(0, len(ids), TREE_PAGE_SIZE):
+            found.update({row['id']: row for row in Session.objects.filter(
+                pk__in=ids[offset:offset + TREE_PAGE_SIZE],
+            ).values('id', 'type', 'parent_session_id', *COLD_FIELDS)})
+        metadata.update(dict.fromkeys(frontier))
+        metadata.update(found)
+        frontier = {row['parent_session_id'] for row in found.values()
+                    if row['type'] == 'subagent' and row['parent_session_id'] is not None
+                    and row['parent_session_id'] not in metadata}
+
+    def native_root(session_id):
+        visited = set()
+        while session_id not in visited:
+            visited.add(session_id)
+            fields = metadata.get(session_id)
+            if fields is None:
+                break
+            parent_id = fields['parent_session_id']
+            if fields['type'] == 'session' and parent_id is None:
+                return session_id
+            if fields['type'] != 'subagent' or parent_id is None:
+                break
+            session_id = parent_id
+        return None
+
+    active = {native_root(session_id) for session_id in active_root_ids}
+    decisions = {}
+    for session_id in requested:
+        root_id = native_root(session_id)
+        if root_id is None:
+            decisions[session_id] = RootDecision(None, False, False, False)
+        else:
+            is_active = root_id in active
+            decisions[session_id] = RootDecision(
+                root_id, not is_active and cold_from_fields(metadata[root_id], now), True, is_active,
+            )
+    return decisions
+
+
 def resolve_root_decision(session_id: str, now: datetime, active_root_ids: frozenset[str]) -> RootDecision:
-    """Resolve native ancestry through metadata projections; unresolved trees stay conservative."""
-    visited = set()
-    while session_id not in visited:
-        visited.add(session_id)
-        fields = Session.objects.filter(pk=session_id).values('id', 'type', 'parent_session_id', *COLD_FIELDS).first()
-        if fields is None:
-            break
-        parent_id = fields['parent_session_id']
-        if fields['type'] == 'session' and parent_id is None:
-            active = session_id in active_root_ids
-            return RootDecision(session_id, not active and cold_from_fields(fields, now), True, active)
-        if fields['type'] != 'subagent' or parent_id is None:
-            break
-        session_id = parent_id
-    return RootDecision(None, False, False, False)
+    """Resolve native ancestry; unresolved trees stay conservative."""
+    return resolve_root_decisions([session_id], now, active_root_ids)[session_id]
 
 
 def ensure_storage_incarnation(session_id: str) -> str:
@@ -50,12 +87,17 @@ def ensure_storage_incarnation(session_id: str) -> str:
 def invalidate_roots(root_ids: Iterable[str]) -> None:
     """Advance each supplied root once for this mutation group; callers supply old and new roots."""
     _require_writer_transaction()
-    seen = set()
-    for root_id in root_ids:
-        if root_id in seen:
-            continue
-        seen.add(root_id)
-        Session.objects.filter(pk=root_id).update(content_state_epoch=Coalesce(F('content_state_epoch'), 0) + 1)
+    roots = tuple(set(root_ids))
+    for offset in range(0, len(roots), TREE_PAGE_SIZE):
+        Session.objects.filter(pk__in=roots[offset:offset + TREE_PAGE_SIZE]).update(
+            content_state_epoch=Coalesce(F('content_state_epoch'), 0) + 1,
+        )
+    from twicc.core.content_storage.lifecycle import active_session_ids, request_root_promotion
+
+    decisions = resolve_root_decisions(roots, timezone.now(), active_session_ids.get())
+    for root_id, decision in decisions.items():
+        if decision.resolved and decision.root_id == root_id and not decision.is_cold:
+            transaction.on_commit(lambda root_id=root_id: request_root_promotion(root_id))
 
 
 def iter_native_tree_session_pages(

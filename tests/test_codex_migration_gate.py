@@ -186,7 +186,7 @@ def test_watcher_skips_a_deferred_change_and_replays_it_on_demand(monkeypatch, t
         monkeypatch.setattr(watcher, "defer_session_change", defer)
         monkeypatch.setattr(watcher, "_process_parsed_session_change", process)
         monkeypatch.setattr(watcher, "maybe_handle_special_change", special)
-        monkeypatch.setattr("twicc.providers.sessions_watcher.run_under_db_write_lock", lambda fn: fn())
+        monkeypatch.setattr("twicc.providers.sessions_watcher.run_under_db_write_lock", lambda fn, **kwargs: fn())
         monkeypatch.setattr("twicc.providers.sessions_watcher.get_channel_layer", lambda: object())
 
         await watcher._process_change(Change.modified, str(path), object())

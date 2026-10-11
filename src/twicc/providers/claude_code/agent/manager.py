@@ -847,6 +847,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             return
         from django.utils import timezone
 
+        from twicc.core.content_storage.lifecycle import update_lifecycle
         from twicc.core.models import Session
         from twicc.logging_context import provider_log_context
 
@@ -860,7 +861,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                     previous_cutoff = session.cutoff if session else None
 
                     await asyncio.to_thread(
-                        lambda: Session.objects.filter(id=agent.session_id).update(
+                        lambda: update_lifecycle(Session.objects.filter(id=agent.session_id),
                             last_stopped_at=now, last_updated_at=now,
                         )
                     )
@@ -876,13 +877,13 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                     )
                     if subagent_ids:
                         await asyncio.to_thread(
-                            lambda: Session.objects.filter(id__in=subagent_ids).update(
+                            lambda: update_lifecycle(Session.objects.filter(id__in=subagent_ids),
                                 last_stopped_at=now, last_updated_at=now,
                             )
                         )
                     return subagent_ids
 
-                subagent_ids = await run_under_db_write_lock(_persist_session_stopped_and_propagate)
+                subagent_ids = await run_under_db_write_lock(_persist_session_stopped_and_propagate, content_activity=True)
                 await self._broadcast_session_updated(agent.session_id)
                 for subagent_id in subagent_ids:
                     await self._broadcast_session_updated(subagent_id)

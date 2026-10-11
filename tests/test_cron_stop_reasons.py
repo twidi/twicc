@@ -74,7 +74,7 @@ def project(transactional_db):
 @pytest.fixture
 def passthrough_db_write_lock(monkeypatch):
     """The global DB writer only runs at app boot; run the write factory directly."""
-    async def _passthrough(coro_factory):
+    async def _passthrough(coro_factory, **kwargs):
         return await coro_factory()
 
     monkeypatch.setattr(

@@ -127,7 +127,9 @@ def _apply_visibility_flag(session_id: str, new_hidden: bool):
         session = Session.objects.get(id=session_id)
         before = session_contribution(session)
         session.hidden = new_hidden
-        session.save(update_fields=['hidden'])
+        from twicc.core.content_storage.lifecycle import save_lifecycle
+
+        save_lifecycle(session, update_fields=['hidden'])
         apply_contribution_changes([], [], before_sessions=[before],
             after_sessions=[session_contribution(session)], repair=True)
         session.refresh_from_db()
@@ -159,7 +161,9 @@ async def _apply_flip(session, *, new_hidden: bool) -> None:
                 session.id, new_hidden,
             )
 
-    saved = await run_under_db_write_lock(lambda: run_compute_sync(_apply_visibility_flag, session.id, new_hidden))
+    saved = await run_under_db_write_lock(
+        lambda: run_compute_sync(_apply_visibility_flag, session.id, new_hidden), content_activity=True,
+    )
     session.hidden = saved.hidden
     session.user_message_count = saved.user_message_count
     session.self_cost = saved.self_cost

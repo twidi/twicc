@@ -188,7 +188,7 @@ def test_generation_from_before_slice_is_not_relabelled_after_delete(tmp_path, m
         path = tmp_path / 's.jsonl'
         path.write_bytes(b'{}\n')
         before = await watcher._observe_source(path)
-        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn, **kwargs: fn())
         watcher.parse_session_file = AsyncMock(return_value=ParsedSessionFile('p', 's', SessionType.SESSION, 's'))
         async def callback(*args):
             watcher._queue.enqueue(path, Change.deleted)
@@ -337,7 +337,7 @@ def test_claude_replacement_with_committed_offset_fails_before_slice(tmp_path, m
         await watcher._observe_source(path)
         parsed = module.ParsedSessionFile('p', 's', SessionType.SESSION, 's', title='known')
         monkeypatch.setattr(module, 'get_session_by_id', AsyncMock(return_value=SimpleNamespace(last_offset=15)))
-        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn, **kwargs: fn())
         watcher.sync_and_broadcast = AsyncMock(side_effect=AssertionError('replacement was sliced'))
         result = await watcher._process_parsed_session_change(path, parsed, Change.modified, None)
         assert result.disposition == 'failed'
@@ -411,7 +411,7 @@ def test_codex_restart_prepares_releases_before_watcher_start(
                 yield set()
 
         watcher._process_parsed_session_change = process
-        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn, **kwargs: fn())
         monkeypatch.setattr(module, 'load_project_directories', lambda: None)
         monkeypatch.setattr(module, 'load_project_git_roots', lambda: None)
         monkeypatch.setattr(module, 'awatch', watch)
@@ -630,7 +630,7 @@ def test_busy_agent_gate_and_waiting_migration_do_not_block_small_session(tmp_pa
         watcher.parse_session_file = AsyncMock(side_effect=lambda path: module.ParsedSessionFile(
             'p', path.stem, SessionType.SESSION, path.name, title='known'))
         watcher._rewrite_detected = AsyncMock(return_value=False)
-        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn, **kwargs: fn())
         small_done = asyncio.Event()
         async def callback(self, path, *_args):
             if path == small:
@@ -677,7 +677,7 @@ def test_stop_cancels_gate_wake_and_drain_waiter(tmp_path, monkeypatch):
         path.write_bytes(b'{}\n')
         parsed = module.ParsedSessionFile('p', 'stop-gate', SessionType.SESSION, path.name)
         watcher.parse_session_file = AsyncMock(return_value=parsed)
-        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn, **kwargs: fn())
         gate = gate_for(parsed.session_id)
         await gate.acquire()
         waiter = asyncio.create_task(watcher.process_path(path))
@@ -814,7 +814,7 @@ def test_deletion_recreation_reparses_before_migration_exclusion(tmp_path, monke
             path.write_bytes(orjson.dumps({'type': 'session_meta', 'payload': {'id': sid, 'cwd': '/tmp/p'}}) + b'\n')
         write('first')
         watcher._rewrite_detected = AsyncMock(return_value=False)
-        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn, **kwargs: fn())
         seen = []
         async def process(self, path, parsed, *_args):
             seen.append(parsed.session_id)
@@ -855,7 +855,7 @@ def test_recreated_source_does_not_defer_on_old_migrating_identity(tmp_path, mon
             return orjson.dumps({'type': 'session_meta', 'payload': {'id': sid, 'cwd': '/tmp/p'}}) + b'\n'
         path.write_bytes(content('old'))
         watcher._rewrite_detected = AsyncMock(return_value=False)
-        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn, **kwargs: fn())
         seen = []
         async def process(self, source, parsed, *_args):
             seen.append(parsed.session_id)
@@ -1006,7 +1006,7 @@ def test_release_before_replacement_parse_waits_for_source_identity(
             return orjson.dumps({'type': 'session_meta', 'payload': {'id': sid, 'cwd': '/tmp/p', 'version': version}}) + b'\n'
         path.write_bytes(content('old', 1))
         watcher._rewrite_detected = AsyncMock(return_value=False)
-        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn, **kwargs: fn())
         seen = []
         async def process(self, source, parsed, change, *_args):
             seen.append(parsed.session_id)
@@ -1095,7 +1095,7 @@ def test_stop_drains_identification_before_clearing_pending_release(tmp_path, mo
         async def process(source, *_args):
             return module.SessionChangeResult('drained', watcher._queue.source_generation(source), source.stat().st_size)
         watcher._process_parsed_session_change = process
-        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn, **kwargs: fn())
         waiter = asyncio.create_task(watcher.process_path(path))
         await entered.wait()
         watcher.notify_migration_released(MigrationRelease('old', path, 'cancelled', False, None, 6001))
@@ -1137,7 +1137,7 @@ def test_terminal_release_after_close_waits_for_admitted_identity(tmp_path, monk
 
         watcher.parse_session_file = parse
         watcher._process_parsed_session_change = process
-        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn, **kwargs: fn())
         waiter = asyncio.create_task(watcher.process_path(path))
         try:
             await asyncio.wait_for(entered.wait(), 1)
@@ -1184,7 +1184,7 @@ def test_gate_wake_tracks_same_session_replacement(tmp_path, monkeypatch, outcom
         parsed = module.ParsedSessionFile('p', 'same-session-gate', SessionType.SESSION, path.name)
         watcher.parse_session_file = AsyncMock(return_value=parsed)
         watcher._rewrite_detected = AsyncMock(return_value=False)
-        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn, **kwargs: fn())
         sliced = []
         async def process(self, source, *_args):
             sliced.append(source)
@@ -1250,7 +1250,7 @@ def test_first_observed_claude_truncation_fails_before_slice(tmp_path, monkeypat
         assert path not in watcher._replaced_paths
         parsed = module.ParsedSessionFile('p', 'first-truncated', SessionType.SESSION, path.name, title='known')
         monkeypatch.setattr(module, 'get_session_by_id', AsyncMock(return_value=SimpleNamespace(last_offset=300)))
-        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn, **kwargs: fn())
         watcher.sync_and_broadcast = AsyncMock(return_value=module.SessionChangeResult('drained', target.source_generation, 300))
         result = await watcher._process_parsed_session_change(path, parsed, Change.modified, None)
         assert result.disposition == 'failed'
@@ -1279,7 +1279,7 @@ def test_unidentified_source_preserves_release_identity_and_original_event_order
         path.write_bytes(b'{}\n')
         parsed = module.ParsedSessionFile('p', 'new', SessionType.SESSION, path.name)
         watcher.parse_session_file = AsyncMock(return_value=parsed)
-        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn: fn())
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda fn, **kwargs: fn())
         sliced = []
         async def process(source, *_args):
             sliced.append(source)

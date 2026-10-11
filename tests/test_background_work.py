@@ -506,7 +506,7 @@ class TestIdleTimeout:
 # ---------------------------------------------------------------------------
 
 
-async def _direct(factory):
+async def _direct(factory, **kwargs):
     return await factory()
 
 

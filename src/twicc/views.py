@@ -1450,10 +1450,12 @@ async def bulk_archive_sessions(request):
     # any session whose Tantivy re-index is interrupted by shutdown (the
     # detached task below) will be picked up by the next-boot search
     # indexing sweep (which selects rows with ``search_version != CURRENT``).
+    from twicc.core.content_storage.lifecycle import update_lifecycle
+
     await run_under_db_write_lock(
-        lambda: Session.objects.filter(id__in=ids).aupdate(
-            archived=True, search_version=0,
-        )
+        lambda: sync_to_async(update_lifecycle)(
+            Session.objects.filter(id__in=ids), archived=True, search_version=0,
+        ), content_activity=True,
     )
 
     if ids:

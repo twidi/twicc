@@ -322,6 +322,9 @@ def test_unhide_session_restates_the_live_agent_state_after_the_row():
         def get_agent_info(self, session_id):
             return info if session_id == "s-unhide" else None
 
+        def get_active_agents(self):
+            return [info]
+
     with patch.object(session_visibility, "_push_hidden_to_live_agent", _push), \
             patch.object(session_visibility, "_broadcast_session_updated", _updated), \
             patch.object(session_visibility, "_broadcast_project_updated", _project), \

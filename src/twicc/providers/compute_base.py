@@ -54,6 +54,7 @@ from twicc.context_injection import (
     unwrap_cli_paste_in_slots,
 )
 from twicc.core.services.attachments.types import UserTextSlot
+from twicc.core.content_storage.lifecycle import apply_compute_lifecycle, save_lifecycle, update_lifecycle
 from twicc.core.agent_runs import RunStateExclude, StopStepResult, interaction_payloads, run_stop_step
 from twicc.core.enums import ItemDisplayLevel, ItemKind, Provider
 from twicc.core.models import (
@@ -3990,7 +3991,9 @@ class BaseSessionCompute:
                 session_fields['tasks'] = select_tasks_snapshot(db_tasks or {}, session_fields['tasks'])
             if 'compute_version' in session_fields:
                 session_fields['search_version'] = None
-            rows = Session.objects.filter(id=session_id).update(**session_fields)
+            rows = apply_compute_lifecycle(msg, lambda: update_lifecycle(
+                Session.objects.filter(id=session_id), **session_fields,
+            ))
             if rows == 0:
                 logger.debug(f"apply_session_complete: session {session_id} not found for update")
                 return ComputeApplyResult("missing")
@@ -4091,11 +4094,11 @@ class BaseSessionCompute:
         if agent_stopped:
             for entry in agent_stopped:
                 stopped_at = datetime.fromisoformat(entry['stopped_at'])
-                Session.objects.filter(id=entry['agent_session_id']).exclude(
-                    last_updated_at__gt=stopped_at,
-                ).update(
-                    last_stopped_at=stopped_at, last_updated_at=stopped_at,
-                )
+                apply_compute_lifecycle(msg, lambda entry=entry, stopped_at=stopped_at: update_lifecycle(
+                    Session.objects.filter(id=entry['agent_session_id']).exclude(
+                        last_updated_at__gt=stopped_at,
+                    ), last_stopped_at=stopped_at, last_updated_at=stopped_at,
+                ))
 
         # 12. Update project metadata (sessions_count, mtime, total_cost)
         if project_id:
@@ -4707,7 +4710,7 @@ class BaseSessionCompute:
                 preserve_dismissed_flags(db_goals, goals)
             session.goals = goals
             session_update_fields.append("goals")
-        session.save(update_fields=session_update_fields)
+        save_lifecycle(session, update_fields=session_update_fields)
 
         apply_contribution_changes(
             [], item_contributions(SessionItem.objects.filter(session=session, line_num__in=new_line_nums)),

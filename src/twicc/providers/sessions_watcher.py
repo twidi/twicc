@@ -1200,7 +1200,7 @@ class BaseSessionsWatcher:
 
         with sync_timing_context(getattr(session, "provider", None), parsed.session_id):
             result = await run_under_db_write_lock(
-                lambda: self.sync_and_broadcast(path, parsed, change_type, channel_layer)
+                lambda: self.sync_and_broadcast(path, parsed, change_type, channel_layer), content_activity=True,
             )
 
         indexing = result.indexing

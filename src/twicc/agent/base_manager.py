@@ -650,12 +650,10 @@ class BaseAgentManager:
         from django.utils import timezone
 
         from twicc.core.models import ProcessRun, Session
+        from twicc.core.content_storage.lifecycle import update_lifecycle
+        from twicc.providers.db_writer import storage_admission
 
         session_id = agent.session_id
-        self._agents[session_id] = agent
-        agent._background_work_callback = self._persist_background_work
-        ephemeral_runs.mark_registered(session_id)
-
         now = timezone.now()
 
         # Persist both DB writes (ProcessRun create + Session start-timestamps
@@ -676,25 +674,38 @@ class BaseAgentManager:
         agent_pid = agent.get_pid()
 
         async def _persist_run_and_start_timestamps() -> None:
-            pr = await asyncio.to_thread(
-                lambda: ProcessRun.objects.create(
-                    provider=agent.provider.value,
-                    session_id=session_id,
-                    started_at=now,
-                    last_state_change_at=now,
-                    twicc_pid=twicc_pid,
-                    agent_pid=agent_pid,
-                )
-            )
-            agent.process_run = pr
-            await asyncio.to_thread(
-                lambda: Session.objects.filter(id=session_id).update(
-                    last_started_at=now, last_updated_at=now,
-                )
-            )
+            def persist():
+                from django.db import transaction
 
+                with transaction.atomic():
+                    pr = ProcessRun.objects.create(
+                        provider=agent.provider.value,
+                        session_id=session_id,
+                        started_at=now,
+                        last_state_change_at=now,
+                        twicc_pid=twicc_pid,
+                        agent_pid=agent_pid,
+                    )
+                    update_lifecycle(Session.objects.filter(id=session_id),
+                                     last_started_at=now, last_updated_at=now)
+                    return pr
+
+            agent.process_run = await asyncio.to_thread(persist)
+
+        admission = contextlib.nullcontext() if getattr(agent, "ephemeral", False) else storage_admission()
+        async with admission:
+            self._agents[session_id] = agent
+            agent._background_work_callback = self._persist_background_work
+            ephemeral_runs.mark_registered(session_id)
+            try:
+                if not getattr(agent, "ephemeral", False):
+                    await run_under_db_write_lock(_persist_run_and_start_timestamps, content_activity=True)
+            except BaseException:
+                if self._agents.get(session_id) is agent:
+                    self._agents.pop(session_id, None)
+                    ephemeral_runs.agent_ended(session_id)
+                raise
         if not getattr(agent, "ephemeral", False):
-            await run_under_db_write_lock(_persist_run_and_start_timestamps)
             await self._broadcast_session_updated(session_id)
 
         # Initial STARTING broadcast (state was set to STARTING in __init__).
@@ -1256,18 +1267,19 @@ class BaseAgentManager:
         from django.utils import timezone
 
         from twicc.core.models import Session
+        from twicc.core.content_storage.lifecycle import update_lifecycle
 
         try:
             now = timezone.now()
 
             async def _persist_stopped() -> None:
                 await asyncio.to_thread(
-                    lambda: Session.objects.filter(id=agent.session_id).update(
+                    lambda: update_lifecycle(Session.objects.filter(id=agent.session_id),
                         last_stopped_at=now, last_updated_at=now,
                     )
                 )
 
-            await run_under_db_write_lock(_persist_stopped)
+            await run_under_db_write_lock(_persist_stopped, content_activity=True)
             await self._broadcast_session_updated(agent.session_id)
         except Exception as e:
             logger.error(

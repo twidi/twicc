@@ -178,3 +178,38 @@ def test_shutdown_drains_admission_before_clearing_locks():
                 pass
 
     asyncio.run(scenario())
+
+
+def test_unrelated_writer_skips_active_registry_snapshot(writer_state, monkeypatch):
+    def forbidden():
+        raise AssertionError('Unrelated writer work must not read active agents')
+
+    monkeypatch.setattr('twicc.agent.registry.get_agent_manager_registry', forbidden)
+
+    async def job():
+        return 'settings'
+
+    assert asyncio.run(db_writer.run_under_db_write_lock(job)) == 'settings'
+
+
+def test_content_writer_captures_actual_active_snapshot(writer_state, monkeypatch):
+    from types import SimpleNamespace
+    from twicc.core.content_storage.lifecycle import active_session_ids
+
+    calls = []
+
+    def snapshot():
+        calls.append('snapshot')
+        return [SimpleNamespace(session_id='native-leaf')]
+
+    monkeypatch.setattr('twicc.agent.registry.get_agent_manager_registry', lambda: SimpleNamespace(
+        get_active_agents=snapshot,
+    ))
+
+    async def job():
+        assert db_writer._lease_admits_current()
+        return active_session_ids.get()
+
+    assert asyncio.run(db_writer.run_under_db_write_lock(job, content_activity=True)) == frozenset({'native-leaf'})
+    assert calls == ['snapshot']
+    assert active_session_ids.get() == frozenset()

@@ -207,7 +207,7 @@ def test_in_place_tail_rewrite_precedes_append_slice(tmp_path, monkeypatch, prov
             jobs.append(job)
         monkeypatch.setattr(codex_module, 'submit_async_job', submit)
         monkeypatch.setattr(codex_module, 'request_rebuild', lambda sid: None)
-        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda callback: callback())
+        monkeypatch.setattr(module, 'run_under_db_write_lock', lambda callback, **kwargs: callback())
         watcher.sync_and_broadcast = AsyncMock(side_effect=AssertionError('rewritten source was sliced'))
         parsed = module.ParsedSessionFile(
             'p', session.id, SessionType.SESSION, path.name, title='known', compute_ready_on_create=False,

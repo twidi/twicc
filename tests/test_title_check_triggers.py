@@ -231,7 +231,9 @@ def test_archive_transition_requests_after_all_teardown(monkeypatch, requests, a
     now = timezone.now()
     ProcessRun.objects.create(session_id=session.id, provider=session.provider, started_at=now,
                               last_state_change_at=now, state=AgentState.DEAD.value)
-    monkeypatch.setattr(registry, "get_agent_manager_registry", lambda: SimpleNamespace(kill_agent=kill))
+    monkeypatch.setattr(registry, "get_agent_manager_registry", lambda: SimpleNamespace(
+        kill_agent=kill, get_active_agents=lambda: [] if already_dead else [SimpleNamespace(session_id=session.id)],
+    ))
     monkeypatch.setattr(terminal, "kill_all_tmux_terminals", kill_tmux)
     run_with_writer(lambda: apply_session_archived_change(session, True))
     session.refresh_from_db()
@@ -247,7 +249,9 @@ def test_archive_without_false_to_true_transition_requests_nothing(monkeypatch, 
 
     session = Session.objects.create(id="archive-repeat", project=Project.objects.create(id="archive-repeat-project"),
                                      archived=before)
-    monkeypatch.setattr(registry, "get_agent_manager_registry", lambda: SimpleNamespace(kill_agent=AsyncMock()))
+    monkeypatch.setattr(registry, "get_agent_manager_registry", lambda: SimpleNamespace(
+        kill_agent=AsyncMock(), get_active_agents=list,
+    ))
     monkeypatch.setattr(terminal, "kill_all_tmux_terminals", lambda scope: None)
     run_with_writer(lambda: apply_session_archived_change(session, after))
     assert requests == []
@@ -301,7 +305,7 @@ def test_startup_initial_sync_does_not_request_title(provider_home, requests, pr
 
     async def scenario():
         for payload in payloads:
-            await db_writer.run_under_db_write_lock(lambda: db_writer._process_thread_message(payload))
+            await db_writer.run_under_db_write_lock(lambda payload=payload: db_writer._process_thread_message(payload))
 
     run_with_writer(scenario)
     assert Session.objects.filter(id="startup-title").exists()

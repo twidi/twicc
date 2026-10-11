@@ -444,8 +444,10 @@ async def apply_session_archived_change(
         session.pinned = None
         fields.append("pinned")
 
+    from twicc.core.content_storage.lifecycle import save_lifecycle
+
     await run_under_db_write_lock(
-        lambda: session.asave(update_fields=fields)
+        lambda: sync_to_async(save_lifecycle)(session, update_fields=fields), content_activity=True,
     )
 
     # Search reindex — non-critical because the next full rebuild reconciles

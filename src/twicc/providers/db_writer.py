@@ -1381,8 +1381,23 @@ async def storage_admission() -> AsyncIterator[None]:
         yield
 
 
+async def _run_with_content_activity(coro_factory):
+    """Capture real active protection only for opted-in content work under writer ownership."""
+    from twicc.agent.registry import get_agent_manager_registry
+    from twicc.core.content_storage.lifecycle import active_session_ids
+
+    token = active_session_ids.set(frozenset(
+        info.session_id for info in get_agent_manager_registry().get_active_agents()
+    ))
+    try:
+        return await coro_factory()
+    finally:
+        active_session_ids.reset(token)
+
+
 async def _run_under_db_write_lock(
     coro_factory: Callable[[], Coroutine[Any, Any, _T]],
+    *, content_activity: bool = False,
 ) -> _T:
     """Internal core — no stop-event guard.
 
@@ -1406,6 +1421,10 @@ async def _run_under_db_write_lock(
 
     See :func:`run_under_db_write_lock` for the user-facing contract.
     """
+    if content_activity:
+        original_factory = coro_factory
+        coro_factory = lambda: _run_with_content_activity(original_factory)
+
     if _lease_admits_current():
         # Nested call inside a context that still holds the lock and
         # whose current Task is part of the lease's drive: the outer
@@ -1449,8 +1468,13 @@ async def _run_under_db_write_lock(
 
 async def run_under_db_write_lock(
     coro_factory: Callable[[], Coroutine[Any, Any, _T]],
+    *, content_activity: bool = False,
 ) -> _T:
     """Run a coroutine under the shared DB write lock, cancellation-safe.
+
+    Set ``content_activity=True`` for ingestion, lifecycle or representation
+    writes that need a real immutable active-session snapshot. Capture occurs
+    under writer ownership on the event loop. Unrelated jobs skip the registry.
 
     Public, recommended API for every caller that needs to wrap a
     ``transaction.atomic`` block in the DB writer's serialization. Use
@@ -1587,6 +1611,10 @@ async def run_under_db_write_lock(
     The intended default pattern is sequential ``await``s or nested
     ``run_under_db_write_lock`` calls; neither needs special handling.
     """
+    if content_activity:
+        original_factory = coro_factory
+        coro_factory = lambda: _run_with_content_activity(original_factory)
+
     if _lease_admits_current():
         # Nested call. See the reentrance section of the docstring.
         # The outer call's pre/post-acquire stop-event checks already
@@ -1713,7 +1741,7 @@ async def _drain_one() -> bool:
             ):
                 try:
                     async with storage_admission():
-                        await _run_under_db_write_lock(lambda: _process_compute_message(msg))
+                        await _run_under_db_write_lock(lambda: _process_compute_message(msg), content_activity=True)
                 except Exception as exc:
                     logger.error(f"Error processing compute message: {exc}", exc_info=True)
 
@@ -1726,7 +1754,7 @@ async def _drain_one() -> bool:
         any_processed = True
         with provider_log_context(getattr(payload, "provider", None)):
             try:
-                await _run_under_db_write_lock(lambda: _process_thread_message(payload))
+                await _run_under_db_write_lock(lambda: _process_thread_message(payload), content_activity=True)
             except Exception as exc:
                 logger.error(f"Error processing thread message: {exc}", exc_info=True)
 
