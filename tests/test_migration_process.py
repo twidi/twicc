@@ -25,18 +25,18 @@ from django.conf import settings
 django.setup()
 from django.db import connections
 connections['default'].ensure_connection()
-assert settings.DATABASES['default']['ENGINE'] == 'twicc.db.backends.sqlite_runtime'
+assert settings.DATABASES['default']['ENGINE'] == 'django.db.backends.sqlite3'
 assert not any(name.startswith('twicc.db.backends.sqlite3') for name in sys.modules)
 """, DJANGO_SETTINGS_MODULE="twicc.settings", TWICC_SQLITE_STANDARD_MIGRATIONS=fallback)
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("fallback,engine", [("", "twicc.db.backends.sqlite3"), ("1", "twicc.db.backends.sqlite_runtime")])
+@pytest.mark.parametrize("fallback,engine", [("", "twicc.db.backends.sqlite3"), ("1", "django.db.backends.sqlite3")])
 def test_migration_settings_preserve_database_options(tmp_path, fallback, engine):
     result = probe(tmp_path, f"""
 from twicc import settings, settings_migration
 assert settings_migration.DATABASES['default']['ENGINE'] == {engine!r}
-assert settings.DATABASES['default']['ENGINE'] == 'twicc.db.backends.sqlite_runtime'
+assert settings.DATABASES['default']['ENGINE'] == 'django.db.backends.sqlite3'
 for key in ('NAME', 'OPTIONS'):
     assert settings_migration.DATABASES['default'][key] == settings.DATABASES['default'][key]
 assert settings_migration.LOGGING == settings.LOGGING

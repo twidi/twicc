@@ -10,7 +10,7 @@ from contextlib import contextmanager
 import pytest
 from django.core.management import call_command
 from django.db import IntegrityError, OperationalError, connections
-from twicc.db.backends.sqlite_runtime.base import DatabaseWrapper as StandardWrapper
+from django.db.backends.sqlite3.base import DatabaseWrapper as StandardWrapper
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.loader import MigrationLoader
 from django.db.migrations.recorder import MigrationRecorder
@@ -35,7 +35,7 @@ def disposable_db(tmp_path, django_db_blocker):
         previous = connections[alias]
         previous_config = connections.databases[alias]
         config = {**connections["default"].settings_dict, "NAME": str(tmp_path / "disposable.sqlite3")}
-        config["ENGINE"] = "twicc.db.backends.sqlite_runtime" if standard else "twicc.db.backends.sqlite3"
+        config["ENGINE"] = "django.db.backends.sqlite3" if standard else "twicc.db.backends.sqlite3"
         db = (StandardWrapper if standard else DatabaseWrapper)(config, alias)
         connections.databases[alias] = config
         setattr(connections._connections, alias, db)
@@ -78,12 +78,12 @@ print(db.connection is None)
         [sys.executable, "-c", script], check=True, capture_output=True, text=True,
         env={**os.environ, "TWICC_SQLITE_STANDARD_MIGRATIONS": opt_out},
     )
-    expected = "twicc.db.backends.sqlite_runtime" if opt_out == "1" else "twicc.db.backends.sqlite3"
+    expected = "django.db.backends.sqlite3" if opt_out == "1" else "twicc.db.backends.sqlite3"
     assert result.stdout.splitlines() == [expected, "True"]
 
 
-def test_test_settings_select_runtime_backend():
-    assert connections["default"].settings_dict["ENGINE"] == "twicc.db.backends.sqlite_runtime"
+def test_test_settings_select_standard_backend():
+    assert connections["default"].settings_dict["ENGINE"] == "django.db.backends.sqlite3"
 
 
 @pytest.fixture

@@ -1,12 +1,12 @@
 """SQLite backend with transaction-local migration validation."""
 
-from twicc.db.backends.sqlite_runtime.base import DatabaseWrapper as RuntimeDatabaseWrapper
+from django.db.backends.sqlite3.base import DatabaseWrapper as SQLiteDatabaseWrapper
 
 from .driver import Connection
 from .schema import DatabaseSchemaEditor
 
 
-class DatabaseWrapper(RuntimeDatabaseWrapper):
+class DatabaseWrapper(SQLiteDatabaseWrapper):
     SchemaEditorClass = DatabaseSchemaEditor
 
     def get_connection_params(self):

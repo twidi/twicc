@@ -493,7 +493,10 @@ class Session(models.Model):
     # time by `validate_hidden_constraints`. Subagent sessions
     # (`type=SUBAGENT`) ignore this flag entirely: they are already invisible
     # everywhere via the `type=SESSION` filter.
-    hidden = models.BooleanField(default=False, db_index=True)
+    # Indexed only where True (idx_session_hidden below): most sessions are
+    # visible, so a full index would be picked for `hidden=False` filters and
+    # beat the selective project indexes.
+    hidden = models.BooleanField(default=False)
     # Suppress this session's finished-working notification family AND its
     # unread state (the row's eye, the project/workspace badges, the favicon,
     # the sidebar's cross-filter promotion). Questions, approvals, failures,
@@ -707,6 +710,8 @@ class Session(models.Model):
                     hidden=False,
                 ),
             ),
+            # Lists the few hidden sessions (WebSocket connect, `--only-hidden`).
+            models.Index(fields=["hidden"], name="idx_session_hidden", condition=models.Q(hidden=True)),
         ]
 
     @property

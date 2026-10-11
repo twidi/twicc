@@ -310,9 +310,7 @@ CHANNEL_LAYERS = {
 
 DATABASES = {
     "default": {
-        # Django's SQLite backend, keeping boolean filters as `NOT "flag"` (see
-        # twicc/db/backends/sqlite_runtime/operations.py).
-        "ENGINE": "twicc.db.backends.sqlite_runtime",
+        "ENGINE": "django.db.backends.sqlite3",
         "NAME": get_db_path(),
         "OPTIONS": {
             "timeout": 30,
