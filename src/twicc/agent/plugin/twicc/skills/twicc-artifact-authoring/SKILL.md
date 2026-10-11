@@ -1,6 +1,6 @@
 ---
 name: twicc-artifact-authoring
-description: Load before writing any artifact TwiCC renders: an image in your reply, a file in the Artifacts tab (image, PDF, audio/video, Markdown, Mermaid, HTML page), or an HTML page inline in the chat.
+description: "Load before writing any artifact TwiCC renders: an image in your reply, a file in the Artifacts tab (image, PDF, audio/video, Markdown, Mermaid, HTML page), or an HTML page inline in the chat."
 ---
 
 # TwiCC Artifact Authoring
