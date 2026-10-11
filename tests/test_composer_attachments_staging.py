@@ -101,15 +101,20 @@ def test_validate_ref_rejects_bad_bucket(bucket):
         validate_ref({"bucket": bucket, "id": str(uuid.uuid4())})
 
 
+FIXED_ID = "0b40824e-a529-47bf-953d-b7f5e3b83d6e"
+
+
 @pytest.mark.parametrize(
     "att_id",
     [
         "",
         ".released",
         "not-a-uuid",
-        str(uuid.uuid4()).upper(),
-        uuid.uuid4().hex,
-        "{" + str(uuid.uuid4()) + "}",
+        # Fixed values: a random id would change the test id on every run, so
+        # a failing case could not be re-run by its id (``--lf``, a copied id).
+        FIXED_ID.upper(),
+        FIXED_ID.replace("-", ""),
+        "{" + FIXED_ID + "}",
         5,
         None,
     ],

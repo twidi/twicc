@@ -224,11 +224,22 @@ def test_expected_row_counts_cover_every_fixture():
     assert set(EXPECTED_ROW_COUNTS) == set(ALL_FIXTURES)
 
 
-@pytest.mark.parametrize("per_line", [True, False], ids=["per_line", "one_chunk"])
+# A per-line replay appends one line per sync, so every slice limit reads it
+# in a single slice: only the one-chunk replay varies the limit (one line per
+# slice, a boundary inside pairs of lines, the whole file at once).
+REPLAY_MODES = {
+    "per_line": (True, 500),
+    "one_chunk_slice_1": (False, 1),
+    "one_chunk_slice_2": (False, 2),
+    "one_chunk": (False, 500),
+}
+
+
+@pytest.mark.parametrize("mode", sorted(REPLAY_MODES))
 @pytest.mark.parametrize("name", sorted(ALL_FIXTURES))
 @pytest.mark.parametrize("current", [False, True], ids=["stale_history", "indexed_history"])
-@pytest.mark.parametrize('slice_lines', [1, 2, 500])
-def test_batch_live_parity(db, tmp_path, name, per_line, current, slice_lines, monkeypatch):
+def test_batch_live_parity(db, tmp_path, name, mode, current, monkeypatch):
+    per_line, slice_lines = REPLAY_MODES[mode]
     from tests import live_sync_helpers
     from twicc.providers.live_sync import LiveSyncLimits
     monkeypatch.setattr(live_sync_helpers, 'REPLAY_LIMITS', LiveSyncLimits(slice_lines))

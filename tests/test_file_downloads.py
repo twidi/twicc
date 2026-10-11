@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -126,15 +127,19 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-@pytest.fixture
-def repo(tmp_path, transactional_db):
-    """A repo with two commits, then uncommitted work.
+@pytest.fixture(scope="module")
+def repo_template(tmp_path_factory):
+    """A repo with two commits, then uncommitted work, built once per module.
 
     HEAD~1 adds ``kept.txt`` and ``gone.txt``; HEAD modifies ``kept.txt`` and
     deletes ``gone.txt``. The working tree then modifies ``kept.txt`` again and
     adds an untracked file.
+
+    Building it takes a dozen ``git`` processes; each test gets its own copy
+    (see :func:`repo`), so tests that commit or delete files never see each
+    other's changes.
     """
-    directory = tmp_path / "repo"
+    directory = tmp_path_factory.mktemp("repo-template") / "repo"
     directory.mkdir()
     _git(directory, "init", "-q", "-b", "main")
     _git(directory, "config", "user.email", "test@example.com")
@@ -154,6 +159,15 @@ def repo(tmp_path, transactional_db):
 
     (directory / "kept.txt").write_text("v3\n")
     (directory / "fresh.txt").write_text("brand new\n")
+    return {"dir": directory, "first": first, "second": second}
+
+
+@pytest.fixture
+def repo(tmp_path, transactional_db, repo_template):
+    """A private copy of :func:`repo_template`, with its project and session."""
+    directory = tmp_path / "repo"
+    shutil.copytree(repo_template["dir"], directory, symlinks=True)
+    first, second = repo_template["first"], repo_template["second"]
 
     project = Project.objects.create(
         id="-tmp-dl-repo", directory=str(directory), git_root=str(directory)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 import pytest
 
@@ -30,6 +31,23 @@ class _PausedCache(dict):
         return self._pause(super().__iter__())
 
 
+class _ObservedLock:
+    """A plain lock that reports when a thread has to wait for it."""
+
+    def __init__(self, contended: threading.Event):
+        self._lock = threading.Lock()
+        self.contended = contended
+
+    def __enter__(self):
+        if not self._lock.acquire(blocking=False):
+            self.contended.set()
+            self._lock.acquire()
+        return self
+
+    def __exit__(self, *exc_info):
+        self._lock.release()
+
+
 @pytest.mark.parametrize("module,operation", [
     (original_file_cache, "cleanup"),
     (original_files_cache, "cleanup"),
@@ -45,6 +63,8 @@ def test_cache_compound_operation_is_safe_during_concurrent_capture(monkeypatch,
     shared.put(("old", "b"), value)
     cache = _PausedCache(shared._entries, paused, resume)
     monkeypatch.setattr(shared, "_entries", cache)
+    contended = threading.Event()
+    monkeypatch.setattr(shared, "_lock", _ObservedLock(contended))
     monkeypatch.setattr(module, "_cache", shared)
     errors = []
 
@@ -69,7 +89,13 @@ def test_cache_compound_operation_is_safe_during_concurrent_capture(monkeypatch,
     cleaner.start()
     assert paused.wait(2)
     writer.start()
-    inserted.wait(0.5)
+    # Resume once the writer either waits on the lock (the cleaner holds it)
+    # or already inserted mid-iteration (an unlocked side: the resumed
+    # iteration then raises). Either is final, so no fixed wait is needed.
+    deadline = time.monotonic() + 2
+    while not (contended.is_set() or inserted.is_set()) and time.monotonic() < deadline:
+        time.sleep(0.001)
+    assert contended.is_set() or inserted.is_set()
     resume.set()
     cleaner.join(3)
     writer.join(3)

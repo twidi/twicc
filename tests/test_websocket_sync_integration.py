@@ -103,7 +103,12 @@ def records_for(provider):
     tool = {'type': 'tool_use', 'id': 'reuse', 'name': 'Bash', 'input': {'command': 'true'}}
     result = {'type': 'user', 'message': {'role': 'user', 'content': [
         {'type': 'tool_result', 'tool_use_id': 'reuse', 'content': 'done'}]}}
-    return [assistant('message-1', [tool]), result, *[{} for _ in range(499)],
+    # The filler only pushes the reuse past the 500-line slice. A SYSTEM line
+    # (DEBUG_ONLY) keeps that: a bare ``{}`` is COLLAPSIBLE and joins the open
+    # tool group, so every line rewrites the whole group (quadratic, ~2 s),
+    # and group fields are not part of the compared snapshot.
+    filler = {'type': 'queue-operation'}
+    return [assistant('message-1', [tool]), result, *[filler for _ in range(499)],
             assistant('message-2', [tool]), result,
             assistant('message-2', [{'type': 'text', 'text': 'stream duplicate'}])]
 

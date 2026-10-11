@@ -99,6 +99,20 @@ original = subprocess.Popen
 def slow_child(command, **kwargs):
     child = original([sys.executable, '-c', {child_script!r}], **kwargs)
     Path({str(tmp_path / 'child.pid')!r}).write_text(str(child.pid))
+    communicate = child.communicate
+    def observed_grace(*args, timeout=None, **kwargs):
+        if timeout is not None:
+            Path({str(tmp_path / 'grace')!r}).write_text(repr(timeout))
+            # A child ignoring SIGTERM can never exit within the grace period, so
+            # waiting its full length proves nothing; the kill path stays real.
+            if {ignore_term!r}:
+                timeout = min(timeout, 0.2)
+        try:
+            return communicate(*args, timeout=timeout, **kwargs)
+        except subprocess.TimeoutExpired:
+            Path({str(tmp_path / 'escalated')!r}).touch()
+            raise
+    child.communicate = observed_grace
     return child
 migration_process.subprocess.Popen = slow_child
 with InstanceLock(Path({str(tmp_path)!r})) as lock:
@@ -125,6 +139,10 @@ with InstanceLock(Path({str(tmp_path)!r})) as lock:
         _, stderr = parent.communicate(timeout=10)
         assert parent.returncode != 0, stderr
         assert (tmp_path / "reaped").exists(), stderr
+        # Only a child ignoring SIGTERM needs the SIGKILL escalation, and the
+        # requested grace must still fit in the window this test allows.
+        assert (tmp_path / "escalated").exists() is ignore_term, stderr
+        assert 0 < float((tmp_path / "grace").read_text()) < 10, stderr
     finally:
         if parent.poll() is None:
             parent.kill()

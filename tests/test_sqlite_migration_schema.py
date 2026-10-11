@@ -24,10 +24,20 @@ from django.test.utils import isolate_apps
 from twicc.db.backends.sqlite3.base import DatabaseWrapper
 
 
+def disposable_config(path):
+    config = {**connections["default"].settings_dict, "NAME": str(path)}
+    # A disposable file never needs crash durability. Skipping the fsync of
+    # every commit leaves transactions, rollback and locking unchanged, and
+    # the test settings define no init_command of their own to preserve.
+    assert "init_command" not in config["OPTIONS"]
+    config["OPTIONS"] = {**config["OPTIONS"], "init_command": "PRAGMA synchronous=OFF"}
+    return config
+
+
 @pytest.fixture
 def connection(tmp_path, django_db_blocker):
     alias = "migration_scope"
-    config = {**connections["default"].settings_dict, "NAME": str(tmp_path / "disposable.sqlite3")}
+    config = disposable_config(tmp_path / "disposable.sqlite3")
     db = DatabaseWrapper(config, alias)
     setattr(connections._connections, alias, db)
     django_db_blocker.unblock()

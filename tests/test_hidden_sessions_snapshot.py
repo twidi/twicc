@@ -60,6 +60,31 @@ async def _collect(comm, wanted, limit=40):
     return None
 
 
+async def _connect_frames(comm):
+    """Every frame ``connect()`` sent, read up to a barrier instead of a timeout.
+
+    Channels dispatches one event at a time, so a request sent after the
+    handshake is handled only once ``connect()`` has returned: its reply comes
+    after every connect-time frame. An empty ``validate_usage_dump_path``
+    answers at once and touches nothing. Not a ``ping``: the heartbeat
+    transport answers that one itself, ahead of the consumer.
+
+    Proving a frame absent then costs one round trip, not a receive timeout.
+    Returns ``None`` if the barrier never comes back.
+    """
+    await comm.send_json_to({"type": "validate_usage_dump_path"})
+    frames = []
+    for _ in range(40):
+        try:
+            msg = await comm.receive_json_from(timeout=2)
+        except Exception:
+            return None
+        if msg.get("type") == "usage_dump_path_validated":
+            return frames
+        frames.append(msg)
+    return None
+
+
 async def _close(comm):
     """Disconnect, tolerating a communicator already torn down by a timeout.
 
@@ -147,11 +172,16 @@ def test_a_subscribe_filter_that_excludes_it_gets_nothing(project):
     async def scenario():
         comm = _communicator(subscribe="server_version")
         await comm.connect()
-        msg = await _collect(comm, "hidden_sessions", limit=5)
+        frames = await _connect_frames(comm)
         await _close(comm)
-        return msg
+        return frames
 
-    assert _run(scenario()) is None
+    frames = _run(scenario())
+    assert frames is not None, "the barrier must come back"
+    types = [frame.get("type") for frame in frames]
+    # The filter did let its own type through: the stream was live.
+    assert "server_version" in types
+    assert "hidden_sessions" not in types
 
 
 def test_the_active_process_filter_still_works(project):

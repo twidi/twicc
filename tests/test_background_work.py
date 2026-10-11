@@ -195,19 +195,45 @@ class TestClaudeTracking:
         asyncio.run(agent._update_live_tasks(_task_list("b2")))
         assert list(agent._live_shell_tasks) == ["b2"]
 
-    def test_a_pending_wakeup_publishes_again_when_it_comes_due(self):
+    def test_a_pending_wakeup_publishes_again_when_it_comes_due(self, monkeypatch):
+        from twicc.providers.claude_code.agent import agent as agent_module
+
         agent = _claude_agent()
         published = []
         agent._schedule_background_work_refresh = lambda: published.append(agent.current_background_work())
+        # Virtual wall clock: the timer below advances it by the delay the
+        # agent asked for, so the publication still sees the deadline passed
+        # without the test sleeping the real 1.1 s.
+        clock = [time.time()]
+        monkeypatch.setattr(agent_module, "time", SimpleNamespace(time=lambda: clock[0]))
+        delays = []
 
         async def run():
+            loop = asyncio.get_running_loop()
+            real_call_later = loop.call_later
+
+            def call_later(delay, callback, *args):
+                delays.append(delay)
+
+                def fire():
+                    clock[0] += delay
+                    callback(*args)
+
+                return real_call_later(0, fire)
+
             # Due in 0.1 s: the timer fires 1 s past the deadline.
-            agent._pending_wakeup_at = time.time() + 0.1
-            agent._arm_wakeup_refresh()
+            agent._pending_wakeup_at = clock[0] + 0.1
+            loop.call_later = call_later
+            try:
+                agent._arm_wakeup_refresh()
+            finally:
+                del loop.call_later
             assert agent._wakeup_refresh_handle is not None
-            await asyncio.sleep(1.3)
+            assert agent.current_background_work() is not None
+            await asyncio.sleep(0.05)
 
         asyncio.run(run())
+        assert delays == [pytest.approx(1.1)]
         assert published and published[-1] is None
 
 

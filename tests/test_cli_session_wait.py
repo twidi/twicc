@@ -115,7 +115,9 @@ def test_a_session_whose_compute_is_not_current_starts_at_its_last_line(session,
     running(session)
     answer(session, 5, "old news")  # below last_line=10
 
-    payload, code = run(capsysbinary)
+    # The answer is in the DB before the wait starts, so the first poll
+    # already decides; a longer budget only re-reads the same rows.
+    payload, code = run(capsysbinary, timeout=0.05)
 
     assert payload["reply"]["since_line_num"] == 10
     assert payload["reply"]["outcome"] != "replied"
@@ -126,7 +128,8 @@ def test_a_line_at_the_cursor_does_not_count(session, capsysbinary):
     running(session)
     answer(session, 7, "seen before")
 
-    payload, _ = run(capsysbinary, from_line=7)
+    # Decided by the first poll: the line is there before the wait starts.
+    payload, _ = run(capsysbinary, from_line=7, timeout=0.05)
 
     assert payload["reply"]["outcome"] != "replied"
 
@@ -169,7 +172,7 @@ def test_a_timeout_exits_five(session, capsysbinary):
     """And the budget it ran on is the one that was asked for.
 
     Asserting the outcome alone lets any budget through: `timeout` and exit 5
-    are true whether the wait lasted the 0.3 s requested or five seconds. A
+    are true whether the wait lasted the 1 s requested or five seconds. A
     mutant halving it, or pinning it to a constant, kept the suite green —
     the same gap the batch wait closed one commit earlier and this file
     reopened.
@@ -349,7 +352,7 @@ def test_the_payload_names_the_session_it_waited_on(session, capsysbinary):
     """
     running(session)
 
-    payload, _ = run(capsysbinary, timeout=0.3)
+    payload, _ = run(capsysbinary, timeout=0.05)
 
     assert payload["session_id"] == "sw-session"
 
@@ -461,7 +464,7 @@ def test_a_provider_error_consumes_a_line_like_an_answer_does(session, capsysbin
     assert again["reply"]["line_num"] == 15
 
     # The rule this ending actually needs.
-    past, _ = run(capsysbinary, from_line=first["reply"]["line_num"], timeout=0.3)
+    past, _ = run(capsysbinary, from_line=first["reply"]["line_num"], timeout=0.05)
     assert past["reply"]["outcome"] != "provider_error"
 
 

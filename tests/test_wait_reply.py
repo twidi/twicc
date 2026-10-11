@@ -243,7 +243,9 @@ def test_a_final_message_at_or_below_the_cursor_is_not_the_answer(project):
     assistant(session, 7, "the previous answer", "end_turn")
     process(session, AgentState.ASSISTANT_TURN.value)
 
-    reply = wait(session, since_line_num=7, timeout=0.2)
+    # Decided by the first poll: everything it looks at is in place before
+    # the wait starts, so a longer budget only re-reads the same rows.
+    reply = wait(session, since_line_num=7, timeout=0.05)
 
     assert reply["outcome"] == TIMEOUT
     assert reply["since_line_num"] == 7
@@ -317,10 +319,12 @@ def test_an_answer_still_being_indexed_is_not_a_finished_turn(project, on_tick, 
         assistant(session, 19, "the answer", "end_turn")
         behind.write_bytes(b"")
 
-    # Tick 2 puts the process at rest; the answer only lands at tick 20, long
-    # past the point (tick 7) where a loop trusting the process alone would
-    # have given up. That gap is the test.
-    on_tick({2: goes_idle, 20: watcher_catches_up})
+    # Tick 2 puts the process at rest; the answer only lands at tick 12, past
+    # the point (tick 9 at the latest: five flush ticks plus the confirming
+    # one) where a loop trusting the process alone would have given up. That
+    # gap is the test. A loaded machine only stretches the ticks, which makes
+    # such a loop give up at an earlier tick, never a later one.
+    on_tick({2: goes_idle, 12: watcher_catches_up})
 
     reply = wait(session, timeout=5.0)
 
@@ -575,7 +579,9 @@ def test_a_wait_that_never_saw_a_pending_click_says_nothing_about_it(project, js
     jsonl(session, size=0)
     process(session, AgentState.ASSISTANT_TURN.value)
 
-    reply = wait(session, timeout=0.2)
+    # Decided by the first poll: everything it looks at is in place before
+    # the wait starts, so a longer budget only re-reads the same rows.
+    reply = wait(session, timeout=0.05)
 
     assert reply["outcome"] == TIMEOUT
     assert "awaiting_user_input" not in reply
@@ -629,10 +635,14 @@ def test_a_working_session_costs_one_query_per_tick(project, monkeypatch, jsonl)
     monkeypatch.setattr(transport, "_in_backend", lambda: True)
     monkeypatch.setattr(AgentManagerRegistry, "get_agent_info", lambda self, sid: live)
 
+    # Still dozens of ticks at the patched poll interval: plenty to tell
+    # "once per wait" from "once per tick".
     with CaptureQueriesContext(connection) as queries:
-        wait(session, timeout=0.2)
+        wait(session, timeout=0.05)
 
     tables = [q["sql"] for q in queries]
+    # The loop did tick many times: otherwise "once" below proves nothing.
+    assert sum("core_sessionitem" in sql for sql in tables) >= 3
     assert sum("core_session" in sql and "core_sessionitem" not in sql for sql in tables) == 1
     assert sum("core_processrun" in sql for sql in tables) == 0
     # Everything left is the transcript scan, the one thing that must happen.
@@ -713,7 +723,9 @@ def test_a_retry_the_cli_is_still_working_through_is_not_a_refusal(project):
     api_error(session, 3, terminal=False, text="API Error: 529 overloaded_error")
     process(session, AgentState.ASSISTANT_TURN.value)
 
-    assert wait(session, timeout=0.3)["outcome"] == TIMEOUT
+    # Decided by the first poll: everything it looks at is in place before
+    # the wait starts, so a longer budget only re-reads the same rows.
+    assert wait(session, timeout=0.05)["outcome"] == TIMEOUT
 
 
 def test_an_answer_below_a_terminal_error_is_not_lost(project):
@@ -849,7 +861,9 @@ def test_the_deadline_hands_back_the_cursor_to_resume_from(project):
     session = make_session(project)
     process(session, AgentState.ASSISTANT_TURN.value)
 
-    reply = wait(session, since_line_num=41, timeout=0.2)
+    # Decided by the first poll: everything it looks at is in place before
+    # the wait starts, so a longer budget only re-reads the same rows.
+    reply = wait(session, since_line_num=41, timeout=0.05)
 
     assert reply["outcome"] == TIMEOUT
     assert reply["line_num"] is None
@@ -885,7 +899,9 @@ def test_a_session_still_booting_is_not_a_finished_turn(project, jsonl):
     jsonl(session, size=0)  # settled: only the state can hold the window open
     process(session, AgentState.STARTING.value)
 
-    assert wait(session, timeout=0.3)["outcome"] == TIMEOUT
+    # Twice the flush window: a loop reading ``starting`` as idle would end
+    # ``ended`` after one window plus the confirming tick, well before this.
+    assert wait(session, timeout=0.2)["outcome"] == TIMEOUT
 
 
 def test_the_deadline_keeps_what_the_agent_did_say(project):
@@ -894,7 +910,9 @@ def test_the_deadline_keeps_what_the_agent_did_say(project):
     assistant(session, 4, "I'm on it", "tool_use")
     process(session, AgentState.ASSISTANT_TURN.value)
 
-    reply = wait(session, timeout=0.2)
+    # Decided by the first poll: everything it looks at is in place before
+    # the wait starts, so a longer budget only re-reads the same rows.
+    reply = wait(session, timeout=0.05)
 
     assert reply["outcome"] == TIMEOUT
     assert reply["line_num"] == 4
@@ -912,7 +930,9 @@ def test_an_unmarked_message_is_not_an_answer(project):
     assistant(session, 4, "no marker here", None)
     process(session, AgentState.ASSISTANT_TURN.value)
 
-    reply = wait(session, timeout=0.2)
+    # Decided by the first poll: everything it looks at is in place before
+    # the wait starts, so a longer budget only re-reads the same rows.
+    reply = wait(session, timeout=0.05)
 
     assert reply["outcome"] == TIMEOUT
     assert reply["line_num"] == 4
@@ -924,7 +944,9 @@ def test_the_last_message_is_the_one_reported_not_the_first(project):
     assistant(session, 6, "most recent", "tool_use")
     process(session, AgentState.ASSISTANT_TURN.value)
 
-    assert wait(session, timeout=0.2)["text"] == "most recent"
+    # Decided by the first poll: everything it looks at is in place before
+    # the wait starts, so a longer budget only re-reads the same rows.
+    assert wait(session, timeout=0.05)["text"] == "most recent"
 
 
 # --- The command's own surface -----------------------------------------------
@@ -1340,7 +1362,9 @@ def test_a_cursor_is_honoured_per_session(project):
     assistant(one, 5, "old news", "end_turn")
     assistant(two, 9, "fresh", "end_turn")
 
-    replies = wait_many({one.id: 7, two.id: 0}, timeout=0.5)
+    # Decided by the first poll: everything it looks at is in place before
+    # the wait starts, so a longer budget only re-reads the same rows.
+    replies = wait_many({one.id: 7, two.id: 0}, timeout=0.05)
 
     assert replies[one.id]["outcome"] == TIMEOUT
     assert replies[two.id]["outcome"] == REPLIED
@@ -1370,7 +1394,9 @@ def test_wait_all_waits_for_the_slow_one(project):
     process(slow, AgentState.ASSISTANT_TURN.value)
     assistant(fast, 5, "here", "end_turn")
 
-    replies = wait_many({fast.id: 0, slow.id: 0}, timeout=0.5)
+    # Decided by the first poll: everything it looks at is in place before
+    # the wait starts, so a longer budget only re-reads the same rows.
+    replies = wait_many({fast.id: 0, slow.id: 0}, timeout=0.05)
 
     assert replies[fast.id]["outcome"] == REPLIED
     assert replies[slow.id]["outcome"] == TIMEOUT
@@ -1389,7 +1415,10 @@ def test_a_crashed_turn_does_not_end_a_first_batch(project):
     working = make_session(project, session_id="crash-two")
     process(working, AgentState.ASSISTANT_TURN.value)
 
-    replies = wait_many({crashed.id: 0, working.id: 0}, timeout=1.5, first=True)
+    # Six flush windows: room for the crashed one to conclude on its own
+    # (one window plus the confirming tick) well before the deadline, even
+    # on a loaded machine.
+    replies = wait_many({crashed.id: 0, working.id: 0}, timeout=0.6, first=True)
 
     assert replies[crashed.id]["outcome"] == ENDED
     assert replies[working.id]["outcome"] == TIMEOUT
@@ -1624,7 +1653,9 @@ def test_a_refused_turn_does_not_end_a_first_batch(project):
     process(working, AgentState.ASSISTANT_TURN.value)
     api_error(refused, 4, terminal=True)
 
-    replies = wait_many({refused.id: 0, working.id: 0}, timeout=1.5, first=True)
+    # The refusal is in place before the wait starts, so it is read on the
+    # first poll; a batch it wrongly cut would come back ``pending`` there.
+    replies = wait_many({refused.id: 0, working.id: 0}, timeout=0.05, first=True)
 
     assert replies[refused.id]["outcome"] == PROVIDER_ERROR
     assert replies[working.id]["outcome"] == TIMEOUT
@@ -1644,11 +1675,12 @@ def test_the_budget_is_one_for_the_batch_not_one_each(project):
         ids[session.id] = 0
 
     started = time.monotonic()
-    replies = wait_many(ids, timeout=0.6)
+    replies = wait_many(ids, timeout=0.4)
     elapsed = time.monotonic() - started
 
     assert {r["outcome"] for r in replies.values()} == {TIMEOUT}
-    assert elapsed < 1.5
+    # 2.5x the budget: three budgets in sequence (1.2 s) still fail it.
+    assert elapsed < 1.0
 
 
 def test_a_block_is_read_every_tick_and_not_only_at_the_start(project, on_tick):

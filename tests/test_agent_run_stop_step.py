@@ -536,13 +536,20 @@ def _budget_tree(prefix, agents, filler_results):
     return root, agent_ids[0], RunStateExclude(tool_result_link_ids=frozenset({closing.id}))
 
 
+# Filler results of the big tree: a per-row query would show with a
+# few dozen, and staying above the 2000-row default chunk of
+# ``QuerySet.iterator()`` keeps a chunked read visible too. More rows only
+# lengthen the bulk insert, never the step under test.
+BIG_TREE_FILLER_RESULTS = 2_500
+
+
 def test_stop_step_query_budget_does_not_grow_with_the_tree(django_assert_num_queries):
     small_root, small_agent, small_exclude = _budget_tree("small", 5, 0)
     with CaptureQueriesContext(connection) as small:
         small_outcome = run_stop_step(small_root.id, [small_agent], small_exclude)
     assert small_outcome.stopped == [AgentStoppedUpdate(small_agent, at(4), True)]
 
-    big_root, big_agent, big_exclude = _budget_tree("big", 200, 15_000)
+    big_root, big_agent, big_exclude = _budget_tree("big", 200, BIG_TREE_FILLER_RESULTS)
     with django_assert_num_queries(len(small.captured_queries)):
         big_outcome = run_stop_step(big_root.id, [big_agent], big_exclude)
     assert big_outcome.stopped == [AgentStoppedUpdate(big_agent, at(4), True)]
@@ -562,7 +569,7 @@ def test_live_collection_query_budget_does_not_grow_with_the_tree(django_assert_
         small_outcome = _live_collection(small_root, small_exclude)
     assert small_outcome.stopped == [AgentStoppedUpdate(small_agent, at(4), True)]
 
-    big_root, big_agent, big_exclude = _budget_tree("big", 200, 15_000)
+    big_root, big_agent, big_exclude = _budget_tree("big", 200, BIG_TREE_FILLER_RESULTS)
     with django_assert_num_queries(len(small.captured_queries)):
         big_outcome = _live_collection(big_root, big_exclude)
     assert big_outcome.stopped == [AgentStoppedUpdate(big_agent, at(4), True)]

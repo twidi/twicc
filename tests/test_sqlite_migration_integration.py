@@ -3,6 +3,7 @@
 import io
 import logging
 import os
+import shutil
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -19,6 +20,7 @@ from django.test import override_settings
 from twicc.db.backends.sqlite3.base import DatabaseWrapper
 
 
+M145 = ("core", "0145_processrun_background_work_in_progress")
 M146 = ("core", "0146_agent_runs")
 M147 = ("core", "0147_session_history_fact")
 M148 = ("core", "0148_live_contribution_indexes")
@@ -26,27 +28,64 @@ M149 = ("core", "0149_remove_redundant_message_index")
 SQUASH = ("core", "0148_live_contribution_indexes_squashed_0149_remove_redundant_message_index")
 
 
+def disposable_config(path, standard):
+    config = {**connections["default"].settings_dict, "NAME": str(path)}
+    config["ENGINE"] = "django.db.backends.sqlite3" if standard else "twicc.db.backends.sqlite3"
+    # A disposable file never needs crash durability. Skipping the fsync of
+    # every commit leaves transactions, rollback and locking unchanged, and
+    # the test settings define no init_command of their own to preserve.
+    assert "init_command" not in config["OPTIONS"]
+    config["OPTIONS"] = {**config["OPTIONS"], "init_command": "PRAGMA synchronous=OFF"}
+    return config
+
+
+@contextmanager
+def default_alias_database(path, django_db_blocker, standard=False):
+    # Historical RunPython migrations use the default ORM alias.
+    alias = "default"
+    previous = connections[alias]
+    previous_config = connections.databases[alias]
+    config = disposable_config(path, standard)
+    db = (StandardWrapper if standard else DatabaseWrapper)(config, alias)
+    connections.databases[alias] = config
+    setattr(connections._connections, alias, db)
+    with django_db_blocker.unblock():
+        db.ensure_connection()
+        try:
+            yield db
+        finally:
+            db.close()
+            setattr(connections._connections, alias, previous)
+            connections.databases[alias] = previous_config
+
+
+@pytest.fixture(scope="module")
+def migrated_145(tmp_path_factory, django_db_blocker):
+    """A database file migrated from zero to 0145, built once per module.
+
+    Tests whose subject starts at an installed 0145 copy it instead of
+    replaying the whole chain each. Sharing is safe: no test opens this file,
+    each one gets a byte copy of it (closed, journal deleted). The complete
+    fresh install keeps its own run from zero.
+    """
+    path = tmp_path_factory.mktemp("migrated_145") / "template.sqlite3"
+    with default_alias_database(path, django_db_blocker) as db:
+        MigrationExecutor(db).migrate([M145])
+        records = MigrationRecorder(db).applied_migrations()
+        assert M145 in records and M146 not in records
+    return path
+
+
 @pytest.fixture
 def disposable_db(tmp_path, django_db_blocker):
+    path = tmp_path / "disposable.sqlite3"
+
     @contextmanager
-    def open_db(standard=False):
-        # Historical RunPython migrations use the default ORM alias.
-        alias = "default"
-        previous = connections[alias]
-        previous_config = connections.databases[alias]
-        config = {**connections["default"].settings_dict, "NAME": str(tmp_path / "disposable.sqlite3")}
-        config["ENGINE"] = "django.db.backends.sqlite3" if standard else "twicc.db.backends.sqlite3"
-        db = (StandardWrapper if standard else DatabaseWrapper)(config, alias)
-        connections.databases[alias] = config
-        setattr(connections._connections, alias, db)
-        with django_db_blocker.unblock():
-            db.ensure_connection()
-            try:
-                yield db
-            finally:
-                db.close()
-                setattr(connections._connections, alias, previous)
-                connections.databases[alias] = previous_config
+    def open_db(standard=False, template=None):
+        if template is not None:
+            shutil.copyfile(template, path)
+        with default_alias_database(path, django_db_blocker, standard) as db:
+            yield db
     return open_db
 
 
@@ -252,8 +291,10 @@ def test_complete_fresh_install_rollback_146_and_populated_replay(disposable_db)
         assert_latest(db)
 
 
-def test_mixed_148_state_applies_original_149_and_replacement_bookkeeping(disposable_db, monkeypatch):
-    with disposable_db() as db:
+def test_mixed_148_state_applies_original_149_and_replacement_bookkeeping(disposable_db, migrated_145, monkeypatch):
+    # The patched loader below only drops the new replacement and its
+    # descendants, so its graph up to 0145 matches the template's.
+    with disposable_db(template=migrated_145) as db:
         # Simulate the release where the new replacement is not yet shipped.
         # Keep every older replacement and every original migration unchanged.
         load_disk = MigrationLoader.load_disk
@@ -397,16 +438,14 @@ def test_unknown_operation_uses_global_check_in_both_directions(disposable_db, c
     assert all("unproved main-schema effects" in r.reason for r in checks)
 
 
-def test_populated_145_upgrade_146_skips_unrelated_checks(disposable_db, caplog, monkeypatch):
+def test_populated_145_upgrade_146_skips_unrelated_checks(disposable_db, migrated_145, caplog, monkeypatch):
     logger = logging.getLogger("twicc.db.migrations")
     monkeypatch.setattr(logger, "disabled", False)
     monkeypatch.setattr(logger, "propagate", True)
     caplog.set_level(logging.INFO, logger=logger.name)
-    target = ("core", "0145_processrun_background_work_in_progress")
-    with disposable_db() as db:
-        MigrationExecutor(db).migrate([target])
+    with disposable_db(template=migrated_145) as db:
         executor = MigrationExecutor(db)
-        populate_items(db, executor.loader.project_state([target]))
+        populate_items(db, executor.loader.project_state([M145]))
         caplog.clear()
         with trace(db) as statements:
             executor.migrate([M146])

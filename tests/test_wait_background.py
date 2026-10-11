@@ -16,6 +16,7 @@ from __future__ import annotations
 import pytest
 
 from twicc.agent.states import AgentState
+from twicc.cli import _wait_reply
 from twicc.cli._wait_reply import (
     AWAITING,
     ENDED,
@@ -89,15 +90,19 @@ def test_without_the_flag_a_timeout_keeps_its_shape(project):
     SHELL | {"shells": 0, "scheduled_wakeup_at": "2026-09-25T14:05:00+00:00"},
     SHELL | {"shells": 0, "goal": True},
 ], ids=["shell", "subagents", "monitor", "wakeup", "goal"])
-def test_a_final_message_read_while_work_runs_does_not_count(project, jsonl, background):
+def test_a_final_message_read_while_work_runs_does_not_count(project, jsonl, monkeypatch, background):
     """Every kind of work counts. The deadline is three times the flush
     window: an idle agent with work behind it is not a finished turn."""
+    # No ``on_tick`` here, so the window is not tied to ``TICK_SECONDS``. It
+    # is halved and the deadline with it: still three windows, so an idle
+    # backstop that ignored the work still ends the wait well before it.
+    monkeypatch.setattr(_wait_reply, "AGENT_FLUSH_SECONDS", 0.05)
     session = make_session(project)
     jsonl(session, size=0)
     assistant(session, 5, "done", "end_turn")
     with_background(process(session, AgentState.USER_TURN.value), background)
 
-    reply = wait(session, timeout=0.3, wait_background=True)
+    reply = wait(session, timeout=0.15, wait_background=True)
 
     assert reply["outcome"] == TIMEOUT
     assert reply["line_num"] == 5
@@ -249,7 +254,9 @@ def test_a_dead_agent_has_nothing_behind_it(project, jsonl, with_row):
 
 def test_after_an_ignored_final_an_alive_idle_agent_runs_to_the_deadline(project, on_tick, jsonl):
     """The next final message is owed, however late: the idle backstop does
-    not end the wait. The deadline here is six flush windows."""
+    not end the wait. The deadline here is four flush windows: the idle
+    backstop would end it at one window plus the confirming tick, with room
+    left for slow ticks on a loaded machine."""
     session = make_session(project)
     jsonl(session, size=0)
     assistant(session, 5, "done", "end_turn")
@@ -257,7 +264,7 @@ def test_after_an_ignored_final_an_alive_idle_agent_runs_to_the_deadline(project
 
     on_tick({2: lambda: set_state(row)})
 
-    reply = wait(session, timeout=0.6, wait_background=True)
+    reply = wait(session, timeout=0.4, wait_background=True)
 
     assert reply["outcome"] == TIMEOUT
     assert reply["line_num"] == 5
@@ -273,9 +280,12 @@ def test_a_final_long_after_the_work_ended_is_the_answer(project, on_tick, jsonl
     assistant(session, 5, "started the job", "end_turn")
     row = with_background(process(session, AgentState.USER_TURN.value))
 
+    # Tick 15: the idle backstop would have ended the wait by tick 9 (work
+    # over at tick 2, five flush ticks, one confirming tick), so the answer
+    # lands six ticks past that point.
     on_tick({
         2: lambda: set_state(row),
-        25: lambda: assistant(session, 9, "the conclusion", "end_turn"),
+        15: lambda: assistant(session, 9, "the conclusion", "end_turn"),
     })
 
     reply = wait(session, timeout=5.0, wait_background=True)
@@ -335,7 +345,9 @@ def test_inside_the_backend_the_snapshot_comes_from_memory(project, monkeypatch)
     monkeypatch.setattr(transport, "_in_backend", lambda: True)
     monkeypatch.setattr(AgentManagerRegistry, "get_agent_info", lambda self, sid: live)
 
-    reply = wait(session, timeout=0.3, wait_background=True)
+    # Twice the flush window: the agent is idle, so an idle backstop that read
+    # the row's empty snapshot would end the wait well before this.
+    reply = wait(session, timeout=0.2, wait_background=True)
 
     assert reply["outcome"] == TIMEOUT
     assert reply["background_work_in_progress"] == SHELL
@@ -359,8 +371,10 @@ def busy_and_done(project):
 def test_each_session_of_a_batch_is_judged_on_its_own_work(busy_and_done):
     busy, done = busy_and_done
 
+    # Twice the flush window: an idle backstop ignoring the shell would end
+    # the busy one ``ended`` well before this.
     replies = wait_for_replies(
-        {busy.id: 0, done.id: 0}, timeout=0.5, want_text=True, wait_background=True,
+        {busy.id: 0, done.id: 0}, timeout=0.2, want_text=True, wait_background=True,
     )
 
     assert replies[done.id]["outcome"] == REPLIED

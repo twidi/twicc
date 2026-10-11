@@ -167,8 +167,14 @@ def test_omission_preserves_execution(prepared_call):
     assert payload["ok"] is False
 
 
-@pytest.mark.parametrize("unit", ['"', "\\", "\n", "é", "x"])
-def test_dual_output_bound(prepared_call, unit):
+@pytest.mark.parametrize(("unit", "omitted"), [('"', 6), ("\\", 6), ("\n", 3), ("é", 0), ("x", 0)])
+def test_dual_output_bound(prepared_call, unit, omitted, monkeypatch):
+    # Both limits scaled by 1/32, ratio kept: the per-record metadata does not
+    # shrink, so this is the stricter case. Each unit omits as many records as
+    # with the real 384 KiB / 16 MiB (asserted below, so the scaled run keeps
+    # exercising the result bound, not only the child bound).
+    monkeypatch.setattr(contract, "MAX_CHILD_BYTES", contract.MAX_CHILD_BYTES // 32)
+    monkeypatch.setattr(contract, "MAX_RESULT_BYTES", contract.MAX_RESULT_BYTES // 32)
     envelope = {
         "exit_code": 0,
         "result": unit * (contract.MAX_CHILD_BYTES // len(orjson.dumps(unit)[1:-1]) - 100),
@@ -181,6 +187,7 @@ def test_dual_output_bound(prepared_call, unit):
     assert orjson.loads(result.content[0].text) == result.structured_content
     jsonschema.validate(result.structured_content, contract.BATCH_OUTPUT_SCHEMA)
     assert result.structured_content["summary"]["succeeded"] == 20
+    assert sum(r["response_omitted"] for r in result.structured_content["results"]) == omitted
 
 
 def test_rejection_schema_and_adapter():

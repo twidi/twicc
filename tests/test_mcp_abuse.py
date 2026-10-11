@@ -59,13 +59,20 @@ def test_registration_rate_is_per_source_and_has_retry_after(config):
     asyncio.run(run())
 
 
-def test_discovery_flood_does_not_block_refresh_or_revocation(config):
+def test_discovery_flood_does_not_block_refresh_or_revocation(config, monkeypatch):
+    from twicc.mcp.oauth import protection
+
+    # A smaller discovery budget flooded the same way (limit + 1 calls).
+    monkeypatch.setitem(protection.RATE_LIMITS, 'discovery', 10)
+
     async def run():
         async with client() as c:
             credentials, code = await authorize(c)
             pair = (await tokens(c, credentials, code)).json()
-            for _ in range(301):
-                await c.get('/.well-known/oauth-protected-resource/mcp')
+            for _ in range(protection.RATE_LIMITS['discovery'] + 1):
+                flood = await c.get('/.well-known/oauth-protected-resource/mcp')
+            # The patched budget is the one in force: the flood was refused.
+            assert flood.status_code == 429
             assert (await c.get('/mcp/oauth/wait')).status_code == 200
             preflight = await c.options('/mcp/oauth/token', headers={
                 'Origin': 'https://client.example.com', 'Access-Control-Request-Method': 'POST',
@@ -170,16 +177,24 @@ def test_distributed_attempts_pause_admission_but_preserve_active_flow(config, m
     asyncio.run(run())
 
 
-def test_invalid_token_traffic_cannot_spend_valid_grant_budget(config):
+def test_invalid_token_traffic_cannot_spend_valid_grant_budget(config, monkeypatch):
+    from twicc.mcp.oauth import protection
+
+    # A smaller token budget exhausted the same way (limit + 1 invalid calls):
+    # 121 real requests only re-prove the counter, at ~10 ms each.
+    monkeypatch.setitem(protection.RATE_LIMITS, 'token', 10)
+
     async def run():
         async with client() as c:
             credentials, code = await authorize(c)
             pair = (await tokens(c, credentials, code)).json()
-            for _ in range(121):
-                await c.post('/mcp/oauth/token', data={
+            for _ in range(protection.RATE_LIMITS['token'] + 1):
+                flood = await c.post('/mcp/oauth/token', data={
                     'grant_type': 'refresh_token', 'client_id': credentials['client_id'],
                     'refresh_token': 'invalid', 'resource': RESOURCE,
                 })
+            # The patched budget is the one in force: the invalid traffic was refused.
+            assert flood.status_code == 429
             response = await c.post('/mcp/oauth/token', data={
                 'grant_type': 'refresh_token', 'client_id': credentials['client_id'],
                 'refresh_token': pair['refresh_token'], 'resource': RESOURCE,

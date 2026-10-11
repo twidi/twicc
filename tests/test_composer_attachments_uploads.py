@@ -214,7 +214,12 @@ def test_composer_refuses_a_client_target(client, ref, extra):
     assert not store.list_metadata()
 
 
-@pytest.mark.parametrize("key", ["bucket/not-a-uuid", "no-slash", "../x/" + str(uuid.uuid4()), "/" + str(uuid.uuid4())])
+# Fixed uuids: a random one would change the test id on every run, so a
+# failing case could not be re-run by its id (``--lf``, a copied id).
+@pytest.mark.parametrize("key", [
+    "bucket/not-a-uuid", "no-slash",
+    "../x/3712c2ca-f6ee-4616-a90f-7441af6fed44", "/cd411289-6f84-4da7-a4b5-c9497c8f2be6",
+])
 def test_composer_refuses_an_invalid_key(client, key):
     body = {
         "filename": "x.bin",

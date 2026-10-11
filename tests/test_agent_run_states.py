@@ -788,6 +788,13 @@ def _drop_tree(root):
     Session.objects.filter(parent_session=root).delete()
 
 
+# Root results of the big tree: a per-row query would show with a
+# few dozen, and staying above the 2000-row default chunk of
+# ``QuerySet.iterator()`` keeps a chunked read visible too. More rows only
+# lengthen the bulk insert, never the read under test.
+BIG_TREE_RESULTS = 2_500
+
+
 def test_query_budget_is_independent_of_the_tree_size(project, django_assert_num_queries,
                                                       django_assert_max_num_queries):
     small = make_session(project, "small-root")
@@ -795,7 +802,7 @@ def test_query_budget_is_independent_of_the_tree_size(project, django_assert_num
     small_count = _count_queries(small, ["agent-1"])
     _drop_tree(small)
     big = make_session(project, "big-root")
-    _build_tree(big, 200, 15_000)
+    _build_tree(big, 200, BIG_TREE_RESULTS)
 
     with django_assert_num_queries(small_count):
         state = agent_run_states(big, ["agent-1"])["agent-1"]
@@ -812,7 +819,7 @@ def test_frozen_query_budget_is_independent_of_the_tree_size(project, django_ass
     small_count = _count_queries(small, ["agent-1"], frozen_at_line=500_000)
     _drop_tree(small)
     big = make_session(project, "big-root")
-    _build_tree(big, 200, 15_000)
+    _build_tree(big, 200, BIG_TREE_RESULTS)
     with django_assert_num_queries(small_count):
         state = agent_run_states(big, ["agent-1"], frozen_at_line=500_000)["agent-1"]
     assert state.known is True

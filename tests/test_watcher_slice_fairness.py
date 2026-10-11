@@ -11,6 +11,15 @@ from twicc.providers.claude_code.sessions_watcher import ClaudeCodeSessionsWatch
 
 
 
+# One full 500-line slice plus one line: the big file needs a second slice,
+# so the small file's turn can come between the two.
+BIG_FILE_LINES = 501
+# Content-free JSONL line for synthetic files. A SYSTEM line (DEBUG_ONLY): a
+# bare ``{}`` is COLLAPSIBLE, and every such line rewrites the whole open
+# group, which made syncing a long file quadratic.
+FILLER_LINE = b'{"type": "queue-operation"}\n'
+
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize('subagent', [False, True])
 def test_real_slices_release_locks_and_small_file_commits_first(provider_home, monkeypatch, subagent):
@@ -21,7 +30,7 @@ def test_real_slices_release_locks_and_small_file_commits_first(provider_home, m
     sessions = []
     parent = Session.objects.create(id='00000000-0000-4000-8000-000000000003', project=project,
                                     provider='claude_code', file_path='p/parent.jsonl') if subagent else None
-    for suffix, lines in [('1', 1001), ('2', 1)]:
+    for suffix, lines in [('1', BIG_FILE_LINES), ('2', 1)]:
         sid = f'00000000-0000-4000-8000-{suffix:0>12}'
         file_path = f'p/{sid}.jsonl'
         if subagent and suffix == '1':
@@ -34,7 +43,7 @@ def test_real_slices_release_locks_and_small_file_commits_first(provider_home, m
         sessions.append(session)
         path = provider_home.claude / 'projects' / session.file_path
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b'{}\n' * lines)
+        path.write_bytes(FILLER_LINE * lines)
         paths.append(path)
     monkeypatch.setattr(module, 'broadcast_message', AsyncMock())
     turns = []
@@ -57,8 +66,8 @@ def test_real_slices_release_locks_and_small_file_commits_first(provider_home, m
         try:
             first = asyncio.create_task(watcher.process_path(paths[0]))
             second = asyncio.create_task(watcher.process_path(paths[1]))
-            # Real slices of a 1001-line file take ~3.5 s on an idle machine:
-            # the timeout only guards against a hang, it must not race the work.
+            # The timeout only guards against a hang: far above the real
+            # slices, so it never races the work on a loaded machine.
             await asyncio.wait_for(asyncio.gather(first, second), 60)
             watcher.stop_watcher()
             await watcher._consumer_task
@@ -75,7 +84,7 @@ def test_real_slices_release_locks_and_small_file_commits_first(provider_home, m
     asyncio.run(run())
     assert [path for path, _ in turns[:2]] == [str(paths[0]), str(paths[1])]
     assert turns[0][1] == 'ready'
-    assert Session.objects.get(id=sessions[0].id).last_line == 1001
+    assert Session.objects.get(id=sessions[0].id).last_line == BIG_FILE_LINES
 
 
 def test_process_path_finite_target_and_incomplete_tail(tmp_path):
@@ -262,7 +271,11 @@ def test_tuning_applies_only_to_future_current_version_slices(provider_home, mon
         compute_version=watcher.get_compute().compute_version if current else None)
     path = provider_home.claude / 'projects' / session.file_path
     path.parent.mkdir(parents=True)
-    path.write_bytes(b'{}\n' * 1200)
+    # A full first slice (500 lines), then a full second one at the tuned
+    # limit, then one line: the second slice is still 'ready', not drained.
+    # SYSTEM lines (DEBUG_ONLY): a bare ``{}`` is COLLAPSIBLE, and every such
+    # line rewrites the whole open group, which made the sync quadratic.
+    path.write_bytes(FILLER_LINE * (500 + expected + 1))
     parsed = module.ParsedSessionFile('p', session.id, SessionType.SESSION, session.file_path)
     limits = []
     original = module._sync_live_session_items
@@ -273,7 +286,7 @@ def test_tuning_applies_only_to_future_current_version_slices(provider_home, mon
     monkeypatch.setattr(module, 'broadcast_message', AsyncMock())
     async def run():
         first = await watcher.sync_and_broadcast(path, parsed, Change.modified, None)
-        assert first.disposition == 'ready' and first.end_offset == 1500
+        assert first.disposition == 'ready' and first.end_offset == 500 * len(FILLER_LINE)
         second = await watcher.sync_and_broadcast(path, parsed, Change.modified, None)
         assert second.disposition == 'ready'
         while (await watcher.sync_and_broadcast(path, parsed, Change.modified, None)).disposition == 'ready':
@@ -281,6 +294,36 @@ def test_tuning_applies_only_to_future_current_version_slices(provider_home, mon
         assert path not in watcher._line_limits
     asyncio.run(run())
     assert limits[:2] == [500, expected]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures('compute_executor_started')
+def test_slow_slices_never_tune_the_limit_below_one_line(provider_home, monkeypatch):
+    """Halving stops at one line: a zero limit could not read anything."""
+    from twicc.core.models import Project, Session, SessionType
+    watcher = ClaudeCodeSessionsWatcher()
+    session = Session.objects.create(id='00000000-0000-4000-8000-000000000998',
+        project=Project.objects.create(id='p'), provider='claude_code', file_path='p/floor.jsonl',
+        compute_version=watcher.get_compute().compute_version)
+    path = provider_home.claude / 'projects' / session.file_path
+    path.parent.mkdir(parents=True)
+    path.write_bytes(FILLER_LINE * 3)
+    parsed = module.ParsedSessionFile('p', session.id, SessionType.SESSION, session.file_path)
+    # Already halved down to the floor by earlier slow slices.
+    watcher._line_limits[path] = 1
+    limits = []
+    original = module._sync_live_session_items
+    def slow(compute, sid, path, limit):
+        limits.append(limit.max_lines)
+        return original(compute, sid, path, limit)._replace(elapsed_ms=101)
+    monkeypatch.setattr(module, '_sync_live_session_items', slow)
+    monkeypatch.setattr(module, 'broadcast_message', AsyncMock())
+    async def run():
+        while (await watcher.sync_and_broadcast(path, parsed, Change.modified, None)).disposition == 'ready':
+            pass
+        assert path not in watcher._line_limits
+    asyncio.run(run())
+    assert limits == [1, 1, 1]
 
 
 def test_claude_replacement_with_committed_offset_fails_before_slice(tmp_path, monkeypatch):

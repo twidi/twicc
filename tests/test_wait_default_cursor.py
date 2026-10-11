@@ -17,6 +17,11 @@ from twicc.providers.helpers import get_provider_helpers
 
 TWICC_PID = 7171
 
+# Budget of the waits that must NOT reply. Each one runs on a working session
+# whose rows are all in place before the wait starts, so the first poll already
+# decides; a longer budget would only re-read the same rows.
+FIRST_POLL_TIMEOUT = 0.05
+
 
 @pytest.fixture(autouse=True)
 def fast(monkeypatch):
@@ -100,7 +105,7 @@ def test_a_re_messaged_session_not_answered_yet_waits(project, capsysbinary):
     user(s, 2)
     final(s, 3, "old")
     user(s, 4)
-    assert wait(capsysbinary, "a4", timeout=0.2)["outcome"] != "replied"
+    assert wait(capsysbinary, "a4", timeout=FIRST_POLL_TIMEOUT)["outcome"] != "replied"
 
 
 def test_a_queued_command_does_not_move_the_anchor(project, capsysbinary):
@@ -130,7 +135,7 @@ def test_explicit_cursors_are_unchanged(project, capsysbinary):
     running(s)
     user(s, 2)
     final(s, 5)
-    assert wait(capsysbinary, "a7", from_line=5, timeout=0.2)["outcome"] != "replied"
+    assert wait(capsysbinary, "a7", from_line=5, timeout=FIRST_POLL_TIMEOUT)["outcome"] != "replied"
     assert wait(capsysbinary, "a7", from_line=0)["line_num"] == 5
 
 
@@ -149,7 +154,7 @@ def test_since_is_unchanged_on_a_ready_session(project, capsysbinary):
     early = (base + timedelta(minutes=5)).isoformat()
     late = (base + timedelta(minutes=20)).isoformat()
     assert wait(capsysbinary, "a9", since=early)["line_num"] == 5
-    assert wait(capsysbinary, "a9", since=late, timeout=0.2)["outcome"] != "replied"
+    assert wait(capsysbinary, "a9", since=late, timeout=FIRST_POLL_TIMEOUT)["outcome"] != "replied"
 
 
 def test_the_indexing_lag_case_returns_the_previous_answer(project, capsysbinary):
@@ -173,7 +178,7 @@ def test_a_session_whose_compute_is_not_current_keeps_last_line(project, capsysb
     user(s, 2)
     final(s, 5, "below last_line")
     assert default_wait_cursors([s]) == {"b1": 10}
-    assert wait(capsysbinary, "b1", timeout=0.2)["outcome"] != "replied"
+    assert wait(capsysbinary, "b1", timeout=FIRST_POLL_TIMEOUT)["outcome"] != "replied"
 
 
 def test_a_codex_null_kind_item_does_not_move_the_anchor(project):

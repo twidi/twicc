@@ -1,7 +1,10 @@
 """Pytest configuration for Django tests."""
 
 import asyncio
-from collections import deque
+import itertools
+import os
+import re
+from collections import defaultdict, deque
 from pathlib import Path
 from typing import NamedTuple
 
@@ -10,6 +13,33 @@ import pytest
 from django.conf import settings
 
 from twicc import provider_homes
+
+
+# One counter per directory name prefix, for the whole run (see ``tmp_path``).
+_tmp_path_numbers = defaultdict(itertools.count)
+
+
+@pytest.fixture
+def tmp_path(request, tmp_path_factory) -> Path:
+    """pytest's ``tmp_path``, minus its cost that grows with the run.
+
+    pytest numbers each test's directory by listing the whole base temp dir,
+    which by then holds a directory and a ``*current`` symlink for every test
+    that ran before: quadratic over the suite, about ten seconds of the full
+    run. Here the number comes from a counter and the directory sits in one
+    folder per test module, so nothing is listed. Same name prefix (the test
+    name, sanitized, cut to 30 characters, then a dash before the number) and
+    same base temp dir, hence the same retention across runs. The
+    ``tmp_path_retention_policy`` option is not honoured: this project keeps
+    pytest's default (keep everything).
+    """
+    module = re.sub(r"\W", "_", request.node.path.stem)
+    name = re.sub(r"\W", "_", request.node.name)[:30]
+    # The dash cannot occur in the sanitized name: "test_x1" + 0 and
+    # "test_x" + 10 stay distinct.
+    path = tmp_path_factory.getbasetemp() / module / f"{name}-{next(_tmp_path_numbers[(module, name)])}"
+    path.mkdir(mode=0o700, parents=True)
+    return path
 
 
 @pytest.fixture
@@ -29,6 +59,61 @@ def pytest_configure():
     if not settings.configured:
         settings.configure()
     django.setup()
+
+
+@pytest.fixture(autouse=True)
+def cheap_password_hashes(monkeypatch):
+    """Hash new passwords with 1 000 PBKDF2 rounds instead of 600 000.
+
+    The real count costs ~0.3 s per hash and per check, and no test is about
+    the work factor. The count is written in the hash itself, so
+    ``verify_password`` still runs the real check on what was stored.
+    """
+    from twicc.auth import hashers
+
+    monkeypatch.setattr(hashers, "_PBKDF2_ITERATIONS", 1000)
+
+
+class _ShortSleepAsyncio:
+    """``asyncio`` as seen by ``db_writer``, with its sleeps cut to 1 ms."""
+
+    def __getattr__(self, name):
+        return getattr(asyncio, name)
+
+    @staticmethod
+    async def sleep(delay, result=None):
+        return await asyncio.sleep(min(delay, 0.001), result)
+
+
+@pytest.fixture(autouse=True)
+def short_db_writer_polls(monkeypatch):
+    """Cut the DB writer's 50 ms sleeps to 1 ms.
+
+    The writer sleeps 50 ms whenever its queues are empty (so each job waits up
+    to 50 ms) and between retries on a full queue. Both are pure latency, never
+    an ordering the code relies on: jobs still go through the real queues, lock
+    and loop, in the same order.
+    """
+    from twicc.providers import db_writer
+
+    monkeypatch.setattr(db_writer, "asyncio", _ShortSleepAsyncio())
+
+
+@pytest.fixture(autouse=True)
+def no_fsync(monkeypatch):
+    """Skip the disk flush of ``os.fsync``: tests never survive a power cut anyway.
+
+    The attachment and upload stores fsync every file and directory they
+    write, a few milliseconds each. Nothing a test observes depends on the
+    data reaching the disk. The descriptor is still checked, so fsyncing a
+    closed or invalid one keeps raising, as the real call does. A test that is
+    about fsync (that it is called, or that its failure is handled) patches it
+    again on top of this one.
+    """
+    def checked_fsync(fd):
+        os.fstat(fd)
+
+    monkeypatch.setattr(os, "fsync", checked_fsync)
 
 
 @pytest.fixture(autouse=True)

@@ -37,6 +37,20 @@ def _communicator(token):
     return comm
 
 
+async def _assert_nothing_forwarded(comm, root_session_id):
+    """Prove every broadcast sent so far was dropped, without waiting out a timeout.
+
+    The consumer handles broadcasts one at a time, in the order the layer
+    delivers them, and always forwards the root session's ``process_state``.
+    So when that sentinel is the next message, nothing sent before it was
+    forwarded — a check both faster and stricter than ``receive_nothing``,
+    which only proves silence for as long as it waits.
+    """
+    await get_channel_layer().group_send("updates", {"type": "broadcast", "data": {
+        "type": "process_state", "session_id": root_session_id, "state": "sentinel"}})
+    assert await comm.receive_json_from(timeout=2) == {"type": "share_process_state", "state": "sentinel"}
+
+
 def test_live_share_accepts_and_filters_debug(session):
     # Share created in the sync test body (async ORM in the consumer is fine).
     share = _share(session, options={"mode": "live", "max_display_mode": "normal", "include_subagents": True})
@@ -133,14 +147,14 @@ def test_tool_state_forwarded_with_visibility_check(session):
             "result_count": 1, "completed_at": None, "extra": None, "error": "hidden detail",
             "tool_result_line_nums": [5],
         }})
-        assert await comm.receive_nothing(timeout=0.5)
+        await _assert_nothing_forwarded(comm, session.id)
         # Another session's tool_state: dropped.
         await layer.group_send("updates", {"type": "broadcast", "data": {
             "type": "tool_state", "session_id": "some-other-session", "tool_use_id": "tu-x",
             "result_count": 1, "completed_at": None, "extra": None, "error": None,
             "tool_result_line_nums": [1],
         }})
-        assert await comm.receive_nothing(timeout=0.5)
+        await _assert_nothing_forwarded(comm, session.id)
         await comm.disconnect()
 
     _run(scenario())
@@ -172,7 +186,7 @@ def test_share_updated_refreshes_open_socket_filters(session):
         # Level-3 traffic is now dropped by the refreshed ceiling.
         await layer.group_send("updates", {"type": "broadcast", "data": {
             "type": "session_items_added", "session_id": sid, "items": [item]}})
-        assert await comm.receive_nothing(timeout=0.5)
+        await _assert_nothing_forwarded(comm, session.id)
         await comm.disconnect()
 
     _run(scenario())
@@ -198,7 +212,7 @@ def test_process_state_forwarded_root_only(session):
         # Another session's process_state: dropped.
         await layer.group_send("updates", {"type": "broadcast", "data": {
             "type": "process_state", "session_id": "some-other-session", "state": "assistant_turn"}})
-        assert await comm.receive_nothing(timeout=0.5)
+        await _assert_nothing_forwarded(comm, session.id)
         await comm.disconnect()
 
     _run(scenario())
@@ -261,7 +275,7 @@ def test_agent_link_not_forwarded_when_subagents_disabled(session):
             "type": "agent_link_created", "parent_session_id": sid,
             "agent_session_id": "sub-1", "tool_use_id": "tu-agent", "tool_use_line_num": 3,
         }})
-        assert await comm.receive_nothing(timeout=0.5)
+        await _assert_nothing_forwarded(comm, session.id)
         await comm.disconnect()
 
     _run(scenario())
@@ -288,7 +302,7 @@ def test_obsolete_descendant_items_are_not_forwarded(session):
             "session_id": sub.id,
             "items": [{"line_num": 1, "display_level": 1, "content": "{}"}],
         }})
-        assert await communicator.receive_nothing(timeout=0.5)
+        await _assert_nothing_forwarded(communicator, session.id)
         await communicator.disconnect()
 
     _run(scenario())
@@ -307,7 +321,7 @@ def test_unrelated_session_items_not_forwarded(session):
             "type": "session_items_added", "session_id": "some-other-session",
             "items": [{"line_num": 1, "display_level": 1, "content": "{}", "kind": "user_message"}],
         }})
-        assert await comm.receive_nothing(timeout=0.5)
+        await _assert_nothing_forwarded(comm, session.id)
         await comm.disconnect()
 
     _run(scenario())
@@ -447,7 +461,7 @@ def test_agent_run_state_relayed_flat_for_its_root_only(session):
         comm = _communicator(share.token)
         assert (await comm.connect())[0]
         await _send(_run_state("other-root"))
-        assert await comm.receive_nothing(timeout=0.1)
+        await _assert_nothing_forwarded(comm, session.id)
         await _send(_run_state(sid))
         msg = await comm.receive_json_from(timeout=2)
         assert set(msg) == RUN_STATE_KEYS
@@ -466,7 +480,7 @@ def test_agent_run_state_not_relayed_when_subagents_disabled(session):
         assert (await comm.connect())[0]
         await _send(_run_state(sid))
         await _send(_interaction(sid, sid))
-        assert await comm.receive_nothing(timeout=0.2)
+        await _assert_nothing_forwarded(comm, session.id)
         await comm.disconnect()
 
     _run(scenario())
@@ -496,7 +510,7 @@ def test_agent_interaction_relay_filters(session):
             _interaction(sid, "sub-b", line_num=8),             # subagent call over the ceiling
         ):
             await _send(dropped)
-        assert await comm.receive_nothing(timeout=0.2)
+        await _assert_nothing_forwarded(comm, session.id)
         for kept in (_interaction(sid, sid), _interaction(sid, "sub-b", line_num=6, tool_use_id="tu-sub")):
             await _send(kept)
             msg = await comm.receive_json_from(timeout=2)
@@ -552,7 +566,7 @@ def test_late_interaction_passes_after_agent_link_created(session, new_agent_is)
         assert (await comm.connect())[0]
         await sync_to_async(new_agent_rows)()
         await _send(late)
-        assert await comm.receive_nothing(timeout=0.2)
+        await _assert_nothing_forwarded(comm, session.id)
         await _send({"type": "agent_link_created", "parent_session_id": sid, "root_session_id": sid,
                      "agent_session_id": "sub-new", "tool_use_id": "tu-spawn-new", "tool_use_line_num": 9,
                      "is_background": True, "started_at": None, "project_id": "-tmp-cons"})

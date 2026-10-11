@@ -10,6 +10,20 @@ diag = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(diag)   # must not run anything at import
 
 
+@pytest.fixture(autouse=True)
+def _fast_loopback_shutdown(monkeypatch):
+    """``serve_forever`` checks for ``shutdown()`` every 0.5 s, so each D11c listener costs 0.5 s to stop.
+
+    The poll interval only bounds that latency: requests are served the same way.
+    """
+    import http.server
+    import socketserver
+    from functools import partialmethod
+
+    monkeypatch.setattr(http.server.ThreadingHTTPServer, "serve_forever",
+                        partialmethod(socketserver.BaseServer.serve_forever, poll_interval=0.01))
+
+
 def test_exit_code_zero_with_only_pass_skip_warn():
     r = diag.Report()
     r.add("O1", diag.PASS, "ok"); r.add("O2", diag.WARN, "new key"); r.add("D8", diag.SKIP, "no line")
