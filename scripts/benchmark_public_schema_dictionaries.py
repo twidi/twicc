@@ -18,6 +18,51 @@ from pathlib import Path
 import orjson
 import zstandard as zstd
 
+
+def load_sampled_current_contents(db: sqlite3.Connection, ids: list[int]):
+    """Load only sampled effective current bytes from legacy or extracted databases."""
+    columns = {row[1] for row in db.execute("PRAGMA table_info(core_sessionitem)")}
+    extracted = "current_content_id" in columns
+    for offset in range(0, len(ids), 500):
+        batch = ids[offset : offset + 500]
+        placeholders = ",".join("?" * len(batch))
+        fields = "i.session_id,s.provider,s.project_id,i.content"
+        joins = ""
+        if extracted:
+            fields += ",i.current_content_id,c.payload,c.codec,c.dictionary_id,c.raw_size,c.sha256,d.payload,d.format,d.sha256"
+            joins = (" LEFT JOIN core_sessionitemcontent c ON c.id=i.current_content_id"
+                     " LEFT JOIN core_contentdictionary d ON d.id=c.dictionary_id")
+        query = (f"SELECT {fields} FROM core_sessionitem i JOIN core_session s ON s.id=i.session_id"
+                 f"{joins} WHERE i.id IN ({placeholders}) ORDER BY i.id")
+        for row in db.execute(query, batch):
+            sid, provider, project, legacy = row[:4]
+            if not extracted or row[4] is None:
+                raw = legacy.encode("utf-8")
+            else:
+                _, payload, codec, dictionary_id, raw_size, digest, dictionary, dictionary_format, dictionary_digest = row[4:]
+                if codec == "plain":
+                    if dictionary_id is not None:
+                        raise ValueError("Plain sampled content has a dictionary")
+                    raw = payload
+                elif codec == "zstd":
+                    if (dictionary_id is None or dictionary_format != "raw" or not dictionary
+                            or len(dictionary) > 16384 or hashlib.sha256(dictionary).digest() != dictionary_digest):
+                        raise ValueError("Invalid sampled content dictionary")
+                    data = zstd.ZstdCompressionDict(dictionary, dict_type=zstd.DICT_TYPE_RAWCONTENT)
+                    frame_size = zstd.frame_content_size(payload)
+                    if frame_size not in (raw_size, -1):
+                        raise ValueError("Sampled content frame size mismatch")
+                    raw = zstd.ZstdDecompressor(dict_data=data).decompress(
+                        payload, max_output_size=max(raw_size, 1), allow_extra_data=False
+                    )
+                else:
+                    raise ValueError("Invalid sampled content codec")
+                if len(raw) != raw_size or hashlib.sha256(raw).digest() != digest:
+                    raise ValueError("Sampled content integrity failure")
+                raw.decode("utf-8")
+            yield sid, provider, project, raw
+
+
 DROP = object()
 BLOCKED_TYPES = {
     "text",
@@ -206,16 +251,10 @@ def main():
         parser.error("The item table is empty")
     ids = rng.sample(range(lo, hi + 1), min(args.sample_ids, hi - lo + 1))
     records = {}
-    for offset in range(0, len(ids), 500):
-        batch = ids[offset : offset + 500]
-        for sid, provider, project, raw in db.execute(
-            "select i.session_id,s.provider,s.project_id,i.content from core_sessionitem i "
-            "join core_session s on s.id=i.session_id where i.id in (" + ",".join("?" * len(batch)) + ")",
-            batch,
-        ):
-            if raw:
-                group = ("project", project) if project is not None else ("session", sid)
-                records.setdefault(provider, []).append((group, raw.encode()))
+    for sid, provider, project, raw in load_sampled_current_contents(db, ids):
+        if raw:
+            group = ("project", project) if project is not None else ("session", sid)
+            records.setdefault(provider, []).append((group, raw))
     db.close()
     results = {
         "seed": args.seed,
