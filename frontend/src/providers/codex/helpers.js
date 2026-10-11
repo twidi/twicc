@@ -575,7 +575,7 @@ export class CodexHelpers extends BaseProviderHelpers {
 
     getUsageExternalLink() {
         return {
-            url: 'https://chatgpt.com/codex/cloud/settings/analytics#usage',
+            url: 'https://chatgpt.com/settings/usage?tab=overview',
             label: 'View usage on chatgpt.com',
         }
     }
