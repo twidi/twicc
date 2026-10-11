@@ -8,11 +8,11 @@
 
 **Tech Stack:** Existing Python ≥3.13, Django, SQLite WAL, Channels, orjson, uv; add Python zstandard compatible with the measured 0.25.0 API.
 
-**Spec:** [consolidated specification](../../plans/2026-10-11-session-item-content-extraction-spec.md).
+**Spec:** [consolidated specification](2026-10-11-session-item-content-extraction-spec.md).
 
-**Research:** [impact audit](../../plans/2026-10-11-session-item-content-extraction-audit.md): section 11 covers compression integration; section 11.13 preserves benchmark evidence and public dictionary validation.
+**Research:** [impact audit](2026-10-11-session-item-content-extraction-audit.md): section 11 covers compression integration; section 11.13 preserves benchmark evidence and public dictionary validation.
 
-**Dictionary inputs:** [reviewed public policy](../../../scripts/content_dictionary_policy.json) and [offline generator](../../../scripts/benchmark_public_schema_dictionaries.py).
+**Dictionary inputs:** [reviewed public policy](../../scripts/content_dictionary_policy.json) and [offline generator](../../scripts/benchmark_public_schema_dictionaries.py).
 
 ## Global Constraints
 
