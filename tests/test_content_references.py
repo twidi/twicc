@@ -270,3 +270,103 @@ def test_count_validation_reads_only_bounded_delta_keys():
     validations = [query['sql'] for query in queries if 'count < 0' in query['sql']]
     assert len(validations) == 1
     assert 'content_id IN' in validations[0]
+
+
+def test_reference_pages_are_bounded_guarded_and_count_equal_slots():
+    from django.test.utils import CaptureQueriesContext
+    root = session('pages')
+    with transaction.atomic():
+        ids = references.intern_contents(['same'], 'codex')
+        for line in range(0, 5):
+            item(root, ids['same'], ids['same'], line)
+    operation = references.SessionReferenceOperation(root.id, 500000, 2)
+    calls = []
+    try:
+        with CaptureQueriesContext(connection) as queries:
+            assert not operation.initialize_page(row_budget=2, validate=lambda: calls.append(1) or True)
+            assert not operation.initialize_page(row_budget=2, validate=lambda: calls.append(1) or True)
+            assert operation.initialize_page(row_budget=2, validate=lambda: calls.append(1) or True)
+        assert len(calls) == 3
+        assert not any('UPDATE "main"' in q['sql'] or 'UNION ALL' in q['sql'] for q in queries)
+        reads = [q['sql'] for q in queries if 'SELECT' in q['sql'] and 'core_sessionitem"' in q['sql']]
+        assert len(reads) == 3 and all('LIMIT 2' in sql for sql in reads)
+        assert references._reference_operation.get() is None
+        with operation.activate(), transaction.atomic():
+            assert references._referenced_ids(root.id, [ids['same']]) == {ids['same']}
+        assert references._reference_operation.get() is None
+        with connection.cursor() as cursor:
+            cursor.execute(f'SELECT count FROM {operation.table}')
+            assert cursor.fetchone() == (10,)
+    finally:
+        operation.close()
+        operation.close()
+
+
+def test_reference_page_guard_rejects_without_refresh():
+    operation = references.SessionReferenceOperation('gone', 500000, 2)
+    try:
+        with pytest.raises(ContentIntegrityError, match='observation'):
+            operation.initialize_page(row_budget=1, validate=lambda: False)
+        with pytest.raises(ContentIntegrityError):
+            operation.initialize_page(row_budget=1, validate=lambda: True)
+    finally:
+        operation.close()
+
+
+def test_reference_connection_replacement_aborts_before_temp_sql(monkeypatch):
+    operation = references.SessionReferenceOperation('replace', 500000, 2)
+    operation.initialize()
+    physical = connection.connection
+    try:
+        monkeypatch.setattr(connection, 'connection', object())
+        with pytest.raises(ContentIntegrityError, match='connection'):
+            operation.validate_connection()
+    finally:
+        monkeypatch.setattr(connection, 'connection', physical)
+        operation.close()
+
+
+def test_reference_cached_reads_require_complete_pages_and_same_connection(monkeypatch):
+    from django.test.utils import CaptureQueriesContext
+    root = session('bounded-reads')
+    with transaction.atomic():
+        ids = references.intern_contents(['value'], 'codex')
+        item(root, ids['value'])
+    operation = references.SessionReferenceOperation(root.id, 500000, 2)
+    try:
+        assert not operation.initialize_page(row_budget=1, validate=lambda: True)
+        with operation.activate(), pytest.raises(ContentIntegrityError, match='not initialized'):
+            references._referenced_ids(root.id, [ids['value']])
+        assert operation.initialize_page(row_budget=1, validate=lambda: True)
+        with operation.activate(), CaptureQueriesContext(connection) as queries:
+            for _ in range(3):
+                assert references._referenced_ids(root.id, [ids['value']]) == {ids['value']}
+        assert len(queries) == 3
+        assert all('content_reference_counts_' in q['sql'] for q in queries)
+        physical = connection.connection
+        with operation.activate():
+            monkeypatch.setattr(connection, 'connection', object())
+            try:
+                with pytest.raises(ContentIntegrityError, match='connection'):
+                    references._referenced_ids(root.id, [ids['value']])
+            finally:
+                monkeypatch.setattr(connection, 'connection', physical)
+    finally:
+        operation.close()
+
+
+def test_reference_page_failure_does_not_advance_cursor_or_damage_outer_transaction():
+    root = session('page-rollback')
+    operation = references.SessionReferenceOperation(root.id, 500000, 2)
+    physical = connection.connection
+    def failure():
+        raise RuntimeError('guard failed')
+    try:
+        with pytest.raises(RuntimeError, match='guard failed'):
+            operation.initialize_page(validate=failure)
+        assert operation.initialization_cursor == -1
+        assert not operation.initialized
+    finally:
+        operation.close()
+    assert connection.connection is physical
+    assert Session.objects.filter(pk=root.id).exists()

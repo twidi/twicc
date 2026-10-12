@@ -260,3 +260,115 @@ def test_compute_executor_cannot_restart_or_finish_second_stop_during_shutdown()
             await db_writer.stop_compute_executor()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_application_worker_pins_temp_connection_and_copies_context(tmp_path):
+    from contextvars import ContextVar
+    from twicc.providers import compute_executor as executor
+    marker = ContextVar('application_test_marker', default='empty')
+
+    def create():
+        connection = connections['default']
+        assert connection.settings_dict['CONN_MAX_AGE'] == 0
+        # A file-backed worker connection makes Django close() effective.
+        # In-memory test connections deliberately ignore close().
+        connection.settings_dict = {**connection.settings_dict, 'NAME': str(tmp_path / 'pinned.sqlite3')}
+        with connection.cursor() as cursor:
+            cursor.execute('CREATE TEMP TABLE pinned_test (value INTEGER)')
+            cursor.execute('INSERT INTO pinned_test VALUES (7)')
+        marker.set('worker-change')
+        return connection.connection
+
+    def read():
+        with connections['default'].cursor() as cursor:
+            cursor.execute('SELECT value FROM pinned_test')
+            assert cursor.fetchone() == (7,)
+        return connections['default'].connection, marker.get()
+
+    async def scenario():
+        executor.start_compute_application_executor()
+        try:
+            marker.set('caller')
+            physical = await executor.run_compute_application_sync(create)
+            assert marker.get() == 'caller'
+            assert await executor.run_compute_application_sync(read) == (physical, 'caller')
+        finally:
+            await executor.stop_compute_application_executor()
+    asyncio.run(scenario())
+
+
+def test_application_preparation_does_not_block_writer_and_shutdown_drains():
+    from twicc.providers import compute_executor as executor
+    started, release = threading.Event(), threading.Event()
+
+    async def scenario():
+        executor.start_compute_executor()
+        executor.start_compute_application_executor()
+        job = asyncio.create_task(executor.run_compute_application_sync(_blocked_work, started, release))
+        stop = None
+        try:
+            assert await asyncio.to_thread(started.wait, 2)
+            assert await asyncio.wait_for(executor.run_compute_sync(lambda: 'writer-ready'), .5) == 'writer-ready'
+            job.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await job
+            stop = asyncio.create_task(executor.stop_compute_application_executor())
+            await asyncio.sleep(0)
+            stop.cancel()
+            await asyncio.sleep(0)
+            assert not stop.done()
+            with pytest.raises(RuntimeError, match='already started'):
+                executor.start_compute_application_executor()
+        finally:
+            release.set()
+            if stop is not None:
+                with pytest.raises(asyncio.CancelledError):
+                    await stop
+            await executor.stop_compute_application_executor()
+            await executor.stop_compute_executor()
+    asyncio.run(scenario())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_application_terminal_cleanup_runs_on_worker_after_broken_transaction():
+    from django.db import IntegrityError, transaction
+    from twicc.core.content_storage.references import SessionReferenceOperation
+    from twicc.providers import compute_executor as executor
+    close_threads = []
+
+    def broken():
+        project = Project.objects.create(id='broken-worker')
+        session = Session.objects.create(id='broken-worker', project=project)
+        operation = SessionReferenceOperation(session.id, 500000, 2)
+        operation.initialize()
+        SessionItem.objects.create(session=session, line_num=1)
+        with pytest.raises(IntegrityError), transaction.atomic():
+            try:
+                SessionItem.objects.create(session=session, line_num=1)
+            finally:
+                assert connections['default'].needs_rollback
+                operation.close()  # Skip SQL inside the broken transaction.
+        connection = connections['default']
+        original_close = connection.close
+        def close():
+            close_threads.append(threading.get_ident())
+            original_close()
+        connection.close = close
+        executor.close_compute_application_connection()
+        # Django intentionally keeps shared in-memory test connections open.
+        if connection.is_in_memory_db():
+            with connection.cursor() as cursor:
+                cursor.execute(f'DROP TABLE IF EXISTS {operation.table}')
+        return threading.get_ident()
+
+    async def scenario():
+        executor.start_compute_application_executor()
+        try:
+            worker = await executor.run_compute_application_sync(broken)
+            assert close_threads == [worker]
+            with pytest.raises(RuntimeError, match='requires its worker'):
+                executor.close_compute_application_connection()
+        finally:
+            await executor.stop_compute_application_executor()
+    asyncio.run(scenario())

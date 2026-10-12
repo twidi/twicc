@@ -1,6 +1,6 @@
 """Exact content reuse and transaction-owned ownership of persisted item references.
 
-Callers hold the existing database writer lease around the complete operation.
+Callers hold the database writer lease around each main-database mutation.
 Each item mutation, accounting delta, and membership mutation shares one atomic
 transaction. No helper writes item assignments or guesses ignored insert results.
 """
@@ -10,6 +10,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from itertools import islice
+from threading import get_ident
 from uuid import uuid4
 
 from django.db import connection, transaction
@@ -119,6 +120,8 @@ def bind_persisted_items(bindings: Sequence[ContentBinding]) -> None:
 def _referenced_ids(session_id: str, content_ids: Sequence[int]) -> set[int]:
     operation = _reference_operation.get()
     if operation is not None and operation.session_id == session_id and operation.uses_counts:
+        operation.validate_connection()
+        operation.require_initialized()
         with connection.cursor() as cursor:
             placeholders = ', '.join(['%s'] * len(content_ids))
             cursor.execute(f'SELECT content_id FROM {operation.table} WHERE count > 0 '
@@ -187,7 +190,7 @@ def remove_history_memberships(session_id: str) -> None:
 
 
 class SessionReferenceOperation:
-    """Connection-local accounting across bounded chunks under one writer lease.
+    """Connection-local accounting across bounded preparation and publication calls.
 
     Call capture_mutation inside the chunk transaction around every item write.
     Supply existing IDs and insertion line numbers, including ignored conflicts.
@@ -196,22 +199,116 @@ class SessionReferenceOperation:
     """
 
     def __init__(self, session_id: str, item_count: int, expected_batches: int):
+        if item_count < 0 or expected_batches < 1:
+            raise ValueError('Reference operation estimates must be nonnegative with at least one batch')
         self.session_id = session_id
         self.uses_counts = expected_batches >= 2 and item_count * expected_batches >= COUNT_SCAN_THRESHOLD
         self.table = connection.ops.quote_name(f'content_reference_counts_{uuid4().hex}')
+        self._connection = None
+        self._thread = None
+        self._table_created = False
+        self.initialized = not self.uses_counts
+        self.initialization_cursor = -1
+        self._closed = False
+        self._invalid = False
+
+    def validate_connection(self) -> None:
+        """Reject replacement before accessing any connection-local state."""
+        if self._closed or self._invalid:
+            raise ContentIntegrityError('Reference operation is closed or invalid')
+        if self._connection is None:
+            connection.ensure_connection()
+            self._connection = connection.connection
+            self._thread = get_ident()
+        elif self._thread != get_ident() or connection.connection is not self._connection:
+            self._invalid = True
+            raise ContentIntegrityError('Reference operation physical connection changed')
+        if connection.needs_rollback or connection.closed_in_transaction:
+            self._invalid = True
+            raise ContentIntegrityError('Reference operation connection is unusable')
+
+    def require_initialized(self) -> None:
+        if not self.initialized:
+            raise ContentIntegrityError('Reference counts are not initialized')
+
+    @contextmanager
+    def activate(self) -> Iterator['SessionReferenceOperation']:
+        """Scope accounting to one synchronous invocation, then reset context."""
+        if _reference_operation.get() is not None:
+            raise ValueError('Nested reference operations are not supported')
+        self.validate_connection()
+        token = _reference_operation.set(self)
+        try:
+            yield self
+        finally:
+            _reference_operation.reset(token)
+
+    def initialize_page(self, *, row_budget: int = MEMBERSHIP_BATCH_SIZE, validate: Callable[[], bool]) -> bool:
+        """Build one metadata-only TEMP page; return true when complete.
+
+        The guard checks the original observation inside this read snapshot.
+        It must not acquire the main writer through a no-op UPDATE. The page
+        cursor advances only after atomic exit. Any failure invalidates the
+        operation; callers close it and start a fresh operation, never retry
+        a page against a refreshed observation. Resumable callers enter without
+        an outer transaction or open read cursor. Compatibility initialization
+        may keep its caller transaction because its handle closes before exit.
+        """
+        if row_budget < 1:
+            raise ValueError('Reference page budget must be positive')
+        self.validate_connection()
+        if self.initialized:
+            return True
+        created = self._table_created
+        try:
+            with transaction.atomic():
+                if not validate():
+                    raise ContentIntegrityError('Reference initialization observation changed')
+                rows = list(SessionItem.objects.filter(
+                    session_id=self.session_id, line_num__gt=self.initialization_cursor,
+                ).order_by('line_num').values_list(
+                    'line_num', 'current_content_id', 'original_content_id',
+                )[:row_budget])
+                counts = Counter(content_id for _, current, original in rows
+                                 for content_id in (current, original) if content_id is not None)
+                self.validate_connection()
+                with connection.cursor() as cursor:
+                    if not created:
+                        cursor.execute(f'CREATE TEMP TABLE {self.table} '
+                                       '(content_id INTEGER PRIMARY KEY, count INTEGER NOT NULL)')
+                    cursor.executemany(f'INSERT INTO {self.table} (content_id, count) VALUES (%s, %s) '
+                                       'ON CONFLICT(content_id) DO UPDATE SET count = count + excluded.count',
+                                       list(counts.items()))
+        except BaseException:
+            self._invalid = True
+            raise
+        self._table_created = True
+        if rows:
+            self.initialization_cursor = rows[-1][0]
+        self.initialized = len(rows) < row_budget
+        return self.initialized
 
     def initialize(self) -> None:
-        if not self.uses_counts:
+        """Compatibility initialization under the caller's whole-operation lease."""
+        while not self.initialize_page(validate=lambda: True):
+            pass
+
+    def close(self) -> None:
+        """Drop usable TEMP state once; preserve caller-owned connections.
+
+        A broken enclosing transaction cannot run cleanup SQL. Its rollback
+        removes a table created inside it. A table from an earlier commit
+        survives until explicit worker terminal connection cleanup.
+        """
+        if self._closed:
             return
-        item_table = connection.ops.quote_name(SessionItem._meta.db_table)
-        with transaction.atomic(), connection.cursor() as cursor:
-            cursor.execute(f'CREATE TEMP TABLE {self.table} (content_id INTEGER PRIMARY KEY, count INTEGER NOT NULL)')
-            cursor.execute(
-                f'INSERT INTO {self.table} SELECT content_id, COUNT(*) FROM ('
-                f'SELECT current_content_id AS content_id FROM {item_table} WHERE session_id = %s '
-                f'UNION ALL SELECT original_content_id FROM {item_table} WHERE session_id = %s) '
-                'WHERE content_id IS NOT NULL GROUP BY content_id', [self.session_id, self.session_id],
-            )
+        try:
+            if self._table_created and self._thread == get_ident() and connection.connection is self._connection:
+                if not connection.needs_rollback and not connection.closed_in_transaction:
+                    with connection.cursor() as cursor:
+                        cursor.execute(f'DROP TABLE IF EXISTS {self.table}')
+        finally:
+            self._closed = True
 
     def _assignments(self, item_ids: Sequence[int], line_nums: Sequence[int]) -> Counter:
         counts = Counter()
@@ -228,8 +325,11 @@ class SessionReferenceOperation:
         if not self.uses_counts:
             yield
             return
+        self.validate_connection()
+        self.require_initialized()
         before = self._assignments(item_ids, line_nums)
         yield
+        self.validate_connection()
         after = self._assignments(item_ids, line_nums)
         changed_ids = []
         with connection.cursor() as cursor:
@@ -253,19 +353,10 @@ def session_reference_operation(
     session_id: str, *, item_count: int, expected_batches: int,
 ) -> Iterator[SessionReferenceOperation]:
     """Activate measured accounting; the caller holds its writer lease until exit."""
-    if item_count < 0 or expected_batches < 1:
-        raise ValueError('Reference operation estimates must be nonnegative with at least one batch')
-    if _reference_operation.get() is not None:
-        raise ValueError('Nested reference operations are not supported')
     operation = SessionReferenceOperation(session_id, item_count, expected_batches)
-    token = _reference_operation.set(operation)
     try:
-        operation.initialize()
-        yield operation
+        with operation.activate():
+            operation.initialize()
+            yield operation
     finally:
-        _reference_operation.reset(token)
-        if operation.uses_counts and not connection.needs_rollback:
-            with connection.cursor() as cursor:
-                cursor.execute(f'DROP TABLE IF EXISTS {operation.table}')
-        # A broken enclosing transaction cannot execute cleanup SQL. SQLite
-        # rolls back the temporary table creation with that transaction.
+        operation.close()
