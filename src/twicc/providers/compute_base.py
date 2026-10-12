@@ -4063,11 +4063,21 @@ class BaseSessionCompute:
             # Publish an exact baseline in this same transaction before the
             # new compute version becomes visible to the next live operation.
             session = Session.objects.get(id=session_id)
+            from twicc.providers.activity_preparation import activity_final_policy
+
+            operation = msg.get('_storage_operation')
+            activity_cache = activity_final_policy(
+                operation.activity_preparation if operation is not None else None,
+                before_session,
+                {field: getattr(session, field) for field in ('project_id', 'provider', 'type', 'hidden', 'created_at')},
+                item_updates=msg.get('item_updates', ()), content_overrides=msg.get('content_overrides', ()),
+                extra_activity_keys=msg.get('_activity_repair_keys', ()),
+            )
             apply_contribution_changes(
                 before_items, item_contributions(changed), before_sessions=[before_session],
                 after_sessions=[session_contribution(session)], repair=True,
-                # Legacy per-run entries never prove an exact final baseline.
-                repaired_activity_buckets=None,
+                # This private filtered set never contains legacy run-cache proof.
+                repaired_activity_buckets=activity_cache,
                 extra_activity_keys=msg.get('_activity_repair_keys', ()),
             )
             session.refresh_from_db()

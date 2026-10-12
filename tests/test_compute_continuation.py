@@ -1059,6 +1059,12 @@ def test_compute_diagnostics_separate_final_hold_and_preparation(wal_runtime, mo
                      if 'operation=compute_final_aggregates ' in record.getMessage())
     assert float(aggregate.split('elapsed_ms=')[1].split()[0]) >= 30
     assert any('Compute storage preparation:' in record.getMessage() for record in caplog.records)
+    enumeration = [record.getMessage() for record in caplog.records
+                   if 'Compute activity enumeration:' in record.getMessage()]
+    assert any('rows=256 cursor=256 complete=False fallback=none retry_count=0' in row for row in enumeration)
+    assert any('rows=88 cursor=600 complete=True fallback=none retry_count=0' in row for row in enumeration)
+    assert any('operation=compute_activity_enumeration ' in record.getMessage() for record in caplog.records)
+    assert all('legacy ' not in row and 'SELECT ' not in row and 'UPDATE ' not in row for row in enumeration)
 
 
 def test_compute_diagnostics_accumulate_denied_combined_grant_wait(wal_runtime):
@@ -1090,3 +1096,234 @@ def test_compute_diagnostics_accumulate_denied_combined_grant_wait(wal_runtime):
     with sqlite3.connect(path) as database:
         assert database.execute('SELECT title FROM core_session WHERE id = ?', [session.id]).fetchone() == (
             'diagnostic grant',)
+
+
+@pytest.mark.parametrize('barrier', ['enumeration', 'between_buckets'])
+def test_activity_preparation_keeps_foreground_on_another_worker(wal_runtime, monkeypatch, barrier):
+    """Removing private runtime preparation or sharing its worker breaks this barrier."""
+    from twicc.providers import activity_preparation
+    session, path = wal_runtime
+    with sqlite3.connect(path) as database:
+        database.execute("UPDATE core_sessionitem SET timestamp='2026-09-29 00:00:00', cost=0.0000012")
+    started, release = threading.Event(), threading.Event()
+    captured = {}
+    original_page = activity_preparation.prepare_activity_key_page
+    original_publish = activity_preparation.publish_activity_key
+
+    def page(state, **kwargs):
+        captured['state'] = state
+        if barrier == 'enumeration' and not started.is_set():
+            captured['application_thread'] = threading.get_ident()
+            started.set()
+            assert release.wait(5)
+        return original_page(state, **kwargs)
+
+    async def turn(factory, *, diagnostics=None, phase=None):
+        result = await original_turn(factory, diagnostics=diagnostics, phase=phase)
+        if barrier == 'between_buckets' and phase == 'activity' and result and not started.is_set():
+            captured['application_thread'] = captured['state'].thread
+            started.set()
+            await asyncio.to_thread(release.wait, 5)
+        return result
+
+    def publish(state, key):
+        captured['state'] = state
+        return original_publish(state, key)
+
+    original_turn = db_writer._background_turn
+    monkeypatch.setattr(activity_preparation, 'prepare_activity_key_page', page)
+    monkeypatch.setattr(activity_preparation, 'publish_activity_key', publish)
+    monkeypatch.setattr(db_writer, '_background_turn', turn)
+
+    async def scenario():
+        db_writer.start_db_writer()
+        applied = asyncio.Queue()
+        run_id, done = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0,
+                                                       applied_queue=applied)
+        db_writer.get_subprocess_queue().put(result_message(session, run_id))
+        db_writer.get_subprocess_queue().put({'type': 'done', 'provider': 'codex', 'run_id': run_id})
+        try:
+            assert await asyncio.to_thread(started.wait, 3), 'Runtime never enters activity preparation'
+            async def foreground():
+                def write():
+                    captured['foreground_thread'] = threading.get_ident()
+                    rows = Session.objects.filter(pk=session.id).update(title='activity foreground')
+                    captured['foreground_connection'] = connections['default'].connection
+                    return rows
+                return await db_writer.run_compute_sync(write)
+            assert await asyncio.wait_for(db_writer.run_under_db_write_lock(foreground), .5) == 1
+            assert captured['application_thread'] != captured['foreground_thread']
+            assert captured['foreground_connection'] is not None
+            assert captured['state'].physical_connection is not captured['foreground_connection']
+            assert applied.empty() and not done.done()
+            release.set()
+            assert (await asyncio.wait_for(applied.get(), 5)).outcome == 'applied'
+        finally:
+            release.set()
+            await db_writer.stop_db_writer()
+        assert captured['state'].fallback_reason == 'foreign_commit'
+        assert captured['state'].repaired_keys == set()
+        assert captured['state'].required_keys == set()
+        assert done.result() == 0
+    asyncio.run(scenario())
+
+
+def test_queued_foreground_commits_before_second_activity_bucket(wal_runtime, monkeypatch):
+    from twicc.providers import activity_preparation
+    session, path = wal_runtime
+    with sqlite3.connect(path) as database:
+        database.execute("UPDATE core_sessionitem SET timestamp='2026-09-29 00:00:00', cost=0.0000012")
+    captured = {'publications': 0}
+    original = activity_preparation.publish_activity_key
+
+    def publish(state, key):
+        result = original(state, key)
+        captured['state'] = state
+        captured['publications'] += int(result.published)
+        if result.published:
+            def enqueue():
+                future = asyncio.get_running_loop().create_future()
+                captured['foreground'] = future
+                db_writer.enqueue_async_job(db_writer._RetireSessionsJob(
+                    None, {session.id: {'title': 'between activity buckets'}}, future))
+            captured['loop'].call_soon_threadsafe(enqueue)
+        return result
+
+    monkeypatch.setattr(activity_preparation, 'publish_activity_key', publish)
+    async def scenario():
+        captured['loop'] = asyncio.get_running_loop()
+        db_writer.start_db_writer()
+        applied = asyncio.Queue()
+        run_id, done = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0,
+                                                       applied_queue=applied)
+        db_writer.get_subprocess_queue().put(result_message(session, run_id))
+        db_writer.get_subprocess_queue().put({'type': 'done', 'provider': 'codex', 'run_id': run_id})
+        try:
+            assert (await asyncio.wait_for(applied.get(), 5)).outcome == 'applied'
+            assert captured['foreground'].done() and captured['foreground'].result() == 1
+            assert captured['publications'] == 1
+            assert captured['state'].fallback_reason == 'foreign_commit'
+        finally:
+            await db_writer.stop_db_writer()
+        assert done.done() and done.result() == 0
+    asyncio.run(scenario())
+    with sqlite3.connect(path) as database:
+        assert database.execute('SELECT title, compute_version FROM core_session WHERE id=?', (session.id,)).fetchone() == (
+            'between activity buckets', 123)
+        assert database.execute('SELECT SUM(cost) FROM core_dailyactivity').fetchone()[0] == pytest.approx(.00144)
+
+
+@pytest.mark.parametrize('failure', ['rollback', 'callback', 'capacity'])
+def test_optional_activity_failure_finishes_with_exact_no_cache(wal_runtime, monkeypatch, failure):
+    from twicc.providers import activity_preparation, compute_base
+    from twicc.core.models import DailyActivity
+    session, path = wal_runtime
+    with sqlite3.connect(path) as database:
+        database.execute("UPDATE core_sessionitem SET timestamp='2026-09-29 00:00:00', cost=0.0000012")
+    captured = {}
+    original_begin = activity_preparation.begin_activity_preparation
+    def begin(operation):
+        state = original_begin(operation)
+        captured['state'] = state
+        return state
+    monkeypatch.setattr(activity_preparation, 'begin_activity_preparation', begin)
+    if failure == 'capacity':
+        monkeypatch.setattr(activity_preparation, 'MAX_REPAIRED_ACTIVITY_BUCKETS', 1)
+    elif failure == 'rollback':
+        original_recalculate = DailyActivity.recalculate
+        def recalculate(*args):
+            if not captured.get('failed'):
+                captured['failed'] = True
+                raise RuntimeError('one optional activity rollback')
+            return original_recalculate(*args)
+        monkeypatch.setattr(DailyActivity, 'recalculate', recalculate)
+    else:
+        original_commit = activity_preparation.transaction.on_commit
+        def on_commit(callback, *args, **kwargs):
+            original_commit(callback, *args, **kwargs)
+            if callback.__name__ == 'settle' and not captured.get('failed'):
+                captured['failed'] = True
+                def fail():
+                    raise RuntimeError('one optional activity callback failure')
+                original_commit(fail)
+        monkeypatch.setattr(activity_preparation.transaction, 'on_commit', on_commit)
+    original_helper = compute_base.apply_contribution_changes
+    def helper(*args, **kwargs):
+        captured['final_cache'] = kwargs['repaired_activity_buckets']
+        return original_helper(*args, **kwargs)
+    monkeypatch.setattr(compute_base, 'apply_contribution_changes', helper)
+    async def scenario():
+        db_writer.start_db_writer()
+        applied = asyncio.Queue()
+        run_id, done = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0,
+                                                       applied_queue=applied)
+        db_writer.get_subprocess_queue().put(result_message(session, run_id))
+        db_writer.get_subprocess_queue().put({'type': 'done', 'provider': 'codex', 'run_id': run_id})
+        try:
+            assert (await asyncio.wait_for(applied.get(), 5)).outcome == 'applied'
+            assert captured['final_cache'] is None
+            assert captured['state'].fallback_reason == ('capacity' if failure == 'capacity' else 'publication_failed')
+            assert not captured['state'].repaired_keys and not captured['state'].required_keys
+        finally:
+            await db_writer.stop_db_writer()
+        assert done.result() == 0
+    asyncio.run(scenario())
+    with sqlite3.connect(path) as database:
+        assert database.execute('SELECT SUM(cost) FROM core_dailyactivity').fetchone()[0] == pytest.approx(.00144)
+        assert database.execute('SELECT compute_version, content_storage_version FROM core_session WHERE id=?',
+                                (session.id,)).fetchone() == (123, 1)
+
+
+@pytest.mark.parametrize('terminal', ['cancel', 'abandon', 'stop'])
+def test_activity_page_terminal_drains_private_proof_before_ack(wal_runtime, monkeypatch, terminal):
+    from twicc.providers import activity_preparation
+    session, path = wal_runtime
+    started, release = threading.Event(), threading.Event()
+    captured = {}
+    original = activity_preparation.prepare_activity_key_page
+    def page(state, **kwargs):
+        captured['state'] = state
+        started.set()
+        assert release.wait(5)
+        return original(state, **kwargs)
+    monkeypatch.setattr(activity_preparation, 'prepare_activity_key_page', page)
+    async def scenario():
+        db_writer.start_db_writer()
+        applied = asyncio.Queue()
+        run_id, done = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0,
+                                                       applied_queue=applied)
+        db_writer.get_subprocess_queue().put(result_message(session, run_id))
+        stop = None
+        try:
+            assert await asyncio.to_thread(started.wait, 3)
+            pending = db_writer._pending_compute
+            if terminal == 'cancel':
+                db_writer._db_writer_task.cancel()
+            elif terminal == 'abandon':
+                stop = asyncio.create_task(db_writer.abandon_compute_run(run_id, Provider.CODEX))
+            else:
+                db_writer.get_subprocess_queue().put({'type': 'done', 'provider': 'codex', 'run_id': run_id})
+                stop = asyncio.create_task(db_writer.stop_db_writer())
+            await asyncio.sleep(.02)
+            assert not pending.terminal and not pending.operation.closed and applied.empty()
+            release.set()
+            if stop is not None:
+                await asyncio.wait_for(stop, 5)
+            if terminal == 'cancel':
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(asyncio.shield(db_writer._db_writer_task), 5)
+            assert pending.terminal and pending.operation.closed
+            assert not captured['state'].required_keys and not captured['state'].repaired_keys
+            assert pending.deferral.released
+            if terminal == 'abandon':
+                assert applied.empty()
+            else:
+                signal = applied.get_nowait()
+                assert signal.outcome == ('failed' if terminal == 'cancel' else 'applied')
+                assert applied.empty()
+        finally:
+            release.set()
+            await db_writer.stop_db_writer()
+            db_writer._compute_states.pop(run_id, None)
+            db_writer._compute_done_events.pop(run_id, None)
+    asyncio.run(scenario())

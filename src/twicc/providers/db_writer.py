@@ -54,7 +54,7 @@ from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 from django.db import transaction
 
-from twicc.sync_diagnostics import log_slow, sync_timing_context
+from twicc.sync_diagnostics import log_slow, sync_timing_context, timed_sync_phase
 
 from twicc.core.enums import Provider
 from twicc.logging_context import provider_log_context
@@ -1900,6 +1900,7 @@ async def _advance_pending_compute_body() -> bool:
     )
     from twicc.providers.compute_base import BaseSessionCompute, ComputeApplyResult
     from twicc.content_maintenance_task import defer_background_promotions
+    from twicc.providers.activity_preparation import begin_activity_preparation, prepare_activity_key_page, publish_activity_key
 
     pending = _pending_compute
     state = _compute_states.get(pending.run_id)
@@ -1926,12 +1927,36 @@ async def _advance_pending_compute_body() -> bool:
             if not await _background_turn(begin, diagnostics=pending, phase='begin'):
                 return False
         elif pending.operation.phase == 'final':
+            activity = pending.operation.activity_preparation
+            # The pinned worker serves only this pending operation. Ordinary
+            # foreground/bulk/init jobs retain run_compute_sync on another worker.
+            # Reuse the one retained future/batch slot for bounded activity pages.
+            pending.batch = None
+            if activity is None or (activity.fallback_reason is None and not activity.enumeration_complete):
+                def prepare_activity():
+                    with timed_sync_phase('compute_activity_enumeration'):
+                        activity = begin_activity_preparation(pending.operation)
+                        page = prepare_activity_key_page(activity)
+                    logger.debug('Compute activity enumeration: rows=%d cursor=%d complete=%s fallback=%s retry_count=0',
+                                 page.rows, page.cursor, page.complete, page.fallback_reason or 'none')
+                    return page
+                context = contextvars.copy_context()
+                context.run(write_priority.set, WritePriority.BACKGROUND)
+                pending.preparation = asyncio.create_task(
+                    run_compute_application_sync(prepare_activity), context=context,
+                )
+                return True
+            if activity.fallback_reason is None and activity.repair_cursor < len(activity.ordered_keys):
+                key = activity.ordered_keys[activity.repair_cursor]
+                async def publish_activity():
+                    _require_live_compute_run(pending)
+                    await run_compute_application_sync(publish_activity_key, activity, key)
+                return await _background_turn(publish_activity, diagnostics=pending, phase='activity')
             async def finalize():
                 _require_live_compute_run(pending)
                 active = _active_compute_ids()
                 def apply():
                     msg = final_compute_message(pending.operation, active)
-                    msg['_repaired_activity_buckets'] = state.repaired_activity_buckets
                     return BaseSessionCompute._apply_session_complete_final(msg)
                 pending.result = await run_compute_application_sync(apply)
             if not await _background_turn(finalize, diagnostics=pending, phase='final'):

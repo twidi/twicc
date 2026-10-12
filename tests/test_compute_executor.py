@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import threading
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
 from channels.db import database_sync_to_async
 from django.db import connections
+from django.db.models import Sum
 
 from twicc.core.enums import ItemKind, Provider
 from twicc.core.models import DailyActivity, Project, Session, SessionItem
@@ -103,7 +105,7 @@ def test_final_apply_aggregate_does_not_block_channels_or_repeat_at_finalization
 
 
 @pytest.mark.django_db(transaction=True)
-def test_compute_run_reuses_exact_activity_bucket_after_first_apply(monkeypatch):
+def test_compute_run_without_private_proof_repairs_activity_for_each_result(monkeypatch):
     project = Project.objects.create(id='shared-activity-project')
     stamp = datetime(2026, 9, 29, tzinfo=UTC)
     sessions = [Session.objects.create(id=f'activity-{index}', project=project, provider=Provider.CODEX,
@@ -112,6 +114,9 @@ def test_compute_run_reuses_exact_activity_bucket_after_first_apply(monkeypatch)
     for session in sessions:
         SessionItem.objects.create(session=session, line_num=1, content='{}',
                                    timestamp=stamp, kind=ItemKind.USER_MESSAGE)
+    with connections['default'].cursor() as cursor:
+        cursor.execute('UPDATE core_sessionitem SET cost=0.0000006 WHERE session_id IN (%s, %s)',
+                       [session.id for session in sessions])
     calls = []
     original = DailyActivity.recalculate
 
@@ -143,8 +148,13 @@ def test_compute_run_reuses_exact_activity_bucket_after_first_apply(monkeypatch)
             await db_writer.stop_compute_executor()
 
     asyncio.run(scenario())
-    assert len(calls) == 2  # Project and global are each rebuilt once.
+    assert len(calls) == 4  # Compatibility results have no private preparation proof.
     assert {row.session_count for row in DailyActivity.objects.all()} == {2}
+    for scope in (project.id, None):
+        with connections['default'].cursor() as cursor:
+            cursor.execute('SELECT SUM(cost) FROM core_dailyactivity WHERE project_id IS %s', [scope])
+            assert cursor.fetchone()[0] == pytest.approx(.0000012, abs=1e-15)
+        assert DailyActivity.objects.filter(project_id=scope).aggregate(cost=Sum('cost'))['cost'] == Decimal('.0000012')
 
 
 @pytest.mark.django_db(transaction=True)

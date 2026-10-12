@@ -2,10 +2,12 @@
 
 The application worker must exclusively serve this operation until terminal
 cleanup. Other workers/processes use other physical connections. No transaction,
-iterator, cursor, or context manager survives a step. These APIs do not authorize
-final cache reuse; final publication still performs exact no-cache repair.
+iterator, cursor, or context manager survives a step. Final cache admission
+occurs only within the guarded final transaction.
 """
 
+import logging
+from datetime import datetime
 from threading import get_ident
 from typing import NamedTuple
 
@@ -16,6 +18,7 @@ from twicc.core.models import Session, SessionItem
 from twicc.providers.live_aggregates import MAX_REPAIRED_ACTIVITY_BUCKETS, _activity_keys
 
 ACTIVITY_PAGE_ROWS = 256
+logger = logging.getLogger(__name__)
 
 
 class ActivityPreparation:
@@ -34,6 +37,7 @@ class ActivityPreparation:
         self.repair_cursor = 0
         self.fallback_reason = None
         self.scope = None
+        self.metadata = None
 
     def disable(self, reason, *, discard=True):
         if self.fallback_reason is None:
@@ -123,6 +127,7 @@ def begin_activity_preparation(operation):
             state.disable('metadata_changed')
             return state
         state.scope = row['project_id'], row['provider']
+        state.metadata = tuple(row[field] for field in ('project_id', 'provider', 'type', 'hidden'))
         if len(operation.activity_repair_keys) > MAX_REPAIRED_ACTIVITY_BUCKETS:
             state.disable('capacity')
             return state
@@ -254,3 +259,53 @@ def close_activity_preparation(state, *, reason='closed'):
     state.disable(reason)
     state.required_keys.clear()
     state.ordered_keys = ()
+
+
+def activity_final_policy(state, before_session, effective_fields, *, item_updates=(), content_overrides=(),
+                          extra_activity_keys=()):
+    """Admit private zero-delta keys under the final transaction's writer lock.
+
+    Initial storage validation occurs before final source/lifecycle writes.
+    Do not repeat that immutable observation after this transaction's own writes.
+    The fixed physical connection/version and actual before/effective metadata
+    are rechecked here, directly before the aggregate helper consumes the cache.
+    """
+    cache = None
+    if state is not None:
+        if not connection.in_atomic_block:
+            state.disable('final_transaction_missing')
+        elif _check_state(state, fresh=False):
+            try:
+                version_matches = _check_version(state)
+            except Exception:
+                version_matches = state.disable('final_validation_failed')
+            if version_matches:
+                fields = ('project_id', 'provider', 'type', 'hidden')
+                before = tuple(getattr(before_session, field) for field in fields)
+                effective = tuple(effective_fields.get(field, getattr(before_session, field)) for field in fields)
+                if item_updates or content_overrides:
+                    state.disable('source_incomplete')
+                elif before != state.metadata or effective != state.metadata:
+                    state.disable('metadata_changed')
+                elif (not state.enumeration_complete or state.repair_cursor != len(state.ordered_keys)
+                      or set(state.ordered_keys) != state.required_keys
+                      or state.repaired_keys != state.required_keys
+                      or not state.operation.activity_repair_keys <= state.required_keys
+                      or any(key not in state.required_keys for key in extra_activity_keys)):
+                    state.disable('missing_key')
+                elif len(state.required_keys) > MAX_REPAIRED_ACTIVITY_BUCKETS:
+                    state.disable('capacity')
+                else:
+                    created = effective_fields.get('created_at', before_session.created_at)
+                    if isinstance(created, str):
+                        created = datetime.fromisoformat(created)
+                    excluded = set(_activity_keys(before_session.project_id, before_session.provider,
+                                                  before_session.created_at))
+                    excluded.update(_activity_keys(effective[0], effective[1], created))
+                    cache = state.repaired_keys - excluded
+    required = len(state.required_keys) if state is not None else 0
+    hits = len(cache) if cache is not None else 0
+    logger.debug('Compute activity final policy: fallback=%s retry_count=0 cache_hits=%d cache_misses=%d',
+                 state.fallback_reason if state is not None and state.fallback_reason else
+                 ('none' if cache is not None else 'missing_proof'), hits, required - hits)
+    return cache
