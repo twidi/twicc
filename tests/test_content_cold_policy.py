@@ -31,11 +31,11 @@ def test_content_and_scratch_have_distinct_boundaries(archived, hidden, days, co
 
 def test_latest_lifecycle_date_and_incomplete_metadata_stay_hot():
     now = timezone.now()
-    for name in policy.COLD_DATE_FIELDS:
+    for name in ('created_at', 'last_started_at', 'last_updated_at', 'last_stopped_at'):
         metadata = fields(now) | {name: now - timedelta(days=14)}
         assert not policy.cold_from_fields(metadata, now)
         assert not policy.scratch_cold_from_fields(metadata, now)
-    for missing in policy.COLD_FIELDS:
+    for missing in ('archived', 'hidden', 'created_at', 'last_started_at', 'last_updated_at', 'last_stopped_at'):
         metadata = fields(now)
         del metadata[missing]
         assert not policy.cold_from_fields(metadata, now)
