@@ -85,14 +85,17 @@
 - Explicit foreground origin produces foreground demand; background compute binding notifications remain background with recovery=False.
 - Preserve one maintenance codec worker and bounded batches. Store interrupted target snapshot/cursor/verification state explicitly rather than keeping a whole target in an awaited local loop.
 - Keep FIFO among eligible foreground targets; duplicate target requests coalesce, foreground upgrades background, and explicit demand overrides recovery eligibility.
+- Produce an event-loop-owned idempotent background-promotion deferral token keyed by guarded root identity and incarnation. Task 5 owns its compute lifetime. Existing and new background targets retain exact target/provenance while deferred; foreground demand bypasses deferral. Unresolved ancestry receives no guessed root scope.
 
 - [ ] Write failing barriers: demand for B arrives during large recovery A; B publishes before A's next background slice.
 - [ ] Test same-target demand upgrading recovery, demand arriving while a background resource request waits, FIFO foreground targets, and no deadlock from registered pressure.
 - [ ] Test background compute binding wakeups: no foreground token, no full promotion scan per extraction slice, unchanged eligibility provenance.
+- [ ] Test synthetic operation deferral across changing epochs, queued recovery before registration, exact target retention, foreground bypass, release wakeup, late callbacks, successor tokens, and shutdown. Task 5 proves activation through the real compute path; Task 2 does not claim production integration yet.
 - [ ] Test cancellation/shutdown during codec preparation and admitted publication, including token cleanup and retained periodic deadline/scratch rules.
 - [ ] Confirm failures before restructuring maintenance dispatch.
 - [ ] Advance recovery and demanded targets one bounded preparation/publication step at a time. A waiting background grant must not suspend the demand dispatcher.
 - [ ] Preserve completed codec work or drain it before changing target; never pretend cancelling a future stops its thread. Interruption occurs before a grant or after an admitted publication drains.
+- [ ] Defer further background preparation/publication for the registered root, including already queued recovery. A cheap guarded snapshot may resolve queued target scope. Preserve immediate epoch invalidation, exact membership, ordinary decoding, and readiness checks. Deferral neither certifies plaintext nor creates tree-wide requests.
 - [ ] Register foreground pressure on enqueue and retain it through target settlement or safe transfer to an executing foreground request. Never let that pressure block its own foreground dispatch.
 - [ ] Capture priority origin as an immutable callback argument when registering `transaction.on_commit`, not only when the callback later executes. Pass it explicitly through `call_soon_threadsafe`; do not infer priority solely from recovery=False. Scope/reset origin per publication, including pinned-worker calls; later background invalidation cannot downgrade foreground demand.
 - [ ] Run maintenance, lifecycle, admission and coordinator tests. Preserve root-only recovery and target-only promotion.
@@ -156,6 +159,7 @@
 **Interfaces:**
 - Consume Tasks 1–4 APIs.
 - Produce one `PendingComputeApplication` owned by the writer loop, with run ID, receive/apply times, operation, at most one preparation future/batch, and terminal outcome.
+- The pending result owns Task 2's root/incarnation deferral token, registered after guarded initialization before its lease releases. Release it on every terminal outcome after admitted work drains, in cancellation-safe cleanup even if operation cleanup raises. Release before acknowledgement or successor dispatch. Retained exact targets resume; late callbacks cannot revive or release another token.
 - `_drain_one()` services foreground queued writer jobs before any background application or ingestion advancement.
 - Queued foreground pressure registers before dispatch and remains continuous until resource grant/settlement. Separate foreground/background job queues preserve FIFO within each class; background initialization cannot hide foreground jobs behind it.
 - Background advancement uses nonblocking combined acquisition. It never waits for background resources inside the permanent writer tick.
@@ -165,6 +169,7 @@
 - [ ] Test that a foreground waiter arriving after preparation wins before the next compute or compression publication.
 - [ ] Test compute FIFO/done ordering, abandoned-run cleanup, exactly-one terminal handling, shutdown during preparation/publication, and final rollback with valid partial extraction.
 - [ ] Test no tight idle spin while preparation waits or foreground excludes background admission.
+- [ ] Test real compute deferral across multiple binding slices, existing root recovery during child compute, explicit foreground bypass, compressed-row hot reuse, valid partial extraction after supersession, cleanup failure, cancellation, abandonment, shutdown, and late callbacks. No repeated full-target background scan occurs per extraction slice.
 - [ ] Confirm failures, then introduce the pending state and explicit phase advancement.
 - [ ] Service foreground async jobs first. If their backlog remains, skip compute, initialization and bulk ingestion for this tick.
 - [ ] Register queued foreground demand before enqueue-to-dispatch can expose a background grant. Release or transfer tokens without a dequeue-to-grant gap. Settle all tokens on failure and shutdown.

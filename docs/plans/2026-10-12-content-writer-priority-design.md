@@ -59,6 +59,17 @@ A later background invalidation cannot downgrade existing foreground demand.
 This prevents repeated high-priority full-session promotion walks after each background extraction slice.
 Preserve explicit-versus-recovery eligibility and target-only promotion semantics.
 
+Coalescing alone cannot prevent repeated scans when each compute slice changes the root epoch.
+One pending compute application owns an idempotent background-promotion deferral token for its guarded root identity and incarnation.
+Register it before releasing initialization resources and before source-changing phases begin.
+Defer existing and new background targets for that root at safe batch boundaries; retain exact targets and eligibility provenance.
+Foreground demand upgrades the target and bypasses deferral.
+Do not guess unresolved roots or turn root-scoped scheduling into tree-wide promotion.
+Epoch invalidation, ordinary decoding, hot reconciliation, and final readiness checks remain immediate and independent of maintenance.
+Every terminal path releases deferral after admitted work drains, even if cleanup fails, and wakes retained targets.
+Compute never waits for maintenance that its own token defers.
+Late callbacks cannot revive a released token or release a successor token.
+
 ## Resumable compute application
 
 Keep one pending result with its run identity, observations, phase, committed cursors, and reference-operation handle.
