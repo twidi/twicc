@@ -34,6 +34,10 @@ When foreground traffic stops, pending background work resumes without lost resu
 An already-admitted transaction cannot be preempted safely.
 Foreground waits for that transaction to commit or roll back, then takes precedence over the next background publication.
 Rows and byte limits bound work size, not absolute latency.
+The metadata row limit bounds source updates, not their inherited aggregate helper.
+For outdated compute versions, a nonempty metadata batch can scan all target history and repair session, direct-child, parent, and activity aggregates.
+This correction preserves that atomic behavior; final-only activity preparation does not shorten this earlier hold.
+An empty metadata phase skips that helper, matching existing behavior.
 One oversized content, one SQL query, or final atomic publication can exceed the normal slice duration.
 Telemetry must expose these exceptions instead of claiming zero blocking.
 

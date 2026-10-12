@@ -148,6 +148,7 @@
 - [ ] Use audited binding/deletion/replacement fences for resolved targets. For unresolved targets, disable cached counts/compression and reconcile from current persisted assignments.
 - [ ] Refresh active roots and eligibility time per publication; fresh owner checks apply even when the target proof is unchanged.
 - [ ] Advance Python cursors/expected epoch only after successful atomic exit. Read resulting epochs; do not guess increments or refresh after foreign changes.
+- [ ] An empty metadata phase skips apply_session_items_chunk and its aggregate helper, matching the existing zero-update path. Nonempty chunks retain inherited full-history aggregate repair; report this atomic hold separately from the 2,000-row update budget.
 - [ ] Validate the operation in final atomic publication; preserve goals/plan-path/task concurrent folds and root-own readiness scope.
 - [ ] Run storage extraction, references, initial compression, readers, lifecycle, and admission tests.
 - [ ] Commit and review before Task 5.
@@ -210,6 +211,7 @@
 - [ ] Add adversarial equivalence/interleaving tests for project/global day/week keys, null/old/new dates, removed timestamps, hidden sessions, native children, metadata changes, legacy cache entries, failed repair rollback, failed commit callbacks, stale snapshots, physical connection replacement with equal version numbers, unrelated foreign commits, and current-version replay mutations without aggregate deltas.
 - [ ] Preserve exact no-cache final repair for unknown/missing keys, metadata changes, failed proof, connection loss, or more than 4,096 keys. Bound preparation retries. Performance fallback must never skip exact repair.
 - [ ] Keep expensive repair transactions visible: one bucket may itself exceed the desired interactive wait. No strict latency guarantee or new index follows from this task.
+- [ ] Measure inherited metadata aggregate holds too. Post-source bucket preparation does not shorten a preceding nonempty metadata chunk's full-history repair. Separating that repair requires a separate baseline/precision proof and is outside this correction.
 - [ ] Run aggregate, continuation, lifecycle, replacement/deletion and content tests.
 - [ ] Commit and independently review diagnostics and any approved optimization.
 
