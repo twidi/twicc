@@ -4,7 +4,6 @@ import asyncio
 import queue
 import threading
 
-import orjson
 import pytest
 
 from twicc.providers import db_writer
@@ -22,6 +21,7 @@ def writer_state(monkeypatch):
     monkeypatch.setattr(db_writer, "_subprocess_queue", queue.Queue())
     monkeypatch.setattr(db_writer, "_thread_queue", queue.Queue())
     monkeypatch.setattr(db_writer, "_async_queue", asyncio.Queue())
+    monkeypatch.setattr(db_writer, "_background_async_queue", asyncio.Queue())
 
 
 @pytest.mark.parametrize("publication_path", ["compute", "maintenance"])
@@ -55,13 +55,16 @@ def test_pending_start_and_compression_never_invert_locks(writer_state, monkeypa
         async def publication():
             publication_attempted.set()
             if publication_path == "compute":
-                db_writer._subprocess_queue.put(orjson.dumps({"type": "session_complete", "provider": "codex"}))
-                await db_writer._drain_one()
+                # Combined background acquisition returns immediately while
+                # registration owns admission. The permanent tick stays free.
+                assert not await db_writer._background_turn(publish)
+                assert publication_results == []
+                await start_task
+                assert await db_writer._background_turn(publish)
             else:
                 async with db_writer.storage_admission():
                     await db_writer.run_under_db_write_lock(publish)
 
-        monkeypatch.setattr(db_writer, "_process_compute_message", publish)
         start_task = asyncio.create_task(start())
         await registration_paused.wait()
         publication_task = asyncio.create_task(publication())

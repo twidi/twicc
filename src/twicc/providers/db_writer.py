@@ -58,7 +58,11 @@ from twicc.sync_diagnostics import log_slow, sync_timing_context
 
 from twicc.core.enums import Provider
 from twicc.logging_context import provider_log_context
-from twicc.providers.compute_executor import run_compute_sync, start_compute_executor, stop_compute_executor
+from twicc.providers.compute_executor import (
+    close_compute_application_connection, run_compute_application_sync, run_compute_sync,
+    start_compute_application_executor, start_compute_executor,
+    stop_compute_application_executor, stop_compute_executor,
+)
 from twicc.providers.write_coordinator import (
     ForegroundLock, WritePriority, WriteResources, WriterCoordinator, write_priority,
 )
@@ -80,7 +84,7 @@ INITIAL_SYNC_QUEUE_MAXSIZE = 200
 COMPUTE_QUEUE_MAXSIZE = 200
 # A compute result carrying more item writes than this is applied in slices
 # of this size, each in its own transaction on the compute executor. The
-# writer lease spans the complete message; the event loop remains available.
+# runtime prepares on a separate worker and grants one publication per turn.
 COMPUTE_APPLY_CHUNK_SIZE = 2000
 
 # "spawn" context — the compute result queue is created here and passed to
@@ -268,6 +272,46 @@ _db_writer_stop_event: asyncio.Event | None = None
 # DB writer flush an abandoned compute run's batched state instead of writing
 # to the DB directly and racing the DB writer.
 _async_queue: asyncio.Queue | None = None
+
+# Background initialization has its own FIFO, so it cannot hide normal jobs.
+_background_async_queue: asyncio.Queue | None = None
+_pending_compute: PendingComputeApplication | None = None
+
+
+class _ForegroundJobQueue(asyncio.Queue):
+    """Register foreground demand before exposing a queued job to dispatch."""
+
+    def put_nowait(self, job):
+        if isinstance(job, InitializeComputeStorageJob):
+            _background_async_queue.put_nowait(job)
+            return
+        demand = get_write_coordinator().foreground_demand()
+        try:
+            super().put_nowait((job, demand))
+        except BaseException:
+            demand.release()
+            raise
+
+
+@dataclass
+class PendingComputeApplication:
+    """One result owns its worker state until terminal cleanup finishes."""
+
+    message: dict
+    run_id: int
+    state: object | None = None
+    notifications: asyncio.Task | None = None
+    received_at: float = field(default_factory=perf_counter)
+    apply_started: float = field(default_factory=perf_counter)
+    operation: object | None = None
+    preparation: asyncio.Task | None = None
+    batch: object | None = None
+    deferral: object | None = None
+    result: object | None = None
+    error: str | None = None
+    terminal: bool = False
+    abandon_jobs: list = field(default_factory=list)
+
 
 # Shared write lock — serializes every SQLite-writing critical section that
 # happens in the main process. The DB writer itself acquires it via
@@ -613,22 +657,48 @@ def start_db_writer() -> None:
     starts. Raises if called twice (programming error).
     """
     global _thread_queue, _subprocess_queue
-    global _db_writer_stop_event, _db_writer_task, _async_queue
+    global _db_writer_stop_event, _db_writer_task, _async_queue, _background_async_queue
     global _write_coordinator, _db_write_lock, _storage_admission_lock
 
     if _db_writer_task is not None:
         raise RuntimeError("DB writer already started")
 
-    start_compute_executor()
-    _thread_queue = queue.Queue(maxsize=INITIAL_SYNC_QUEUE_MAXSIZE)
-    _subprocess_queue = _mp_ctx.Queue(maxsize=COMPUTE_QUEUE_MAXSIZE)
-    _async_queue = asyncio.Queue()
-    _db_writer_stop_event = asyncio.Event()
-    # One coordinator owns both resources for this writer lifetime.
-    _write_coordinator = WriterCoordinator()
-    _db_write_lock = _write_coordinator.foreground_lock(WriteResources.WRITER)
-    _storage_admission_lock = _write_coordinator.foreground_lock(WriteResources.ADMISSION)
-    _db_writer_task = asyncio.create_task(_db_writer_loop())
+    # Validate the synchronous entry point before allocating owned workers.
+    asyncio.get_running_loop()
+    ordinary_started = application_started = False
+    try:
+        start_compute_executor()
+        ordinary_started = True
+        start_compute_application_executor()
+        application_started = True
+        _thread_queue = queue.Queue(maxsize=INITIAL_SYNC_QUEUE_MAXSIZE)
+        _subprocess_queue = _mp_ctx.Queue(maxsize=COMPUTE_QUEUE_MAXSIZE)
+        _background_async_queue = asyncio.Queue()
+        _async_queue = _ForegroundJobQueue()
+        _db_writer_stop_event = asyncio.Event()
+        _write_coordinator = WriterCoordinator()
+        _db_write_lock = _write_coordinator.foreground_lock(WriteResources.WRITER)
+        _storage_admission_lock = _write_coordinator.foreground_lock(WriteResources.ADMISSION)
+        _db_writer_task = asyncio.create_task(_db_writer_loop())
+    except BaseException:
+        async def failed_start():
+            global _db_writer_task, _db_writer_stop_event, _thread_queue, _subprocess_queue
+            global _async_queue, _background_async_queue, _write_coordinator, _db_write_lock, _storage_admission_lock
+            try:
+                try:
+                    if application_started:
+                        await stop_compute_application_executor()
+                finally:
+                    if ordinary_started:
+                        await stop_compute_executor()
+            finally:
+                _db_writer_task = _db_writer_stop_event = None
+                _thread_queue = _subprocess_queue = _async_queue = _background_async_queue = None
+                _write_coordinator = _db_write_lock = _storage_admission_lock = None
+        # Startup is synchronous. Retain asynchronous drainage as the lifetime
+        # task, so stop and restart cannot race a still-running owned worker.
+        _db_writer_task = asyncio.create_task(failed_start())
+        raise
     logger.info("DB writer started")
 
 
@@ -667,7 +737,7 @@ async def stop_db_writer() -> None:
     Grants count as holders before their waiting coroutines resume.
     """
     global _write_coordinator, _db_write_lock, _storage_admission_lock, _db_writer_task, _db_writer_stop_event
-    global _thread_queue, _subprocess_queue, _async_queue
+    global _thread_queue, _subprocess_queue, _async_queue, _background_async_queue, _pending_compute
 
     if _db_writer_stop_event is not None:
         _db_writer_stop_event.set()
@@ -702,6 +772,10 @@ async def stop_db_writer() -> None:
         # Every admitted writer has released its lease. The compute worker
         # can now close its own connections and join without blocking the loop.
         try:
+            await stop_compute_application_executor()
+        except asyncio.CancelledError:
+            cancelled = True
+        try:
             await stop_compute_executor()
         except asyncio.CancelledError:
             cancelled = True
@@ -720,6 +794,8 @@ async def stop_db_writer() -> None:
         _thread_queue = None
         _subprocess_queue = None
         _async_queue = None
+        _background_async_queue = None
+        _pending_compute = None
     if cancelled:
         # Our caller wanted us cancelled; honour that AFTER the writer task
         # has actually drained and we've cleared module state.
@@ -1669,132 +1745,274 @@ def get_write_coordinator() -> WriterCoordinator:
     return _write_coordinator
 
 
-async def _drain_one() -> bool:
-    """Process at most one message from each queue.
-
-    Covers the two shared producer queues (compute, initial-sync) and the
-    intra-process async queue. Returns True if anything was processed
-    this call.
-
-    Every per-message apply runs inside :func:`provider_log_context` so
-    log records emitted during the apply (including those bubbling up
-    through ``sync_to_async`` and the helpers it transitively calls) get
-    the right ``provider`` tag in the log column — the DB writer task
-    itself runs in the global context, but each individual message
-    belongs to one provider.
-
-    Each of the three branches dispatches its apply through
-    :func:`_run_under_db_write_lock` (the internal version, so the final
-    shutdown drain can bypass the public stop guard and apply messages
-    that were queued before the stop). The helper acquires
-    :data:`_db_write_lock` for the duration of the apply AND holds it
-    across asyncio cancellation (see its docstring for the cancel-vs-
-    executor-thread rationale). The lock is the single priority-aware
-    serialisation point shared with every future external writer (the
-    watcher, agent lifecycle, etc.). Acquiring per-branch rather than
-    once around the whole function gives the lock 3 release points per
-    tick — a future external waiter never has to wait longer than one
-    apply, even when all three queues happen to fire on the same tick.
-    The pulls themselves (``get_nowait``) run outside the lock: they
-    are synchronous and never block, and we only need the lock once we
-    have actual work to apply. The coroutine factory passed to the
-    helper is a ``lambda`` capturing the dequeued message, so the apply
-    coroutine is only created after the lock has been acquired — a
-    cancellation while waiting for the lock cannot leave an unawaited
-    coroutine (or, equivalently, a silently dropped dequeued message).
-
-    **Granularity trade-off (intentional)**: ``_run_under_db_write_lock``
-    holds the lock around the **whole** ``_process_*`` / ``_dispatch_*``
-    handler, not just the ``transaction.atomic`` part. Post-commit
-    broadcasts (WS via ``channel_layer.group_send``), workspace-JSON
-    file updates, and any read-only ORM calls the handler makes are
-    therefore under the lock too. The strict-architectural model says
-    "lock around ``transaction.atomic`` only" and would not include
-    those side effects, but the current shape is a deliberate safety
-    net: every dequeued message goes through ``_drain_one`` and every
-    branch dispatches through the helper, so no code path can forget
-    to take the lock. The cost is that future external waiters queue
-    behind those non-SQL side effects (Channels InMemoryLayer, FS via
-    ``sync_to_async``, fast reads); in practice each handler completes
-    in tens of milliseconds. If profiling later shows the wait is
-    unacceptable, individual handlers can be split into a locked
-    apply portion and an unlocked post-apply portion without changing
-    the helper itself.
-
-    Never raises an ordinary exception: a message is removed from its queue
-    before processing, and every per-message failure (deserialization, apply,
-    finalization) is caught and logged. So one bad message can neither crash a
-    steady-state DB writer tick nor abort the shutdown drain — which would
-    strand the messages queued behind it.
-    """
-    any_processed = False
-
-    # ---- Compute side (mp.Queue, shared by every provider) ----
-    try:
-        raw = _subprocess_queue.get_nowait()
-    except queue.Empty:
-        pass
-    except Exception as exc:
-        # The mp.Queue is never closed, so get_nowait() should only ever raise
-        # Empty; guard anyway so an unexpected failure cannot abort the drain.
-        logger.error(f"Compute result queue read failed: {exc}", exc_info=True)
-    else:
-        any_processed = True
+async def _dispatch_queued_job(job) -> None:
+    with provider_log_context(getattr(job, 'provider', None)):
         try:
-            msg = orjson.loads(raw)
-        except Exception:
-            logger.error(f"Failed to deserialize compute message: {raw!r:.500}")
-        else:
-            with (
-                provider_log_context(_provider_from_compute_message(msg)),
-                sync_timing_context(_provider_from_compute_message(msg), msg.get('session_id')),
-            ):
-                try:
-                    async with storage_admission():
-                        await _run_under_db_write_lock(lambda: _process_compute_message(msg), content_activity=True)
-                except Exception as exc:
-                    logger.error(f"Error processing compute message: {exc}", exc_info=True)
+            await _dispatch_async_job(job)
+        except Exception as exc:
+            logger.exception('Error processing async job')
+            _settle_unhandled_async_job(job, exc)
 
-    # ---- Thread queue (initial-sync, shared by every provider) ----
-    try:
-        payload = _thread_queue.get_nowait()
-    except queue.Empty:
-        pass
-    else:
-        any_processed = True
-        with provider_log_context(getattr(payload, "provider", None)):
-            try:
-                await _run_under_db_write_lock(lambda: _process_thread_message(payload), content_activity=True)
-            except Exception as exc:
-                logger.error(f"Error processing thread message: {exc}", exc_info=True)
 
-    # ---- DB writer-side jobs (intra-process) ----
+async def _background_turn(factory, *, content_activity=True) -> bool:
+    """Try one combined grant. Never wait for background admission in a tick."""
+    lease = get_write_coordinator().try_background_lease()
+    if lease is None:
+        return False
     try:
-        job = _async_queue.get_nowait()
+        await _drive_publication(
+            (lambda: _run_with_content_activity(factory)) if content_activity else factory,
+            lease.priority, lease.resources,
+        )
+    finally:
+        lease.release()
+    return True
+
+
+async def _drain_one() -> bool:
+    """Serve foreground FIFO first, then one bounded turn per background class."""
+    global _pending_compute
+    processed = False
+    try:
+        job, demand = _async_queue.get_nowait()
     except asyncio.QueueEmpty:
         pass
     else:
-        any_processed = True
-        with provider_log_context(getattr(job, "provider", None)):
-            try:
-                await _run_under_db_write_lock(lambda: _dispatch_async_job(job))
-            except Exception as exc:
-                # _dispatch_async_job has its own internal guards
-                # (convention check, isinstance dispatch, registry fallback,
-                # _settle_async_job per-apply try/except), so an Exception
-                # surfacing here is unexpected. But the message is already
-                # dequeued from ``_async_queue`` — if we don't settle the
-                # job's future, the producer's
-                # ``await asyncio.shield(job.future)`` would hang forever.
-                # Mirror what the compute / thread branches log, and
-                # settle the future with the exception so the producer
-                # observes the failure instead of stranding.
-                logger.error(
-                    f"Error processing async job: {exc}", exc_info=True,
-                )
-                _settle_unhandled_async_job(job, exc)
+        processed = True
+        try:
+            if (isinstance(job, _AbandonComputeRunJob) and _pending_compute is not None
+                    and job.run_id == _pending_compute.run_id
+                    and not (_pending_compute.terminal and _pending_compute.notifications is not None
+                             and _pending_compute.notifications.done())):
+                # Its state must stay attached until actual preparation drains.
+                _pending_compute.abandon_jobs.append(job)
+            else:
+                await _run_under_db_write_lock(lambda: _dispatch_queued_job(job))
+        except asyncio.CancelledError:
+            _settle_unhandled_async_job(job, RuntimeError('DB writer cancelled'))
+            raise
+        except Exception as exc:
+            logger.exception('Error admitting async job')
+            _settle_unhandled_async_job(job, exc)
+        finally:
+            demand.release()
+        if not _async_queue.empty():
+            return True
 
-    return any_processed
+    # Background initialization and ingestion each get one turn. Inspect FIFO
+    # heads only after a grant; a failed grant never removes a queued payload.
+    if not _background_async_queue.empty():
+        async def initialize():
+            await _dispatch_queued_job(_background_async_queue.get_nowait())
+        processed |= await _background_turn(initialize)
+    if not _thread_queue.empty():
+        async def ingest():
+            payload = _thread_queue.get_nowait()
+            with provider_log_context(getattr(payload, 'provider', None)):
+                await _process_thread_message(payload)
+        processed |= await _background_turn(ingest)
+
+    if _pending_compute is not None:
+        processed |= await _advance_pending_compute()
+        return processed
+    try:
+        raw = _subprocess_queue.get_nowait()
+    except queue.Empty:
+        return processed
+    except Exception:
+        logger.exception('Compute result queue read failed')
+        return processed
+    try:
+        msg = orjson.loads(raw) if isinstance(raw, (str, bytes, bytearray)) else raw
+        provider = _provider_from_compute_message(msg)
+        if provider is None:
+            return True
+        state = _compute_states.get(msg.get('run_id'))
+        if msg.get('type') == 'session_complete' and state is not None and not state.abandoned:
+            _pending_compute = PendingComputeApplication(msg, msg.get('run_id'), state)
+            await _advance_pending_compute()
+        else:
+            # Control messages perform notifications and state settlement only.
+            await _process_compute_message(msg)
+    except Exception:
+        logger.exception('Error processing compute message')
+    return True
+
+
+def _active_compute_ids():
+    from twicc.agent.registry import get_agent_manager_registry
+    return frozenset(info.session_id for info in get_agent_manager_registry().get_active_agents())
+
+
+class _AbandonedComputeApplication(Exception):
+    """The admitted factory must not submit work for a detached/abandoned run."""
+
+
+def _require_live_compute_run(pending):
+    state = _compute_states.get(pending.run_id)
+    if state is not pending.state or state.abandoned:
+        raise _AbandonedComputeApplication()
+    return state
+
+
+async def _advance_pending_compute() -> bool:
+    pending = _pending_compute
+    with (
+        provider_log_context(_provider_from_compute_message(pending.message)),
+        sync_timing_context(_provider_from_compute_message(pending.message), pending.message.get('session_id')),
+    ):
+        return await _advance_pending_compute_body()
+
+
+async def _advance_pending_compute_body() -> bool:
+    """Collect completed preparation or publish one already-prepared slice."""
+    from twicc.core.content_storage.extraction import (
+        SupersededStorageResult, begin_compute_application, final_compute_message,
+        prepare_compute_batch, publish_compute_batch,
+    )
+    from twicc.providers.compute_base import BaseSessionCompute, ComputeApplyResult
+    from twicc.content_maintenance_task import defer_background_promotions
+
+    pending = _pending_compute
+    state = _compute_states.get(pending.run_id)
+    abandoned = state is None or state is not pending.state or state.abandoned
+    if pending.terminal:
+        return _collect_pending_notifications(pending)
+    if pending.preparation is not None and not pending.preparation.done():
+        return False
+    try:
+        if pending.preparation is not None:
+            task, pending.preparation = pending.preparation, None
+            pending.batch = task.result()
+        if abandoned:
+            await _finish_pending_compute(pending, notify=False)
+            return True
+        if pending.operation is None:
+            async def begin():
+                _require_live_compute_run(pending)
+                pending.message['_repaired_activity_buckets'] = state.repaired_activity_buckets
+                pending.operation = await run_compute_application_sync(begin_compute_application, pending.message)
+                observation = pending.operation.observation
+                if observation.root_id and observation.root_incarnation:
+                    pending.deferral = defer_background_promotions(observation.root_id, observation.root_incarnation)
+            if not await _background_turn(begin):
+                return False
+        elif pending.operation.phase == 'final':
+            async def finalize():
+                _require_live_compute_run(pending)
+                active = _active_compute_ids()
+                def apply():
+                    msg = final_compute_message(pending.operation, active)
+                    msg['_repaired_activity_buckets'] = state.repaired_activity_buckets
+                    return BaseSessionCompute._apply_session_complete_final(msg)
+                pending.result = await run_compute_application_sync(apply)
+            if not await _background_turn(finalize):
+                return False
+            await _finish_pending_compute(pending)
+            return True
+        elif pending.batch is not None:
+            async def publish():
+                _require_live_compute_run(pending)
+                await run_compute_application_sync(publish_compute_batch, pending.operation, pending.batch,
+                                                   _active_compute_ids())
+                pending.batch = None
+            if not await _background_turn(publish):
+                return False
+        if pending.operation.phase != 'final' and pending.preparation is None:
+            # This task is never cancelled by a tick or terminal waiter. The raw
+            # worker cannot be cancelled, so only actual task completion permits reuse.
+            context = contextvars.copy_context()
+            context.run(write_priority.set, WritePriority.BACKGROUND)
+            pending.preparation = asyncio.create_task(
+                run_compute_application_sync(prepare_compute_batch, pending.operation), context=context,
+            )
+        return True
+    except _AbandonedComputeApplication:
+        await _finish_pending_compute(pending, notify=False)
+        return True
+    except SupersededStorageResult as exc:
+        pending.result = ComputeApplyResult(str(exc))
+        await _finish_pending_compute(pending, notify=not abandoned)
+        return True
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.exception('Error advancing session_complete')
+        pending.result = ComputeApplyResult('failed')
+        pending.error = str(exc)
+        await _finish_pending_compute(pending, notify=not abandoned)
+        return True
+
+
+async def _finish_pending_compute(pending, *, notify=True):
+    """Drain worker work, close state, release deferral, then settle exactly once."""
+    from twicc.core.content_storage.extraction import close_compute_application
+    from twicc.providers.compute_base import ComputeApplyResult
+
+    if pending.terminal:
+        return
+    async def cleanup():
+        try:
+            if pending.preparation is not None:
+                try:
+                    await asyncio.shield(pending.preparation)
+                except Exception:
+                    pass  # The terminal outcome already carries preparation failure.
+            def close():
+                try:
+                    if pending.operation is not None:
+                        close_compute_application(pending.operation)
+                finally:
+                    close_compute_application_connection()
+            await run_compute_application_sync(close)
+        except Exception as exc:
+            logger.exception('Error closing compute application')
+            if pending.result is None or pending.result.outcome != 'applied':
+                pending.result = ComputeApplyResult('failed')
+                pending.error = str(exc)
+        finally:
+            if pending.deferral is not None:
+                pending.deferral.release()
+            pending.terminal = True
+    task = asyncio.create_task(cleanup())
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+    task.result()
+    async def notify_result():
+        try:
+            state = _compute_states.get(pending.run_id)
+            if notify and state is pending.state and not state.abandoned:
+                if pending.result.outcome == 'failed':
+                    state.failed_count += 1
+                    if state.applied_queue is not None:
+                        state.applied_queue.put_nowait(ComputeApplied(pending.message['session_id'], 'failed', pending.error))
+                else:
+                    await _complete_compute_result(pending.message, pending.result, state,
+                                                   pending.received_at, pending.apply_started)
+        finally:
+            for job in pending.abandon_jobs:
+                await _dispatch_queued_job(job)
+    pending.notifications = asyncio.create_task(notify_result())
+    if cancelled:
+        raise asyncio.CancelledError()
+
+
+def _collect_pending_notifications(pending):
+    global _pending_compute
+    if pending.notifications is None or not pending.notifications.done():
+        return False
+    try:
+        pending.notifications.result()
+    except Exception:
+        logger.exception('Error notifying terminal compute result')
+    finally:
+        if _pending_compute is pending:
+            _pending_compute = None
+    return True
 
 
 def _provider_from_compute_message(msg: dict) -> Provider | None:
@@ -2028,6 +2246,52 @@ async def _settle_async_job(job, apply_fn, label: str) -> None:
 
 
 async def _db_writer_loop() -> None:
+    """Drain normal shutdown; external cancellation closes every owned result."""
+    try:
+        await _db_writer_loop_body()
+    except asyncio.CancelledError:
+        _db_writer_stop_event.set()
+        # Queued pressure cannot survive a writer that can no longer dispatch.
+        # Settle it before terminal notifications request their own resources.
+        while not _async_queue.empty():
+            job, demand = _async_queue.get_nowait()
+            try:
+                _settle_unhandled_async_job(job, RuntimeError('DB writer cancelled'))
+            finally:
+                demand.release()
+        while not _background_async_queue.empty():
+            _settle_unhandled_async_job(_background_async_queue.get_nowait(), RuntimeError('DB writer cancelled'))
+        pending = _pending_compute
+        if pending is not None:
+            from twicc.providers.compute_base import ComputeApplyResult
+            if pending.result is None:
+                pending.result = ComputeApplyResult('failed')
+                pending.error = 'Compute application cancelled'
+            # A protected final publication may have committed before the
+            # cancellation reaches this task. Preserve that applied result.
+            async def terminal():
+                await _finish_pending_compute(pending)
+                try:
+                    if pending.notifications is not None:
+                        try:
+                            await asyncio.shield(pending.notifications)
+                        except Exception:
+                            # Collection logs notification failure. It must not
+                            # replace the writer's already-drained cancellation.
+                            pass
+                finally:
+                    _collect_pending_notifications(pending)
+            task = asyncio.create_task(terminal())
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    pass
+            task.result()
+        raise
+
+
+async def _db_writer_loop_body() -> None:
     """Drain the producer queues and DB writer jobs until the app shuts down.
 
     Permanent: runs from start_db_writer() to stop_db_writer().
@@ -2066,7 +2330,10 @@ async def _db_writer_loop() -> None:
     while True:
         try:
             if not await _drain_one():
-                break
+                if (_pending_compute is None and _async_queue.empty() and _background_async_queue.empty()
+                        and _thread_queue.empty() and _subprocess_queue.empty()):
+                    break
+                await asyncio.sleep(0.05)
         except Exception as exc:
             logger.error(f"DB writer shutdown-drain tick crashed: {exc}", exc_info=True)
             continue
@@ -2085,7 +2352,7 @@ async def _db_writer_loop() -> None:
 
 
 async def _apply_compute_items_in_chunks(msg: dict) -> tuple[dict, str]:
-    """Apply bounded item/storage phases for both result-size branches.
+    """Synchronous adapter compatibility for direct compute-message callers.
 
     The writer lease remains held. One executor invocation retains temporary
     reference counts across separately committed transactions. The final apply
@@ -2104,7 +2371,11 @@ async def _apply_compute_items_in_chunks(msg: dict) -> tuple[dict, str]:
 
 
 async def _process_compute_message(msg: dict) -> None:
-    """Apply one message drained from the shared compute result queue."""
+    """Handle control messages and direct synchronous adapter invocations.
+
+    The permanent loop routes live session results through pending phases.
+    Its control path never invokes this compatibility whole-result apply.
+    """
     msg_type = msg.get("type")
     provider_value = msg.get("provider")
     if provider_value is None:
@@ -2190,6 +2461,14 @@ async def _process_compute_message(msg: dict) -> None:
             state.applied_queue.put_nowait(ComputeApplied(msg["session_id"], "failed", str(e)))
         return
 
+    await _complete_compute_result(msg, result, state, received_at, apply_started)
+
+
+async def _complete_compute_result(msg, result, state, received_at, apply_started):
+    if _compute_states.get(msg.get('run_id')) is not state or state.abandoned:
+        return
+    provider = state.provider
+    line_count = len(msg.get('item_updates', []))
     compute_ms = msg.get('compute_ms')
     completed_at = msg.get('compute_completed_at')
     queue_ms = (received_at - completed_at) * 1000 if completed_at is not None else None
@@ -2226,6 +2505,8 @@ async def _process_compute_message(msg: dict) -> None:
         state.failed_count += 1
         return
 
+    if _compute_states.get(msg.get('run_id')) is not state or state.abandoned:
+        return
     project_id = msg.get("project_id")
     if project_id:
         state.pending_project_ids.add(project_id)
@@ -2237,8 +2518,12 @@ async def _process_compute_message(msg: dict) -> None:
         # Link to its main repo if this project is a git worktree (local
         # import: twicc.projects ↔ db_writer is a cycle at module load).
         from twicc.projects import ensure_project_color, ensure_worktree_link
-        await ensure_worktree_link(project_id, project_directory)
-        await ensure_project_color(project_id, project_directory)
+        async def project_writes():
+            if _compute_states.get(msg.get('run_id')) is not state or state.abandoned:
+                return
+            await ensure_worktree_link(project_id, project_directory)
+            await ensure_project_color(project_id, project_directory)
+        await run_under_storage_write_lock(project_writes, priority=WritePriority.BACKGROUND, internal=True)
 
     session_id = msg["session_id"]
     if state.display_session_ids is None or session_id in state.display_session_ids:
