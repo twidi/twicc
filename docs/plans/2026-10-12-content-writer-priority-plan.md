@@ -223,13 +223,13 @@
 **Interfaces:** Consume reviewed Tasks 1–6; produce verification evidence and reviewed commit range, without automatic merge/restart.
 
 - [x] Check the plan/spec against the delivered paths, including both providers, foreground classification, cold/shared content, cancellation, retries and terminal ordering.
-- [ ] Run `TWICC_DATA_DIR=$PWD uv run pytest` in this worktree. Record all failures/skips/warnings. Fix regressions through the implementing agent and review the fix.
+- [x] Run `TWICC_DATA_DIR=$PWD uv run pytest` in this worktree. Record all failures/skips/warnings. Fix regressions through the implementing agent and review the fix.
 - [x] Run targeted `uvx ruff check` for changed Python files and `git diff --check`.
 - [x] Run a synthetic isolated workload with large hot/cold results, shared current/original contents, concurrent foreground writes, and compression publication. It must assert semantic equivalence, not only elapsed time.
 - [x] Measure foreground completion between batches and during blocked preparation, background resumption, total throughput, maximum resource hold, and final hold. Report DEBUG modes separately if measured; do not extrapolate synthetic timing to the live database.
 - [ ] Dispatch an independent whole-correction review against `442d07cc`, carrying private ledger rulings and task review evidence. Do not repeat the original feature's unrelated whole-branch review scope.
 - [ ] Resolve Critical/Important findings, rerun covering checks, and request scoped re-review before presenting the correction as ready.
-- [ ] Update persistent audit with delivered changes, measurements and remaining atomic-hold/fallback limitations. Mark tasks from evidence, not anticipated success.
+- [x] Update persistent audit with delivered changes, measurements and remaining atomic-hold/fallback limitations. Mark tasks from evidence, not anticipated success.
 - [ ] Present paths, commits, reviews and checks. Keep both existing servers and main untouched. Integration or restart remains a separate user action.
 
 
@@ -237,7 +237,9 @@
 
 Tasks 1–5 and the separate 6A/6B/6C gates have accepted independent reviews.
 Task 7 focused verification passes 103 tests; the isolated WAL load harness passes 12 cases.
-Changed-file ruff and diff checks pass. Final full backend verification is running after those checks.
+Changed-file ruff and diff checks pass. Final full backend verification runs alone after those checks.
+Result: **10,374 passed, 26 skipped, 3 recorded warnings in 442.38 seconds**, exit **0**.
+Independent Task 7 checkpoint review approves the committed boundary without findings.
 Whole-correction review remains pending. Integration and restart remain separate user actions.
 
 Persistent evidence: [delivered correction audit](2026-10-11-session-item-content-extraction-audit.md#delivered-foreground-writer-priority-correction--2026-10-12).

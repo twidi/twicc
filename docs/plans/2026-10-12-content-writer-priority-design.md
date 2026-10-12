@@ -171,9 +171,12 @@ No review or test provides an absolute guarantee against regressions; evidence a
 - [x] Exact references, owners, representations, raw aggregate precision, versions, and readiness assertions pass.
 - [x] Measurements separate foreground completion, preparation, metadata aggregates, final hold, and maximum hold.
 - [x] Creation duplicate repairs and slower total background throughput remain explicit limitations.
-- [ ] Final full backend suite completes successfully.
+- [x] Final full backend suite completes successfully: 10,374 passed, 26 skipped, 3 recorded warnings; exit 0.
 - [ ] Whole-correction independent review against `442d07cc` accepts the correction.
 - [ ] User authorizes integration or restart separately.
 
 See the [persistent correction audit](2026-10-11-session-item-content-extraction-audit.md#delivered-foreground-writer-priority-correction--2026-10-12)
 for complete evidence. No single SQL, oversized row, initialization, or final transaction gains an absolute latency bound.
+
+Independent Task 7 checkpoint review approves its committed regression/style/docs boundary without findings.
+Whole-correction review remains pending; no integration or restart occurs.

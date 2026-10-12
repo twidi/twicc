@@ -2152,7 +2152,8 @@ Correction baseline: `442d07cc`. Isolated branch: `fix/content-writer-priority`.
 The running original feature checkout and main checkout remain unchanged.
 No server, live database, provider, schema, index, dependency, policy, API, or changelog operation occurs.
 Independent reviews accept Tasks 1–5 and the three Task 6 boundaries.
-Whole-correction independent review and final backend-suite acceptance remain pending at this evidence checkpoint.
+Independent Task 7 checkpoint review accepts the regression, style changes, and load evidence without findings.
+The final backend suite passes. Whole-correction independent review remains pending.
 
 ### Delivered paths and correctness checks
 
@@ -2271,9 +2272,40 @@ Total application duration still includes those intervals. Successful measured p
 Activity enumeration has separate timings; it is not part of the source-preparation counter.
 
 Final full backend command: `TWICC_DATA_DIR=$PWD uv run pytest` from the isolated worktree.
-It starts after final focused checks and the isolated harness. Its outcome remains pending at this checkpoint.
+It runs alone after final focused checks and the isolated harness.
+Result: **10,374 passed, 26 skipped, 3 warnings in 442.38 seconds**, exit **0**.
+The product and tests remain unchanged after collection; subsequent edits record evidence only.
 The earlier full run stops with exit 143 before the authorized invalid-priority correction.
 That stopped run is not passing verification.
 The expected uv environment warning means the inherited main-checkout `VIRTUAL_ENV` is ignored.
 No command uses `--active` or targets that environment.
 Previously recorded unawaited-coroutine warnings remain final-review input; no unrelated warning cleanup occurs.
+
+The load harness does not activate default large-history TEMP counts with its 2,400-row estimate.
+The accepted Task 4 actual TEMP-page/WAL test and new Task 7 physical-close test cover that path separately.
+No greater-than-8-MiB workload row is measured; existing storage tests retain oversized-row progress coverage.
+
+Final warnings match the three previously recorded sources:
+
+- `tests/test_codex_sdk_wrappers.py::test_turn_forwards_auto_review`, line 133:
+  `RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited`.
+- `tests/test_codex_sdk_wrappers.py::test_turn_forwards_fast_service_tier`, line 152:
+  `RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited`.
+- `tests/test_shell_notice_codex.py::test_turn_openings_restart_the_delay`, `tests/shell_notice_helpers.py:31`:
+  `RuntimeWarning: coroutine 'BaseAgent._notify_state_change' was never awaited`.
+
+These test/helper files have no diff against `442d07cc`.
+No warning cleanup or unrelated source change occurs. Whole-correction review retains their final triage.
+
+The 26 skips cover opt-in real-runtime tests and one host limitation:
+
+| File | Skips | Reason |
+| --- | --- | --- |
+| `tests/test_claude_ephemeral_scenarios.py` | 4 | Claude runtime opt-in disabled. |
+| `tests/test_claude_ephemeral_integration.py` | 1 | `TWICC_CLAUDE_INTEGRATION=1` required. |
+| `tests/test_nested_subagents_runtime.py` | 2 | `TWICC_CLAUDE_INTEGRATION=1` required. |
+| `tests/test_codex_migration_integration.py` | 5 | `TWICC_CODEX_INTEGRATION=1` required. |
+| `tests/test_ephemeral_codex_runtime.py` | 8 | Codex runtime and explicit opt-in required. |
+| `tests/test_codex_goal_steering_integration.py` | 1 | Codex runtime and explicit opt-in required. |
+| `tests/test_codex_interactive_catalog_integration.py` | 4 | Codex runtime and explicit opt-in required. |
+| `tests/test_inline_artifact_files.py` | 1 | Test host does not permit device-node creation. |
