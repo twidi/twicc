@@ -48,6 +48,7 @@
 - Modify `src/twicc/providers/compute_base.py`: reserved-field protection, final operation validation, phase diagnostics.
 - Modify `src/twicc/content_maintenance_task.py`: foreground-demand versus background-recovery/compression grants.
 - Modify `src/twicc/providers/live_aggregates.py` only in Task 6 after its audit/review gate.
+- Create `src/twicc/providers/activity_preparation.py` in Task 6B for operation-owned bucket preparation; Task 6C owns its runtime integration.
 - Tests live in existing focused files and new `tests/test_write_coordinator.py`, `tests/test_compute_continuation.py`.
 
 ### Task 1: Priority resources and foreground demand
