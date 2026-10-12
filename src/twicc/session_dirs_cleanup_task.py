@@ -81,12 +81,12 @@ def _session_state(row: dict, scratch_root: Path, now: datetime, eligible: bool)
 
 
 def _session_states(rows, scratch_root, now, active_ids):
-    """Apply native-root cold policy in bounded metadata pages."""
-    from twicc.core.content_storage.state import TREE_PAGE_SIZE, resolve_root_decisions
+    """Apply independent scratch expiry in bounded native-root metadata pages."""
+    from twicc.core.content_storage.state import TREE_PAGE_SIZE, resolve_scratch_root_decisions
 
     iterator = iter(rows)
     while page := list(islice(iterator, TREE_PAGE_SIZE)):
-        decisions = resolve_root_decisions([row["id"] for row in page], now, frozenset(active_ids))
+        decisions = resolve_scratch_root_decisions([row["id"] for row in page], now, frozenset(active_ids))
         for row in page:
             decision = decisions[row["id"]]
             yield row["id"], _session_state(row, scratch_root, now, decision.resolved and decision.is_cold)

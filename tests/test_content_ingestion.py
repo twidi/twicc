@@ -187,7 +187,7 @@ def test_live_latest_lifecycle_promotes_previous_cold_owner(content_row_factory,
     path = tmp_path / 'cold-live.jsonl'
     path.write_text(text + '\n')
     drain_live_sync(ClaudeCodeSessionCompute(), session, path)
-    assert not session.is_cold
+    assert not session.is_cold_for_content
     compressed.refresh_from_db()
     assert compressed.codec == 'plain'
     _assert_item(session.items.get(), text, text)

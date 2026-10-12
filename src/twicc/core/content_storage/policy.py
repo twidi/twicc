@@ -24,13 +24,22 @@ def cold_from_fields(fields: dict, now: datetime) -> bool:
     """Use complete loaded lifecycle metadata; unknown metadata cannot authorize cold placement."""
     if any(name not in fields for name in COLD_FIELDS):
         return False
+    days = 15 if fields['archived'] or fields['hidden'] else 30
+    dates = [fields[name] for name in COLD_DATE_FIELDS if fields[name] is not None]
+    return bool(dates) and max(dates) <= now - timedelta(days=days)
+
+
+def scratch_cold_from_fields(fields: dict, now: datetime) -> bool:
+    """Authorize scratch removal only for archived or hidden roots inactive for 30 days."""
+    if any(name not in fields for name in COLD_FIELDS):
+        return False
     if not (fields['archived'] or fields['hidden']):
         return False
     dates = [fields[name] for name in COLD_DATE_FIELDS if fields[name] is not None]
     return bool(dates) and max(dates) <= now - timedelta(days=30)
 
 
-def cold_from_loaded_session(session, now: datetime) -> bool:
+def cold_from_loaded_session(session, now: datetime, *, for_scratch: bool = False) -> bool:
     """Inspect only explicit model fields and cached native parents, without database access."""
     visited = set()
     while session is not None:
@@ -42,7 +51,8 @@ def cold_from_loaded_session(session, now: datetime) -> bool:
         if 'type' not in fields or 'parent_session_id' not in fields:
             return False
         if fields['type'] == 'session':
-            return fields['parent_session_id'] is None and cold_from_fields(fields, now)
+            predicate = scratch_cold_from_fields if for_scratch else cold_from_fields
+            return fields['parent_session_id'] is None and predicate(fields, now)
         if fields['type'] != 'subagent' or fields['parent_session_id'] is None:
             return False
         parent = session._state.fields_cache.get('parent_session')

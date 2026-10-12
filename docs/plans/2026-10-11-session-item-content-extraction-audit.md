@@ -1588,3 +1588,108 @@ They remain outside this storage task.
 Task-owned temporary probe scripts are removed; evidence logs and the authorized database copy remain.
 The production instance still needs its normal migration and restart through devctl after integration.
 No production migration or restart runs during this validation.
+
+## 2026-10-12: Independent content and scratch cold policies
+
+Content eligibility now uses the current native root's flags and latest lifecycle activity.
+Archived or hidden roots qualify at exactly 15 days.
+Every other root qualifies at exactly 30 days, including visible, nonarchived roots.
+Scratch eligibility retains archived OR hidden and exactly 30 days.
+The latest activity is the maximum non-NULL created/start/update/stop timestamp.
+Archive and hide timestamps do not participate.
+
+`Session.is_cold_for_content` and `Session.is_cold_for_scratch` are pure properties.
+Both inspect loaded fields and cached native parents without SQL.
+Unknown fields, missing parents, inconsistent ancestry, and cycles remain conservative.
+Independent orchestration sessions do not inherit eligibility.
+The scratch batch resolver explicitly selects its independent predicate.
+Native active-tree and exact ephemeral-work protections remain unchanged.
+Filesystem ownership, orphan, empty-directory, and destructive-removal rules remain unchanged.
+
+No schema, migration, storage version, API, provenance, wire, or frontend change occurs.
+
+TDD first observes ten failures against the prior policy and forty passing cleanup tests.
+The focused content/cleanup suite passes 337 tests after implementation.
+A separate policy run passes ten tests, including deferred-field zero-SQL checks.
+Self-review precedes the full suite: **10,084 passed, 26 skipped, 3 warnings in 341.07 seconds**.
+Scoped Ruff passes all eight changed Python files. `git diff --check` passes.
+The six prior broader Ruff findings remain outside this change.
+
+The existing warning names remain unchanged:
+
+- `test_codex_sdk_wrappers.py::test_turn_forwards_auto_review`: unawaited AsyncMock coroutine.
+- `test_codex_sdk_wrappers.py::test_turn_forwards_fast_service_tier`: unawaited AsyncMock coroutine.
+- `test_shell_notice_codex.py::test_turn_openings_restart_the_delay`: unawaited agent notification coroutine.
+
+## Real session-ID persistent promotion benchmark
+
+Five real native trees use the copied database. Synthetic Task 15 roots are excluded.
+Workload sizes include every native descendant. Distinct content counts include both FK slots.
+All legacy original slots are NULL: **zero original FK slots** in every measured tree.
+No historical originals are fabricated. The production cursor still checks both slots.
+Every distinct referenced content compresses with the genuine provider dictionary.
+All measured cases have **zero no-gain rows, zero protected rows, and zero multi-session content owners**.
+Duplicate references within one session account for the large Claude item/content count difference.
+
+| Provider | Root items | Native sessions | All items | Compressed distinct contents | Raw bytes | Stored bytes | Largest payload bytes |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| claude_code | 100 | 1 | 100 | 100 | 321,149 | 112,814 | 43,005 |
+| codex | 1,039 | 6 | 1,889 | 1,889 | 6,226,852 | 2,902,686 | 97,070 |
+| claude_code | 5,297 | 30 | 7,997 | 7,997 | 22,698,816 | 8,170,246 | 238,571 |
+| claude_code | 22,485 | 8 | 23,145 | 19,376 | 108,054,632 | 41,500,810 | 683,972 |
+| codex | 23,521 | 1 | 23,521 | 23,521 | 50,921,722 | 25,735,901 | 347,853 |
+
+The stopwatch starts before production admission of a lifecycle update supplied only the root session ID.
+The lifecycle service updates `last_started_at`, invalidates readiness, commits, and schedules through `on_commit`.
+The production coordinator resolves native ancestry and references, prepares slices, and publishes persistent plaintext.
+The stopwatch stops after a database read observes the committed root plaintext-readiness epoch.
+Timing includes lookup, metadata, both-slot cursor traversal, scheduling, admission, writer/executor work, publication, and commits.
+The final observation adds up to the 2-millisecond polling interval plus its database read.
+Post-timing checks verify every referenced content is plain and every native session effective-content hash is unchanged.
+This measures **persistent promotion**, not requested-content cold reading.
+
+All timing uses `DEBUG=False`, without allocation tracing.
+Full pytest, the single largest-payload census, and workload extraction finish before timing.
+Only the selected root queue runs; unrelated pending-root recovery is excluded.
+Filesystem cleanup is disabled. No periodic global compression sweep runs.
+
+| Provider / root items | Repeat | Total seconds | Preparation/proof seconds | Apply/validation/commit seconds | Batches | Endpoint WAL delta bytes |
+|---|---:|---:|---:|---:|---:|---:|
+| claude_code / 100 | 1 | 1.278 | 0.284 | 0.399 | 1 | 0 |
+| claude_code / 100 | 2 | 0.738 | 0.294 | 0.394 | 1 | 0 |
+| codex / 1,039 | 1 | 14.460 | 5.398 | 8.816 | 19 | 0 |
+| codex / 1,039 | 2 | 14.637 | 5.465 | 8.911 | 19 | 0 |
+| claude_code / 5,297 | 1 | 64.793 | 26.758 | 37.077 | 80 | 0 |
+| claude_code / 22,485 | 1 | 151.309 | 58.801 | 89.763 | 232 | 0 |
+| codex / 23,521 | 1 | 172.806 | 63.262 | 106.805 | 236 | 0 |
+
+Preparation includes decode, row lookup, and ownership/root proof generation.
+Apply includes proof validation, writes, and transaction commits inside the production apply function.
+Worker connection cleanup, scheduling, admission waits, snapshot creation, and readiness observation remain in total wall time.
+These preparation values are not isolated decode measurements.
+Validation and publication dominate the observed total.
+Endpoint WAL deltas do not measure peak growth or total writes.
+Production connection cleanup and automatic checkpoints remain enabled and reduce these endpoint deltas to zero.
+
+### Excluded extreme and copied fixture restoration
+
+The single legacy census orders records by SQLite text character length.
+Scoped extracted metadata supplies their exact UTF-8 sizes.
+The largest observed payload contains **15,614,580 UTF-8 bytes**.
+Its root has 145,950 items; its complete native tree has **414 sessions and 458,192 items**.
+Partial extraction of that copied tree remains. Full setup and timing are excluded to retain a small representative benchmark.
+Its temporary lifecycle age shift restores through the exact inverse 90-day datetime operation.
+Nullable dates and microseconds remain unchanged; extraction performs no lifecycle mutation.
+The naturally hot status is rechecked after restoration.
+Six original root compute markers are saved, restored, and compared with their saved values.
+All measured root lifecycle fields restore from their original loaded dictionaries.
+An initially selected naturally hot 21,222-item root is extracted but excluded from timing.
+
+A repeat-count reduction interrupts an extra middle-sized repeat after its first complete measurement.
+An untimed production cleanup verifies full plaintext readiness and unchanged hashes before remaining large measurements.
+Both large cases then use one measured pass. The first middle-sized measurement remains unchanged.
+
+Final checks confirm all five measured trees have only plain referenced contents and matching readiness epochs.
+Main data, provider files, and shared scratch/artifacts remain untouched.
+No server starts, provider compute, provider migration, content GC, vacuum, or column removal occurs.
+The temporary harness and machine-readable statistics remain in the ignored implementation workspace for review.

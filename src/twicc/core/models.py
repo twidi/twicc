@@ -720,13 +720,22 @@ class Session(models.Model):
         ]
 
     @property
-    def is_cold(self) -> bool:
+    def is_cold_for_content(self) -> bool:
         """Use explicitly loaded native ancestry without implicit database queries."""
         from django.utils import timezone
 
         from twicc.core.content_storage.policy import cold_from_loaded_session
 
         return cold_from_loaded_session(self, timezone.now())
+
+    @property
+    def is_cold_for_scratch(self) -> bool:
+        """Apply scratch expiry to cached native ancestry without database queries."""
+        from django.utils import timezone
+
+        from twicc.core.content_storage.policy import cold_from_loaded_session
+
+        return cold_from_loaded_session(self, timezone.now(), for_scratch=True)
 
     @property
     def cutoff(self) -> datetime | None:

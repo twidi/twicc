@@ -12,15 +12,35 @@ def fields(now):
             'last_started_at': None, 'last_updated_at': None, 'last_stopped_at': None}
 
 
-def test_exact_thirty_day_boundary_and_latest_date():
+@pytest.mark.parametrize('archived,hidden,days,content,scratch', [
+    (False, False, 31, True, False),
+    (False, False, 29, False, False),
+    (True, False, 20, True, False),
+    (True, False, 30, True, True),
+    (True, False, 14, False, False),
+    (True, False, 15, True, False),
+    (False, True, 15, True, False),
+    (False, False, 30, True, False),
+])
+def test_content_and_scratch_have_distinct_boundaries(archived, hidden, days, content, scratch):
     now = timezone.now()
-    assert policy.cold_from_fields(fields(now), now)
-    for name in ('created_at', 'last_started_at', 'last_updated_at', 'last_stopped_at'):
-        assert not policy.cold_from_fields(fields(now) | {name: now - timedelta(days=29)}, now)
-    assert not policy.cold_from_fields(fields(now) | {'archived': False}, now)
-    assert policy.cold_from_fields(fields(now) | {'archived': False, 'hidden': True}, now)
+    metadata = fields(now) | {'archived': archived, 'hidden': hidden, 'created_at': now - timedelta(days=days)}
+    assert policy.cold_from_fields(metadata, now) is content
+    assert policy.scratch_cold_from_fields(metadata, now) is scratch
+
+
+def test_latest_lifecycle_date_and_incomplete_metadata_stay_hot():
+    now = timezone.now()
+    for name in policy.COLD_DATE_FIELDS:
+        metadata = fields(now) | {name: now - timedelta(days=14)}
+        assert not policy.cold_from_fields(metadata, now)
+        assert not policy.scratch_cold_from_fields(metadata, now)
+    for missing in policy.COLD_FIELDS:
+        metadata = fields(now)
+        del metadata[missing]
+        assert not policy.cold_from_fields(metadata, now)
+        assert not policy.scratch_cold_from_fields(metadata, now)
     assert not policy.cold_from_fields(dict.fromkeys(fields(now)) | {'archived': True}, now)
-    assert not policy.cold_from_fields({'archived': True}, now)
 
 
 @pytest.mark.django_db
@@ -33,11 +53,19 @@ def test_loaded_native_ancestry_never_queries_and_spawned_sessions_are_independe
                                         type='subagent', parent_session=child)
     spawned = Session.objects.create(id='spawned', project=project, provider='codex', file_path='s', spawned_by=root)
     with django_assert_num_queries(0):
-        assert grandchild.is_cold
-        assert not spawned.is_cold
+        assert grandchild.is_cold_for_content
+        assert grandchild.is_cold_for_scratch
+        assert not spawned.is_cold_for_content
+        assert not spawned.is_cold_for_scratch
     unloaded = Session.objects.get(id=grandchild.id)
     with django_assert_num_queries(0):
-        assert not unloaded.is_cold
+        assert not unloaded.is_cold_for_content
+        assert not unloaded.is_cold_for_scratch
+    deferred = Session.objects.only('id').get(id=root.id)
+    with django_assert_num_queries(0):
+        assert not deferred.is_cold_for_content
+        assert not deferred.is_cold_for_scratch
     child.parent_session = grandchild
     with django_assert_num_queries(0):
-        assert not grandchild.is_cold
+        assert not grandchild.is_cold_for_content
+        assert not grandchild.is_cold_for_scratch

@@ -511,3 +511,14 @@ def test_active_native_child_protects_root_and_sibling_scratch(data_root, projec
     assert _prune_stale_session_dirs() == (0, 1)
     assert root_folder.exists() and sibling_folder.exists()
     assert not independent_folder.exists()
+
+
+@pytest.mark.parametrize('archived,days,removed', [(False, 31, False), (True, 20, False), (True, 30, True)])
+def test_content_cold_policy_does_not_expand_scratch_deletion(data_root, project, archived, days, removed):
+    _, scratch = data_root
+    directory = _session_dir(scratch, 'policy-root', empty=False)
+    root = _make_session(project, 'policy-root', last_updated=timezone.now() - timedelta(days=days))
+    root.archived = archived
+    root.save(update_fields=['archived'])
+    assert _prune_stale_session_dirs() == (0, int(removed))
+    assert directory.exists() is not removed

@@ -9,7 +9,7 @@ from django.db.models import F
 from django.db.models.functions import Coalesce, Length
 from django.utils import timezone
 
-from twicc.core.content_storage.policy import COLD_FIELDS, CONTENT_STORAGE_VERSION, cold_from_fields
+from twicc.core.content_storage.policy import COLD_FIELDS, CONTENT_STORAGE_VERSION, cold_from_fields, scratch_cold_from_fields
 from twicc.core.content_storage.types import RootDecision, RootStorageSnapshot
 from twicc.core.models import Session, SessionItem
 
@@ -25,6 +25,18 @@ def _require_writer_transaction() -> None:
 def resolve_root_decisions(
     session_ids: Iterable[str], now: datetime, active_root_ids: frozenset[str],
 ) -> dict[str, RootDecision]:
+    """Resolve content eligibility from bounded native-root metadata batches."""
+    return _resolve_root_decisions(session_ids, now, active_root_ids, cold_from_fields)
+
+
+def resolve_scratch_root_decisions(
+    session_ids: Iterable[str], now: datetime, active_root_ids: frozenset[str],
+) -> dict[str, RootDecision]:
+    """Apply the independent scratch policy with the same native active-tree protection."""
+    return _resolve_root_decisions(session_ids, now, active_root_ids, scratch_cold_from_fields)
+
+
+def _resolve_root_decisions(session_ids, now, active_root_ids, predicate):
     """Load native ancestry by metadata batches, including active native descendants."""
     requested = tuple(set(session_ids))
     metadata = {}
@@ -67,7 +79,7 @@ def resolve_root_decisions(
         else:
             is_active = root_id in active
             decisions[session_id] = RootDecision(
-                root_id, not is_active and cold_from_fields(metadata[root_id], now), True, is_active,
+                root_id, not is_active and predicate(metadata[root_id], now), True, is_active,
             )
     return decisions
 

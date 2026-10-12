@@ -25,7 +25,7 @@ def test_one_remaining_flag_keeps_old_root_cold(flag, monkeypatch):
     with transaction.atomic():
         lifecycle.update_lifecycle(Session.objects.filter(pk=root.id), **{flag: False})
     root.refresh_from_db()
-    assert root.is_cold
+    assert root.is_cold_for_content
     assert root.content_state_epoch == 5
     assert requests == []
 
@@ -97,7 +97,7 @@ def test_late_parent_and_cycle_reject_old_root_proof():
 def test_real_flag_services_and_postcommit_wakeup(monkeypatch):
     from twicc.core.services.session_visibility import _apply_visibility_flag
 
-    root = make_session('root', hidden=True, created_at=timezone.now() - timedelta(days=31))
+    root = make_session('root', hidden=True, created_at=timezone.now() - timedelta(days=20))
     requests = []
     monkeypatch.setattr(lifecycle, 'request_root_promotion', requests.append)
     _apply_visibility_flag(root.id, False)
@@ -237,7 +237,7 @@ def test_actual_unarchive_service_keeps_hidden_old_root_cold(monkeypatch):
     monkeypatch.setattr(db_writer, '_db_writer_stop_event', asyncio.Event())
     asyncio.run(apply_session_archived_change(root, False))
     root.refresh_from_db()
-    assert root.is_cold
+    assert root.is_cold_for_content
     assert root.content_state_epoch == 5
     assert requests == []
 

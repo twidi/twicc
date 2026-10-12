@@ -476,16 +476,19 @@ Writing this specification changes documentation only. It does not create migrat
 
 ## 15. Cold eligibility and session trees
 
-Expose `Session.is_cold` as a property using one shared predicate.
+Expose pure `Session.is_cold_for_content` and `Session.is_cold_for_scratch` properties.
+Both inspect explicitly loaded fields and cached native parents without queries.
 Do not add a stored or generated cold column: elapsed time changes eligibility without a database write.
-Batch operations use the same predicate with projected state and one evaluation time.
+Batch operations use the matching predicate with projected state and one evaluation time.
 
 For a root session:
 
-1. Require `archived OR hidden`.
-2. Take the latest non-NULL value of `created_at`, `last_started_at`, `last_updated_at`, and `last_stopped_at`.
-3. Require that value to be at least thirty days old.
-4. Unknown dates do not authorize cold storage.
+1. Take the latest non-NULL value of `created_at`, `last_started_at`, `last_updated_at`, and `last_stopped_at`.
+2. Content becomes cold after fifteen days when the current root is archived OR hidden.
+3. Content becomes cold after thirty days for every other root, including visible, nonarchived roots.
+4. Scratch becomes cold only when the current root is archived OR hidden and inactive for thirty days.
+5. Missing lifecycle fields or unknown dates cannot authorize either cold policy.
+6. Archive and hide timestamps do not affect these thresholds.
 
 A subagent inherits the root's cold status at every depth.
 Its own flags and timestamps do not establish a separate cold status.
@@ -500,9 +503,10 @@ Late parent resolution, reparenting, and ancestry removal invalidate affected tr
 Compression also checks active-agent protection for the whole root tree.
 An active descendant prevents compression even if the date-and-flag property still says cold.
 Required promotion on active/resumed work cannot wait for daily maintenance.
-This protection is an operation guard, not a second definition of `is_cold`.
+This protection is an operation guard, not a second definition of the pure properties.
 
-Scratch cleanup uses the shared predicate and the inherited root status for session users.
+Scratch cleanup uses its independent thirty-day predicate and inherited native root status for session users.
+Its batch resolver cannot consume content eligibility.
 Retain its filesystem ownership checks, shared-folder checks, and active-work protection.
 Empty directory age rules, orphan scratch rules, and draft attachment retention remain distinct.
 Do not replace those rules with session-cold eligibility.

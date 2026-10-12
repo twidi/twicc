@@ -23,7 +23,8 @@
 - Keep exact logical strings, SHA256 of their UTF-8 bytes, line numbering, and consumer-specific payload shapes.
 - One binary payload column; explicit plaintext/zstd codec; zstd level 3.
 - One immutable public dictionary per provider, maximum 16 KiB; no live training or private dictionary literals.
-- `Session.is_cold` uses root archived OR hidden plus thirty days since the latest lifecycle date.
+- `Session.is_cold_for_content` uses fifteen days for archived/hidden roots and thirty days for all other roots.
+- `Session.is_cold_for_scratch` requires archived OR hidden plus thirty days since the latest lifecycle date.
 - Every native subagent inherits root cold status, at every depth; orchestration roots remain independent.
 - Any actual hot owner through either FK requires persistent plaintext; active trees cannot be compressed.
 - Public cold/warming substring operations fail explicitly; ordinary reads decode requested contents only.
@@ -61,7 +62,7 @@ Current production compute versions are Claude 114 and Codex 55; resolve drift b
 
 | File | Responsibility |
 |---|---|
-| `src/twicc/core/models.py` | Content/dictionary models, item references, root storage generations, Session.is_cold property. |
+| `src/twicc/core/models.py` | Content/dictionary models, item references, root storage generations, explicit content/scratch cold properties. |
 | `src/twicc/core/content_storage/types.py` | Shared immutable records and explicit unloaded sentinel. |
 | `src/twicc/core/content_storage/codec.py` | Exact UTF-8 encode/decode, dictionary loading, hash/length integrity. |
 | `src/twicc/core/content_storage/policy.py` | Loaded native-root decisions, compression-policy identity, no-gain rules. |
@@ -275,17 +276,19 @@ Commit: `feat(storage): add lossless content codecs`.
 **Files:** Create `content_storage/state.py`; extend `policy.py`, `models.py`; test `tests/test_content_cold_policy.py`, `tests/test_content_root_state.py`.
 
 **Interfaces:**
-- `cold_from_fields(fields: dict, now: datetime) -> bool`
+- `cold_from_fields(fields: dict, now: datetime) -> bool` for content.
+- `scratch_cold_from_fields(fields: dict, now: datetime) -> bool` for scratch.
+- `resolve_scratch_root_decisions(session_ids, now, active_root_ids)` selects scratch eligibility explicitly.
 - `resolve_root_decision(session_id: str, now: datetime, active_root_ids: frozenset[str]) -> RootDecision`
 - `invalidate_roots(root_ids: Iterable[str]) -> None` inside caller's transaction.
 - `ensure_storage_incarnation(session_id: str) -> str` inside caller's transaction.
 - `iter_native_tree_session_pages(root_id: str, after_id: str | None, page_size: int) -> Iterator[list[str]]`: stable ID order, unresolved/cyclic ancestry fails conservatively.
 - `snapshot_root_storage(root_id: str) -> RootStorageSnapshot`
 - `verify_plaintext_root(snapshot: RootStorageSnapshot) -> bool` guarded verification/publication.
-- `Session.is_cold` uses explicitly loaded native ancestry/shared predicate; no stored cold column.
+- `Session.is_cold_for_content` and `Session.is_cold_for_scratch` use cached native ancestry and distinct predicates; no stored cold column.
 
 - [ ] **Step 1: Write exact boundary and generation tests.**
-30 days exactly qualifies; 29 days does not. Latest of four dates decides. Missing dates cannot authorize cold placement. Resolved dateless roots may publish readiness after complete plaintext/extraction verification. Missing parents, cycles, and inconsistent ancestry cannot authorize cold placement or readiness. Nested native subagents inherit root flags/dates; independent spawned sessions do not.
+Content: archived/hidden roots qualify at exactly 15 days; other roots qualify at exactly 30 days. Scratch: archived/hidden roots qualify at exactly 30 days. Latest of four dates decides. Missing dates cannot authorize cold placement. Resolved dateless roots may publish readiness after complete plaintext/extraction verification. Missing parents, cycles, and inconsistent ancestry cannot authorize cold placement or readiness. Nested native subagents inherit root flags/dates; independent spawned sessions do not.
 `test_stale_promotion_epoch_cannot_mark_ready`: snapshot epoch N, invalidate to N+1, verify old snapshot returns False.
 `test_tree_change_invalidates_both_roots`: move a native descendant and verify old/new epochs change.
 `test_same_id_new_incarnation_rejects_old_promotion`: delete/recreate with matching epochs; old snapshot cannot complete.
@@ -293,8 +296,8 @@ Commit: `feat(storage): add lossless content codecs`.
 Assertion examples for the named scenarios above (fixture/setup variables come from that scenario):
 
 ```python
-assert cold_from_fields(old_archived_fields, now) is True  # exactly thirty days
-assert cold_from_fields(recent_archived_fields, now) is False  # twenty-nine days
+assert cold_from_fields(old_archived_fields, now) is True  # exactly fifteen days
+assert cold_from_fields(recent_archived_fields, now) is False  # fourteen days
 assert resolve_root_decision(cyclic_child.id, now, frozenset()).resolved is False
 snapshot = snapshot_root_storage(root.id)
 invalidate_roots([root.id])
@@ -547,13 +550,13 @@ Commit: `fix(storage): reconcile ownership across history removal`.
 - Invalidation is synchronous transactional work; wakeups must not be awaited under an incompatible parent lease.
 
 - [ ] **Step 1: Write transition tests.**
-Unarchive while hidden and old keeps cold; unhide while archived keeps cold. Both flags cleared requires hot promotion. Start/resume/activity invalidates readiness for the full native tree. Late parent/cycle resolution rejects old readiness. Independent orchestration child changes do not invalidate an unrelated native tree.
+Unarchive while hidden and old keeps cold; unhide while archived keeps cold. Clearing both flags requires promotion only when inactivity remains below thirty days. Start/resume/activity invalidates readiness for the full native tree. Late parent/cycle resolution rejects old readiness. Independent orchestration child changes do not invalidate an unrelated native tree.
 Registration begun while compression is prepared either blocks publication or causes it to discard the stale result, without deadlock. Failed registration removes provisional active protection safely.
 
 Assertion examples for the named scenarios above (fixture/setup variables come from that scenario):
 
 ```python
-assert hidden_after_unarchive.is_cold is True
+assert hidden_after_unarchive.is_cold_for_content is True
 assert promotion_requests == []  # old inactive root remains hidden
 assert hot_root.plaintext_verified_epoch != hot_root.content_state_epoch
 assert late_parent_snapshot.root_id == actual_native_root.id
@@ -611,7 +614,7 @@ Recheck exact membership, root state, active snapshot, codec/dictionary identity
 Use a content row's first provider affinity for policy selection. Retain old dictionary bytes.
 
 - [ ] **Step 4: Integrate the existing directory cleanup without broadening its guard.**
-Combined timer owns scheduling. Its filesystem branch retains its existing all-manager guard and disable setting. Scratch user policy calls the shared native-root cold predicate; empty directories, orphan scratch and draft attachments retain distinct rules. Draft cleanup stays separately scheduled.
+Combined timer owns scheduling. Its filesystem branch retains its existing all-manager guard and disable setting. Scratch user policy calls its independent thirty-day native-root predicate; empty directories, orphan scratch and draft attachments retain distinct rules. Draft cleanup stays separately scheduled.
 Shutdown stops maintenance before compute executor/writer teardown and waits for admitted work using existing cancellation-safe semantics.
 
 - [ ] **Step 5: Run green maintenance/cleanup tests and commit.**
