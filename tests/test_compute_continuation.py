@@ -894,3 +894,118 @@ def test_notification_failure_still_settles_parked_abandonment(wal_runtime, monk
             db_writer._compute_states.pop(run_id, None)
             db_writer._compute_done_events.pop(run_id, None)
     asyncio.run(scenario())
+
+
+def test_late_abandonment_during_cancelled_preparation_drains_without_demand(wal_runtime, monkeypatch):
+    from twicc import content_maintenance_task as maintenance
+    session, _ = wal_runtime
+    started, release = threading.Event(), threading.Event()
+    prepare = extraction.prepare_compute_batch
+    close_connection = db_writer.close_compute_application_connection
+    closed = []
+
+    def preparation(operation):
+        started.set()
+        assert release.wait(5)
+        return prepare(operation)
+
+    def close():
+        assert release.is_set()
+        close_connection()
+        closed.append(connections['default'].connection is None)
+
+    monkeypatch.setattr(extraction, 'prepare_compute_batch', preparation)
+    monkeypatch.setattr(db_writer, 'close_compute_application_connection', close)
+
+    async def scenario():
+        db_writer.start_db_writer()
+        applied = asyncio.Queue()
+        run_id, _ = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0,
+                                                    applied_queue=applied)
+        db_writer.get_subprocess_queue().put(result_message(session, run_id))
+        abandonment = None
+        try:
+            assert await asyncio.to_thread(started.wait, 2)
+            writer = db_writer._db_writer_task
+            pending = db_writer._pending_compute
+            writer.cancel()
+            await wait_until(db_writer._db_writer_stop_event.is_set)
+            abandonment = asyncio.create_task(db_writer.abandon_compute_run(run_id, Provider.CODEX))
+            await wait_until(lambda: db_writer._compute_states[run_id].abandoned)
+            assert not abandonment.done()
+            assert not writer.done()
+            assert not db_writer.get_write_coordinator().demands
+            release.set()
+            await asyncio.wait_for(asyncio.shield(abandonment), .5)
+            await wait_until(writer.done)
+            assert writer.cancelled()
+            assert closed == [True]
+            assert pending.preparation.done()
+            assert pending.operation.closed
+            assert db_writer._pending_compute is None
+            assert applied.empty()
+            assert not maintenance._promotion_deferrals
+            assert not db_writer.get_write_coordinator().demands
+            assert db_writer._async_queue.empty()
+            assert run_id not in db_writer._compute_states
+            await asyncio.wait_for(db_writer.stop_db_writer(), 2)
+        finally:
+            release.set()
+            if abandonment is not None:
+                abandonment.cancel()
+            await db_writer.stop_db_writer()
+            db_writer._compute_states.pop(run_id, None)
+            db_writer._compute_done_events.pop(run_id, None)
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('boundary', ['workspace', 'project_lease'])
+@pytest.mark.parametrize('detach', ['abandon', 'replace'])
+def test_postcommit_progress_rechecks_run_after_project_await(wal_runtime, monkeypatch, boundary, detach):
+    session, _ = wal_runtime
+
+    async def scenario():
+        reached, release = asyncio.Event(), asyncio.Event()
+        progress = []
+        async def workspace(*args):
+            if boundary == 'workspace':
+                reached.set()
+                await release.wait()
+        original_lock = db_writer.run_under_storage_write_lock
+        async def lock(factory, **kwargs):
+            if boundary == 'project_lease':
+                reached.set()
+                await release.wait()
+            return await original_lock(factory, **kwargs)
+        async def broadcast(*args, **kwargs):
+            progress.append((args, kwargs))
+        monkeypatch.setattr(db_writer, 'auto_add_project_to_workspaces', workspace)
+        monkeypatch.setattr(db_writer, 'run_under_storage_write_lock', lock)
+        monkeypatch.setattr(db_writer, 'broadcast_startup_progress', broadcast)
+        db_writer.start_db_writer()
+        applied = asyncio.Queue()
+        run_id, _ = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=None, total_display=1,
+                                                    applied_queue=applied)
+        state = db_writer._compute_states[run_id]
+        msg = {**result_message(session, run_id), 'project_id': session.project_id,
+               'project_directory': '/isolated-test-directory'}
+        db_writer.get_subprocess_queue().put(msg)
+        try:
+            await asyncio.wait_for(reached.wait(), 3)
+            if detach == 'abandon':
+                state.abandoned = True
+            else:
+                db_writer._compute_states[run_id] = db_writer._ComputeProviderState(
+                    provider=Provider.CODEX, run_id=run_id, display_session_ids=None, total_display=1)
+            release.set()
+            await wait_until(lambda: db_writer._pending_compute is None)
+            assert applied.get_nowait().outcome == 'applied'
+            assert state.completed_count == 0
+            assert state.sessions_since_project_broadcast == 0
+            assert progress == []
+        finally:
+            release.set()
+            await db_writer.stop_db_writer()
+            db_writer._compute_states.pop(run_id, None)
+            db_writer._compute_done_events.pop(run_id, None)
+    asyncio.run(scenario())

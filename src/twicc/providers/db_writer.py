@@ -1102,9 +1102,19 @@ async def abandon_compute_run(run_id: int, provider: Provider) -> None:
     if _async_queue is None:
         raise RuntimeError("DB writer not started")
     done = asyncio.get_running_loop().create_future()
-    _async_queue.put_nowait(
-        _AbandonComputeRunJob(run_id=run_id, provider=provider, done=done)
-    )
+    job = _AbandonComputeRunJob(run_id=run_id, provider=provider, done=done)
+    if _db_writer_task is not None and _db_writer_task.cancelling():
+        # Forced cancellation has no further queue ticks. Its retained
+        # notifier owns late control jobs without registering writer demand.
+        pending = _pending_compute
+        if pending is not None and (pending.notifications is None or not pending.notifications.done()):
+            pending.abandon_jobs.append(job)
+        else:
+            # Notification completion implies actual worker/connection cleanup.
+            # Abandon finalization only flushes broadcasts and bookkeeping.
+            await _dispatch_queued_job(job)
+    else:
+        _async_queue.put_nowait(job)
     # Await the DB writer-side finalization so shutdown does not reach STOPPED
     # before the run's batched state has been flushed and committed.
     with suppress(Exception):
@@ -2525,6 +2535,8 @@ async def _complete_compute_result(msg, result, state, received_at, apply_starte
             await ensure_project_color(project_id, project_directory)
         await run_under_storage_write_lock(project_writes, priority=WritePriority.BACKGROUND, internal=True)
 
+    if _compute_states.get(msg.get('run_id')) is not state or state.abandoned:
+        return
     session_id = msg["session_id"]
     if state.display_session_ids is None or session_id in state.display_session_ids:
         state.completed_count += 1
