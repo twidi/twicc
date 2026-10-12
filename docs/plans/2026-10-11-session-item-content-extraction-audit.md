@@ -1856,10 +1856,13 @@ Copied samples remain private; committed documentation contains aggregate statis
 | copied100 | compress | 57.826 | 57.655 | 0.886 / 0.199 | 0.431 / 0.186 |
 | copied100 | decompress | 112.054 | 101.345 | 0.880 / 0.853 | 0.880 / 0.681 |
 
-Yields reduce the large-content maximum from about 5.7 ms to below 0.9 ms in these runs.
+Yields reduce the median of per-run large-content maxima from about 5.7 ms to below 0.9 ms.
+The three compression maxima are 2.122, 0.849, and 0.730 ms.
+The three decompression maxima are 1.882, 0.885, and 0.842 ms.
+The observed compression maximum is 2.122 ms; the observed decompression maximum is 1.882 ms.
 They reduce large-content throughput by about 2.5%, relative to byte preparation without yields.
 The many-content compression case loses about 10.8% throughput to explicit yields.
-Small copied decompression shows increased max/p95 versus baseline, although each remains below 1 ms.
+Small copied decompression shows increased median max/p95 versus baseline; both medians remain below 1 ms.
 Short runs and sample count changes limit conclusions about small percentile differences.
 The implementation offers scheduling opportunities; it does not guarantee a maximum event-loop latency.
 
