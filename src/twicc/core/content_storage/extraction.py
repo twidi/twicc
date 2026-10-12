@@ -457,6 +457,7 @@ class ComputeStorageOperation:
         # Current history is enumerated by final exact repair. Keep obligations
         # that metadata commits can remove from that history independently.
         self.activity_repair_keys = activity_repair_keys
+        self.activity_preparation = None
         self.preparation_ms = 0.0
         self.max_publication_ms = 0.0
 
@@ -676,6 +677,9 @@ def final_compute_message(operation, active_ids):
 def close_compute_application(operation):
     if not operation.closed:
         try:
+            if operation.activity_preparation is not None:
+                from twicc.providers.activity_preparation import close_activity_preparation
+                close_activity_preparation(operation.activity_preparation)
             operation.references.close()
         finally:
             operation.closed = True
