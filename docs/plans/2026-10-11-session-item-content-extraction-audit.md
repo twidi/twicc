@@ -1928,3 +1928,219 @@ Snapshot capture under admission, preparation, and publication recheck persisted
 A cold-threshold crossing between awaits cannot create root demand from an active descendant.
 An explicit target enqueue supersedes recovery provenance and retains normal active eligibility.
 Root incarnation/epoch and target incarnation fences remain unchanged.
+
+## Background compute writer contention investigation — 2026-10-12
+
+### Scope and conclusion
+
+This section records analysis at feature HEAD `442d07cc`, not an implemented correction.
+The running worktree uses a fresh main-data copy and Django DEBUG mode.
+Product code, database contents, provider files, and server configuration remain unchanged during this investigation.
+Database probes use SQLite `mode=ro`, asserted worktree paths, and two-second statement budgets.
+
+Whole-session writer ownership causes confirmed contention.
+Bounded transactions do not release storage admission or the application's writer lock.
+A separate final-publication cost remains after extraction preparation.
+Activity repair is the strongest measured SQL candidate for that cost; complete phase attribution remains unmeasured.
+
+### Observed application times
+
+The following entries belong to the latest startup, not earlier benchmark runs.
+Apply minus final is an approximate preparation remainder, not a separately instrumented phase.
+
+| Session prefix | Items | Total apply | Final apply | Apply minus final |
+| --- | ---: | ---: | ---: | ---: |
+| 2992a814 | 43,166 | 49.620 s | 7.615 s | 42.005 s |
+| 01a0dc54 | 32,949 | 43.743 s | 7.409 s | 36.335 s |
+| 3f7d70bc | 6,609 | 25.964 s | 1.542 s | 24.422 s |
+| 84f99fe9 | 6,424 | 21.301 s | 16.523 s | 4.777 s |
+| 3086fbc2 | 8,357 | 17.866 s | 11.817 s | 6.049 s |
+
+Immediately after the 84f99fe9 application, another task reports 21.268 seconds waiting for storage admission.
+This establishes actual contention. The log does not identify that task as a particular user request.
+The sampled 84f99fe9 and 3086fbc2 results contain zero item metadata updates.
+Their recent activity makes them hot; cold compression does not explain their final-publication delay.
+Hot sessions still require legacy-content extraction, FK assignment, ownership maintenance, and final validation.
+
+At the 19:21:29 observation, 170 roots and 1,363 subagents have applied, with one superseded root.
+Root median apply is 268.6 ms; its maximum is 49.620 seconds.
+Subagent median apply is 228.6 ms; its maximum is 2.320 seconds.
+This is a long-tail problem. Root-only progress counts omit substantial subagent work.
+Summed queue durations overlap and must not be presented as startup wall time.
+
+### Why transaction slices do not solve contention
+
+`src/twicc/providers/db_writer.py` acquires storage admission and writer ownership around `_process_compute_message`.
+`_apply_compute_items_in_chunks` invokes `prepare_compute_result` once on the compute executor.
+`src/twicc/core/content_storage/extraction.py` then completes every metadata, override, extraction, and reconciliation chunk.
+The final transaction and subsequent bookkeeping execute before the outer lease ends.
+
+The single compute executor and asynchronous waits preserve event-loop availability.
+They do not preserve write availability. Watcher writes and admitted session starts can wait for the lease.
+Writer-side initial-sync and async-job queues also wait because `_drain_one` dispatches them after the complete compute message.
+Merely releasing a lock inside that awaited message does not service those queues.
+Codec yields address a different problem: CPU scheduling and GIL fairness.
+
+### Final-publication SQL evidence
+
+Final application calls `apply_contribution_changes(..., repair=True)`.
+Its activity repair implementation is unchanged from local `main`.
+A compute-version bump exposes existing repair costs alongside the added extraction workload.
+
+A first bucket repair recalculates message count, cost sum, and session count, then writes the activity row.
+The per-run committed bucket cache permits later deltas. Metadata changes bypass that cache.
+Compared metadata includes provider, project, session type, and hidden status.
+A fresh compute run has no repaired buckets. The cache clears when it reaches 4,096 entries.
+Metadata preparation can fill that cache, but zero-update results do not run those update chunks.
+
+| Session prefix | Distinct item days | Distinct weeks | Potential project/global daily/weekly keys |
+| --- | ---: | ---: | ---: |
+| 84f99fe9 | 43 | 17 | 120 |
+| 3086fbc2 | 85 | 25 | 220 |
+
+If all those keys miss, they imply 360 or 660 aggregate SELECTs, respectively.
+These are possible counts, not observed cache-miss counts.
+Removed contributions and session-created dates can add keys.
+
+Existing partial cost indexes support the predicates but omit the cost value.
+`SUM(cost)` therefore reads matching SessionItem table records.
+Message counts can use covering indexes and avoid those table reads.
+A historical global weekly sum takes 1,346 ms on its first probe and 52 ms after cache warming.
+A count with the same cost join/filter takes 28 ms.
+Another project weekly sum takes 379 ms. Narrow own/child costs and project totals take approximately 0.06–2.5 ms.
+A paginated own-session readiness metadata scan takes 32 ms for the 6,424-item target in a separate warm-cache probe.
+
+These probes support expensive historical aggregate reads as a material contributor.
+They do not assign the complete 16.523-second final interval to that contributor.
+They exclude live write, commit, fsync, Django adaptation, and SQL-debug-formatting costs.
+Forced timestamp-index probes improve one period but worsen another. An unconditional `INDEXED BY` change lacks evidence.
+
+### Django DEBUG measurement confounder
+
+`devctl.py` sets `TWICC_DEBUG=1`.
+Django's SQLite debug wrapper quotes parameters and retains rendered SQL after measuring statement execution.
+BLOB parameters become large hexadecimal literals. Logged SQL duration excludes that later formatting work.
+
+An isolated in-memory diagnostic uses the actual Django cursor wrapper and synthetic BLOBs.
+No live setting or database changes. Three repeats produce these medians:
+
+| Synthetic inserts | DEBUG=False | DEBUG=True |
+| --- | ---: | ---: |
+| 100 × 256 KiB | 0.0127 s | 0.0774 s |
+| 4 × 16 MiB | 0.0405 s | 0.3894 s |
+
+This confirms BLOB-wrapper overhead, not a sixfold or tenfold whole-compute speedup.
+Large BLOB writes mainly occur during preparation, not the already-prepared final message.
+Production DEBUG=False and devctl DEBUG=True measurements require separate reporting.
+
+### Recommended correction boundary
+
+Keep the existing database, compute process, writer coordinator, and storage admission protocol.
+Introduce one resumable pending compute application, rather than concurrent application of multiple results.
+Retain its run identity, phase, committed cursors, target/root observations, and reference-operation state.
+
+Advance these phases through writer ticks:
+
+1. Capture and validate operation identity.
+2. Publish one bounded metadata chunk.
+3. Prepare and publish one bounded override chunk.
+4. Prepare and publish one bounded legacy-extraction chunk.
+5. Prepare and publish one bounded representation-reconciliation chunk.
+6. Publish final session metadata, facts, links, versions, aggregates, and readiness atomically.
+7. Perform terminal acknowledgement and safe post-commit notifications outside writer ownership.
+
+Preparation reads bounded inputs and runs codecs outside admission and writer ownership.
+Its worker must not monopolize the single writer executor.
+Existing codec-executor reuse versus a dedicated preparation worker requires queue/cancellation validation; a process executor is unnecessary here.
+The coordinator retains the preparation future and services other queues while it runs.
+Each publication acquires admission, then writer ownership, then the transaction.
+It validates fresh observations and active protection, commits its bounded mutation, then releases both async locks.
+The next writer tick gives initial-sync and async jobs service before another compute slice.
+
+Keep only one pending compute result. Do not consume its successor or `done` before terminal handling.
+Advance cursors only after commit. Emit one terminal application acknowledgement, never one acknowledgement per slice.
+Existing partial commits remain recoverable because compute versions stay outdated until final publication.
+Only safe notifications move outside writer ownership.
+Post-commit database writes, including worktree links and project colors, retain their own writer lease.
+
+### Required safeguards when releasing ownership
+
+Current TEMP reference counts are correct because the complete operation excludes other writers.
+They count both FK slots. Releasing the writer without invalidating these counts introduces a data-integrity race.
+For example, a concurrent second reference to A can be missed when the first reference changes to B.
+A stale zero count then removes an owner that still references A, making later compression eligibility incorrect.
+
+The efficient conservative path retains TEMP counts only behind verified target/history/root fences.
+Every publication validates target incarnation, history, offset, upper line, root identity, and expected root epoch.
+Only the operation's committed mutations advance its expected epoch.
+Audit every target FK mutation before treating history/root fences as reference-count invalidation.
+Existing root epochs are not yet proven universal per-session count revisions.
+Unresolved ancestry requires fresh exact reconciliation or another verified target fence.
+Foreign changes invalidate pending state before cached counts are used.
+Shared-owner and representation observations require their own fresh publication checks.
+Fresh active identities and current lifecycle eligibility prevent compression after an intervening session start.
+
+TEMP tables belong to physical SQLite connections.
+The compute executor uses `database_sync_to_async`, whose connection cleanup can replace that connection.
+An explicit operation handle must detect connection replacement and rebuild or abort safely.
+Activate its ContextVars only during its own calls. Unrelated jobs must never inherit them.
+Clean its TEMP state on success, supersession, failure, cancellation, abandonment, and shutdown.
+
+Broad root fences can reject work after sibling activity even when the target's references remain unchanged.
+Record invalidation and retry counts. Evaluate starvation on active native trees.
+Do not refresh a root epoch while keeping unproven old counts or compression candidates.
+Repeated whole-session count rebuilding per chunk creates approximately O(items × chunks) work and is not the default remedy.
+
+Cancellation must drain an admitted write before releasing admission or the writer.
+Cancelled preparation cannot publish automatically.
+Final publication remains atomic; failure rolls back its facts, versions, aggregate baseline, and readiness together.
+Earlier committed extraction slices remain valid and support retry.
+
+### Separate treatment of the final transaction
+
+Releasing preparation slices alone leaves observed final transactions of 7–16 seconds.
+A complete correction must measure and reduce those tails separately.
+Do not weaken final atomic publication merely to achieve a latency target.
+
+First instrument final facts/links, session publication, aggregate repair, project refresh, readiness, and commit.
+Record bucket hits/misses and metadata-change reasons.
+Then test an exact aggregate optimization with its concurrency contract:
+
+- A content-only fast path requires a proven valid metadata/aggregate baseline. Zero item updates alone do not prove it.
+- Progressive exact bucket repair before final publication requires mutation-safe baseline tracking and correct final deltas.
+- Grouped daily repair and weekly derivation require complete exact daily coverage, including session-created counts and removed/moved contributions.
+- Covering partial cost indexes can avoid table reads, but require workload evidence and separately measured creation cost.
+
+Progressive repair can preserve exact statistics if every mutation either precedes the committed baseline or contributes an exact subsequent delta.
+That requires committed baseline tracking, serialized publication, and complete coverage of all mutation paths.
+Changed aggregate semantics require complete historical deltas or baseline invalidation and exact repair.
+Existing cached rows and zero metadata updates are insufficient baseline certificates.
+This is a correctness requirement for a proposed optimization, not evidence that the current implementation already supports it.
+
+Do not put a large new index build into startup migrations without resolving the established startup-time requirement.
+Do not add FK reverse indexes as an unrelated attempt to accelerate these cost aggregates.
+Payload-free timing or scoped debug-wrapper suppression can address DEBUG overhead separately.
+Never toggle global `settings.DEBUG` around threaded operations.
+
+### Validation before implementation acceptance
+
+Use barrier-based concurrency tests, not fragile timing-only assertions:
+
+- Watcher writes and queued async jobs complete between slices while a large result remains pending.
+- Those jobs also complete while codec preparation waits on a barrier.
+- Same-session append, replacement, deletion/recreation, and sibling/root changes cannot reuse stale counts or proofs.
+- Shared-owner changes and admitted starts invalidate unsafe compressed candidates.
+- Connection replacement and unrelated ContextVars cannot corrupt reference accounting.
+- Cancellation retains locks until admitted publication drains; cancellation of preparation performs no publication.
+- Abandonment, shutdown, and `done` preserve exactly one terminal acknowledgement.
+- Final failure preserves committed extraction but rolls back final publication atomically.
+- Retry reconstructs exact two-slot ownership from committed progress.
+
+Then measure representative small, large, and historical hot/cold sessions on an isolated copy.
+Report DEBUG modes separately, warm/cold-cache limits, total duration, preparation duration, maximum admission/writer hold, and interactive-job delay.
+Record rows/bytes per slice, preparation/executor waits, invalidation reasons, retries, and final hold separately.
+Use payload-free logs with bounded cardinality.
+
+Acceptance requires both write fairness and unchanged reference/version/eligibility correctness.
+A row/byte budget does not guarantee a strict latency ceiling: one oversized content, TEMP initialization, or one SQL aggregate can exceed it.
+No server restart, migration, live profiler, copied-database write, or full test run forms part of this analysis.
