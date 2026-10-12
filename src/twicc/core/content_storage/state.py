@@ -106,11 +106,15 @@ def invalidate_roots(root_ids: Iterable[str], *, promotion_targets: Iterable[str
         )
     from twicc.core.content_storage.lifecycle import active_session_ids, request_root_promotion
 
+    from twicc.providers.write_coordinator import write_priority
+
+    priority = write_priority.get()
     targets = roots if promotion_targets is None else tuple(set(promotion_targets))
     decisions = resolve_root_decisions(targets, timezone.now(), active_session_ids.get())
     for session_id, decision in decisions.items():
         if decision.resolved and not decision.is_cold:
-            transaction.on_commit(lambda session_id=session_id: request_root_promotion(session_id))
+            transaction.on_commit(lambda session_id=session_id, priority=priority:
+                                  request_root_promotion(session_id, priority=priority))
 
 
 def iter_native_tree_session_pages(

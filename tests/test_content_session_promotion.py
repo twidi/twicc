@@ -93,7 +93,7 @@ def test_child_lifecycle_change_queues_child_and_fences_root(monkeypatch):
     root, child = native_pair()
     before = snapshot(root)
     requests = []
-    monkeypatch.setattr(lifecycle, 'request_root_promotion', requests.append)
+    monkeypatch.setattr(lifecycle, 'request_root_promotion', lambda target, **kwargs: requests.append(target))
     lifecycle.update_lifecycle(Session.objects.filter(pk=child.id), last_started_at=timezone.now())
     root.refresh_from_db()
     assert root.content_state_epoch > before.epoch
@@ -171,7 +171,7 @@ def test_child_contains_checks_both_slots_without_payload_or_wakeup(content_row_
     compressed = content_row_factory('compressed' * 100, True, session_ids=[child.id])
     item(child, compressed if slot == 'current' else plain, compressed if slot == 'original' else None)
     requests = []
-    monkeypatch.setattr(lifecycle, 'request_root_promotion', requests.append)
+    monkeypatch.setattr(lifecycle, 'request_root_promotion', lambda target, **kwargs: requests.append(target))
     with (transaction.atomic(), CaptureQueriesContext(connection) as queries,
           pytest.raises(state.PlaintextSearchUnavailable) as error):
         state.require_plaintext_search(child.id)
@@ -191,7 +191,7 @@ def test_child_reference_binding_queues_only_its_owner(content_row_factory, monk
     row = content_row_factory('child', False, session_ids=[])
     stored = item(child, row)
     requests = []
-    monkeypatch.setattr(lifecycle, 'request_root_promotion', requests.append)
+    monkeypatch.setattr(lifecycle, 'request_root_promotion', lambda target, **kwargs: requests.append(target))
     with transaction.atomic():
         bind_persisted_items([ContentBinding(stored.id, child.id, row.id, None)])
     root.refresh_from_db()

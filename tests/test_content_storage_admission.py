@@ -13,9 +13,12 @@ from twicc.providers import db_writer
 @pytest.fixture
 def writer_state(monkeypatch):
     """Use the existing isolated writer-lock fixture pattern, without a polling task."""
-    monkeypatch.setattr(db_writer, "_db_write_lock", asyncio.Lock())
+    from twicc.providers.write_coordinator import WriterCoordinator, WriteResources
+    coordinator = WriterCoordinator()
+    monkeypatch.setattr(db_writer, "_write_coordinator", coordinator)
+    monkeypatch.setattr(db_writer, "_db_write_lock", coordinator.foreground_lock(WriteResources.WRITER))
     monkeypatch.setattr(db_writer, "_db_writer_stop_event", asyncio.Event())
-    monkeypatch.setattr(db_writer, "_storage_admission_lock", asyncio.Lock(), raising=False)
+    monkeypatch.setattr(db_writer, "_storage_admission_lock", coordinator.foreground_lock(WriteResources.ADMISSION))
     monkeypatch.setattr(db_writer, "_subprocess_queue", queue.Queue())
     monkeypatch.setattr(db_writer, "_thread_queue", queue.Queue())
     monkeypatch.setattr(db_writer, "_async_queue", asyncio.Queue())

@@ -11,24 +11,25 @@ from django.utils import timezone
 from twicc.core.content_storage.policy import COLD_FIELDS
 from twicc.core.content_storage.state import TREE_PAGE_SIZE, invalidate_roots, resolve_root_decisions
 from twicc.core.models import Session
+from twicc.providers.write_coordinator import WritePriority, write_priority
 
 logger = logging.getLogger(__name__)
 LIFECYCLE_FIELDS = (*COLD_FIELDS, 'type', 'parent_session_id')
 active_session_ids: ContextVar[frozenset[str]] = ContextVar('content_active_session_ids', default=frozenset())
-_promotion_wakeup: Callable[[str], None] | None = None
+_promotion_wakeup: Callable[..., None] | None = None
 
 
-def set_root_promotion_wakeup(callback: Callable[[str], None] | None) -> None:
+def set_root_promotion_wakeup(callback: Callable[..., None] | None) -> None:
     """Install Task 12's synchronous scheduler callback; pending generations remain durable."""
     global _promotion_wakeup
     _promotion_wakeup = callback
 
 
-def request_root_promotion(session_id: str) -> None:
+def request_root_promotion(session_id: str, *, priority: WritePriority | None = None) -> None:
     """Wake one target session after commit; the historical name also accepts native children."""
     if _promotion_wakeup is not None:
         try:
-            _promotion_wakeup(session_id)
+            _promotion_wakeup(session_id, priority=write_priority.get() if priority is None else priority)
         except Exception:
             logger.exception('Content promotion wakeup failed for session %s', session_id)
 

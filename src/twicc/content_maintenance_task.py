@@ -25,6 +25,7 @@ from twicc.core.content_storage.state import (
 )
 from twicc.core.content_storage.types import PreparedRepresentation, RootPromotionCursor, RootStorageSnapshot, SessionPromotionSnapshot
 from twicc.core.models import ContentDictionary, Session, SessionItem, SessionItemContent
+from twicc.providers.write_coordinator import WritePriority, write_priority
 
 logger = logging.getLogger(__name__)
 INITIAL_DELAY = 1800
@@ -33,6 +34,38 @@ ROW_BUDGET = 100
 BYTE_BUDGET = 8 * 1024 * 1024
 START_CURSOR = RootPromotionCursor(None, -1, 1, 0, 0, False)
 _wakeup = None
+_deferral_wakeup = None
+_promotion_deferrals = set()
+
+
+class PromotionDeferral:
+    """An operation-owned scheduling pause, independent of maintenance startup/shutdown."""
+
+    def __init__(self, root_id: str, root_incarnation: str):
+        self.root_id = root_id
+        self.root_incarnation = root_incarnation
+        self.released = False
+        _promotion_deferrals.add(self)
+
+    def release(self) -> None:
+        """Release on the owning event loop, even after maintenance has stopped."""
+        if self.released:
+            return
+        self.released = True
+        _promotion_deferrals.remove(self)
+        if _deferral_wakeup is not None:
+            _deferral_wakeup()
+
+
+def defer_background_promotions(root_id: str, root_incarnation: str) -> PromotionDeferral:
+    """Defer one guarded root scope; callers own release on every terminal path.
+
+    Register on the writer event loop before releasing guarded initialization.
+    This token owns no resource, demand, readiness certificate, or inferred target.
+    """
+    if not root_id or not root_incarnation:
+        raise ValueError('Promotion deferral requires a resolved root and incarnation')
+    return PromotionDeferral(root_id, root_incarnation)
 
 
 class RepresentationProof(NamedTuple):
@@ -61,10 +94,10 @@ class PromotionBatch(NamedTuple):
     verified: bool
 
 
-def request_root_promotion(session_id: str) -> None:
+def request_root_promotion(session_id: str, *, priority: WritePriority | None = None) -> None:
     """Marshal one actual target; the historical name also accepts native-child IDs."""
     if _wakeup is not None:
-        _wakeup(session_id)
+        _wakeup(session_id, write_priority.get() if priority is None else priority)
 
 
 def _metadata_proof(owners):
@@ -406,15 +439,23 @@ def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_
     return last, tuple(entries), not SessionItemContent.objects.filter(pk__gt=last).exists()
 
 
-async def _apply(function, *args):
+async def _apply(function, *args, priority=WritePriority.FOREGROUND, lease=None):
     from twicc.providers.compute_executor import run_compute_sync
-    from twicc.providers.db_writer import run_under_db_write_lock, storage_admission
+    from twicc.providers.db_writer import (
+        _drive_publication, _run_with_content_activity, run_under_storage_write_lock,
+    )
 
     async def apply():
         return await run_compute_sync(function, *args, active_session_ids.get())
 
-    async with storage_admission():
-        return await run_under_db_write_lock(apply, content_activity=True)
+    if lease is None:
+        return await run_under_storage_write_lock(apply, priority=priority, content_activity=True)
+    try:
+        return await _drive_publication(
+            lambda: _run_with_content_activity(apply), lease.priority, lease.resources,
+        )
+    finally:
+        lease.release()
 
 
 def _snapshot(session_id, active, *, recovery=False):
@@ -451,27 +492,63 @@ async def _wait(stop_event, wake, timeout):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+class _PromotionTarget:
+    """One resumable target; scheduling priority never determines recovery eligibility."""
+
+    def __init__(self, *, recovery, priority):
+        self.recovery = recovery
+        self.priority = priority
+        self.demand = None
+        self.reset()
+
+    def reset(self):
+        self.snapshot = None
+        self.cursor = START_CURSOR
+        self.verified = True
+        self.batch = None
+        self.deferred = False
+
+    def explicit(self):
+        self.recovery = False
+        if self.snapshot is not None and getattr(self.snapshot, 'recovery', False):
+            self.snapshot = self.snapshot._replace(recovery=False)
+            if self.batch is not None:
+                self.batch = self.batch._replace(snapshot=self.snapshot)
+
+
 async def start_content_maintenance_task(stop_event: asyncio.Event) -> None:
-    """Run one bounded preparation at a time, releasing admission between each slice."""
-    global _wakeup
+    """Dispatch bounded target steps; foreground demand wins each new resource grant."""
+    global _wakeup, _deferral_wakeup
     from django.conf import settings
 
+    from twicc.providers.db_writer import get_write_coordinator
     from twicc.session_dirs_cleanup_task import _run_cleanup_pass
 
     loop = asyncio.get_running_loop()
+    coordinator = get_write_coordinator()
     wake = asyncio.Event()
     targets = {}
+    closing = False
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='twicc-content-codec')
 
-    def enqueue(session_id):
-        # Explicit demand supersedes recovery-only eligibility for this target.
-        targets[session_id] = False
+    def enqueue(session_id, priority):
+        if closing or stop_event.is_set():
+            return
+        target = targets.setdefault(session_id, _PromotionTarget(recovery=False, priority=priority))
+        target.explicit()
+        if priority is WritePriority.FOREGROUND:
+            if target.priority is WritePriority.BACKGROUND:
+                targets[session_id] = targets.pop(session_id)
+            target.priority = priority
+            if target.demand is None:
+                target.demand = coordinator.foreground_demand()
         wake.set()
 
-    def wakeup(session_id):
-        loop.call_soon_threadsafe(enqueue, session_id)
+    def wakeup(session_id, priority):
+        loop.call_soon_threadsafe(enqueue, session_id, priority)
 
     _wakeup = wakeup
+    _deferral_wakeup = wake.set
     set_root_promotion_wakeup(request_root_promotion)
 
     async def prepare(function, *args):
@@ -483,31 +560,83 @@ async def start_content_maintenance_task(stop_event: asyncio.Event) -> None:
             page = await prepare(pending_root_page, after)
             if not page:
                 break
-            for session_id in await prepare(recovery_promotion_targets, page):
-                targets.setdefault(session_id, True)
+            eligible = await prepare(recovery_promotion_targets, page)
+            for session_id in page:
+                if session_id in eligible:
+                    targets.setdefault(session_id, _PromotionTarget(recovery=True, priority=WritePriority.BACKGROUND))
             await promote()
             after = page[-1]
 
+    def settle(session_id, target):
+        targets.pop(session_id)
+        if target.demand is not None:
+            target.demand.release()
+
+    def eligible(target):
+        snapshot = target.snapshot
+        if (target.priority is WritePriority.BACKGROUND and snapshot is not None and any(
+            token.root_id == snapshot.root_id and token.root_incarnation == snapshot.incarnation
+            for token in _promotion_deferrals
+        )):
+            target.deferred = True
+            return False
+        if target.deferred:
+            # Compute may change generations while paused. Never adopt those epochs.
+            target.reset()
+        return True
+
     async def promote():
         while targets and not stop_event.is_set():
-            session_id, recovery = targets.popitem()
+            wake.clear()
+            ready = [key for key, target in targets.items() if eligible(target)]
+            if not ready:
+                return
+            session_id = next((key for key in ready if targets[key].priority is WritePriority.FOREGROUND), ready[0])
+            target = targets[session_id]
             try:
-                snapshot = await _apply(partial(_snapshot, recovery=recovery), session_id)
-                if snapshot is None:
+                if target.snapshot is not None and target.batch is None:
+                    recovery = target.recovery
+                    batch = await prepare(prepare_promotion_batch, target.snapshot, target.cursor,
+                                          ROW_BUDGET, BYTE_BUDGET)
+                    # An upgrade must retry a rejection under the old recovery eligibility.
+                    if recovery and not target.recovery and batch.cursor == target.cursor and not batch.verified:
+                        continue
+                    # An explicit enqueue can upgrade recovery while its codec thread runs.
+                    target.batch = batch._replace(snapshot=target.snapshot)
                     continue
-                cursor = START_CURSOR
-                pass_verified = True
-                while not cursor.done and not stop_event.is_set():
-                    batch = await prepare(prepare_promotion_batch, snapshot, cursor, ROW_BUDGET, BYTE_BUDGET)
-                    pass_verified &= batch.verified
-                    cursor = await _apply(partial(apply_promotion_batch, pass_verified=pass_verified), batch)
-                    if cursor == START_CURSOR:
-                        targets.setdefault(session_id, recovery)
-                        break
-                    await asyncio.sleep(0)
-                # Incomplete extraction does not spin. Its writer invalidation wakes us again.
+                lease = None
+                if target.priority is WritePriority.BACKGROUND:
+                    lease = coordinator.try_background_lease()
+                    if lease is None:
+                        # Never await a background grant in the foreground dispatcher.
+                        await _wait(stop_event, wake, 0.05)
+                        continue
+                if target.snapshot is None:
+                    recovery = target.recovery
+                    target.snapshot = await _apply(partial(_snapshot, recovery=recovery), session_id,
+                                                   priority=target.priority, lease=lease)
+                    if target.snapshot is None:
+                        if recovery and not target.recovery:
+                            continue
+                        settle(session_id, target)
+                    elif not target.recovery:
+                        target.explicit()
+                    continue
+                verified = target.verified and target.batch.verified
+                cursor = await _apply(partial(apply_promotion_batch, pass_verified=verified), target.batch,
+                                      priority=target.priority, lease=lease)
+                if cursor == START_CURSOR:
+                    target.reset()
+                elif cursor.done:
+                    # Incomplete extraction sleeps until a new writer invalidation.
+                    settle(session_id, target)
+                else:
+                    target.cursor, target.verified, target.batch = cursor, verified, None
+                    # Eligible peers retain FIFO at each bounded publication boundary.
+                    targets[session_id] = targets.pop(session_id)
+                await asyncio.sleep(0)
             except Exception:
-                # Root generations survive restarts. Child targets need explicit retry.
+                settle(session_id, target)
                 logger.exception('Content promotion failed for session %s', session_id)
 
     deadline = _maintenance_time() + INITIAL_DELAY
@@ -529,10 +658,17 @@ async def start_content_maintenance_task(stop_event: asyncio.Event) -> None:
                     while not done and not stop_event.is_set():
                         await promote()
                         cursor, entries, done = await prepare(prepare_compression_batch, cursor, ROW_BUDGET, BYTE_BUDGET)
-                        if targets:
+                        while entries and not stop_event.is_set():
+                            wake.clear()
                             await promote()
-                        if entries:
-                            await _apply(_publish, entries)
+                            if stop_event.is_set():
+                                break
+                            lease = coordinator.try_background_lease()
+                            if lease is None:
+                                await _wait(stop_event, wake, 0.05)
+                                continue
+                            await _apply(_publish, entries, lease=lease)
+                            break
                         await asyncio.sleep(0)
                 except Exception:
                     logger.exception('Periodic content maintenance failed')
@@ -548,16 +684,23 @@ async def start_content_maintenance_task(stop_event: asyncio.Event) -> None:
     except Exception:
         logger.exception('Content maintenance task failed')
     finally:
+        closing = True
         set_root_promotion_wakeup(None)
         _wakeup = None
+        _deferral_wakeup = None
         # Submitted read/CPU work can outlive cancellation. Drain it before teardown.
         async def close():
             await loop.run_in_executor(executor, connections.close_all)
             await asyncio.to_thread(executor.shutdown, wait=True)
-        closing = asyncio.create_task(close())
-        while not closing.done():
-            try:
-                await asyncio.shield(closing)
-            except asyncio.CancelledError:
-                continue
-        closing.result()
+        close_task = asyncio.create_task(close())
+        try:
+            while not close_task.done():
+                try:
+                    await asyncio.shield(close_task)
+                except asyncio.CancelledError:
+                    continue
+            close_task.result()
+        finally:
+            for target in targets.values():
+                if target.demand is not None:
+                    target.demand.release()

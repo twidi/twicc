@@ -21,7 +21,7 @@ def make_session(name, **kwargs):
 def test_one_remaining_flag_keeps_old_root_cold(flag, monkeypatch):
     root = make_session('root', archived=True, hidden=True, created_at=timezone.now() - timedelta(days=31))
     requests = []
-    monkeypatch.setattr(lifecycle, 'request_root_promotion', requests.append)
+    monkeypatch.setattr(lifecycle, 'request_root_promotion', lambda target, **kwargs: requests.append(target))
     with transaction.atomic():
         lifecycle.update_lifecycle(Session.objects.filter(pk=root.id), **{flag: False})
     root.refresh_from_db()
@@ -33,7 +33,7 @@ def test_one_remaining_flag_keeps_old_root_cold(flag, monkeypatch):
 def test_clear_last_flag_requests_after_commit(monkeypatch):
     root = make_session('root', archived=True, created_at=timezone.now() - timedelta(days=31))
     requests = []
-    monkeypatch.setattr(lifecycle, 'request_root_promotion', requests.append)
+    monkeypatch.setattr(lifecycle, 'request_root_promotion', lambda target, **kwargs: requests.append(target))
     with pytest.raises(RuntimeError), transaction.atomic():
         lifecycle.update_lifecycle(Session.objects.filter(pk=root.id), archived=False)
         raise RuntimeError('rollback')
@@ -99,7 +99,7 @@ def test_real_flag_services_and_postcommit_wakeup(monkeypatch):
 
     root = make_session('root', hidden=True, created_at=timezone.now() - timedelta(days=20))
     requests = []
-    monkeypatch.setattr(lifecycle, 'request_root_promotion', requests.append)
+    monkeypatch.setattr(lifecycle, 'request_root_promotion', lambda target, **kwargs: requests.append(target))
     _apply_visibility_flag(root.id, False)
     root.refresh_from_db()
     assert root.content_state_epoch == 5
@@ -232,7 +232,7 @@ def test_actual_unarchive_service_keeps_hidden_old_root_cold(monkeypatch):
 
     root = make_session('root', archived=True, hidden=True, created_at=timezone.now() - timedelta(days=31))
     requests = []
-    monkeypatch.setattr(lifecycle, 'request_root_promotion', requests.append)
+    monkeypatch.setattr(lifecycle, 'request_root_promotion', lambda target, **kwargs: requests.append(target))
     monkeypatch.setattr(db_writer, '_db_write_lock', asyncio.Lock())
     monkeypatch.setattr(db_writer, '_db_writer_stop_event', asyncio.Event())
     asyncio.run(apply_session_archived_change(root, False))

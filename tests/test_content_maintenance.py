@@ -654,3 +654,630 @@ def test_compression_prepares_the_observed_content_once(content_row_factory):
     assert len(entries) == 1
     assert entries[0].proof.payload == bytes(row.payload)
     assert decode_content(type(row)(**entries[0].candidate.encoded._asdict())) == 'exact observed bytes ' * 100
+
+
+@pytest.mark.django_db(transaction=True)
+def test_foreground_targets_interrupt_recovery_at_next_grant(
+    content_row_factory, writer_state, compute_executor_started, monkeypatch, settings,
+):
+    # Finishing A's local loop or using LIFO violates foreground B/C ordering.
+    import asyncio
+    import threading
+    from twicc import content_maintenance_task as maintenance
+    from twicc.agent.registry import get_agent_manager_registry
+    from twicc.core.models import SessionItem
+    from twicc.providers import db_writer
+
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    monkeypatch.setattr(get_agent_manager_registry(), 'get_active_agents', list)
+    monkeypatch.setattr(maintenance, 'ROW_BUDGET', 1)
+    for name, count in [('a', 3), ('b', 1), ('c', 1)]:
+        owner = session(name, content_storage_version=1, storage_incarnation=name, content_state_epoch=4,
+                        plaintext_verified_epoch=None if name == 'a' else 4)
+        for line in range(1, count + 1):
+            row = content_row_factory((name + str(line)) * 1000, True, session_ids=[name])
+            SessionItem.objects.create(session=owner, line_num=line, current_content=row, content='')
+    entered, release = threading.Event(), threading.Event()
+    original_prepare, original_apply = maintenance.prepare_promotion_batch, maintenance.apply_promotion_batch
+    trace = []
+
+    def prepare(snapshot, cursor, *args):
+        result = original_prepare(snapshot, cursor, *args)
+        if snapshot.root_id == 'a' and not entered.is_set():
+            entered.set()
+            assert release.wait(5)
+        return result
+
+    def apply(batch, active, **kwargs):
+        result = original_apply(batch, active, **kwargs)
+        trace.append(batch.snapshot.root_id)
+        return result
+
+    async def wait(stop, wake, timeout):
+        stop.set()
+
+    monkeypatch.setattr(maintenance, 'prepare_promotion_batch', prepare)
+    monkeypatch.setattr(maintenance, 'apply_promotion_batch', apply)
+    monkeypatch.setattr(maintenance, '_wait', wait)
+
+    async def scenario():
+        task = asyncio.create_task(maintenance.start_content_maintenance_task(asyncio.Event()))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            maintenance.request_root_promotion('b')
+            maintenance.request_root_promotion('c')
+            maintenance.request_root_promotion('b')
+            await asyncio.sleep(0)
+        finally:
+            release.set()
+        await asyncio.wait_for(task, 5)
+        assert not db_writer.get_write_coordinator().demands
+
+    asyncio.run(scenario())
+    assert trace[:2] == ['b', 'c']
+    assert trace.count('b') == trace.count('c') == 1
+    assert trace[2:] == ['a', 'a', 'a']
+
+
+@pytest.mark.django_db(transaction=True)
+def test_foreground_demand_interrupts_background_wait_without_self_blocking(
+    content_row_factory, writer_state, compute_executor_started, monkeypatch, settings,
+):
+    import asyncio
+    from twicc import content_maintenance_task as maintenance
+    from twicc.agent.registry import get_agent_manager_registry
+    from twicc.core.models import SessionItem
+    from twicc.providers import db_writer
+    from twicc.providers.write_coordinator import WritePriority, WriteResources
+
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    monkeypatch.setattr(get_agent_manager_registry(), 'get_active_agents', list)
+    for name in ('a', 'b'):
+        owner = session(name, content_storage_version=1, storage_incarnation=name, content_state_epoch=4,
+                        plaintext_verified_epoch=None if name == 'a' else 4)
+        row = content_row_factory(name * 1000, True, session_ids=[name])
+        SessionItem.objects.create(session=owner, line_num=1, current_content=row, content='')
+    trace = []
+    original = maintenance.apply_promotion_batch
+    waiting = asyncio.Event()
+    original_wait = maintenance._wait
+
+    async def wait(stop, wake, timeout):
+        if trace == ['b', 'a']:
+            stop.set()
+        else:
+            waiting.set()
+            return await original_wait(stop, wake, timeout)
+
+    def apply(batch, active, **kwargs):
+        trace.append(batch.snapshot.root_id)
+        return original(batch, active, **kwargs)
+
+    monkeypatch.setattr(maintenance, 'apply_promotion_batch', apply)
+    monkeypatch.setattr(maintenance, '_wait', wait)
+
+    async def scenario():
+        coordinator = db_writer.get_write_coordinator()
+        holder = await coordinator.acquire(WriteResources.WRITER, WritePriority.FOREGROUND)
+        task = asyncio.create_task(maintenance.start_content_maintenance_task(asyncio.Event()))
+        try:
+            await asyncio.wait_for(waiting.wait(), 2)
+            maintenance.request_root_promotion('b')
+            await asyncio.sleep(0)
+            assert len(coordinator.demands) == 1
+            holder.release()
+            await asyncio.wait_for(task, 5)
+            assert not coordinator.demands and not coordinator.holders
+        finally:
+            holder.release()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+    assert trace == ['b', 'a']
+
+
+@pytest.mark.django_db(transaction=True)
+def test_commit_callback_captures_priority_before_origin_resets(monkeypatch):
+    from twicc.core.content_storage import lifecycle, state
+    from twicc.providers.write_coordinator import WritePriority, write_priority
+
+    root = session('origin', storage_incarnation='origin', content_state_epoch=4)
+    calls = []
+    monkeypatch.setattr(lifecycle, '_promotion_wakeup', lambda target, *, priority: calls.append((target, priority)))
+    with transaction.atomic():
+        token = write_priority.set(WritePriority.BACKGROUND)
+        try:
+            state.invalidate_roots([root.id])
+        finally:
+            write_priority.reset(token)
+        assert calls == []
+    assert calls == [('origin', WritePriority.BACKGROUND)]
+    assert write_priority.get() is WritePriority.FOREGROUND
+
+
+@pytest.mark.django_db(transaction=True)
+def test_recovery_upgrade_preserves_prepared_work_and_foreground_fifo(
+    content_row_factory, writer_state, compute_executor_started, monkeypatch, settings,
+):
+    import asyncio
+    import threading
+    from twicc import content_maintenance_task as maintenance
+    from twicc.agent.registry import get_agent_manager_registry
+    from twicc.core.models import SessionItem
+    from twicc.providers import db_writer
+    from twicc.providers.write_coordinator import WritePriority, write_priority
+
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    monkeypatch.setattr(get_agent_manager_registry(), 'get_active_agents', list)
+    for name in ('a', 'b'):
+        owner = session(name, content_storage_version=1, storage_incarnation=name, content_state_epoch=4,
+                        plaintext_verified_epoch=None if name == 'a' else 4)
+        row = content_row_factory(name * 1000, True, session_ids=[name])
+        SessionItem.objects.create(session=owner, line_num=1, current_content=row, content='')
+    entered, release = threading.Event(), threading.Event()
+    original_prepare, original_apply = maintenance.prepare_promotion_batch, maintenance.apply_promotion_batch
+    preparations, publications = [], []
+
+    def prepare(snapshot, *args):
+        preparations.append(snapshot.root_id)
+        result = original_prepare(snapshot, *args)
+        if snapshot.root_id == 'a':
+            entered.set()
+            assert release.wait(5)
+        return result
+
+    def apply(batch, active, **kwargs):
+        publications.append((batch.snapshot.root_id, getattr(batch.snapshot, 'recovery', False), write_priority.get()))
+        return original_apply(batch, active, **kwargs)
+
+    async def wait(stop, wake, timeout):
+        stop.set()
+
+    monkeypatch.setattr(maintenance, 'prepare_promotion_batch', prepare)
+    monkeypatch.setattr(maintenance, 'apply_promotion_batch', apply)
+    monkeypatch.setattr(maintenance, '_wait', wait)
+
+    async def scenario():
+        task = asyncio.create_task(maintenance.start_content_maintenance_task(asyncio.Event()))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            maintenance.request_root_promotion('b')
+            maintenance.request_root_promotion('a')
+            maintenance.request_root_promotion('a', priority=WritePriority.BACKGROUND)
+            await asyncio.sleep(0)
+            assert len(db_writer.get_write_coordinator().demands) == 2
+        finally:
+            release.set()
+        await asyncio.wait_for(task, 5)
+        assert not db_writer.get_write_coordinator().demands
+
+    asyncio.run(scenario())
+    assert preparations == ['a', 'b']
+    assert publications == [('b', False, WritePriority.FOREGROUND), ('a', False, WritePriority.FOREGROUND)]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('phase', ['prepare', 'publish'])
+@pytest.mark.parametrize('outcome', ['cancel', 'stop', 'failure'])
+def test_foreground_pressure_settles_after_worker_drain(
+    content_row_factory, writer_state, compute_executor_started, monkeypatch, settings, phase, outcome,
+):
+    import asyncio
+    import threading
+    from twicc import content_maintenance_task as maintenance
+    from twicc.agent.registry import get_agent_manager_registry
+    from twicc.core.models import SessionItem
+    from twicc.providers import db_writer
+
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    monkeypatch.setattr(get_agent_manager_registry(), 'get_active_agents', list)
+    owner = session('a', content_storage_version=1, storage_incarnation='a', content_state_epoch=4)
+    row = content_row_factory('a' * 1000, True, session_ids=['a'])
+    SessionItem.objects.create(session=owner, line_num=1, current_content=row, content='')
+    prepared, allow_prepare = threading.Event(), threading.Event()
+    publishing, allow_publish = threading.Event(), threading.Event()
+    original_prepare, original_apply = maintenance.prepare_promotion_batch, maintenance.apply_promotion_batch
+
+    def prepare(*args):
+        result = original_prepare(*args)
+        prepared.set()
+        assert allow_prepare.wait(5)
+        if phase == 'prepare' and outcome == 'failure':
+            raise RuntimeError('injected preparation failure')
+        return result
+
+    def apply(*args, **kwargs):
+        publishing.set()
+        assert allow_publish.wait(5)
+        if phase == 'publish' and outcome == 'failure':
+            raise RuntimeError('injected publication failure')
+        return original_apply(*args, **kwargs)
+
+    async def wait(stop, wake, timeout):
+        stop.set()
+
+    monkeypatch.setattr(maintenance, 'prepare_promotion_batch', prepare)
+    monkeypatch.setattr(maintenance, 'apply_promotion_batch', apply)
+    monkeypatch.setattr(maintenance, '_wait', wait)
+
+    async def scenario():
+        stop = asyncio.Event()
+        task = asyncio.create_task(maintenance.start_content_maintenance_task(stop))
+        coordinator = db_writer.get_write_coordinator()
+        try:
+            assert await asyncio.to_thread(prepared.wait, 5)
+            maintenance.request_root_promotion('a')
+            await asyncio.sleep(0)
+            assert len(coordinator.demands) == 1
+            if phase == 'publish':
+                allow_prepare.set()
+                assert await asyncio.to_thread(publishing.wait, 5)
+            if outcome == 'cancel':
+                task.cancel()
+                await asyncio.sleep(0)
+                task.cancel()
+                await asyncio.sleep(0)
+            elif outcome == 'stop':
+                stop.set()
+                await asyncio.sleep(0)
+            assert not task.done()
+            assert len(coordinator.demands) == 1
+            assert bool(coordinator.holders) == (phase == 'publish')
+        finally:
+            allow_prepare.set()
+            allow_publish.set()
+        if outcome == 'cancel':
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 5)
+        else:
+            await asyncio.wait_for(task, 5)
+        assert not coordinator.demands and not coordinator.holders and not coordinator.requests
+        assert maintenance._wakeup is None
+
+    asyncio.run(scenario())
+    row.refresh_from_db()
+    assert row.codec == ('plain' if phase == 'publish' and outcome != 'failure' else 'zstd')
+
+
+@pytest.mark.django_db(transaction=True)
+def test_background_deferral_coalesces_changed_epochs_and_preserves_exact_targets(
+    content_row_factory, writer_state, compute_executor_started, monkeypatch, settings,
+):
+    import asyncio
+    from twicc import content_maintenance_task as maintenance
+    from twicc.agent.registry import get_agent_manager_registry
+    from twicc.core.content_storage import state
+    from twicc.core.models import SessionItem
+    from twicc.providers import db_writer
+    from twicc.providers.write_coordinator import WritePriority, write_priority
+
+    # Missing deferral repeatedly scans the root after each binding generation change.
+    assert hasattr(maintenance, 'defer_background_promotions'), 'Operation-scoped promotion deferral is required'
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    monkeypatch.setattr(get_agent_manager_registry(), 'get_active_agents', list)
+    root = session('root', content_storage_version=1, storage_incarnation='root-inc', content_state_epoch=4)
+    child = session('child', type='subagent', parent_session=root, content_storage_version=1,
+                    storage_incarnation='child-inc')
+    sibling = session('sibling', type='subagent', parent_session=root, content_storage_version=1,
+                      storage_incarnation='sibling-inc')
+    rows = []
+    for owner in (root, child, sibling):
+        row = content_row_factory(owner.id * 1000, True, session_ids=[owner.id])
+        SessionItem.objects.create(session=owner, line_num=1, current_content=row, original_content=row, content='')
+        rows.append(row)
+    preparations, publications = [], []
+    original_prepare, original_apply = maintenance.prepare_promotion_batch, maintenance.apply_promotion_batch
+
+    def prepare(snapshot, *args):
+        preparations.append(getattr(snapshot, 'session_id', snapshot.root_id))
+        return original_prepare(snapshot, *args)
+
+    def apply(batch, active, **kwargs):
+        publications.append((getattr(batch.snapshot, 'session_id', batch.snapshot.root_id),
+                             getattr(batch.snapshot, 'recovery', False), write_priority.get()))
+        return original_apply(batch, active, **kwargs)
+
+    def mutation(active):
+        with transaction.atomic():
+            state.invalidate_roots(['root'], promotion_targets=['child'])
+        assert state.Session.objects.get(pk='root').plaintext_verified_epoch is None
+        return [decode_content(row) for row in rows]
+
+    waits = []
+    token = None
+
+    async def wait(stop, wake, timeout):
+        waits.append(timeout)
+        if len(waits) <= 3:
+            assert preparations == []
+            result = await maintenance._apply(mutation, priority=WritePriority.BACKGROUND)
+            assert result == ['root' * 1000, 'child' * 1000, 'sibling' * 1000]
+            await asyncio.sleep(0)
+            assert not db_writer.get_write_coordinator().demands
+        elif len(waits) == 4:
+            assert preparations == []
+            token.release()
+            await asyncio.wait_for(wake.wait(), 1)
+        else:
+            stop.set()
+
+    monkeypatch.setattr(maintenance, 'prepare_promotion_batch', prepare)
+    monkeypatch.setattr(maintenance, 'apply_promotion_batch', apply)
+    monkeypatch.setattr(maintenance, '_wait', wait)
+
+    async def scenario():
+        nonlocal token
+        token = maintenance.defer_background_promotions('root', 'root-inc')
+        try:
+            await asyncio.wait_for(maintenance.start_content_maintenance_task(asyncio.Event()), 5)
+        finally:
+            token.release()
+        assert not db_writer.get_write_coordinator().demands
+
+    asyncio.run(scenario())
+    assert preparations == ['root', 'child']
+    assert publications == [('root', True, WritePriority.BACKGROUND), ('child', False, WritePriority.BACKGROUND)]
+    for row in rows:
+        row.refresh_from_db()
+    assert [row.codec for row in rows] == ['plain', 'plain', 'zstd']
+    root.refresh_from_db()
+    assert root.content_state_epoch == root.plaintext_verified_epoch == 7
+
+
+@pytest.mark.django_db(transaction=True)
+def test_deferral_pauses_existing_recovery_and_foreground_bypasses_it(
+    content_row_factory, writer_state, compute_executor_started, monkeypatch, settings,
+):
+    import asyncio
+    import threading
+    from twicc import content_maintenance_task as maintenance
+    from twicc.agent.registry import get_agent_manager_registry
+    from twicc.core.models import SessionItem
+    from twicc.providers import db_writer
+    from twicc.providers.write_coordinator import WritePriority, write_priority
+
+    assert hasattr(maintenance, 'defer_background_promotions'), 'Operation-scoped promotion deferral is required'
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    monkeypatch.setattr(get_agent_manager_registry(), 'get_active_agents', list)
+    root = session('root', content_storage_version=1, storage_incarnation='root-inc', content_state_epoch=4)
+    row = content_row_factory('root' * 1000, True, session_ids=['root'])
+    SessionItem.objects.create(session=root, line_num=1, current_content=row, content='')
+    prepared, release = threading.Event(), threading.Event()
+    original_prepare, original_apply = maintenance.prepare_promotion_batch, maintenance.apply_promotion_batch
+    publications = []
+    token = None
+
+    def prepare(*args):
+        batch = original_prepare(*args)
+        prepared.set()
+        assert release.wait(5)
+        return batch
+
+    def apply(batch, active, **kwargs):
+        publications.append((getattr(batch.snapshot, 'recovery', False), write_priority.get()))
+        return original_apply(batch, active, **kwargs)
+
+    async def wait(stop, wake, timeout):
+        if not publications:
+            assert token is not None
+            maintenance.request_root_promotion('root')
+            await asyncio.wait_for(wake.wait(), 1)
+        else:
+            stop.set()
+
+    monkeypatch.setattr(maintenance, 'prepare_promotion_batch', prepare)
+    monkeypatch.setattr(maintenance, 'apply_promotion_batch', apply)
+    monkeypatch.setattr(maintenance, '_wait', wait)
+
+    async def scenario():
+        nonlocal token
+        task = asyncio.create_task(maintenance.start_content_maintenance_task(asyncio.Event()))
+        try:
+            assert await asyncio.to_thread(prepared.wait, 5)
+            token = maintenance.defer_background_promotions('root', 'root-inc')
+            release.set()
+            await asyncio.wait_for(task, 5)
+            assert publications == [(False, WritePriority.FOREGROUND)]
+            assert not db_writer.get_write_coordinator().demands
+        finally:
+            release.set()
+            if token is not None:
+                # Maintenance already stopped. Releasing still works and remains idempotent.
+                token.release()
+                token.release()
+
+    asyncio.run(scenario())
+    row.refresh_from_db()
+    assert row.codec == 'plain'
+
+
+@pytest.mark.django_db(transaction=True)
+def test_deferral_successor_survives_old_release_and_late_callback_across_restart(
+    content_row_factory, writer_state, compute_executor_started, monkeypatch, settings,
+):
+    import asyncio
+    from twicc import content_maintenance_task as maintenance
+    from twicc.agent.registry import get_agent_manager_registry
+    from twicc.core.models import SessionItem
+    from twicc.providers.write_coordinator import WritePriority
+
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    monkeypatch.setattr(get_agent_manager_registry(), 'get_active_agents', list)
+    root = session('root', content_storage_version=1, storage_incarnation='root-inc', content_state_epoch=4)
+    row = content_row_factory('root' * 1000, True, session_ids=['root'])
+    SessionItem.objects.create(session=root, line_num=1, current_content=row, content='')
+    original = maintenance.prepare_promotion_batch
+    preparations = []
+    phase, waits = 0, 0
+    successor = None
+
+    def prepare(*args):
+        preparations.append(args[0].root_id)
+        return original(*args)
+
+    async def wait(stop, wake, timeout):
+        nonlocal waits
+        waits += 1
+        if phase == 0:
+            assert preparations == []
+            stop.set()
+        elif waits == 1:
+            assert preparations == []
+            # A thread-safe callback after the predecessor released uses the current token.
+            await asyncio.to_thread(maintenance.request_root_promotion, 'root', priority=WritePriority.BACKGROUND)
+            await asyncio.sleep(0)
+        elif waits == 2:
+            assert preparations == []
+            successor.release()
+            await asyncio.wait_for(wake.wait(), 1)
+        else:
+            stop.set()
+
+    monkeypatch.setattr(maintenance, 'prepare_promotion_batch', prepare)
+    monkeypatch.setattr(maintenance, '_wait', wait)
+
+    async def scenario():
+        nonlocal successor, phase, waits
+        old = maintenance.defer_background_promotions('root', 'root-inc')
+        try:
+            await asyncio.wait_for(maintenance.start_content_maintenance_task(asyncio.Event()), 5)
+            old.release()
+            successor = maintenance.defer_background_promotions('root', 'root-inc')
+            old.release()  # Must not remove the successor's root scope.
+            phase, waits = 1, 0
+            await asyncio.wait_for(maintenance.start_content_maintenance_task(asyncio.Event()), 5)
+        finally:
+            old.release()
+            if successor is not None:
+                successor.release()
+
+    asyncio.run(scenario())
+    assert preparations == ['root']
+    row.refresh_from_db()
+    assert row.codec == 'plain'
+
+
+@pytest.mark.django_db(transaction=True)
+def test_old_incarnation_deferral_cannot_pause_recreated_root(
+    content_row_factory, writer_state, compute_executor_started, monkeypatch, settings,
+):
+    import asyncio
+    from twicc import content_maintenance_task as maintenance
+    from twicc.agent.registry import get_agent_manager_registry
+    from twicc.core.models import SessionItem
+
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    monkeypatch.setattr(get_agent_manager_registry(), 'get_active_agents', list)
+    root = session('root', content_storage_version=1, storage_incarnation='new-inc', content_state_epoch=4)
+    row = content_row_factory('root' * 1000, True, session_ids=['root'])
+    SessionItem.objects.create(session=root, line_num=1, current_content=row, content='')
+
+    async def wait(stop, wake, timeout):
+        stop.set()
+
+    monkeypatch.setattr(maintenance, '_wait', wait)
+
+    async def scenario():
+        token = maintenance.defer_background_promotions('root', 'old-inc')
+        try:
+            await asyncio.wait_for(maintenance.start_content_maintenance_task(asyncio.Event()), 5)
+        finally:
+            token.release()
+
+    asyncio.run(scenario())
+    row.refresh_from_db()
+    assert row.codec == 'plain'
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('phase', ['snapshot', 'later_preparation'])
+@pytest.mark.parametrize('outcome', ['complete', 'stop', 'cancel'])
+def test_explicit_upgrade_retries_recovery_eligibility_rejected_during_await(
+    content_row_factory, writer_state, compute_executor_started, monkeypatch, settings, phase, outcome,
+):
+    import asyncio
+    import threading
+    from types import SimpleNamespace
+    from twicc import content_maintenance_task as maintenance
+    from twicc.agent.registry import get_agent_manager_registry
+    from twicc.core.models import SessionItem
+    from twicc.providers import db_writer
+
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    monkeypatch.setattr(maintenance, 'ROW_BUDGET', 1)
+    monkeypatch.setattr(get_agent_manager_registry(), 'get_active_agents',
+                        lambda: [SimpleNamespace(session_id='root')])
+    now = [timezone.now()]
+    root = session('root', archived=True, created_at=now[0] - timedelta(days=14),
+                   content_storage_version=1, storage_incarnation='root-inc', content_state_epoch=4)
+    rows = []
+    for line in (1, 2):
+        row = content_row_factory(str(line) * 1000, True, session_ids=['root'])
+        SessionItem.objects.create(session=root, line_num=line, current_content=row, content='')
+        rows.append(row)
+    monkeypatch.setattr(maintenance.timezone, 'now', lambda: now[0])
+    rejected, release = threading.Event(), threading.Event()
+    original_snapshot, original_prepare = maintenance._snapshot, maintenance.prepare_promotion_batch
+
+    def snapshot(*args, **kwargs):
+        if phase == 'snapshot' and not rejected.is_set():
+            now[0] += timedelta(days=2)
+            result = original_snapshot(*args, **kwargs)
+            assert result is None  # Recovery has no active override.
+            rejected.set()
+            assert release.wait(5)
+            return result
+        return original_snapshot(*args, **kwargs)
+
+    def prepare(snapshot, cursor, *args):
+        if phase == 'later_preparation' and cursor != maintenance.START_CURSOR and not rejected.is_set():
+            now[0] += timedelta(days=2)
+            result = original_prepare(snapshot, cursor, *args)
+            assert result.cursor == cursor and not result.verified
+            rejected.set()
+            assert release.wait(5)
+            return result
+        return original_prepare(snapshot, cursor, *args)
+
+    async def wait(stop, wake, timeout):
+        stop.set()
+
+    monkeypatch.setattr(maintenance, '_snapshot', snapshot)
+    monkeypatch.setattr(maintenance, 'prepare_promotion_batch', prepare)
+    monkeypatch.setattr(maintenance, '_wait', wait)
+
+    async def scenario():
+        stop = asyncio.Event()
+        task = asyncio.create_task(maintenance.start_content_maintenance_task(stop))
+        coordinator = db_writer.get_write_coordinator()
+        try:
+            assert await asyncio.to_thread(rejected.wait, 5)
+            maintenance.request_root_promotion('root')
+            await asyncio.sleep(0)
+            assert len(coordinator.demands) == 1
+            if outcome == 'cancel':
+                task.cancel()
+                await asyncio.sleep(0)
+                task.cancel()
+            elif outcome == 'stop':
+                stop.set()
+        finally:
+            release.set()
+        if outcome == 'cancel':
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 5)
+        else:
+            await asyncio.wait_for(task, 5)
+        assert not coordinator.demands and not coordinator.holders and not coordinator.requests
+
+    asyncio.run(scenario())
+    root.refresh_from_db()
+    for row in rows:
+        row.refresh_from_db()
+    if outcome == 'complete':
+        assert [row.codec for row in rows] == ['plain', 'plain']
+        assert root.plaintext_verified_epoch == 4
+    else:
+        assert rows[-1].codec == 'zstd'
+        assert root.plaintext_verified_epoch is None
