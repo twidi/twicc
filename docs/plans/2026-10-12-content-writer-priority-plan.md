@@ -228,7 +228,7 @@
 - [x] Run a synthetic isolated workload with large hot/cold results, shared current/original contents, concurrent foreground writes, and compression publication. It must assert semantic equivalence, not only elapsed time.
 - [x] Measure foreground completion between batches and during blocked preparation, background resumption, total throughput, maximum resource hold, and final hold. Report DEBUG modes separately if measured; do not extrapolate synthetic timing to the live database.
 - [x] Dispatch an independent whole-correction review against `442d07cc`, carrying ledger rulings and task review evidence. Review accepts `442d07cc..80ba11ba` without Critical or Important findings.
-- [ ] Resolve Critical/Important findings, rerun covering checks, and request scoped re-review before presenting the correction as ready.
+- [x] Resolve Critical/Important findings, rerun covering checks, and request scoped re-review before presenting the correction as ready.
 - [x] Update persistent audit with delivered changes, measurements and remaining atomic-hold/fallback limitations. Mark tasks from evidence, not anticipated success.
 - [ ] Present paths, commits, reviews and checks. Keep both existing servers and main untouched. Integration or restart remains a separate user action.
 
@@ -241,7 +241,7 @@ Changed-file ruff and diff checks pass. Final full backend verification runs alo
 Result: **10,374 passed, 26 skipped, 3 recorded warnings in 442.38 seconds**, exit **0**.
 Independent Task 7 checkpoint review approves the committed boundary without findings.
 Whole-correction review accepts `442d07cc..80ba11ba` with four nonblocking Minor findings.
-The final diagnostic fix and its scoped independent re-review remain the readiness gate.
+Scoped independent re-review accepts the final diagnostic fix at `178a2f43`, with no new breakage.
 Integration and restart remain separate user actions.
 
 Persistent evidence: [delivered correction audit](2026-10-11-session-item-content-extraction-audit.md#delivered-foreground-writer-priority-correction--2026-10-12).
@@ -259,7 +259,7 @@ It contains no required links to private harness or report files.
 - [x] Defer Minor 4 unchanged test-coroutine warning sources to a separate test correction.
 - [x] Reproduce Minor 1 and Minor 2 with deterministic-clock tests: four expected failures before product edits.
 - [x] Correct diagnostic counters only; four regressions pass after product edits.
-- [ ] Obtain scoped independent re-review of the final diagnostic wave before readiness.
+- [x] Obtain scoped independent re-review of `50bee9db..178a2f43`; both diagnostic findings are addressed.
 - [ ] User authorizes integration or restart separately.
 
 The diagnostic change uses `finally` for failed/superseded source preparation and settles outstanding terminal grant wait exactly once.

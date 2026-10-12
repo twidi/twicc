@@ -173,7 +173,7 @@ No review or test provides an absolute guarantee against regressions; evidence a
 - [x] Creation duplicate repairs and slower total background throughput remain explicit limitations.
 - [x] Final full backend suite completes successfully: 10,374 passed, 26 skipped, 3 recorded warnings; exit 0.
 - [x] Whole-correction independent review accepts `442d07cc..80ba11ba`, with no Critical or Important findings.
-- [ ] Scoped independent re-review accepts the final diagnostic correction before readiness.
+- [x] Scoped independent re-review accepts `50bee9db..178a2f43`, with both diagnostic findings addressed and no new breakage.
 - [ ] User authorizes integration or restart separately.
 
 See the [persistent correction audit](2026-10-11-session-item-content-extraction-audit.md#delivered-foreground-writer-priority-correction--2026-10-12)
@@ -186,7 +186,7 @@ Source preparation records elapsed time through `finally`, without publishing fa
 Terminal logging settles an open denied-grant interval once; grants, leases, demand, drainage, and ACK order keep their behavior.
 Creation-key duplicate repairs remain; early exclusion requires a separate inventory and raw-precision proof.
 The three unchanged test-coroutine warning sources remain a separate correction.
-Scoped re-review of the diagnostic wave remains pending; integration and restart remain separate user actions.
+Scoped re-review accepts the diagnostic wave. Integration and restart remain separate user actions.
 The full-suite result covers `80ba11ba`; separate diagnostic covering evidence appears in the persistent audit.
 Original-feature correctness outside correction intersections, live latency, and `DEBUG=True` behavior remain outside acceptance.
 The 25 skipped opt-in runtime cases remain unverified. Unsupported same-connection SQL remains outside structural worker exclusivity.

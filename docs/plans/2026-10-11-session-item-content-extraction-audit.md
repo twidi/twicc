@@ -2320,7 +2320,8 @@ The 26 skips cover opt-in real-runtime tests and one host limitation:
 
 Whole-correction review accepts `442d07cc..80ba11ba` with four nonblocking Minor findings.
 The final fix wave addresses only Minor 1 and Minor 2: the two diagnostic undercounts.
-Scoped independent re-review of that wave remains pending. Integration and restart remain separate user actions.
+Scoped independent re-review accepts `50bee9db..178a2f43`. Both diagnostic findings are addressed; no new breakage appears.
+Integration and restart remain separate user actions.
 
 | Finding | Decision and remaining limitation |
 | --- | --- |
