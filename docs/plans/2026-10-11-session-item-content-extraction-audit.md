@@ -1790,3 +1790,98 @@ Targeted synthetic tests cover those cases; the timing table does not measure th
 No new allocation or peak-WAL claim follows from these measurements.
 
 The temporary harness, result JSON, logs, and Task 17 report remain in the ignored implementation workspace for independent review.
+
+## Codec cooperation and byte preparation — 2026-10-12
+
+Representation preparation verifies source size, SHA-256, frame boundaries, dictionary bytes, and strict UTF-8 once.
+It retains verified bytes and digest instead of decoding text, encoding text, and hashing again.
+The requested-content text API retains its exact UTF-8 failure contract.
+
+Strict incremental UTF-8 validation uses 1 MiB chunks and preserves decoder state across chunk boundaries.
+`time.sleep(0)` releases the worker GIL between validation chunks and after each transformed content.
+The coordinator's existing `asyncio.sleep(0)` remains separate.
+Zstd and large hashlib operations already release the GIL in their native implementations.
+
+Dictionary objects remain operation-local, with at most 32 identities in the codec cache.
+Each new operation validates database dictionary bytes again.
+Compression selects its provider dictionary once per bounded batch.
+Preparation uses the already observed content row; source proof and encoded output now share that exact row.
+A verified frame already using the selected dictionary retains its original compressed bytes.
+
+Extraction reconciliation also uses byte preparation for representation changes.
+No-gain and missing-dictionary skips perform no representation validation because they publish no new representation.
+Integrity failures during actual representation preparation remain mandatory failures.
+Optional compressor failures remain recoverable.
+
+Publication ownership/root proofs, current-policy checks, exact representation CAS, readiness generations, and cancellation draining remain unchanged.
+Owner ancestry and root proofs retain their bounded, fresh database checks.
+No mutable ownership cache, schema, dependency, process executor, or server change is introduced.
+
+### Bounded worker benchmark
+
+The heartbeat coroutine requests a 1 ms sleep and records delay beyond that request.
+One worker thread executes a finite batch; each case runs three times.
+The table shows the median of each run's throughput, maximum delay, and p95 delay.
+Percentiles use sorted heartbeat samples at floor(0.95 × (sample count − 1)).
+Before and after use identical row sequences, payload bytes, dictionary, directions, and heartbeat code.
+Before uses the committed decode-text/encode path; after uses byte preparation.
+Ablation changes only worker `sleep(0)` to a no-op.
+
+Fixture setup, dictionary selection, and initial compression happen before timed worker execution.
+Timing includes executor construction, worker dictionary loads, transforms, and connection cleanup.
+Heartbeat starts 5 ms before worker execution and ends after completion.
+Faster workers collect fewer samples; elapsed time and sample counts appear below.
+This measures codec preparation, not native-tree traversal, writer publication, or readiness latency.
+
+| Case | Direction | Before MiB/s | After MiB/s | Before max / p95 ms | After max / p95 ms | Before / after median seconds | Before / after ticks |
+|---|---|---:|---:|---:|---:|---:|---|
+| single16MiB | compress | 143.895 | 317.847 | 22.016 / 0.296 | 0.849 / 0.330 | 0.4448 / 0.2014 | 281, 269, 270 / 189, 181, 186 |
+| single16MiB | decompress | 147.488 | 325.193 | 19.639 / 0.154 | 0.885 / 0.367 | 0.4339 / 0.1968 | 264, 262, 268 / 183, 176, 176 |
+| many256KiB | compress | 158.335 | 308.410 | 0.926 / 0.349 | 0.533 / 0.245 | 0.2021 / 0.1038 | 179, 180, 180 / 96, 101, 93 |
+| many256KiB | decompress | 163.869 | 348.595 | 0.904 / 0.262 | 0.721 / 0.204 | 0.1953 / 0.0918 | 177, 177, 181 / 85, 87, 92 |
+| copied100 | compress | 33.356 | 57.655 | 0.456 / 0.361 | 0.431 / 0.186 | 0.0505 / 0.0292 | 51, 49, 48 / 31, 33, 32 |
+| copied100 | decompress | 42.127 | 101.345 | 0.639 / 0.413 | 0.880 / 0.681 | 0.0400 / 0.0166 | 39, 39, 39 / 20, 20, 20 |
+
+The single-content case repeats one exact 16 MiB UTF-8 payload four times: 64 MiB total.
+The many-content case uses 128 contents of 262,140 bytes: 33,553,920 bytes total.
+The copied sample uses 100 already-extracted worktree contents: 1,766,083 raw bytes total.
+Copied samples remain private; committed documentation contains aggregate statistics only.
+
+| Case | Direction | Without yields MiB/s | With yields MiB/s | Without yields max / p95 ms | With yields max / p95 ms |
+|---|---|---:|---:|---:|---:|
+| single16MiB | compress | 326.333 | 317.847 | 5.770 / 0.621 | 0.849 / 0.330 |
+| single16MiB | decompress | 333.938 | 325.193 | 5.732 / 0.625 | 0.885 / 0.367 |
+| many256KiB | compress | 345.615 | 308.410 | 0.347 / 0.249 | 0.533 / 0.245 |
+| many256KiB | decompress | 352.066 | 348.595 | 0.834 / 0.244 | 0.721 / 0.204 |
+| copied100 | compress | 57.826 | 57.655 | 0.886 / 0.199 | 0.431 / 0.186 |
+| copied100 | decompress | 112.054 | 101.345 | 0.880 / 0.853 | 0.880 / 0.681 |
+
+Yields reduce the large-content maximum from about 5.7 ms to below 0.9 ms in these runs.
+They reduce large-content throughput by about 2.5%, relative to byte preparation without yields.
+The many-content compression case loses about 10.8% throughput to explicit yields.
+Small copied decompression shows increased max/p95 versus baseline, although each remains below 1 ms.
+Short runs and sample count changes limit conclusions about small percentile differences.
+The implementation offers scheduling opportunities; it does not guarantee a maximum event-loop latency.
+
+Servers remain stopped. The benchmark asserts the resolved database path is inside this worktree.
+It reads existing copied contents without writing rows or changing lifecycle fields.
+No production access, extra copy, census, extraction, native-tree recompression, migration, or shared scratch/artifact write occurs.
+Private harnesses and complete results remain in the ignored task workspace for independent review.
+
+### Task 18 validation
+
+The full backend suite reports 10,104 passed, 26 skipped, and three failures in 314.82 seconds.
+All failures are extraction tests that still reference the removed `extraction.decode_content` instrumentation boundary:
+
+- `test_reconcile_resumes_between_distinct_oversized_fk_payloads`
+- `test_reconcile_shared_fk_slots_advance_without_duplicate_payload_decode`
+- `test_reconcile_epoch_change_before_publication_rejects_all_candidates`
+
+Those hooks now wrap `transcode_content` and forward keyword arguments.
+Their budget, deduplication, and epoch assertions remain unchanged.
+A subsequent focused run of codec, maintenance, initial-compression, and extraction tests passes all 107 cases in 6.68 seconds.
+Production code does not change after the full run.
+No second full run repeats for these test-only hook corrections.
+
+The full suite retains three existing coroutine warnings from Codex SDK wrappers and shell-notice tests.
+Targeted Ruff and `git diff --check` pass.

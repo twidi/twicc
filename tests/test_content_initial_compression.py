@@ -150,6 +150,7 @@ def test_optional_encoding_failure_does_not_block_extraction(monkeypatch):
     def fail(*args, **kwargs):
         raise RuntimeError('optional encoding failure')
     monkeypatch.setattr(extraction, 'encode_cold', fail)
+    monkeypatch.setattr(extraction, 'transcode_content', fail)
     assert BaseSessionCompute.apply_session_complete(message(session)).outcome == 'applied'
     item.refresh_from_db()
     assert read_current(item) == 'repeat ' * 1000

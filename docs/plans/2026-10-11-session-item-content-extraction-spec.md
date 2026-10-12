@@ -716,3 +716,21 @@ The earlier extraction-only review is separate and does not substitute for this 
 
 The review outcome and resolved findings are retained here; the separate review report is removed.
 This verdict supports planning; it does not establish implementation correctness or measured end-to-end performance.
+
+## Byte representation preparation and worker cooperation
+
+Maintenance and extraction reconciliation verify exact source bytes before changing representation.
+They retain the verified size and digest instead of decoding text, re-encoding text, and hashing again.
+Strict incremental UTF-8 validation uses bounded chunks and carries decoder state between chunks.
+The requested-content text API still rejects invalid UTF-8.
+
+Worker `time.sleep(0)` calls release the GIL between validation chunks and after each prepared content.
+These calls provide scheduling opportunities without promising a maximum event-loop delay.
+The existing coordinator yield, bounded batches, one oversized-row progress, writer admission, and cancellation drain remain intact.
+
+Dictionary reuse remains bounded and operation-local.
+New operations reload and validate dictionary bytes.
+Already-selected compressed frames retain their exact verified representation.
+No-gain or missing-dictionary skips publish no representation and require no representation transform.
+Compression preparation uses the same observed source row as its publication proof.
+Publication retains all owner/root cold checks, policy checks, exact source CAS, and readiness/incarnation/epoch fences.

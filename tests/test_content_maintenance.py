@@ -112,9 +112,9 @@ def test_optional_encoder_failure_does_not_record_no_gain(content_row_factory, m
 
     owner = cold('cold')
     row = content_row_factory('content' * 100, False, session_ids=[owner.id])
-    def failure(*args):
+    def failure(*args, **kwargs):
         raise RuntimeError('optional encoder unavailable')
-    monkeypatch.setattr(maintenance, 'encode_cold', failure)
+    monkeypatch.setattr(maintenance, 'transcode_content', failure)
     _, entries, _ = maintenance.prepare_compression_batch(0)
     row.refresh_from_db()
     assert entries == ()
@@ -637,3 +637,20 @@ def test_compression_budget_charges_owner_list_bytes_even_for_ineligible_rows(co
     cursor, entries, done = maintenance.prepare_compression_batch(0, 500, 1024)
     assert cursor == first.id and entries == () and not done
     assert len(decoded_owner_lists) == 1
+
+
+def test_compression_prepares_the_observed_content_once(content_row_factory):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from twicc import content_maintenance_task as maintenance
+
+    owner = cold('one-observed-row')
+    row = content_row_factory('exact observed bytes ' * 100, False, session_ids=[owner.id])
+    with CaptureQueriesContext(connection) as queries:
+        _, entries, _ = maintenance.prepare_compression_batch(0)
+    payload_reads = [query for query in queries if 'SELECT' in query['sql']
+                     and '"core_sessionitemcontent"."payload"' in query['sql'] and 'LENGTH(' not in query['sql']]
+    assert len(payload_reads) == 1
+    assert len(entries) == 1
+    assert entries[0].proof.payload == bytes(row.payload)
+    assert decode_content(type(row)(**entries[0].candidate.encoded._asdict())) == 'exact observed bytes ' * 100

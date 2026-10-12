@@ -230,13 +230,13 @@ def test_reconcile_resumes_between_distinct_oversized_fk_payloads(content_row_fa
     SessionItem.objects.create(session=owner, line_num=1, content='', current_content=current, original_content=original)
     msg = message(owner)
     decoded = []
-    decode = extraction.decode_content
+    decode = extraction.transcode_content
 
-    def record(row):
+    def record(row, *args, **kwargs):
         decoded.append(row.id)
-        return decode(row)
+        return decode(row, *args, **kwargs)
 
-    monkeypatch.setattr(extraction, 'decode_content', record)
+    monkeypatch.setattr(extraction, 'transcode_content', record)
     cursor = extraction.reconcile_storage_slice(msg, -1)
     assert decoded == [current.id]
     assert cursor.line_num == -1 and not cursor.done
@@ -258,7 +258,7 @@ def test_reconcile_shared_fk_slots_advance_without_duplicate_payload_decode(cont
     shared = content_row_factory('shared' * 1500000, True, session_ids=[owner.id])
     SessionItem.objects.create(session=owner, line_num=1, content='', current_content=shared, original_content=shared)
     from unittest.mock import patch
-    with patch.object(extraction, 'decode_content', wraps=extraction.decode_content) as decode:
+    with patch.object(extraction, 'transcode_content', wraps=extraction.transcode_content) as decode:
         cursor = extraction.reconcile_storage_slice(message(owner), -1)
     assert cursor.done and cursor.line_num == 1
     assert decode.call_count == 1
@@ -311,15 +311,15 @@ def test_reconcile_epoch_change_before_publication_rejects_all_candidates(conten
     owner = make_session()
     stored = content_row_factory('compressed pending ' * 1000, True, session_ids=[owner.id])
     SessionItem.objects.create(session=owner, line_num=1, content='', current_content=stored)
-    decode = extraction.decode_content
+    decode = extraction.transcode_content
 
-    def invalidate(row):
-        result = decode(row)
+    def invalidate(row, *args, **kwargs):
+        result = decode(row, *args, **kwargs)
         with transaction.atomic():
             invalidate_roots([owner.id])
         return result
 
-    monkeypatch.setattr(extraction, 'decode_content', invalidate)
+    monkeypatch.setattr(extraction, 'transcode_content', invalidate)
     msg = message(owner)
     with pytest.raises(extraction.SupersededStorageResult):
         extraction.prepare_compute_result(msg)

@@ -16,7 +16,7 @@ from django.db.models import BinaryField, F, Q
 from django.db.models.functions import Cast, Length
 from django.utils import timezone
 
-from twicc.core.content_storage.codec import ContentIntegrityError, decode_content, encode_cold, encode_plain
+from twicc.core.content_storage.codec import ContentIntegrityError, transcode_content
 from twicc.core.content_storage.lifecycle import active_session_ids, set_root_promotion_wakeup
 from twicc.core.content_storage.policy import COLD_FIELDS, CONTENT_STORAGE_VERSION, compression_policy_version
 from twicc.core.content_storage.state import (
@@ -138,17 +138,26 @@ def _dictionary(row):
     return ContentDictionary.objects.filter(provider=row.dictionary_provider).order_by('-version').first()
 
 
-def prepare_representation(content_id: int, policy_version: str) -> PreparedRepresentation:
+def prepare_representation(content_id: int, policy_version: str, observed=None, dictionary=None,
+                           dictionary_cache=None) -> PreparedRepresentation:
     """Prepare exact bytes on the read/codec worker without a writer lease."""
-    row = SessionItemContent.objects.get(pk=content_id)
-    text = decode_content(row)
+    row = SessionItemContent.objects.get(pk=content_id) if observed is None else observed
+    if row.id != content_id:
+        raise ValueError('Observed content does not match requested identity')
     if policy_version == 'plain':
-        encoded, no_gain = encode_plain(text), False
+        encoded, no_gain = transcode_content(row, dictionary_cache=dictionary_cache)
     else:
-        dictionary = _dictionary(row)
-        if dictionary is None or compression_policy_version(row.dictionary_provider, dictionary.id) != policy_version:
+        dictionary = _dictionary(row) if dictionary is None else dictionary
+        if dictionary is None or compression_policy_version(
+            row.dictionary_provider, dictionary.id, dictionary=dictionary,
+        ) != policy_version:
             raise ValueError('Compression policy no longer selects the provider dictionary')
-        encoded, no_gain = encode_cold(text, dictionary.id, policy_version)
+        if dictionary_cache is None:
+            dictionary_cache = {}
+        if dictionary.id not in dictionary_cache and len(dictionary_cache) >= 32:
+            dictionary_cache.pop(next(iter(dictionary_cache)))
+        dictionary_cache[dictionary.id] = dictionary
+        encoded, no_gain = transcode_content(row, dictionary.id, dictionary_cache=dictionary_cache)
     return PreparedRepresentation(row.id, row.codec, row.dictionary_id, encoded, policy_version, no_gain)
 
 
@@ -271,6 +280,7 @@ def prepare_promotion_batch(snapshot, cursor, row_budget=ROW_BUDGET, byte_budget
     rows = SessionItemContent.objects.in_bulk({key[3] for key in selected if key[3] is not None})
     entries = []
     prepared_ids = set()
+    dictionary_cache = {}
     last = cursor
     verified = True
     for session_id, line, slot, content_id, item_valid in selected:
@@ -280,7 +290,7 @@ def prepare_promotion_batch(snapshot, cursor, row_budget=ROW_BUDGET, byte_budget
             verified = False
         if row is not None and row.codec != 'plain' and row.id not in prepared_ids:
             prepared_ids.add(row.id)
-            encoded = encode_plain(decode_content(row))
+            encoded, _ = transcode_content(row, dictionary_cache=dictionary_cache)
             candidate = PreparedRepresentation(row.id, row.codec, row.dictionary_id, encoded, 'plain', False)
             entries.append(PromotionEntry(candidate, bytes(row.payload)))
         last = RootPromotionCursor(session_id, line, slot, len(selected), size, False)
@@ -353,6 +363,8 @@ def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_
     entries = []
     size = 0
     last = after_id
+    dictionaries = {}
+    dictionary_cache = {}
     query = SessionItemContent.objects.filter(pk__gt=after_id).order_by('id')
     rows = list(query.annotate(
         stored_size=Length('payload'), owner_size=Length(Cast('session_ids', BinaryField())),
@@ -366,16 +378,21 @@ def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_
         row = SessionItemContent.objects.get(pk=last)
         if not _owners_cold(row, frozenset()):
             continue
-        dictionary = _dictionary(row)
+        if row.dictionary_provider not in dictionaries:
+            dictionary = _dictionary(row)
+            policy = None if dictionary is None else compression_policy_version(
+                row.dictionary_provider, dictionary.id, dictionary=dictionary,
+            )
+            dictionaries[row.dictionary_provider] = dictionary, policy
+        dictionary, policy = dictionaries[row.dictionary_provider]
         if dictionary is None:
             continue
-        policy = compression_policy_version(row.dictionary_provider, dictionary.id)
         if (row.compression_attempt_version == policy and row.compression_no_gain
                 or row.codec == 'zstd' and row.dictionary_id == dictionary.id):
             continue
         proof = _proof(row)
         try:
-            candidate = prepare_representation(row.id, policy)
+            candidate = prepare_representation(row.id, policy, row, dictionary, dictionary_cache)
         except ContentIntegrityError:
             raise
         except Exception:

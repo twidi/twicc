@@ -784,3 +784,19 @@ Both reviewers recheck the corrected plan and independently report no remaining 
 The review outcome and resolved findings are retained here; the separate review report is removed.
 The planned tests and design/performance gates still must run during implementation.
 This document and its review do not claim those gates already pass.
+
+### Task 18: Codec CPU optimization and worker cooperation
+
+- Prepare verified bytes without a text roundtrip or a second SHA-256 calculation.
+- Validate UTF-8 incrementally in 1 MiB chunks; preserve the public text API contract.
+- Release the worker GIL with `time.sleep(0)` between chunks and after each prepared content.
+- Reuse at most 32 validated dictionaries per codec operation; reload them in new operations.
+- Select provider dictionaries once per compression batch and prepare the already observed content row.
+- Keep source CAS, owner/root proofs, current-policy checks, eligibility, readiness, cancellation, and writer bounds intact.
+- Retain verified frames when their dictionary already matches the target.
+- Apply byte preparation to extraction reconciliation; skip validation when no representation is published.
+
+Regression tests cover strict UTF-8 across chunk boundaries, invalid UTF-8 with valid hashes, exact byte preservation,
+operation-local dictionary queries, worker/event-loop handoff, observed-row payload reads, and verified-frame retention.
+The audit records three-repeat before/after heartbeat and throughput measurements plus a yield ablation.
+No native-tree recompression or production access is repeated.

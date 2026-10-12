@@ -2,12 +2,14 @@
 
 from datetime import datetime, timedelta
 
-from twicc.core.content_storage.codec import COMPRESSION_LEVEL, ContentIntegrityError, _load_dictionary
+from twicc.core.content_storage.codec import (
+    COMPRESSION_LEVEL, ContentIntegrityError, _load_dictionary, _validate_dictionary,
+)
 
 
-def compression_policy_version(provider: str, dictionary_id: int) -> str:
-    dictionary = _load_dictionary(dictionary_id)
-    if dictionary.provider != provider:
+def compression_policy_version(provider: str, dictionary_id: int, *, dictionary=None) -> str:
+    dictionary = _load_dictionary(dictionary_id) if dictionary is None else _validate_dictionary(dictionary)
+    if dictionary.provider != provider or dictionary.id != dictionary_id:
         raise ContentIntegrityError('Content dictionary provider mismatch')
     return (
         f'zstd:level={COMPRESSION_LEVEL}:dictionary={bytes(dictionary.sha256).hex()}'

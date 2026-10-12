@@ -13,7 +13,7 @@ from django.db.models import BinaryField, Max, Q
 from django.db.models.functions import Cast, Length
 from django.utils import timezone
 
-from twicc.core.content_storage.codec import ContentIntegrityError, decode_content, encode_cold, encode_plain
+from twicc.core.content_storage.codec import ContentIntegrityError, encode_cold, encode_plain, transcode_content
 from twicc.core.content_storage.policy import (
     COLD_FIELDS, CONTENT_STORAGE_VERSION, cold_from_fields, compression_policy_version,
 )
@@ -264,6 +264,7 @@ def reconcile_storage_slice(msg, cursor, row_budget=ROW_BUDGET, byte_budget=BYTE
     last_line = cursor
     owner_cache = {}
     dictionaries = {}
+    dictionary_cache = {}
     incoming_cold = cold_placement(msg['session_id'])
     stopped = False
     for item_line, current, original in rows:
@@ -284,30 +285,32 @@ def reconcile_storage_slice(msg, cursor, row_budget=ROW_BUDGET, byte_budget=BYTE
                 row = SessionItemContent.objects.get(pk=pk)
                 owners_cold = _owners_cold(row, owner_cache)
                 if owners_cold or row.codec != 'plain':
-                    text = decode_content(row)
                     if owners_cold:
                         if row.dictionary_provider not in dictionaries:
                             dictionaries[row.dictionary_provider] = ContentDictionary.objects.filter(
                                 provider=row.dictionary_provider).order_by('-version').first()
                         dictionary = dictionaries[row.dictionary_provider]
                         if dictionary is not None:
-                            policy = compression_policy_version(row.dictionary_provider, dictionary.id)
+                            policy = compression_policy_version(
+                                row.dictionary_provider, dictionary.id, dictionary=dictionary,
+                            )
                             if row.codec == 'zstd' and row.dictionary_id == dictionary.id:
-                                from twicc.core.content_storage.types import EncodedContent
-
-                                encoded = EncodedContent(bytes(row.payload), row.codec, row.dictionary_id,
-                                                         row.raw_size, bytes(row.sha256))
+                                encoded, _ = transcode_content(row, dictionary.id, dictionary_cache=dictionary_cache)
                                 prepared.append((row, encoded, policy, False))
                             elif not (row.compression_attempt_version == policy and row.compression_no_gain):
                                 try:
-                                    encoded, no_gain = encode_cold(text, dictionary.id, policy)
+                                    encoded, no_gain = transcode_content(
+                                        row, dictionary.id, dictionary_cache=dictionary_cache,
+                                    )
+                                except ContentIntegrityError:
+                                    raise
                                 except Exception:
                                     logger.warning('Optional initial content compression failed', exc_info=True)
                                 else:
                                     prepared.append((row, encoded, policy, no_gain))
                     else:
-                        prepared.append((row, encode_plain(text), row.compression_attempt_version,
-                                         row.compression_no_gain))
+                        encoded, _ = transcode_content(row, dictionary_cache=dictionary_cache)
+                        prepared.append((row, encoded, row.compression_attempt_version, row.compression_no_gain))
             visited.append((item_line, item_slot, pk))
             position = (item_line, item_slot)
             if item_slot == 1:

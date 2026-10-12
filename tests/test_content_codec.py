@@ -138,3 +138,100 @@ def test_unknown_frame_size_has_bounded_output(content_row_factory, incorrect_si
             decode_content(row)
     else:
         assert decode_content(row) == text
+
+
+@pytest.mark.parametrize('compressed', [False, True])
+def test_transcode_preserves_verified_bytes(content_row_factory, compressed):
+    from twicc.core.content_storage.codec import transcode_content
+
+    text = 'é🙂 raw\x00 text ' * 1000
+    row = content_row_factory(text=text, compressed=compressed)
+    dictionary_id = ContentDictionary.objects.get(provider='codex', version=1).id
+    encoded, no_gain = transcode_content(row, dictionary_id if not compressed else None)
+    assert encoded.sha256 == bytes(row.sha256)
+    assert encoded.raw_size == row.raw_size
+    assert decode_content(SessionItemContent(**encoded._asdict())) == text
+    assert no_gain is False
+
+
+@pytest.mark.parametrize('compressed', [False, True])
+def test_transcode_rejects_invalid_utf8_with_valid_digest(compressed):
+    from twicc.core.content_storage.codec import transcode_content
+
+    raw = b'a' * (1024 * 1024 - 1) + b'\xf0\x9f\x99\x82' + b'\xff'
+    dictionary = ContentDictionary.objects.get(provider='codex', version=1)
+    payload = raw
+    if compressed:
+        data = zstandard.ZstdCompressionDict(bytes(dictionary.payload), dict_type=zstandard.DICT_TYPE_RAWCONTENT)
+        payload = zstandard.ZstdCompressor(dict_data=data).compress(raw)
+    row = SessionItemContent(payload=payload, codec='zstd' if compressed else 'plain',
+                             dictionary_id=dictionary.id if compressed else None,
+                             raw_size=len(raw), sha256=hashlib.sha256(raw).digest())
+    with pytest.raises(ContentIntegrityError, match='UTF-8'):
+        transcode_content(row, dictionary.id if not compressed else None)
+
+
+def test_transcode_validates_utf8_across_chunk_boundary():
+    from twicc.core.content_storage.codec import transcode_content
+
+    raw = b'a' * (1024 * 1024 - 1) + '🙂'.encode() + b'z'
+    row = SessionItemContent(codec='plain', payload=raw, raw_size=len(raw), sha256=hashlib.sha256(raw).digest())
+    encoded, _ = transcode_content(row)
+    assert encoded.payload == raw
+
+
+def test_transcode_batch_reuses_dictionary_queries(content_row_factory, django_assert_num_queries):
+    from twicc.core.content_storage.codec import transcode_content
+
+    rows = [content_row_factory(text=f'large exact bytes {i} ' * 100, compressed=True) for i in range(3)]
+    cache = {}
+    with django_assert_num_queries(1):
+        for i, row in enumerate(rows):
+            encoded, _ = transcode_content(row, dictionary_cache=cache)
+            assert encoded.payload == (f'large exact bytes {i} ' * 100).encode()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_transcode_worker_gives_event_loop_opportunity(monkeypatch):
+    import asyncio
+    import threading
+    from twicc.core.content_storage import codec
+
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        opportunity = asyncio.Event()
+        resume = threading.Event()
+        raw = b'valid raw bytes'
+        row = SessionItemContent(codec='plain', payload=raw, raw_size=len(raw), sha256=hashlib.sha256(raw).digest())
+
+        def handoff(seconds):
+            assert seconds == 0
+            loop.call_soon_threadsafe(opportunity.set)
+            assert resume.wait(5)
+
+        monkeypatch.setattr(codec, 'sleep', handoff)
+        task = asyncio.create_task(asyncio.to_thread(codec.transcode_content, row))
+        try:
+            await asyncio.wait_for(opportunity.wait(), 5)
+            assert not task.done()
+        finally:
+            resume.set()
+        encoded, _ = await task
+        assert encoded.payload == raw
+
+    asyncio.run(scenario())
+
+
+def test_transcode_same_dictionary_retains_verified_frame(content_row_factory):
+    from twicc.core.content_storage.codec import transcode_content
+
+    text = 'exact existing compressed frame ' * 100
+    row = content_row_factory(text=text, compressed=True)
+    dictionary = ContentDictionary.objects.get(pk=row.dictionary_id)
+    data = zstandard.ZstdCompressionDict(bytes(dictionary.payload), dict_type=zstandard.DICT_TYPE_RAWCONTENT)
+    row.payload = zstandard.ZstdCompressor(level=1, dict_data=data, write_checksum=True).compress(text.encode())
+    encoded, no_gain = transcode_content(row, row.dictionary_id)
+    assert encoded.payload == bytes(row.payload)
+    assert encoded.codec == 'zstd'
+    assert no_gain is False
+    assert decode_content(type(row)(**encoded._asdict())) == text

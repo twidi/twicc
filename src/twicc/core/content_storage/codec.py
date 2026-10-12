@@ -1,7 +1,9 @@
 """Lossless UTF-8 representations with explicit integrity checks."""
 
 import hashlib
+from codecs import getincrementaldecoder
 from functools import lru_cache
+from time import sleep
 
 import zstandard
 
@@ -11,6 +13,7 @@ from twicc.core.models import ContentDictionary, SessionItemContent
 
 COMPRESSION_LEVEL = 3
 MAX_DICTIONARY_BYTES = 16 * 1024
+UTF8_CHUNK_BYTES = 1024 * 1024
 
 
 class ContentIntegrityError(ValueError):
@@ -28,6 +31,10 @@ def _load_dictionary(dictionary_id: int) -> ContentDictionary:
         dictionary = ContentDictionary.objects.get(pk=dictionary_id)
     except ContentDictionary.DoesNotExist as error:
         raise ContentIntegrityError(f"Missing content dictionary {dictionary_id}") from error
+    return _validate_dictionary(dictionary)
+
+
+def _validate_dictionary(dictionary: ContentDictionary) -> ContentDictionary:
     payload = _binary(dictionary.payload, 'dictionary payload')
     digest = _binary(dictionary.sha256, 'dictionary digest')
     if dictionary.format != 'raw' or not 0 < len(payload) <= MAX_DICTIONARY_BYTES:
@@ -68,8 +75,19 @@ def encode_cold(text: str, dictionary_id: int, policy_version: str) -> tuple[Enc
     return EncodedContent(compressed, 'zstd', dictionary_id, plain.raw_size, plain.sha256), False
 
 
-def decode_content(row: SessionItemContent) -> str:
-    """Decode one requested row and verify its exact size and digest."""
+def _operation_dictionary(dictionary_id, cache):
+    if cache is None:
+        return _load_dictionary(dictionary_id)
+    if dictionary_id not in cache:
+        dictionary = _load_dictionary(dictionary_id)
+        if len(cache) >= 32:
+            cache.pop(next(iter(cache)))
+        cache[dictionary_id] = dictionary
+    return cache[dictionary_id]
+
+
+def _decode_bytes(row: SessionItemContent, dictionary_cache=None) -> bytes:
+    """Verify one representation before exposing its logical bytes."""
     payload = _binary(row.payload, 'content payload')
     digest = _binary(row.sha256, 'content digest')
     if type(row.raw_size) is not int or row.raw_size < 0 or len(digest) != 32:
@@ -81,7 +99,7 @@ def decode_content(row: SessionItemContent) -> str:
     elif row.codec == 'zstd':
         if row.dictionary_id is None:
             raise ContentIntegrityError('Compressed content has no dictionary')
-        dictionary = _load_dictionary(row.dictionary_id)
+        dictionary = _operation_dictionary(row.dictionary_id, dictionary_cache)
         try:
             frame_size = zstandard.frame_content_size(payload)
             # frame_content_size returns -1 for unknown size, unlike the C sentinel.
@@ -97,6 +115,47 @@ def decode_content(row: SessionItemContent) -> str:
         raise ContentIntegrityError(f'Unknown content codec {row.codec!r}')
     if len(raw) != row.raw_size or hashlib.sha256(raw).digest() != digest:
         raise ContentIntegrityError('Content size or digest mismatch')
+    return raw
+
+
+def transcode_content(row: SessionItemContent, dictionary_id: int | None = None, *, dictionary_cache=None):
+    """Change representation without re-encoding text or re-hashing verified bytes.
+
+    The optional dictionary cache belongs to one bounded preparation operation.
+    Strict incremental UTF-8 validation bounds temporary strings and GIL work.
+    Worker sleeps release the GIL between chunks and after each content.
+    """
+    raw = _decode_bytes(row, dictionary_cache)
+    validator = getincrementaldecoder('utf-8')()
+    try:
+        for offset in range(0, len(raw), UTF8_CHUNK_BYTES):
+            end = offset + UTF8_CHUNK_BYTES
+            validator.decode(memoryview(raw)[offset:end], final=end >= len(raw))
+            if end < len(raw):
+                sleep(0)
+    except UnicodeDecodeError as error:
+        raise ContentIntegrityError('Content payload is not valid UTF-8') from error
+    plain = EncodedContent(raw, 'plain', None, row.raw_size, bytes(row.sha256))
+    if dictionary_id is None:
+        result = plain, False
+    elif row.codec == 'zstd' and row.dictionary_id == dictionary_id:
+        result = EncodedContent(bytes(row.payload), 'zstd', dictionary_id, row.raw_size, plain.sha256), False
+    else:
+        dictionary = _operation_dictionary(dictionary_id, dictionary_cache)
+        compressed = zstandard.ZstdCompressor(
+            level=COMPRESSION_LEVEL, dict_data=_dictionary_data(dictionary),
+        ).compress(raw)
+        if len(compressed) >= row.raw_size:
+            result = plain, True
+        else:
+            result = EncodedContent(compressed, 'zstd', dictionary_id, row.raw_size, plain.sha256), False
+    sleep(0)
+    return result
+
+
+def decode_content(row: SessionItemContent, *, dictionary_cache=None) -> str:
+    """Decode one requested row and verify its exact size, digest, and UTF-8."""
+    raw = _decode_bytes(row, dictionary_cache)
     try:
         return raw.decode('utf-8')
     except UnicodeDecodeError as error:
