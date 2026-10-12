@@ -576,43 +576,45 @@ def prepare_compute_batch(operation):
         raise ValueError('A prepared compute batch already exists')
     started = perf_counter()
     msg = operation.message
-    with _compute_scope(operation, msg.get('_active_session_ids', frozenset())):
-        if operation.phase == 'counts':
-            def validate_page():
-                if not validate_compute_application(operation):
-                    raise SupersededStorageResult('superseded')
-                return True
-            operation.references.initialize_page(row_budget=ROW_BUDGET,
-                                                  validate=validate_page)
-            batch = PreparedComputeBatch('counts', operation.references.initialization_cursor, (), (), None, 0,
-                                         operation.references.initialized)
-        elif operation.phase == 'metadata':
-            updates = msg.get('item_updates') or ()
-            end = min(len(updates), operation.cursor + operation.item_row_budget)
-            batch = PreparedComputeBatch('metadata', end,
-                                         tuple(MappingProxyType(dict(row)) for row in updates[operation.cursor:end]),
-                                         (), None, 0, end == len(updates))
-        elif operation.phase == 'overrides':
-            overrides = msg.get('content_overrides') or ()
-            chunk, size = [], 0
-            for row in overrides[operation.cursor:operation.cursor + ROW_BUDGET]:
-                length = len(row['content'].encode('utf-8'))
-                if chunk and size + length > BYTE_BUDGET:
-                    break
-                chunk.append(row)
-                size += length
-            batch = _prepare_overrides(msg, chunk)._replace(cursor=operation.cursor + len(chunk),
-                                                            done=operation.cursor + len(chunk) == len(overrides))
-        elif operation.phase == 'extraction':
-            batch = _prepare_extraction(msg['session_id'], msg['observed_upper_line'], operation.cursor,
-                                        ROW_BUDGET, BYTE_BUDGET)
-        elif operation.phase == 'reconciliation':
-            local = {**msg, '_storage_reconcile_position': operation.cursor}
-            batch = _prepare_reconciliation(local, operation.cursor[0], ROW_BUDGET, BYTE_BUDGET)
-        else:
-            raise ValueError('Compute storage preparation is complete')
+    try:
+        with _compute_scope(operation, msg.get('_active_session_ids', frozenset())):
+            if operation.phase == 'counts':
+                def validate_page():
+                    if not validate_compute_application(operation):
+                        raise SupersededStorageResult('superseded')
+                    return True
+                operation.references.initialize_page(row_budget=ROW_BUDGET,
+                                                      validate=validate_page)
+                batch = PreparedComputeBatch('counts', operation.references.initialization_cursor, (), (), None, 0,
+                                             operation.references.initialized)
+            elif operation.phase == 'metadata':
+                updates = msg.get('item_updates') or ()
+                end = min(len(updates), operation.cursor + operation.item_row_budget)
+                batch = PreparedComputeBatch('metadata', end,
+                                             tuple(MappingProxyType(dict(row)) for row in updates[operation.cursor:end]),
+                                             (), None, 0, end == len(updates))
+            elif operation.phase == 'overrides':
+                overrides = msg.get('content_overrides') or ()
+                chunk, size = [], 0
+                for row in overrides[operation.cursor:operation.cursor + ROW_BUDGET]:
+                    length = len(row['content'].encode('utf-8'))
+                    if chunk and size + length > BYTE_BUDGET:
+                        break
+                    chunk.append(row)
+                    size += length
+                batch = _prepare_overrides(msg, chunk)._replace(cursor=operation.cursor + len(chunk),
+                                                                done=operation.cursor + len(chunk) == len(overrides))
+            elif operation.phase == 'extraction':
+                batch = _prepare_extraction(msg['session_id'], msg['observed_upper_line'], operation.cursor,
+                                            ROW_BUDGET, BYTE_BUDGET)
+            elif operation.phase == 'reconciliation':
+                local = {**msg, '_storage_reconcile_position': operation.cursor}
+                batch = _prepare_reconciliation(local, operation.cursor[0], ROW_BUDGET, BYTE_BUDGET)
+            else:
+                raise ValueError('Compute storage preparation is complete')
+    finally:
+        operation.preparation_ms += (perf_counter() - started) * 1000
     operation.pending_batch = batch
-    operation.preparation_ms += (perf_counter() - started) * 1000
     logger.debug('Compute storage preparation: session=%s phase=%s rows=%d bytes=%d elapsed_ms=%.1f cursor=%s',
                  msg['session_id'], batch.phase, len(batch.rows), batch.bytes,
                  (perf_counter() - started) * 1000, batch.cursor)

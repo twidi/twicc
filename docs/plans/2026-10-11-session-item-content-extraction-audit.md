@@ -2153,7 +2153,9 @@ The running original feature checkout and main checkout remain unchanged.
 No server, live database, provider, schema, index, dependency, policy, API, or changelog operation occurs.
 Independent reviews accept Tasks 1–5 and the three Task 6 boundaries.
 Independent Task 7 checkpoint review accepts the regression, style changes, and load evidence without findings.
-The final backend suite passes. Whole-correction independent review remains pending.
+The prior-code full backend suite passes on `80ba11ba`.
+Whole-correction independent review accepts `442d07cc..80ba11ba`, with no Critical or Important findings.
+The final diagnostic correction still requires scoped independent re-review before readiness.
 
 ### Delivered paths and correctness checks
 
@@ -2265,21 +2267,22 @@ Final creation-day/week repairs, facts, links, source metadata, cached costs, ve
 Foreign commits conservatively discard optional proof and select complete exact repair without restarting proof.
 Continuous foreground traffic can delay background work indefinitely.
 
-Terminal timing has a retained diagnostic limitation.
-Failed source preparation can be absent from accumulated `preparation_ms`.
-A trailing denied-grant interval can be absent from `grant_wait_ms` when abandonment ends the result.
-Total application duration still includes those intervals. Successful measured paths retain separate phase evidence.
-Activity enumeration has separate timings; it is not part of the source-preparation counter.
+The final diagnostic correction records failed or superseded source preparation in `preparation_ms` through `finally`.
+A failed batch remains unpublished; exceptions, committed cursors, observation guards, and stored data keep their behavior.
+Terminal logging settles an outstanding denied-grant interval once into `grant_wait_ms`, then clears its start.
+Grant decisions, foreground demand, leases, deferral, drainage, cancellation, and acknowledgement order keep their behavior.
+Activity enumeration retains separate timings; it is not part of the source-preparation counter.
 
 Final full backend command: `TWICC_DATA_DIR=$PWD uv run pytest` from the isolated worktree.
 It runs alone after final focused checks and the isolated harness.
 Result: **10,374 passed, 26 skipped, 3 warnings in 442.38 seconds**, exit **0**.
-The product and tests remain unchanged after collection; subsequent edits record evidence only.
+That full run covers product/test commit `80ba11ba`; `50bee9db` records its durable evidence only.
+The subsequent diagnostic correction has separate covering evidence below; the full run does not cover that correction.
 The earlier full run stops with exit 143 before the authorized invalid-priority correction.
 That stopped run is not passing verification.
 The expected uv environment warning means the inherited main-checkout `VIRTUAL_ENV` is ignored.
 No command uses `--active` or targets that environment.
-Previously recorded unawaited-coroutine warnings remain final-review input; no unrelated warning cleanup occurs.
+Final review accepts the three warning signatures as a nonblocking limitation; no unrelated warning cleanup occurs.
 
 The load harness does not activate default large-history TEMP counts with its 2,400-row estimate.
 The accepted Task 4 actual TEMP-page/WAL test and new Task 7 physical-close test cover that path separately.
@@ -2295,7 +2298,9 @@ Final warnings match the three previously recorded sources:
   `RuntimeWarning: coroutine 'BaseAgent._notify_state_change' was never awaited`.
 
 These test/helper files have no diff against `442d07cc`.
-No warning cleanup or unrelated source change occurs. Whole-correction review retains their final triage.
+Final review finds no retained compute worker or lease leak behind these warnings.
+Their mock/coroutine lifecycle repair remains a separate correction.
+No original-baseline full-suite run proves historical occurrence; no stronger baseline comparison is claimed.
 
 The 26 skips cover opt-in real-runtime tests and one host limitation:
 
@@ -2309,3 +2314,52 @@ The 26 skips cover opt-in real-runtime tests and one host limitation:
 | `tests/test_codex_goal_steering_integration.py` | 1 | Codex runtime and explicit opt-in required. |
 | `tests/test_codex_interactive_catalog_integration.py` | 4 | Codex runtime and explicit opt-in required. |
 | `tests/test_inline_artifact_files.py` | 1 | Test host does not permit device-node creation. |
+
+
+### Final review decisions and diagnostic correction
+
+Whole-correction review accepts `442d07cc..80ba11ba` with four nonblocking Minor findings.
+The final fix wave addresses only Minor 1 and Minor 2: the two diagnostic undercounts.
+Scoped independent re-review of that wave remains pending. Integration and restart remain separate user actions.
+
+| Finding | Decision and remaining limitation |
+| --- | --- |
+| Minor 1: failed preparation timing | Record elapsed source preparation in `finally`, without retaining or publishing a failed batch. |
+| Minor 2: terminal grant wait | Settle an outstanding denied-grant interval once before terminal timing logging. |
+| Minor 3: duplicate creation repairs | Keep final creation-key exclusion. Early exclusion needs a separate inventory and raw-precision proof. Additional SQL and lower measured throughput remain. |
+| Minor 4: test coroutine warnings | Keep unchanged warning sources outside this correction. Repair mock/coroutine lifecycle separately. |
+
+The controller also accepts these review boundaries:
+
+- Original-feature correctness outside correction intersections remains outside this review.
+  An unrelated original-feature defect can remain unreviewed.
+- Isolated `DEBUG=False` timing provides no live-database or `DEBUG=True` acceptance.
+  Deployed latency can exceed the isolated measurements.
+- The 25 skipped opt-in provider/runtime cases remain unverified real-runtime acceptance.
+  Shared storage/continuation tests do not replace those cases.
+- Supported pinned-worker callers retain structural exclusivity.
+  Fixed `main.data_version` covers foreign physical connections.
+  Manually injected unrelated SQL on the same connection remains unsupported and can invalidate private proof undetected.
+
+Diagnostic regression command from the isolated worktree:
+`TWICC_DATA_DIR=$PWD uv run pytest tests/test_content_extraction.py tests/test_compute_continuation.py -k 'failed_preparation_records_elapsed or terminal_diagnostics_settle_denied' -q`.
+Before product edits: **4 failed, 81 deselected in 4.97 seconds**, exit **1**.
+After product edits: **4 passed, 81 deselected in 4.48 seconds**, exit **0**, with no pytest warnings.
+Deterministic clocks verify exact 250 ms intervals without wall-clock thresholds.
+Tests preserve exception identity, source content, compute version, cursor, epoch, and absence of a failed batch.
+Actual runtime abandonment and permanent-writer cancellation retain their acknowledgement and provider-owned done semantics.
+Repeated terminal handling leaves the interval counted once and emits one terminal timing record.
+
+No material scheduling or correctness change appears in this source-only diagnostic correction.
+The prior full suite is not rerun; covering checks are separate evidence for the final fix.
+
+
+Final-fix covering command from the isolated worktree:
+`TWICC_DATA_DIR=$PWD uv run pytest tests/test_sync_diagnostics.py tests/test_content_extraction.py tests/test_content_references.py tests/test_content_initial_compression.py tests/test_compute_continuation.py tests/test_compute_executor.py tests/test_compute_activity_obligations.py tests/test_write_coordinator.py tests/test_content_storage_admission.py tests/test_activity_final_admission.py -q`.
+Result: **260 passed in 49.04 seconds**, exit **0**, with no pytest warnings.
+This covers diagnostics, storage, continuation, executor cleanup, exact activity obligations, coordinator, admission, and final activity admission.
+
+Final-fix style command:
+`uvx ruff check src/twicc/core/content_storage/extraction.py src/twicc/providers/db_writer.py tests/test_content_extraction.py tests/test_compute_continuation.py`.
+Result: **All checks passed**, exit **0**. `git diff --check` also passes, exit **0**.
+These checks cover the final diagnostic product/test changes, separately from the prior-code full suite and load measurements.

@@ -616,3 +616,41 @@ def test_unresolved_override_reconciles_both_persisted_items_exactly(cyclic, mon
         assert first.current_content.codec == 'plain'
     finally:
         extraction.close_compute_application(operation)
+
+
+@pytest.mark.parametrize('failure', ['failed', 'superseded'])
+def test_failed_preparation_records_elapsed_without_advancing_storage(monkeypatch, failure):
+    """Skipping the exception interval loses preparation cost without publishing anything."""
+    from twicc.core.content_storage import extraction
+
+    session = make_session()
+    item = SessionItem.objects.create(session=session, line_num=1, content='preserved')
+    operation = extraction.begin_compute_application(message(session))
+    try:
+        _advance_storage_operation(operation, 'extraction')
+        cursor = operation.cursor
+        epoch = operation.placement['root_epoch']
+        previous_ms = operation.preparation_ms
+        error = (RuntimeError('preparation failure') if failure == 'failed'
+                 else extraction.SupersededStorageResult('superseded'))
+
+        def fail(*args, **kwargs):
+            raise error
+
+        monkeypatch.setattr(extraction, '_prepare_extraction', fail)
+        times = iter((10.0, 10.25))
+        monkeypatch.setattr(extraction, 'perf_counter', lambda: next(times))
+        with pytest.raises(type(error)) as caught:
+            extraction.prepare_compute_batch(operation)
+        assert caught.value is error
+        assert operation.pending_batch is None
+        assert operation.cursor == cursor
+        assert operation.placement['root_epoch'] == epoch
+        item.refresh_from_db()
+        session.refresh_from_db()
+        assert item.content == 'preserved'
+        assert item.current_content_id is None
+        assert session.compute_version is None
+        assert operation.preparation_ms == pytest.approx(previous_ms + 250.0)
+    finally:
+        extraction.close_compute_application(operation)

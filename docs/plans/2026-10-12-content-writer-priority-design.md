@@ -172,11 +172,21 @@ No review or test provides an absolute guarantee against regressions; evidence a
 - [x] Measurements separate foreground completion, preparation, metadata aggregates, final hold, and maximum hold.
 - [x] Creation duplicate repairs and slower total background throughput remain explicit limitations.
 - [x] Final full backend suite completes successfully: 10,374 passed, 26 skipped, 3 recorded warnings; exit 0.
-- [ ] Whole-correction independent review against `442d07cc` accepts the correction.
+- [x] Whole-correction independent review accepts `442d07cc..80ba11ba`, with no Critical or Important findings.
+- [ ] Scoped independent re-review accepts the final diagnostic correction before readiness.
 - [ ] User authorizes integration or restart separately.
 
 See the [persistent correction audit](2026-10-11-session-item-content-extraction-audit.md#delivered-foreground-writer-priority-correction--2026-10-12)
 for complete evidence. No single SQL, oversized row, initialization, or final transaction gains an absolute latency bound.
 
 Independent Task 7 checkpoint review approves its committed regression/style/docs boundary without findings.
-Whole-correction review remains pending; no integration or restart occurs.
+The accepted whole-correction review has four nonblocking Minor findings.
+The final wave fixes failed source-preparation timing and outstanding terminal grant-wait timing only.
+Source preparation records elapsed time through `finally`, without publishing failed batches or changing exceptions and cursors.
+Terminal logging settles an open denied-grant interval once; grants, leases, demand, drainage, and ACK order keep their behavior.
+Creation-key duplicate repairs remain; early exclusion requires a separate inventory and raw-precision proof.
+The three unchanged test-coroutine warning sources remain a separate correction.
+Scoped re-review of the diagnostic wave remains pending; integration and restart remain separate user actions.
+The full-suite result covers `80ba11ba`; separate diagnostic covering evidence appears in the persistent audit.
+Original-feature correctness outside correction intersections, live latency, and `DEBUG=True` behavior remain outside acceptance.
+The 25 skipped opt-in runtime cases remain unverified. Unsupported same-connection SQL remains outside structural worker exclusivity.

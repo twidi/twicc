@@ -1327,3 +1327,68 @@ def test_activity_page_terminal_drains_private_proof_before_ack(wal_runtime, mon
             db_writer._compute_states.pop(run_id, None)
             db_writer._compute_done_events.pop(run_id, None)
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('terminal', ['abandoned', 'cancelled'])
+def test_terminal_diagnostics_settle_denied_grant_once(wal_runtime, monkeypatch, caplog, terminal):
+    """A terminal result must include its open wait even without a later grant."""
+    import logging
+
+    session, path = wal_runtime
+    clock = [0.0]
+    monkeypatch.setattr(db_writer, 'perf_counter', lambda: clock[0])
+    monkeypatch.setattr(db_writer.logger, 'disabled', False)
+    monkeypatch.setattr(db_writer.logger, 'handlers', [caplog.handler])
+    monkeypatch.setattr(db_writer.logger, 'propagate', False)
+    monkeypatch.setattr(db_writer.logger, 'level', logging.DEBUG)
+
+    async def scenario():
+        db_writer.start_db_writer()
+        applied = asyncio.Queue()
+        run_id, done = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0,
+                                                       applied_queue=applied)
+        lock = db_writer.get_db_write_lock()
+        await lock.acquire()
+        try:
+            db_writer.get_subprocess_queue().put(result_message(session, run_id))
+            await wait_until(lambda: db_writer._pending_compute is not None
+                             and db_writer._pending_compute.grant_wait_started is not None)
+            pending = db_writer._pending_compute
+            pending.apply_started = 0.0
+            assert pending.operation is None
+            assert pending.grant_wait_started == 0.0
+            clock[0] = .25
+            if terminal == 'abandoned':
+                await db_writer.abandon_compute_run(run_id, Provider.CODEX)
+            else:
+                db_writer._db_writer_task.cancel()
+            await wait_until(lambda: db_writer._pending_compute is None)
+            assert pending.terminal
+            assert pending.operation is None
+            assert pending.grant_wait_started is None
+            assert pending.grant_wait_ms == 250.0
+            # Repeated terminal handling cannot accumulate or log the interval again.
+            clock[0] = .75
+            await db_writer._finish_pending_compute(pending)
+            assert pending.grant_wait_ms == 250.0
+            assert not db_writer.get_write_coordinator().demands
+            if terminal == 'abandoned':
+                assert applied.empty()
+            else:
+                assert applied.get_nowait() == db_writer.ComputeApplied(
+                    session.id, 'failed', 'Compute application cancelled')
+                assert applied.empty()
+                assert not done.done()
+        finally:
+            lock.release()
+            await db_writer.stop_db_writer()
+            db_writer._compute_states.pop(run_id, None)
+            db_writer._compute_done_events.pop(run_id, None)
+
+    asyncio.run(scenario())
+    rows = [record.getMessage() for record in caplog.records
+            if 'Compute application timings:' in record.getMessage()]
+    assert len(rows) == 1
+    assert 'grant_wait_ms=250.0' in rows[0]
+    with sqlite3.connect(path) as database:
+        assert database.execute('SELECT compute_version FROM core_session WHERE id=?', (session.id,)).fetchone() == (None,)

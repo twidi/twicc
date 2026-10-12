@@ -2035,6 +2035,9 @@ async def _finish_pending_compute(pending, *, notify=True):
         except asyncio.CancelledError:
             cancelled = True
     task.result()
+    if pending.grant_wait_started is not None:
+        pending.grant_wait_ms += (perf_counter() - pending.grant_wait_started) * 1000
+        pending.grant_wait_started = None
     logger.debug('Compute application timings: total_apply_ms=%.1f preparation_ms=%.1f grant_wait_ms=%.1f '
                  'max_publication_hold_ms=%.1f final_hold_ms=%.1f',
                  (perf_counter() - pending.apply_started) * 1000,
