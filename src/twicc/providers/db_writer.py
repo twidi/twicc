@@ -311,6 +311,10 @@ class PendingComputeApplication:
     error: str | None = None
     terminal: bool = False
     abandon_jobs: list = field(default_factory=list)
+    grant_wait_started: float | None = None
+    grant_wait_ms: float = 0.0
+    max_publication_hold_ms: float = 0.0
+    final_hold_ms: float = 0.0
 
 
 # Shared write lock — serializes every SQLite-writing critical section that
@@ -1764,11 +1768,18 @@ async def _dispatch_queued_job(job) -> None:
             _settle_unhandled_async_job(job, exc)
 
 
-async def _background_turn(factory, *, content_activity=True) -> bool:
+async def _background_turn(factory, *, content_activity=True, diagnostics=None, phase=None) -> bool:
     """Try one combined grant. Never wait for background admission in a tick."""
+    waiting = perf_counter()
     lease = get_write_coordinator().try_background_lease()
     if lease is None:
+        if diagnostics is not None and diagnostics.grant_wait_started is None:
+            diagnostics.grant_wait_started = waiting
         return False
+    if diagnostics is not None:
+        diagnostics.grant_wait_ms += (waiting - (diagnostics.grant_wait_started or waiting)) * 1000
+        diagnostics.grant_wait_started = None
+    holding = perf_counter()
     try:
         await _drive_publication(
             (lambda: _run_with_content_activity(factory)) if content_activity else factory,
@@ -1776,6 +1787,13 @@ async def _background_turn(factory, *, content_activity=True) -> bool:
         )
     finally:
         lease.release()
+        if diagnostics is not None:
+            hold_ms = (perf_counter() - holding) * 1000
+            diagnostics.max_publication_hold_ms = max(diagnostics.max_publication_hold_ms, hold_ms)
+            if phase == 'final':
+                diagnostics.final_hold_ms = hold_ms
+            logger.debug('Compute grant: phase=%s wait_ms=%.1f hold_ms=%.1f',
+                         phase, diagnostics.grant_wait_ms, hold_ms)
     return True
 
 
@@ -1905,7 +1923,7 @@ async def _advance_pending_compute_body() -> bool:
                 observation = pending.operation.observation
                 if observation.root_id and observation.root_incarnation:
                     pending.deferral = defer_background_promotions(observation.root_id, observation.root_incarnation)
-            if not await _background_turn(begin):
+            if not await _background_turn(begin, diagnostics=pending, phase='begin'):
                 return False
         elif pending.operation.phase == 'final':
             async def finalize():
@@ -1916,7 +1934,7 @@ async def _advance_pending_compute_body() -> bool:
                     msg['_repaired_activity_buckets'] = state.repaired_activity_buckets
                     return BaseSessionCompute._apply_session_complete_final(msg)
                 pending.result = await run_compute_application_sync(apply)
-            if not await _background_turn(finalize):
+            if not await _background_turn(finalize, diagnostics=pending, phase='final'):
                 return False
             await _finish_pending_compute(pending)
             return True
@@ -1926,7 +1944,7 @@ async def _advance_pending_compute_body() -> bool:
                 await run_compute_application_sync(publish_compute_batch, pending.operation, pending.batch,
                                                    _active_compute_ids())
                 pending.batch = None
-            if not await _background_turn(publish):
+            if not await _background_turn(publish, diagnostics=pending, phase=pending.batch.phase):
                 return False
         if pending.operation.phase != 'final' and pending.preparation is None:
             # This task is never cancelled by a tick or terminal waiter. The raw
@@ -1992,6 +2010,11 @@ async def _finish_pending_compute(pending, *, notify=True):
         except asyncio.CancelledError:
             cancelled = True
     task.result()
+    logger.debug('Compute application timings: total_apply_ms=%.1f preparation_ms=%.1f grant_wait_ms=%.1f '
+                 'max_publication_hold_ms=%.1f final_hold_ms=%.1f',
+                 (perf_counter() - pending.apply_started) * 1000,
+                 pending.operation.preparation_ms if pending.operation is not None else 0,
+                 pending.grant_wait_ms, pending.max_publication_hold_ms, pending.final_hold_ms)
     async def notify_result():
         try:
             state = _compute_states.get(pending.run_id)

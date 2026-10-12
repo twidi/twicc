@@ -1,7 +1,7 @@
 """Exact session, direct-parent, and activity contributions in writer transactions."""
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import NamedTuple
@@ -70,6 +70,13 @@ def _activity_keys(project_id, provider, timestamp):
             yield WeeklyActivity, scope, provider, day - timedelta(days=day.weekday())
 
 
+def contribution_activity_keys(items=(), sessions=()) -> set[tuple]:
+    """Enumerate exact UTC project/global day/week obligations without deltas."""
+    return {key for row in (*items, *sessions)
+            for key in _activity_keys(row.project_id, row.provider,
+                                      row.timestamp if isinstance(row, ItemContribution) else row.created_at)}
+
+
 def _save_session_aggregates(session: Session) -> None:
     total = (session.self_cost or ZERO) + (session.subagents_cost or ZERO)
     session.total_cost = total if total > 0 else None
@@ -101,6 +108,7 @@ def apply_contribution_changes(
     before_items: Sequence[ItemContribution], after_items: Sequence[ItemContribution], *,
     before_sessions: Sequence[SessionContribution], after_sessions: Sequence[SessionContribution], repair: bool,
     repaired_activity_buckets: set[tuple] | None = None,
+    extra_activity_keys: Iterable[tuple] = (),
 ) -> None:
     """Maintain aggregates after source writes, under the caller's transaction.
 
@@ -108,6 +116,8 @@ def apply_contribution_changes(
     use only changed rows and indexed existence probes for nullable costs.
     A compute run may reuse an exact, committed activity bucket and apply
     later persisted deltas. Other callers continue to repair each bucket.
+    extra_activity_keys retains removed keys independently of that cache.
+    With repair=True, each extra key receives exact repair on a cache miss.
     """
     if not connection.in_atomic_block:
         raise RuntimeError('Contribution changes require a caller-owned transaction')
@@ -179,6 +189,8 @@ def apply_contribution_changes(
         for state in states.values():
             for key in _activity_keys(state.project_id, state.provider, state.created_at):
                 buckets[key][1] += sign * int(_eligible(state) and state.user_message_count > 0)
+    for key in extra_activity_keys:
+        buckets[key]
     if repair:
         # Cover unchanged historical buckets as well as removed/moved rows.
         for item in item_contributions(SessionItem.objects.filter(session_id__in=session_ids)):

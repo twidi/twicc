@@ -1009,3 +1009,84 @@ def test_postcommit_progress_rechecks_run_after_project_await(wal_runtime, monke
             db_writer._compute_states.pop(run_id, None)
             db_writer._compute_done_events.pop(run_id, None)
     asyncio.run(scenario())
+
+
+
+def test_compute_diagnostics_separate_final_hold_and_preparation(wal_runtime, monkeypatch, caplog):
+    import logging
+    import time
+    from twicc.providers import compute_base
+    from twicc import sync_diagnostics
+    original = compute_base.apply_contribution_changes
+    def delayed_aggregates(*args, **kwargs):
+        time.sleep(.03)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(compute_base, 'apply_contribution_changes', delayed_aggregates)
+    for logger in (sync_diagnostics.logger, extraction.logger):
+        monkeypatch.setattr(logger, 'disabled', False)
+        monkeypatch.setattr(logger, 'handlers', [caplog.handler])
+        monkeypatch.setattr(logger, 'propagate', False)
+        monkeypatch.setattr(logger, 'level', logging.DEBUG)
+    session, path = wal_runtime
+    monkeypatch.setattr(db_writer.logger, 'disabled', False)
+    monkeypatch.setattr(db_writer.logger, 'handlers', [caplog.handler])
+    monkeypatch.setattr(db_writer.logger, 'propagate', False)
+    monkeypatch.setattr(db_writer.logger, 'level', logging.DEBUG)
+    async def scenario():
+        db_writer.start_db_writer()
+        applied = asyncio.Queue()
+        run_id, done = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0,
+                                                       applied_queue=applied)
+        db_writer.get_subprocess_queue().put(result_message(session, run_id))
+        db_writer.get_subprocess_queue().put({'type': 'done', 'provider': 'codex', 'run_id': run_id})
+        try:
+            assert (await asyncio.wait_for(applied.get(), 5)).outcome == 'applied'
+        finally:
+            await db_writer.stop_db_writer()
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(scenario())
+    rows = [record.getMessage() for record in caplog.records if 'Compute application timings:' in record.getMessage()]
+    assert len(rows) == 1
+    row = rows[0]
+    for counter in ('total_apply_ms', 'preparation_ms', 'grant_wait_ms', 'max_publication_hold_ms', 'final_hold_ms'):
+        assert f'{counter}=' in row
+    assert 'legacy ' not in row and 'UPDATE ' not in row
+    values = dict(part.split('=') for part in row.split() if '=' in part)
+    assert float(values['final_hold_ms']) >= 30
+    assert float(values['max_publication_hold_ms']) >= float(values['final_hold_ms'])
+    assert float(values['total_apply_ms']) >= float(values['final_hold_ms'])
+    aggregate = next(record.getMessage() for record in caplog.records
+                     if 'operation=compute_final_aggregates ' in record.getMessage())
+    assert float(aggregate.split('elapsed_ms=')[1].split()[0]) >= 30
+    assert any('Compute storage preparation:' in record.getMessage() for record in caplog.records)
+
+
+def test_compute_diagnostics_accumulate_denied_combined_grant_wait(wal_runtime):
+    session, path = wal_runtime
+    async def scenario():
+        db_writer.start_db_writer()
+        diagnostics = db_writer.PendingComputeApplication({}, 0)
+        lock = db_writer.get_db_write_lock()
+        try:
+            await lock.acquire()
+            async def publish():
+                return await db_writer.run_compute_sync(
+                    lambda: Session.objects.filter(pk=session.id).update(title='diagnostic grant'))
+            assert not await db_writer._background_turn(publish, diagnostics=diagnostics, phase='metadata')
+            assert diagnostics.grant_wait_started is not None
+            assert diagnostics.max_publication_hold_ms == 0
+            await asyncio.sleep(.01)
+            lock.release()
+            assert await db_writer._background_turn(publish, diagnostics=diagnostics, phase='metadata')
+            assert diagnostics.grant_wait_ms >= 10
+            assert diagnostics.grant_wait_started is None
+            assert diagnostics.max_publication_hold_ms > 0
+            assert diagnostics.final_hold_ms == 0
+        finally:
+            if lock.locked():
+                lock.release()
+            await db_writer.stop_db_writer()
+    asyncio.run(scenario())
+    with sqlite3.connect(path) as database:
+        assert database.execute('SELECT title FROM core_session WHERE id = ?', [session.id]).fetchone() == (
+            'diagnostic grant',)

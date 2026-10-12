@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from types import MappingProxyType
 from time import perf_counter
-from datetime import datetime
+from datetime import UTC, datetime
 
 from django.db import transaction
 from django.db.models import BinaryField, Max, Q
@@ -444,7 +444,7 @@ def _settle_placement_epoch(placement):
 class ComputeStorageOperation:
     """Worker-owned mutable state; only successful publications settle cursors."""
 
-    def __init__(self, msg, observation, placement, references):
+    def __init__(self, msg, observation, placement, references, activity_repair_keys):
         self.message = msg
         self.observation = observation
         self.placement = placement
@@ -454,6 +454,11 @@ class ComputeStorageOperation:
         self.closed = False
         self.item_row_budget = 2000
         self.pending_batch = None
+        # Current history is enumerated by final exact repair. Keep obligations
+        # that metadata commits can remove from that history independently.
+        self.activity_repair_keys = activity_repair_keys
+        self.preparation_ms = 0.0
+        self.max_publication_ms = 0.0
 
     @property
     def connection_identity(self):
@@ -518,6 +523,7 @@ def begin_compute_application(msg):
     """Capture exact target/root observations under a short write-first guard."""
     from twicc.core.content_storage.references import SessionReferenceOperation
     from twicc.providers.compute_base import BaseSessionCompute
+    from twicc.providers.live_aggregates import contribution_activity_keys, session_contribution, ItemContribution
 
     with transaction.atomic():
         guard_storage(msg['session_id'], msg.get('observed_incarnation'), msg.get('observed_epoch'),
@@ -527,6 +533,14 @@ def begin_compute_application(msg):
         BaseSessionCompute.validate_item_fields(msg.get('item_fields', ()))
         initialize_compute_session(msg['session_id'])
         session = Session.objects.get(pk=msg['session_id'])
+        state = session_contribution(session)
+        prospective = msg.get('session_fields', {}).get('created_at', state.created_at)
+        if isinstance(prospective, str):
+            prospective = datetime.fromisoformat(prospective)
+        days = [ItemContribution(state.session_id, state.project_id, state.provider,
+                                 datetime.fromisoformat(day).replace(tzinfo=UTC), None, None)
+                for day in msg.get('affected_days') or ()]
+        activity_repair_keys = contribution_activity_keys(days, (state, state._replace(created_at=prospective)))
         upper_line = msg.get('observed_upper_line')
         if upper_line is None:
             upper_line = max(session.last_line,
@@ -552,7 +566,7 @@ def begin_compute_application(msg):
         references.uses_counts = False
         references.initialized = True
     references.validate_connection()
-    return ComputeStorageOperation(msg, observation, placement, references)
+    return ComputeStorageOperation(msg, observation, placement, references, activity_repair_keys)
 
 
 def prepare_compute_batch(operation):
@@ -597,8 +611,10 @@ def prepare_compute_batch(operation):
         else:
             raise ValueError('Compute storage preparation is complete')
     operation.pending_batch = batch
-    logger.debug('Compute storage preparation: session=%s phase=%s rows=%d bytes=%d elapsed_ms=%.1f',
-                 msg['session_id'], batch.phase, len(batch.rows), batch.bytes, (perf_counter() - started) * 1000)
+    operation.preparation_ms += (perf_counter() - started) * 1000
+    logger.debug('Compute storage preparation: session=%s phase=%s rows=%d bytes=%d elapsed_ms=%.1f cursor=%s',
+                 msg['session_id'], batch.phase, len(batch.rows), batch.bytes,
+                 (perf_counter() - started) * 1000, batch.cursor)
     return batch
 
 
@@ -619,7 +635,8 @@ def publish_compute_batch(operation, batch, active_ids):
                 outcome = BaseSessionCompute.apply_session_items_chunk(
                     msg['session_id'], msg.get('observed_last_offset'), msg.get('item_fields', []),
                     list(batch.rows), [], msg.get('_repaired_activity_buckets'),
-                    msg['observed_incarnation'], msg['observed_epoch'], msg['observed_upper_line'])
+                    msg['observed_incarnation'], msg['observed_epoch'], msg['observed_upper_line'],
+                    activity_repair_keys=operation.activity_repair_keys)
                 if outcome != 'ok':
                     raise SupersededStorageResult(outcome)
             elif batch.phase == 'overrides':
@@ -631,6 +648,7 @@ def publish_compute_batch(operation, batch, active_ids):
                 _publish_reconciliation(msg, batch)
             _settle_placement_epoch(placement)
             epoch = placement['root_epoch']
+    operation.max_publication_ms = max(operation.max_publication_ms, (perf_counter() - started) * 1000)
     operation.placement['root_epoch'] = epoch
     operation.pending_batch = None
     operation.cursor = batch.cursor
@@ -639,8 +657,9 @@ def publish_compute_batch(operation, batch, active_ids):
                       'extraction': 'reconciliation', 'reconciliation': 'final'}[batch.phase]
         operation.phase = next_phase
         operation.cursor = -1 if next_phase == 'extraction' else (-1, 1) if next_phase == 'reconciliation' else 0
-    logger.debug('Compute storage publication: session=%s phase=%s rows=%d bytes=%d elapsed_ms=%.1f',
-                 msg['session_id'], batch.phase, len(batch.rows), batch.bytes, (perf_counter() - started) * 1000)
+    logger.debug('Compute storage publication: session=%s phase=%s rows=%d bytes=%d elapsed_ms=%.1f cursor=%s',
+                 msg['session_id'], batch.phase, len(batch.rows), batch.bytes,
+                 (perf_counter() - started) * 1000, batch.cursor)
     return ComputeStorageProgress(operation.phase, operation.cursor, epoch, len(batch.rows), batch.bytes,
                                   operation.phase == 'final')
 
@@ -651,7 +670,7 @@ def final_compute_message(operation, active_ids):
     with _compute_scope(operation, active_ids) as placement:
         return {**operation.message, 'item_updates': [], 'content_overrides': [], '_storage_prepared': True,
                 '_storage_operation': operation, '_storage_final_root': dict(placement),
-                '_active_session_ids': active_ids}
+                '_active_session_ids': active_ids, '_activity_repair_keys': frozenset(operation.activity_repair_keys)}
 
 
 def close_compute_application(operation):

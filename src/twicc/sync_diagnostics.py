@@ -42,3 +42,18 @@ def log_slow(operation, elapsed_ms, *, threshold_ms=100, **sizes):
     logger.warning('Slow sync operation=%s elapsed_ms=%.1f provider=%s session=%s %s',
                    operation, elapsed_ms, context.pop('provider', None), context.pop('session', None),
                    ' '.join(f'{key}={value}' for key, value in context.items()))
+
+
+@contextmanager
+def timed_sync_phase(operation, **sizes):
+    """Measure an internal phase using identifiers and numeric counters only."""
+    started = monotonic()
+    try:
+        yield
+    finally:
+        elapsed_ms = (monotonic() - started) * 1000
+        context = {**(_context.get() or {}), **sizes}
+        logger.debug('Sync phase operation=%s elapsed_ms=%.1f provider=%s session=%s %s',
+                     operation, elapsed_ms, context.pop('provider', None), context.pop('session', None),
+                     ' '.join(f'{key}={value}' for key, value in context.items()))
+        log_slow(operation, elapsed_ms, **sizes)

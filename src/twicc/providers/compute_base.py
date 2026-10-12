@@ -75,8 +75,10 @@ from twicc.inline_artifacts.publications import merge_publications
 from twicc.providers.enrichment_cache import BorrowedEnrichment, EnrichmentCache
 from twicc.providers.live_sync import LiveSyncLimits, LiveSyncResult, LiveSyncUpdates, RawLiveSlice, read_live_slice
 from twicc.providers.live_aggregates import (
-    ItemContribution, apply_contribution_changes, item_contributions, needs_repair, persisted_cost, session_contribution,
+    ItemContribution, contribution_activity_keys, apply_contribution_changes, item_contributions, needs_repair,
+    persisted_cost, session_contribution,
 )
+from twicc.sync_diagnostics import timed_sync_phase
 from twicc.providers.goals import GoalEvent, apply_goal_event, preserve_dismissed_flags
 from twicc.providers.task_snapshots import select_tasks_snapshot
 from twicc.providers.history_facts import (
@@ -3702,12 +3704,14 @@ class BaseSessionCompute:
         repaired_activity_buckets: set[tuple] | None = None,
         observed_incarnation: str | None = None, observed_epoch: int | None = None,
         observed_upper_line: int | None = None,
+        activity_repair_keys: set[tuple] | None = None,
     ) -> str:
         """Apply one slice of a compute result's item writes in its own transaction.
 
         The DB writer feeds a large result to the dedicated compute worker
-        in slices. Each slice releases its SQL transaction, while the outer
-        writer lease remains held for the full result. Each slice re-checks
+        in slices. Each publication releases its transaction and writer
+        lease. The row budget bounds source writes, while inherited aggregate
+        repair remains atomic and can scan full history. Each slice re-checks
         the revision guard;
         returns its outcome (``"ok"`` / ``"superseded"`` / ``"missing"``).
         A slice applied before a later ``superseded`` is harmless: the
@@ -3723,13 +3727,19 @@ class BaseSessionCompute:
         before_session = session_contribution(session)
         changed = SessionItem.objects.filter(session_id=session_id, id__in=[u['id'] for u in item_updates])
         before_items = item_contributions(changed)
-        BaseSessionCompute.apply_item_updates(item_fields, item_updates)
-        BaseSessionCompute.apply_content_overrides(content_overrides)
-        apply_contribution_changes(
-            before_items, item_contributions(changed), before_sessions=[before_session],
-            after_sessions=[session_contribution(session)], repair=needs_repair(session),
-            repaired_activity_buckets=repaired_activity_buckets,
-        )
+        with timed_sync_phase('compute_metadata_source', rows=len(item_updates)):
+            BaseSessionCompute.apply_item_updates(item_fields, item_updates)
+            BaseSessionCompute.apply_content_overrides(content_overrides)
+        after_items = item_contributions(changed)
+        if activity_repair_keys is not None:
+            keys = contribution_activity_keys((*before_items, *after_items), (before_session,))
+            transaction.on_commit(lambda: activity_repair_keys.update(keys))
+        with timed_sync_phase('compute_metadata_aggregates', rows=len(item_updates)):
+            apply_contribution_changes(
+                before_items, after_items, before_sessions=[before_session],
+                after_sessions=[session_contribution(session)], repair=needs_repair(session),
+                repaired_activity_buckets=repaired_activity_buckets,
+            )
         return "ok"
 
     @staticmethod
@@ -3819,242 +3829,248 @@ class BaseSessionCompute:
         # 2. Apply content overrides (rare: provider-specific transformations applied at compute time)
         BaseSessionCompute.apply_content_overrides(msg.get('content_overrides', []))
 
-        # 3. Sync tool result links (diff-based: create/update/delete)
-        trl_to_create = msg.get('tool_result_links_to_create', [])
-        if trl_to_create:
-            links = [
-                ToolResultLink(
+        with timed_sync_phase('compute_final_links'):
+            # 3. Sync tool result links (diff-based: create/update/delete)
+            trl_to_create = msg.get('tool_result_links_to_create', [])
+            if trl_to_create:
+                links = [
+                    ToolResultLink(
+                        session_id=d['session_id'],
+                        tool_use_line_num=d['tool_use_line_num'],
+                        tool_result_line_num=d['tool_result_line_num'],
+                        tool_use_id=d['tool_use_id'],
+                        tool_name=d['tool_name'],
+                        tool_result_at=datetime.fromisoformat(d['tool_result_at']) if d.get('tool_result_at') else None,
+                        extra=d.get('extra'),
+                        error=d.get('error'),
+                    )
+                    for d in trl_to_create
+                ]
+                ToolResultLink.objects.bulk_create(links, ignore_conflicts=True, batch_size=50)
+
+            trl_to_update = msg.get('tool_result_links_to_update', [])
+            if trl_to_update:
+                trl_update_fields = ['tool_use_line_num', 'tool_name', 'tool_result_at', 'extra', 'error']
+                links = [
+                    ToolResultLink(
+                        id=d['id'],
+                        session_id=d['session_id'],
+                        tool_use_line_num=d['tool_use_line_num'],
+                        tool_result_line_num=d['tool_result_line_num'],
+                        tool_use_id=d['tool_use_id'],
+                        tool_name=d['tool_name'],
+                        tool_result_at=datetime.fromisoformat(d['tool_result_at']) if d.get('tool_result_at') else None,
+                        extra=d.get('extra'),
+                        error=d.get('error'),
+                    )
+                    for d in trl_to_update
+                ]
+                ToolResultLink.objects.bulk_update(links, trl_update_fields, batch_size=50)
+
+            trl_to_delete = msg.get('tool_result_links_to_delete', [])
+            if trl_to_delete:
+                ToolResultLink.objects.filter(id__in=trl_to_delete).delete()
+
+            # 4. Sync agent links (diff-based: create/update/delete)
+            agent_links_to_create = msg.get('agent_links_to_create', [])
+            # Another tree owner's backfill may have inserted a link after the
+            # compute snapshot. The transcript revision guard cannot detect that.
+            for d in [*agent_links_to_create, *(msg.get("agent_links_backfill") or [])]:
+                existing = AgentLink.objects.filter(session_id=d["session_id"],
+                    agent_id=d["agent_id"], tool_use_id=d["tool_use_id"]).first()
+                if existing is None:
+                    AgentLink.objects.create(session_id=d["session_id"], agent_id=d["agent_id"],
+                        tool_use_id=d["tool_use_id"], tool_use_line_num=d["tool_use_line_num"],
+                        is_background=d["is_background"],
+                        started_at=datetime.fromisoformat(d["started_at"]) if d.get("started_at") else None)
+                elif d["is_background"] and not existing.is_background:
+                    existing.is_background = True
+                    existing.save(update_fields=["is_background"])
+
+            agent_links_to_update = msg.get('agent_links_to_update', [])
+            if agent_links_to_update:
+                agent_link_fields = ['tool_use_line_num', 'is_background', 'started_at']
+                links = [
+                    AgentLink(
+                        id=d['id'],
+                        session_id=d['session_id'],
+                        tool_use_line_num=d['tool_use_line_num'],
+                        tool_use_id=d['tool_use_id'],
+                        agent_id=d['agent_id'],
+                        is_background=d['is_background'],
+                        started_at=datetime.fromisoformat(d['started_at']) if d.get('started_at') else None,
+                    )
+                    for d in agent_links_to_update
+                ]
+                AgentLink.objects.bulk_update(links, agent_link_fields, batch_size=50)
+
+            agent_links_to_delete = msg.get('agent_links_to_delete', [])
+            if agent_links_to_delete:
+                AgentLink.objects.filter(id__in=agent_links_to_delete).delete()
+
+            # 4b. Sync agent interactions and transcript run ends (diff-based).
+            # ``ignore_conflicts`` + the unique constraints are the in-writer
+            # existence re-check: a row the live path wrote after the compute
+            # snapshot stays (first line wins).
+            def parse_dt(value: str | None) -> datetime | None:
+                return datetime.fromisoformat(value) if value else None
+
+            def build_agent_interaction(d: dict) -> AgentInteraction:
+                return AgentInteraction(
+                    id=d.get('id'),
                     session_id=d['session_id'],
                     tool_use_line_num=d['tool_use_line_num'],
-                    tool_result_line_num=d['tool_result_line_num'],
-                    tool_use_id=d['tool_use_id'],
-                    tool_name=d['tool_name'],
-                    tool_result_at=datetime.fromisoformat(d['tool_result_at']) if d.get('tool_result_at') else None,
-                    extra=d.get('extra'),
-                    error=d.get('error'),
-                )
-                for d in trl_to_create
-            ]
-            ToolResultLink.objects.bulk_create(links, ignore_conflicts=True, batch_size=50)
-
-        trl_to_update = msg.get('tool_result_links_to_update', [])
-        if trl_to_update:
-            trl_update_fields = ['tool_use_line_num', 'tool_name', 'tool_result_at', 'extra', 'error']
-            links = [
-                ToolResultLink(
-                    id=d['id'],
-                    session_id=d['session_id'],
-                    tool_use_line_num=d['tool_use_line_num'],
-                    tool_result_line_num=d['tool_result_line_num'],
-                    tool_use_id=d['tool_use_id'],
-                    tool_name=d['tool_name'],
-                    tool_result_at=datetime.fromisoformat(d['tool_result_at']) if d.get('tool_result_at') else None,
-                    extra=d.get('extra'),
-                    error=d.get('error'),
-                )
-                for d in trl_to_update
-            ]
-            ToolResultLink.objects.bulk_update(links, trl_update_fields, batch_size=50)
-
-        trl_to_delete = msg.get('tool_result_links_to_delete', [])
-        if trl_to_delete:
-            ToolResultLink.objects.filter(id__in=trl_to_delete).delete()
-
-        # 4. Sync agent links (diff-based: create/update/delete)
-        agent_links_to_create = msg.get('agent_links_to_create', [])
-        # Another tree owner's backfill may have inserted a link after the
-        # compute snapshot. The transcript revision guard cannot detect that.
-        for d in [*agent_links_to_create, *(msg.get("agent_links_backfill") or [])]:
-            existing = AgentLink.objects.filter(session_id=d["session_id"],
-                agent_id=d["agent_id"], tool_use_id=d["tool_use_id"]).first()
-            if existing is None:
-                AgentLink.objects.create(session_id=d["session_id"], agent_id=d["agent_id"],
-                    tool_use_id=d["tool_use_id"], tool_use_line_num=d["tool_use_line_num"],
-                    is_background=d["is_background"],
-                    started_at=datetime.fromisoformat(d["started_at"]) if d.get("started_at") else None)
-            elif d["is_background"] and not existing.is_background:
-                existing.is_background = True
-                existing.save(update_fields=["is_background"])
-
-        agent_links_to_update = msg.get('agent_links_to_update', [])
-        if agent_links_to_update:
-            agent_link_fields = ['tool_use_line_num', 'is_background', 'started_at']
-            links = [
-                AgentLink(
-                    id=d['id'],
-                    session_id=d['session_id'],
-                    tool_use_line_num=d['tool_use_line_num'],
+                    event_line_num=d['event_line_num'],
                     tool_use_id=d['tool_use_id'],
                     agent_id=d['agent_id'],
-                    is_background=d['is_background'],
-                    started_at=datetime.fromisoformat(d['started_at']) if d.get('started_at') else None,
-                )
-                for d in agent_links_to_update
-            ]
-            AgentLink.objects.bulk_update(links, agent_link_fields, batch_size=50)
-
-        agent_links_to_delete = msg.get('agent_links_to_delete', [])
-        if agent_links_to_delete:
-            AgentLink.objects.filter(id__in=agent_links_to_delete).delete()
-
-        # 4b. Sync agent interactions and transcript run ends (diff-based).
-        # ``ignore_conflicts`` + the unique constraints are the in-writer
-        # existence re-check: a row the live path wrote after the compute
-        # snapshot stays (first line wins).
-        def parse_dt(value: str | None) -> datetime | None:
-            return datetime.fromisoformat(value) if value else None
-
-        def build_agent_interaction(d: dict) -> AgentInteraction:
-            return AgentInteraction(
-                id=d.get('id'),
-                session_id=d['session_id'],
-                tool_use_line_num=d['tool_use_line_num'],
-                event_line_num=d['event_line_num'],
-                tool_use_id=d['tool_use_id'],
-                agent_id=d['agent_id'],
-                kind=d['kind'],
-                opens_run=d['opens_run'],
-                started_at=parse_dt(d.get('started_at')),
-            )
-
-        def build_agent_run_end(d: dict) -> AgentRunEnd:
-            return AgentRunEnd(
-                id=d.get('id'),
-                session_id=d['session_id'],
-                line_num=d['line_num'],
-                source=AgentRunEndSource.TRANSCRIPT,
-                tool_use_id=d['tool_use_id'],
-                agent_id=d['agent_id'],
-                ended_at=parse_dt(d.get('ended_at')),
-                status=d.get('status'),
-            )
-
-        if interactions_to_create := msg.get('agent_interactions_to_create'):
-            AgentInteraction.objects.bulk_create(
-                [build_agent_interaction(d) for d in interactions_to_create],
-                ignore_conflicts=True, batch_size=50,
-            )
-        if interactions_to_update := msg.get('agent_interactions_to_update'):
-            AgentInteraction.objects.bulk_update(
-                [build_agent_interaction(d) for d in interactions_to_update],
-                ['tool_use_line_num', 'event_line_num', 'kind', 'agent_id', 'opens_run', 'started_at'],
-                batch_size=50,
-            )
-        if interactions_to_delete := msg.get('agent_interactions_to_delete'):
-            AgentInteraction.objects.filter(id__in=interactions_to_delete).delete()
-
-        if run_ends_to_create := msg.get('agent_run_ends_to_create'):
-            AgentRunEnd.objects.bulk_create(
-                [build_agent_run_end(d) for d in run_ends_to_create],
-                ignore_conflicts=True, batch_size=50,
-            )
-        if run_ends_to_update := msg.get('agent_run_ends_to_update'):
-            AgentRunEnd.objects.bulk_update(
-                [build_agent_run_end(d) for d in run_ends_to_update],
-                ['agent_id', 'ended_at', 'status'],
-                batch_size=50,
-            )
-        if run_ends_to_delete := msg.get('agent_run_ends_to_delete'):
-            AgentRunEnd.objects.filter(id__in=run_ends_to_delete).delete()
-
-        # Publish the complete fact set only in the final transaction. Item
-        # pre-apply chunks do not advance the compute version.
-        replace_history_facts(session_id, [HistoryFact(**fact) for fact in msg['history_facts']])
-
-        if msg.get("async_question_facts"):
-            from twicc.core.services.async_questions import merge_question_facts
-            from twicc.providers.codex.async_questions import QuestionFact
-
-            merge_question_facts(session_id, [QuestionFact(**fact) for fact in msg["async_question_facts"]])
-
-        # 5. Update session fields (always includes compute_version)
-        session_fields = dict(msg.get('session_fields', {}))
-        if session_fields:
-            for dt_field in ('created_at', 'last_started_at', 'last_updated_at', 'last_stopped_at'):
-                if dt_field in session_fields and isinstance(session_fields[dt_field], str):
-                    session_fields[dt_field] = datetime.fromisoformat(session_fields[dt_field])
-            # The recompute folded ``goals`` from scratch, so a UI-set
-            # ``dismissed`` flag (the one non-compute-owned key in that JSON)
-            # would be dropped — re-port it from the stored row. Safe read:
-            # this apply runs serialized through the DB writer under the shared
-            # write lock (and inside ``transaction.atomic``), the same lock the
-            # dismiss PATCH takes, so the stored value can't move under us.
-            if session_fields.get('goals'):
-                db_goals = Session.objects.filter(id=session_id).values_list('goals', flat=True).first()
-                if db_goals:
-                    preserve_dismissed_flags(db_goals, session_fields['goals'])
-            # The plans watcher (native-plan latch) and subagent compute
-            # passes write plan_paths entries this rebuild can't reproduce
-            # from the session's own lines — and their writes don't advance
-            # last_offset, so the revision guard above can't catch them. Fold
-            # them back in before the authoritative overwrite (same
-            # just-before-write re-read as ``goals`` right above).
-            if 'plan_paths' in session_fields:
-                db_plan_paths = Session.objects.filter(id=session_id).values_list('plan_paths', flat=True).first()
-                session_fields['plan_paths'] = fold_concurrent_entries(
-                    session_fields['plan_paths'], db_plan_paths, sources=FOLDED_SOURCES,
-                )
-            if 'tasks' in session_fields:
-                # SDK plans do not advance last_offset. Re-read after acquiring
-                # the writer lock so a concurrent stream update survives.
-                db_tasks = Session.objects.filter(id=session_id).values_list('tasks', flat=True).first()
-                session_fields['tasks'] = select_tasks_snapshot(db_tasks or {}, session_fields['tasks'])
-            if 'compute_version' in session_fields:
-                session_fields['search_version'] = None
-            rows = apply_compute_lifecycle(msg, lambda: update_lifecycle(
-                Session.objects.filter(id=session_id), **session_fields,
-            ))
-            if rows == 0:
-                logger.debug(f"apply_session_complete: session {session_id} not found for update")
-                return ComputeApplyResult("missing")
-            else:
-                logger.debug(
-                    f"apply_session_complete: session {session_id} updated"
-                    f" (compute_version={session_fields.get('compute_version')})"
+                    kind=d['kind'],
+                    opens_run=d['opens_run'],
+                    started_at=parse_dt(d.get('started_at')),
                 )
 
-        # Remap private snapshot anchors before advancing outside this atomic
-        # metadata apply. The greatest matching line includes every canonical
-        # row that shares the source timestamp.
-        snapshot_anchor_key = "_codex_rollout_migration_anchor"
-        shares = Share.objects.select_for_update().filter(session_id=session_id)
-        for share in shares:
-            options = share.options
-            anchor_payload = options.get(snapshot_anchor_key)
-            if options.get("mode") != "snapshot" or anchor_payload is None:
-                continue
+            def build_agent_run_end(d: dict) -> AgentRunEnd:
+                return AgentRunEnd(
+                    id=d.get('id'),
+                    session_id=d['session_id'],
+                    line_num=d['line_num'],
+                    source=AgentRunEndSource.TRANSCRIPT,
+                    tool_use_id=d['tool_use_id'],
+                    agent_id=d['agent_id'],
+                    ended_at=parse_dt(d.get('ended_at')),
+                    status=d.get('status'),
+                )
 
-            frozen_at_line = 0
-            timestamp_text = anchor_payload.get("timestamp") if isinstance(anchor_payload, dict) else None
-            if isinstance(timestamp_text, str):
-                try:
-                    anchor_timestamp = datetime.fromisoformat(timestamp_text)
-                    if anchor_timestamp.tzinfo is None:
-                        anchor_timestamp = anchor_timestamp.replace(tzinfo=UTC)
-                    matched_line = SessionItem.objects.filter(
-                        session_id=session_id,
-                        timestamp__lte=anchor_timestamp,
-                    ).order_by("-line_num").values_list("line_num", flat=True).first()
-                    if matched_line is not None:
-                        frozen_at_line = matched_line
-                except ValueError:
-                    pass
+            if interactions_to_create := msg.get('agent_interactions_to_create'):
+                AgentInteraction.objects.bulk_create(
+                    [build_agent_interaction(d) for d in interactions_to_create],
+                    ignore_conflicts=True, batch_size=50,
+                )
+            if interactions_to_update := msg.get('agent_interactions_to_update'):
+                AgentInteraction.objects.bulk_update(
+                    [build_agent_interaction(d) for d in interactions_to_update],
+                    ['tool_use_line_num', 'event_line_num', 'kind', 'agent_id', 'opens_run', 'started_at'],
+                    batch_size=50,
+                )
+            if interactions_to_delete := msg.get('agent_interactions_to_delete'):
+                AgentInteraction.objects.filter(id__in=interactions_to_delete).delete()
 
-            new_options = dict(options)
-            new_options["frozen_at_line"] = frozen_at_line
-            new_options.pop(snapshot_anchor_key, None)
-            share.options = new_options
-            share.save(update_fields=["options"])
+            if run_ends_to_create := msg.get('agent_run_ends_to_create'):
+                AgentRunEnd.objects.bulk_create(
+                    [build_agent_run_end(d) for d in run_ends_to_create],
+                    ignore_conflicts=True, batch_size=50,
+                )
+            if run_ends_to_update := msg.get('agent_run_ends_to_update'):
+                AgentRunEnd.objects.bulk_update(
+                    [build_agent_run_end(d) for d in run_ends_to_update],
+                    ['agent_id', 'ended_at', 'status'],
+                    batch_size=50,
+                )
+            if run_ends_to_delete := msg.get('agent_run_ends_to_delete'):
+                AgentRunEnd.objects.filter(id__in=run_ends_to_delete).delete()
 
-        # Publish an exact baseline in this same transaction before the
-        # new compute version becomes visible to the next live operation.
-        session = Session.objects.get(id=session_id)
-        apply_contribution_changes(
-            before_items, item_contributions(changed), before_sessions=[before_session],
-            after_sessions=[session_contribution(session)], repair=True,
-            repaired_activity_buckets=msg.get('_repaired_activity_buckets'),
-        )
-        session.refresh_from_db()
+        with timed_sync_phase('compute_final_facts'):
+            # Publish the complete fact set only in the final transaction. Item
+            # pre-apply chunks do not advance the compute version.
+            replace_history_facts(session_id, [HistoryFact(**fact) for fact in msg['history_facts']])
+
+            if msg.get("async_question_facts"):
+                from twicc.core.services.async_questions import merge_question_facts
+                from twicc.providers.codex.async_questions import QuestionFact
+
+                merge_question_facts(session_id, [QuestionFact(**fact) for fact in msg["async_question_facts"]])
+
+        with timed_sync_phase('compute_final_source'):
+            # 5. Update session fields (always includes compute_version)
+            session_fields = dict(msg.get('session_fields', {}))
+            if session_fields:
+                for dt_field in ('created_at', 'last_started_at', 'last_updated_at', 'last_stopped_at'):
+                    if dt_field in session_fields and isinstance(session_fields[dt_field], str):
+                        session_fields[dt_field] = datetime.fromisoformat(session_fields[dt_field])
+                # The recompute folded ``goals`` from scratch, so a UI-set
+                # ``dismissed`` flag (the one non-compute-owned key in that JSON)
+                # would be dropped — re-port it from the stored row. Safe read:
+                # this apply runs serialized through the DB writer under the shared
+                # write lock (and inside ``transaction.atomic``), the same lock the
+                # dismiss PATCH takes, so the stored value can't move under us.
+                if session_fields.get('goals'):
+                    db_goals = Session.objects.filter(id=session_id).values_list('goals', flat=True).first()
+                    if db_goals:
+                        preserve_dismissed_flags(db_goals, session_fields['goals'])
+                # The plans watcher (native-plan latch) and subagent compute
+                # passes write plan_paths entries this rebuild can't reproduce
+                # from the session's own lines — and their writes don't advance
+                # last_offset, so the revision guard above can't catch them. Fold
+                # them back in before the authoritative overwrite (same
+                # just-before-write re-read as ``goals`` right above).
+                if 'plan_paths' in session_fields:
+                    db_plan_paths = Session.objects.filter(id=session_id).values_list('plan_paths', flat=True).first()
+                    session_fields['plan_paths'] = fold_concurrent_entries(
+                        session_fields['plan_paths'], db_plan_paths, sources=FOLDED_SOURCES,
+                    )
+                if 'tasks' in session_fields:
+                    # SDK plans do not advance last_offset. Re-read after acquiring
+                    # the writer lock so a concurrent stream update survives.
+                    db_tasks = Session.objects.filter(id=session_id).values_list('tasks', flat=True).first()
+                    session_fields['tasks'] = select_tasks_snapshot(db_tasks or {}, session_fields['tasks'])
+                if 'compute_version' in session_fields:
+                    session_fields['search_version'] = None
+                rows = apply_compute_lifecycle(msg, lambda: update_lifecycle(
+                    Session.objects.filter(id=session_id), **session_fields,
+                ))
+                if rows == 0:
+                    logger.debug(f"apply_session_complete: session {session_id} not found for update")
+                    return ComputeApplyResult("missing")
+                else:
+                    logger.debug(
+                        f"apply_session_complete: session {session_id} updated"
+                        f" (compute_version={session_fields.get('compute_version')})"
+                    )
+
+            # Remap private snapshot anchors before advancing outside this atomic
+            # metadata apply. The greatest matching line includes every canonical
+            # row that shares the source timestamp.
+            snapshot_anchor_key = "_codex_rollout_migration_anchor"
+            shares = Share.objects.select_for_update().filter(session_id=session_id)
+            for share in shares:
+                options = share.options
+                anchor_payload = options.get(snapshot_anchor_key)
+                if options.get("mode") != "snapshot" or anchor_payload is None:
+                    continue
+
+                frozen_at_line = 0
+                timestamp_text = anchor_payload.get("timestamp") if isinstance(anchor_payload, dict) else None
+                if isinstance(timestamp_text, str):
+                    try:
+                        anchor_timestamp = datetime.fromisoformat(timestamp_text)
+                        if anchor_timestamp.tzinfo is None:
+                            anchor_timestamp = anchor_timestamp.replace(tzinfo=UTC)
+                        matched_line = SessionItem.objects.filter(
+                            session_id=session_id,
+                            timestamp__lte=anchor_timestamp,
+                        ).order_by("-line_num").values_list("line_num", flat=True).first()
+                        if matched_line is not None:
+                            frozen_at_line = matched_line
+                    except ValueError:
+                        pass
+
+                new_options = dict(options)
+                new_options["frozen_at_line"] = frozen_at_line
+                new_options.pop(snapshot_anchor_key, None)
+                share.options = new_options
+                share.save(update_fields=["options"])
+
+        with timed_sync_phase('compute_final_aggregates'):
+            # Publish an exact baseline in this same transaction before the
+            # new compute version becomes visible to the next live operation.
+            session = Session.objects.get(id=session_id)
+            apply_contribution_changes(
+                before_items, item_contributions(changed), before_sessions=[before_session],
+                after_sessions=[session_contribution(session)], repair=True,
+                # Legacy per-run entries never prove an exact final baseline.
+                repaired_activity_buckets=None,
+                extra_activity_keys=msg.get('_activity_repair_keys', ()),
+            )
+            session.refresh_from_db()
 
         # 7bis. Fold subagent-detected plan docs into the top-level ancestor
         folded_ancestor_id: str | None = None
@@ -4116,7 +4132,8 @@ class BaseSessionCompute:
 
         from twicc.core.content_storage.extraction import finish_storage_result
 
-        finish_storage_result(msg)
+        with timed_sync_phase('compute_final_readiness'):
+            finish_storage_result(msg)
         return ComputeApplyResult("applied", folded_ancestor_id, title_updated_session_ids)
 
     # ------------------------------------------------------------------
