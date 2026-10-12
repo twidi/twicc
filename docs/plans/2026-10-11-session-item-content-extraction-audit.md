@@ -1888,3 +1888,37 @@ No second full run repeats for these test-only hook corrections.
 
 The full suite retains three existing coroutine warnings from Codex SDK wrappers and shell-notice tests.
 Targeted Ruff and `git diff --check` pass.
+
+
+## Authorized session-scoped promotion amendment — 2026-10-12 (Task 19)
+
+This amendment supersedes historical native-tree promotion and readiness contracts above.
+Earlier measured tree timings remain historical evidence; they do not measure the new session-scoped behavior.
+
+Promotion visits only the requested session's current/original references.
+Native descendants inherit root cold eligibility but retain unrelated compressed bytes after root resume.
+Shared payloads can warm child references when the target also owns those content rows.
+Root readiness certifies only root extraction and root contents.
+A current root certificate skips metadata validation. A stale root certificate falls back to scoped read-only metadata validation.
+Child substring calls validate scoped extraction and both FK codecs in the same read snapshot as substring SQL.
+They never trust root readiness alone. An already plain child succeeds without a root certificate or complete root extraction.
+Compressed/incomplete child contents return `warming`; no read/search callback requests promotion.
+Validation uses bounded metadata pages and does not select payload bytes, with cost proportional to the validated session's item count.
+Ordinary reads retain temporary decoding; Tantivy search remains available.
+
+Existing root epochs still fence every native tree and reference mutation.
+Operation-local child promotion additionally captures target incarnation to reject same-ID replacement.
+Lifecycle, reference, and ingestion invalidation retain old/new root fences but queue only actual changed session IDs.
+Native-child explicit resume follows the existing registration lifecycle callback.
+Startup recovery remains root-only and does not warm inherited-hot children.
+An interrupted child promotion requires another explicit resume or targeted write after restart.
+No durable child certificate or promotion-demand schema is added.
+Compression all-owner eligibility, 15/30-day content policy, scratch cleanup, source CAS, CPU yields, and writer admission remain unchanged.
+
+Synthetic coordinator evidence uses the test database only.
+Startup promotes root rows; a later child resume promotes child rows while sibling rows stay `zstd`.
+No production/provider paths, servers, new dependencies, schema migration, copied-database writes, or tree recompression are required.
+
+Recovery filters each raw root page with persisted cold policy and no active override.
+An active child alone cannot warm its cold root. Cold pages still advance the raw ID cursor to later hot roots.
+Explicit target callbacks retain admitted active eligibility.

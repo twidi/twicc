@@ -443,7 +443,7 @@ def prepare_compute_result(msg, item_row_budget=2000):
 
 
 def finish_storage_result(msg):
-    """Verify final lifecycle, placement and optional complete native-tree plaintext."""
+    """Verify this computed session and optionally certify the root's own plaintext."""
     from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION
     from twicc.core.content_storage.state import snapshot_root_storage, verify_plaintext_root
 
@@ -468,6 +468,6 @@ def finish_storage_result(msg):
     ).exists():
         raise ContentIntegrityError('Hot compute storage requires plaintext through both references')
     Session.objects.filter(pk=session_id).update(content_storage_version=CONTENT_STORAGE_VERSION)
-    if decision.resolved and not decision.is_cold:
+    if decision.resolved and decision.root_id == session_id and not decision.is_cold:
         verify_plaintext_root(snapshot_root_storage(decision.root_id),
                               active_root_ids=pending['active_roots'] if pending else frozenset())

@@ -49,7 +49,7 @@ def test_promotion_cursor_between_current_and_original(content_row_factory):
         assert state.verify_plaintext_root(observation)
 
 
-def test_promotion_cursor_between_descendants_with_repeated_lines(content_row_factory):
+def test_promotion_cursor_does_not_visit_descendants_with_repeated_lines(content_row_factory):
     root = session('z-root', storage_incarnation='r', content_storage_version=1)
     child = session('a-child', type='subagent', parent_session=root,
                     storage_incarnation='c', content_storage_version=1)
@@ -66,10 +66,10 @@ def test_promotion_cursor_between_descendants_with_repeated_lines(content_row_fa
     while not cursor.done:
         cursor = promote_root_slice(observation, cursor, 1, 1)
         completed.append(cursor.session_id)
-    assert completed == ['a-child', 'b-leaf', 'z-root']
-    for row in rows:
+    assert completed == ['z-root']
+    for owner, row in zip((child, leaf, root), rows):
         row.refresh_from_db()
-        assert row.codec == 'plain'
+        assert row.codec == ('plain' if owner == root else 'zstd')
 
 
 def test_epoch_change_rejects_prepared_promotion(content_row_factory):
@@ -111,7 +111,7 @@ def test_repeated_both_slots_advance_without_repeated_writes(content_row_factory
 
 
 @pytest.mark.parametrize('problem', ['version', 'identity', 'current', 'legacy', 'non_native'])
-def test_missing_descendant_metadata_never_publishes_readiness(content_row_factory, problem):
+def test_missing_descendant_metadata_does_not_block_root_readiness(content_row_factory, problem):
     from twicc import content_maintenance_task as maintenance
 
     root = session('a-root', storage_incarnation='i', content_storage_version=1)
@@ -125,10 +125,12 @@ def test_missing_descendant_metadata_never_publishes_readiness(content_row_facto
         child.type = 'session'
         child.save(update_fields=['type'])
     batch = maintenance.prepare_promotion_batch(snapshot(root), START, 500, 8000000)
-    assert not batch.verified
+    assert batch.verified
     maintenance.apply_promotion_batch(batch, frozenset(), pass_verified=True)
     root.refresh_from_db()
-    assert root.plaintext_verified_epoch is None
+    row.refresh_from_db()
+    assert root.plaintext_verified_epoch == root.content_state_epoch
+    assert row.codec == 'zstd'
 
 
 def test_new_child_invalidates_final_batch_and_restarts(content_row_factory):
@@ -162,7 +164,8 @@ def test_promotion_counts_empty_session_metadata_within_budget():
         assert batch.cursor.rows <= 2
         batches.append(batch)
         cursor = maintenance.apply_promotion_batch(batch, frozenset())
-    assert len(batches) == 3
+    assert len(batches) == 1
+    assert batches[0].cursor.session_id == root.id
 
 
 def test_promotion_budget_includes_prepared_plaintext_for_compressible_large_rows(content_row_factory):

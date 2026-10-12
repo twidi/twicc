@@ -20,10 +20,10 @@ from twicc.core.content_storage.codec import ContentIntegrityError, transcode_co
 from twicc.core.content_storage.lifecycle import active_session_ids, set_root_promotion_wakeup
 from twicc.core.content_storage.policy import COLD_FIELDS, CONTENT_STORAGE_VERSION, compression_policy_version
 from twicc.core.content_storage.state import (
-    TREE_PAGE_SIZE, _require_writer_transaction, _snapshot_matches, iter_native_tree_session_pages,
-    resolve_root_decision, resolve_root_decisions, snapshot_root_storage,
+    TREE_PAGE_SIZE, _require_writer_transaction, _snapshot_matches,
+    resolve_root_decision, resolve_root_decisions, snapshot_session_promotion,
 )
-from twicc.core.content_storage.types import PreparedRepresentation, RootPromotionCursor, RootStorageSnapshot
+from twicc.core.content_storage.types import PreparedRepresentation, RootPromotionCursor, RootStorageSnapshot, SessionPromotionSnapshot
 from twicc.core.models import ContentDictionary, Session, SessionItem, SessionItemContent
 
 logger = logging.getLogger(__name__)
@@ -55,16 +55,16 @@ class PromotionEntry(NamedTuple):
 
 
 class PromotionBatch(NamedTuple):
-    snapshot: RootStorageSnapshot
+    snapshot: RootStorageSnapshot | SessionPromotionSnapshot
     cursor: RootPromotionCursor
     entries: tuple[PromotionEntry, ...]
     verified: bool
 
 
-def request_root_promotion(root_id: str) -> None:
-    """Marshal DB-thread wakeups to the installed event-loop coordinator."""
+def request_root_promotion(session_id: str) -> None:
+    """Marshal one actual target; the historical name also accepts native-child IDs."""
     if _wakeup is not None:
-        _wakeup(root_id)
+        _wakeup(session_id)
 
 
 def _metadata_proof(owners):
@@ -215,23 +215,18 @@ def publish_prepared_batch(entries: tuple[PreparedEntry, ...], active: frozenset
 
 
 def _promotion_keys(snapshot, cursor):
-    if cursor.session_id is not None:
-        sessions = [[cursor.session_id]]
-        yield from _session_keys(sessions, cursor)
-    pages = iter_native_tree_session_pages(snapshot.root_id, cursor.session_id, TREE_PAGE_SIZE)
-    yield from _session_keys(pages, cursor)
+    target_id = getattr(snapshot, 'session_id', snapshot.root_id)
+    yield from _session_keys([[target_id]], cursor)
 
 
 def _session_keys(pages, cursor):
     for page in pages:
-        invalid_parents = set(Session.objects.filter(parent_session_id__in=page).exclude(type='subagent')
-                              .values_list('parent_session_id', flat=True))
         sessions = {row['id']: row for row in Session.objects.filter(pk__in=page).values(
             'id', 'storage_incarnation', 'content_storage_version',
         )}
         for session_id in page:
             session = sessions.get(session_id)
-            valid = bool(session_id not in invalid_parents and session and session['storage_incarnation']
+            valid = bool(session and session['storage_incarnation']
                          and session['content_storage_version'] == CONTENT_STORAGE_VERSION)
             query = SessionItem.objects.filter(session_id=session_id)
             if session_id == cursor.session_id:
@@ -325,9 +320,10 @@ def apply_promotion_batch(batch, active, *, pass_verified=False):
             changed.append(row)
         if changed:
             SessionItemContent.objects.bulk_update(changed, ['payload', 'codec', 'dictionary'], batch_size=ROW_BUDGET)
-        if batch.cursor.done and pass_verified and batch.verified:
-            # The operation checks every session/item slot across admitted slices.
-            # The unchanged root generation fences every tree/reference mutation.
+        if (batch.cursor.done and pass_verified and batch.verified
+                and getattr(batch.snapshot, 'session_id', batch.snapshot.root_id) == batch.snapshot.root_id):
+            # Only the root's own slots receive a durable readiness certificate.
+            # The root generation still fences every native-tree/reference mutation.
             Session.objects.filter(pk=batch.snapshot.root_id, storage_incarnation=batch.snapshot.incarnation,
                                    content_state_epoch=batch.snapshot.epoch).update(
                                        plaintext_verified_epoch=batch.snapshot.epoch,
@@ -340,21 +336,28 @@ def promote_root_slice(snapshot: RootStorageSnapshot, cursor: RootPromotionCurso
     """Promote one bounded slice; async production prepares before acquiring admission.
 
     An externally resumed cursor carries no prior readiness proof. Only a full
-    pass from START_CURSOR can certify readiness. The coordinator accumulates
-    each batch's explicit metadata proof and restarts from zero after changes.
+    pass from START_CURSOR can certify root readiness. Native-child passes carry
+    no durable certificate. Each pass visits only its target session's FK slots.
     """
     batch = prepare_promotion_batch(snapshot, cursor, row_budget, byte_budget)
     return apply_promotion_batch(batch, active_session_ids.get(), pass_verified=cursor == START_CURSOR)
 
 
 def pending_root_page(after_id=None):
-    """Recover durable pending roots from bounded metadata, without reading content."""
+    """Recover root-only demand from metadata; never infer demand for inherited-hot children."""
     query = Session.objects.filter(type='session', parent_session__isnull=True,
                                    storage_incarnation__isnull=False, content_state_epoch__isnull=False)
     query = query.filter(Q(plaintext_verified_epoch__isnull=True) | ~Q(plaintext_verified_epoch=F('content_state_epoch')))
     if after_id is not None:
         query = query.filter(pk__gt=after_id)
     return list(query.order_by('id').values_list('id', flat=True)[:TREE_PAGE_SIZE])
+
+
+def recovery_promotion_targets(root_ids):
+    """Recover persisted-hot roots only; an active child does not create demand for its cold root."""
+    decisions = resolve_root_decisions(root_ids, timezone.now(), frozenset())
+    return {root_id for root_id, decision in decisions.items()
+            if decision.resolved and decision.root_id == root_id and not decision.is_cold}
 
 
 def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_BUDGET):
@@ -413,12 +416,12 @@ async def _apply(function, *args):
         return await run_under_db_write_lock(apply, content_activity=True)
 
 
-def _snapshot(root_id, active):
+def _snapshot(session_id, active):
     with transaction.atomic():
-        decision = resolve_root_decision(root_id, timezone.now(), active)
-        if not decision.resolved or decision.root_id != root_id or decision.is_cold:
+        decision = resolve_root_decision(session_id, timezone.now(), active)
+        if not decision.resolved or decision.is_cold:
             return None
-        return snapshot_root_storage(root_id)
+        return snapshot_session_promotion(session_id)
 
 
 def _publish(entries, active):
@@ -450,15 +453,15 @@ async def start_content_maintenance_task(stop_event: asyncio.Event) -> None:
 
     loop = asyncio.get_running_loop()
     wake = asyncio.Event()
-    roots = set()
+    targets = set()
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='twicc-content-codec')
 
-    def enqueue(root_id):
-        roots.add(root_id)
+    def enqueue(session_id):
+        targets.add(session_id)
         wake.set()
 
-    def wakeup(root_id):
-        loop.call_soon_threadsafe(enqueue, root_id)
+    def wakeup(session_id):
+        loop.call_soon_threadsafe(enqueue, session_id)
 
     _wakeup = wakeup
     set_root_promotion_wakeup(request_root_promotion)
@@ -472,15 +475,15 @@ async def start_content_maintenance_task(stop_event: asyncio.Event) -> None:
             page = await prepare(pending_root_page, after)
             if not page:
                 break
-            roots.update(page)
+            targets.update(await prepare(recovery_promotion_targets, page))
             await promote()
             after = page[-1]
 
     async def promote():
-        while roots and not stop_event.is_set():
-            root_id = roots.pop()
+        while targets and not stop_event.is_set():
+            session_id = targets.pop()
             try:
-                snapshot = await _apply(_snapshot, root_id)
+                snapshot = await _apply(_snapshot, session_id)
                 if snapshot is None:
                     continue
                 cursor = START_CURSOR
@@ -490,13 +493,13 @@ async def start_content_maintenance_task(stop_event: asyncio.Event) -> None:
                     pass_verified &= batch.verified
                     cursor = await _apply(partial(apply_promotion_batch, pass_verified=pass_verified), batch)
                     if cursor == START_CURSOR:
-                        roots.add(root_id)
+                        targets.add(session_id)
                         break
                     await asyncio.sleep(0)
                 # Incomplete extraction does not spin. Its writer invalidation wakes us again.
             except Exception:
-                # The pending generation survives failures and restarts.
-                logger.exception('Content promotion failed for root %s', root_id)
+                # Root generations survive restarts. Child targets need explicit retry.
+                logger.exception('Content promotion failed for session %s', session_id)
 
     deadline = _maintenance_time() + INITIAL_DELAY
     try:
@@ -517,7 +520,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event) -> None:
                     while not done and not stop_event.is_set():
                         await promote()
                         cursor, entries, done = await prepare(prepare_compression_batch, cursor, ROW_BUDGET, BYTE_BUDGET)
-                        if roots:
+                        if targets:
                             await promote()
                         if entries:
                             await _apply(_publish, entries)

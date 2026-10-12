@@ -28,7 +28,7 @@ def initialize_ingestion_session(session: Session, *, invalidate: bool = False) 
     if decision.resolved:
         ensure_storage_incarnation(decision.root_id)
         if invalidate:
-            invalidate_roots([decision.root_id])
+            invalidate_roots([decision.root_id], promotion_targets=[session.id])
 
 
 def insert_ingested_items(

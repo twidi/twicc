@@ -2,9 +2,16 @@
 
 User and assistant messages only, one shape across providers: no tool calls, no system noise. The command to read a session's answer. MCP tool: `mcp__twicc__session_messages`. Read `SKILL.md` first: it resolves `$TWICC`.
 
-`--contains` requires a **ready hot native root**. Native subagents inherit the root state at every depth.
+`--contains` requires **complete plaintext for the requested session** and a **hot native root**.
+Native subagents inherit root cold eligibility. A hot root can still have compressed child contents.
+Root readiness covers only root contents. A current root certificate is the fast path.
+Children and uncertified roots check both references of every requested session item in the same read snapshot.
+Read validation never publishes a certificate.
 Cold, warming, and unresolved ancestry return explicit errors: `cold`, `warming`, or `unresolved_ancestry`.
-The gate applies to the root even when the requested range contains plaintext rows.
+The cold gate applies even when the requested range contains plaintext rows.
+An already plain child can pass while root readiness remains pending.
+Search stays read-only and does not schedule promotion. Explicit child resume or targeted writes can promote that child.
+An interrupted child promotion requires a new explicit resume or targeted write after restart.
 Use global full-text search (`search`) or read specific lines/ranges without `--contains`.
 Ordinary reads decode only requested contents. They keep compressed storage unchanged.
 The result's message fields and pagination shape remain unchanged.

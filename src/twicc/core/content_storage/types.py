@@ -50,6 +50,15 @@ class RootStorageSnapshot(NamedTuple):
     epoch: int
 
 
+class SessionPromotionSnapshot(NamedTuple):
+    """Operation-local target identity plus the unchanged native-root mutation fence."""
+    root_id: str
+    incarnation: str
+    epoch: int
+    session_id: str
+    session_incarnation: str
+
+
 class PreparedRepresentation(NamedTuple):
     content_id: int
     observed_codec: str

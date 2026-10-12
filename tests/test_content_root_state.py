@@ -109,7 +109,7 @@ def test_writer_helpers_require_caller_transaction():
         state.invalidate_roots([root.id])
 
 
-def test_deep_native_tree_verifies_empty_payload_and_incomplete_child_blocks_publication():
+def test_deep_native_tree_membership_does_not_expand_root_verification():
     root = session('root', content_storage_version=1)
     parent = root
     with transaction.atomic():
@@ -125,7 +125,8 @@ def test_deep_native_tree_verifies_empty_payload_and_incomplete_child_blocks_pub
         parent.content_storage_version = None
         parent.save(update_fields=['content_storage_version'])
         state.invalidate_roots([root.id])
-        assert not state.verify_plaintext_root(state.snapshot_root_storage(root.id))
+        assert state.verify_plaintext_root(state.snapshot_root_storage(root.id))
+        assert not state.session_plaintext_metadata(parent.id)
 
 
 def test_verification_never_selects_payload_or_inline_text():

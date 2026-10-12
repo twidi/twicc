@@ -24,13 +24,13 @@ def set_root_promotion_wakeup(callback: Callable[[str], None] | None) -> None:
     _promotion_wakeup = callback
 
 
-def request_root_promotion(root_id: str) -> None:
-    """Wake an installed scheduler without awaiting writer ownership or retaining dummy events."""
+def request_root_promotion(session_id: str) -> None:
+    """Wake one target session after commit; the historical name also accepts native children."""
     if _promotion_wakeup is not None:
         try:
-            _promotion_wakeup(root_id)
+            _promotion_wakeup(session_id)
         except Exception:
-            logger.exception('Content promotion wakeup failed for root %s', root_id)
+            logger.exception('Content promotion wakeup failed for session %s', session_id)
 
 
 def _metadata(ids):
@@ -64,7 +64,7 @@ def lifecycle_change(session_ids: Iterable[str]):
         roots = set(_root_map(changed).values())
         for session_id in changed:
             roots.add(old_roots[session_id])
-        invalidate_roots(roots)
+        invalidate_roots(roots, promotion_targets=changed)
 
 
 def update_lifecycle(queryset, **updates) -> int:

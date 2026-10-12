@@ -494,7 +494,7 @@ A subagent inherits the root's cold status at every depth.
 Its own flags and timestamps do not establish a separate cold status.
 Use the native `parent_session` subagent relationship, including nested descendants.
 Separate `spawned_by`/`spawn_root` orchestration sessions retain independent lifecycle eligibility.
-That orchestration relationship alone does not make a session inherit cold status or join root-wide promotion.
+That orchestration relationship alone does not make a session inherit cold status or require promotion of another session.
 A fork that is an independent root has its own cold status.
 An unresolved or inconsistent root cannot authorize compression or public substring-search readiness.
 Requested-content reads remain available through decoding.
@@ -561,7 +561,7 @@ Item FKs remain the authoritative graph. The JSON list is derived metadata for e
 No separate mapping table or child content-FK index is introduced.
 
 A content can be compressed only when every actual owner belongs to a cold, inactive root tree.
-Any hot owner keeps the shared content plaintext.
+Any hot owner prevents new compression. Promotion of an explicitly targeted owner makes shared content plaintext.
 Unknown, incomplete, or inconsistent ownership cannot authorize compression.
 Unused retained content rows do not become cold candidates merely because their owner list is empty.
 
@@ -607,11 +607,11 @@ Compression publication rechecks row identity, ownership completeness, root elig
 It verifies observed payload, codec, dictionary identity, sha256, and raw_size under storage admission and writer ownership.
 Decode verifies exact UTF-8 bytes before publication.
 
-Root incarnation/epoch and complete native-tree reference traversal still fence readiness.
+Root incarnation/epoch still fence mutations. Task 19 scopes reference traversal and readiness to the target session.
 Both FK slots, ownership, immutable dictionary identity, bounded budgets, and cancellation semantics remain unchanged.
 Compression retains every existing owner/root cold guard.
 
-Per-session-only readiness stays outside this amendment.
+Task 19 below supersedes the original native-tree readiness scope.
 
 A hot reference or tree transition invalidates an obsolete compression result.
 
@@ -621,10 +621,11 @@ A crash leaves a valid old or new representation, never partially written bytes.
 
 Unarchive, unhide, resume, activity update, and tree changes reevaluate effective root eligibility.
 Removing only one flag does not require promotion if the other flag keeps the inactive root cold.
-A newly hot root, active-tree protection, or a new hot reference triggers required promotion promptly.
+A newly hot session or a targeted hot reference triggers promotion of that actual session promptly.
 Promotion outranks optional compression and does not wait thirty minutes or twenty-four hours.
-Deduplicate obsolete work and resume interrupted work after restart without a global blocking startup conversion.
-Lifecycle mutation applies the effective root state to every descendant.
+Deduplicate obsolete work. Recover pending root targets after restart without a global blocking startup conversion.
+Interrupted native-child promotion requires a new explicit resume or targeted write after restart.
+Lifecycle mutation applies root cold eligibility to every descendant, but queues only the changed session for promotion.
 Promotion uses both FK columns and includes originals, even when ordinary reads use current content only.
 
 Preserve worktree isolation and the existing filesystem cleanup disable behavior.
@@ -640,14 +641,22 @@ Do not persist plaintext or update a read timestamp merely because a cold conten
 Any decoded memory cache is bounded by bytes and includes a limit for oversized entries.
 No cache is required for initial correctness; benchmarks favor temporary decode over a persistent DB read cache.
 
-A non-cold root requires all contents used by that root and its descendants to be persistently plaintext.
+Promotion makes both references of the actual target session persistently plaintext.
+Root resume does not promote its native descendants. Their existing compressed rows can remain compressed under inherited hot policy.
+Shared rows become plaintext for every owner when any targeted session promotes them.
 A transition may temporarily enter warming while bounded promotion completes.
 Normal reads remain available through the decoder during warming.
 Neither unarchive nor the entire session interface waits for full synchronous promotion.
 
 Public `session content --contains` and `session messages --contains` validate the effective root state before candidate selection.
 Reject cold roots explicitly, even if a requested range happens to contain only plaintext rows.
-Reject warming roots explicitly until persistent promotion is verified complete.
+Root queries use a current root certificate as the fast path.
+An uncertified root validates its own plaintext metadata without writing a certificate.
+Native-child queries validate complete extraction and both FK codecs in the same read transaction as substring SQL.
+A plain child succeeds even when root readiness or root extraction remains pending.
+A compressed or incomplete child returns `warming`, even when its root certificate is ready.
+Metadata validation reads no payload bytes and uses bounded pages, with query cost proportional to child item count.
+Substring search stays read-only and never requests promotion.
 Unresolved or inconsistent native ancestry produces an explicit not-ready error, rather than assumed hot/cold readiness.
 Readiness validation covers late parent resolution and tree changes before accepting a substring query.
 Do not silently return only plaintext matches, partial counts, or incomplete pages.
@@ -676,7 +685,7 @@ Historical migrations continue running in their existing order before extraction
 - A hot owner through either FK prevents compression of shared content.
 - Membership survives duplicate inserts, repeated references, transformation, deletion, reset, and history replacement.
 - Partial ownership reconciliation prevents compression and recovers after restart.
-- Cold-to-hot transitions promote the entire tree progressively; normal reads remain available.
+- Cold-to-hot transitions promote only the actual target session progressively; normal reads remain available.
 - Cold/warming substring calls return explicit errors; ready hot calls preserve Unicode matching and pagination.
 - Internal task/image/workflow/spawn features work on cold compressed and partially computed history.
 - Compression publication rejects stale ownership, root state, active protection, or representation identity.
@@ -734,3 +743,25 @@ Already-selected compressed frames retain their exact verified representation.
 No-gain or missing-dictionary skips publish no representation and require no representation transform.
 Compression preparation uses the same observed source row as its publication proof.
 Publication retains all owner/root cold checks, policy checks, exact source CAS, and readiness/incarnation/epoch fences.
+
+
+## Authorized target-only promotion amendment — 2026-10-12 (Task 19)
+
+This amendment replaces native-subtree promotion and subtree-wide readiness.
+Cold compression eligibility remains inherited from the native root at every depth.
+The content thresholds remain 15 days for archived/hidden roots and 30 days for other roots.
+Scratch policy, all-owner compression guards, CPU yielding, and source CAS remain unchanged.
+
+A promotion snapshot contains the target ID/incarnation and native root ID/incarnation/epoch.
+Every existing ownership and tree mutation still invalidates the old/new native root generations.
+Promotion queues use the actual changed session ID, separate from these root mutation fences.
+Root readiness certifies only root contents. Historical whole-tree certificates remain sufficient for their root's own contents.
+Child search never trusts a parent certificate or an old child certificate.
+Native-child resume uses the same lifecycle path and promotes only that child's own references.
+Startup recovery discovers root targets only; it never queues all inherited-hot children.
+No durable child promotion-demand state, schema change, or new process is introduced.
+Ordinary reads decode only requested contents temporarily. Tantivy search remains available.
+
+Recovery filters each raw root page with persisted cold policy and no active override.
+An active child alone cannot warm its cold root. Cold pages still advance the raw ID cursor to later hot roots.
+Explicit target callbacks retain admitted active eligibility.

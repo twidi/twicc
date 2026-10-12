@@ -726,7 +726,7 @@ def content(
             "Case-insensitive substring filter on the raw item content. "
             "Repeatable, AND-combined (an item must contain every term). "
             "Combinable with a line/range to scope the search. "
-            "Requires a ready hot native root; cold, warming and unresolved ancestry fail. "
+            "Requires complete plaintext for the requested session and a hot native root; cold, warming and unresolved ancestry fail. Search does not schedule promotion. "
             "Use global full-text search or read lines without --contains otherwise."
         ),
     ),
@@ -753,7 +753,7 @@ def messages(
             "Case-insensitive substring filter on the message text. "
             "Repeatable, AND-combined (a message must contain every term). "
             "Applied before --tail/--limit/--offset. "
-            "Requires a ready hot native root; cold, warming and unresolved ancestry fail. "
+            "Requires complete plaintext for the requested session and a hot native root; cold, warming and unresolved ancestry fail. Search does not schedule promotion. "
             "Use global full-text search or read lines without --contains otherwise."
         ),
     ),

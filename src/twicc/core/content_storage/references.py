@@ -113,7 +113,7 @@ def bind_persisted_items(bindings: Sequence[ContentBinding]) -> None:
             roots.add(decision.root_id)
     # Any new persisted binding changes verification's graph, including hot
     # reuse of shared compressed rows. The caller promotes before hot reads.
-    invalidate_roots(roots)
+    invalidate_roots(roots, promotion_targets={binding.session_id for binding in bindings})
 
 
 def _referenced_ids(session_id: str, content_ids: Sequence[int]) -> set[int]:

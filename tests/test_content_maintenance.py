@@ -565,7 +565,7 @@ def test_hot_promotion_precedes_prepared_compression_publication(content_row_fac
 
 
 @pytest.mark.django_db(transaction=True)
-def test_readiness_proof_is_false_for_unextracted_empty_descendant(content_row_factory, writer_state,
+def test_root_readiness_does_not_wait_for_unextracted_empty_descendant(content_row_factory, writer_state,
                                                                  compute_executor_started, monkeypatch, settings):
     import asyncio
     from twicc import content_maintenance_task as maintenance
@@ -585,7 +585,7 @@ def test_readiness_proof_is_false_for_unextracted_empty_descendant(content_row_f
     asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event()))
     root.refresh_from_db()
     row.refresh_from_db()
-    assert root.plaintext_verified_epoch is None and row.codec == 'plain'
+    assert root.plaintext_verified_epoch == root.content_state_epoch and row.codec == 'plain'
 
 
 def test_compression_never_queries_reverse_item_ownership(content_row_factory):

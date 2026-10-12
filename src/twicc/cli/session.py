@@ -159,9 +159,11 @@ def content(
     reaching the last N takes a first call to learn ``last_line`` or ``total``,
     and the session may grow between the two.
 
-    Substring search requires a ready hot native root. Cold, warming and
-    unresolved-ancestry roots fail explicitly. Global full-text search and
-    ordinary line/range reads remain available for these roots.
+    Substring search requires complete plaintext for the requested session and
+    a hot native root. Root readiness covers only its own contents. Children
+    and uncertified roots validate their own plaintext metadata. Cold, warming, and unresolved
+    ancestry fail explicitly. Search does not schedule promotion. Global
+    full-text search and ordinary line/range reads remain available.
 
     No match is an empty result, not an error: with a window, running past the
     end is ordinary paging rather than a failure.
@@ -255,9 +257,11 @@ def messages(
     Python, the filter (and, with it, the ``tail``/``limit``/``offset`` window)
     is applied after extraction, on the matching messages.
 
-    Substring search requires a ready hot native root. Cold, warming and
-    unresolved-ancestry roots fail explicitly. Global full-text search and
-    ordinary line/range reads remain available for these roots.
+    Substring search requires complete plaintext for the requested session and
+    a hot native root. Root readiness covers only its own contents. Children
+    and uncertified roots validate their own plaintext metadata. Cold, warming, and unresolved
+    ancestry fail explicitly. Search does not schedule promotion. Global
+    full-text search and ordinary line/range reads remain available.
 
     The ``is_final`` argument is the matching filter on that field: a list of
     ``"true"`` / ``"false"`` / ``"null"`` tokens, **OR-combined** (a message

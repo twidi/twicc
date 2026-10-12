@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Extract SessionItem contents progressively, preserve exact external behavior, and compress only cold native session trees.
+**Goal:** Extract SessionItem contents progressively, preserve exact external behavior, and compress only contents whose owners have cold native roots.
 
 **Architecture:** Content rows retain immutable logical UTF-8 data with mutable plaintext/zstd representation and exact JSON ownership. Existing ingestion and newest-first compute migrate references; a bounded maintenance coordinator performs periodic compression and immediate recoverable hot promotion. Root generations protect plaintext readiness, while explicit loaders preserve mixed-storage reads and serializers.
 
@@ -26,7 +26,7 @@
 - `Session.is_cold_for_content` uses fifteen days for archived/hidden roots and thirty days for all other roots.
 - `Session.is_cold_for_scratch` requires archived OR hidden plus thirty days since the latest lifecycle date.
 - Every native subagent inherits root cold status, at every depth; orchestration roots remain independent.
-- Any actual hot owner through either FK requires persistent plaintext; active trees cannot be compressed.
+- Any actual hot owner through either FK blocks new compression; active trees cannot be compressed. Target-only promotion warms reused content.
 - Public cold/warming substring operations fail explicitly; ordinary reads decode requested contents only.
 - Periodic maintenance starts thirty minutes after startup, then runs every twenty-four hours.
 - No content GC, automatic column removal, automatic vacuum, persistent cold-read cache, or new fork-resolution behavior.
@@ -101,7 +101,7 @@ Define these records in `types.py`; do not invent differently named variants in 
 `UNLOADED = object()` distinguishes unloaded from empty strings.
 Codec values are `plain` and `zstd`. All plain payloads are UTF-8 bytes with NULL dictionary.
 Session storage columns are nullable `content_storage_version`, `content_state_epoch`, and `plaintext_verified_epoch`, and `storage_incarnation`, without database defaults or indexes.
-Readiness uses verified equality at the resolved native root, plus current hot/active policy and required extraction checks.
+Root readiness uses verified equality for that root session only. Native-child substring readiness checks its own metadata in the read snapshot.
 Increment epochs transactionally; do not set a generic boolean ready after an old promotion result.
 `storage_incarnation` is a fresh UUID string assigned transactionally on session creation, never reused after deletion.
 Legacy NULL incarnations initialize per session before dispatching a read-only compute worker, not through a migration/global startup backfill.
@@ -113,8 +113,8 @@ Ownership deletion/replacement remains in its existing transaction in this relea
 Do not split removal across transactions or add a pending-reconciliation alternative implicitly.
 If Task 1 measurements reject this choice, amend schema/recovery interfaces and review the plan before Task 2 proceeds.
 
-`RootPromotionCursor` orders native sessions by ID, items by line_num, then FK slot 0=current and 1=original.
-Task 4 provides bounded native-tree membership pages; root epoch/incarnation guard the traversal.
+`RootPromotionCursor` orders the actual target session items by line_num, then FK slot 0=current and 1=original.
+Native-root epoch/incarnation guard target traversal. Native-child snapshots additionally carry target ID/incarnation.
 After a budget stop, store the last completed FK slot and resume strictly after that key.
 A shared/already-plain row advances the cursor without another payload write.
 A root epoch change restarts the traversal; a process restart may start from zero using the durable pending generation.
@@ -310,7 +310,7 @@ assert verify_plaintext_root(snapshot) is False
 Run: `cd /home/twidi/dev/twicc-poc && uv run pytest tests/test_content_cold_policy.py tests/test_content_root_state.py -v`.
 
 - [ ] **Step 3: Implement pure date predicate, explicit root resolution, and transactional epochs.**
-Use metadata projections and visited IDs; unresolved ancestry returns `resolved=False`. Root generation advances once per mutation group. Initialize session incarnation once; it never changes during that session row's lifetime. Snapshot verification must compare incarnation before epoch. Verification checks tree membership, root incarnation, current generation, both FK columns, payload codec and extraction requirements; inline legacy strings count as plaintext while incomplete extraction remains separately tracked.
+Use metadata projections and visited IDs; unresolved ancestry returns `resolved=False`. Root generation advances once per mutation group. Initialize session incarnation once; it never changes during that session row's lifetime. Snapshot verification must compare incarnation before epoch. Verification checks native-root resolution, root incarnation, current generation, and the target session's FK codecs and extraction requirements; inline legacy strings count as plaintext while incomplete extraction remains separately tracked.
 Use bounded root/tree/item pages. Do not hold an unbounded set of content PKs for a whole tree.
 
 - [ ] **Step 4: Run green tests and commit.**
@@ -480,7 +480,7 @@ Legacy empty/malformed strings survive; unavailable original stays NULL; known o
 `test_initial_cold_rows_compress_before_periodic_maintenance`: eligible independent rows compress during first compute; no timer wait.
 `test_new_cold_row_is_inserted_compressed_without_plain_intermediate`: observe insertion before commit; new payload has zstd codec on its first persisted representation.
 `test_old_compute_rejected_after_same_id_recreation`: recreate equal offsets/epochs and reject the old incarnation.
-`test_recent_root_compute_does_not_wait_for_old_descendant_metadata`: preserve newest-first availability and separate tree readiness.
+`test_recent_root_compute_does_not_wait_for_old_descendant_metadata`: preserve newest-first availability and certify only root contents.
 
 Assertion examples for the named scenarios above (fixture/setup variables come from that scenario):
 
@@ -550,7 +550,7 @@ Commit: `fix(storage): reconcile ownership across history removal`.
 - Invalidation is synchronous transactional work; wakeups must not be awaited under an incompatible parent lease.
 
 - [ ] **Step 1: Write transition tests.**
-Unarchive while hidden and old keeps cold; unhide while archived keeps cold. Clearing both flags requires promotion only when inactivity remains below thirty days. Start/resume/activity invalidates readiness for the full native tree. Late parent/cycle resolution rejects old readiness. Independent orchestration child changes do not invalidate an unrelated native tree.
+Unarchive while hidden and old keeps cold; unhide while archived keeps cold. Clearing both flags requires promotion only when inactivity remains below thirty days. Start/resume/activity invalidates native-root generation fences and queues only the actual changed session. Late parent/cycle resolution rejects old readiness. Independent orchestration child changes do not invalidate an unrelated native tree.
 Registration begun while compression is prepared either blocks publication or causes it to discard the stale result, without deadlock. Failed registration removes provisional active protection safely.
 
 Assertion examples for the named scenarios above (fixture/setup variables come from that scenario):
@@ -586,8 +586,8 @@ Commit: `feat(storage): invalidate readiness on lifecycle changes`.
 - `promote_root_slice(snapshot: RootStorageSnapshot, cursor: RootPromotionCursor, row_budget: int, byte_budget: int) -> RootPromotionCursor`
 
 - [ ] **Step 1: Write controlled-clock and interruption tests.**
-First periodic pass at 1,800 seconds; later intervals 86,400 seconds. Event hot promotion starts without either wait. Filesystem-disable flag still permits promotion/recovery. Tree promotion covers both refs across depths and remains readable mid-pass. Epoch changes prevent false completion. Restart rediscovers pending roots from metadata only.
-`test_promotion_cursor_between_descendants_with_repeated_lines`: stop after one descendant; resume the next without skipping its same-numbered lines.
+First periodic pass at 1,800 seconds; later intervals 86,400 seconds. Event hot promotion starts without either wait. Filesystem-disable flag still permits promotion/recovery. Target promotion covers both refs of the actual session and remains readable mid-pass. Epoch changes prevent false completion. Restart rediscovers pending roots from metadata only.
+`test_promotion_cursor_does_not_visit_descendants_with_repeated_lines`: repeated line numbers in children never add child promotion work.
 `test_promotion_cursor_between_current_and_original`: stop after current slot on one item; resume original slot and complete both.
 No-gain same policy skips, changed policy retries, successful promoted content recompresses. Empty ownership does not classify orphans cold. Cold shared row with one hot owner cannot publish zstd. Stop/cancel leaves valid bytes/state and drains admitted applies.
 `test_interactive_write_runs_between_maintenance_slices`: barriers prove a full pass does not retain one writer lease.
@@ -598,7 +598,7 @@ Assertion examples for the named scenarios above (fixture/setup variables come f
 assert periodic_delays == [1800, 86400]
 assert cursor_after_current.fk_slot == 0
 assert cursor_after_original.fk_slot == 1
-assert resumed_descendant_ids == expected_native_ids_in_order
+assert promoted_session_ids == [target_session.id]
 assert verify_plaintext_root(old_epoch_snapshot) is False
 assert interactive_apply_index < final_maintenance_slice_index
 assert attempted_same_no_gain_policy.call_count == 0
@@ -609,12 +609,12 @@ Run: `cd /home/twidi/dev/twicc-poc && uv run pytest tests/test_content_maintenan
 
 - [ ] **Step 3: Implement coordinator and bounded publication.**
 Use immediate promotion wakeups plus recoverable root generations/incarnations and the exact RootPromotionCursor ordering above; periodic content-PK/keyset sweeps handle elapsed-time cold eligibility. Initial provisional budgets: 500 rows and 8 MiB encoded input per slice, one oversized row allowed. Validate and tune these in Task 15; these are plan choices, not spec requirements.
-Coalesce roots and prioritize promotion before the next optional compression slice. Prepare codec CPU on a bounded worker separate from the single writer executor; one candidate batch in flight, no unbounded thread pool queue.
+Coalesce actual session targets and prioritize promotion before the next optional compression slice. Prepare codec CPU on a bounded worker separate from the single writer executor; one candidate batch in flight, no unbounded thread pool queue.
 Compression rechecks exact membership, root state, active snapshot, codec/dictionary identity and hash/length at publication.
 
 The authorized Task 17 amendment separates promotion from compression eligibility.
 Promotion compares exact source payload, codec, dictionary, hash, and length under the existing admission and writer locks.
-Root incarnation/epoch and complete native-tree traversal fence readiness.
+Root incarnation/epoch fence mutations. Task 19 limits promotion and root readiness to target references.
 
 Preparation uses one read snapshot for consistent metadata/payload byte accounting.
 Production budgets use 100 rows and 8 MiB of stored+raw+owner bytes.
@@ -800,3 +800,36 @@ Regression tests cover strict UTF-8 across chunk boundaries, invalid UTF-8 with 
 operation-local dictionary queries, worker/event-loop handoff, observed-row payload reads, and verified-frame retention.
 The audit records three-repeat before/after heartbeat and throughput measurements plus a yield ablation.
 No native-tree recompression or production access is repeated.
+
+
+## Authorized Task 19 amendment: session-scoped hot promotion
+
+Task 19 supersedes every earlier native-tree promotion/readiness instruction in this plan.
+`SessionPromotionSnapshot` adds target ID/incarnation to the existing root ID/incarnation/epoch fence.
+Root snapshots retain the existing three-field `RootStorageSnapshot` interface.
+`invalidate_roots` accepts separate `promotion_targets`; lifecycle, reference, and ingestion writes provide actual session IDs.
+The historical `request_root_promotion` callback name accepts root and native-child targets.
+`_promotion_keys` visits only that target's current/original FK slots.
+Root-only startup recovery remains bounded and never infers promotion demand from inherited child hot status.
+Native-child promotion has no durable request record; interrupted work requires a new explicit resume or targeted write.
+
+`verify_plaintext_root` certifies only root extraction and root plaintext references.
+`session_plaintext_metadata` validates exactly one session with bounded metadata pages and no payload reads.
+Root substring queries use a current durable certificate as the fast path.
+Uncertified roots and children validate their own metadata in the same read snapshot as SQL.
+A child-only epoch change cannot make an already plain root unavailable. Read validation never publishes a certificate.
+A child needs no root certificate or root extraction completion. Existing compressed child bytes return `warming` without scheduling promotion.
+Fallback validation adds metadata-query cost proportional to the requested session's item count.
+Tantivy search and temporary line decoding remain available.
+Shared payloads can become plain for untargeted owners because one content row has one representation.
+Cold thresholds, scratch cleanup, compression all-owner eligibility, codec yielding, and publication admission remain unchanged.
+
+Validation adds `tests/test_content_session_promotion.py` and updates historical subtree expectations.
+The synthetic production coordinator recovers root references, then handles an explicit child lifecycle resume.
+It leaves an inherited-hot sibling compressed throughout both phases.
+Target/root delete-recreate ABA, reparenting, intermediate ancestor moves, reference invalidation, and shared FK slots receive regressions.
+No copied database conversion or real native-tree benchmark is repeated.
+
+Recovery filters each raw root page with persisted cold policy and no active override.
+An active child alone cannot warm its cold root. Cold pages still advance the raw ID cursor to later hot roots.
+Explicit target callbacks retain admitted active eligibility.

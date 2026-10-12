@@ -105,6 +105,7 @@ def test_public_contains_discovery_exposes_root_gate_and_alternatives():
     by_name = {tool.name: tool for tool in iter_mcp_tools()}
     for name in ('session_content', 'session_messages'):
         description = by_name[name].input_schema['properties']['contains']['description']
-        assert 'ready hot native root' in description
+        assert 'complete plaintext for the requested session and a hot native root' in description
+        assert 'Search does not schedule promotion' in description
         assert 'cold, warming and unresolved ancestry' in description
         assert 'global full-text search' in description

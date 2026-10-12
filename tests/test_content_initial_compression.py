@@ -53,7 +53,8 @@ def test_recent_root_compute_does_not_wait_for_old_descendant_metadata():
     assert session.compute_version == 123
     assert session.content_storage_version == 1
     assert child.content_storage_version is None
-    assert session.plaintext_verified_epoch != session.content_state_epoch
+    assert session.plaintext_verified_epoch == session.content_state_epoch
+    assert SessionItem.objects.get(session=child, line_num=1).current_content_id is None
 
 
 @pytest.mark.parametrize('active_child', [False, True])

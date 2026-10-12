@@ -62,16 +62,17 @@ def test_deep_native_root_cold_inheritance_and_no_active_override():
         active_session_ids.reset(token)
 
 
-def test_unknown_identity_or_unverified_epoch_is_warming():
+def test_unknown_identity_is_warming_but_plain_root_uses_metadata_fallback():
     session = make_session(content_storage_version=1, content_state_epoch=2, plaintext_verified_epoch=2)
     with transaction.atomic(), pytest.raises(state.PlaintextSearchUnavailable) as error:
         state.require_plaintext_search(session.id)
     assert error.value.reason == 'warming'
     prepare_plaintext_search(session)
     Session.objects.filter(pk=session.pk).update(content_state_epoch=3)
-    with transaction.atomic(), pytest.raises(state.PlaintextSearchUnavailable) as error:
-        state.require_plaintext_search(session.id)
-    assert error.value.reason == 'warming'
+    with transaction.atomic():
+        assert state.require_plaintext_search(session.id).epoch == 3
+    session.refresh_from_db()
+    assert session.plaintext_verified_epoch != session.content_state_epoch
 
 
 @pytest.mark.parametrize('terms', [['NEEDLE', '100%_'], ['é'], ['É'], ['\\'], ['needle\x00'], ['missing']])
@@ -170,7 +171,8 @@ def test_contains_snapshot_cannot_mix_ready_epoch_and_new_hot_reference(command,
             observed.append(state.require_plaintext_search(session_id))
             with sqlite3.connect(database, timeout=5) as writer:
                 columns = [row[1] for row in writer.execute('PRAGMA table_info(core_sessionitem)')]
-                selected = ['NULL' if column == 'id' else '2' if column == 'line_num' else f'"{column}"'
+                selected = ['NULL' if column in ('id', 'current_content_id')
+                            else '2' if column == 'line_num' else f'"{column}"'
                             for column in columns]
                 names = ', '.join(f'"{column}"' for column in columns)
                 writer.execute(f'INSERT INTO core_sessionitem ({names}) SELECT {", ".join(selected)} '

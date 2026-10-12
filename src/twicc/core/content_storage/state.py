@@ -10,7 +10,7 @@ from django.db.models.functions import Coalesce, Length
 from django.utils import timezone
 
 from twicc.core.content_storage.policy import COLD_FIELDS, CONTENT_STORAGE_VERSION, cold_from_fields, scratch_cold_from_fields
-from twicc.core.content_storage.types import RootDecision, RootStorageSnapshot
+from twicc.core.content_storage.types import RootDecision, RootStorageSnapshot, SessionPromotionSnapshot
 from twicc.core.models import Session, SessionItem
 
 TREE_PAGE_SIZE = 128
@@ -96,8 +96,8 @@ def ensure_storage_incarnation(session_id: str) -> str:
     return Session.objects.values_list('storage_incarnation', flat=True).get(pk=session_id)
 
 
-def invalidate_roots(root_ids: Iterable[str]) -> None:
-    """Advance each supplied root once for this mutation group; callers supply old and new roots."""
+def invalidate_roots(root_ids: Iterable[str], *, promotion_targets: Iterable[str] | None = None) -> None:
+    """Fence native-root mutations separately from the sessions that require plaintext promotion."""
     _require_writer_transaction()
     roots = tuple(set(root_ids))
     for offset in range(0, len(roots), TREE_PAGE_SIZE):
@@ -106,10 +106,11 @@ def invalidate_roots(root_ids: Iterable[str]) -> None:
         )
     from twicc.core.content_storage.lifecycle import active_session_ids, request_root_promotion
 
-    decisions = resolve_root_decisions(roots, timezone.now(), active_session_ids.get())
-    for root_id, decision in decisions.items():
-        if decision.resolved and decision.root_id == root_id and not decision.is_cold:
-            transaction.on_commit(lambda root_id=root_id: request_root_promotion(root_id))
+    targets = roots if promotion_targets is None else tuple(set(promotion_targets))
+    decisions = resolve_root_decisions(targets, timezone.now(), active_session_ids.get())
+    for session_id, decision in decisions.items():
+        if decision.resolved and not decision.is_cold:
+            transaction.on_commit(lambda session_id=session_id: request_root_promotion(session_id))
 
 
 def iter_native_tree_session_pages(
@@ -151,21 +152,71 @@ def snapshot_root_storage(root_id: str) -> RootStorageSnapshot:
     return RootStorageSnapshot(root_id, incarnation, epoch)
 
 
-def _snapshot_matches(snapshot: RootStorageSnapshot) -> bool:
+def snapshot_session_promotion(session_id: str) -> RootStorageSnapshot | SessionPromotionSnapshot:
+    """Capture one target identity and its native-root mutation fence under writer ownership."""
+    _require_writer_transaction()
+    decision = resolve_root_decision(session_id, timezone.now(), frozenset())
+    if not decision.resolved:
+        raise ValueError('Storage promotion requires resolved native ancestry')
+    root = snapshot_root_storage(decision.root_id)
+    if session_id == root.root_id:
+        return root
+    incarnation = ensure_storage_incarnation(session_id)
+    return SessionPromotionSnapshot(root.root_id, root.incarnation, root.epoch, session_id, incarnation)
+
+
+def _snapshot_matches(snapshot: RootStorageSnapshot | SessionPromotionSnapshot) -> bool:
     fields = Session.objects.filter(pk=snapshot.root_id).values('storage_incarnation', 'content_state_epoch').first()
-    return (fields is not None and fields['storage_incarnation'] == snapshot.incarnation
-            and fields['content_state_epoch'] == snapshot.epoch)
+    if (fields is None or fields['storage_incarnation'] != snapshot.incarnation
+            or fields['content_state_epoch'] != snapshot.epoch):
+        return False
+    if isinstance(snapshot, SessionPromotionSnapshot):
+        incarnation = Session.objects.filter(pk=snapshot.session_id).values_list('storage_incarnation', flat=True).first()
+        decision = resolve_root_decision(snapshot.session_id, timezone.now(), frozenset())
+        return (incarnation == snapshot.session_incarnation and decision.resolved
+                and decision.root_id == snapshot.root_id)
+    decision = resolve_root_decision(snapshot.root_id, timezone.now(), frozenset())
+    return decision.resolved and decision.root_id == snapshot.root_id
+
+
+def session_plaintext_metadata(session_id: str) -> bool:
+    """Check complete extraction and both plaintext slots for one session without loading content bytes.
+
+    Callers hold one read snapshot or the writer transaction. Metadata pages keep
+    memory bounded. No readiness certificate for a native parent authorizes a child.
+    """
+    if not connection.in_atomic_block:
+        raise transaction.TransactionManagementError('Plaintext metadata requires a caller-owned transaction')
+    fields = Session.objects.filter(pk=session_id).values('content_storage_version', 'storage_incarnation').first()
+    if (fields is None or fields['content_storage_version'] != CONTENT_STORAGE_VERSION
+            or not fields['storage_incarnation']):
+        return False
+    after_line = -1
+    while True:
+        rows = list(SessionItem.objects.filter(session_id=session_id, line_num__gt=after_line)
+                    .annotate(legacy_length=Length('content'))
+                    .order_by('line_num').values(
+                        'line_num', 'legacy_length', 'current_content_id', 'original_content_id',
+                        'current_content__codec', 'current_content__dictionary_id',
+                        'original_content__codec', 'original_content__dictionary_id',
+                    )[:ITEM_PAGE_SIZE])
+        if not rows:
+            return True
+        for row in rows:
+            if row['legacy_length'] != 0 or row['current_content_id'] is None:
+                return False
+            for slot in ('current_content', 'original_content'):
+                if row[f'{slot}_id'] is not None and (
+                    row[f'{slot}__codec'] != 'plain' or row[f'{slot}__dictionary_id'] is not None
+                ):
+                    return False
+        after_line = rows[-1]['line_num']
 
 
 def verify_plaintext_root(
     snapshot: RootStorageSnapshot, *, now: datetime | None = None, active_root_ids: frozenset[str] = frozenset(),
 ) -> bool:
-    """Publish only complete extracted plaintext for the same root incarnation and generation.
-
-    The caller owns the writer transaction and invalidates every ownership/tree mutation.
-    This checks payload metadata only. It never loads payload or legacy text bytes.
-    The caller supplies its active-root admission snapshot. Cold inactive roots cannot publish readiness.
-    """
+    """Certify only this root session's extracted plaintext for its current native-root generation."""
     _require_writer_transaction()
     if not _snapshot_matches(snapshot):
         return False
@@ -173,39 +224,7 @@ def verify_plaintext_root(
     decision = resolve_root_decision(snapshot.root_id, now, active_root_ids)
     if not decision.resolved or decision.root_id != snapshot.root_id or decision.is_cold:
         return False
-    found_root = False
-    for page in iter_native_tree_session_pages(snapshot.root_id, None, TREE_PAGE_SIZE):
-        found_root |= snapshot.root_id in page
-        metadata = Session.objects.filter(pk__in=page).values('content_storage_version', 'storage_incarnation')
-        if any(row['content_storage_version'] != CONTENT_STORAGE_VERSION or not row['storage_incarnation']
-               for row in metadata):
-            return False
-        if Session.objects.filter(parent_session_id__in=page).exclude(type='subagent').exists():
-            return False
-        for session_id in page:
-            after_line = -1
-            while True:
-                rows = list(SessionItem.objects.filter(session_id=session_id, line_num__gt=after_line)
-                            .annotate(legacy_length=Length('content'))
-                            .order_by('line_num').values(
-                                'line_num', 'legacy_length', 'current_content_id', 'original_content_id',
-                                'current_content__codec', 'current_content__dictionary_id',
-                                'original_content__codec', 'original_content__dictionary_id',
-                            )[:ITEM_PAGE_SIZE])
-                if not rows:
-                    break
-                for row in rows:
-                    if row['legacy_length'] != 0 or row['current_content_id'] is None:
-                        return False
-                    for slot in ('current_content', 'original_content'):
-                        if row[f'{slot}_id'] is not None and (
-                            row[f'{slot}__codec'] != 'plain' or row[f'{slot}__dictionary_id'] is not None
-                        ):
-                            return False
-                after_line = rows[-1]['line_num']
-    decision = resolve_root_decision(snapshot.root_id, now, active_root_ids)
-    if (not found_root or not _snapshot_matches(snapshot) or not decision.resolved
-            or decision.root_id != snapshot.root_id or decision.is_cold):
+    if not session_plaintext_metadata(snapshot.root_id):
         return False
     return bool(Session.objects.filter(
         pk=snapshot.root_id, storage_incarnation=snapshot.incarnation, content_state_epoch=snapshot.epoch,
@@ -234,9 +253,10 @@ def require_plaintext_search(session_id: str) -> RootStorageSnapshot:
     """Validate current DB ancestry and readiness inside the caller's read snapshot.
 
     Persisted cold policy governs this public operation. Runtime activity never
-    overrides it, including in a standalone CLI process. The verified generation
-    certifies complete extraction and both plaintext FK slots across the native
-    tree; ownership and tree writers invalidate it in their mutation transaction.
+    overrides it, including in a standalone CLI process. Root certificates cover
+    only the root's own references. Children and uncertified roots require scoped
+    metadata validation in this same read snapshot. It never publishes a certificate.
+    A hot root can still have compressed children.
     """
     if not connection.in_atomic_block:
         raise transaction.TransactionManagementError('Substring search requires a caller-owned read transaction')
@@ -249,7 +269,13 @@ def require_plaintext_search(session_id: str) -> RootStorageSnapshot:
         'storage_incarnation', 'content_storage_version', 'content_state_epoch', 'plaintext_verified_epoch',
     ).get()
     epoch = fields['content_state_epoch']
-    if (not fields['storage_incarnation'] or fields['content_storage_version'] != CONTENT_STORAGE_VERSION
-            or epoch is None or fields['plaintext_verified_epoch'] != epoch):
+    certified_root = (
+        session_id == decision.root_id and bool(fields['storage_incarnation'])
+        and fields['content_storage_version'] == CONTENT_STORAGE_VERSION
+        and epoch is not None and fields['plaintext_verified_epoch'] == epoch
+    )
+    # A child-only mutation can stale the root certificate without changing root
+    # bytes. Read-only scoped validation preserves availability for that root.
+    if not certified_root and not session_plaintext_metadata(session_id):
         raise PlaintextSearchUnavailable('warming')
     return RootStorageSnapshot(decision.root_id, fields['storage_incarnation'], epoch)
