@@ -5,6 +5,7 @@ import hashlib
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+from itertools import islice
 from typing import NamedTuple
 
 import orjson
@@ -48,10 +49,15 @@ class PreparedEntry(NamedTuple):
     proof: RepresentationProof
 
 
+class PromotionEntry(NamedTuple):
+    candidate: PreparedRepresentation
+    observed_payload: bytes
+
+
 class PromotionBatch(NamedTuple):
     snapshot: RootStorageSnapshot
     cursor: RootPromotionCursor
-    entries: tuple[PreparedEntry, ...]
+    entries: tuple[PromotionEntry, ...]
     verified: bool
 
 
@@ -238,6 +244,7 @@ def _session_keys(pages, cursor):
                 yield session_id, -1, 1, None, valid
 
 
+@transaction.atomic
 def prepare_promotion_batch(snapshot, cursor, row_budget=ROW_BUDGET, byte_budget=BYTE_BUDGET):
     if row_budget <= 0 or byte_budget <= 0:
         raise ValueError('Maintenance budgets must be positive')
@@ -246,37 +253,39 @@ def prepare_promotion_batch(snapshot, cursor, row_budget=ROW_BUDGET, byte_budget
     decision = resolve_root_decision(snapshot.root_id, timezone.now(), frozenset())
     if not decision.resolved:
         return PromotionBatch(snapshot, cursor, (), False)
-    count, size = 0, 0
+    # Fetch only bounded FK metadata before loading any payload bytes.
+    keys = list(islice(_promotion_keys(snapshot, cursor), row_budget + 1))
+    ids = {key[3] for key in keys if key[3] is not None}
+    metadata = {row['id']: row for row in SessionItemContent.objects.filter(pk__in=ids).annotate(
+        stored_size=Length('payload'), owner_size=Length(Cast('session_ids', BinaryField())),
+    ).values('id', 'raw_size', 'stored_size', 'owner_size')}
+    selected = []
+    size = 0
+    for key in keys:
+        content = metadata.get(key[3])
+        length = content['raw_size'] + content['stored_size'] + content['owner_size'] if content else 0
+        if selected and (len(selected) >= row_budget or size + length > byte_budget):
+            break
+        selected.append(key)
+        size += length
+    rows = SessionItemContent.objects.in_bulk({key[3] for key in selected if key[3] is not None})
     entries = []
     prepared_ids = set()
     last = cursor
-    done = True
     verified = True
-    for session_id, line, slot, content_id, item_valid in _promotion_keys(snapshot, cursor):
-        if content_id is None:
-            length = 0
-        else:
-            raw_size, stored_size, owner_size = SessionItemContent.objects.filter(pk=content_id).annotate(
-                size=Length('payload'), owner_size=Length(Cast('session_ids', BinaryField())),
-            ).values_list('raw_size', 'size', 'owner_size').get()
-            # The proof retains stored bytes and owners; promotion retains decoded bytes.
-            length = raw_size + stored_size + owner_size
-        if count and (count >= row_budget or size + length > byte_budget):
-            done = False
-            break
-        verified &= item_valid
-        row = SessionItemContent.objects.get(pk=content_id) if content_id is not None else None
+    for session_id, line, slot, content_id, item_valid in selected:
+        row = rows.get(content_id)
+        verified &= item_valid and (content_id is None or row is not None)
         if row is not None and row.codec == 'plain' and row.dictionary_id is not None:
             verified = False
         if row is not None and row.codec != 'plain' and row.id not in prepared_ids:
             prepared_ids.add(row.id)
-            proof = _proof(row)
-            candidate = prepare_representation(row.id, 'plain')
-            entries.append(PreparedEntry(candidate, proof))
-        count += 1
-        size += length
-        last = RootPromotionCursor(session_id, line, slot, count, size, False)
-    return PromotionBatch(snapshot, last._replace(rows=count, bytes=size, done=done), tuple(entries), verified)
+            encoded = encode_plain(decode_content(row))
+            candidate = PreparedRepresentation(row.id, row.codec, row.dictionary_id, encoded, 'plain', False)
+            entries.append(PromotionEntry(candidate, bytes(row.payload)))
+        last = RootPromotionCursor(session_id, line, slot, len(selected), size, False)
+    return PromotionBatch(snapshot, last._replace(rows=len(selected), bytes=size, done=len(selected) == len(keys)),
+                          tuple(entries), verified)
 
 
 def apply_promotion_batch(batch, active, *, pass_verified=False):
@@ -286,12 +295,26 @@ def apply_promotion_batch(batch, active, *, pass_verified=False):
         decision = resolve_root_decision(batch.snapshot.root_id, timezone.now(), active)
         if not decision.resolved or decision.is_cold:
             return START_CURSOR
+        _require_writer_transaction()
+        rows = SessionItemContent.objects.in_bulk(entry.candidate.content_id for entry in batch.entries)
+        changed = []
         for entry in batch.entries:
-            row = SessionItemContent.objects.filter(pk=entry.candidate.content_id).first()
-            if row is None or not _proof_matches(entry, row):
+            candidate = entry.candidate
+            row = rows.get(candidate.content_id)
+            encoded = candidate.encoded
+            # Decompression needs representation CAS, not compression eligibility.
+            # Owner changes remain intact; tree/reference changes invalidate the root epoch.
+            if (row is None or row.codec != candidate.observed_codec
+                    or row.dictionary_id != candidate.observed_dictionary_id
+                    or bytes(row.payload) != entry.observed_payload
+                    or bytes(row.sha256) != encoded.sha256 or row.raw_size != encoded.raw_size):
                 return START_CURSOR
-        if publish_prepared_batch(batch.entries, active) != len(batch.entries):
-            return START_CURSOR
+            row.payload = encoded.payload
+            row.codec = 'plain'
+            row.dictionary_id = None
+            changed.append(row)
+        if changed:
+            SessionItemContent.objects.bulk_update(changed, ['payload', 'codec', 'dictionary'], batch_size=ROW_BUDGET)
         if batch.cursor.done and pass_verified and batch.verified:
             # The operation checks every session/item slot across admitted slices.
             # The unchanged root generation fences every tree/reference mutation.

@@ -1693,3 +1693,100 @@ Final checks confirm all five measured trees have only plain referenced contents
 Main data, provider files, and shared scratch/artifacts remain untouched.
 No server starts, provider compute, provider migration, content GC, vacuum, or column removal occurs.
 The temporary harness and machine-readable statistics remain in the ignored implementation workspace for review.
+
+## Authorized persistent promotion simplification — 2026-10-12
+
+User authorization separates plaintext promotion from compression eligibility proofs.
+Compression retains every existing owner/root cold guard and operation-local proof.
+Promotion uses exact representation CAS under the existing admission, writer, and transaction boundaries.
+
+Preparation uses a consistent read snapshot for metadata and payload byte accounting.
+It bulk-loads bounded FK metadata, then admitted content rows.
+Publication bulk-loads source representations and checks every candidate before the first update.
+
+Comparisons include source payload, codec, dictionary identity, sha256, and raw_size.
+Decode still verifies exact UTF-8, size, digest, and immutable dictionary bytes.
+Updates change only payload, codec, and dictionary; ownership and compression-attempt metadata remain intact.
+
+Root incarnation/epoch and complete native-tree traversal still fence readiness.
+Both FK slots and empty-session completeness remain part of the cursor.
+Budgets remain 100 rows and 8 MiB of stored+raw+owner bytes, with one oversized-row progress.
+
+### Real-tree comparison
+
+All five trees use the same authorized copied database and IDs as the historical benchmark above.
+Native session, item, distinct-content, raw-byte, and compressed-byte counts match that benchmark exactly.
+The historical measurements remain unchanged.
+
+| Provider / root items | Repeat | Total seconds | Preparation seconds | Apply seconds | Batches |
+|---|---:|---:|---:|---:|---:|
+| claude_code / 100 | 1 | 0.144 | 0.066 | 0.039 | 1 |
+| claude_code / 100 | 2 | 0.152 | 0.064 | 0.048 | 1 |
+| codex / 1,039 | 1 | 2.137 | 1.084 | 0.785 | 19 |
+| codex / 1,039 | 2 | 2.287 | 1.117 | 0.886 | 19 |
+| claude_code / 5,297 | 1 | 12.758 | 8.063 | 3.608 | 80 |
+| claude_code / 5,297 | 2 | 13.108 | 8.379 | 3.614 | 80 |
+| claude_code / 22,485 | 1 | 23.216 | 11.359 | 8.704 | 232 |
+| codex / 23,521 | 1 | 24.246 | 11.041 | 10.141 | 236 |
+
+| Distinct contents | Historical total seconds | New total seconds |
+|---:|---:|---:|
+| 100 | 0.738–1.278 | 0.144–0.152 |
+| 1,889 | 14.460–14.637 | 2.137–2.287 |
+| 7,997 | 64.793 | 12.758–13.108 |
+| 19,376 | 151.309 | 23.216 |
+| 23,521 | 172.806 | 24.246 |
+
+The larger Claude case improves by 6.52×; the larger Codex case improves by 7.13×.
+The medium case improves by 4.94–5.08× against its single historical pass.
+These are observed native-tree persistent-promotion timings, not requested-content read timings.
+
+### Measurement and restoration
+
+Full pytest finishes before setup or timing. Normal `DEBUG=False` applies throughout the harness.
+No allocation tracing or SQL tracing runs during these measurements.
+Untimed recompression uses production codec, full compression proofs, and guarded production publication.
+
+The clock starts before the admitted session-ID lifecycle resume mutation.
+The real coordinator schedules, traverses, decodes, admits, publishes, and commits each bounded batch.
+The clock stops when a database read observes genuinely committed plaintext readiness.
+
+Preparation includes FK traversal, bounded metadata/payload reads, decode, integrity checks, and its read transaction.
+Apply includes fresh root/source validation, bulk publication, readiness publication, and transaction commits.
+Worker connection cleanup, scheduling, admission waits, snapshots, and the 2-millisecond observation polling remain in total wall time.
+
+Only selected-root events run. Startup pending-root recovery and unrelated periodic passes are disabled in the temporary harness.
+Filesystem cleanup remains disabled. No server, provider computation, migration, extraction, census, GC, or vacuum runs.
+No second production database copy or extreme-tree measurement occurs.
+
+Every pass starts with all distinct referenced contents compressed and ends with all referenced contents plain.
+Before/after checks compare raw integrity hashes, both FK slots, exact owners, native references, and each native session effective-content hash.
+The final read observes readiness before coordinator shutdown and fixture restoration.
+
+Root lifecycle dates remain naturally cold before each synthetic resume.
+Untimed setup temporarily uses current root compute markers: Claude 115 and Codex 56.
+Stopped copied-fixture restoration restores exact saved lifecycle dictionaries and original compute markers: Claude 114 and Codex 55.
+
+This authorized fixture restoration uses scoped raw updates, preserving the genuine completed readiness certificate.
+It never fabricates active protection or readiness. Production lifecycle services retain their normal invalidation behavior.
+Final read-only checks confirm naturally cold dates and matching readiness epochs on every measured root.
+
+### Verification and limits
+
+The final production full suite reports 10,097 passed, 26 skipped, and three warnings in 314.48 seconds.
+Two SDK wrapper tests warn about unawaited AsyncMock coroutines; one shell-notice test warns about an unawaited state notification.
+Subsequent test-only WAL strengthening and original-slot atomicity coverage pass in a 27-test promotion gate.
+
+The forbidden-helper regression proves promotion avoids per-content compression owner/root proof work.
+A synthetic file-backed WAL race commits concurrent plaintext between metadata and payload reads.
+Actual preparation retains its original compressed snapshot and consistent byte accounting.
+
+Targeted tests retain source CAS, retry, deletion/replacement, root ABA, reference-change, incomplete-tree, original-slot, and shared-owner coverage.
+Scoped Ruff and diff checks pass. Compression guards, native-tree scope, and public hot-only substring gates remain unchanged.
+Per-session-only readiness remains a separate unauthorized design change.
+
+As before, every measured tree has zero original FK slots and zero multi-session owners.
+Targeted synthetic tests cover those cases; the timing table does not measure their performance.
+No new allocation or peak-WAL claim follows from these measurements.
+
+The temporary harness, result JSON, logs, and Task 17 report remain in the ignored implementation workspace for independent review.

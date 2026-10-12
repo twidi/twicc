@@ -610,7 +610,19 @@ Run: `cd /home/twidi/dev/twicc-poc && uv run pytest tests/test_content_maintenan
 - [ ] **Step 3: Implement coordinator and bounded publication.**
 Use immediate promotion wakeups plus recoverable root generations/incarnations and the exact RootPromotionCursor ordering above; periodic content-PK/keyset sweeps handle elapsed-time cold eligibility. Initial provisional budgets: 500 rows and 8 MiB encoded input per slice, one oversized row allowed. Validate and tune these in Task 15; these are plan choices, not spec requirements.
 Coalesce roots and prioritize promotion before the next optional compression slice. Prepare codec CPU on a bounded worker separate from the single writer executor; one candidate batch in flight, no unbounded thread pool queue.
-Recheck exact membership, root state, active snapshot, codec/dictionary identity and hash/length at publication. Replace payload/codec/dictionary/attempt metadata atomically. No cold-read DB cache/timestamps.
+Compression rechecks exact membership, root state, active snapshot, codec/dictionary identity and hash/length at publication.
+
+The authorized Task 17 amendment separates promotion from compression eligibility.
+Promotion compares exact source payload, codec, dictionary, hash, and length under the existing admission and writer locks.
+Root incarnation/epoch and complete native-tree traversal fence readiness.
+
+Preparation uses one read snapshot for consistent metadata/payload byte accounting.
+Production budgets use 100 rows and 8 MiB of stored+raw+owner bytes.
+One oversized row still advances the cursor.
+
+Promotion changes payload/codec/dictionary only.
+It preserves ownership and compression-attempt metadata.
+No cold-read DB cache/timestamps.
 Use a content row's first provider affinity for policy selection. Retain old dictionary bytes.
 
 - [ ] **Step 4: Integrate the existing directory cleanup without broadening its guard.**

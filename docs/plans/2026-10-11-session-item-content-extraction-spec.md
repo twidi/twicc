@@ -601,9 +601,22 @@ It also detects eligibility changes caused by elapsed time, not only explicit fl
 Maintenance performs bounded work and yields to interactive writer operations.
 CPU encoding/decoding does not hold a long database write transaction.
 Do not extend the cleanup's agent-start exclusion guard over an entire database compression pass.
-Each published representation rechecks row identity, ownership completeness, root eligibility, and active protection under writer coordination.
+Compression publication rechecks row identity, ownership completeness, root eligibility, and active protection under writer coordination.
+
+**Authorized amendment, 2026-10-12 (Task 17):** Persistent plaintext promotion does not require per-content compression eligibility proofs.
+It verifies observed payload, codec, dictionary identity, sha256, and raw_size under storage admission and writer ownership.
+Decode verifies exact UTF-8 bytes before publication.
+
+Root incarnation/epoch and complete native-tree reference traversal still fence readiness.
+Both FK slots, ownership, immutable dictionary identity, bounded budgets, and cancellation semantics remain unchanged.
+Compression retains every existing owner/root cold guard.
+
+Per-session-only readiness stays outside this amendment.
+
 A hot reference or tree transition invalidates an obsolete compression result.
-Payload, codec, dictionary reference, and attempt metadata change atomically.
+
+Compression changes payload, codec, dictionary reference, and attempt metadata atomically.
+Promotion changes payload, codec, and dictionary reference atomically while preserving attempt metadata.
 A crash leaves a valid old or new representation, never partially written bytes.
 
 Unarchive, unhide, resume, activity update, and tree changes reevaluate effective root eligibility.

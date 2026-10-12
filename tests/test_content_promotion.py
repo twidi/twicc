@@ -176,3 +176,161 @@ def test_promotion_budget_includes_prepared_plaintext_for_compressible_large_row
     assert len(batch.entries) == 1
     assert batch.cursor.bytes >= 5 * 1024 * 1024
     assert not batch.cursor.done
+
+
+def test_promotion_avoids_compression_eligibility_proofs(content_row_factory, monkeypatch):
+    from twicc import content_maintenance_task as maintenance
+
+    root = session('root', storage_incarnation='i', content_storage_version=1)
+    shared = session('shared', archived=True, created_at=timezone.now() - timedelta(days=31))
+    row = content_row_factory('shared' * 200, True, session_ids=[root.id, shared.id])
+    item(root, row, row)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('Promotion performs compression eligibility proof work')
+
+    monkeypatch.setattr(maintenance, '_metadata_proof', forbidden)
+    monkeypatch.setattr(maintenance, '_owners_cold', forbidden)
+    batch = maintenance.prepare_promotion_batch(snapshot(root), START)
+    # Unrelated shared-owner lifecycle changes do not invalidate exact decompression.
+    shared.archived = False
+    shared.save(update_fields=['archived'])
+    cursor = maintenance.apply_promotion_batch(batch, frozenset(), pass_verified=True)
+    row.refresh_from_db()
+    root.refresh_from_db()
+    assert cursor.done and row.codec == 'plain'
+    assert row.session_ids == ['root', 'shared']
+    assert root.plaintext_verified_epoch == root.content_state_epoch
+
+
+@pytest.mark.parametrize('change', ['payload', 'sha256', 'raw_size', 'codec', 'dictionary_id', 'delete'])
+def test_promotion_rejects_changed_source_representation(content_row_factory, change):
+    from twicc import content_maintenance_task as maintenance
+    from twicc.core.models import SessionItemContent
+
+    root = session('root', storage_incarnation='i', content_storage_version=1)
+    row = content_row_factory('exact' * 200, True, session_ids=[root.id])
+    item(root, row)
+    batch = maintenance.prepare_promotion_batch(snapshot(root), START)
+    changes = {'payload': b'changed', 'sha256': b'x' * 32, 'raw_size': 1,
+               'codec': 'plain', 'dictionary_id': None}
+    if change == 'delete':
+        SessionItem.objects.filter(session=root).delete()
+        row.delete()
+    else:
+        SessionItemContent.objects.filter(pk=row.id).update(**{change: changes[change]})
+    assert maintenance.apply_promotion_batch(batch, frozenset(), pass_verified=True) == START
+    root.refresh_from_db()
+    assert root.plaintext_verified_epoch is None
+
+
+@pytest.mark.parametrize('change', ['incarnation', 'epoch', 'replacement', 'reference'])
+def test_promotion_rejects_root_or_reference_generation_changes(content_row_factory, change):
+    from twicc import content_maintenance_task as maintenance
+    from twicc.core.models import Session
+
+    root = session('root', storage_incarnation='i', content_storage_version=1)
+    row = content_row_factory('exact' * 200, True, session_ids=[root.id])
+    ref = item(root, row)
+    observation = snapshot(root)
+    batch = maintenance.prepare_promotion_batch(observation, START)
+    if change == 'incarnation':
+        Session.objects.filter(pk=root.id).update(storage_incarnation='new')
+    elif change == 'replacement':
+        root.delete()
+        session('root', storage_incarnation='new', content_storage_version=1,
+                content_state_epoch=observation.epoch)
+    else:
+        with transaction.atomic():
+            if change == 'reference':
+                replacement = content_row_factory('replacement' * 100, True, session_ids=[root.id])
+                SessionItem.objects.filter(pk=ref.pk).update(current_content=replacement)
+            state.invalidate_roots([root.id])
+    assert maintenance.apply_promotion_batch(batch, frozenset(), pass_verified=True) == START
+    row.refresh_from_db()
+    assert row.codec == 'zstd'
+    assert Session.objects.get(pk='root').plaintext_verified_epoch is None
+
+
+def test_already_promoted_representation_retries_without_stale_publication(content_row_factory):
+    from twicc import content_maintenance_task as maintenance
+    from twicc.core.content_storage.codec import encode_plain
+    from twicc.core.models import SessionItemContent
+
+    root = session('root', storage_incarnation='i', content_storage_version=1)
+    text = 'same' * 200
+    row = content_row_factory(text, True, session_ids=[root.id])
+    item(root, row, row)
+    observation = snapshot(root)
+    batch = maintenance.prepare_promotion_batch(observation, START)
+    SessionItemContent.objects.filter(pk=row.pk).update(payload=encode_plain(text).payload, codec='plain', dictionary=None)
+    assert maintenance.apply_promotion_batch(batch, frozenset(), pass_verified=True) == START
+    retry = maintenance.prepare_promotion_batch(observation, START)
+    assert maintenance.apply_promotion_batch(retry, frozenset(), pass_verified=True).done
+    root.refresh_from_db()
+    assert root.plaintext_verified_epoch == observation.epoch
+
+
+@pytest.mark.django_db(transaction=True)
+def test_preparation_byte_accounting_survives_separate_connection_promotion(content_row_factory, monkeypatch, tmp_path):
+    import sqlite3
+    from django.db import connections
+    from twicc import content_maintenance_task as maintenance
+    from twicc.core.content_storage.codec import encode_plain
+    from twicc.core.models import SessionItemContent
+
+    root = session('root', storage_incarnation='i', content_storage_version=1)
+    row = content_row_factory('large' * 10000, True, session_ids=[root.id])
+    item(root, row)
+    stored = bytes(row.payload)
+    plain = encode_plain('large' * 10000)
+    # Copy only this tiny synthetic pytest database into a WAL fixture.
+    source = connections['default']
+    path = tmp_path / 'promotion-race.sqlite'
+    with sqlite3.connect(path) as target:
+        source.connection.backup(target)
+        target.execute('PRAGMA journal_mode=WAL')
+    reader = source.copy()
+    reader.settings_dict['NAME'] = str(path)
+    connections['default'] = reader
+    independent = reader.copy()
+    original = SessionItemContent.objects.in_bulk
+    attempted = []
+
+    def concurrent_promotion(ids):
+        # The writer commits after metadata reads. The reader must retain
+        # its compressed snapshot while preparation performs codec work.
+        with independent.cursor() as cursor:
+            cursor.execute('UPDATE core_sessionitemcontent SET payload = %s, codec = %s, dictionary_id = NULL '
+                           'WHERE id = %s', [plain.payload, 'plain', row.pk])
+        attempted.append('committed')
+        return original(ids)
+
+    monkeypatch.setattr(SessionItemContent.objects, 'in_bulk', concurrent_promotion)
+    try:
+        batch = maintenance.prepare_promotion_batch(snapshot(root), START)
+    finally:
+        independent.close()
+        reader.close()
+        connections['default'] = source
+    assert attempted == ['committed']
+    assert len(batch.entries) == 1
+    assert batch.entries[0].observed_payload == stored
+    assert batch.cursor.bytes >= plain.raw_size + len(stored)
+
+
+def test_rejected_source_keeps_other_prepared_content_compressed(content_row_factory):
+    from twicc import content_maintenance_task as maintenance
+    from twicc.core.models import SessionItemContent
+
+    root = session('root', storage_incarnation='i', content_storage_version=1)
+    current = content_row_factory('current' * 200, True, session_ids=[root.id])
+    original = content_row_factory('original' * 200, True, session_ids=[root.id])
+    item(root, current, original)
+    batch = maintenance.prepare_promotion_batch(snapshot(root), START)
+    SessionItemContent.objects.filter(pk=original.pk).update(payload=b'replaced')
+    assert maintenance.apply_promotion_batch(batch, frozenset(), pass_verified=True) == START
+    current.refresh_from_db()
+    assert current.codec == 'zstd'
+    root.refresh_from_db()
+    assert root.plaintext_verified_epoch is None
