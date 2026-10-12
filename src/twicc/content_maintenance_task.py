@@ -255,7 +255,7 @@ def prepare_promotion_batch(snapshot, cursor, row_budget=ROW_BUDGET, byte_budget
     if not _snapshot_matches(snapshot):
         return PromotionBatch(snapshot, cursor, (), False)
     decision = resolve_root_decision(snapshot.root_id, timezone.now(), frozenset())
-    if not decision.resolved:
+    if not decision.resolved or (getattr(snapshot, 'recovery', False) and decision.is_cold):
         return PromotionBatch(snapshot, cursor, (), False)
     # Fetch only bounded FK metadata before loading any payload bytes.
     keys = list(islice(_promotion_keys(snapshot, cursor), row_budget + 1))
@@ -297,7 +297,8 @@ def apply_promotion_batch(batch, active, *, pass_verified=False):
     with transaction.atomic():
         if not _snapshot_matches(batch.snapshot):
             return START_CURSOR
-        decision = resolve_root_decision(batch.snapshot.root_id, timezone.now(), active)
+        eligibility_active = frozenset() if getattr(batch.snapshot, 'recovery', False) else active
+        decision = resolve_root_decision(batch.snapshot.root_id, timezone.now(), eligibility_active)
         if not decision.resolved or decision.is_cold:
             return START_CURSOR
         _require_writer_transaction()
@@ -416,12 +417,18 @@ async def _apply(function, *args):
         return await run_under_db_write_lock(apply, content_activity=True)
 
 
-def _snapshot(session_id, active):
+def _snapshot(session_id, active, *, recovery=False):
     with transaction.atomic():
-        decision = resolve_root_decision(session_id, timezone.now(), active)
-        if not decision.resolved or decision.is_cold:
+        eligibility_active = frozenset() if recovery else active
+        decision = resolve_root_decision(session_id, timezone.now(), eligibility_active)
+        if (not decision.resolved or decision.is_cold
+                or recovery and decision.root_id != session_id):
             return None
-        return snapshot_session_promotion(session_id)
+        snapshot = snapshot_session_promotion(session_id)
+        if recovery:
+            return SessionPromotionSnapshot(snapshot.root_id, snapshot.incarnation, snapshot.epoch,
+                                            session_id, snapshot.incarnation, recovery=True)
+        return snapshot
 
 
 def _publish(entries, active):
@@ -453,11 +460,12 @@ async def start_content_maintenance_task(stop_event: asyncio.Event) -> None:
 
     loop = asyncio.get_running_loop()
     wake = asyncio.Event()
-    targets = set()
+    targets = {}
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='twicc-content-codec')
 
     def enqueue(session_id):
-        targets.add(session_id)
+        # Explicit demand supersedes recovery-only eligibility for this target.
+        targets[session_id] = False
         wake.set()
 
     def wakeup(session_id):
@@ -475,15 +483,16 @@ async def start_content_maintenance_task(stop_event: asyncio.Event) -> None:
             page = await prepare(pending_root_page, after)
             if not page:
                 break
-            targets.update(await prepare(recovery_promotion_targets, page))
+            for session_id in await prepare(recovery_promotion_targets, page):
+                targets.setdefault(session_id, True)
             await promote()
             after = page[-1]
 
     async def promote():
         while targets and not stop_event.is_set():
-            session_id = targets.pop()
+            session_id, recovery = targets.popitem()
             try:
-                snapshot = await _apply(_snapshot, session_id)
+                snapshot = await _apply(partial(_snapshot, recovery=recovery), session_id)
                 if snapshot is None:
                     continue
                 cursor = START_CURSOR
@@ -493,7 +502,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event) -> None:
                     pass_verified &= batch.verified
                     cursor = await _apply(partial(apply_promotion_batch, pass_verified=pass_verified), batch)
                     if cursor == START_CURSOR:
-                        targets.add(session_id)
+                        targets.setdefault(session_id, recovery)
                         break
                     await asyncio.sleep(0)
                 # Incomplete extraction does not spin. Its writer invalidation wakes us again.

@@ -356,3 +356,49 @@ def test_public_child_contains_uses_target_metadata_while_root_is_unextracted(
     assert row.codec == ('zstd' if compressed else 'plain')
     assert root.content_storage_version is root.storage_incarnation is None
     assert root.plaintext_verified_epoch is None
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('barrier', ['filter_to_snapshot', 'snapshot_to_apply'])
+def test_recovery_rechecks_persisted_hot_policy_across_admission_barriers(
+    content_row_factory, writer_state, compute_executor_started, monkeypatch, settings, barrier,
+):
+    import asyncio
+    from datetime import timedelta
+    from types import SimpleNamespace
+    from twicc.agent.registry import get_agent_manager_registry
+
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    root, child = native_pair()
+    now = [timezone.now()]
+    Session.objects.filter(pk=root.id).update(archived=True, created_at=now[0] - timedelta(days=14))
+    row = content_row_factory('root data' * 100, True, session_ids=[root.id])
+    item(root, row)
+    snapshot(root)
+    monkeypatch.setattr(maintenance.timezone, 'now', lambda: now[0])
+    monkeypatch.setattr(get_agent_manager_registry(), 'get_active_agents',
+                        lambda: [SimpleNamespace(session_id=child.id)])
+    crossed = []
+    name = 'recovery_promotion_targets' if barrier == 'filter_to_snapshot' else 'prepare_promotion_batch'
+    original = getattr(maintenance, name)
+
+    def cross_threshold(*args):
+        result = original(*args)
+        if not crossed:
+            crossed.append(True)
+            # Elapsed time changes persisted cold policy without a metadata write or epoch change.
+            now[0] += timedelta(days=2)
+        return result
+
+    monkeypatch.setattr(maintenance, name, cross_threshold)
+
+    async def wait(stop, wake, timeout):
+        stop.set()
+
+    monkeypatch.setattr(maintenance, '_wait', wait)
+    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event()))
+    assert crossed == [True]
+    row.refresh_from_db()
+    root.refresh_from_db()
+    assert row.codec == 'zstd'
+    assert root.plaintext_verified_epoch is None

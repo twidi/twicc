@@ -57,6 +57,7 @@ class SessionPromotionSnapshot(NamedTuple):
     epoch: int
     session_id: str
     session_incarnation: str
+    recovery: bool = False
 
 
 class PreparedRepresentation(NamedTuple):

@@ -765,3 +765,9 @@ Ordinary reads decode only requested contents temporarily. Tantivy search remain
 Recovery filters each raw root page with persisted cold policy and no active override.
 An active child alone cannot warm its cold root. Cold pages still advance the raw ID cursor to later hot roots.
 Explicit target callbacks retain admitted active eligibility.
+
+Recovery provenance remains operation-local in the target queue and promotion snapshot.
+Snapshot capture under admission, preparation, and publication recheck persisted hot policy without active override for recovery-only roots.
+A cold-threshold crossing between awaits cannot create root demand from an active descendant.
+An explicit target enqueue supersedes recovery provenance and retains normal active eligibility.
+Root incarnation/epoch and target incarnation fences remain unchanged.
