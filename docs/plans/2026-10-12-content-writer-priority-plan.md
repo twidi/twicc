@@ -66,15 +66,15 @@
 - Preserve current `run_under_db_write_lock` and `storage_admission` signatures/default behavior; foreground is the default.
 - Produce a scoped write-priority ContextVar and idempotent foreground-demand token API. Registered demand blocks new background grants before a foreground operation requests resources. Resource-wait dependencies still permit foreground grants.
 
-- [ ] Write barrier tests for foreground overtaking queued background work, FIFO within eligible classes, background resuming after foreground completion, and no background admission reservation while writer is busy.
-- [ ] Add a dependency test: hold admission; enqueue another admission request; request writer from the holder; assert it completes and later admission proceeds.
-- [ ] Add grant/cancellation race tests, repeated cancellation during worker publication, raw-lock facade compatibility, reentrance, child-task rejection, and drain covering already-granted requests.
-- [ ] Run new tests and confirm expected failures before production edits.
-- [ ] Test registered queued foreground demand blocking both compute and maintenance grants; cancelled/failed/settled demand releases pressure exactly once.
-- [ ] Implement the coordinator with public state; do not inspect asyncio private waiter internals. Maintain existing manager/admission/writer/transaction order.
-- [ ] Integrate wrappers while preserving `_LockLease` task membership, eager-task-factory behavior, stop guards, and cancellation drain.
-- [ ] Run coordinator, writer-lock, admission, maintenance, and executor tests. Update all changed annotation/FIFO contracts.
-- [ ] Commit with a descriptive Conventional Commit body and current model co-author trailer. Review before Task 2.
+- [x] Write barrier tests for foreground overtaking queued background work, FIFO within eligible classes, background resuming after foreground completion, and no background admission reservation while writer is busy.
+- [x] Add a dependency test: hold admission; enqueue another admission request; request writer from the holder; assert it completes and later admission proceeds.
+- [x] Add grant/cancellation race tests, repeated cancellation during worker publication, raw-lock facade compatibility, reentrance, child-task rejection, and drain covering already-granted requests.
+- [x] Run new tests and confirm expected failures before production edits.
+- [x] Test registered queued foreground demand blocking both compute and maintenance grants; cancelled/failed/settled demand releases pressure exactly once.
+- [x] Implement the coordinator with public state; do not inspect asyncio private waiter internals. Maintain existing manager/admission/writer/transaction order.
+- [x] Integrate wrappers while preserving `_LockLease` task membership, eager-task-factory behavior, stop guards, and cancellation drain.
+- [x] Run coordinator, writer-lock, admission, maintenance, and executor tests. Update all changed annotation/FIFO contracts.
+- [x] Commit with a descriptive Conventional Commit body and current model co-author trailer. Review before Task 2.
 
 ### Task 2: Slice-level maintenance demand scheduling
 
@@ -88,19 +88,19 @@
 - Keep FIFO among eligible foreground targets; duplicate target requests coalesce, foreground upgrades background, and explicit demand overrides recovery eligibility.
 - Produce an event-loop-owned idempotent background-promotion deferral token keyed by guarded root identity and incarnation. Task 5 owns its compute lifetime. Existing and new background targets retain exact target/provenance while deferred; foreground demand bypasses deferral. Unresolved ancestry receives no guessed root scope.
 
-- [ ] Write failing barriers: demand for B arrives during large recovery A; B publishes before A's next background slice.
-- [ ] Test same-target demand upgrading recovery, demand arriving while a background resource request waits, FIFO foreground targets, and no deadlock from registered pressure.
-- [ ] Test background compute binding wakeups: no foreground token, no full promotion scan per extraction slice, unchanged eligibility provenance.
-- [ ] Test synthetic operation deferral across changing epochs, queued recovery before registration, exact target retention, foreground bypass, release wakeup, late callbacks, successor tokens, and shutdown. Task 5 proves activation through the real compute path; Task 2 does not claim production integration yet.
-- [ ] Test cancellation/shutdown during codec preparation and admitted publication, including token cleanup and retained periodic deadline/scratch rules.
-- [ ] Confirm failures before restructuring maintenance dispatch.
-- [ ] Advance recovery and demanded targets one bounded preparation/publication step at a time. A waiting background grant must not suspend the demand dispatcher.
-- [ ] Preserve completed codec work or drain it before changing target; never pretend cancelling a future stops its thread. Interruption occurs before a grant or after an admitted publication drains.
-- [ ] Defer further background preparation/publication for the registered root, including already queued recovery. A cheap guarded snapshot may resolve queued target scope. Preserve immediate epoch invalidation, exact membership, ordinary decoding, and readiness checks. Deferral neither certifies plaintext nor creates tree-wide requests.
-- [ ] Register foreground pressure on enqueue and retain it through target settlement or safe transfer to an executing foreground request. Never let that pressure block its own foreground dispatch.
-- [ ] Capture priority origin as an immutable callback argument when registering `transaction.on_commit`, not only when the callback later executes. Pass it explicitly through `call_soon_threadsafe`; do not infer priority solely from recovery=False. Scope/reset origin per publication, including pinned-worker calls; later background invalidation cannot downgrade foreground demand.
-- [ ] Run maintenance, lifecycle, admission and coordinator tests. Preserve root-only recovery and target-only promotion.
-- [ ] Commit and independently review before Task 3.
+- [x] Write failing barriers: demand for B arrives during large recovery A; B publishes before A's next background slice.
+- [x] Test same-target demand upgrading recovery, demand arriving while a background resource request waits, FIFO foreground targets, and no deadlock from registered pressure.
+- [x] Test background compute binding wakeups: no foreground token, no full promotion scan per extraction slice, unchanged eligibility provenance.
+- [x] Test synthetic operation deferral across changing epochs, queued recovery before registration, exact target retention, foreground bypass, release wakeup, late callbacks, successor tokens, and shutdown. Task 5 proves activation through the real compute path; Task 2 does not claim production integration yet.
+- [x] Test cancellation/shutdown during codec preparation and admitted publication, including token cleanup and retained periodic deadline/scratch rules.
+- [x] Confirm failures before restructuring maintenance dispatch.
+- [x] Advance recovery and demanded targets one bounded preparation/publication step at a time. A waiting background grant must not suspend the demand dispatcher.
+- [x] Preserve completed codec work or drain it before changing target; never pretend cancelling a future stops its thread. Interruption occurs before a grant or after an admitted publication drains.
+- [x] Defer further background preparation/publication for the registered root, including already queued recovery. A cheap guarded snapshot may resolve queued target scope. Preserve immediate epoch invalidation, exact membership, ordinary decoding, and readiness checks. Deferral neither certifies plaintext nor creates tree-wide requests.
+- [x] Register foreground pressure on enqueue and retain it through target settlement or safe transfer to an executing foreground request. Never let that pressure block its own foreground dispatch.
+- [x] Capture priority origin as an immutable callback argument when registering `transaction.on_commit`, not only when the callback later executes. Pass it explicitly through `call_soon_threadsafe`; do not infer priority solely from recovery=False. Scope/reset origin per publication, including pinned-worker calls; later background invalidation cannot downgrade foreground demand.
+- [x] Run maintenance, lifecycle, admission and coordinator tests. Preserve root-only recovery and target-only promotion.
+- [x] Commit and independently review before Task 3.
 
 ### Task 3: Pinned worker and resumable reference accounting
 
@@ -114,16 +114,16 @@
 - Produce paginated TEMP count initialization, consuming line-ordered current/original FK metadata with a row budget and a guarded observation callback.
 - Preserve transactional `capture_mutation` and existing optimized `_referenced_ids` behavior.
 
-- [ ] Write failing tests proving TEMP persistence across application calls with `CONN_MAX_AGE=0`, and unrelated writer jobs progressing while application preparation blocks.
-- [ ] Test physical connection replacement before TEMP use, terminal cleanup after a broken transaction, and executor shutdown draining an uncancellable thread.
-- [ ] Test paginated counts for equal FK slots, ignored insertion conflicts, mutation rollback, no ambient ContextVar leakage, and no full-session rebuild per publication.
-- [ ] Run the tests and capture expected failures.
-- [ ] Implement one lifetime application worker, distinct from both the original writer executor and maintenance codec worker.
-- [ ] Refactor reference scope without leaving context managers suspended across unrelated calls. Store and validate physical connection identity.
-- [ ] Build TEMP counts through bounded read/TEMP-only transactions outside the main writer lease. Never use the main no-op UPDATE during count preparation.
-- [ ] Scope connection lifetime explicitly. On replacement or unusable cleanup connection, abort and close; never continue with missing/stale counts.
-- [ ] Run reference and executor tests, including existing transaction/savepoint behavior.
-- [ ] Commit and review before Task 4.
+- [x] Write failing tests proving TEMP persistence across application calls with `CONN_MAX_AGE=0`, and unrelated writer jobs progressing while application preparation blocks.
+- [x] Test physical connection replacement before TEMP use, terminal cleanup after a broken transaction, and executor shutdown draining an uncancellable thread.
+- [x] Test paginated counts for equal FK slots, ignored insertion conflicts, mutation rollback, no ambient ContextVar leakage, and no full-session rebuild per publication.
+- [x] Run the tests and capture expected failures.
+- [x] Implement one lifetime application worker, distinct from both the original writer executor and maintenance codec worker.
+- [x] Refactor reference scope without leaving context managers suspended across unrelated calls. Store and validate physical connection identity.
+- [x] Build TEMP counts through bounded read/TEMP-only transactions outside the main writer lease. Never use the main no-op UPDATE during count preparation.
+- [x] Scope connection lifetime explicitly. On replacement or unusable cleanup connection, abort and close; never continue with missing/stale counts.
+- [x] Run reference and executor tests, including existing transaction/savepoint behavior.
+- [x] Commit and review before Task 4.
 
 ### Task 4: Bounded storage preparation and publication
 
@@ -139,20 +139,20 @@
 - Immutable batch/progress records use NamedTuple. Do not expose live QuerySets or unbounded payload collections.
 - Keep `prepare_compute_result` as a synchronous compatibility wrapper using the same phase primitives. The new async runtime must never call this whole-session wrapper.
 
-- [ ] Add failing tests for interleaved same-session append after count initialization, offset-decreasing history replacement, equal-offset recreation, sibling/root mutation, and target reparenting.
-- [ ] Add tests for shared-owner/representation changes, new active child between preparation/publication, cold threshold changes, existing compressed-row reuse by a hot target, and unchanged original-NULL provenance.
-- [ ] Add tests for unresolved/cyclic ancestry: plaintext placement and exact persisted reconciliation; later resolution supersedes instead of adopting old counts.
-- [ ] Add reserved metadata-field rejection tests for `content`, `current_content`, `original_content`, and both FK `_id` aliases. They must not bypass audited binding mutation paths.
-- [ ] Confirm failures before implementing phases.
-- [ ] Split existing prepare/publication bodies without duplicating storage logic. Preserve observed-current/digest identical-result retry and all collision checks.
-- [ ] Keep the conditional target no-op UPDATE first in each main publication transaction. Validate exact operation offset/upper line, target type/parent, ancestry, root incarnation/epoch, and initial lifecycle fields before cached count use.
-- [ ] Use audited binding/deletion/replacement fences for resolved targets. For unresolved targets, disable cached counts/compression and reconcile from current persisted assignments.
-- [ ] Refresh active roots and eligibility time per publication; fresh owner checks apply even when the target proof is unchanged.
-- [ ] Advance Python cursors/expected epoch only after successful atomic exit. Read resulting epochs; do not guess increments or refresh after foreign changes.
-- [ ] An empty metadata phase skips apply_session_items_chunk and its aggregate helper, matching the existing zero-update path. Nonempty chunks retain inherited full-history aggregate repair; report this atomic hold separately from the 2,000-row update budget.
-- [ ] Validate the operation in final atomic publication; preserve goals/plan-path/task concurrent folds and root-own readiness scope.
-- [ ] Run storage extraction, references, initial compression, readers, lifecycle, and admission tests.
-- [ ] Commit and review before Task 5.
+- [x] Add failing tests for interleaved same-session append after count initialization, offset-decreasing history replacement, equal-offset recreation, sibling/root mutation, and target reparenting.
+- [x] Add tests for shared-owner/representation changes, new active child between preparation/publication, cold threshold changes, existing compressed-row reuse by a hot target, and unchanged original-NULL provenance.
+- [x] Add tests for unresolved/cyclic ancestry: plaintext placement and exact persisted reconciliation; later resolution supersedes instead of adopting old counts.
+- [x] Add reserved metadata-field rejection tests for `content`, `current_content`, `original_content`, and both FK `_id` aliases. They must not bypass audited binding mutation paths.
+- [x] Confirm failures before implementing phases.
+- [x] Split existing prepare/publication bodies without duplicating storage logic. Preserve observed-current/digest identical-result retry and all collision checks.
+- [x] Keep the conditional target no-op UPDATE first in each main publication transaction. Validate exact operation offset/upper line, target type/parent, ancestry, root incarnation/epoch, and initial lifecycle fields before cached count use.
+- [x] Use audited binding/deletion/replacement fences for resolved targets. For unresolved targets, disable cached counts/compression and reconcile from current persisted assignments.
+- [x] Refresh active roots and eligibility time per publication; fresh owner checks apply even when the target proof is unchanged.
+- [x] Advance Python cursors/expected epoch only after successful atomic exit. Read resulting epochs; do not guess increments or refresh after foreign changes.
+- [x] An empty metadata phase skips apply_session_items_chunk and its aggregate helper, matching the existing zero-update path. Nonempty chunks retain inherited full-history aggregate repair; report this atomic hold separately from the 2,000-row update budget.
+- [x] Validate the operation in final atomic publication; preserve goals/plan-path/task concurrent folds and root-own readiness scope.
+- [x] Run storage extraction, references, initial compression, readers, lifecycle, and admission tests.
+- [x] Commit and review before Task 5.
 
 ### Task 5: Writer continuation and terminal handling
 
@@ -167,24 +167,24 @@
 - Background advancement uses nonblocking combined acquisition. It never waits for background resources inside the permanent writer tick.
 - Existing `ComputeApplied`, run futures, abandonment, missing/superseded/failed outcomes, progress and broadcasts remain compatible.
 
-- [ ] Write failing barrier tests: external watcher and queued async job both commit before a multi-batch result ends; they also progress while preparation blocks.
-- [ ] Test that a foreground waiter arriving after preparation wins before the next compute or compression publication.
-- [ ] Test compute FIFO/done ordering, abandoned-run cleanup, exactly-one terminal handling, shutdown during preparation/publication, and final rollback with valid partial extraction.
-- [ ] Test no tight idle spin while preparation waits or foreground excludes background admission.
-- [ ] Test real compute deferral across multiple binding slices, existing root recovery during child compute, explicit foreground bypass, compressed-row hot reuse, valid partial extraction after supersession, cleanup failure, cancellation, abandonment, shutdown, and late callbacks. No repeated full-target background scan occurs per extraction slice.
-- [ ] Confirm failures, then introduce the pending state and explicit phase advancement.
-- [ ] Service foreground async jobs first. If their backlog remains, skip compute, initialization and bulk ingestion for this tick.
-- [ ] Register queued foreground demand before enqueue-to-dispatch can expose a background grant. Release or transfer tokens without a dequeue-to-grant gap. Settle all tokens on failure and shutdown.
-- [ ] Classify InitializeComputeStorageJob as background. Keep FIFO within each class, with eligible background initialization and bulk ingestion using nonblocking dispatch. Do not await a low-priority grant in the permanent tick.
-- [ ] Give eligible bulk ingestion, initialization, and compute bounded turns when foreground traffic stops; avoid starving provider initialization behind a pending result.
-- [ ] Start preparation on the application worker and retain its future. Collect only completed preparation; do not await unfinished work in the permanent tick.
-- [ ] Capture actual active IDs on the event loop under admission before publication and final application. Never freeze them for the whole operation.
-- [ ] Recheck run abandonment before each publication. Drain already-admitted work before teardown; close operation state before another result uses the application worker.
-- [ ] Refactor common terminal handling to preserve provider acknowledgements and completion policy exactly. Do not acknowledge slices or publish through a stale detached run state.
-- [ ] Move safe notifications outside the compute lease. Worktree links, colors, and other post-commit database writes retain their own classified writer lease.
-- [ ] Start/stop the extra worker with the writer lifetime, including startup failure cleanup and pending preparation during shutdown.
-- [ ] Run queue, lock, compute, provider acknowledgement, and all content tests.
-- [ ] Commit and review before Task 6.
+- [x] Write failing barrier tests: external watcher and queued async job both commit before a multi-batch result ends; they also progress while preparation blocks.
+- [x] Test that a foreground waiter arriving after preparation wins before the next compute or compression publication.
+- [x] Test compute FIFO/done ordering, abandoned-run cleanup, exactly-one terminal handling, shutdown during preparation/publication, and final rollback with valid partial extraction.
+- [x] Test no tight idle spin while preparation waits or foreground excludes background admission.
+- [x] Test real compute deferral across multiple binding slices, existing root recovery during child compute, explicit foreground bypass, compressed-row hot reuse, valid partial extraction after supersession, cleanup failure, cancellation, abandonment, shutdown, and late callbacks. No repeated full-target background scan occurs per extraction slice.
+- [x] Confirm failures, then introduce the pending state and explicit phase advancement.
+- [x] Service foreground async jobs first. If their backlog remains, skip compute, initialization and bulk ingestion for this tick.
+- [x] Register queued foreground demand before enqueue-to-dispatch can expose a background grant. Release or transfer tokens without a dequeue-to-grant gap. Settle all tokens on failure and shutdown.
+- [x] Classify InitializeComputeStorageJob as background. Keep FIFO within each class, with eligible background initialization and bulk ingestion using nonblocking dispatch. Do not await a low-priority grant in the permanent tick.
+- [x] Give eligible bulk ingestion, initialization, and compute bounded turns when foreground traffic stops; avoid starving provider initialization behind a pending result.
+- [x] Start preparation on the application worker and retain its future. Collect only completed preparation; do not await unfinished work in the permanent tick.
+- [x] Capture actual active IDs on the event loop under admission before publication and final application. Never freeze them for the whole operation.
+- [x] Recheck run abandonment before each publication. Drain already-admitted work before teardown; close operation state before another result uses the application worker.
+- [x] Refactor common terminal handling to preserve provider acknowledgements and completion policy exactly. Do not acknowledge slices or publish through a stale detached run state.
+- [x] Move safe notifications outside the compute lease. Worktree links, colors, and other post-commit database writes retain their own classified writer lease.
+- [x] Start/stop the extra worker with the writer lifetime, including startup failure cleanup and pending preparation during shutdown.
+- [x] Run queue, lock, compute, provider acknowledgement, and all content tests.
+- [x] Commit and review before Task 6.
 
 ### Task 6: Final hold diagnostics and gated exact bucket preparation
 
@@ -201,20 +201,20 @@
 - Exclude all old/new creation day/week keys at project/global scope from final cache reuse, regardless of apparent count stability.
 - Final admission validates the same physical connection, fixed data_version, completed source phases, stable metadata, and committed key membership after the first guarded write.
 
-- [ ] Write tests for phase diagnostics without payload/SQL leakage, and a diagnostic final-aggregate delay distinct from codec preparation.
-- [ ] Audit all contribution mutation paths: live ingestion, metadata chunks, hide/project/provider/type changes, creation/date changes, replacement/deletion, parent costs, and cache eviction.
-- [ ] Write the audit result in this plan's private ledger. Obtain an independent reviewer verdict before adding the optional bucket optimization.
-- [ ] If the audit cannot prove exact committed baselines survive all supported writes, retain original atomic repair and record the reason. This is a deliberate safe outcome, not permission to skip correctness.
-- [ ] The mutation audit rejects unrestricted pre-repair before normalization. The independent narrowed-design review approves the following three boundaries. Implement and review each boundary separately before enabling shortcut reuse.
-- [ ] **6A: Exact obligations and diagnostics.** Preserve current, removed, prospective, creation, and worker affected keys. Add explicit extra repair keys or equivalent zero-delta enumeration to the final helper. Initially use no prepared cache. Test raw SQL aggregate cost and endpoint-style SUM, including legacy normalization and count-only precision counterexamples.
-- [ ] **6B: Operation-owned preparation.** Prepare bounded key pages with before/after fixed-version validation. For each exact repair, start with the target guarded write, verify data_version and physical identity, and sample the expected version before commit. Record the key/cursor/version only on successful commit. Foreign commits invalidate all keys. Never sample a replacement baseline after commit while retaining evidence.
-- [ ] **6C: Final admission and integration.** Within final write ownership, recheck all preparation gates and exclude actual old/effective-new creation keys. Pass the private filtered cache or None directly into the final helper in the same transaction. Retain all old-key obligations on either path. Discard private state on terminal handling.
-- [ ] Add adversarial equivalence/interleaving tests for project/global day/week keys, null/old/new dates, removed timestamps, hidden sessions, native children, metadata changes, legacy cache entries, failed repair rollback, failed commit callbacks, stale snapshots, physical connection replacement with equal version numbers, unrelated foreign commits, and current-version replay mutations without aggregate deltas.
-- [ ] Preserve exact no-cache final repair for unknown/missing keys, metadata changes, failed proof, connection loss, or more than 4,096 keys. Bound preparation retries. Performance fallback must never skip exact repair.
-- [ ] Keep expensive repair transactions visible: one bucket may itself exceed the desired interactive wait. No strict latency guarantee or new index follows from this task.
-- [ ] Measure inherited metadata aggregate holds too. Post-source bucket preparation does not shorten a preceding nonempty metadata chunk's full-history repair. Separating that repair requires a separate baseline/precision proof and is outside this correction.
-- [ ] Run aggregate, continuation, lifecycle, replacement/deletion and content tests.
-- [ ] Commit and independently review diagnostics and any approved optimization.
+- [x] Write tests for phase diagnostics without payload/SQL leakage, and a diagnostic final-aggregate delay distinct from codec preparation.
+- [x] Audit all contribution mutation paths: live ingestion, metadata chunks, hide/project/provider/type changes, creation/date changes, replacement/deletion, parent costs, and cache eviction.
+- [x] Write the audit result in this plan's private ledger. Obtain an independent reviewer verdict before adding the optional bucket optimization.
+- [x] If the audit cannot prove exact committed baselines survive all supported writes, retain original atomic repair and record the reason. This is a deliberate safe outcome, not permission to skip correctness.
+- [x] The mutation audit rejects unrestricted pre-repair before normalization. The independent narrowed-design review approves the following three boundaries. Implement and review each boundary separately before enabling shortcut reuse.
+- [x] **6A: Exact obligations and diagnostics.** Preserve current, removed, prospective, creation, and worker affected keys. Add explicit extra repair keys or equivalent zero-delta enumeration to the final helper. Initially use no prepared cache. Test raw SQL aggregate cost and endpoint-style SUM, including legacy normalization and count-only precision counterexamples.
+- [x] **6B: Operation-owned preparation.** Prepare bounded key pages with before/after fixed-version validation. For each exact repair, start with the target guarded write, verify data_version and physical identity, and sample the expected version before commit. Record the key/cursor/version only on successful commit. Foreign commits invalidate all keys. Never sample a replacement baseline after commit while retaining evidence.
+- [x] **6C: Final admission and integration.** Within final write ownership, recheck all preparation gates and exclude actual old/effective-new creation keys. Pass the private filtered cache or None directly into the final helper in the same transaction. Retain all old-key obligations on either path. Discard private state on terminal handling.
+- [x] Add adversarial equivalence/interleaving tests for project/global day/week keys, null/old/new dates, removed timestamps, hidden sessions, native children, metadata changes, legacy cache entries, failed repair rollback, failed commit callbacks, stale snapshots, physical connection replacement with equal version numbers, unrelated foreign commits, and current-version replay mutations without aggregate deltas.
+- [x] Preserve exact no-cache final repair for unknown/missing keys, metadata changes, failed proof, connection loss, or more than 4,096 keys. Bound preparation retries. Performance fallback must never skip exact repair.
+- [x] Keep expensive repair transactions visible: one bucket may itself exceed the desired interactive wait. No strict latency guarantee or new index follows from this task.
+- [x] Measure inherited metadata aggregate holds too. Post-source bucket preparation does not shorten a preceding nonempty metadata chunk's full-history repair. Separating that repair requires a separate baseline/precision proof and is outside this correction.
+- [x] Run aggregate, continuation, lifecycle, replacement/deletion and content tests.
+- [x] Commit and independently review diagnostics and any approved optimization.
 
 ### Task 7: Whole-correction verification and isolated load evidence
 
@@ -222,12 +222,24 @@
 
 **Interfaces:** Consume reviewed Tasks 1–6; produce verification evidence and reviewed commit range, without automatic merge/restart.
 
-- [ ] Check the plan/spec against the delivered paths, including both providers, foreground classification, cold/shared content, cancellation, retries and terminal ordering.
+- [x] Check the plan/spec against the delivered paths, including both providers, foreground classification, cold/shared content, cancellation, retries and terminal ordering.
 - [ ] Run `TWICC_DATA_DIR=$PWD uv run pytest` in this worktree. Record all failures/skips/warnings. Fix regressions through the implementing agent and review the fix.
-- [ ] Run targeted `uvx ruff check` for changed Python files and `git diff --check`.
-- [ ] Run a synthetic isolated workload with large hot/cold results, shared current/original contents, concurrent foreground writes, and compression publication. It must assert semantic equivalence, not only elapsed time.
-- [ ] Measure foreground completion between batches and during blocked preparation, background resumption, total throughput, maximum resource hold, and final hold. Report DEBUG modes separately if measured; do not extrapolate synthetic timing to the live database.
+- [x] Run targeted `uvx ruff check` for changed Python files and `git diff --check`.
+- [x] Run a synthetic isolated workload with large hot/cold results, shared current/original contents, concurrent foreground writes, and compression publication. It must assert semantic equivalence, not only elapsed time.
+- [x] Measure foreground completion between batches and during blocked preparation, background resumption, total throughput, maximum resource hold, and final hold. Report DEBUG modes separately if measured; do not extrapolate synthetic timing to the live database.
 - [ ] Dispatch an independent whole-correction review against `442d07cc`, carrying private ledger rulings and task review evidence. Do not repeat the original feature's unrelated whole-branch review scope.
 - [ ] Resolve Critical/Important findings, rerun covering checks, and request scoped re-review before presenting the correction as ready.
 - [ ] Update persistent audit with delivered changes, measurements and remaining atomic-hold/fallback limitations. Mark tasks from evidence, not anticipated success.
 - [ ] Present paths, commits, reviews and checks. Keep both existing servers and main untouched. Integration or restart remains a separate user action.
+
+
+## Verification checkpoint — 2026-10-12
+
+Tasks 1–5 and the separate 6A/6B/6C gates have accepted independent reviews.
+Task 7 focused verification passes 103 tests; the isolated WAL load harness passes 12 cases.
+Changed-file ruff and diff checks pass. Final full backend verification is running after those checks.
+Whole-correction review remains pending. Integration and restart remain separate user actions.
+
+Persistent evidence: [delivered correction audit](2026-10-11-session-item-content-extraction-audit.md#delivered-foreground-writer-priority-correction--2026-10-12).
+The audit contains measurements, semantic assertions, creation repair overhead, and remaining atomic holds.
+It contains no required links to private harness or report files.

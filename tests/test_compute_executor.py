@@ -382,3 +382,69 @@ def test_application_terminal_cleanup_runs_on_worker_after_broken_transaction():
         finally:
             await executor.stop_compute_application_executor()
     asyncio.run(scenario())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_wal_terminal_close_removes_committed_temp_after_broken_transaction(tmp_path):
+    """A rollback cannot remove TEMP state committed before the failed transaction."""
+    import sqlite3
+
+    from django.db import IntegrityError, transaction
+
+    from twicc.core.content_storage.references import SessionReferenceOperation
+    from twicc.providers import compute_executor as executor
+
+    project = Project.objects.create(id='wal-broken-worker')
+    session = Session.objects.create(id='wal-broken-worker', project=project)
+    SessionItem.objects.create(session=session, line_num=1)
+    ordinary = connections['default']
+    path = tmp_path / 'broken-worker.sqlite3'
+    with sqlite3.connect(path) as destination:
+        ordinary.connection.backup(destination)
+        assert destination.execute('PRAGMA journal_mode=WAL').fetchone() == ('wal',)
+
+    def initialize():
+        worker = connections['default']
+        worker.settings_dict = {**worker.settings_dict, 'NAME': str(path)}
+        operation = SessionReferenceOperation(session.id, 500000, 2)
+        operation.initialize()
+        assert not worker.in_atomic_block
+        assert worker.connection.execute(
+            'SELECT name FROM sqlite_temp_master WHERE type="table"').fetchall() == [(operation.table.strip('"'),)]
+        return operation, worker.connection, threading.get_ident()
+
+    def fail_and_close(operation, physical):
+        worker = connections['default']
+        assert worker.connection is physical
+        with pytest.raises(IntegrityError), transaction.atomic():
+            try:
+                SessionItem.objects.create(session_id=session.id, line_num=1)
+            finally:
+                assert worker.needs_rollback
+                operation.close()
+        # Earlier committed TEMP survives rollback. Only physical close removes it.
+        assert physical.execute('SELECT COUNT(*) FROM sqlite_temp_master WHERE type="table"').fetchone() == (1,)
+        executor.close_compute_application_connection()
+        assert worker.connection is None
+        with pytest.raises(sqlite3.ProgrammingError, match='closed database'):
+            physical.execute('SELECT 1')
+        with worker.cursor() as cursor:
+            cursor.execute('SELECT COUNT(*) FROM sqlite_temp_master WHERE type="table"')
+            assert cursor.fetchone() == (0,)
+            cursor.execute('SELECT COUNT(*) FROM core_sessionitem WHERE session_id=%s', [session.id])
+            assert cursor.fetchone() == (1,)
+        assert worker.connection is not physical
+        return threading.get_ident()
+
+    async def scenario():
+        executor.start_compute_application_executor()
+        try:
+            operation, physical, worker_thread = await executor.run_compute_application_sync(initialize)
+            assert await executor.run_compute_application_sync(fail_and_close, operation, physical) == worker_thread
+        finally:
+            await executor.stop_compute_application_executor()
+
+    asyncio.run(scenario())
+    assert SessionItem.objects.filter(session=session).count() == 1
+    Session.objects.filter(pk=session.id).update(title='ordinary connection still works')
+    assert Session.objects.get(pk=session.id).title == 'ordinary connection still works'

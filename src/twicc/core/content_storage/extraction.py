@@ -627,28 +627,27 @@ def publish_compute_batch(operation, batch, active_ids):
         raise ValueError('Prepared compute batch does not match operation')
     started = perf_counter()
     msg = operation.message
-    with _compute_scope(operation, active_ids) as placement:
-        with transaction.atomic():
-            guard_storage(msg['session_id'], msg['observed_incarnation'], msg['observed_epoch'],
-                          msg['observed_upper_line'], msg.get('observed_last_offset'))
-            _refresh_active_placement(placement, active_ids)
-            if batch.phase == 'metadata' and batch.rows:
-                outcome = BaseSessionCompute.apply_session_items_chunk(
-                    msg['session_id'], msg.get('observed_last_offset'), msg.get('item_fields', []),
-                    list(batch.rows), [], msg.get('_repaired_activity_buckets'),
-                    msg['observed_incarnation'], msg['observed_epoch'], msg['observed_upper_line'],
-                    activity_repair_keys=operation.activity_repair_keys)
-                if outcome != 'ok':
-                    raise SupersededStorageResult(outcome)
-            elif batch.phase == 'overrides':
-                _publish_overrides(msg, batch, operation.references)
-            elif batch.phase == 'extraction':
-                _publish_extraction(msg['session_id'], msg['observed_incarnation'], msg['observed_epoch'],
-                                    msg['observed_upper_line'], batch)
-            elif batch.phase == 'reconciliation':
-                _publish_reconciliation(msg, batch)
-            _settle_placement_epoch(placement)
-            epoch = placement['root_epoch']
+    with _compute_scope(operation, active_ids) as placement, transaction.atomic():
+        guard_storage(msg['session_id'], msg['observed_incarnation'], msg['observed_epoch'],
+                      msg['observed_upper_line'], msg.get('observed_last_offset'))
+        _refresh_active_placement(placement, active_ids)
+        if batch.phase == 'metadata' and batch.rows:
+            outcome = BaseSessionCompute.apply_session_items_chunk(
+                msg['session_id'], msg.get('observed_last_offset'), msg.get('item_fields', []),
+                list(batch.rows), [], msg.get('_repaired_activity_buckets'),
+                msg['observed_incarnation'], msg['observed_epoch'], msg['observed_upper_line'],
+                activity_repair_keys=operation.activity_repair_keys)
+            if outcome != 'ok':
+                raise SupersededStorageResult(outcome)
+        elif batch.phase == 'overrides':
+            _publish_overrides(msg, batch, operation.references)
+        elif batch.phase == 'extraction':
+            _publish_extraction(msg['session_id'], msg['observed_incarnation'], msg['observed_epoch'],
+                                msg['observed_upper_line'], batch)
+        elif batch.phase == 'reconciliation':
+            _publish_reconciliation(msg, batch)
+        _settle_placement_epoch(placement)
+        epoch = placement['root_epoch']
     operation.max_publication_ms = max(operation.max_publication_ms, (perf_counter() - started) * 1000)
     operation.placement['root_epoch'] = epoch
     operation.pending_batch = None

@@ -2144,3 +2144,136 @@ Use payload-free logs with bounded cardinality.
 Acceptance requires both write fairness and unchanged reference/version/eligibility correctness.
 A row/byte budget does not guarantee a strict latency ceiling: one oversized content, TEMP initialization, or one SQL aggregate can exceed it.
 No server restart, migration, live profiler, copied-database write, or full test run forms part of this analysis.
+
+
+## Delivered foreground writer priority correction — 2026-10-12
+
+Correction baseline: `442d07cc`. Isolated branch: `fix/content-writer-priority`.
+The running original feature checkout and main checkout remain unchanged.
+No server, live database, provider, schema, index, dependency, policy, API, or changelog operation occurs.
+Independent reviews accept Tasks 1–5 and the three Task 6 boundaries.
+Whole-correction independent review and final backend-suite acceptance remain pending at this evidence checkpoint.
+
+### Delivered paths and correctness checks
+
+The coordinator grants foreground requests before eligible background publications.
+Queued foreground demand registers before dispatch. Combined background grants reserve admission and writer ownership together.
+The writer retains one result, one preparation future, and one bounded batch.
+Its separate application worker pins the physical SQLite connection across TEMP preparation and publication.
+Maintenance keeps foreground demand separate from recovery provenance.
+Root/incarnation deferral retains background promotion targets; explicit foreground promotion bypasses it.
+Every terminal path drains admitted work, closes operation and connection state, releases deferral, then settles acknowledgements.
+Final facts, links, lifecycle fields, costs, versions, and readiness remain atomic.
+
+The binding audit covers extraction/overrides, shared initial/live ingestion, history replacement, and session deletion.
+Bindings invalidate resolved roots. Replacement/deletion invalidate before removal; replacement also advances history epoch.
+Unresolved ancestry uses persisted reference reconciliation and plaintext placement.
+Codecs retain cooperative yields between input chunks and after each content.
+The same continuation handles Claude Code and Codex results through shared storage APIs.
+The runtime proof interval uses the dedicated connection only for its pending operation.
+Foreign workers retain other physical connections; optional activity proof checks a fixed `main.data_version`.
+
+New regression: `tests/test_compute_executor.py::test_wal_terminal_close_removes_committed_temp_after_broken_transaction`.
+It commits TEMP state, breaks a later transaction, skips unsafe DROP, and confirms TEMP survives rollback.
+Worker-side physical close makes the former connection unusable. Its replacement contains no TEMP table.
+The ordinary foreground connection still reads and writes successfully.
+Task 4 already covers an actual WAL TEMP count-page transaction alongside a concurrent main writer.
+
+Task 7 focused verification: **103 passed in 9.47 seconds**, with no pytest warnings.
+Command: `TWICC_DATA_DIR=$PWD uv run pytest tests/test_write_coordinator.py tests/test_content_references.py tests/test_compute_executor.py tests/test_content_extraction.py tests/test_content_initial_compression.py -q`.
+Run it from `/home/twidi/dev/twicc-poc/.worktrees/content-writer-priority`.
+All changed Python files pass `uvx ruff check` against correction baseline `442d07cc`.
+`git diff --check` passes.
+The Task 4 nested `_compute_scope`/`atomic` contexts now combine with identical entry/exit order.
+The original `442d07cc` extraction file has no SIM117 finding; later task-relative baselines caused the earlier attribution error.
+Invalid priority types now raise `TypeError` before registering resources; valid priorities retain their behavior.
+Its covering regression fails before that change and passes afterward.
+
+### Isolated synthetic load evidence
+
+The final private harness passes **12 cases in 51.27 seconds**, without pytest warnings.
+It runs alone, before the final backend suite. Earlier draft measurements overlap a draft suite and are excluded.
+Each case uses a fresh temporary file-backed WAL database copied from the isolated pytest fixture.
+Django `DEBUG=False` throughout. No DEBUG=True or OS cold-cache comparison runs.
+
+Cases pair private post-source bucket preparation with the existing exact no-cache final fallback.
+The fallback comparison disables only optional preparation; it preserves the same scheduler, storage phases, and exact final helper.
+Large roots contain 2,400 items across 21 days, with approximately 2 KiB unique payloads.
+Small roots and native children contain 20 items on one day.
+Each hot/cold case includes shared current/original content, equal FK slots, distinct current/original IDs, and original NULL.
+Each case starts with outdated metadata and nonempty metadata publication.
+
+Assertions verify exact decoded strings and SHA256, both FK assignments, exact owner sets, codecs, cleared legacy strings,
+raw activity SQL totals, endpoint-style ORM SUM, activity messages/session counts, own/parent costs, versions, and readiness scope.
+A shared hot owner keeps the shared original plaintext even when the target is cold.
+Cold exclusive content uses Zstd; hot exclusive content stays plaintext.
+Native-child completion never certifies the parent's whole-tree plaintext readiness.
+Exactly one applied acknowledgement precedes the provider done completion.
+
+Queued foreground plus external watcher-style writes finish during blocked preparation and between storage batches.
+The two sequential writes complete together in **57.8–77.5 ms**, before either barrier releases or compute completes.
+Foreground work also completes before a blocked maintenance compression grant in **14.2–21.8 ms**.
+Background compute and compression resume after foreground pressure releases.
+These barriers prove grant precedence. They do not measure foreground arrival inside an already-admitted SQL transaction.
+
+All table values are milliseconds. Each cell lists **prepared / exact fallback**.
+Adjusted total excludes the complete artificial preparation-barrier intervals; raw totals include them.
+
+| Items / state / target | Adjusted total | Final hold | Maximum publication hold | Nonempty metadata hold |
+| --- | --- | --- | --- | --- |
+| 2400 / hot / root | 5127.0 / 3601.7 | 109.4 / 246.7 | 707.2 / 303.9 | 301.4 / 303.9 |
+| 2400 / cold / root | 11646.1 / 10753.6 | 70.0 / 220.9 | 653.3 / 652.1 | 289.3 / 300.1 |
+| 20 / hot / root | 507.4 / 500.0 | 37.0 / 52.5 | 37.0 / 52.5 | 29.9 / 35.7 |
+| 20 / cold / root | 548.9 / 540.6 | 33.2 / 37.8 | 56.5 / 75.4 | 34.4 / 37.2 |
+| 20 / hot / child | 507.5 / 511.1 | 39.2 / 43.9 | 39.2 / 53.0 | 28.8 / 53.0 |
+| 20 / cold / child | 558.7 / 571.4 | 36.4 / 52.5 | 71.1 / 82.9 | 26.9 / 39.3 |
+
+Large hot source preparation: **116.5 / 120.3 ms**; activity enumeration: **36.1 / 0.0 ms**.
+Large cold source preparation: **2,289.9 / 2,276.9 ms**; activity enumeration: **37.6 / 0.0 ms**.
+Large hot inherited metadata aggregate subphase maximum: **209.8 / 229.9 ms**.
+Large cold inherited metadata aggregate subphase maximum: **209.6 / 214.0 ms**.
+The metadata publication hold also includes source writes and transaction overhead.
+Large hot final aggregate subphase: **47.3 / 183.6 ms**.
+Large cold final aggregate subphase: **50.0 / 193.2 ms**.
+
+Large hot adjusted throughput: **468.1 / 666.4 items/s**.
+Large cold adjusted throughput: **206.1 / 223.2 items/s**.
+Final holds decrease in these cases; total background throughput decreases.
+Maximum overall hold does not uniformly decrease.
+The first hot prepared case spends **707.2 ms** in initialization; the exact comparison maximum occurs in metadata.
+Cold cases retain approximately **653 ms** extraction publications on both paths.
+Cases run sequentially. First-use imports, process caches, OS cache, and scheduler noise remain confounders.
+These are single synthetic observations, not a speedup guarantee or an extrapolation to the live 22 GiB database.
+
+### Creation repair overhead and remaining limits
+
+Large cases repair 50 buckets in metadata and 50 during optional preparation.
+Final then repairs four excluded creation buckets again; exact fallback repairs all 50 in final.
+Small one-day roots and native children repair four buckets in metadata.
+Preparation repairs the same four, then final repairs all four again.
+The exact comparison performs four metadata repairs and four final repairs.
+Optional preparation therefore adds four duplicate bucket repairs to every small case.
+Small adjusted total differences range from **12.7 ms less** to **8.4 ms more**.
+Single-run timing variation does not erase the verified duplicate SQL work.
+
+Rows and bytes bound preparation/publication work size; they do not bound individual SQL latency.
+Nonempty metadata still repairs inherited whole-history/session/child/parent aggregates atomically.
+One oversized content can exceed the normal storage byte budget.
+One exact activity bucket can hold the writer for a long query.
+Final creation-day/week repairs, facts, links, source metadata, cached costs, versions, and readiness remain atomic.
+Foreign commits conservatively discard optional proof and select complete exact repair without restarting proof.
+Continuous foreground traffic can delay background work indefinitely.
+
+Terminal timing has a retained diagnostic limitation.
+Failed source preparation can be absent from accumulated `preparation_ms`.
+A trailing denied-grant interval can be absent from `grant_wait_ms` when abandonment ends the result.
+Total application duration still includes those intervals. Successful measured paths retain separate phase evidence.
+Activity enumeration has separate timings; it is not part of the source-preparation counter.
+
+Final full backend command: `TWICC_DATA_DIR=$PWD uv run pytest` from the isolated worktree.
+It starts after final focused checks and the isolated harness. Its outcome remains pending at this checkpoint.
+The earlier full run stops with exit 143 before the authorized invalid-priority correction.
+That stopped run is not passing verification.
+The expected uv environment warning means the inherited main-checkout `VIRTUAL_ENV` is ignored.
+No command uses `--active` or targets that environment.
+Previously recorded unawaited-coroutine warnings remain final-review input; no unrelated warning cleanup occurs.

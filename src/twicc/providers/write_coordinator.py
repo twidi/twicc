@@ -116,7 +116,7 @@ class WriterCoordinator:
         if not resources or int(resources) & ~int(_ALL_RESOURCES):
             raise ValueError('Expected admission and/or writer resources')
         if not isinstance(priority, WritePriority):
-            raise ValueError('Expected a write priority')
+            raise TypeError('Expected a write priority')
         future = asyncio.get_running_loop().create_future()
         request = _Request(resources, priority, future)
         self.requests.append(request)

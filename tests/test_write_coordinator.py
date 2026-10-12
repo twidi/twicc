@@ -185,3 +185,16 @@ def test_foreground_lock_facade_cannot_bypass_priority():
         with pytest.raises(RuntimeError):
             lock.release()
     asyncio.run(scenario())
+
+
+def test_invalid_priority_type_rejects_before_registering_resources():
+    async def scenario():
+        mod = api()
+        coordinator = mod.WriterCoordinator()
+        with pytest.raises(TypeError, match='Expected a write priority'):
+            await coordinator.acquire(mod.WriteResources.WRITER, 'foreground')
+        assert not coordinator.requests
+        assert not coordinator.holders
+        assert not coordinator.demands
+        await coordinator.drain()
+    asyncio.run(scenario())

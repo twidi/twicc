@@ -160,3 +160,20 @@ Acceptance requires foreground precedence at publication boundaries and unchange
 Total background throughput may decrease because foreground priority takes precedence.
 Document remaining longest atomic holds and any unoptimized final-publication cases.
 No review or test provides an absolute guarantee against regressions; evidence and isolated rollout reduce the risk.
+
+
+## Delivered verification checkpoint — 2026-10-12
+
+- [x] Independent task reviews accept priority, maintenance, pinned storage, continuation, and 6A/6B/6C activity proof.
+- [x] File-backed WAL cleanup proves physical-close removal of previously committed TEMP after a broken transaction.
+- [x] Focused final checks pass 103 tests; all changed Python files pass ruff; diff check passes.
+- [x] Isolated actual continuation/coordinator/storage/maintenance harness passes 12 hot/cold root/native-child cases.
+- [x] Exact references, owners, representations, raw aggregate precision, versions, and readiness assertions pass.
+- [x] Measurements separate foreground completion, preparation, metadata aggregates, final hold, and maximum hold.
+- [x] Creation duplicate repairs and slower total background throughput remain explicit limitations.
+- [ ] Final full backend suite completes successfully.
+- [ ] Whole-correction independent review against `442d07cc` accepts the correction.
+- [ ] User authorizes integration or restart separately.
+
+See the [persistent correction audit](2026-10-11-session-item-content-extraction-audit.md#delivered-foreground-writer-priority-correction--2026-10-12)
+for complete evidence. No single SQL, oversized row, initialization, or final transaction gains an absolute latency bound.

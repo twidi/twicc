@@ -277,7 +277,7 @@ def test_reference_pages_are_bounded_guarded_and_count_equal_slots():
     root = session('pages')
     with transaction.atomic():
         ids = references.intern_contents(['same'], 'codex')
-        for line in range(0, 5):
+        for line in range(5):
             item(root, ids['same'], ids['same'], line)
     operation = references.SessionReferenceOperation(root.id, 500000, 2)
     calls = []
