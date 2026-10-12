@@ -24,7 +24,7 @@ from twicc.providers.db_writer import (
 
 @pytest.fixture(autouse=True)
 def _install_lock_state():
-    """Install a fresh asyncio.Lock + dummy stop event for each test.
+    """Install a fresh foreground writer facade + dummy stop event for each test.
 
     The public runner checks ``_db_writer_stop_event`` at entry, so we
     install a real ``asyncio.Event`` that we never set — the check then
@@ -32,7 +32,9 @@ def _install_lock_state():
     """
     saved_lock = db_writer._db_write_lock
     saved_stop = db_writer._db_writer_stop_event
-    db_writer._db_write_lock = asyncio.Lock()
+    from twicc.providers.write_coordinator import WriterCoordinator, WriteResources
+    coordinator = WriterCoordinator()
+    db_writer._db_write_lock = coordinator.foreground_lock(WriteResources.WRITER)
     db_writer._db_writer_stop_event = asyncio.Event()
     try:
         yield

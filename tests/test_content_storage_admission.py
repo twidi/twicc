@@ -213,3 +213,231 @@ def test_content_writer_captures_actual_active_snapshot(writer_state, monkeypatc
     assert asyncio.run(db_writer.run_under_db_write_lock(job, content_activity=True)) == frozenset({'native-leaf'})
     assert calls == ['snapshot']
     assert active_session_ids.get() == frozenset()
+
+
+@pytest.fixture
+def coordinated_writer(monkeypatch):
+    import importlib
+    assert importlib.util.find_spec('twicc.providers.write_coordinator') is not None
+    from twicc.providers.write_coordinator import WriterCoordinator, WriteResources
+    coordinator = WriterCoordinator()
+    monkeypatch.setattr(db_writer, '_write_coordinator', coordinator, raising=False)
+    monkeypatch.setattr(db_writer, '_db_write_lock', coordinator.foreground_lock(WriteResources.WRITER))
+    monkeypatch.setattr(db_writer, '_storage_admission_lock', coordinator.foreground_lock(WriteResources.ADMISSION))
+    monkeypatch.setattr(db_writer, '_db_writer_stop_event', asyncio.Event())
+    return coordinator
+
+
+@pytest.mark.parametrize('eager', [False, True])
+def test_combined_publication_preserves_origin_and_nested_ownership(coordinated_writer, eager):
+    # Resetting priority in a nested writer turns background promotion into foreground demand.
+    from twicc.providers.write_coordinator import WritePriority, write_priority
+
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        if eager:
+            loop.set_task_factory(asyncio.eager_task_factory)
+        async def inspect():
+            assert write_priority.get() is WritePriority.BACKGROUND
+            assert db_writer._db_write_lock.locked()
+            assert db_writer._storage_admission_lock.locked()
+            return 42
+        async def nested():
+            assert await db_writer.run_under_db_write_lock(inspect) == 42
+            return await db_writer.run_under_storage_write_lock(inspect, priority=WritePriority.FOREGROUND)
+        try:
+            result = await db_writer.run_under_storage_write_lock(nested, priority=WritePriority.BACKGROUND)
+            assert result == 42
+            assert write_priority.get() is WritePriority.FOREGROUND
+        finally:
+            loop.set_task_factory(None)
+    asyncio.run(scenario())
+
+
+def test_combined_call_under_admission_keeps_foreground_dependency(coordinated_writer):
+    from twicc.providers.write_coordinator import WritePriority, WriteResources, write_priority
+
+    async def scenario():
+        async with db_writer.storage_admission():
+            attempted = asyncio.Event()
+            async def waiter():
+                attempted.set()
+                return await coordinated_writer.acquire(WriteResources.ADMISSION, WritePriority.FOREGROUND)
+            waiting = asyncio.create_task(waiter())
+            await attempted.wait()
+            async def inspect():
+                assert write_priority.get() is WritePriority.FOREGROUND
+            async with asyncio.timeout(1):
+                await db_writer.run_under_storage_write_lock(inspect, priority=WritePriority.BACKGROUND)
+            assert not waiting.done()
+        (await asyncio.wait_for(waiting, 1)).release()
+    asyncio.run(scenario())
+
+
+def test_combined_call_rejects_writer_before_admission(coordinated_writer):
+    from twicc.providers.write_coordinator import WritePriority
+
+    async def inner():
+        with pytest.raises(RuntimeError, match='before writer'):
+            await db_writer.run_under_storage_write_lock(lambda: asyncio.sleep(0), priority=WritePriority.FOREGROUND)
+    asyncio.run(db_writer.run_under_db_write_lock(inner))
+
+
+def test_combined_child_must_wait_for_its_own_resources(coordinated_writer):
+    from twicc.providers.write_coordinator import WritePriority, write_priority
+
+    async def scenario():
+        attempted = asyncio.Event()
+        entered = asyncio.Event()
+        async def child_factory():
+            entered.set()
+            assert write_priority.get() is WritePriority.FOREGROUND
+        async def child():
+            attempted.set()
+            await db_writer.run_under_storage_write_lock(child_factory, priority=WritePriority.FOREGROUND)
+        async def parent():
+            task = asyncio.create_task(child())
+            await attempted.wait()
+            assert not entered.is_set()
+            return task
+        task = await db_writer.run_under_storage_write_lock(parent, priority=WritePriority.BACKGROUND)
+        await asyncio.wait_for(task, 1)
+        assert entered.is_set()
+    asyncio.run(scenario())
+
+
+def test_repeated_cancellation_drains_combined_worker(coordinated_writer, compute_executor_started):
+    from twicc.providers.write_coordinator import WritePriority
+    started = threading.Event()
+    release = threading.Event()
+    def worker():
+        started.set()
+        assert release.wait(5)
+    async def scenario():
+        first = asyncio.create_task(db_writer.run_under_storage_write_lock(
+            lambda: db_writer.run_compute_sync(worker), priority=WritePriority.BACKGROUND,
+        ))
+        try:
+            assert await asyncio.to_thread(started.wait, 2)
+            for _ in range(3):
+                first.cancel()
+                await asyncio.sleep(0)
+                assert db_writer._db_write_lock.locked()
+                assert db_writer._storage_admission_lock.locked()
+            assert coordinated_writer.try_background_lease() is None
+        finally:
+            release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        await asyncio.wait_for(coordinated_writer.drain(), 1)
+        assert not db_writer._db_write_lock.locked()
+        assert not db_writer._storage_admission_lock.locked()
+    asyncio.run(scenario())
+
+
+def test_combined_stop_guards_and_internal_drain(coordinated_writer):
+    from twicc.providers.write_coordinator import WritePriority, WriteResources
+    async def scenario():
+        held = await coordinated_writer.acquire(WriteResources.WRITER, WritePriority.FOREGROUND)
+        called = []
+        async def factory():
+            called.append(True)
+        pending = asyncio.create_task(db_writer.run_under_storage_write_lock(factory, priority=WritePriority.BACKGROUND))
+        await asyncio.sleep(0)
+        db_writer._db_writer_stop_event.set()
+        held.release()
+        with pytest.raises(RuntimeError, match='stopping'):
+            await pending
+        with pytest.raises(RuntimeError, match='stopping'):
+            await db_writer.run_under_storage_write_lock(factory, priority=WritePriority.FOREGROUND)
+        assert not called
+        await db_writer.run_under_storage_write_lock(factory, priority=WritePriority.BACKGROUND, internal=True)
+        assert called == [True]
+    asyncio.run(scenario())
+
+
+def test_child_cannot_reuse_inherited_admission_owner(coordinated_writer):
+    # A ContextVar-only check would let a child publish before its parent's start completes.
+    from twicc.providers.write_coordinator import WritePriority
+    async def scenario():
+        attempted = asyncio.Event()
+        entered = asyncio.Event()
+        async def publication():
+            entered.set()
+        async def child():
+            attempted.set()
+            await db_writer.run_under_storage_write_lock(publication, priority=WritePriority.FOREGROUND)
+        async with db_writer.storage_admission():
+            task = asyncio.create_task(child())
+            await attempted.wait()
+            assert not entered.is_set()
+        await asyncio.wait_for(task, 1)
+        assert entered.is_set()
+    asyncio.run(scenario())
+
+
+def test_combined_content_snapshot_and_origin_restore_after_failure(coordinated_writer, monkeypatch):
+    from types import SimpleNamespace
+    from twicc.core.content_storage.lifecycle import active_session_ids
+    from twicc.providers.write_coordinator import WritePriority, write_priority
+    def snapshot():
+        assert db_writer._storage_admission_lock.locked()
+        assert db_writer._db_write_lock.locked()
+        return [SimpleNamespace(session_id='live-leaf')]
+    monkeypatch.setattr('twicc.agent.registry.get_agent_manager_registry', lambda: SimpleNamespace(
+        get_active_agents=snapshot,
+    ))
+    async def scenario():
+        async def factory():
+            assert active_session_ids.get() == frozenset({'live-leaf'})
+            assert write_priority.get() is WritePriority.BACKGROUND
+            raise ValueError('publication failed')
+        with pytest.raises(ValueError, match='publication failed'):
+            await db_writer.run_under_storage_write_lock(
+                factory, priority=WritePriority.BACKGROUND, content_activity=True,
+            )
+        assert write_priority.get() is WritePriority.FOREGROUND
+        assert active_session_ids.get() == frozenset()
+        assert not db_writer._db_write_lock.locked()
+        assert not db_writer._storage_admission_lock.locked()
+    asyncio.run(scenario())
+
+
+def test_shutdown_waits_for_background_grant_across_repeated_cancellation():
+    # A foreground drain sentinel can overtake a queued background resource request.
+    from twicc.providers.write_coordinator import WritePriority, WriteResources
+    async def scenario():
+        db_writer.start_db_writer()
+        coordinator = db_writer.get_write_coordinator()
+        foreground = await coordinator.acquire(WriteResources.WRITER, WritePriority.FOREGROUND)
+        attempted = asyncio.Event()
+        async def background():
+            attempted.set()
+            return await coordinator.acquire(
+                WriteResources.ADMISSION | WriteResources.WRITER, WritePriority.BACKGROUND,
+            )
+        request = asyncio.create_task(background())
+        await attempted.wait()
+        stop = asyncio.create_task(db_writer.stop_db_writer())
+        try:
+            await asyncio.shield(db_writer._db_writer_task)
+            for _ in range(2):
+                stop.cancel()
+                await asyncio.sleep(0)
+                assert db_writer.get_write_coordinator() is coordinator
+                assert not stop.done()
+            foreground.release()
+            lease = await asyncio.wait_for(request, 1)
+            assert not stop.done()
+            assert db_writer.get_write_coordinator() is coordinator
+            lease.release()
+            with pytest.raises(asyncio.CancelledError):
+                await stop
+            with pytest.raises(RuntimeError, match='not started'):
+                db_writer.get_write_coordinator()
+        finally:
+            foreground.release()
+            if request.done() and not request.cancelled():
+                request.result().release()
+            await db_writer.stop_db_writer()
+    asyncio.run(scenario())

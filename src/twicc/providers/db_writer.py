@@ -59,6 +59,9 @@ from twicc.sync_diagnostics import log_slow, sync_timing_context
 from twicc.core.enums import Provider
 from twicc.logging_context import provider_log_context
 from twicc.providers.compute_executor import run_compute_sync, start_compute_executor, stop_compute_executor
+from twicc.providers.write_coordinator import (
+    ForegroundLock, WritePriority, WriteResources, WriterCoordinator, write_priority,
+)
 from twicc.startup_progress import broadcast_startup_progress
 from twicc.workspaces import auto_add_project_to_workspaces
 
@@ -278,14 +281,18 @@ _async_queue: asyncio.Queue | None = None
 # ``sync_to_async``) or, for short critical sections that do not await
 # orphanable executor work, the raw lock via :func:`get_db_write_lock`.
 # The point is to move the contention from SQLite's busy_timeout (no fairness,
-# 30 s grace period, raises "database is locked" on loss) into asyncio's
-# FIFO lock (fair, no timeout, never raises). ``None`` outside of an active
-# DB writer lifetime so a stray ``get_db_write_lock`` call surfaces a clear
+# 30 s grace period, raises "database is locked" on loss) into the resource
+# coordinator (foreground first, FIFO among eligible peers, no timeout).
+# ``None`` outside of an active DB writer lifetime so a stray ``get_db_write_lock`` call surfaces a clear
 # RuntimeError instead of silently handing out a stale Lock.
-_db_write_lock: asyncio.Lock | None = None
+_write_coordinator: WriterCoordinator | None = None
+_db_write_lock: ForegroundLock | None = None
 # Starts and representation publication share this fence before writer ownership.
 # Its lifetime matches the writer lock; no holder acquires provider manager locks.
-_storage_admission_lock: asyncio.Lock | None = None
+_storage_admission_lock: ForegroundLock | None = None
+_storage_admission_owner: contextvars.ContextVar[asyncio.Task | None] = contextvars.ContextVar(
+    'storage_admission_owner', default=None,
+)
 
 # Reentrance marker for the lock runners. ``asyncio.Lock`` is NOT reentrant:
 # a second ``acquire()`` from the same Task self-deadlocks. The runners
@@ -317,7 +324,7 @@ _storage_admission_lock: asyncio.Lock | None = None
 # the "started during hold, continued past release" case still slipped
 # through). Restricting the short-circuit to ``current_task() in
 # lease.drive_tasks`` forces every inherited sub-task to take its own
-# slot in the lock's FIFO, regardless of when it runs relative to the
+# slot in the priority queue, regardless of when it runs relative to the
 # outer's release.
 #
 # ``ContextVar`` is still needed because :func:`_drive_inner_under_held_lock`
@@ -338,7 +345,7 @@ _storage_admission_lock: asyncio.Lock | None = None
 # **Consequence for fire-and-forget sub-tasks under lock.** A sub-task
 # spawned naively from inside a factory will block on its own acquire
 # attempt because the outer still holds the lock. If the factory does
-# not ``await`` it, the sub will queue FIFO, acquire normally once the
+# not ``await`` it, the sub will queue by priority, acquire once the
 # outer releases, and write under its own slot. If the factory ``await``s
 # the returned Task handle from within the locked block, the result is
 # a deadlock (sub waits for the lock; the lock-holder waits for sub).
@@ -352,7 +359,7 @@ _storage_admission_lock: asyncio.Lock | None = None
 # a "nested step" is to ``await`` the coroutine directly (no
 # ``create_task``) — it becomes a transparent reentrant call. The
 # helper :func:`spawn_isolated_db_write_task` exists only to document
-# "this sub-task takes its own slot in the FIFO"; its returned Task
+# "this sub-task takes its own resource slot"; its returned Task
 # handle has the SAME constraint (await it only AFTER the locked
 # factory returns).
 
@@ -386,9 +393,10 @@ class _LockLease:
     they fall through to a real acquire.
     """
 
-    __slots__ = ("active", "drive_tasks")
+    __slots__ = ("active", "drive_tasks", "resources")
 
-    def __init__(self) -> None:
+    def __init__(self, resources: WriteResources = WriteResources.WRITER) -> None:
+        self.resources = resources
         self.active = True
         # Identity-keyed: asyncio.Task is hashable by id. Mutation is
         # safe because asyncio is single-threaded — only the runner /
@@ -606,7 +614,7 @@ def start_db_writer() -> None:
     """
     global _thread_queue, _subprocess_queue
     global _db_writer_stop_event, _db_writer_task, _async_queue
-    global _db_write_lock, _storage_admission_lock
+    global _write_coordinator, _db_write_lock, _storage_admission_lock
 
     if _db_writer_task is not None:
         raise RuntimeError("DB writer already started")
@@ -616,15 +624,10 @@ def start_db_writer() -> None:
     _subprocess_queue = _mp_ctx.Queue(maxsize=COMPUTE_QUEUE_MAXSIZE)
     _async_queue = asyncio.Queue()
     _db_writer_stop_event = asyncio.Event()
-    # Created here, not at module level. ``asyncio.Lock`` itself binds to the
-    # running loop lazily (on first contended acquire) in 3.11+, so any timing
-    # would technically work for binding alone, but instantiating it inside
-    # ``start_db_writer`` co-locates the lock's lifetime with the writer
-    # task's: "DB writer running ⇔ lock available" is obvious from the
-    # lifecycle code, and a stop properly clears the slot (see
-    # ``stop_db_writer``).
-    _db_write_lock = asyncio.Lock()
-    _storage_admission_lock = asyncio.Lock()
+    # One coordinator owns both resources for this writer lifetime.
+    _write_coordinator = WriterCoordinator()
+    _db_write_lock = _write_coordinator.foreground_lock(WriteResources.WRITER)
+    _storage_admission_lock = _write_coordinator.foreground_lock(WriteResources.ADMISSION)
     _db_writer_task = asyncio.create_task(_db_writer_loop())
     logger.info("DB writer started")
 
@@ -659,15 +662,11 @@ async def stop_db_writer() -> None:
     call to a queue API into a clean :class:`RuntimeError` rather than
     a hand-out of a stale (and now drained) queue.
 
-    Before clearing the globals, we also drain in-flight external lock
-    holders by briefly acquiring/releasing the lock. That closes the
-    TOCTOU window where an external caller passed the public
-    ``run_under_db_write_lock``'s pre-acquire stop check, joined the
-    FIFO acquire queue, and would otherwise still be holding the lock
-    when we ``= None`` it — leaving them serializing on an orphan lock
-    that nothing else references.
+    Before clearing the globals, drain every registered request and holder.
+    A foreground sentinel cannot prove this: it can overtake background work.
+    Grants count as holders before their waiting coroutines resume.
     """
-    global _db_write_lock, _storage_admission_lock, _db_writer_task, _db_writer_stop_event
+    global _write_coordinator, _db_write_lock, _storage_admission_lock, _db_writer_task, _db_writer_stop_event
     global _thread_queue, _subprocess_queue, _async_queue
 
     if _db_writer_stop_event is not None:
@@ -689,45 +688,15 @@ async def stop_db_writer() -> None:
                     exc_info=exc,
                 ),
             )
-        # Drain admission first. A holder may not have reached the writer yet.
-        # Producers and managers have already stopped before this shutdown.
-        if _storage_admission_lock is not None:
-            admission_drain = asyncio.create_task(_acquire_then_release(_storage_admission_lock))
-            cancelled |= await _shielded_shutdown_wait(
-                admission_drain,
-                external_cancel_log=lambda: logger.warning("Storage admission drain was cancelled externally"),
-                unexpected_exception_log=lambda exc: logger.error(
-                    "Storage admission drain raised: %s", exc, exc_info=exc,
-                ),
-            )
-        # Drain in-flight external lock holders. The writer task is done by
-        # this point, so it has released its last apply's hold on the lock;
-        # the only remaining holders/waiters are external callers that
-        # passed ``run_under_db_write_lock``'s pre-check before we set
-        # the stop event. ``acquire()`` blocks until every prior holder
-        # in the FIFO queue has released; we immediately release so the
-        # lock is quiescent. Shielded against our own cancellation so we
-        # don't bail mid-drain and leave the next ``_db_write_lock = None``
-        # racing an active holder.
-        #
-        # ONE drain Task created up front, shield-looped until ``.done()``.
-        # A naive ``while True: shield(_acquire_then_release(lock))`` would
-        # create a fresh coroutine on every cancel retry, queueing multiple
-        # orphan acquirers in the FIFO and leaving earlier
-        # ``_acquire_then_release`` Tasks unobserved.
-        if _db_write_lock is not None:
-            drain_task = asyncio.create_task(_acquire_then_release(_db_write_lock))
+        # A holder may still need the other resource. Wait for coordinator
+        # quiescence rather than acquiring resource-specific drain sentinels.
+        if _write_coordinator is not None:
+            drain_task = asyncio.create_task(_write_coordinator.drain())
             cancelled |= await _shielded_shutdown_wait(
                 drain_task,
-                external_cancel_log=lambda: logger.warning(
-                    "Lock holder-drain task was cancelled externally during "
-                    "shutdown — in-flight external lock holders may not have "
-                    "fully released before the lifecycle bundle is cleared"
-                ),
+                external_cancel_log=lambda: logger.warning('Writer resource drain was cancelled externally'),
                 unexpected_exception_log=lambda exc: logger.error(
-                    "DB write-lock drain at shutdown raised: %s",
-                    exc,
-                    exc_info=exc,
+                    'Writer resource drain raised: %s', exc, exc_info=exc,
                 ),
             )
         # Every admitted writer has released its lease. The compute worker
@@ -743,6 +712,7 @@ async def stop_db_writer() -> None:
         # works, and any stray post-stop queue-API call surfaces a clean
         # ``RuntimeError("DB writer not started")`` instead of returning
         # a drained queue or handing out an orphan lock.
+        _write_coordinator = None
         _db_write_lock = None
         _storage_admission_lock = None
         _db_writer_task = None
@@ -755,13 +725,6 @@ async def stop_db_writer() -> None:
         # has actually drained and we've cleared module state.
         raise asyncio.CancelledError()
     logger.info("DB writer stopped")
-
-
-async def _acquire_then_release(lock: asyncio.Lock) -> None:
-    """Acquire ``lock``, release it. Used by :func:`stop_db_writer` to wait
-    for in-flight external lock holders to release before lifecycle teardown."""
-    await lock.acquire()
-    lock.release()
 
 
 async def _shielded_shutdown_wait(
@@ -853,7 +816,7 @@ async def _shielded_shutdown_wait(
     return cancelled
 
 
-def get_db_write_lock() -> asyncio.Lock:
+def get_db_write_lock() -> ForegroundLock:
     """Return the shared write lock for SQLite serialization.
 
     .. warning::
@@ -875,7 +838,7 @@ def get_db_write_lock() -> asyncio.Lock:
        call, no nested ``await`` on a third-party Future). For
        everything else, prefer the runner.
 
-    The lock is the single FIFO serialisation point shared with every
+    The foreground facade shares the priority coordinator with every
     other main-process SQLite writer — current (the DB writer's own
     apply branches inside :func:`_drain_one`) AND future (the JSONL
     watcher, agent lifecycle hooks, the cron expiry monitor, the
@@ -883,7 +846,7 @@ def get_db_write_lock() -> asyncio.Lock:
     R19 documented as still bypassing the writer queue). The point
     is to move contention from SQLite's ``busy_timeout`` (no
     fairness, gives up after 30 s, raises ``database is locked``)
-    into asyncio's FIFO ``Lock`` (fair, never raises).
+    into coordinated resource requests (foreground first, FIFO among eligible peers).
 
     External wiring (watcher etc.) is intentionally deferred to a
     later commit so the lock infrastructure can land and stabilise
@@ -1139,7 +1102,7 @@ _T = TypeVar("_T")
 
 def spawn_isolated_db_write_task(coro: Coroutine[Any, Any, _T]) -> asyncio.Task[_T]:
     """Create an :class:`asyncio.Task` that documents "take a separate
-    FIFO slot in the DB write lock".
+    resource slot in the DB write lock".
 
     **Under the current membership-based reentrance design this helper
     is semantically equivalent to a naive
@@ -1147,7 +1110,7 @@ def spawn_isolated_db_write_task(coro: Coroutine[Any, Any, _T]) -> asyncio.Task[
     ``current_task()`` is NOT in the outer lease's ``drive_tasks`` set,
     so the sub-task's first :func:`run_under_db_write_lock` call falls
     through to a real acquire (blocks until the outer releases, then
-    runs FIFO behind every other waiter). The helper exists for
+    runs by priority, FIFO among eligible peers). The helper exists for
     documentation-of-intent and as a defence-in-depth: it forces the
     inherited lease binding back to ``None`` in the sub-task's
     context, so even if a future maintainer ever removed the
@@ -1166,11 +1129,11 @@ def spawn_isolated_db_write_task(coro: Coroutine[Any, Any, _T]) -> asyncio.Task[
         async def outer_writer():
             async def with_subtask():
                 # Make it explicit that ``sub_writer_coro`` takes its
-                # own slot in the lock's FIFO.
+                # own slot in the priority queue.
                 sub = spawn_isolated_db_write_task(sub_writer_coro())
                 # … do the outer write’s remaining steps here …
                 # DO NOT ``await sub`` here — the sub is queued behind
-                # us in the lock's FIFO and cannot run until we release
+                # our resource hold and cannot run until we release
                 # by returning from this factory. Awaiting the returned
                 # Task inside the locked factory deadlocks (sub blocks
                 # on acquire; we block on sub; the shield-loop in the
@@ -1378,7 +1341,16 @@ async def storage_admission() -> AsyncIterator[None]:
     waiting = perf_counter()
     async with lock:
         log_slow('storage_admission', (perf_counter() - waiting) * 1000)
-        yield
+        token = _storage_admission_owner.set(asyncio.current_task())
+        try:
+            yield
+        finally:
+            _storage_admission_owner.reset(token)
+
+
+def _admission_admits_current() -> bool:
+    owner = _storage_admission_owner.get()
+    return owner is not None and owner is asyncio.current_task()
 
 
 async def _run_with_content_activity(coro_factory):
@@ -1417,7 +1389,7 @@ async def _run_under_db_write_lock(
     inner Task; nested calls reuse that existing membership rather
     than entering a fresh drive. Sub-tasks the factory spawns via
     ``asyncio.create_task`` inherit the lease but are NOT admitted,
-    so they fall through to a real acquire (FIFO behind the outer).
+    so they fall through to a real acquire after the outer releases.
 
     See :func:`run_under_db_write_lock` for the user-facing contract.
     """
@@ -1442,28 +1414,10 @@ async def _run_under_db_write_lock(
     waiting = perf_counter()
     async with lock:
         log_slow('writer_lock', (perf_counter() - waiting) * 1000)
-        # Install a fresh lease and admit the current Task to its
-        # drive-task set BEFORE the drive. The drive will wrap the user
-        # factory in a coroutine that self-admits its inner Task as its
-        # first action (compatible with both default and eager task
-        # factories). ``finally`` invalidates the lease so any sub-task
-        # that inherited it observes ``active == False`` after our
-        # release and acquires normally
-        # — preventing the silent lock-less write a stale-True bool
-        # would have allowed. ``ContextVar.reset(token)`` restores the
-        # prior value in this Task's context only — other Tasks that
-        # copied the context keep their own bindings.
-        new_lease = _LockLease()
-        current = asyncio.current_task()
-        if current is not None:
-            new_lease.drive_tasks.add(current)
-        token = _db_write_lock_lease.set(new_lease)
-        try:
-            return await _drive_inner_under_held_lock(coro_factory)
-        finally:
-            new_lease.active = False
-            new_lease.drive_tasks.clear()
-            _db_write_lock_lease.reset(token)
+        resources = WriteResources.WRITER
+        if _admission_admits_current():
+            resources |= WriteResources.ADMISSION
+        return await _drive_publication(coro_factory, WritePriority.FOREGROUND, resources)
 
 
 async def run_under_db_write_lock(
@@ -1509,7 +1463,7 @@ async def run_under_db_write_lock(
     teardown). The check happens at BOTH entry time AND after we
     have acquired the lock — the post-acquire re-check closes the
     TOCTOU window where ``stop_db_writer`` fires between the entry
-    check and our turn in the FIFO acquire queue. The DB writer's
+    check and our turn in the eligible priority queue. The DB writer's
     own final drain uses the internal :func:`_run_under_db_write_lock`
     which has no such guard.
 
@@ -1585,7 +1539,7 @@ async def run_under_db_write_lock(
     ``drive_tasks`` — so its first ``run_under_db_write_lock`` call
     falls through to a real acquire. If the outer still holds the
     lock, the sub-task BLOCKS on the acquire until the outer releases.
-    This serialises the sub-task FIFO behind the outer (safe behaviour:
+    This serialises the sub-task after the outer releases (safe behaviour:
     no parallel write under one lock, no lock-less write past the
     outer's release). The trade-off: if the factory itself ``await``s
     the sub-task inside the locked block, the result is a deadlock —
@@ -1633,30 +1587,86 @@ async def run_under_db_write_lock(
     async with lock:
         # Post-acquire re-check. Closes the TOCTOU window where
         # ``stop_db_writer`` fires between our pre-check and our turn in
-        # the FIFO acquire queue. Without this, a caller that passed the
+        # the eligible priority queue. Without this, a caller that passed the
         # pre-check would happily start an apply while ``stop_db_writer``
         # is mid-flight clearing the lifecycle bundle.
         if _db_writer_stop_event is None or _db_writer_stop_event.is_set():
             raise RuntimeError("DB writer is stopping")
-        # Install a fresh lease and admit the current Task to its
-        # drive-task set BEFORE the drive. The drive will wrap the user
-        # factory in a coroutine that self-admits its inner Task as its
-        # first action (compatible with both default and eager task
-        # factories). ``finally`` invalidates the lease (defence-in-
-        # depth — the membership check already excludes non-drive
-        # sub-tasks) so an inherited lease never short-circuits past
-        # our release.
-        new_lease = _LockLease()
-        current = asyncio.current_task()
-        if current is not None:
-            new_lease.drive_tasks.add(current)
-        token = _db_write_lock_lease.set(new_lease)
-        try:
-            return await _drive_inner_under_held_lock(coro_factory)
-        finally:
-            new_lease.active = False
-            new_lease.drive_tasks.clear()
-            _db_write_lock_lease.reset(token)
+        resources = WriteResources.WRITER
+        if _admission_admits_current():
+            resources |= WriteResources.ADMISSION
+        return await _drive_publication(coro_factory, WritePriority.FOREGROUND, resources)
+
+
+async def _drive_publication(
+    coro_factory: Callable[[], Coroutine[Any, Any, _T]],
+    priority: WritePriority,
+    resources: WriteResources,
+) -> _T:
+    """Publish outer ownership and origin only for this cancellation-safe drive.
+
+    The caller must already hold every declared resource. Call directly in a
+    try/finally that releases the ResourceLease only after this drive returns
+    or raises. Do not spawn an unshielded task between grant and this call.
+
+    Nested runners call their factory directly. They preserve this origin and
+    the admitted task set, even when a nested API defaults to foreground.
+    """
+    lease = _LockLease(resources)
+    lease.drive_tasks.add(asyncio.current_task())
+    token = _db_write_lock_lease.set(lease)
+    priority_token = write_priority.set(priority)
+    try:
+        return await _drive_inner_under_held_lock(coro_factory)
+    finally:
+        lease.active = False
+        lease.drive_tasks.clear()
+        write_priority.reset(priority_token)
+        _db_write_lock_lease.reset(token)
+
+
+async def run_under_storage_write_lock(
+    coro_factory: Callable[[], Coroutine[Any, Any, _T]],
+    *, priority: WritePriority, content_activity: bool = False, internal: bool = False,
+) -> _T:
+    """Acquire admission plus writer together, then drain publication on cancellation.
+
+    An existing admission holder needs only writer ownership and retains its
+    foreground priority. A writer-only holder cannot acquire admission late.
+    Nested combined publication reuses ownership only for admitted drive tasks.
+    ``internal`` permits the writer's final drain after the public stop guard.
+    """
+    if content_activity:
+        original_factory = coro_factory
+        coro_factory = lambda: _run_with_content_activity(original_factory)
+    if _lease_admits_current():
+        if not _db_write_lock_lease.get().resources & WriteResources.ADMISSION:
+            raise RuntimeError('Storage admission must be acquired before writer ownership')
+        return await coro_factory()
+    if not internal and _db_writer_stop_event is not None and _db_writer_stop_event.is_set():
+        raise RuntimeError('DB writer is stopping')
+    coordinator = get_write_coordinator()
+    resources = WriteResources.ADMISSION | WriteResources.WRITER
+    requested = resources
+    if _admission_admits_current():
+        requested = WriteResources.WRITER
+        priority = WritePriority.FOREGROUND
+    waiting = perf_counter()
+    lease = await coordinator.acquire(requested, priority)
+    try:
+        if not internal and (_db_writer_stop_event is None or _db_writer_stop_event.is_set()):
+            raise RuntimeError('DB writer is stopping')
+        log_slow('storage_writer_lock', (perf_counter() - waiting) * 1000)
+        return await _drive_publication(coro_factory, priority, resources)
+    finally:
+        lease.release()
+
+
+def get_write_coordinator() -> WriterCoordinator:
+    """Return the active coordinator, including during the internal shutdown drain."""
+    if _write_coordinator is None:
+        raise RuntimeError('DB writer not started')
+    return _write_coordinator
 
 
 async def _drain_one() -> bool:
@@ -1679,7 +1689,7 @@ async def _drain_one() -> bool:
     that were queued before the stop). The helper acquires
     :data:`_db_write_lock` for the duration of the apply AND holds it
     across asyncio cancellation (see its docstring for the cancel-vs-
-    executor-thread rationale). The lock is the single FIFO
+    executor-thread rationale). The lock is the single priority-aware
     serialisation point shared with every future external writer (the
     watcher, agent lifecycle, etc.). Acquiring per-branch rather than
     once around the whole function gives the lock 3 release points per
