@@ -1,11 +1,14 @@
-"""Bounded progressive storage writes within one compute writer lease.
+"""Bounded storage preparation and independently guarded publication.
 
 Preparation runs outside atomic blocks. Each assignment rechecks the observed
 session, native root and final lifecycle decision inside its own transaction.
 """
 
 import logging
+from contextlib import contextmanager
 from contextvars import ContextVar
+from types import MappingProxyType
+from time import perf_counter
 from datetime import datetime
 
 from django.db import transaction
@@ -21,7 +24,10 @@ from twicc.core.content_storage.references import (
     bind_persisted_items, intern_contents, prepared_content_guard, reconcile_session_memberships,
 )
 from twicc.core.content_storage.state import resolve_root_decision
-from twicc.core.content_storage.types import ContentBinding, StorageCursor
+from twicc.core.content_storage.types import (
+    ContentBinding, StorageCursor, ItemStorageObservation, ContentRepresentationObservation,
+    PreparedComputeBatch, ComputeStorageProgress, ComputeStorageObservation,
+)
 from twicc.core.models import ContentDictionary, Session, SessionItem, SessionItemContent
 
 logger = logging.getLogger(__name__)
@@ -43,6 +49,8 @@ def guard_storage(session_id, incarnation, epoch, upper_line, offset=None):
     if outcome != 'ok':
         raise SupersededStorageResult(outcome)
     placement = _placement.get()
+    if placement is not None and placement.get('operation') is not None:
+        validate_compute_application(placement['operation'])
     if placement is not None:
         root_id, actual = pending_root_fields(session_id, {}, placement['active_roots'])
         if root_id != placement['root_id'] or actual and (
@@ -135,10 +143,27 @@ def _read_page(session_id, upper_line, cursor, row_budget, byte_budget):
 def extract_storage_slice(session_id: str, observed_incarnation: str, observed_epoch: int,
                           upper_line: int, cursor: int, row_budget: int, byte_budget: int) -> StorageCursor:
     """Move one exact legacy slice; preserve NULL provenance and current authority."""
+    batch = _prepare_extraction(session_id, upper_line, cursor, row_budget, byte_budget)
+    return _publish_extraction(session_id, observed_incarnation, observed_epoch, upper_line, batch)
+
+
+def _prepare_extraction(session_id, upper_line, cursor, row_budget, byte_budget):
     rows, size = _read_page(session_id, upper_line, cursor, row_budget, byte_budget)
+    rows = tuple(ItemStorageObservation(*(getattr(item, name) for name in ItemStorageObservation._fields))
+                 for item in rows)
     provider = Session.objects.values_list('provider', flat=True).get(pk=session_id)
     texts = [item.content for item in rows if item.current_content_id is None]
     prepared = prepare_texts(texts, provider, session_id)
+    last_line = rows[-1].line_num if rows else cursor
+    done = not SessionItem.objects.filter(session_id=session_id, line_num__gt=last_line,
+                                          line_num__lte=upper_line).exists()
+    return PreparedComputeBatch('extraction', last_line, rows, tuple(prepared.items()), provider, size, done)
+
+
+def _publish_extraction(session_id, observed_incarnation, observed_epoch, upper_line, batch):
+    rows, size, provider = batch.rows, batch.bytes, batch.provider
+    texts = [item.content for item in rows if item.current_content_id is None]
+    prepared = dict(batch.prepared)
     with transaction.atomic():
         placement = _placement.get()
         guard_storage(session_id, observed_incarnation, observed_epoch, upper_line,
@@ -150,6 +175,8 @@ def extract_storage_slice(session_id: str, observed_incarnation: str, observed_e
         if len(actual) != len(rows) or any(
             expected[item.id] != (item.content, item.current_content_id, item.original_content_id) for item in actual
         ):
+            raise SupersededStorageResult('superseded')
+        if any(encoded.codec == 'zstd' for encoded in prepared.values()) and not cold_placement(session_id):
             raise SupersededStorageResult('superseded')
         with prepared_content_guard(lambda: cold_placement(session_id)):
             ids = intern_contents(texts, provider, prepared)
@@ -168,18 +195,28 @@ def extract_storage_slice(session_id: str, observed_incarnation: str, observed_e
             with operation.capture_mutation([item.id for item in changed]):
                 SessionItem.objects.bulk_update(changed, ['current_content', 'content'])
         bind_persisted_items(bindings)
-        if bindings and placement is not None and placement['root_id'] is not None:
-            placement['root_epoch'] += 1
-    last_line = rows[-1].line_num if rows else cursor
-    done = not SessionItem.objects.filter(session_id=session_id, line_num__gt=last_line,
-                                          line_num__lte=upper_line).exists()
-    return StorageCursor(last_line, len(rows), size, done)
+        _settle_placement_epoch(placement)
+    return StorageCursor(batch.cursor, len(rows), size, batch.done)
 
 
 def apply_override_slice(msg, overrides, operation):
-    texts = [override['content'] for override in overrides]
+    batch = _prepare_overrides(msg, overrides)
+    return _publish_overrides(msg, batch, operation)
+
+
+def _prepare_overrides(msg, overrides):
     provider = Session.objects.values_list('provider', flat=True).get(pk=msg['session_id'])
+    texts = [override['content'] for override in overrides]
     prepared = prepare_texts(texts, provider, msg['session_id'])
+    return PreparedComputeBatch('overrides', None, tuple(MappingProxyType(dict(row)) for row in overrides),
+                                tuple(prepared.items()), provider,
+                                sum(len(text.encode('utf-8')) for text in texts), False)
+
+
+def _publish_overrides(msg, batch, operation):
+    overrides, provider = batch.rows, batch.provider
+    texts = [override['content'] for override in overrides]
+    prepared = dict(batch.prepared)
     with transaction.atomic():
         guard_storage(msg['session_id'], msg.get('observed_incarnation'), msg.get('observed_epoch'),
                       msg.get('observed_upper_line'), msg.get('observed_last_offset'))
@@ -203,6 +240,8 @@ def apply_override_slice(msg, overrides, operation):
                         raise SupersededStorageResult('superseded')
             if item.current_content_id is not None:
                 displaced.append(item.current_content_id)
+        if any(encoded.codec == 'zstd' for encoded in prepared.values()) and not cold_placement(msg['session_id']):
+            raise SupersededStorageResult('superseded')
         with prepared_content_guard(lambda: cold_placement(msg['session_id'])):
             ids = intern_contents(texts, provider, prepared)
         with operation.capture_mutation(list(items)):
@@ -214,8 +253,7 @@ def apply_override_slice(msg, overrides, operation):
         bind_persisted_items([ContentBinding(item.id, item.session_id, item.current_content_id,
                                             item.original_content_id) for item in items.values()])
         placement = _placement.get()
-        if items and placement is not None and placement['root_id'] is not None:
-            placement['root_epoch'] += 1
+        _settle_placement_epoch(placement)
         reconcile_session_memberships(msg['session_id'], displaced)
 
 
@@ -233,10 +271,10 @@ def _owners_cold(row, cache=None):
         owner_ids = [owner for owner in row.session_ids[start:start + 128] if owner not in cache]
         if not owner_ids:
             continue
-        owners = list(Session.objects.filter(pk__in=owner_ids).values('id', 'content_storage_version'))
+        owners = list(Session.objects.filter(pk__in=owner_ids).values('id', 'content_storage_version', 'storage_incarnation'))
         if len(owners) != len(owner_ids) or any(
-            owner['id'] != placement['pending_session_id']
-            and owner['content_storage_version'] != CONTENT_STORAGE_VERSION for owner in owners
+            not owner['storage_incarnation'] or (owner['id'] != placement['pending_session_id']
+            and owner['content_storage_version'] != CONTENT_STORAGE_VERSION) for owner in owners
         ):
             return False
         for owner in owner_ids:
@@ -246,6 +284,13 @@ def _owners_cold(row, cache=None):
 
 def reconcile_storage_slice(msg, cursor, row_budget=ROW_BUDGET, byte_budget=BYTE_BUDGET):
     """Bound payload retention and resume between an item's two content references."""
+    batch = _prepare_reconciliation(msg, cursor, row_budget, byte_budget)
+    result = _publish_reconciliation(msg, batch)
+    msg['_storage_reconcile_position'] = batch.cursor
+    return result
+
+
+def _prepare_reconciliation(msg, cursor, row_budget=ROW_BUDGET, byte_budget=BYTE_BUDGET):
     if row_budget <= 0 or byte_budget <= 0:
         raise ValueError('Storage budgets must be positive')
     position = msg.get('_storage_reconcile_position', (cursor, 1))
@@ -317,6 +362,18 @@ def reconcile_storage_slice(msg, cursor, row_budget=ROW_BUDGET, byte_budget=BYTE
                 last_line = item_line
         if stopped:
             break
+    done = position[1] == 1 and not SessionItem.objects.filter(
+        session_id=msg['session_id'], line_num__gt=last_line, line_num__lte=msg['observed_upper_line'],
+    ).exists()
+    immutable = tuple((ContentRepresentationObservation(*(bytes(getattr(row, name)) if name in ('payload', 'sha256')
+                       else tuple(row.session_ids) if name == 'session_ids' else getattr(row, name)
+                       for name in ContentRepresentationObservation._fields)), encoded, policy, no_gain)
+                      for row, encoded, policy, no_gain in prepared)
+    return PreparedComputeBatch('reconciliation', position, tuple(visited), immutable, None, size, done, last_line)
+
+
+def _publish_reconciliation(msg, batch):
+    visited, prepared = batch.rows, batch.prepared
     with transaction.atomic():
         guard_storage(msg['session_id'], msg.get('observed_incarnation'), msg.get('observed_epoch'),
                       msg.get('observed_upper_line'), msg.get('observed_last_offset'))
@@ -330,20 +387,19 @@ def reconcile_storage_slice(msg, cursor, row_budget=ROW_BUDGET, byte_budget=BYTE
         for observed, encoded, policy, no_gain in prepared:
             actual = SessionItemContent.objects.get(pk=observed.id)
             if (actual.codec != observed.codec or actual.dictionary_id != observed.dictionary_id
-                    or actual.session_ids != observed.session_ids or bytes(actual.payload) != bytes(observed.payload)
-                    or actual.raw_size != observed.raw_size or bytes(actual.sha256) != bytes(observed.sha256)):
+                    or tuple(actual.session_ids) != observed.session_ids or bytes(actual.payload) != bytes(observed.payload)
+                    or actual.raw_size != observed.raw_size or bytes(actual.sha256) != bytes(observed.sha256)
+                    or actual.dictionary_provider != observed.dictionary_provider
+                    or actual.compression_attempt_version != observed.compression_attempt_version
+                    or actual.compression_no_gain != observed.compression_no_gain):
                 raise SupersededStorageResult('superseded')
             if encoded.codec == 'zstd' and not _owners_cold(actual, publication_cache):
-                continue
+                raise SupersededStorageResult('superseded')
             SessionItemContent.objects.filter(pk=actual.id).update(
                 payload=encoded.payload, codec=encoded.codec, dictionary_id=encoded.dictionary_id,
                 compression_attempt_version=policy, compression_no_gain=no_gain,
             )
-    msg['_storage_reconcile_position'] = position
-    done = position[1] == 1 and not SessionItem.objects.filter(
-        session_id=msg['session_id'], line_num__gt=last_line, line_num__lte=msg['observed_upper_line'],
-    ).exists()
-    return StorageCursor(last_line, len({entry[0] for entry in visited}), size, done)
+    return StorageCursor(batch.line_num, len({entry[0] for entry in visited}), batch.bytes, batch.done)
 
 
 def initialize_compute_session(session_id):
@@ -361,85 +417,294 @@ def initialize_compute_session(session_id):
             snapshot_root_storage(root.root_id)
 
 
-def prepare_compute_result(msg, item_row_budget=2000):
-    """Keep reference accounting on one connection across separately committed slices."""
-    from twicc.core.content_storage.references import session_reference_operation
+_TARGET_FIELDS = ('storage_incarnation', 'history_epoch', 'last_offset', 'last_line', 'type', 'parent_session_id')
+
+
+def _native_ancestry(session_id):
+    ancestry = []
+    seen = set()
+    while session_id is not None and session_id not in seen:
+        seen.add(session_id)
+        row = Session.objects.filter(pk=session_id).values_list(
+            'id', 'storage_incarnation', 'type', 'parent_session_id',
+        ).first()
+        ancestry.append(row or (session_id, None, None, None))
+        if row is None or row[2] != 'subagent':
+            break
+        session_id = row[3]
+    return tuple(ancestry)
+
+
+def _settle_placement_epoch(placement):
+    if placement is not None and placement['root_id'] is not None:
+        placement['root_epoch'] = Session.objects.values_list('content_state_epoch', flat=True).get(
+            pk=placement['root_id'])
+
+
+class ComputeStorageOperation:
+    """Worker-owned mutable state; only successful publications settle cursors."""
+
+    def __init__(self, msg, observation, placement, references):
+        self.message = msg
+        self.observation = observation
+        self.placement = placement
+        self.references = references
+        self.phase = 'counts'
+        self.cursor = 0
+        self.closed = False
+        self.item_row_budget = 2000
+        self.pending_batch = None
+
+    @property
+    def connection_identity(self):
+        return self.references._connection
+
+
+@contextmanager
+def _compute_scope(operation, active_ids):
+    operation.references.validate_connection()
+    placement = dict(operation.placement)
+    _refresh_active_placement(placement, active_ids)
+    placement['operation'] = operation
+    token = _placement.set(placement)
+    try:
+        with operation.references.activate():
+            yield placement
+    finally:
+        _placement.reset(token)
+
+
+def _refresh_active_placement(placement, active_ids):
+    now = timezone.now()
+    roots = set()
+    unresolved = False
+    for identity in active_ids:
+        decision = resolve_root_decision(identity, now, frozenset())
+        if decision.resolved:
+            roots.add(decision.root_id)
+        else:
+            unresolved = True
+    placement.update(active_roots=frozenset(roots), unresolved_active=unresolved, now=now)
+
+
+def validate_compute_application(operation):
+    """Read-only immutable fence, usable inside TEMP preparation snapshots."""
+    if operation.closed:
+        raise SupersededStorageResult('superseded')
+    operation.references.validate_connection()
+    return _validate_observation(operation.observation, operation.placement['root_epoch'])
+
+
+def _validate_observation(observation, expected_epoch):
+    target = Session.objects.filter(pk=observation.session_id).values_list(*_TARGET_FIELDS).first()
+    if target != observation.target or _native_ancestry(observation.session_id) != observation.ancestry:
+        raise SupersededStorageResult('superseded')
+    decision = resolve_root_decision(observation.session_id, timezone.now(), frozenset())
+    if decision.root_id != observation.root_id:
+        raise SupersededStorageResult('superseded')
+    if observation.root_id is not None:
+        root = Session.objects.filter(pk=observation.root_id).values(
+            'storage_incarnation', 'content_state_epoch', *COLD_FIELDS,
+        ).first()
+        if root is None or root['storage_incarnation'] != observation.root_incarnation or (
+            root['content_state_epoch'] != expected_epoch
+            or tuple(root[name] for name in COLD_FIELDS) != observation.initial_fields
+        ):
+            raise SupersededStorageResult('superseded')
+    return True
+
+
+def begin_compute_application(msg):
+    """Capture exact target/root observations under a short write-first guard."""
+    from twicc.core.content_storage.references import SessionReferenceOperation
     from twicc.providers.compute_base import BaseSessionCompute
 
-    if msg.get('_storage_prepared'):
-        return msg
     with transaction.atomic():
         guard_storage(msg['session_id'], msg.get('observed_incarnation'), msg.get('observed_epoch'),
                       msg.get('observed_upper_line'), msg.get('observed_last_offset'))
-    if 'history_facts' not in msg:
-        raise ValueError('session_complete is missing history_facts')
-    initialize_compute_session(msg['session_id'])
-    session = Session.objects.get(pk=msg['session_id'])
-    upper_line = msg.get('observed_upper_line')
-    if upper_line is None:
-        upper_line = max(session.last_line,
-                         SessionItem.objects.filter(session_id=session.id).aggregate(last=Max('line_num'))['last'] or 0)
-    msg = {**msg, 'observed_incarnation': msg.get('observed_incarnation') or session.storage_incarnation,
-           'observed_epoch': msg.get('observed_epoch', session.history_epoch),
-           'observed_upper_line': upper_line}
-    now = timezone.now()
-    active_roots = set()
-    unresolved_active = False
-    for active_id in msg.get('_active_session_ids', ()):
-        decision = resolve_root_decision(active_id, now, frozenset())
-        if decision.resolved:
-            active_roots.add(decision.root_id)
-        else:
-            unresolved_active = True
-    root_id, final = pending_root_fields(msg['session_id'], msg.get('session_fields', {}), frozenset(active_roots))
-    final = final or {}
-    initial_root = Session.objects.filter(pk=root_id).values(*COLD_FIELDS).first()
-    placement = {'root_id': root_id, 'root_incarnation': final.get('storage_incarnation'),
-                 'root_epoch': final.get('content_state_epoch'),
-                 'final_fields': {name: final[name] for name in COLD_FIELDS if name in final},
-                 'initial_fields': initial_root, 'active_roots': frozenset(active_roots), 'now': now,
-                 'unresolved_active': unresolved_active, 'pending_session_id': msg['session_id'],
-                 'observed_offset': msg.get('observed_last_offset')}
-    msg['_storage_final_root'] = placement
-    token = _placement.set(placement)
-    updates = msg.get('item_updates') or []
-    overrides = msg.get('content_overrides') or []
-    estimate = max(1, (len(overrides) + ROW_BUDGET - 1) // ROW_BUDGET
+        if 'history_facts' not in msg:
+            raise ValueError('session_complete is missing history_facts')
+        BaseSessionCompute.validate_item_fields(msg.get('item_fields', ()))
+        initialize_compute_session(msg['session_id'])
+        session = Session.objects.get(pk=msg['session_id'])
+        upper_line = msg.get('observed_upper_line')
+        if upper_line is None:
+            upper_line = max(session.last_line,
+                             SessionItem.objects.filter(session_id=session.id).aggregate(last=Max('line_num'))['last'] or 0)
+        msg = {**msg, 'observed_incarnation': msg.get('observed_incarnation') or session.storage_incarnation,
+               'observed_epoch': msg.get('observed_epoch', session.history_epoch), 'observed_upper_line': upper_line}
+        root_id, final = pending_root_fields(session.id, msg.get('session_fields', {}), frozenset())
+        final = final or {}
+        initial = Session.objects.filter(pk=root_id).values(*COLD_FIELDS).first()
+        placement = {'root_id': root_id, 'root_incarnation': final.get('storage_incarnation'),
+                     'root_epoch': final.get('content_state_epoch'), 'initial_fields': initial,
+                     'final_fields': {name: final[name] for name in COLD_FIELDS if name in final},
+                     'active_roots': frozenset(), 'unresolved_active': False, 'now': timezone.now(),
+                     'pending_session_id': session.id, 'observed_offset': msg.get('observed_last_offset')}
+        observation = ComputeStorageObservation(session.id, tuple(getattr(session, name) for name in _TARGET_FIELDS),
+                                               _native_ancestry(session.id), root_id,
+                                               placement['root_incarnation'],
+                                               tuple(initial[name] for name in COLD_FIELDS) if initial else ())
+    estimate = max(1, (len(msg.get('content_overrides') or ()) + ROW_BUDGET - 1) // ROW_BUDGET
                    + (session.last_line + ROW_BUDGET - 1) // ROW_BUDGET)
-    try:
-        with session_reference_operation(msg['session_id'], item_count=session.last_line,
-                                         expected_batches=estimate) as operation:
-            for start in range(0, len(updates), item_row_budget):
+    references = SessionReferenceOperation(session.id, session.last_line, estimate)
+    if root_id is None:
+        references.uses_counts = False
+        references.initialized = True
+    references.validate_connection()
+    return ComputeStorageOperation(msg, observation, placement, references)
+
+
+def prepare_compute_batch(operation):
+    """Prepare one bounded batch outside admission and main writer ownership."""
+    if operation.pending_batch is not None:
+        raise ValueError('A prepared compute batch already exists')
+    started = perf_counter()
+    msg = operation.message
+    with _compute_scope(operation, msg.get('_active_session_ids', frozenset())):
+        if operation.phase == 'counts':
+            def validate_page():
+                if not validate_compute_application(operation):
+                    raise SupersededStorageResult('superseded')
+                return True
+            operation.references.initialize_page(row_budget=ROW_BUDGET,
+                                                  validate=validate_page)
+            batch = PreparedComputeBatch('counts', operation.references.initialization_cursor, (), (), None, 0,
+                                         operation.references.initialized)
+        elif operation.phase == 'metadata':
+            updates = msg.get('item_updates') or ()
+            end = min(len(updates), operation.cursor + operation.item_row_budget)
+            batch = PreparedComputeBatch('metadata', end,
+                                         tuple(MappingProxyType(dict(row)) for row in updates[operation.cursor:end]),
+                                         (), None, 0, end == len(updates))
+        elif operation.phase == 'overrides':
+            overrides = msg.get('content_overrides') or ()
+            chunk, size = [], 0
+            for row in overrides[operation.cursor:operation.cursor + ROW_BUDGET]:
+                length = len(row['content'].encode('utf-8'))
+                if chunk and size + length > BYTE_BUDGET:
+                    break
+                chunk.append(row)
+                size += length
+            batch = _prepare_overrides(msg, chunk)._replace(cursor=operation.cursor + len(chunk),
+                                                            done=operation.cursor + len(chunk) == len(overrides))
+        elif operation.phase == 'extraction':
+            batch = _prepare_extraction(msg['session_id'], msg['observed_upper_line'], operation.cursor,
+                                        ROW_BUDGET, BYTE_BUDGET)
+        elif operation.phase == 'reconciliation':
+            local = {**msg, '_storage_reconcile_position': operation.cursor}
+            batch = _prepare_reconciliation(local, operation.cursor[0], ROW_BUDGET, BYTE_BUDGET)
+        else:
+            raise ValueError('Compute storage preparation is complete')
+    operation.pending_batch = batch
+    logger.debug('Compute storage preparation: session=%s phase=%s rows=%d bytes=%d elapsed_ms=%.1f',
+                 msg['session_id'], batch.phase, len(batch.rows), batch.bytes, (perf_counter() - started) * 1000)
+    return batch
+
+
+def publish_compute_batch(operation, batch, active_ids):
+    """Publish one guarded batch; settle Python state only after atomic exit."""
+    from twicc.providers.compute_base import BaseSessionCompute
+
+    if batch is not operation.pending_batch or batch.phase != operation.phase:
+        raise ValueError('Prepared compute batch does not match operation')
+    started = perf_counter()
+    msg = operation.message
+    with _compute_scope(operation, active_ids) as placement:
+        with transaction.atomic():
+            guard_storage(msg['session_id'], msg['observed_incarnation'], msg['observed_epoch'],
+                          msg['observed_upper_line'], msg.get('observed_last_offset'))
+            _refresh_active_placement(placement, active_ids)
+            if batch.phase == 'metadata' and batch.rows:
                 outcome = BaseSessionCompute.apply_session_items_chunk(
                     msg['session_id'], msg.get('observed_last_offset'), msg.get('item_fields', []),
-                    updates[start:start + item_row_budget], [], msg.get('_repaired_activity_buckets'),
-                    msg['observed_incarnation'], msg['observed_epoch'], msg['observed_upper_line'],
-                )
+                    list(batch.rows), [], msg.get('_repaired_activity_buckets'),
+                    msg['observed_incarnation'], msg['observed_epoch'], msg['observed_upper_line'])
                 if outcome != 'ok':
                     raise SupersededStorageResult(outcome)
-            offset = 0
-            while offset < len(overrides):
-                chunk = []
-                size = 0
-                while offset < len(overrides) and len(chunk) < ROW_BUDGET:
-                    override = overrides[offset]
-                    length = len(override['content'].encode('utf-8'))
-                    if chunk and size + length > BYTE_BUDGET:
-                        break
-                    chunk.append(override)
-                    size += length
-                    offset += 1
-                apply_override_slice(msg, chunk, operation)
-            cursor = StorageCursor(-1, 0, 0, False)
-            while not cursor.done:
-                cursor = extract_storage_slice(msg['session_id'], msg['observed_incarnation'], msg['observed_epoch'],
-                                               msg['observed_upper_line'], cursor.line_num, ROW_BUDGET, BYTE_BUDGET)
-            cursor = StorageCursor(-1, 0, 0, False)
-            while not cursor.done:
-                cursor = reconcile_storage_slice(msg, cursor.line_num)
+            elif batch.phase == 'overrides':
+                _publish_overrides(msg, batch, operation.references)
+            elif batch.phase == 'extraction':
+                _publish_extraction(msg['session_id'], msg['observed_incarnation'], msg['observed_epoch'],
+                                    msg['observed_upper_line'], batch)
+            elif batch.phase == 'reconciliation':
+                _publish_reconciliation(msg, batch)
+            _settle_placement_epoch(placement)
+            epoch = placement['root_epoch']
+    operation.placement['root_epoch'] = epoch
+    operation.pending_batch = None
+    operation.cursor = batch.cursor
+    if batch.done:
+        next_phase = {'counts': 'metadata', 'metadata': 'overrides', 'overrides': 'extraction',
+                      'extraction': 'reconciliation', 'reconciliation': 'final'}[batch.phase]
+        operation.phase = next_phase
+        operation.cursor = -1 if next_phase == 'extraction' else (-1, 1) if next_phase == 'reconciliation' else 0
+    logger.debug('Compute storage publication: session=%s phase=%s rows=%d bytes=%d elapsed_ms=%.1f',
+                 msg['session_id'], batch.phase, len(batch.rows), batch.bytes, (perf_counter() - started) * 1000)
+    return ComputeStorageProgress(operation.phase, operation.cursor, epoch, len(batch.rows), batch.bytes,
+                                  operation.phase == 'final')
+
+
+def final_compute_message(operation, active_ids):
+    if operation.phase != 'final' or operation.pending_batch is not None:
+        raise ValueError('Compute storage publication is incomplete')
+    with _compute_scope(operation, active_ids) as placement:
+        return {**operation.message, 'item_updates': [], 'content_overrides': [], '_storage_prepared': True,
+                '_storage_operation': operation, '_storage_final_root': dict(placement),
+                '_active_session_ids': active_ids}
+
+
+def close_compute_application(operation):
+    if not operation.closed:
+        try:
+            operation.references.close()
+        finally:
+            operation.closed = True
+            operation.pending_batch = None
+
+
+def prepare_compute_result(msg, item_row_budget=2000):
+    """Synchronous compatibility wrapper sharing the resumable phase primitives."""
+    if item_row_budget < 1:
+        raise ValueError('Metadata row budget must be positive')
+    if msg.get('_storage_prepared'):
+        return msg
+    operation = begin_compute_application(msg)
+    operation.item_row_budget = item_row_budget
+    try:
+        while operation.phase != 'final':
+            batch = prepare_compute_batch(operation)
+            publish_compute_batch(operation, batch, msg.get('_active_session_ids', frozenset()))
+        final = final_compute_message(operation, msg.get('_active_session_ids', frozenset()))
+        # Compatibility callers publish after this handle's TEMP scope ends.
+        final.pop('_storage_operation')
+        final['_storage_observation'] = operation.observation
+        final['_storage_final_root'].pop('operation')
+        return final
     finally:
-        _placement.reset(token)
-    return {**msg, 'item_updates': [], 'content_overrides': [], '_storage_prepared': True}
+        close_compute_application(operation)
+
+
+def validate_final_compute_operation(msg):
+    """Called only after the final helper acquires its write-first guard."""
+    operation = msg.get('_storage_operation')
+    if operation is not None:
+        validate_compute_application(operation)
+    elif msg.get('_storage_observation') is not None:
+        _validate_observation(msg['_storage_observation'], msg['_storage_final_root']['root_epoch'])
+    pending = msg.get('_storage_final_root')
+    if pending is not None:
+        _refresh_active_placement(pending, msg.get('_active_session_ids', ()))
+        decision = resolve_root_decision(msg['session_id'], timezone.now(), pending['active_roots'])
+        root_id, effective = pending_root_fields(msg['session_id'], msg.get('session_fields', {}),
+                                                 pending['active_roots'])
+        requires_plaintext = (pending['unresolved_active'] or not decision.resolved
+                              or root_id in pending['active_roots']
+                              or not cold_from_fields(effective or {}, timezone.now()))
+        if requires_plaintext and SessionItem.objects.filter(session_id=msg['session_id']).filter(
+            Q(current_content__codec='zstd') | Q(original_content__codec='zstd'),
+        ).exists():
+            raise SupersededStorageResult('superseded')
 
 
 def finish_storage_result(msg):
@@ -462,12 +727,19 @@ def finish_storage_result(msg):
     ).exists():
         raise ContentIntegrityError('Compute storage placement is incomplete')
     decision = resolve_root_decision(session_id, timezone.now(), pending['active_roots'] if pending else frozenset())
-    if not decision.is_cold and SessionItem.objects.filter(session_id=session_id).filter(
-        ~Q(current_content__codec='plain')
-        | Q(original_content_id__isnull=False) & ~Q(original_content__codec='plain'),
+    if (not decision.is_cold or pending and pending['unresolved_active']) and SessionItem.objects.filter(
+        session_id=session_id).filter(
+        (~Q(current_content__codec='plain') | Q(current_content__dictionary_id__isnull=False))
+        | Q(original_content_id__isnull=False) & (
+            ~Q(original_content__codec='plain') | Q(original_content__dictionary_id__isnull=False)),
     ).exists():
         raise ContentIntegrityError('Hot compute storage requires plaintext through both references')
     Session.objects.filter(pk=session_id).update(content_storage_version=CONTENT_STORAGE_VERSION)
     if decision.resolved and decision.root_id == session_id and not decision.is_cold:
         verify_plaintext_root(snapshot_root_storage(decision.root_id),
                               active_root_ids=pending['active_roots'] if pending else frozenset())
+    operation = msg.get('_storage_operation')
+    if operation is not None:
+        epoch = (Session.objects.values_list('content_state_epoch', flat=True).get(pk=decision.root_id)
+                 if decision.resolved else None)
+        transaction.on_commit(lambda: operation.placement.update(root_epoch=epoch))

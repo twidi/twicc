@@ -67,3 +67,55 @@ class PreparedRepresentation(NamedTuple):
     encoded: EncodedContent
     policy_version: str
     no_gain: bool
+
+
+class ItemStorageObservation(NamedTuple):
+    id: int
+    session_id: str
+    line_num: int
+    content: str
+    current_content_id: int | None
+    original_content_id: int | None
+
+
+class ContentRepresentationObservation(NamedTuple):
+    id: int
+    payload: bytes
+    codec: str
+    dictionary_id: int | None
+    sha256: bytes
+    raw_size: int
+    session_ids: tuple[str, ...]
+    dictionary_provider: str
+    compression_attempt_version: str | None
+    compression_no_gain: bool
+
+
+class PreparedComputeBatch(NamedTuple):
+    """One bounded phase input; cursor is proposed until publication commits."""
+    phase: str
+    cursor: object
+    rows: tuple
+    prepared: tuple
+    provider: str | None
+    bytes: int
+    done: bool
+    line_num: int = -1
+
+
+class ComputeStorageProgress(NamedTuple):
+    phase: str
+    cursor: object
+    root_epoch: int | None
+    rows: int
+    bytes: int
+    done: bool
+
+
+class ComputeStorageObservation(NamedTuple):
+    session_id: str
+    target: tuple
+    ancestry: tuple
+    root_id: str | None
+    root_incarnation: str | None
+    initial_fields: tuple

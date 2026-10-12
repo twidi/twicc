@@ -3638,6 +3638,12 @@ class BaseSessionCompute:
         return "ok"
 
     @staticmethod
+    def validate_item_fields(item_fields) -> None:
+        reserved = {'content', 'current_content', 'original_content', 'current_content_id', 'original_content_id'}
+        if reserved.intersection(item_fields):
+            raise ValueError('Compute metadata contains reserved content fields')
+
+    @staticmethod
     def apply_item_updates(item_fields: list[str], item_updates: list[dict]) -> None:
         """Write the worker's per-item metadata with one parametrised UPDATE per row.
 
@@ -3648,6 +3654,7 @@ class BaseSessionCompute:
         is ~50× faster than ``bulk_update`` (which builds CASE/WHEN
         expressions in Python): 186k rows take seconds instead of minutes.
         """
+        BaseSessionCompute.validate_item_fields(item_fields)
         if not item_updates or not item_fields:
             return
         fields = [SessionItem._meta.get_field(name) for name in item_fields]
@@ -3787,6 +3794,9 @@ class BaseSessionCompute:
                 outcome, session_id, observed_last_offset,
             )
             return ComputeApplyResult(outcome)
+        from twicc.core.content_storage.extraction import validate_final_compute_operation
+
+        validate_final_compute_operation(msg)
         if 'history_facts' not in msg:
             raise ValueError("session_complete is missing history_facts")
 

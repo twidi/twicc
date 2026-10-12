@@ -351,3 +351,268 @@ def test_reconcile_admits_owner_bytes_before_json_or_payload_loading(content_row
     cursor = extraction.reconcile_storage_slice(message(owner), -1, byte_budget=1024)
     assert cursor.line_num == 1 and not cursor.done
     assert set(loaded) == {rows[0].id}
+
+
+@pytest.mark.parametrize('field', ['content', 'current_content', 'original_content',
+                                  'current_content_id', 'original_content_id'])
+def test_metadata_cannot_mutate_content_assignments(field):
+    session = make_session()
+    item = SessionItem.objects.create(session=session, line_num=1, content='preserved')
+    with pytest.raises(ValueError, match='reserved'):
+        BaseSessionCompute.apply_item_updates([field], [{'id': item.id, field: None}])
+    item.refresh_from_db()
+    assert item.content == 'preserved' and item.current_content_id is None
+
+
+@pytest.mark.parametrize('change', ['append', 'replacement', 'recreation', 'sibling', 'reparent'])
+def test_resumable_publication_rejects_changed_operation_observation(change):
+    from twicc.core.content_storage import extraction
+    from twicc.core.content_storage.state import invalidate_roots
+
+    root = make_session()
+    target = make_session(id='target', type='subagent', parent_session=root, last_offset=50)
+    SessionItem.objects.create(session=target, line_num=1, content='source')
+    operation = extraction.begin_compute_application(message(target))
+    try:
+        batch = extraction.prepare_compute_batch(operation)
+        with transaction.atomic():
+            if change == 'append':
+                Session.objects.filter(pk=target.id).update(last_offset=51)
+            elif change == 'replacement':
+                Session.objects.filter(pk=target.id).update(last_offset=0, history_epoch=1)
+            elif change == 'recreation':
+                target.delete()
+                target = make_session(id='target', type='subagent', parent_session=root, last_offset=50)
+            elif change == 'sibling':
+                invalidate_roots([root.id])
+            else:
+                Session.objects.filter(pk=target.id).update(parent_session_id=None)
+        with pytest.raises(extraction.SupersededStorageResult):
+            extraction.publish_compute_batch(operation, batch, frozenset())
+        target.refresh_from_db()
+        assert target.compute_version is None
+    finally:
+        extraction.close_compute_application(operation)
+
+
+def test_final_message_revalidates_operation_inside_final_transaction():
+    from twicc.core.content_storage import extraction
+
+    session = make_session(last_offset=50)
+    SessionItem.objects.create(session=session, line_num=1, content='source')
+    operation = extraction.begin_compute_application(message(session))
+    try:
+        while operation.phase != 'final':
+            batch = extraction.prepare_compute_batch(operation)
+            extraction.publish_compute_batch(operation, batch, frozenset())
+        final = extraction.final_compute_message(operation, frozenset())
+        Session.objects.filter(pk=session.id).update(last_offset=49)
+        with pytest.raises(extraction.SupersededStorageResult):
+            BaseSessionCompute._apply_session_complete_final(final)
+        session.refresh_from_db()
+        assert session.compute_version is None
+    finally:
+        extraction.close_compute_application(operation)
+
+
+def _advance_storage_operation(operation, phase):
+    from twicc.core.content_storage import extraction
+
+    while operation.phase != phase:
+        batch = extraction.prepare_compute_batch(operation)
+        extraction.publish_compute_batch(operation, batch, frozenset())
+
+
+def test_append_after_real_temp_initialization_retains_second_reference(monkeypatch):
+    from twicc.core.content_storage import extraction, references
+    from twicc.core.content_storage.ingestion import insert_ingested_items
+    from twicc.core.models import SessionItemContent
+
+    monkeypatch.setattr(references, 'COUNT_SCAN_THRESHOLD', 1)
+    monkeypatch.setattr(extraction, 'ROW_BUDGET', 1)
+    session = make_session()
+    with transaction.atomic():
+        insert_ingested_items(session, [(SessionItem(session=session, line_num=1, content='A'), 'A')])
+    item = SessionItem.objects.get(session=session, line_num=1)
+    # Use legacy provenance so the new reference is the only remaining A owner.
+    SessionItem.objects.filter(pk=item.id).update(original_content_id=None)
+    operation = extraction.begin_compute_application(message(session, content_overrides=[
+        {'id': item.id, 'content': 'B', 'observed_current_id': item.current_content_id}]))
+    try:
+        assert operation.references.uses_counts
+        _advance_storage_operation(operation, 'overrides')
+        batch = extraction.prepare_compute_batch(operation)
+        with transaction.atomic():
+            insert_ingested_items(session, [(SessionItem(session=session, line_num=2, content='A'), 'A')])
+        with pytest.raises(extraction.SupersededStorageResult):
+            extraction.publish_compute_batch(operation, batch, frozenset())
+        assert SessionItemContent.objects.get(pk=item.current_content_id).session_ids == [session.id]
+        assert SessionItem.objects.get(pk=item.id).current_content_id == item.current_content_id
+    finally:
+        extraction.close_compute_application(operation)
+
+
+@pytest.mark.parametrize('cyclic', [False, True])
+def test_unresolved_operation_uses_plaintext_and_exact_persisted_membership(cyclic, monkeypatch):
+    from twicc.core.content_storage import extraction, references
+    from twicc.core.models import SessionItemContent
+
+    monkeypatch.setattr(references, 'COUNT_SCAN_THRESHOLD', 1)
+    monkeypatch.setattr(extraction, 'ROW_BUDGET', 1)
+    session = make_session(type='subagent')
+    if cyclic:
+        Session.objects.filter(pk=session.id).update(parent_session_id=session.id)
+    SessionItem.objects.create(session=session, line_num=1, content='A')
+    operation = extraction.begin_compute_application(message(session))
+    try:
+        assert not operation.references.uses_counts
+        _advance_storage_operation(operation, 'final')
+        final = extraction.final_compute_message(operation, frozenset())
+        assert BaseSessionCompute._apply_session_complete_final(final).outcome == 'applied'
+        item = SessionItem.objects.get(session=session, line_num=1)
+        assert item.current_content.codec == 'plain' and item.original_content_id is None
+        assert SessionItemContent.objects.get(pk=item.current_content_id).session_ids == [session.id]
+    finally:
+        extraction.close_compute_application(operation)
+
+
+def test_later_native_ancestry_resolution_supersedes_unresolved_operation():
+    from twicc.core.content_storage import extraction
+
+    target = make_session(type='subagent')
+    root = make_session(id='late-root')
+    operation = extraction.begin_compute_application(message(target))
+    try:
+        batch = extraction.prepare_compute_batch(operation)
+        Session.objects.filter(pk=target.id).update(parent_session=root)
+        with pytest.raises(extraction.SupersededStorageResult):
+            extraction.publish_compute_batch(operation, batch, frozenset())
+    finally:
+        extraction.close_compute_application(operation)
+
+
+def test_publication_rollback_does_not_settle_epoch_or_cursor(monkeypatch):
+    from django.db import DatabaseError, connection
+    from twicc.core.content_storage import extraction
+
+    session = make_session()
+    SessionItem.objects.create(session=session, line_num=1, content='A')
+    operation = extraction.begin_compute_application(message(session))
+    try:
+        _advance_storage_operation(operation, 'extraction')
+        batch = extraction.prepare_compute_batch(operation)
+        before = (operation.cursor, operation.placement['root_epoch'])
+        def fail_commit():
+            raise DatabaseError('publication rollback')
+        with monkeypatch.context() as patch:
+            patch.setattr(connection, 'commit', fail_commit)
+            with pytest.raises(DatabaseError, match='publication rollback'):
+                extraction.publish_compute_batch(operation, batch, frozenset())
+        assert (operation.cursor, operation.placement['root_epoch']) == before
+        assert SessionItem.objects.get(session=session, line_num=1).current_content_id is None
+    finally:
+        extraction.close_compute_application(operation)
+
+
+def test_each_phase_leaves_contextvars_unset():
+    from twicc.core.content_storage import extraction, references
+
+    session = make_session()
+    SessionItem.objects.create(session=session, line_num=1, content='A')
+    operation = extraction.begin_compute_application(message(session))
+    try:
+        while operation.phase != 'final':
+            batch = extraction.prepare_compute_batch(operation)
+            assert extraction._placement.get() is None and references._reference_operation.get() is None
+            extraction.publish_compute_batch(operation, batch, frozenset())
+            assert extraction._placement.get() is None and references._reference_operation.get() is None
+    finally:
+        extraction.close_compute_application(operation)
+
+
+def test_empty_metadata_phase_does_not_call_metadata_aggregate_helper(monkeypatch):
+    from twicc.core.content_storage import extraction
+
+    session = make_session()
+    operation = extraction.begin_compute_application(message(session))
+    try:
+        _advance_storage_operation(operation, 'metadata')
+        def forbidden(*args, **kwargs):
+            pytest.fail('Empty metadata must preserve the baseline skip')
+        monkeypatch.setattr(BaseSessionCompute, 'apply_session_items_chunk', forbidden)
+        batch = extraction.prepare_compute_batch(operation)
+        progress = extraction.publish_compute_batch(operation, batch, frozenset())
+        assert progress.phase == 'overrides'
+    finally:
+        extraction.close_compute_application(operation)
+
+
+def test_final_lifecycle_epoch_settles_only_after_commit(monkeypatch):
+    from datetime import timedelta
+    from django.utils import timezone
+    from twicc.core.content_storage import extraction
+
+    session = make_session()
+    operation = extraction.begin_compute_application(message(
+        session, session_fields={'compute_version': 123, 'created_at': (timezone.now() - timedelta(days=1)).isoformat()}))
+    try:
+        _advance_storage_operation(operation, 'final')
+        original_epoch = operation.placement['root_epoch']
+        final = extraction.final_compute_message(operation, frozenset())
+        with monkeypatch.context() as patch:
+            def fail(*args, **kwargs):
+                raise RuntimeError('late final rollback')
+            patch.setattr(extraction, 'finish_storage_result', fail)
+            with pytest.raises(RuntimeError, match='late final rollback'):
+                BaseSessionCompute._apply_session_complete_final(final)
+        assert operation.placement['root_epoch'] == original_epoch
+        final = extraction.final_compute_message(operation, frozenset())
+        assert BaseSessionCompute._apply_session_complete_final(final).outcome == 'applied'
+        session.refresh_from_db()
+        assert operation.placement['root_epoch'] == session.content_state_epoch > original_epoch
+    finally:
+        extraction.close_compute_application(operation)
+
+
+def test_false_reference_page_guard_maps_to_superseded(monkeypatch):
+    from twicc.core.content_storage import extraction, references
+
+    monkeypatch.setattr(references, 'COUNT_SCAN_THRESHOLD', 1)
+    monkeypatch.setattr(extraction, 'ROW_BUDGET', 1)
+    session = make_session()
+    operation = extraction.begin_compute_application(message(session))
+    try:
+        monkeypatch.setattr(extraction, 'validate_compute_application', lambda operation: False)
+        with pytest.raises(extraction.SupersededStorageResult):
+            extraction.prepare_compute_batch(operation)
+    finally:
+        extraction.close_compute_application(operation)
+
+
+@pytest.mark.parametrize('cyclic', [False, True])
+def test_unresolved_override_reconciles_both_persisted_items_exactly(cyclic, monkeypatch):
+    from twicc.core.content_storage import extraction, references
+    from twicc.core.content_storage.types import ContentBinding
+    from twicc.core.models import SessionItemContent
+
+    monkeypatch.setattr(references, 'COUNT_SCAN_THRESHOLD', 1)
+    monkeypatch.setattr(extraction, 'ROW_BUDGET', 1)
+    target = make_session(type='subagent')
+    if cyclic:
+        Session.objects.filter(pk=target.id).update(parent_session_id=target.id)
+    with transaction.atomic():
+        pk = references.intern_contents(['A'], 'codex')['A']
+        first = SessionItem.objects.create(session=target, line_num=1, content='', current_content_id=pk)
+        second = SessionItem.objects.create(session=target, line_num=2, content='', current_content_id=pk)
+        references.bind_persisted_items([ContentBinding(row.id, target.id, pk, None) for row in (first, second)])
+    operation = extraction.begin_compute_application(message(target, content_overrides=[
+        {'id': first.id, 'content': 'B', 'observed_current_id': pk}]))
+    try:
+        assert not operation.references.uses_counts
+        _advance_storage_operation(operation, 'final')
+        assert SessionItemContent.objects.get(pk=pk).session_ids == [target.id]
+        first.refresh_from_db()
+        assert read_current(first) == 'B' and first.original_content_id is None
+        assert first.current_content.codec == 'plain'
+    finally:
+        extraction.close_compute_application(operation)

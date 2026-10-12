@@ -370,3 +370,68 @@ def test_reference_page_failure_does_not_advance_cursor_or_damage_outer_transact
         operation.close()
     assert connection.connection is physical
     assert Session.objects.filter(pk=root.id).exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_file_backed_temp_count_page_allows_foreground_writer_before_page_commit(tmp_path, monkeypatch):
+    import sqlite3
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from django.db import connections
+
+    monkeypatch.setattr(references, 'COUNT_SCAN_THRESHOLD', 1)
+    owner = session('wal-count-owner')
+    with transaction.atomic():
+        pk = references.intern_contents(['A'], 'codex')['A']
+        item(owner, pk, pk)
+    path = tmp_path / 'count-page.sqlite3'
+    destination = sqlite3.connect(path)
+    connection.connection.backup(destination)
+    destination.execute('PRAGMA journal_mode=WAL')
+    destination.close()
+    page_started, release_page = Event(), Event()
+
+    def worker_connection():
+        db = connections['default']
+        db.settings_dict = {**db.settings_dict, 'NAME': str(path)}
+        db.ensure_connection()
+        return db
+
+    def count_page():
+        db = worker_connection()
+        operation = references.SessionReferenceOperation(owner.id, 1000, 2)
+        def pause(execute, sql, params, many, context):
+            result = execute(sql, params, many, context)
+            if sql.startswith('INSERT INTO') and 'content_reference_counts_' in sql:
+                page_started.set()
+                assert release_page.wait(5)
+            return result
+        try:
+            with db.execute_wrapper(pause):
+                assert operation.initialize_page(row_budget=1, validate=lambda: True) is False
+            assert operation.initialization_cursor == 1
+            assert not db.in_atomic_block
+            with db.cursor() as cursor:
+                cursor.execute(f'SELECT count FROM {operation.table} WHERE content_id = %s', [pk])
+                assert cursor.fetchone() == (2,)
+        finally:
+            operation.close()
+            db.close()
+
+    def foreground():
+        db = worker_connection()
+        try:
+            Session.objects.filter(pk=owner.id).update(last_offset=1)
+            return Session.objects.get(pk=owner.id).last_offset
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        preparation = executor.submit(count_page)
+        try:
+            assert page_started.wait(5)
+            assert executor.submit(foreground).result(timeout=3) == 1
+            assert not preparation.done()
+        finally:
+            release_page.set()
+        preparation.result(timeout=5)

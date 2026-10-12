@@ -224,3 +224,109 @@ def test_candidate_owner_validation_does_not_repeat_reverse_item_scans():
     with connection.execute_wrapper(observe):
         assert BaseSessionCompute.apply_session_complete(message(session)).outcome == 'applied'
     assert not [sql for sql in queries if sql.startswith(f'SELECT "{SessionItem._meta.db_table}"."session_id" AS "session_id" FROM')]
+
+
+def test_new_active_child_between_prepare_and_publish_supersedes_compressed_candidate():
+    from tests.test_content_extraction import _advance_storage_operation
+    from twicc.core.content_storage import extraction
+
+    _public_dictionary('codex')
+    root = make_session(archived=True, created_at=timezone.now() - timedelta(days=60))
+    child = make_session(id='new-active-child', type='subagent', parent_session=root)
+    item = SessionItem.objects.create(session=root, line_num=1, content='repeated ' * 1000)
+    operation = extraction.begin_compute_application(message(root))
+    try:
+        _advance_storage_operation(operation, 'extraction')
+        batch = extraction.prepare_compute_batch(operation)
+        assert any(encoded.codec == 'zstd' for _, encoded in batch.prepared)
+        with pytest.raises(extraction.SupersededStorageResult):
+            extraction.publish_compute_batch(operation, batch, frozenset({child.id}))
+        item.refresh_from_db()
+        assert item.current_content_id is None
+    finally:
+        extraction.close_compute_application(operation)
+
+
+@pytest.mark.parametrize('change', ['owners', 'attempt', 'provider', 'payload'])
+def test_reconciliation_rejects_changed_shared_representation(change, content_row_factory):
+    from tests.test_content_extraction import _advance_storage_operation
+    from twicc.core.content_storage import extraction
+
+    root = make_session()
+    stored = content_row_factory('repeated ' * 1000, True, session_ids=[root.id])
+    SessionItem.objects.create(session=root, line_num=1, content='', current_content=stored)
+    operation = extraction.begin_compute_application(message(root))
+    try:
+        _advance_storage_operation(operation, 'reconciliation')
+        batch = extraction.prepare_compute_batch(operation)
+        updates = {'owners': {'session_ids': [root.id, 'foreign-owner']},
+                   'attempt': {'compression_attempt_version': 'changed'},
+                   'provider': {'dictionary_provider': 'claude_code'},
+                   'payload': {'payload': b'changed'}}[change]
+        SessionItemContent.objects.filter(pk=stored.id).update(**updates)
+        with pytest.raises(extraction.SupersededStorageResult):
+            extraction.publish_compute_batch(operation, batch, frozenset())
+    finally:
+        extraction.close_compute_application(operation)
+
+
+def test_hot_target_promotes_existing_compressed_content(content_row_factory):
+    from twicc.core.models import Session
+
+    cold = make_session(id='cold-owner', archived=True, created_at=timezone.now() - timedelta(days=60),
+                        content_storage_version=1)
+    stored = content_row_factory('shared ' * 1000, True, session_ids=[cold.id])
+    SessionItem.objects.create(session=cold, line_num=1, content='', current_content=stored)
+    hot = make_session()
+    item = SessionItem.objects.create(session=hot, line_num=1, content='shared ' * 1000)
+    assert BaseSessionCompute.apply_session_complete(message(hot)).outcome == 'applied'
+    item.refresh_from_db()
+    assert item.current_content_id == stored.id and item.current_content.codec == 'plain'
+    assert item.original_content_id is None
+    assert item.current_content.session_ids == sorted([cold.id, hot.id])
+    assert Session.objects.get(pk=hot.id).content_storage_version == 1
+
+
+def test_activation_after_cold_slices_supersedes_final_readiness():
+    from tests.test_content_extraction import _advance_storage_operation
+    from twicc.core.content_storage import extraction
+
+    _public_dictionary('codex')
+    root = make_session(archived=True, created_at=timezone.now() - timedelta(days=60))
+    SessionItem.objects.create(session=root, line_num=1, content='repeated ' * 1000)
+    operation = extraction.begin_compute_application(message(root))
+    try:
+        _advance_storage_operation(operation, 'final')
+        final = extraction.final_compute_message(operation, frozenset({root.id}))
+        with pytest.raises(extraction.SupersededStorageResult):
+            BaseSessionCompute._apply_session_complete_final(final)
+        root.refresh_from_db()
+        assert root.compute_version is None and root.content_storage_version is None
+    finally:
+        extraction.close_compute_application(operation)
+
+
+def test_elapsed_cold_threshold_is_fresh_between_storage_phases(monkeypatch):
+    from tests.test_content_extraction import _advance_storage_operation
+    from twicc.core.content_storage import extraction
+
+    _public_dictionary('codex')
+    initial = timezone.now()
+    monkeypatch.setattr(extraction.timezone, 'now', lambda: initial)
+    root = make_session(created_at=initial - timedelta(days=29))
+    item = SessionItem.objects.create(session=root, line_num=1, content='repeated ' * 1000)
+    operation = extraction.begin_compute_application(message(root))
+    try:
+        _advance_storage_operation(operation, 'extraction')
+        batch = extraction.prepare_compute_batch(operation)
+        assert not batch.prepared
+        monkeypatch.setattr(extraction.timezone, 'now', lambda: initial + timedelta(days=2))
+        extraction.publish_compute_batch(operation, batch, frozenset())
+        _advance_storage_operation(operation, 'final')
+        final = extraction.final_compute_message(operation, frozenset())
+        assert BaseSessionCompute._apply_session_complete_final(final).outcome == 'applied'
+        item.refresh_from_db()
+        assert item.current_content.codec == 'zstd' and item.original_content_id is None
+        assert read_current(item) == 'repeated ' * 1000
+    finally:
+        extraction.close_compute_application(operation)
