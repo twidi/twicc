@@ -186,16 +186,24 @@
 **Interfaces:**
 - Produce payload-free phase timings and rows/bytes, lock waits/holds, cursor progress, invalidation reason/retries, and final subphase duration.
 - Preserve existing timing/log consumers; report maximum publication hold separately from total apply.
-- Optional reviewed interface: `repair_activity_bucket(key: tuple, repaired: set[tuple]) -> None`, requiring an admitted caller transaction and remembering only on commit.
-- Optional phase prepares exact missing buckets before metadata publication, one bucket per writer turn, using the existing per-run cache.
+- Retain a complete repair-key inventory independently of shortcut state, including old timestamps removed by committed metadata chunks.
+- Optional preparation begins after all metadata/override/extraction/reconciliation source writes finish, one exact bucket per writer turn.
+- Use private per-result preparation state with the dedicated physical connection, fixed `PRAGMA main.data_version`, required keys, committed keys, cursor, and explicit fallback reason.
+- During the proof interval, this connection serves only this operation. No unrelated writes, outer transaction, read snapshot, open iterator, or unfinished cursor crosses publication boundaries.
+- Never import existing per-run cache entries as proof. Exact fallback passes `repaired_activity_buckets=None` and retains the complete repair inventory.
+- Exclude all old/new creation day/week keys at project/global scope from final cache reuse, regardless of apparent count stability.
+- Final admission validates the same physical connection, fixed data_version, completed source phases, stable metadata, and committed key membership after the first guarded write.
 
 - [ ] Write tests for phase diagnostics without payload/SQL leakage, and a diagnostic final-aggregate delay distinct from codec preparation.
 - [ ] Audit all contribution mutation paths: live ingestion, metadata chunks, hide/project/provider/type changes, creation/date changes, replacement/deletion, parent costs, and cache eviction.
 - [ ] Write the audit result in this plan's private ledger. Obtain an independent reviewer verdict before adding the optional bucket optimization.
 - [ ] If the audit cannot prove exact committed baselines survive all supported writes, retain original atomic repair and record the reason. This is a deliberate safe outcome, not permission to skip correctness.
-- [ ] If approved, add failing equivalence/interleaving tests for project/global day/week keys, prospective and removed timestamp days, old/new created_at, metadata changes, cache clearing, and failed repair rollback.
-- [ ] Implement one-key pre-repair using existing `_activity_keys` semantics and `transaction.on_commit`. Enumerate current, old, new and worker affected days; do not invent persisted readiness/version certificates.
-- [ ] Preserve original final repair for metadata-change cases, missing/evicted keys, or sessions exceeding the 4,096-key cache capacity. Performance fallback must never skip exact repair.
+- [ ] The mutation audit rejects unrestricted pre-repair before normalization. The independent narrowed-design review approves the following three boundaries. Implement and review each boundary separately before enabling shortcut reuse.
+- [ ] **6A: Exact obligations and diagnostics.** Preserve current, removed, prospective, creation, and worker affected keys. Add explicit extra repair keys or equivalent zero-delta enumeration to the final helper. Initially use no prepared cache. Test raw SQL aggregate cost and endpoint-style SUM, including legacy normalization and count-only precision counterexamples.
+- [ ] **6B: Operation-owned preparation.** Prepare bounded key pages with before/after fixed-version validation. For each exact repair, start with the target guarded write, verify data_version and physical identity, and sample the expected version before commit. Record the key/cursor/version only on successful commit. Foreign commits invalidate all keys. Never sample a replacement baseline after commit while retaining evidence.
+- [ ] **6C: Final admission and integration.** Within final write ownership, recheck all preparation gates and exclude actual old/effective-new creation keys. Pass the private filtered cache or None directly into the final helper in the same transaction. Retain all old-key obligations on either path. Discard private state on terminal handling.
+- [ ] Add adversarial equivalence/interleaving tests for project/global day/week keys, null/old/new dates, removed timestamps, hidden sessions, native children, metadata changes, legacy cache entries, failed repair rollback, failed commit callbacks, stale snapshots, physical connection replacement with equal version numbers, unrelated foreign commits, and current-version replay mutations without aggregate deltas.
+- [ ] Preserve exact no-cache final repair for unknown/missing keys, metadata changes, failed proof, connection loss, or more than 4,096 keys. Bound preparation retries. Performance fallback must never skip exact repair.
 - [ ] Keep expensive repair transactions visible: one bucket may itself exceed the desired interactive wait. No strict latency guarantee or new index follows from this task.
 - [ ] Run aggregate, continuation, lifecycle, replacement/deletion and content tests.
 - [ ] Commit and independently review diagnostics and any approved optimization.

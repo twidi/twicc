@@ -106,8 +106,25 @@ Instrument preparation, publication, lock waits/holds, final subphases, and comm
 Measure activity bucket cache hits/misses and metadata-change causes.
 Preserve exact aggregate repair unless an independently reviewed optimization proves an equivalent baseline and all mutation deltas.
 Zero item updates alone do not permit skipping repair.
-A progressive bucket-repair optimization may use the existing committed per-run cache after its mutation contract is audited.
-It must preserve metadata-change and cache-eviction fallbacks.
+A progressive bucket-repair optimization begins only after all source-changing phases finish.
+Use a private per-result cache on the dedicated physical application connection.
+During its proof interval, the connection serves only this operation.
+No outer transaction, read snapshot, open iterator, or unfinished cursor spans publication boundaries.
+Never treat existing per-run cache entries as proof of a current baseline.
+Retain the complete activity-key repair inventory, including timestamps removed by earlier metadata chunks.
+This inventory survives optimization failure and enters exact final repair.
+
+Fence the inventory and every accepted repair with the same connection's `PRAGMA main.data_version`.
+Check it after the first guarded write acquires SQLite writer ownership.
+Capture the expected value inside the transaction and publish evidence only after commit.
+A foreign commit invalidates the complete prepared set; never refresh its version while retaining earlier evidence.
+Connection replacement, metadata changes, remaining source writes, missing keys, or capacity overflow select exact final repair without any cache.
+
+Exclude all old/new creation-day and creation-week keys at project and global scope from final cache reuse.
+These keys can receive session-count deltas; exact SQL recalculation preserves raw aggregate cost precision.
+Other reused keys must receive zero messages, cost, and count deltas.
+Validate all conditions inside final atomic publication before using the private cache.
+Implement and independently review exact obligations, preparation, and final integration as separate gates.
 Do not move required final aggregate consistency after compute-version publication.
 Do not add startup index creation to hide this cost.
 
