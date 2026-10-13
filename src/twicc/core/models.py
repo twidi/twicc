@@ -2265,3 +2265,86 @@ class StatisticsQueueEntry(models.Model):
     id = models.BigAutoField(primary_key=True)
     root_session_id = models.CharField(max_length=255)
     force_cost_session_ids = models.JSONField(default=list, null=True)
+
+
+class TimelineKind(models.TextChoices):
+    """Closed set of timeline event kinds, named ``subject.verb`` (timeline design §4).
+
+    Intervals use ``<subject>.started`` / ``<subject>.ended``; point facts use
+    ``<subject>.<past participle>``.
+    """
+
+    SESSION_CREATED = "session.created", "Session created"
+    TITLE_CHANGED = "title.changed", "Title changed"
+    SETTINGS_CHANGED = "settings.changed", "Settings changed"
+    PROCESS_STARTED = "process.started", "Process started"
+    PROCESS_ENDED = "process.ended", "Process ended"
+    TURN_STARTED = "turn.started", "Turn started"
+    TURN_ENDED = "turn.ended", "Turn ended"
+    AWAITING_INPUT_STARTED = "awaiting_input.started", "Awaiting input started"
+    AWAITING_INPUT_ENDED = "awaiting_input.ended", "Awaiting input ended"
+    ARCHIVED_STARTED = "archived.started", "Archived started"
+    ARCHIVED_ENDED = "archived.ended", "Archived ended"
+    HIDDEN_STARTED = "hidden.started", "Hidden started"
+    HIDDEN_ENDED = "hidden.ended", "Hidden ended"
+    MUTED_STARTED = "muted.started", "Muted started"
+    MUTED_ENDED = "muted.ended", "Muted ended"
+    PINNED_STARTED = "pinned.started", "Pinned started"
+    PINNED_ENDED = "pinned.ended", "Pinned ended"
+    BACKEND_STARTED = "backend.started", "Backend started"
+    BACKEND_ENDED = "backend.ended", "Backend ended"
+
+
+class TimelinePrecision(models.TextChoices):
+    """How much to trust ``TimelineEvent.occurred_at``."""
+
+    EXACT = "exact", "Observed live"
+    DERIVED = "derived", "Derived from a timestamped datum"
+    ESTIMATED = "estimated", "Inferred, see data.upper_bound"
+
+
+class TimelineActor(models.TextChoices):
+    """Who caused a timeline event."""
+
+    USER = "user", "User"
+    AGENT = "agent", "Agent"
+    SYSTEM = "system", "System"
+    EXTERNAL = "external", "External"
+
+
+class TimelineEvent(models.Model):
+    """One append-only fact about a session (or about the backend instance).
+
+    ``session_id`` is a plain CharField (like :class:`ProcessRun`): the Session
+    row may not exist yet when the first process event is written, and rows must
+    survive a purge. ``NULL`` ``session_id`` and ``project`` mean an instance
+    event (``backend.*``). Design: ``docs/plans/2026-10-13-session-timeline-design.md``.
+    """
+
+    session_id = models.CharField(max_length=200, null=True, blank=True)
+    project = models.ForeignKey(
+        Project, null=True, blank=True, on_delete=models.PROTECT, related_name="timeline_events",
+    )
+    kind = models.CharField(max_length=40, choices=TimelineKind.choices)
+    occurred_at = models.DateTimeField()
+    recorded_at = models.DateTimeField(auto_now_add=True)
+    precision = models.CharField(max_length=10, choices=TimelinePrecision.choices, default=TimelinePrecision.EXACT)
+    actor = models.CharField(max_length=10, choices=TimelineActor.choices)
+    reason = models.CharField(max_length=30, blank=True, default="")
+    caused_by = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="effects")
+    data = models.JSONField(default=dict, blank=True)
+    dedupe_key = models.CharField(max_length=100, null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["session_id", "occurred_at", "id"], name="idx_timeline_session"),
+            models.Index(fields=["project", "occurred_at", "id"], name="idx_timeline_project"),
+            models.Index(fields=["kind", "occurred_at"], name="idx_timeline_kind"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["session_id", "dedupe_key"],
+                condition=models.Q(dedupe_key__isnull=False),
+                name="uniq_timeline_dedupe",
+            ),
+        ]

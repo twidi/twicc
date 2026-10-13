@@ -37,6 +37,7 @@ from twicc.core.models import (
     Project,
     Session,
     SessionType,
+    TimelineEvent,
     ToolResultLink,
 )
 from twicc.providers import compute_base, sessions_watcher
@@ -582,7 +583,7 @@ def test_live_collection_query_budget_does_not_grow_with_the_tree(django_assert_
 
 def _reset_db_and_caches(provider_home, monkeypatch):
     shutil.rmtree(provider_home.claude / "projects" / PROJECT, ignore_errors=True)
-    for model in (AgentInteraction, AgentRunEnd, ToolResultLink, AgentLink):
+    for model in (AgentInteraction, AgentRunEnd, ToolResultLink, AgentLink, TimelineEvent):
         model.objects.all().delete()
     Session.objects.all().delete()
     Project.objects.all().delete()

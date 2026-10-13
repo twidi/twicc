@@ -7,7 +7,7 @@ from django.db import transaction
 
 from twicc.core.content_storage.ingestion import initialize_ingestion_session
 from twicc.core.content_storage.references import remove_history_memberships
-from twicc.core.models import Project, Session
+from twicc.core.models import Project, Session, TimelineEvent
 from twicc.providers.claude_code.initial_sync import sync_all_with_progress
 
 
@@ -24,6 +24,8 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         if options["reset"]:
             self.stdout.write("Resetting database...")
+            # Timeline rows protect their project: they go first.
+            TimelineEvent.objects.all().delete()
             # Delete Projects first - cascades to Session and SessionItem
             with transaction.atomic():
                 for session in Session.objects.all().iterator(chunk_size=128):
