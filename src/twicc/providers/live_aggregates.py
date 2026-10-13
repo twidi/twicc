@@ -8,7 +8,7 @@ from typing import NamedTuple
 
 from django.db import connection, transaction
 
-from twicc.core.enums import ItemKind, Provider
+from twicc.core.enums import ItemKind
 from twicc.core.models import DailyActivity, Session, SessionItem, SessionType, WeeklyActivity
 
 ZERO = Decimal(0)
@@ -200,15 +200,16 @@ def apply_contribution_changes(
             if old:
                 for key in _activity_keys(old.project_id, old.provider, item.timestamp):
                     buckets[key]
+        from twicc.providers.compute_repair import repair_activity_key
+
         for key, delta in buckets.items():
-            model, project_id, provider, day = key
             # Project, provider, visibility, and session type change the
             # contribution of unchanged historical items. Their delta is not
             # represented by before_items/after_items, so recalculate them.
             if repaired_activity_buckets is not None and key in repaired_activity_buckets and not metadata_changed:
                 _apply_activity_delta(key, delta)
                 continue
-            model.recalculate(project_id, day, Provider(provider))
+            repair_activity_key(key)
             if repaired_activity_buckets is not None:
                 transaction.on_commit(
                     lambda key=key: _remember_repaired_bucket(repaired_activity_buckets, key),
