@@ -29,6 +29,7 @@ from twicc.core.content_storage.types import (
     ContentBinding, StorageCursor, ItemStorageObservation, ContentRepresentationObservation,
     PreparedComputeBatch, ComputeStorageProgress, ComputeStorageObservation,
 )
+from twicc.core.content_storage.writes import write_item_content_assignments
 from twicc.core.models import ContentDictionary, Session, SessionItem, SessionItemContent
 from twicc.providers.compute_repair_journal import RepairSnapshot
 from twicc.sync_diagnostics import timed_sync_phase
@@ -214,10 +215,10 @@ def _publish_extraction(session_id, observed_incarnation, observed_epoch, upper_
         from twicc.core.content_storage.references import _reference_operation
         operation = _reference_operation.get()
         if operation is None:
-            SessionItem.objects.bulk_update(changed, ['current_content', 'content'])
+            write_item_content_assignments(changed)
         else:
             with operation.capture_mutation([item.id for item in changed]):
-                SessionItem.objects.bulk_update(changed, ['current_content', 'content'])
+                write_item_content_assignments(changed)
         bind_persisted_items(bindings)
         _settle_placement_epoch(placement)
     return StorageCursor(batch.cursor, len(rows), size, batch.done)
@@ -248,6 +249,11 @@ def _publish_overrides(msg, batch, operation):
         items = {item.id: item for item in SessionItem.objects.filter(
             pk__in=[override['id'] for override in overrides], session_id=msg['session_id'],
         )}
+        assignments = {}
+        for override in overrides:
+            if override['id'] in assignments and assignments[override['id']] != override['content']:
+                raise ContentIntegrityError('Conflicting content assignments for the same item')
+            assignments[override['id']] = override['content']
         displaced = []
         for override in overrides:
             item = items.get(override['id'])
@@ -269,12 +275,15 @@ def _publish_overrides(msg, batch, operation):
             raise SupersededStorageResult('superseded')
         with prepared_content_guard(lambda: cold_placement(msg['session_id'])):
             ids = intern_contents(texts, provider, prepared)
-        with operation.capture_mutation(list(items)):
-            for override in overrides:
-                item = items[override['id']]
-                item.current_content_id = ids[override['content']]
+        changed = []
+        for item_id, text in assignments.items():
+            item = items[item_id]
+            if item.current_content_id != ids[text] or item.content != '':
+                item.current_content_id = ids[text]
                 item.content = ''
-            SessionItem.objects.bulk_update(list(items.values()), ['current_content', 'content'])
+                changed.append(item)
+        with operation.capture_mutation([item.id for item in changed]):
+            write_item_content_assignments(changed)
         bind_persisted_items([ContentBinding(item.id, item.session_id, item.current_content_id,
                                             item.original_content_id) for item in items.values()])
         placement = _placement.get()

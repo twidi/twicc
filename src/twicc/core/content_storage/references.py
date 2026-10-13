@@ -20,6 +20,7 @@ from django.utils import timezone
 from twicc.core.content_storage.codec import ContentIntegrityError, decode_content, encode_plain
 from twicc.core.content_storage.state import invalidate_roots, resolve_root_decision
 from twicc.core.content_storage.types import ContentBinding, EncodedContent
+from twicc.core.content_storage.writes import write_content_owners
 from twicc.core.models import SessionItem, SessionItemContent
 
 COUNT_SCAN_THRESHOLD = 1_000_000
@@ -104,9 +105,13 @@ def bind_persisted_items(bindings: Sequence[ContentBinding]) -> None:
     contents = list(SessionItemContent.objects.filter(pk__in=additions).only('id', 'session_ids'))
     if len(contents) != len(additions):
         raise ContentIntegrityError('Content binding references missing content')
+    changed = []
     for row in contents:
+        if additions[row.id] <= set(row.session_ids):
+            continue
         row.session_ids = sorted(set(row.session_ids) | additions[row.id])
-    SessionItemContent.objects.bulk_update(contents, ['session_ids'])
+        changed.append(row)
+    write_content_owners(changed)
     roots = set()
     for session_id in {binding.session_id for binding in bindings}:
         decision = resolve_root_decision(session_id, timezone.now(), frozenset())
@@ -155,7 +160,7 @@ def reconcile_session_memberships(session_id: str, displaced_ids: Sequence[int])
         if serialized != row.session_ids:
             row.session_ids = serialized
             changed.append(row)
-    SessionItemContent.objects.bulk_update(changed, ['session_ids'])
+    write_content_owners(changed)
 
 
 def remove_session_memberships(session_id: str, content_ids: Iterable[int]) -> None:
@@ -186,7 +191,7 @@ def remove_history_memberships(session_id: str) -> None:
             if session_id in row.session_ids:
                 row.session_ids = sorted(set(row.session_ids) - {session_id})
                 changed.append(row)
-        SessionItemContent.objects.bulk_update(changed, ['session_ids'])
+        write_content_owners(changed)
 
 
 class SessionReferenceOperation:
