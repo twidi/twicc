@@ -380,6 +380,26 @@ class WeeklyActivity(PeriodicActivity):
     """Pre-computed weekly activity metrics (messages, sessions, costs), per project and global."""
 
     @classmethod
+    def recalculate_from_daily(cls, project_id: str | None, monday: DateType, provider: Provider) -> None:
+        """Sum seven UTC day rows inside the caller's serialized transaction."""
+        from django.db import connection
+        from django.db.models import Sum
+
+        if not connection.in_atomic_block:
+            raise RuntimeError('Weekly publication requires the caller writer transaction')
+        if monday.weekday() != 0:
+            raise ValueError('Weekly activity date must be Monday')
+        values = DailyActivity.objects.filter(
+            project_id=project_id, provider=provider.value,
+            date__gte=monday, date__lt=monday + timedelta(days=7),
+        ).aggregate(cost=Sum('cost'), user_message_count=Sum('user_message_count'), session_count=Sum('session_count'))
+        values = {key: value or (Decimal(0) if key == 'cost' else 0) for key, value in values.items()}
+        if not any(values.values()):
+            cls.objects.filter(project_id=project_id, provider=provider.value, date=monday).delete()
+            return
+        cls.objects.update_or_create(project_id=project_id, provider=provider.value, date=monday, defaults=values)
+
+    @classmethod
     def date_range(cls, activity_date: DateType) -> tuple[datetime, datetime]:
         """Weekly range: Monday 00:00 UTC to next Monday 00:00 UTC."""
         date_start = datetime.combine(activity_date, datetime.min.time(), tzinfo=UTC)
