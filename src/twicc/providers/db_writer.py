@@ -532,6 +532,7 @@ class _ComputeProviderState:
     auto_added_project_ids: set[str] = field(default_factory=set)
     sessions_since_project_broadcast: int = 0
     completed_count: int = 0
+    ready_session_ids: set[str] | None = None
     failed_count: int = 0
     abandoned: bool = False
     applied_queue: asyncio.Queue | None = None
@@ -1088,6 +1089,8 @@ def arm_compute_completion(
     display_session_ids: set[str] | None,
     total_display: int,
     applied_queue: asyncio.Queue | None = None,
+    *,
+    ready_session_ids: set[str] | None = None,
 ) -> tuple[int, asyncio.Future]:
     """Declare a compute run for ``provider``; return ``(run_id, Future)``.
 
@@ -1117,6 +1120,7 @@ def arm_compute_completion(
         display_session_ids=display_session_ids,
         total_display=total_display,
         applied_queue=applied_queue,
+        ready_session_ids=ready_session_ids,
     )
     future = asyncio.get_running_loop().create_future()
     _compute_done_events[run_id] = future
@@ -2769,7 +2773,11 @@ async def _complete_compute_result(msg, result, state, received_at, apply_starte
         return
     session_id = msg["session_id"]
     if state.display_session_ids is None or session_id in state.display_session_ids:
-        state.completed_count += 1
+        if state.ready_session_ids is None:
+            state.completed_count += 1
+        else:
+            state.ready_session_ids.add(session_id)
+            state.completed_count = len(state.ready_session_ids)
         await broadcast_startup_progress(
             "background_compute", state.completed_count, state.total_display,
             provider=provider.value,

@@ -209,3 +209,39 @@ def test_inline_coordinator_notified_only_after_accepted_apply(monkeypatch, outc
             await db_writer.stop_compute_executor()
     asyncio.run(scenario())
     assert calls == (['root-inline'] if outcome == 'applied' else [])
+
+
+def test_progress_keeps_initial_total_and_ready_sessions_across_passes(monkeypatch):
+    async def scenario():
+        ready_ids = set()
+        progress = []
+        db_writer.start_compute_executor()
+        monkeypatch.setattr(BaseSessionCompute, 'apply_session_complete',
+                            staticmethod(lambda msg: ComputeApplyResult('applied')))
+
+        async def broadcast_session(session_id):
+            pass
+
+        async def broadcast_progress(phase, current, total, **kwargs):
+            progress.append((current, total))
+
+        monkeypatch.setattr(db_writer, 'broadcast_session_updated', broadcast_session)
+        monkeypatch.setattr(db_writer, 'broadcast_startup_progress', broadcast_progress)
+        try:
+            for session_id in ['first', 'second', 'first']:
+                run_id, _ = db_writer.arm_compute_completion(
+                    Provider.CLAUDE_CODE, {'first', 'second'}, 2, ready_session_ids=ready_ids,
+                )
+                try:
+                    await db_writer._process_compute_message({
+                        'type': 'session_complete', 'provider': Provider.CLAUDE_CODE.value,
+                        'run_id': run_id, 'session_id': session_id,
+                    })
+                finally:
+                    db_writer._compute_states.pop(run_id, None)
+                    db_writer._compute_done_events.pop(run_id, None)
+        finally:
+            await db_writer.stop_compute_executor()
+        assert progress == [(1, 2), (2, 2), (2, 2)]
+
+    asyncio.run(scenario())

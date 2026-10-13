@@ -720,6 +720,7 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
         )
     )
     total_display = len(sessions_to_display)
+    ready_session_ids: set[str] = set()
 
     # Broadcast initial progress state (0/N) — using display total (sessions only)
     await broadcast_startup_progress(
@@ -747,16 +748,6 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
             # until another retirement attempt closes the previous transport.
             if ctx.process is not None or ctx.result_stream is not None:
                 await retire_compute_run(ctx)
-            display_ids = await query(
-                lambda: set(
-                    Session.objects.filter(
-                        id__in=session_ids,
-                        provider=ctx.provider,
-                        type=SessionType.SESSION,
-                    ).values_list("id", flat=True)
-                )
-            )
-
             if ctx.stop_event.is_set():
                 return 0
 
@@ -764,8 +755,9 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
             # completed retry from accepting messages from the previous worker.
             run_id, done_future = arm_compute_completion(
                 ctx.provider,
-                display_ids,
-                len(display_ids),
+                sessions_to_display,
+                total_display,
+                ready_session_ids=ready_session_ids,
             )
             ctx.run_id = run_id
             try:
@@ -792,7 +784,21 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
             finally:
                 await retire_compute_run(ctx, done_future)
 
+        async def publish_ready_progress(*, completed: bool = False) -> None:
+            confirmed = await query(lambda: set(
+                Session.objects.filter(
+                    id__in=sessions_to_display, provider=ctx.provider,
+                    compute_version=ctx.compute_version, unavailable_reason__isnull=True,
+                ).values_list("id", flat=True)
+            ))
+            ready_session_ids.update(confirmed)
+            await broadcast_startup_progress(
+                "background_compute", len(ready_session_ids), total_display,
+                provider=provider_value, completed=completed and len(confirmed) == total_display,
+            )
+
         async def load_remaining(candidate_ids: list[str]) -> list[str]:
+            await publish_ready_progress()
             outdated = await query(
                 lambda: set(
                     Session.objects.filter(
@@ -840,10 +846,7 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
             )
 
         if not retry_result.remaining_session_ids and not ctx.stop_event.is_set():
-            await broadcast_startup_progress(
-                "background_compute", total_display, total_display,
-                provider=provider_value, completed=True,
-            )
+            await publish_ready_progress(completed=True)
 
     finally:
         # Stop the worker process. Idempotent if it has already exited.

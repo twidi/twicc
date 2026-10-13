@@ -245,6 +245,7 @@ class CodexComputeCoordinator:
         self.in_flight: str | None = None
         self.initial_ids: set[str] = set()
         self.initial_classified: set[str] = set()
+        self.initial_ready: set[str] = set()
         # Initial top-level sessions currently deferred, failed or unavailable
         # (the UI line's "set aside"); a later success removes them again.
         self._set_aside: set[str] = set()
@@ -562,7 +563,7 @@ class CodexComputeCoordinator:
         if not legacy:
             return None
         set_aside = self._set_aside & legacy
-        done = len((self.initial_classified & legacy) - set_aside)
+        done = len(self.initial_ready & legacy)
         line = f"Migrating Codex legacy sessions ({done} / {len(legacy)}"
         if set_aside:
             line += f", {len(set_aside)} set aside"
@@ -603,14 +604,29 @@ class CodexComputeCoordinator:
         self._log_summary()
         self._flush_final_summary()
 
-    async def _classify_initial(self, session_id: str) -> None:
+    async def _confirm_initial_ready(self, session_ids: set[str]) -> None:
+        unchecked = session_ids & self.initial_ids - self.initial_ready
+        unchecked -= self.failures.keys() | self.deferred | self._forced_rebuild | self._unavailable_diagnoses.keys()
+        if not unchecked:
+            return
+        ready = await sync_to_async(lambda: list(
+            Session.objects.filter(
+                id__in=unchecked, provider=Provider.CODEX, type=SessionType.SESSION,
+                compute_version=self.ctx.compute_version, unavailable_reason__isnull=True,
+            ).values_list("id", flat=True),
+        ))()
+        self.initial_ready.update(ready)
+
+    async def _classify_initial(self, session_id: str, *, confirm_ready: bool = True) -> None:
         if session_id not in self.initial_ids and not self.initial_done.is_set():
             return
         if session_id in self.initial_ids:
             self.initial_classified.add(session_id)
-        current = len(self.initial_classified)
-        classified = current == self._initial_total
-        completed = classified and not (
+            if confirm_ready:
+                await self._confirm_initial_ready({session_id})
+        current = len(self.initial_ready)
+        classified = len(self.initial_classified) == self._initial_total
+        completed = classified and current == self._initial_total and not (
             self.failures or self.deferred or self._prepared or self._forced_rebuild or self._unavailable_diagnoses
         )
         await broadcast_startup_progress(
@@ -1032,8 +1048,10 @@ class CodexComputeCoordinator:
                     )
                     stale_ids = {candidate.session_id for candidate in candidates}
                     await self._prune_deleted_recovery(stale_ids)
-                    for session_id in self.initial_ids - stale_ids:
-                        await self._classify_initial(session_id)
+                    externally_ready = self.initial_ids - stale_ids - self.initial_ready
+                    await self._confirm_initial_ready(externally_ready)
+                    for session_id in externally_ready:
+                        await self._classify_initial(session_id, confirm_ready=False)
 
                     candidates.sort(key=lambda item: item.session_id in self.failures)
                     healthy_pending = (self.submitted | self.computed_not_applied) - self.failures.keys()

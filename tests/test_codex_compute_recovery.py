@@ -24,6 +24,17 @@ from tests.test_background_compute_recovery import versions
 pytest_plugins = ["tests.test_background_compute_recovery"]
 
 
+@pytest.fixture
+def codex_recovery_runtime(recovery_runtime):
+    import sqlite3
+    from contextlib import closing
+    path, progress = recovery_runtime
+    with closing(sqlite3.connect(path)) as database:
+        database.execute("UPDATE core_session SET provider='codex'")
+        database.commit()
+    return path, progress
+
+
 def coordinator():
     return CodexComputeCoordinator(SimpleNamespace(stop_event=asyncio.Event(), compute_version=2, run_id=2), asyncio.Event())
 
@@ -130,8 +141,8 @@ class CodexRecoveryCompute:
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize('failure', ['initialize', 'apply', 'process'])
-def test_real_codex_pipeline_recovers_without_restart(recovery_runtime, monkeypatch, failure):
-    path, progress = recovery_runtime
+def test_real_codex_pipeline_recovers_without_restart(codex_recovery_runtime, monkeypatch, failure):
+    path, progress = codex_recovery_runtime
     from twicc.core.content_storage import extraction
     from twicc.providers.compute_base import BaseSessionCompute
     failed = False
@@ -495,12 +506,12 @@ def test_retirement_failure_retries_before_releasing_old_lease(monkeypatch):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_missing_rollout_restored_without_rebuild_or_restart(recovery_runtime, monkeypatch):
+def test_missing_rollout_restored_without_rebuild_or_restart(codex_recovery_runtime, monkeypatch):
     import sqlite3
     from contextlib import closing
     from twicc.core.content_storage import extraction
     from twicc.providers.codex import rollout_migration
-    path, progress = recovery_runtime
+    path, progress = codex_recovery_runtime
     rollout = path.parent / 'restored.jsonl'
     diagnosed_initializations = []
     original = extraction.initialize_compute_session
@@ -562,7 +573,7 @@ def test_missing_rollout_restored_without_rebuild_or_restart(recovery_runtime, m
             }}) + b'\n')
             try:
                 async with asyncio.timeout(8):
-                    while versions(path)['faulty'] != 123 or owner.failures:
+                    while versions(path)['faulty'] != 123 or owner.failures or not progress[-1][1]:
                         if task.done():
                             await task
                         await asyncio.sleep(.01)
@@ -641,7 +652,7 @@ def test_diagnosed_missing_ack_rechecks_database_before_retaining_retry(monkeypa
         if deleted:
             assert not owner._unavailable_diagnoses and not owner.failures
             assert not owner._retry_at and not owner._forced_rebuild
-            assert progress == [True]
+            assert progress == [False]
         else:
             assert owner._unavailable_diagnoses == {sid: 'rollout_missing'}
             assert sid in owner.failures
@@ -651,7 +662,7 @@ def test_diagnosed_missing_ack_rechecks_database_before_retaining_retry(monkeypa
 
 
 @pytest.mark.django_db(transaction=True)
-def test_deleted_cooling_diagnosis_does_not_block_completion(monkeypatch):
+def test_deleted_cooling_diagnosis_releases_barrier_without_false_ready(monkeypatch):
     async def run():
         owner = coordinator()
         sid = 'deleted-during-cooldown'
@@ -668,5 +679,88 @@ def test_deleted_cooling_diagnosis_does_not_block_completion(monkeypatch):
         await owner._prune_deleted_recovery(set())
         assert not owner._unavailable_diagnoses and not owner.failures
         assert not owner._retry_at and not owner._forced_rebuild
-        assert owner.initial_done.is_set() and progress == [True]
+        assert owner.initial_done.is_set() and progress == [False]
+    asyncio.run(run())
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('version, expected_current', [(None, 0), (2, 1)])
+def test_superseded_progress_counts_database_ready_sessions(monkeypatch, version, expected_current):
+    from twicc.core.models import Project
+    Session.objects.create(id='progress-session', provider=Provider.CODEX, compute_version=version,
+                           project=Project.objects.create(id='progress-project'))
+
+    async def run():
+        owner = coordinator()
+        owner.initial_ids = {'progress-session'}
+        owner._initial_total = 1
+        progress = []
+
+        async def broadcast(phase, current, total, **kwargs):
+            progress.append((current, total, kwargs.get('completed', False)))
+
+        monkeypatch.setattr(background_compute, 'broadcast_startup_progress', broadcast)
+        await owner._handle_applied(ComputeApplied('progress-session', 'superseded', run_id=2))
+        await owner._classify_initial('progress-session')
+        assert owner.initial_done.is_set()
+        assert progress == [(expected_current, 1, bool(expected_current))] * 2
+
+    asyncio.run(run())
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('pending', ['failure', 'deferred', 'rebuild', 'diagnosis'])
+def test_pending_repair_does_not_advance_ready_progress(monkeypatch, pending):
+    from twicc.core.models import Project
+    Session.objects.create(id='pending', project=Project.objects.create(id='pending-project'),
+                           provider=Provider.CODEX, compute_version=2)
+
+    async def run():
+        owner = coordinator()
+        owner.initial_ids = {'pending'}
+        owner._initial_total = 1
+        if pending == 'failure':
+            owner.failures['pending'] = FailedCandidate('pending', 'compute', 'failed')
+        elif pending == 'deferred':
+            owner.deferred.add('pending')
+        elif pending == 'rebuild':
+            owner._forced_rebuild.add('pending')
+        else:
+            owner._unavailable_diagnoses['pending'] = 'rollout_missing'
+        progress = []
+
+        async def broadcast(phase, current, total, **kwargs):
+            progress.append((current, total, kwargs.get('completed', False)))
+
+        monkeypatch.setattr(background_compute, 'broadcast_startup_progress', broadcast)
+        await owner._classify_initial('pending')
+        assert progress == [(0, 1, False)]
+        assert owner.initial_done.is_set()
+
+    asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_external_ready_confirmation_excludes_subagents_and_deduplicates(monkeypatch):
+    from twicc.core.models import Project
+    project = Project.objects.create(id='external-project')
+    Session.objects.create(id='root', project=project, provider=Provider.CODEX, compute_version=2)
+    Session.objects.create(id='child', project=project, provider=Provider.CODEX, compute_version=2, file_path='child',
+                           type=SessionType.SUBAGENT)
+
+    async def run():
+        owner = coordinator()
+        owner.initial_ids = {'root'}
+        owner._initial_total = 1
+        progress = []
+
+        async def broadcast(phase, current, total, **kwargs):
+            progress.append((current, total))
+
+        monkeypatch.setattr(background_compute, 'broadcast_startup_progress', broadcast)
+        await owner._confirm_initial_ready({'root', 'child'})
+        await owner._classify_initial('root', confirm_ready=False)
+        await owner._classify_initial('child')
+        await owner._classify_initial('root')
+        assert owner.initial_ready == {'root'}
+        assert progress == [(1, 1)] * 3
+
     asyncio.run(run())

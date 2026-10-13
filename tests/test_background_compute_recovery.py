@@ -157,6 +157,11 @@ def test_real_pipeline_recovers_and_preserves_healthy_progress(recovery_runtime,
             assert not ctx.stop_event.is_set()
             assert not any(sid == 'healthy' and version == 123 for sid, version in initialized)
             assert progress[-1] == ((2, 2), True)
+            assert all(total == 2 for (_, total), _ in progress)
+            assert [current for (current, _), _ in progress] == sorted(
+                current for (current, _), _ in progress
+            )
+            assert ((1, 2), False) in progress
             assert ctx.process is None
             assert len(streams) >= 2
             assert len({stream.run_id for stream in streams}) == len(streams)

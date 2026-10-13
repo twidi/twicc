@@ -9,7 +9,8 @@ from types import SimpleNamespace
 import pytest
 from watchfiles import Change
 
-from twicc.core.models import SessionType
+from twicc.core.enums import Provider
+from twicc.core.models import Project, Session, SessionType
 from twicc.providers.codex import background_compute
 from twicc.providers.codex.background_compute import (
     CodexComputeCandidate,
@@ -228,7 +229,11 @@ class _FakeCommandQueue:
             self.done_future.set_result(0)
 
 
+@pytest.mark.django_db(transaction=True)
 def test_worker_dispatches_next_only_after_computed_not_applied(monkeypatch):
+    project = Project.objects.create(id="dispatch-project")
+    for sid in ["newest", "older"]:
+        Session.objects.create(id=sid, project=project, provider=Provider.CODEX, compute_version=2, file_path=sid)
     async def scenario():
         loop = asyncio.get_running_loop()
         done_future = loop.create_future()
@@ -527,10 +532,13 @@ def test_outcome_tally_feeds_the_ui_detail_line(monkeypatch):
     assert any("session b rebuilt from its rewritten rollout" in m for m in messages)
 
 
+@pytest.mark.django_db(transaction=True)
 def test_final_summary_waits_for_the_in_flight_subagent(monkeypatch):
     """The last top-level session may be classified while a subagent is still applying."""
 
     coordinator = _coordinator()
+    Session.objects.create(id="parent", project=Project.objects.create(id="progress-project"),
+                           provider=Provider.CODEX, compute_version=2)
     coordinator.initial_ids = {"parent"}
     coordinator._initial_total = 1
     coordinator._prepared["parent"] = PreparedCandidate("parent", None, True, kind="migrated")
@@ -557,10 +565,14 @@ def test_final_summary_waits_for_the_in_flight_subagent(monkeypatch):
     assert "2 migrated, 1 registered with Codex first" in summary
 
 
+@pytest.mark.django_db(transaction=True)
 def test_ui_detail_line_counts_top_level_sessions_done_and_set_aside(monkeypatch):
     """The user-facing line: done / total like the bar, plus what is set aside."""
 
     coordinator = _coordinator()
+    project = Project.objects.create(id="progress-project")
+    for sid in ["a", "b"]:
+        Session.objects.create(id=sid, project=project, provider=Provider.CODEX, compute_version=2, file_path=sid)
     coordinator.initial_ids = {"a", "b", "c", "already-paginated"}
     coordinator._initial_total = 4
     # Only the sessions whose rollout was legacy at startup are counted; a
@@ -581,13 +593,16 @@ def test_ui_detail_line_counts_top_level_sessions_done_and_set_aside(monkeypatch
         coordinator._record_outcome("sub", "migrated")
         assert coordinator._detail() == "Migrating Codex legacy sessions (1 / 3)"
 
+        coordinator.deferred.add("b")
         coordinator._record_outcome("b", None, log="deferred")
         await coordinator._classify_initial("b")
         await coordinator._record_failure(FailedCandidate("c", "Codex migration", "boom", "rollout_missing"))
         assert coordinator._detail() == "Migrating Codex legacy sessions (1 / 3, 2 set aside)"
 
         # The deferred session comes back and succeeds.
+        coordinator.deferred.discard("b")
         coordinator._record_outcome("b", "migrated")
+        await coordinator._classify_initial("b")
         assert coordinator._detail() == "Migrating Codex legacy sessions (2 / 3, 1 set aside)"
 
         # The paginated session's outcome does not move the line.
