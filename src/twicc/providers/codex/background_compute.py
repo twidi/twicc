@@ -30,7 +30,7 @@ Busy sessions (a live TwiCC agent, or Codex's ``skipped_busy`` because
 another process holds the writer lock) are deferred and retried on agent
 ``DEAD`` / a timer. A rollout Codex cannot read or convert, or one that is
 gone from disk, is flagged ``Session.unavailable_reason`` so the UI explains
-it instead of waiting forever; it gets one new attempt per backend start.
+it. Bounded periodic retries re-read its source and database state.
 
 The coordinator stays alive for the whole provider lifetime — idle without a
 worker process between runs — because a rewrite can also happen at runtime
@@ -133,6 +133,7 @@ class CodexComputeCandidate(NamedTuple):
     file_path: Path
     session_type: str
     last_offset: int = 0
+    unavailable_reason: str | None = None
 
 
 class PreparedCandidate(NamedTuple):
@@ -176,15 +177,15 @@ async def _load_stale_candidates(
     rows = await sync_to_async(
         lambda: list(
             Session.objects.filter(provider=Provider.CODEX)
-            .filter(~Q(compute_version=compute_version) | Q(id__in=forced_ids))
+            .filter(~Q(compute_version=compute_version) | Q(id__in=forced_ids) | Q(unavailable_reason__isnull=False))
             .order_by("-mtime")
-            .values_list("id", "file_path", "type", "last_offset")
+            .values_list("id", "file_path", "type", "last_offset", "unavailable_reason")
         )
     )()
     sessions_dir = codex_sessions_dir()
     return [
-        CodexComputeCandidate(session_id, sessions_dir / file_path, session_type, last_offset)
-        for session_id, file_path, session_type, last_offset in rows
+        CodexComputeCandidate(session_id, sessions_dir / file_path, session_type, last_offset, unavailable_reason)
+        for session_id, file_path, session_type, last_offset, unavailable_reason in rows
     ]
 
 
@@ -233,6 +234,7 @@ class CodexComputeCoordinator:
         self._process_delay = 1.0
         self._retired_run_ids: set[int] = set()
         self.failures: dict[str, FailedCandidate] = {}
+        self._unavailable_diagnoses: dict[str, str] = {}
         self.migration_leases: dict[str, asyncio.Lock] = {}
         self.migration_paths: dict[str, Path] = {}
         self._forced_rebuild: set[str] = set()
@@ -337,6 +339,8 @@ class CodexComputeCoordinator:
 
     async def prepare_candidate(self, candidate: CodexComputeCandidate) -> PreparationResult:
         session_id = candidate.session_id
+        if candidate.unavailable_reason:
+            self._unavailable_diagnoses[session_id] = candidate.unavailable_reason
         phase = "classify"
         lease: asyncio.Lock | None = None
         anchors_existed = False
@@ -600,24 +604,21 @@ class CodexComputeCoordinator:
         self._flush_final_summary()
 
     async def _classify_initial(self, session_id: str) -> None:
-        if session_id not in self.initial_ids or session_id in self.initial_classified:
+        if session_id not in self.initial_ids and not self.initial_done.is_set():
             return
-        self.initial_classified.add(session_id)
+        if session_id in self.initial_ids:
+            self.initial_classified.add(session_id)
         current = len(self.initial_classified)
-        completed = current == self._initial_total
+        classified = current == self._initial_total
+        completed = classified and not (self.failures or self.deferred or self._prepared or self._forced_rebuild)
         await broadcast_startup_progress(
-            "background_compute",
-            current,
-            self._initial_total,
-            provider=Provider.CODEX.value,
-            completed=completed,
-            detail=self._detail(),
+            "background_compute", current, self._initial_total,
+            provider=Provider.CODEX.value, completed=completed, detail=self._detail(),
         )
-        if completed:
+        if classified:
+            # Classification releases global indexing even when repairs continue.
             self.initial_done.set()
-            # The last top-level session may be classified while one of its
-            # subagents is still being applied: hold the final summary until
-            # nothing is in flight so its counts are complete.
+        if completed:
             self._final_summary_pending = True
             self._flush_final_summary()
 
@@ -669,6 +670,10 @@ class CodexComputeCoordinator:
 
     async def _record_failure(self, failure: FailedCandidate) -> None:
         self.failed_this_run.add(failure.session_id)
+        if failure.unavailable_reason:
+            self._unavailable_diagnoses[failure.session_id] = failure.unavailable_reason
+        elif failure.session_id in self._unavailable_diagnoses:
+            failure = failure._replace(unavailable_reason=self._unavailable_diagnoses[failure.session_id])
         self.failures[failure.session_id] = failure
         if failure.session_id in self.migrated_history:
             self._forced_rebuild.add(failure.session_id)
@@ -680,8 +685,7 @@ class CodexComputeCoordinator:
         delay = min(self._retry_delays.get(failure.session_id, 0.5) * 2, 60.0)
         self._retry_delays[failure.session_id] = delay
         self._retry_at[failure.session_id] = time.monotonic() + delay
-        if failure.unavailable_reason:
-            await self._classify_initial(failure.session_id)
+        await self._classify_initial(failure.session_id)
         logger.error(
             "Codex background compute failed: session=%s phase=%s error=%s%s",
             failure.session_id,
@@ -735,6 +739,9 @@ class CodexComputeCoordinator:
             ))
             return
 
+        if signal.outcome == "applied" and session_id in self._unavailable_diagnoses:
+            await self._submit_job(MarkSessionUnavailableJob, session_id, None)
+            self._unavailable_diagnoses.pop(session_id, None)
         self.deferred.discard(session_id)
         self.failed_this_run.discard(session_id)
         self.failures.pop(session_id, None)
@@ -994,7 +1001,6 @@ class CodexComputeCoordinator:
                         if item.session_id not in self.submitted
                         and item.session_id not in self.computed_not_applied
                         and self._retry_at.get(item.session_id, 0) <= time.monotonic()
-                        and not (item.session_id in self.failures and self.failures[item.session_id].unavailable_reason)
                         and item.session_id not in self.deferred
                         and not (item.session_id in self.failures and healthy_pending)
                     ), None)
@@ -1053,13 +1059,13 @@ class CodexComputeCoordinator:
                         # keep the idle worker around rather than respawning it
                         # at every 30-second retry.
                         await self._finish_run()
-                        if not self.initial_done.is_set() and not self.failures:
+                        if not self.initial_done.is_set():
                             # Every initial session was classified through the
                             # normal paths; this is a belt-and-braces guard.
                             self.initial_done.set()
 
                     delays = [max(0.01, ready - time.monotonic()) for sid, ready in self._retry_at.items()
-                              if sid in stale_ids and not self.failures[sid].unavailable_reason
+                              if sid in stale_ids
                               and sid not in self.submitted and sid not in self.computed_not_applied
                               and sid not in self.deferred and not healthy_pending]
                     try:

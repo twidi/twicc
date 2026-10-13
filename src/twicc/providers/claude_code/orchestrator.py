@@ -498,17 +498,16 @@ class ClaudeCodeOrchestrator(BaseOrchestrator):
         await self.initial_sync_done.wait()
 
         # Background compute is independent of the search index and can
-        # start as soon as the initial sync is done. The done_callback
-        # signals completion so the CLI's global search-indexing task
-        # can fire — it must run on success, failure, **and** cancel,
-        # otherwise the CLI would block forever.
+        # start as soon as the initial sync is done. Its initial classification
+        # releases global indexing while automatic recovery can remain active.
+        # The done callback also releases the barrier on failure or cancellation.
         self._compute_ctx = ComputeContext(
             provider=self.provider,
             compute_version=settings.CLAUDE_CODE_COMPUTE_VERSION,
             compute_factory="twicc.providers.claude_code.compute:get_compute",
         )
         self._compute_task = self._create_task(
-            start_background_compute_task(self._compute_ctx)
+            start_background_compute_task(self._compute_ctx, initial_done=self.compute_done)
         )
         self._compute_task.add_done_callback(lambda _t: self.compute_done.set())
         logger.info("Background compute started (after initial sync)")

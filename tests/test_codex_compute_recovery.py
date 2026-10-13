@@ -28,14 +28,19 @@ def coordinator():
     return CodexComputeCoordinator(SimpleNamespace(stop_event=asyncio.Event(), compute_version=2, run_id=2), asyncio.Event())
 
 
-def test_failed_initial_session_keeps_startup_pending():
+def test_failed_initial_session_releases_barrier_without_repair_completion(monkeypatch):
     async def run():
         owner = coordinator()
         owner.initial_ids = {'failed'}
         owner._initial_total = 1
+        progress = []
+        async def broadcast(*args, **kwargs):
+            progress.append(kwargs.get('completed', False))
+        monkeypatch.setattr(background_compute, 'broadcast_startup_progress', broadcast)
         await owner._record_failure(FailedCandidate('failed', 'initialize', 'disk full'))
-        assert not owner.initial_done.is_set()
-        assert 'failed' not in owner.initial_classified
+        assert owner.initial_done.is_set()
+        assert owner.initial_classified == {'failed'}
+        assert progress and not any(progress)
         assert owner._retry_at['failed'] > background_compute.time.monotonic()
     asyncio.run(run())
 
@@ -192,11 +197,11 @@ def test_real_codex_pipeline_recovers_without_restart(recovery_runtime, monkeypa
                     await asyncio.sleep(.02)
             if failure == 'process':
                 assert versions(path)['faulty'] != 123
-                assert not owner.initial_done.is_set()
+                assert owner.initial_done.is_set()
                 assert not any(done for _, done in progress)
                 monkeypatch.delenv('RECOVERY_TEST_CRASH')
             async with asyncio.timeout(15):
-                while not owner.initial_done.is_set():
+                while versions(path)['faulty'] != 123 or owner.failures:
                     if task.done():
                         await task
                     await asyncio.sleep(.02)
@@ -386,7 +391,26 @@ def test_other_provider_and_foreground_write_finish_while_codex_cools(recovery_r
             assert versions(path)['healthy'] == 123
             with closing(sqlite3.connect(path)) as db:
                 assert db.execute("SELECT title FROM core_session WHERE id='healthy'").fetchone() == ('foreground',)
-            assert not codex_task.done() and not owner.initial_done.is_set()
+            assert not codex_task.done() and owner.initial_done.is_set()
+            import importlib
+            cli_run = importlib.import_module('twicc.cli.run')
+            indexed = asyncio.Event()
+            async def kick_off():
+                indexed.set()
+            async def wait_compute():
+                await owner.initial_done.wait()
+                await claude_task
+            registry = SimpleNamespace(wait_initial_sync_done=lambda: asyncio.sleep(0), wait_compute_done=wait_compute)
+            monkeypatch.setattr(cli_run, 'init_search_index', lambda: None)
+            monkeypatch.setattr(cli_run, 'remove_obsolete_session_documents', lambda: asyncio.sleep(0, result=0))
+            monkeypatch.setattr(cli_run, 'start_pending_session_reindexes', lambda: None)
+            monkeypatch.setattr(cli_run, 'kick_off_search_indexing', kick_off)
+            ready = asyncio.Event()
+            await asyncio.wait_for(cli_run._orchestrate_global_search(
+                registry, asyncio.Event(), ready, lambda: None,
+            ), 2)
+            assert ready.is_set() and indexed.is_set()
+            assert not codex_task.done() and versions(path)['faulty'] != 123
             assert 1 <= attempts <= 5
         finally:
             codex_task.cancel()
@@ -468,3 +492,100 @@ def test_retirement_failure_retries_before_releasing_old_lease(monkeypatch):
         finally:
             owner._release_lease('retire-retry', replay=False, outcome='cancelled')
     asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_missing_rollout_restored_without_rebuild_or_restart(recovery_runtime, monkeypatch):
+    import sqlite3
+    from contextlib import closing
+    from twicc.core.content_storage import extraction
+    from twicc.providers.codex import rollout_migration
+    path, progress = recovery_runtime
+    rollout = path.parent / 'restored.jsonl'
+    diagnosed_initializations = []
+    original = extraction.initialize_compute_session
+    def initialize(sid):
+        diagnosed_initializations.append(Session.objects.get(pk=sid).unavailable_reason)
+        if len(diagnosed_initializations) == 1:
+            raise RuntimeError('fail after history preparation')
+        return original(sid)
+    monkeypatch.setattr(extraction, 'initialize_compute_session', initialize)
+    monkeypatch.setattr(background_compute, 'sync_to_async', background.sync_to_async)
+    monkeypatch.setattr(background_compute, 'load_project_directories', lambda: None)
+    monkeypatch.setattr(background_compute, 'load_project_git_roots', lambda: None)
+    monkeypatch.setattr(background_compute.search, 'is_initialized', lambda: False)
+    async def broadcast(*args, **kwargs):
+        progress.append((args[1:3], kwargs.get('completed', False)))
+    monkeypatch.setattr(background_compute, 'broadcast_startup_progress', broadcast)
+    async def load(*args, forced_ids=frozenset(), **kwargs):
+        with closing(sqlite3.connect(path)) as db:
+            offset = db.execute("SELECT last_offset FROM core_session WHERE id='faulty'").fetchone()[0]
+        return [CodexComputeCandidate('faulty', rollout, SessionType.SESSION, offset)] if (
+            versions(path)['faulty'] != 123 or 'faulty' in forced_ids
+        ) else []
+    monkeypatch.setattr(background_compute, '_load_stale_candidates', load)
+    def unavailable():
+        with closing(sqlite3.connect(path)) as db:
+            return db.execute("SELECT unavailable_reason FROM core_session WHERE id='faulty'").fetchone()[0]
+    async def run():
+        ctx = background.ComputeContext(Provider.CODEX, 123, f'{__name__}:CodexRecoveryCompute')
+        owner = CodexComputeCoordinator(ctx, asyncio.Event())
+        owner._is_agent_active = lambda sid: False
+        def database_mode(sid):
+            from twicc.core.models import SessionItem
+            from tests.content_storage_helpers import read_current
+            first = SessionItem.objects.filter(session_id=sid).order_by('line_num').first()
+            if first is None:
+                raise rollout_migration.RolloutMigrationError('No first item')
+            return rollout_migration.history_mode_from_record(orjson.loads(read_current(first)))
+        owner._database_mode = lambda candidate: background.sync_to_async(lambda: database_mode(candidate.session_id))()
+        # Initial empty history needs the normal offset-zero classification fallback.
+        original_mode = owner._database_mode
+        async def mode(candidate):
+            try:
+                return await original_mode(candidate)
+            except rollout_migration.RolloutMigrationError:
+                if candidate.last_offset == 0:
+                    return rollout_migration.HistoryMode.LEGACY
+                raise
+        owner._database_mode = mode
+        db_writer.start_db_writer()
+        task = asyncio.create_task(owner.run())
+        try:
+            async with asyncio.timeout(5):
+                while 'faulty' not in owner.failures:
+                    await asyncio.sleep(.01)
+            assert unavailable() == 'rollout_missing'
+            assert not any(completed for _, completed in progress)
+            rollout.write_bytes(orjson.dumps({'type': 'session_meta', 'payload': {
+                'id': 'faulty', 'cwd': '/test', 'history_mode': 'paginated',
+            }}) + b'\n')
+            try:
+                async with asyncio.timeout(8):
+                    while versions(path)['faulty'] != 123 or owner.failures:
+                        if task.done():
+                            await task
+                        await asyncio.sleep(.01)
+            except TimeoutError:
+                pytest.fail(f'Recovery timeout: {owner.failures!r}; initializations={diagnosed_initializations!r}')
+            assert diagnosed_initializations == ['rollout_missing', 'rollout_missing', 'rollout_missing']
+            assert unavailable() is None
+            assert not task.done() and not ctx.stop_event.is_set()
+            assert not owner._forced_rebuild and not gate_for('faulty').locked()
+            assert progress[-1][1]
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await db_writer.stop_db_writer()
+    asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_current_session_with_unavailable_diagnosis_remains_retryable(provider_home):
+    from twicc.core.models import Project
+    session = Session.objects.create(id='diagnosed-current', provider=Provider.CODEX,
+        project=Project.objects.create(id='diagnosed-current-project'), file_path='diagnosed.jsonl',
+        compute_version=123, unavailable_reason='rollout_missing')
+    candidates = asyncio.run(background_compute._load_stale_candidates(123))
+    assert [candidate.session_id for candidate in candidates] == [session.id]
+    assert candidates[0].unavailable_reason == 'rollout_missing'

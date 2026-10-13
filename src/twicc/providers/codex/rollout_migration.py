@@ -433,15 +433,14 @@ def _finish_replace_codex_history(job: ReplaceCodexHistoryJob) -> int:
     session.last_line = job.last_line
     session.mtime = job.mtime
     session.stale = False
-    # A rebuilt history is showable again, whatever an earlier attempt said.
-    session.unavailable_reason = None
+    # Keep any diagnosis until the coordinator observes successful final application.
     from twicc.providers.compute_repair import preserve_pending_repair
     from twicc.providers.live_aggregates import session_contribution
 
     state = session_contribution(session)
     preserve_pending_repair(session.id, session.storage_incarnation,
                             before_sessions=[state], after_sessions=[state])
-    session.save(update_fields=["last_offset", "last_line", "mtime", "stale", "unavailable_reason"])
+    session.save(update_fields=["last_offset", "last_line", "mtime", "stale"])
     return len(job.items)
 
 

@@ -216,3 +216,47 @@ def test_retirement_drains_writer_abandonment_through_repeated_cancellation(monk
             await asyncio.gather(cleanup, return_exceptions=True)
             await db_writer.stop_db_writer()
     asyncio.run(scenario())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_claude_startup_barrier_allows_indexing_during_permanent_recovery(recovery_runtime, monkeypatch):
+    from types import SimpleNamespace
+    import importlib
+    cli_run = importlib.import_module('twicc.cli.run')
+    from twicc.core.content_storage import extraction
+    path, progress = recovery_runtime
+    original = extraction.initialize_compute_session
+    def initialize(sid):
+        if sid == 'faulty':
+            raise RuntimeError('permanent initialization failure')
+        return original(sid)
+    monkeypatch.setattr(extraction, 'initialize_compute_session', initialize)
+    indexed = asyncio.Event()
+    async def kickoff():
+        indexed.set()
+    monkeypatch.setattr(cli_run, 'init_search_index', lambda: None)
+    monkeypatch.setattr(cli_run, 'remove_obsolete_session_documents', lambda: asyncio.sleep(0, result=0))
+    monkeypatch.setattr(cli_run, 'start_pending_session_reindexes', lambda: None)
+    monkeypatch.setattr(cli_run, 'kick_off_search_indexing', kickoff)
+    async def run():
+        db_writer.start_db_writer()
+        barrier = asyncio.Event()
+        ctx = background.ComputeContext(Provider.CLAUDE_CODE, 123, f'{__name__}:RecoveryCompute')
+        task = asyncio.create_task(background.start_background_compute_task(ctx, initial_done=barrier))
+        registry = SimpleNamespace(wait_initial_sync_done=lambda: asyncio.sleep(0), wait_compute_done=barrier.wait)
+        search = asyncio.create_task(cli_run._orchestrate_global_search(
+            registry, asyncio.Event(), asyncio.Event(), lambda: None,
+        ))
+        try:
+            await asyncio.wait_for(search, 25)
+            assert indexed.is_set() and barrier.is_set()
+            assert not task.done() and not ctx.stop_event.is_set()
+            assert versions(path) == {'faulty': None, 'healthy': 123}
+            assert not any(completed for _, completed in progress)
+        finally:
+            task.cancel()
+            search.cancel()
+            await asyncio.gather(task, search, return_exceptions=True)
+            await background.retire_compute_run(ctx)
+            await db_writer.stop_db_writer()
+    asyncio.run(run())

@@ -649,7 +649,7 @@ def start_compute_process(ctx: ComputeContext) -> None:
         logger.info(f"Started compute worker process (PID: {ctx.process.pid})")
 
 
-async def start_background_compute_task(ctx: ComputeContext) -> None:
+async def start_background_compute_task(ctx: ComputeContext, initial_done: asyncio.Event | None = None) -> None:
     """
     Background task that processes existing sessions needing computation at startup.
 
@@ -660,7 +660,8 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
       which serializes writes across providers and phases
 
     This task processes all sessions with outdated or missing compute_version.
-    It keeps startup progress pending until every selected session is current.
+    It releases ``initial_done`` after the finite startup classification pass.
+    Successful progress stays pending until every selected session is current.
     A low-cost recovery monitor retries sessions that remain outdated. New
     sessions created by the watcher get compute_version set at creation time,
     so they don't need background reprocessing.
@@ -687,6 +688,8 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
         return
 
     if total_to_compute == 0:
+        if initial_done is not None:
+            initial_done.set()
         logger.info("Background compute: no sessions to process")
         # Report the total session count so the frontend can show "N/N" instead of "0/0"
         total_display = await query(
@@ -817,6 +820,9 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
             load_offsets=load_offsets,
             stop_event=ctx.stop_event,
         )
+
+        if initial_done is not None:
+            initial_done.set()
 
         if retry_result.remaining_session_ids and not ctx.stop_event.is_set():
             logger.warning(
