@@ -231,7 +231,8 @@ def clone_session(path, session_id, mtime, *, session_type='session'):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_claude_bounds_unapplied_results_and_reselects_modified_sources(recovery_runtime, monkeypatch):
+@pytest.mark.parametrize('provider', [Provider.CLAUDE_CODE, Provider.CODEX])
+def test_bounds_unapplied_results_and_reselects_modified_sources(recovery_runtime, monkeypatch, provider):
     """Computed status cannot release writer admission or freeze a candidate snapshot."""
     import threading
     from twicc.providers.compute_base import BaseSessionCompute
@@ -246,6 +247,10 @@ def test_claude_bounds_unapplied_results_and_reselects_modified_sources(recovery
     statuses = []
     streams = []
     original_submit = background.start_compute_process
+    if provider == Provider.CODEX:
+        with closing(sqlite3.connect(path)) as database:
+            database.execute('UPDATE core_session SET provider=?', (provider.value,))
+            database.commit()
     original_apply = BaseSessionCompute._apply_session_complete_final
     original_job = db_writer.submit_async_job
 
@@ -273,12 +278,27 @@ def test_claude_bounds_unapplied_results_and_reselects_modified_sources(recovery
     monkeypatch.setattr(db_writer, 'submit_async_job', submit)
     monkeypatch.setattr(BaseSessionCompute, '_apply_session_complete_final', staticmethod(apply))
     monkeypatch.setattr(background, 'start_compute_process', start)
+    monkeypatch.setattr(codex, 'start_compute_process', start)
+    monkeypatch.setattr(codex, 'submit_async_job', submit)
+    monkeypatch.setattr(codex, 'sync_to_async', background.sync_to_async)
+    monkeypatch.setattr(codex, 'load_project_directories', lambda: None)
+    monkeypatch.setattr(codex, 'load_project_git_roots', lambda: None)
+    monkeypatch.setattr(codex, 'broadcast_startup_progress', background.broadcast_startup_progress)
 
     async def scenario():
         db_writer.start_db_writer()
-        ctx = background.ComputeContext(Provider.CLAUDE_CODE, 123, 'tests.test_background_compute_recovery:RecoveryCompute')
+        factory = ('tests.test_codex_compute_recovery:CodexRecoveryCompute' if provider == Provider.CODEX
+                   else 'tests.test_background_compute_recovery:RecoveryCompute')
+        ctx = background.ComputeContext(provider, 123, factory)
         barrier = asyncio.Event()
-        task = asyncio.create_task(background.start_background_compute_task(ctx, barrier))
+        if provider == Provider.CODEX:
+            owner = codex.CodexComputeCoordinator(ctx, barrier)
+            async def prepare(candidate):
+                return codex.PreparedCandidate(candidate.session_id, None, False)
+            owner.prepare_candidate = prepare
+            task = asyncio.create_task(owner.run())
+        else:
+            task = asyncio.create_task(background.start_background_compute_task(ctx, barrier))
         try:
             async with asyncio.timeout(4):
                 while not entered.is_set() or len(statuses) < 2:
@@ -298,11 +318,19 @@ def test_claude_bounds_unapplied_results_and_reselects_modified_sources(recovery
             assert len(streams) == 1
             # Give third and recent the same age. The ID breaks the tie.
             update_sources(path, third=now - 31, recent=now - 31)
+            if provider == Provider.CODEX:
+                async with asyncio.timeout(6):
+                    while (not all(version == 123 for version in versions(path).values())
+                           or len(owner.initial_ready) != 4):
+                        await asyncio.sleep(.01)
+                ctx.stop_event.set()
             await asyncio.wait_for(task, 6)
             assert dispatched == ['faulty', 'healthy', 'child', 'third', 'recent']
             assert all(total == 4 for (_, total), _ in progress)
             assert progress[-1] == ((4, 4), True)
-            assert len(streams) == 1
+            if provider == Provider.CLAUDE_CODE:
+                assert len(streams) == 1
+            assert all(stream.reader.closed for stream in streams)
             assert ctx.process is None
         finally:
             release.set()

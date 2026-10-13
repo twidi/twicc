@@ -56,15 +56,17 @@ def test_failed_initial_session_releases_barrier_without_repair_completion(monke
     asyncio.run(run())
 
 
-def test_old_apply_cannot_release_new_migration():
+@pytest.mark.parametrize('retired_run', [1, 2])
+def test_old_apply_cannot_release_new_migration(retired_run):
     async def run():
         owner = coordinator()
+        owner._retired_run_ids.add(retired_run)
         lease = gate_for('late-apply')
         await lease.acquire()
         owner.migration_leases['late-apply'] = lease
         owner.submitted.add('late-apply')
         try:
-            await owner._handle_applied(ComputeApplied('late-apply', 'applied', run_id=1))
+            await owner._handle_applied(ComputeApplied('late-apply', 'applied', run_id=retired_run))
             assert lease.locked()
             assert owner.submitted == {'late-apply'}
             assert not owner.stats
@@ -73,12 +75,14 @@ def test_old_apply_cannot_release_new_migration():
     asyncio.run(run())
 
 
-def test_old_worker_status_cannot_clear_new_submission():
+@pytest.mark.parametrize('retired_run', [1, 2])
+def test_old_worker_status_cannot_clear_new_submission(retired_run):
     async def run():
         owner = coordinator()
+        owner._retired_run_ids.add(retired_run)
         owner.in_flight = 'session'
         owner.submitted.add('session')
-        await owner._handle_worker_status({'type': 'computed', 'session_id': 'session', '_run_id': 1})
+        await owner._handle_worker_status({'type': 'computed', 'session_id': 'session', '_run_id': retired_run})
         assert owner.in_flight == 'session'
         assert owner.submitted == {'session'}
     asyncio.run(run())
@@ -778,4 +782,164 @@ def test_external_ready_confirmation_excludes_subagents_and_deduplicates(monkeyp
         assert owner.initial_ready == {'root'}
         assert progress == [(1, 1)] * 3
 
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('outcome', ['applied', 'failed'])
+def test_early_apply_retains_submitted_slot_until_worker_status(outcome):
+    async def run():
+        owner = coordinator()
+        owner.submitted.add('early')
+        owner.in_flight = 'early'
+        owner.computed_not_applied.add('other')
+        await owner._handle_applied(ComputeApplied('early', outcome, run_id=2))
+        assert owner.submitted == {'early'}
+        assert owner.computed_not_applied == {'other'}
+        assert owner.applied_before_computed == {'early'}
+        assert owner.in_flight == 'early'
+        await owner._handle_worker_status({'type': 'computed', 'session_id': 'early', '_run_id': 2})
+        assert not owner.submitted
+        assert owner.computed_not_applied == {'other'}
+        assert not owner.applied_before_computed
+        assert owner.in_flight is None
+    asyncio.run(run())
+
+
+class CodexAdmissionFailureCompute(CodexRecoveryCompute):
+    """Fail the second worker result once while the first result awaits application."""
+
+    def compute_session_metadata(self, session_id, result_queue, run_id):
+        marker = Path(os.environ['RECOVERY_TEST_FAIL_ONCE'])
+        if session_id == 'healthy' and not marker.exists():
+            marker.touch()
+            raise RuntimeError('one pending compute failure')
+        super().compute_session_metadata(session_id, result_queue, run_id)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('stop_at_capacity', [False, True])
+def test_codex_failed_result_keeps_admission_bounded(codex_recovery_runtime, monkeypatch, stop_at_capacity):
+    import threading
+    from tests.test_compute_age_selection import clone_session
+    from twicc.providers.compute_base import BaseSessionCompute
+
+    path, _ = codex_recovery_runtime
+    clone_session(path, 'third', 1)
+    monkeypatch.setenv('RECOVERY_TEST_FAIL_ONCE', str(path.parent / 'failed-once'))
+    entered, release = threading.Event(), threading.Event()
+    initialized, prepared = [], []
+    original_apply = BaseSessionCompute._apply_session_complete_final
+    original_submit = background_compute.submit_async_job
+
+    def apply(message):
+        if message['session_id'] == 'faulty':
+            entered.set()
+            if not release.wait(8):
+                raise RuntimeError('test did not release application')
+        return original_apply(message)
+
+    async def submit(job):
+        if isinstance(job, db_writer.InitializeComputeStorageJob):
+            initialized.append(job.session_id)
+        return await original_submit(job)
+
+    monkeypatch.setattr(BaseSessionCompute, '_apply_session_complete_final', staticmethod(apply))
+    monkeypatch.setattr(background_compute, 'submit_async_job', submit)
+    monkeypatch.setattr(background_compute, 'sync_to_async', background.sync_to_async)
+    monkeypatch.setattr(background_compute, 'load_project_directories', lambda: None)
+    monkeypatch.setattr(background_compute, 'load_project_git_roots', lambda: None)
+    monkeypatch.setattr(background_compute, 'broadcast_startup_progress', background.broadcast_startup_progress)
+
+    async def run():
+        db_writer.start_db_writer()
+        ctx = background.ComputeContext(Provider.CODEX, 123, f'{__name__}:CodexAdmissionFailureCompute')
+        owner = CodexComputeCoordinator(ctx, asyncio.Event())
+        async def prepare(candidate):
+            prepared.append(candidate.session_id)
+            return PreparedCandidate(candidate.session_id, None, False)
+        owner.prepare_candidate = prepare
+        task = asyncio.create_task(owner.run())
+        try:
+            async with asyncio.timeout(5):
+                while not entered.is_set() or 'healthy' not in owner.worker_errors:
+                    if task.done():
+                        await task
+                    await asyncio.sleep(.01)
+            await asyncio.sleep(.15)
+            assert initialized == ['faulty', 'healthy']
+            assert prepared == ['faulty', 'healthy']
+            assert owner.submitted | owner.computed_not_applied == {'faulty', 'healthy'}
+            assert versions(path)['third'] is None
+            if stop_at_capacity:
+                ctx.stop_event.set()
+                await asyncio.sleep(.05)
+                assert not task.done()
+                assert initialized == ['faulty', 'healthy']
+                release.set()
+                await asyncio.wait_for(task, 3)
+                assert not owner.submitted and not owner.computed_not_applied
+                assert ctx.process is None
+            else:
+                release.set()
+                async with asyncio.timeout(8):
+                    while not all(value == 123 for value in versions(path).values()) or owner.failures:
+                        if task.done():
+                            await task
+                        await asyncio.sleep(.01)
+                assert initialized.count('healthy') == 2
+                assert initialized.count('third') == 1
+                ctx.stop_event.set()
+                await asyncio.wait_for(task, 3)
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await db_writer.stop_db_writer()
+    asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_real_early_apply_keeps_slot_while_worker_status_waits(codex_recovery_runtime, monkeypatch):
+    path, _ = codex_recovery_runtime
+    monkeypatch.setattr(background_compute, 'sync_to_async', background.sync_to_async)
+    monkeypatch.setattr(background_compute, 'load_project_directories', lambda: None)
+    monkeypatch.setattr(background_compute, 'load_project_git_roots', lambda: None)
+    monkeypatch.setattr(background_compute, 'broadcast_startup_progress', background.broadcast_startup_progress)
+
+    async def run():
+        db_writer.start_db_writer()
+        ctx = background.ComputeContext(Provider.CODEX, 123, f'{__name__}:CodexRecoveryCompute')
+        owner = CodexComputeCoordinator(ctx, asyncio.Event())
+        release_status, applied = asyncio.Event(), asyncio.Event()
+        pump = owner._status_pump_loop
+        handle_applied = owner._handle_applied
+        async def paused_pump(status_queue, run_id):
+            await release_status.wait()
+            await pump(status_queue, run_id)
+        async def record_applied(signal):
+            await handle_applied(signal)
+            if signal.session_id == 'faulty':
+                applied.set()
+        owner._status_pump_loop = paused_pump
+        owner._handle_applied = record_applied
+        owner.prepare_candidate = lambda candidate: _prepared(candidate.session_id)
+        task = asyncio.create_task(owner.run())
+        try:
+            await asyncio.wait_for(applied.wait(), 5)
+            assert versions(path) == {'faulty': 123, 'healthy': None}
+            assert owner.submitted == {'faulty'}
+            assert owner.applied_before_computed == {'faulty'}
+            assert owner.in_flight == 'faulty'
+            release_status.set()
+            await asyncio.wait_for(owner.initial_done.wait(), 5)
+            assert versions(path) == {'faulty': 123, 'healthy': 123}
+            ctx.stop_event.set()
+            await asyncio.wait_for(task, 3)
+            assert ctx.process is None
+            assert not owner.submitted and not owner.computed_not_applied
+        finally:
+            release_status.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await db_writer.stop_db_writer()
     asyncio.run(run())

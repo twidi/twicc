@@ -115,6 +115,9 @@ from .rollout_migration import (
 
 logger = logging.getLogger(__name__)
 
+# Bound initialized sessions until both worker status and writer acknowledgment arrive.
+CODEX_MAX_OUTSTANDING = 2
+
 _EXTERNAL_WRITER_RETRY_SECONDS = 30.0
 # A progress summary line is logged every N outcomes or every N seconds,
 # whichever comes first, while sessions are being processed.
@@ -1075,7 +1078,11 @@ class CodexComputeCoordinator:
                         and not (item.session_id in self.failures and healthy_pending)
                     ), None)
 
-                    if self.in_flight is None and candidate is not None:
+                    if (
+                        self.in_flight is None
+                        and len(self.submitted | self.computed_not_applied) < CODEX_MAX_OUTSTANDING
+                        and candidate is not None
+                    ):
                         if not self.run_active:
                             self._start_run()
                         prepared = await self.prepare_candidate(candidate)
