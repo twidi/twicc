@@ -39,7 +39,7 @@
 - New source writes must postpone eligibility without resetting progress or suppressing project notifications during persistent runs.
 - Superseded results must retry before the initial population finishes, without duplicate pending commands.
 - Worker failures, read failures, and cancellation must not strand work or accept retired results. Normal completion must drain writer bookkeeping.
-- Initial age deferral must release startup classification independently of readiness and search indexing.
+- Initial age deferral must release startup classification independently of readiness and search indexing. Later successful applications must schedule search catch-up.
 
 ### Task 1: Progressive Age-Based Selection for Both Providers
 
@@ -66,6 +66,8 @@
 - Poll worker status rapidly while throttling empty candidate reads to the selection interval.
 - Add `publish_progress: bool = True` as an optional keyword to `arm_compute_completion`. Coordinators disable writer progress explicitly while retaining project notification batching.
 - Recheck actual outdated work after the graceful writer drain before declaring completion.
+- A valid successful Claude application acknowledgment requests the existing coalesced session reindex. Retain run fences and indexer readiness checks.
+- Codex wait calculations ignore expired failure deadlines. Future failure waits also respect source age eligibility.
 
 - [x] **Step 1: Write regression tests and observe RED.** Cover age boundaries, newest eligible selection, postponed modifications, recent-only waiting, superseded re-entry, bounded outstanding work, duplicate exclusion, fixed progress totals, startup classification, and explicit shutdown.
 - [x] **Step 2: Implement the shared age helper.** Use wall-clock Unix seconds for source age and stop-aware waits for polling. Keep this module independent of Django imports for spawned workers.
@@ -76,6 +78,19 @@
 
 ## Final Validation
 
-- [ ] Review the full change against the approved behavior and runtime safety constraints.
-- [ ] Run `TWICC_DATA_DIR=$PWD uv run pytest` after the final code and tests are stable.
-- [ ] Record results and limits. Leave the running devctl unchanged and explain that activation requires a backend restart.
+- [x] Review the full change against the approved behavior and runtime safety constraints.
+- [x] Run `TWICC_DATA_DIR=$PWD uv run pytest` after the final code and tests are stable.
+- [x] Record results and limits. Leave the running devctl unchanged and explain that activation requires a backend restart.
+
+## Validation Record
+
+- Independent pre-implementation review approves the design with the Codex migration-age clarification.
+- Independent task review and scoped re-review approve spec compliance and quality after writer drain, project notification, and empty-selection polling corrections.
+- Independent final review and scoped re-review approve deferred Claude search catch-up and Codex age/backoff waits. No finding remains open.
+- Final focused validation: **208 passed in 122.36 seconds**.
+- Final full validation: `TWICC_DATA_DIR=$PWD uv run pytest`, **10,609 passed, 28 skipped, 3 warnings in 600.43 seconds**, exit status 0.
+- The three warnings already occur in the baseline: two Codex SDK mock coroutine warnings and one shell-notice mock coroutine warning.
+- Scoped `uvx ruff check` passes for all modified Python files. `git diff --check` passes.
+- Tests use isolated databases and provider fixtures. Real Codex binary migration execution and live provider diagnostics are outside this scheduling change.
+- No live server restart, migration, dependency installation, or live data mutation occurs. The running backend retains its loaded code until a restart through `devctl.py`.
+- Keep `feature/content-storage-compression` and its existing worktree for subsequent user validation.
