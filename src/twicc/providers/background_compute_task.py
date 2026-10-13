@@ -543,6 +543,8 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
     applied: asyncio.Queue = asyncio.Queue()
     completion: asyncio.Future | None = None
     next_classification_poll = 0.0
+    next_selection_poll = 0.0
+    completed_normally = False
 
     async def progress(candidate_ids=None, *, completed=False):
         check_ids = display_ids if candidate_ids is None else display_ids & candidate_ids
@@ -621,13 +623,16 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
                             if status.get("_run_id") != ctx.run_id:
                                 continue
                             sid = status.get("session_id")
-                            awaiting_status.pop(sid, None)
+                            if sid in awaiting_status:
+                                awaiting_status.pop(sid)
+                                next_selection_poll = 0.0
                 while not applied.empty():
                     signal = applied.get_nowait()
                     if signal.run_id != ctx.run_id or signal.session_id not in pending:
                         continue
                     sid = signal.session_id
                     pending.discard(sid)
+                    next_selection_poll = 0.0
                     classify(sid)
                     if signal.outcome == "failed":
                         failed(sid)
@@ -665,11 +670,13 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
                 if outstanding - retry_delays.keys():
                     cooling.update(retry_delays)
                 candidates = []
-                if len(outstanding) < 2:
+                if len(outstanding) < 2 and time.monotonic() >= next_selection_poll:
                     candidates = await query(lambda cutoff=cutoff, excluded=outstanding | cooling: list(
                         outdated().filter(mtime__lte=cutoff).exclude(id__in=excluded)
                         .order_by("-mtime", "-id").values_list("id", flat=True)[:1]
                     ))
+                    if not candidates:
+                        next_selection_poll = time.monotonic() + COMPUTE_SELECTION_POLL_SECONDS
                 if candidates:
                     if completion is None:
                         # Never replace retained transport resources after failed retirement.
@@ -677,7 +684,8 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
                             await retire()
                         ctx.status_queue = queue.Queue(maxsize=200)
                         ctx.run_id, completion = arm_compute_completion(
-                            ctx.provider, display_session_ids=set(), total_display=0, applied_queue=applied,
+                            ctx.provider, display_session_ids=None, total_display=0, applied_queue=applied,
+                            publish_progress=False,
                         )
                         start_compute_process(ctx)
                     # Re-query after each initialization/application rather than
@@ -694,9 +702,34 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
                     pending.add(sid)
                     awaiting_status[sid] = None
                     ctx.command_queue.put_nowait({"session_id": sid})
+                    next_selection_poll = 0.0
                     continue
                 if not outstanding and not await query(outdated().exists):
+                    if completion is not None:
+                        # Acknowledgments precede notifications and project work.
+                        # Only the terminal writer future confirms their full drain.
+                        ctx.command_queue.put_nowait(None)
+                        stopped = asyncio.create_task(ctx.stop_event.wait())
+                        try:
+                            await asyncio.wait((completion, stopped), return_when=asyncio.FIRST_COMPLETED)
+                        finally:
+                            stopped.cancel()
+                            with suppress(asyncio.CancelledError):
+                                await stopped
+                        if ctx.stop_event.is_set():
+                            break
+                        failed_count = completion.result()
+                        if failed_count:
+                            logger.error("DB writer reported %d failed compute result(s)", failed_count)
+                        await stop_compute_worker(ctx)
+                        completion = None
+                    # Source observations can change while notifications drain.
+                    # A closed successful run can safely give way to a fresh run.
+                    if await query(outdated().exists):
+                        next_selection_poll = 0.0
+                        continue
                     await progress(completed=True)
+                    completed_normally = True
                     break
                 # Polling also detects mtime changes without requiring a watcher event.
                 if outstanding:
@@ -712,6 +745,7 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
                 logger.exception("Background compute run failed; retiring before recovery")
                 faulty = next(iter(awaiting_status), next(iter(pending), None))
                 await retire()
+                next_selection_poll = 0.0
                 if faulty is not None:
                     failed(faulty)
                     continue
@@ -719,4 +753,5 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
                     break
                 process_delay = min(process_delay * 2, 60.0)
     finally:
-        await retire()
+        if not completed_normally:
+            await retire()

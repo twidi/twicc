@@ -181,6 +181,15 @@ def test_real_codex_pipeline_recovers_without_restart(codex_recovery_runtime, mo
     async def run():
         ctx = background.ComputeContext(Provider.CODEX, 123, f'{__name__}:CodexRecoveryCompute')
         owner = CodexComputeCoordinator(ctx, asyncio.Event())
+        classification_entered, classification_release = asyncio.Event(), asyncio.Event()
+        if failure == 'process':
+            classify = owner._classify_initial
+            async def controlled_classification(sid, **kwargs):
+                if sid == 'healthy':
+                    classification_entered.set()
+                    await classification_release.wait()
+                await classify(sid, **kwargs)
+            owner._classify_initial = controlled_classification
         releases = []
         owner.on_migration_released = releases.append
         async def load(_version, *, forced_ids=frozenset()):
@@ -208,9 +217,14 @@ def test_real_codex_pipeline_recovers_without_restart(codex_recovery_runtime, mo
                     await asyncio.sleep(.02)
             if failure == 'process':
                 assert versions(path)['faulty'] != 123
-                assert owner.initial_done.is_set()
+                await asyncio.wait_for(classification_entered.wait(), 2)
+                # SQLite readiness precedes coordinator classification.
+                assert not owner.initial_done.is_set()
                 assert not any(done for _, done in progress)
                 monkeypatch.delenv('RECOVERY_TEST_CRASH')
+                classification_release.set()
+                await asyncio.wait_for(owner.initial_done.wait(), 2)
+                assert owner.initial_done.is_set()
             async with asyncio.timeout(15):
                 while versions(path)['faulty'] != 123 or owner.failures:
                     if task.done():
@@ -223,6 +237,7 @@ def test_real_codex_pipeline_recovers_without_restart(codex_recovery_runtime, mo
             assert [release.outcome for release in releases if release.session_id == 'faulty'][-1] == 'ready'
             assert not any(sid == 'healthy' and version == 123 for sid, version in attempts)
         finally:
+            classification_release.set()
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task

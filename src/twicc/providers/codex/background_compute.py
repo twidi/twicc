@@ -894,9 +894,10 @@ class CodexComputeCoordinator:
 
         run_id, done_future = arm_compute_completion(
             Provider.CODEX,
-            display_session_ids=set(),
+            display_session_ids=None,
             total_display=0,
             applied_queue=self.applied_queue,
+            publish_progress=False,
         )
         self._retired_run_ids.clear()
         self.ctx.run_id = run_id

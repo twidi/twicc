@@ -536,6 +536,7 @@ class _ComputeProviderState:
     failed_count: int = 0
     abandoned: bool = False
     applied_queue: asyncio.Queue | None = None
+    publish_progress: bool = True
 
 
 class _AbandonComputeRunJob(NamedTuple):
@@ -1091,6 +1092,7 @@ def arm_compute_completion(
     applied_queue: asyncio.Queue | None = None,
     *,
     ready_session_ids: set[str] | None = None,
+    publish_progress: bool = True,
 ) -> tuple[int, asyncio.Future]:
     """Declare a compute run for ``provider``; return ``(run_id, Future)``.
 
@@ -1100,6 +1102,9 @@ def arm_compute_completion(
     DB writer routes each message to its own run — a stale message from a
     cancelled run can never touch a hot-restarted one. The Future resolves to
     the run's failed-session count when its ``done`` message is drained.
+
+    ``publish_progress=False`` lets a coordinator publish its own progress
+    without disabling this run's project notification batching.
 
     Any leftover state for the same provider (a previous run whose worker was
     force-killed before emitting ``done``) is dropped here, with a warning —
@@ -1121,6 +1126,7 @@ def arm_compute_completion(
         total_display=total_display,
         applied_queue=applied_queue,
         ready_session_ids=ready_session_ids,
+        publish_progress=publish_progress,
     )
     future = asyncio.get_running_loop().create_future()
     _compute_done_events[run_id] = future
@@ -2778,10 +2784,11 @@ async def _complete_compute_result(msg, result, state, received_at, apply_starte
         else:
             state.ready_session_ids.add(session_id)
             state.completed_count = len(state.ready_session_ids)
-        await broadcast_startup_progress(
-            "background_compute", state.completed_count, state.total_display,
-            provider=provider.value,
-        )
+        if state.publish_progress:
+            await broadcast_startup_progress(
+                "background_compute", state.completed_count, state.total_display,
+                provider=provider.value,
+            )
         state.sessions_since_project_broadcast += 1
         if state.sessions_since_project_broadcast >= PROJECT_BROADCAST_INTERVAL:
             for pid in state.pending_project_ids:
