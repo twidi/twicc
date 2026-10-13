@@ -32,6 +32,10 @@ class RecoveryCompute:
     def compute_session_metadata(self, session_id, result_queue, run_id):
         if os.environ.get('RECOVERY_TEST_CRASH') == session_id:
             os._exit(42)
+        crash_once = os.environ.get('RECOVERY_TEST_CRASH_ONCE')
+        if session_id == 'faulty' and crash_once and not Path(crash_once).exists():
+            Path(crash_once).touch()
+            os._exit(42)
         fail_once = os.environ.get('RECOVERY_TEST_FAIL_ONCE')
         if session_id == 'faulty' and fail_once and not Path(fail_once).exists():
             Path(fail_once).touch()
@@ -95,7 +99,7 @@ def versions(path):
 
 
 @pytest.mark.django_db(transaction=True)
-@pytest.mark.parametrize('failure', ['initialization', 'apply', 'compute', 'process'])
+@pytest.mark.parametrize('failure', ['initialization', 'apply', 'compute', 'process', 'retirement'])
 def test_real_pipeline_recovers_and_preserves_healthy_progress(recovery_runtime, monkeypatch, failure):
     path, progress = recovery_runtime
     from twicc.core.content_storage import extraction
@@ -128,6 +132,18 @@ def test_real_pipeline_recovers_and_preserves_healthy_progress(recovery_runtime,
         monkeypatch.setenv('RECOVERY_TEST_FAIL_ONCE', str(path.parent / 'compute-failed'))
     if failure == 'process':
         monkeypatch.setenv('RECOVERY_TEST_CRASH', 'faulty')
+
+    if failure == 'retirement':
+        monkeypatch.setenv('RECOVERY_TEST_CRASH_ONCE', str(path.parent / 'crashed-once'))
+        retire = background.retire_compute_run
+        retirement_failed = False
+        async def temporary_retirement_failure(ctx, completion=None):
+            nonlocal retirement_failed
+            if ctx.process is not None and not retirement_failed:
+                retirement_failed = True
+                raise RuntimeError('one retirement failure')
+            await retire(ctx, completion)
+        monkeypatch.setattr(background, 'retire_compute_run', temporary_retirement_failure)
 
     streams = []
     create_stream = db_writer.create_compute_result_stream
@@ -163,7 +179,7 @@ def test_real_pipeline_recovers_and_preserves_healthy_progress(recovery_runtime,
             )
             assert ((1, 2), False) in progress
             assert ctx.process is None
-            assert len(streams) >= 2
+            assert len(streams) >= (2 if failure in {'process', 'retirement'} else 1)
             assert len({stream.run_id for stream in streams}) == len(streams)
             assert len({id(stream.reader) for stream in streams}) == len(streams)
             assert all(stream.reader.closed for stream in streams)

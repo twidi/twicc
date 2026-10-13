@@ -1,8 +1,8 @@
 """Long-lived Codex compute and rollout-migration coordinator.
 
 The generic background compute (:mod:`twicc.providers.background_compute_task`)
-is a one-shot startup pass: queue every stale session, drain, stop. Codex
-needs more, because since 0.151 its rollouts come in two on-disk formats
+selects age-eligible stale sources until all sessions are current. Codex
+also coordinates runtime rollout migration, because since 0.151 its rollouts come in two on-disk formats
 (legacy events vs. paginated canonical items — see :mod:`.canonical`) and a
 legacy session must be **migrated by Codex itself** (``codex migrate-rollouts
 --apply``, one thread at a time) before TwiCC reads it. That rewrites the
@@ -72,6 +72,9 @@ from twicc.providers.background_compute_task import (
     stop_background_task,
     stop_compute_worker,
 )
+from twicc.providers.compute_selection import (
+    COMPUTE_SELECTION_POLL_SECONDS, COMPUTE_STATUS_POLL_SECONDS, compute_age_delay,
+)
 from twicc.providers.db_writer import (
     ComputeApplied,
     InitializeComputeStorageJob,
@@ -113,7 +116,6 @@ from .rollout_migration import (
 logger = logging.getLogger(__name__)
 
 _EXTERNAL_WRITER_RETRY_SECONDS = 30.0
-_STATUS_QUEUE_POLL_SECONDS = 0.05
 # A progress summary line is logged every N outcomes or every N seconds,
 # whichever comes first, while sessions are being processed.
 # Final outcomes that count as "done" in the user-facing progress line.
@@ -134,6 +136,7 @@ class CodexComputeCandidate(NamedTuple):
     session_type: str
     last_offset: int = 0
     unavailable_reason: str | None = None
+    mtime: float = 0.0
 
 
 class PreparedCandidate(NamedTuple):
@@ -178,14 +181,14 @@ async def _load_stale_candidates(
         lambda: list(
             Session.objects.filter(provider=Provider.CODEX)
             .filter(~Q(compute_version=compute_version) | Q(id__in=forced_ids) | Q(unavailable_reason__isnull=False))
-            .order_by("-mtime")
-            .values_list("id", "file_path", "type", "last_offset", "unavailable_reason")
+            .order_by("-mtime", "-id")
+            .values_list("id", "file_path", "type", "last_offset", "unavailable_reason", "mtime")
         )
     )()
     sessions_dir = codex_sessions_dir()
     return [
-        CodexComputeCandidate(session_id, sessions_dir / file_path, session_type, last_offset, unavailable_reason)
-        for session_id, file_path, session_type, last_offset, unavailable_reason in rows
+        CodexComputeCandidate(session_id, sessions_dir / file_path, session_type, last_offset, unavailable_reason, mtime)
+        for session_id, file_path, session_type, last_offset, unavailable_reason, mtime in rows
     ]
 
 
@@ -505,7 +508,7 @@ class CodexComputeCoordinator:
                 try:
                     await asyncio.wait_for(
                         self.ctx.stop_event.wait(),
-                        timeout=_STATUS_QUEUE_POLL_SECONDS,
+                        timeout=COMPUTE_STATUS_POLL_SECONDS,
                     )
                 except TimeoutError:
                     pass
@@ -1053,12 +1056,18 @@ class CodexComputeCoordinator:
                     for session_id in externally_ready:
                         await self._classify_initial(session_id, confirm_ready=False)
 
-                    candidates.sort(key=lambda item: item.session_id in self.failures)
+                    source_now = time.time()
+                    age_deferred = {
+                        item.session_id for item in candidates if compute_age_delay(item.mtime, source_now) > 0
+                    }
+                    for session_id in age_deferred & (self.initial_ids - self.initial_classified):
+                        await self._classify_initial(session_id, confirm_ready=False)
                     healthy_pending = (self.submitted | self.computed_not_applied) - self.failures.keys()
                     candidate = next((
                         item
                         for item in candidates
-                        if item.session_id not in self.submitted
+                        if item.session_id not in age_deferred
+                        and item.session_id not in self.submitted
                         and item.session_id not in self.computed_not_applied
                         and self._retry_at.get(item.session_id, 0) <= time.monotonic()
                         and item.session_id not in self.deferred
@@ -1129,7 +1138,9 @@ class CodexComputeCoordinator:
                               and sid not in self.submitted and sid not in self.computed_not_applied
                               and sid not in self.deferred and not healthy_pending]
                     try:
-                        event_type, payload = await asyncio.wait_for(self.events.get(), timeout=min(delays) if delays else None)
+                        event_type, payload = await asyncio.wait_for(
+                            self.events.get(), timeout=min([COMPUTE_SELECTION_POLL_SECONDS, *delays]),
+                        )
                     except TimeoutError:
                         continue
                     if event_type == "worker":
@@ -1144,6 +1155,7 @@ class CodexComputeCoordinator:
                     await self._retire_run()
                     if faulty is not None:
                         await self._record_failure(FailedCandidate(faulty, "transport", "compute run interrupted"))
+                        continue
                     if not await _wait_for_retry_delay(self.ctx.stop_event, self._process_delay):
                         break
                     self._process_delay = min(self._process_delay * 2, 60.0)

@@ -248,7 +248,7 @@ def test_real_workers_deliver_status_and_restart_without_receiver_leaks():
                 ctx.command_queue.put({'session_id': 'healthy'})
                 ctx.command_queue.put(None)
                 assert await asyncio.wait_for(asyncio.shield(completion), 8) == 0
-                assert ctx.status_queue.get_nowait() == {'type': 'computed', 'session_id': 'healthy'}
+                assert ctx.status_queue.get_nowait() == {'type': 'computed', 'session_id': 'healthy', '_run_id': run_id}
                 await stop_compute_worker(ctx)
                 assert not any(thread.name == f'compute-receiver-{run_id}' for thread in threading.enumerate())
                 assert run_id not in db_writer._compute_streams

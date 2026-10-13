@@ -31,15 +31,19 @@ import importlib
 import logging
 import multiprocessing
 import queue
+import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 import orjson
 from asgiref.sync import sync_to_async
 
 from twicc.providers.compute_ipc import ComputeResultStream, ComputeStatusSender, ComputeStopFlag
+from twicc.providers.compute_selection import (
+    COMPUTE_MIN_SOURCE_AGE_SECONDS, COMPUTE_SELECTION_POLL_SECONDS, COMPUTE_STATUS_POLL_SECONDS,
+)
 from twicc.core.enums import Provider
 from twicc.logging_context import current_provider
 from twicc.startup_progress import broadcast_startup_progress
@@ -63,18 +67,6 @@ logger = logging.getLogger(__name__)
 # child inherits all locks in their current state but the threads that held them
 # no longer exist. "spawn" starts a fresh Python interpreter, avoiding this entirely.
 _mp_ctx = multiprocessing.get_context("spawn")
-
-COMPUTE_STALE_RETRY_DELAYS = (1.0, 2.0, 4.0)
-COMPUTE_STALE_RECOVERY_DELAYS = (15.0, 30.0, 60.0)
-COMPUTE_STALE_RECOVERY_INTERVAL = 60.0
-
-
-class ComputeRetryResult(NamedTuple):
-    """Outcome of a compute pass and its stale-revision recovery."""
-
-    failed_count: int
-    remaining_session_ids: list[str]
-
 
 async def _wait_for_retry_delay(stop_event: asyncio.Event, delay: float) -> bool:
     """Wait for one retry window, returning false when shutdown interrupts it."""
@@ -104,144 +96,6 @@ async def read_compute_state[T](
             break
         delay = min(delay * 2, 60.0)
     return stopped
-
-
-async def run_compute_with_stale_retries(
-    initial_session_ids: list[str],
-    *,
-    run_pass: Callable[[list[str]], Awaitable[int]],
-    load_remaining: Callable[[list[str]], Awaitable[list[str]]],
-    load_offsets: Callable[[list[str]], Awaitable[dict[str, int]]],
-    stop_event: asyncio.Event,
-    wait_for_delay: Callable[[asyncio.Event, float], Awaitable[bool]] = _wait_for_retry_delay,
-    retry_delays: tuple[float, ...] = COMPUTE_STALE_RETRY_DELAYS,
-) -> ComputeRetryResult:
-    """Run one complete pass, then retry only quiet sessions still outdated.
-
-    A session remains outdated when the revision guard rejected a stale full
-    compute result. Each retry window compares ``last_offset`` before and after
-    its delay. A changing session waits for a later window instead of starting
-    another full compute that is already likely to become stale.
-
-    Failed sessions remain eligible. Query stored versions after each pass;
-    partial commits and successful sessions need no repeat computation.
-    """
-
-    session_ids = list(initial_session_ids)
-    if not session_ids or stop_event.is_set():
-        return ComputeRetryResult(0, session_ids)
-
-    failed_count = await _run_recoverable_pass(run_pass, session_ids)
-    if stop_event.is_set():
-        return ComputeRetryResult(failed_count, session_ids)
-
-    remaining = await read_compute_state(load_remaining, session_ids, stop_event, wait_for_delay, session_ids)
-    if failed_count and len(remaining) > 1:
-        remaining = remaining[1:] + remaining[:1]
-    for retry_number, delay in enumerate(retry_delays, start=1):
-        if not remaining or stop_event.is_set():
-            break
-
-        offsets_before = await read_compute_state(load_offsets, remaining, stop_event, wait_for_delay, {})
-        if not await wait_for_delay(stop_event, delay):
-            break
-        offsets_after = await read_compute_state(load_offsets, remaining, stop_event, wait_for_delay, {})
-        stable = [
-            session_id
-            for session_id in remaining
-            if session_id in offsets_before
-            and offsets_before[session_id] == offsets_after.get(session_id)
-        ]
-
-        if failed_count and len(stable) > 1:
-            # Cool the last rotated candidate for one pass. A crashing worker
-            # must not fence healthy results before the writer can apply them.
-            stable = stable[:-1]
-        if stable:
-            logger.info(
-                "Background compute: stale retry %d/%d for %d quiet session(s)",
-                retry_number,
-                len(retry_delays),
-                len(stable),
-            )
-            failed_count = await _run_recoverable_pass(run_pass, stable)
-
-        remaining = await read_compute_state(load_remaining, remaining, stop_event, wait_for_delay, remaining)
-        if failed_count and len(remaining) > 1:
-            remaining = remaining[1:] + remaining[:1]
-
-    return ComputeRetryResult(failed_count if remaining else 0, remaining)
-
-
-async def recover_stale_compute_sessions(
-    initial_session_ids: list[str],
-    *,
-    run_pass: Callable[[list[str]], Awaitable[int]],
-    load_remaining: Callable[[list[str]], Awaitable[list[str]]],
-    load_offsets: Callable[[list[str]], Awaitable[dict[str, int]]],
-    stop_event: asyncio.Event,
-    wait_for_delay: Callable[[asyncio.Event, float], Awaitable[bool]] = _wait_for_retry_delay,
-    recovery_delays: tuple[float, ...] = COMPUTE_STALE_RECOVERY_DELAYS,
-    recovery_interval: float = COMPUTE_STALE_RECOVERY_INTERVAL,
-) -> ComputeRetryResult:
-    """Monitor stale sessions until they become quiet enough to recompute.
-
-    The finite delay sequence ramps up after the startup retries. Once it is
-    exhausted, the final interval repeats until every session is current or
-    provider shutdown interrupts the wait. Only an unchanged ``last_offset``
-    starts an expensive compute pass.
-    """
-
-    remaining = list(initial_session_ids)
-    failed_count = 0
-    delay_index = 0
-
-    while remaining and not stop_event.is_set():
-        if delay_index < len(recovery_delays):
-            delay = recovery_delays[delay_index]
-        else:
-            delay = recovery_interval
-        delay_index += 1
-        delay = min(delay, 60.0)
-
-        offsets_before = await read_compute_state(load_offsets, remaining, stop_event, wait_for_delay, {})
-        if not await wait_for_delay(stop_event, delay):
-            break
-        offsets_after = await read_compute_state(load_offsets, remaining, stop_event, wait_for_delay, {})
-        stable = [
-            session_id
-            for session_id in remaining
-            if session_id in offsets_before
-            and offsets_before[session_id] == offsets_after.get(session_id)
-        ]
-
-        if failed_count and len(stable) > 1:
-            # Cool the last rotated candidate for one pass. A crashing worker
-            # must not fence healthy results before the writer can apply them.
-            stable = stable[:-1]
-        if stable:
-            logger.info(
-                "Background compute: recovery pass for %d quiet session(s) after %.0fs",
-                len(stable),
-                delay,
-            )
-            failed_count = await _run_recoverable_pass(run_pass, stable)
-
-        remaining = await read_compute_state(load_remaining, remaining, stop_event, wait_for_delay, remaining)
-        if failed_count and len(remaining) > 1:
-            remaining = remaining[1:] + remaining[:1]
-
-    return ComputeRetryResult(failed_count if remaining else 0, remaining)
-
-
-async def _run_recoverable_pass(
-    run_pass: Callable[[list[str]], Awaitable[int]], session_ids: list[str],
-) -> int:
-    try:
-        return await run_pass(session_ids)
-    except Exception:
-        logger.exception("Background compute run failed; outdated sessions remain eligible")
-        return len(session_ids)
 
 
 async def retire_compute_run(ctx: ComputeContext, completion: asyncio.Future | None = None) -> None:
@@ -309,8 +163,7 @@ class ComputeContext:
     compute_version: int
     compute_factory: str
     command_queue: _mp_ctx.Queue = field(default_factory=_mp_ctx.Queue)
-    # Codex enables this optional worker→coordinator channel. Claude uses
-    # the generic producer and must not accumulate status messages it never reads.
+    # Coordinators consume worker status separately from writer acknowledgments.
     status_queue: queue.Queue | None = None
     worker_stop_event: ComputeStopFlag = field(default_factory=lambda: ComputeStopFlag(_mp_ctx))
     result_stream: ComputeResultStream | None = None
@@ -551,7 +404,7 @@ def compute_worker_main(
                     # This function reads DB and sends batches via result_queue
                     compute.compute_session_metadata(session_id, result_queue, run_id)
                     if status_queue is not None:
-                        status_queue.put({"type": "computed", "session_id": session_id})
+                        status_queue.put({"type": "computed", "session_id": session_id, "_run_id": run_id})
                 except Exception as e:
                     worker_logger.error(f"Error computing session {session_id}: {e}", exc_info=True)
                     # Flush the file handler so the error survives process termination
@@ -568,6 +421,7 @@ def compute_worker_main(
                     if status_queue is not None:
                         status_queue.put({
                             "type": "failed",
+                            "_run_id": run_id,
                             "session_id": session_id,
                             "error": str(e),
                         })
@@ -654,202 +508,215 @@ def start_compute_process(ctx: ComputeContext) -> None:
 
 
 async def start_background_compute_task(ctx: ComputeContext, initial_done: asyncio.Event | None = None) -> None:
-    """
-    Background task that processes existing sessions needing computation at startup.
+    """Compute the newest eligible outdated source with bounded worker admission.
 
-    Architecture:
-    - Starts a separate Process for CPU-intensive work (JSON parsing, metadata computation)
-    - The worker process only READS from the database
-    - All database WRITES happen via the DB writer (:mod:`db_writer`),
-      which serializes writes across providers and phases
-
-    This task processes all sessions with outdated or missing compute_version.
-    It releases ``initial_done`` after the finite startup classification pass.
-    Successful progress stays pending until every selected session is current.
-    A low-cost recovery monitor retries sessions that remain outdated. New
-    sessions created by the watcher get compute_version set at creation time,
-    so they don't need background reprocessing.
+    Startup classification includes deferred sources. Ready progress uses a fixed
+    initial top-level cohort and only advances after database confirmation.
+    Source age uses wall time; failure deadlines use monotonic time.
     """
     from twicc.core.models import Session, SessionType
     from twicc.projects import load_project_directories, load_project_git_roots
-    from twicc.providers.db_writer import arm_compute_completion
+    from twicc.providers.db_writer import InitializeComputeStorageJob, arm_compute_completion, submit_async_job
 
     async def query(read):
         async def load(_session_ids):
             return await sync_to_async(read)()
         return await read_compute_state(load, [], ctx.stop_event, stopped=[])
 
-    provider_value = ctx.provider.value
+    def outdated():
+        return Session.objects.filter(provider=ctx.provider).exclude(compute_version=ctx.compute_version)
 
-    # Count sessions needing computation
-    total_to_compute = await query(Session.objects.filter(
-        provider=ctx.provider,
-    ).exclude(
-        compute_version=ctx.compute_version
-    ).count)
-
+    initial = await query(lambda: list(outdated().values_list("id", "type", "mtime")))
     if ctx.stop_event.is_set():
         return
+    initial_ids = {sid for sid, _, _ in initial}
+    display_ids = {sid for sid, kind, _ in initial if kind == SessionType.SESSION}
+    total = len(display_ids)
+    ready: set[str] = set()
+    unclassified = initial_ids.copy()
+    pending: set[str] = set()
+    # Keep commands excluded until both their writer outcome and worker status
+    # arrive. A fast writer must not admit a duplicate before the status frame.
+    awaiting_status: dict[str, None] = {}
+    retry_at: dict[str, float] = {}
+    retry_delays: dict[str, float] = {}
+    applied: asyncio.Queue = asyncio.Queue()
+    completion: asyncio.Future | None = None
+    next_classification_poll = 0.0
 
-    if total_to_compute == 0:
+    async def progress(candidate_ids=None, *, completed=False):
+        check_ids = display_ids if candidate_ids is None else display_ids & candidate_ids
+        confirmed = await query(lambda: set(Session.objects.filter(
+            id__in=check_ids, provider=ctx.provider, compute_version=ctx.compute_version,
+            unavailable_reason__isnull=True,
+        ).values_list("id", flat=True)))
+        ready.update(confirmed)
+        await broadcast_startup_progress(
+            "background_compute", len(ready), total, provider=ctx.provider.value,
+            completed=completed and len(confirmed) == total,
+        )
+
+    def classify(sid):
+        unclassified.discard(sid)
+        if initial_done is not None and not unclassified:
+            initial_done.set()
+
+    def failed(sid):
+        delay = min(retry_delays.get(sid, .5) * 2, 60.0)
+        retry_delays[sid] = delay
+        retry_at[sid] = time.monotonic() + delay
+        classify(sid)
+
+    async def retire():
+        nonlocal completion
+        async def cleanup():
+            delay = 1.0
+            while True:
+                try:
+                    await retire_compute_run(ctx, completion)
+                    return
+                except Exception:
+                    logger.exception("Compute run retirement failed; retaining resources for retry")
+                if not await _wait_for_retry_delay(ctx.stop_event, delay):
+                    await retire_compute_run(ctx, completion)
+                    return
+                delay = min(delay * 2, 60.0)
+
+        owned = asyncio.create_task(cleanup())
+        cancelled = False
+        while not owned.done():
+            try:
+                await asyncio.shield(owned)
+            except asyncio.CancelledError:
+                cancelled = True
+        owned.result()
+        completion = None
+        pending.clear()
+        awaiting_status.clear()
+        if cancelled:
+            raise asyncio.CancelledError
+
+    if not initial:
         if initial_done is not None:
             initial_done.set()
-        logger.info("Background compute: no sessions to process")
-        # Report the total session count so the frontend can show "N/N" instead of "0/0"
-        total_display = await query(
-            Session.objects.filter(
-                provider=ctx.provider, type=SessionType.SESSION,
-            ).count
-        )
-        if not ctx.stop_event.is_set():
-            await broadcast_startup_progress(
-                "background_compute", total_display, total_display,
-                provider=provider_value, completed=True,
-            )
+        total = await query(Session.objects.filter(provider=ctx.provider, type=SessionType.SESSION).count)
+        await broadcast_startup_progress("background_compute", total, total,
+                                         provider=ctx.provider.value, completed=True)
         return
-
-    # Count only real sessions (not subagents) for progress display.
-    # The actual compute processes ALL sessions, but users only care about session count.
-    sessions_to_display = await query(
-        lambda: set(
-            Session.objects.filter(
-                provider=ctx.provider, type=SessionType.SESSION,
-            )
-            .exclude(compute_version=ctx.compute_version)
-            .values_list("id", flat=True)
-        )
-    )
-    total_display = len(sessions_to_display)
-    ready_session_ids: set[str] = set()
-
-    # Broadcast initial progress state (0/N) — using display total (sessions only)
-    await broadcast_startup_progress(
-        "background_compute", 0, total_display, provider=provider_value
-    )
-
-    # Load project caches at startup
+    await progress()
     await query(load_project_directories)
     await query(load_project_git_roots)
-
+    process_delay = 1.0
     try:
-        # Load all session IDs needing computation in one query, ordered by most recent first
-        session_ids_to_compute = await query(
-            lambda: list(
-                Session.objects
-                .filter(provider=ctx.provider)
-                .exclude(compute_version=ctx.compute_version)
-                .order_by('-mtime')
-                .values_list('id', flat=True)
-            )
-        )
-
-        async def run_pass(session_ids: list[str]) -> int:
-            # A failed teardown retains its resources. Never arm a replacement
-            # until another retirement attempt closes the previous transport.
-            if ctx.process is not None or ctx.result_stream is not None:
-                await retire_compute_run(ctx)
-            if ctx.stop_event.is_set():
-                return 0
-
-            # Arm each pass before spawning its worker. A new run_id prevents a
-            # completed retry from accepting messages from the previous worker.
-            run_id, done_future = arm_compute_completion(
-                ctx.provider,
-                sessions_to_display,
-                total_display,
-                ready_session_ids=ready_session_ids,
-            )
-            ctx.run_id = run_id
+        while not ctx.stop_event.is_set():
             try:
-                start_compute_process(ctx)
-                initialization_failed = 0
-                for session_id in session_ids:
-                    if ctx.stop_event.is_set():
-                        break
-                    from twicc.providers.db_writer import InitializeComputeStorageJob, submit_async_job
+                if ctx.status_queue is not None:
+                    while True:
+                        try:
+                            status = ctx.status_queue.get_nowait()
+                        except queue.Empty:
+                            break
+                        if isinstance(status, dict):
+                            # The queue is owned by this run and replaced on spawn.
+                            if status.get("_run_id") != ctx.run_id:
+                                continue
+                            sid = status.get("session_id")
+                            awaiting_status.pop(sid, None)
+                while not applied.empty():
+                    signal = applied.get_nowait()
+                    if signal.run_id != ctx.run_id or signal.session_id not in pending:
+                        continue
+                    sid = signal.session_id
+                    pending.discard(sid)
+                    classify(sid)
+                    if signal.outcome == "failed":
+                        failed(sid)
+                    else:
+                        retry_at.pop(sid, None)
+                        retry_delays.pop(sid, None)
+                        process_delay = 1.0
+                    await progress({sid})
+                if completion is not None and completion.done():
+                    # An unexpected terminal frame or broken transport retires
+                    # the whole run before any replacement can be armed.
+                    await asyncio.shield(completion)
+                    raise RuntimeError("Compute worker ended before selection completed")
 
+                cutoff = time.time() - COMPUTE_MIN_SOURCE_AGE_SECONDS
+                if unclassified and time.monotonic() >= next_classification_poll:
+                    remaining_initial = unclassified.copy()
+                    recent = await query(lambda cutoff=cutoff, ids=remaining_initial: list(
+                        outdated().filter(mtime__gt=cutoff, id__in=ids).values_list("id", flat=True)
+                    ))
+                    for sid in recent:
+                        classify(sid)
+                    still_outdated = await query(lambda ids=remaining_initial: set(
+                        outdated().filter(id__in=ids).values_list("id", flat=True)
+                    ))
+                    externally_ready = remaining_initial - still_outdated
+                    for sid in externally_ready:
+                        classify(sid)
+                    if externally_ready:
+                        await progress(externally_ready)
+                    next_classification_poll = time.monotonic() + COMPUTE_SELECTION_POLL_SECONDS
+
+                outstanding = pending | awaiting_status.keys()
+                cooling = {sid for sid, deadline in retry_at.items() if deadline > time.monotonic()}
+                if outstanding - retry_delays.keys():
+                    cooling.update(retry_delays)
+                candidates = []
+                if len(outstanding) < 2:
+                    candidates = await query(lambda cutoff=cutoff, excluded=outstanding | cooling: list(
+                        outdated().filter(mtime__lte=cutoff).exclude(id__in=excluded)
+                        .order_by("-mtime", "-id").values_list("id", flat=True)[:1]
+                    ))
+                if candidates:
+                    if completion is None:
+                        # Never replace retained transport resources after failed retirement.
+                        if ctx.process is not None or ctx.result_stream is not None:
+                            await retire()
+                        ctx.status_queue = queue.Queue(maxsize=200)
+                        ctx.run_id, completion = arm_compute_completion(
+                            ctx.provider, display_session_ids=set(), total_display=0, applied_queue=applied,
+                        )
+                        start_compute_process(ctx)
+                    # Re-query after each initialization/application rather than
+                    # admitting a stale batch of source observations.
+                    sid = candidates[0]
                     try:
                         await submit_async_job(InitializeComputeStorageJob(
-                            ctx.provider, session_id, asyncio.get_running_loop().create_future(),
+                            ctx.provider, sid, asyncio.get_running_loop().create_future(),
                         ))
                     except Exception:
-                        initialization_failed += 1
-                        logger.exception("Compute storage initialization failed for %s", session_id)
+                        logger.exception("Compute storage initialization failed for %s", sid)
+                        failed(sid)
                         continue
-                    ctx.command_queue.put({"session_id": session_id})
-                ctx.command_queue.put(None)
-                # Shield retains the future for retirement after task cancellation.
-                failed_count = await asyncio.shield(done_future)
-                return failed_count + initialization_failed
-            finally:
-                await retire_compute_run(ctx, done_future)
-
-        async def publish_ready_progress(*, completed: bool = False) -> None:
-            confirmed = await query(lambda: set(
-                Session.objects.filter(
-                    id__in=sessions_to_display, provider=ctx.provider,
-                    compute_version=ctx.compute_version, unavailable_reason__isnull=True,
-                ).values_list("id", flat=True)
-            ))
-            ready_session_ids.update(confirmed)
-            await broadcast_startup_progress(
-                "background_compute", len(ready_session_ids), total_display,
-                provider=provider_value, completed=completed and len(confirmed) == total_display,
-            )
-
-        async def load_remaining(candidate_ids: list[str]) -> list[str]:
-            await publish_ready_progress()
-            outdated = await query(
-                lambda: set(
-                    Session.objects.filter(
-                        id__in=candidate_ids,
-                        provider=ctx.provider,
-                    ).exclude(
-                        compute_version=ctx.compute_version,
-                    ).values_list("id", flat=True)
-                )
-            )
-            return [session_id for session_id in candidate_ids if session_id in outdated]
-
-        async def load_offsets(candidate_ids: list[str]) -> dict[str, int]:
-            pairs = await query(
-                lambda: list(
-                    Session.objects.filter(
-                        id__in=candidate_ids,
-                        provider=ctx.provider,
-                    ).values_list("id", "last_offset")
-                )
-            )
-            return dict(pairs)
-
-        logger.info(f"Background compute task started ({total_to_compute} sessions to process)")
-        retry_result = await run_compute_with_stale_retries(
-            session_ids_to_compute,
-            run_pass=run_pass,
-            load_remaining=load_remaining,
-            load_offsets=load_offsets,
-            stop_event=ctx.stop_event,
-        )
-
-        if initial_done is not None:
-            initial_done.set()
-
-        if retry_result.remaining_session_ids and not ctx.stop_event.is_set():
-            logger.warning(
-                "Background compute for %s left %d outdated session(s); recovery continues",
-                provider_value, len(retry_result.remaining_session_ids),
-            )
-            retry_result = await recover_stale_compute_sessions(
-                retry_result.remaining_session_ids,
-                run_pass=run_pass, load_remaining=load_remaining,
-                load_offsets=load_offsets, stop_event=ctx.stop_event,
-            )
-
-        if not retry_result.remaining_session_ids and not ctx.stop_event.is_set():
-            await publish_ready_progress(completed=True)
-
+                    pending.add(sid)
+                    awaiting_status[sid] = None
+                    ctx.command_queue.put_nowait({"session_id": sid})
+                    continue
+                if not outstanding and not await query(outdated().exists):
+                    await progress(completed=True)
+                    break
+                # Polling also detects mtime changes without requiring a watcher event.
+                if outstanding:
+                    try:
+                        signal = await asyncio.wait_for(applied.get(), timeout=COMPUTE_STATUS_POLL_SECONDS)
+                    except TimeoutError:
+                        pass
+                    else:
+                        applied.put_nowait(signal)
+                elif not await _wait_for_retry_delay(ctx.stop_event, COMPUTE_SELECTION_POLL_SECONDS):
+                    break
+            except Exception:
+                logger.exception("Background compute run failed; retiring before recovery")
+                faulty = next(iter(awaiting_status), next(iter(pending), None))
+                await retire()
+                if faulty is not None:
+                    failed(faulty)
+                    continue
+                if not await _wait_for_retry_delay(ctx.stop_event, process_delay):
+                    break
+                process_delay = min(process_delay * 2, 60.0)
     finally:
-        # Stop the worker process. Idempotent if it has already exited.
-        await retire_compute_run(ctx)
-
-    logger.info("Background compute task completed")
+        await retire()
