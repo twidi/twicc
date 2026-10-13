@@ -104,9 +104,9 @@
 
 ## Final Validation
 
-- [ ] Obtain independent final review of `e72d53c9..HEAD`; address findings through one fix wave and scoped re-review.
-- [ ] Run `TWICC_DATA_DIR=$PWD uv run pytest` after all code and fixtures settle.
-- [ ] Record focused benchmarks, test results and limitations. Keep DevCTL stopped, database/index intact and branch/worktree preserved.
+- [x] Obtain independent final review of `e72d53c9..HEAD`; address findings through one fix wave and scoped re-review.
+- [x] Run `TWICC_DATA_DIR=$PWD uv run pytest` after all code and fixtures settle.
+- [x] Record focused benchmarks, test results and limitations. Keep DevCTL stopped, database/index intact and branch/worktree preserved.
 
 ## Execution Evidence
 
@@ -133,7 +133,8 @@ Setup is excluded. Shared small payloads and metadata-only queries limit the res
 
 These results do not measure production disk I/O or whole-final writer latency.
 The SQL scan remains proportional to session rows.
-Final certification keeps its conservative independent metadata validation.
+Final hot-root certification uses one mandatory plaintext metadata probe after the final fix.
+Public verification remains conservative and independent.
 
 Task 4 review approves private staging and atomic publication without blocking findings.
 Commit `ca64e9a2` passes 366 scoped tests across history facts, continuation,
@@ -153,3 +154,35 @@ Final hold includes transaction entry, DELETE, ordered INSERT SELECT and commit.
 Large final publication remains proportional to the fact count.
 The input fact list remains allocated in the received compute message.
 These measurements do not guarantee production durations or whole-compute speedup.
+
+Final review approves the complete range without Critical or Important findings.
+Its remaining Minor duplicate plaintext scan is fixed in `eeb5cf07`.
+Scoped re-review approves that fix without new findings.
+The fix passes 223 covering tests and 16 settled new regressions.
+The separate incomplete-placement probe remains intact.
+Inherited `VIRTUAL_ENV` warnings confirm that uv ignores the main checkout environment.
+They require no product change and must never be suppressed with `--active`.
+
+## Final Validation Result
+
+The stable product tree at `eeb5cf07` passes the complete suite:
+
+```bash
+TWICC_DATA_DIR=$PWD uv run pytest
+```
+
+Result: **10,688 passed, 28 skipped, 3 warnings in 610.55 seconds**. Exit code: 0.
+The three RuntimeWarnings concern existing AsyncMock/notification test fixtures in
+`test_codex_sdk_wrappers.py` and `test_shell_notice_codex.py`.
+They match the earlier validation baseline and do not fail the suite.
+
+Scoped `uvx ruff check` passes all 14 changed Python files.
+`git diff --check` passes.
+Final review and scoped re-review report no unresolved findings.
+No controller rulings or parked findings remain.
+
+A final read-only `uv run ./devctl.py status` confirms stopped frontend and backend.
+The worktree remains at `.worktrees/feature-content-storage-compression` on
+`feature/content-storage-compression`. The actual database and index remain intact.
+No restart, merge, push, dependency installation or migration occurs.
+The next runtime start remains a separate user-requested operation.
