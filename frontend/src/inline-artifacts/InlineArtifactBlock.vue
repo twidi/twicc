@@ -23,7 +23,7 @@ const frameStatus = computed(() => {
 })
 const placeholder = ref(null)
 const intersecting = ref(false)
-let detach = null, intersectionObserver = null, resizeObserver = null
+let detach = null, intersectionObserver = null, resizeObserver = null, clipObserver = null
 const refresh = () => {
     runtime.value?.setVisible(props.artifactKey, intersecting.value && !props.suppressed)
     runtime.value?.geometry.schedule()
@@ -31,8 +31,15 @@ const refresh = () => {
 function bind() {
     detach?.()
     detach = null
+    // The conversation resizes (composer growth, mobile keyboard) without moving or resizing this placeholder.
+    clipObserver?.disconnect()
+    clipObserver = null
     if (!runtime.value || !placeholder.value || !current.value) return
     const clip = props.clipEl || placeholder.value.closest('.virtual-scroller')
+    if (clip && typeof ResizeObserver !== 'undefined') {
+        clipObserver = new ResizeObserver(() => runtime.value?.geometry.schedule())
+        clipObserver.observe(clip)
+    }
     detach = runtime.value.attach(props.artifactKey, props.publicationKey, {
         placeholderEl: placeholder.value, clipEl: clip,
         isVisible: () => intersecting.value,
@@ -65,6 +72,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
     intersectionObserver?.disconnect()
     resizeObserver?.disconnect()
+    clipObserver?.disconnect()
     detach?.()
 })
 </script>

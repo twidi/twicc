@@ -129,3 +129,17 @@ test('focus return makes the conversation scroll container programmatically focu
     assert.equal(focused, true)
     assert.equal(attributes.get('tabindex'), '-1')
 })
+
+test('measuring continues until the geometry settles, then stops', () => {
+    const f = fixture()
+    f.flush() // first pass: the geometry is new
+    assert.equal(f.passes(), 2)
+    f.flush(); f.flush() // two unchanged passes
+    assert.equal(f.passes(), 3)
+    f.flush()
+    assert.equal(f.passes(), 3) // settled: nothing left to schedule
+    f.state.rect.y = 40 // moved by layout, with no event
+    f.scheduler.schedule(); f.flush()
+    assert.equal(f.pool.frames.a.rect.y, 40)
+    assert.equal(f.passes(), 5) // the move is followed by a further pass
+})

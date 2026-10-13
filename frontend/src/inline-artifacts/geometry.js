@@ -1,3 +1,6 @@
+/** Extra passes after the geometry last changed: layout driven by animations (composer, keyboard) moves with no event. */
+const SETTLE_PASSES = 2
+
 /** One event-driven measurement pass per owning view. No background polling. */
 export function createInlineGeometryScheduler({ pool,
     requestFrame = callback => globalThis.requestAnimationFrame?.(callback),
@@ -7,6 +10,8 @@ export function createInlineGeometryScheduler({ pool,
     const owners = new Map()
     let pending = null
     let disposed = false
+    let settling = 0
+    let lastSignature = ''
     const rect = element => {
         const box = element?.getBoundingClientRect?.()
         return box ? { x: box.x, y: box.y, width: box.width, height: box.height } : null
@@ -28,12 +33,14 @@ export function createInlineGeometryScheduler({ pool,
         pending = null
         if (disposed) return
         const screen = viewport()
+        let signature = ''
         for (const [id, owner] of owners) {
             const attachment = owner.getAttachment?.()
             if (!owner.isVisible() || owner.isSuppressed?.()) { hide(id, attachment); continue }
             if (owner.isFullscreen?.()) {
                 patch(id, owner, { visible: true, zTier: 'fullscreen', clipRect: null, cardRect: null,
                     rect: screen })
+                signature += `${id}:fs;`
                 continue
             }
             if (!attachment || attachment.isSuppressed?.()) { hide(id, attachment); continue }
@@ -46,7 +53,14 @@ export function createInlineGeometryScheduler({ pool,
             const card = attachment.placeholderEl?.closest?.('.panel-card')
             patch(id, owner, { rect: box, clipRect: clipped, cardRect: rect(card), visible: true,
                 zTier: attachment.isElevated?.() ? 'overlay' : 'base' })
+            signature += `${id}:${box.x},${box.y},${box.width},${box.height}|${clipped.x},${clipped.y},${clipped.width},${clipped.height};`
         }
+        // The scroller can still be moving when a trigger fires (composer height animation, mobile
+        // keyboard) and nothing signals its next steps: keep measuring until the geometry settles.
+        if (signature !== lastSignature) settling = SETTLE_PASSES
+        else if (settling > 0) settling--
+        lastSignature = signature
+        if (settling > 0) schedule()
     }
     function schedule() {
         if (disposed || pending != null || !owners.size) return
