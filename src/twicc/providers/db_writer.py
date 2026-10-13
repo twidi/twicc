@@ -66,6 +66,7 @@ from twicc.providers.compute_executor import (
 from twicc.providers.write_coordinator import (
     ForegroundLock, WritePriority, WriteResources, WriterCoordinator, write_priority,
 )
+from twicc.providers.compute_repair_recovery import RECOVERY_POLL_SECONDS, RepairRecoveryScheduler
 from twicc.startup_progress import broadcast_startup_progress
 from twicc.workspaces import auto_add_project_to_workspaces
 
@@ -276,6 +277,8 @@ _async_queue: asyncio.Queue | None = None
 # Background initialization has its own FIFO, so it cannot hide normal jobs.
 _background_async_queue: asyncio.Queue | None = None
 _pending_compute: PendingComputeApplication | None = None
+_repair_recovery: RepairRecoveryScheduler | None = None
+_repair_discovery_task: asyncio.Task | None = None
 
 
 class _ForegroundJobQueue(asyncio.Queue):
@@ -663,6 +666,7 @@ def start_db_writer() -> None:
     global _thread_queue, _subprocess_queue
     global _db_writer_stop_event, _db_writer_task, _async_queue, _background_async_queue
     global _write_coordinator, _db_write_lock, _storage_admission_lock
+    global _repair_recovery, _repair_discovery_task
 
     if _db_writer_task is not None:
         raise RuntimeError("DB writer already started")
@@ -683,12 +687,16 @@ def start_db_writer() -> None:
         _write_coordinator = WriterCoordinator()
         _db_write_lock = _write_coordinator.foreground_lock(WriteResources.WRITER)
         _storage_admission_lock = _write_coordinator.foreground_lock(WriteResources.ADMISSION)
+        _repair_recovery = RepairRecoveryScheduler()
+        _repair_discovery_task = asyncio.create_task(_discover_compute_repairs())
         _db_writer_task = asyncio.create_task(_db_writer_loop())
     except BaseException:
         async def failed_start():
             global _db_writer_task, _db_writer_stop_event, _thread_queue, _subprocess_queue
             global _async_queue, _background_async_queue, _write_coordinator, _db_write_lock, _storage_admission_lock
+            global _repair_recovery, _repair_discovery_task
             try:
+                await _close_compute_repair_recovery()
                 try:
                     if application_started:
                         await stop_compute_application_executor()
@@ -699,6 +707,7 @@ def start_db_writer() -> None:
                 _db_writer_task = _db_writer_stop_event = None
                 _thread_queue = _subprocess_queue = _async_queue = _background_async_queue = None
                 _write_coordinator = _db_write_lock = _storage_admission_lock = None
+                _repair_recovery = _repair_discovery_task = None
         # Startup is synchronous. Retain asynchronous drainage as the lifetime
         # task, so stop and restart cannot race a still-running owned worker.
         _db_writer_task = asyncio.create_task(failed_start())
@@ -742,6 +751,7 @@ async def stop_db_writer() -> None:
     """
     global _write_coordinator, _db_write_lock, _storage_admission_lock, _db_writer_task, _db_writer_stop_event
     global _thread_queue, _subprocess_queue, _async_queue, _background_async_queue, _pending_compute
+    global _repair_recovery, _repair_discovery_task
 
     if _db_writer_stop_event is not None:
         _db_writer_stop_event.set()
@@ -800,6 +810,7 @@ async def stop_db_writer() -> None:
         _async_queue = None
         _background_async_queue = None
         _pending_compute = None
+        _repair_recovery = _repair_discovery_task = None
     if cancelled:
         # Our caller wanted us cancelled; honour that AFTER the writer task
         # has actually drained and we've cleared module state.
@@ -1797,6 +1808,124 @@ async def _background_turn(factory, *, content_activity=True, diagnostics=None, 
     return True
 
 
+def _pending_repair_exclusions() -> frozenset[str]:
+    pending = _pending_compute
+    return frozenset({pending.message['session_id']}) if pending is not None else frozenset()
+
+
+def _read_recovery_page(after_id: int, upper_id: int, limit: int):
+    """Materialize original page and classify stale sources without a write."""
+    from twicc.core.models import Session
+    from twicc.providers.compute_repair_journal import read_compute_repair_page
+    from twicc.providers.live_aggregates import needs_repair
+    rows = read_compute_repair_page(after_id, upper_id, limit=limit)
+    targets = {target.id: target for target in Session.objects.filter(
+        id__in={row.observation.session_id for row in rows},
+    ).only('id', 'storage_incarnation', 'provider', 'compute_version')}
+    stale = tuple(row.observation for row in rows
+                  if (target := targets.get(row.observation.session_id)) is not None
+                  and target.storage_incarnation == row.observation.incarnation and needs_repair(target))
+    return rows, stale
+
+
+async def _recovery_discovery_read(function, /, *args):
+    """Retain submitted reads until their ordinary-worker call completes."""
+    task = asyncio.create_task(run_compute_sync(function, *args))
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+    result = task.result()
+    if cancelled:
+        raise asyncio.CancelledError()
+    return result
+
+
+async def _discover_compute_repairs() -> None:
+    """Independent writer-lifetime bounded reads on the ordinary worker."""
+    from twicc.providers.compute_repair_journal import compute_repair_upper_id
+    scheduler = _repair_recovery
+    try:
+        while scheduler is not None and not scheduler._closed:
+            try:
+                if scheduler.sweep_ready:
+                    upper_id = await _recovery_discovery_read(compute_repair_upper_id)
+                    scheduler.begin_sweep(upper_id)
+                request = scheduler.page_request()
+                if request is not None:
+                    rows, stale = await _recovery_discovery_read(_read_recovery_page, *request)
+                    scheduler.observe_page(rows, excluded_session_ids=_pending_repair_exclusions())
+                    for observation in stale:
+                        scheduler.defer_unadmitted(observation)
+                    logger.debug('Compute repair discovery: rows=%d queued=%d retries=%d stale=%d',
+                                 len(rows), len(scheduler._queued), len(scheduler._retries), len(stale))
+            except Exception:
+                logger.exception('Compute repair discovery failed')
+                # Failed reads also wait before retrying; they never busy-spin.
+                await asyncio.sleep(RECOVERY_POLL_SECONDS)
+            await asyncio.sleep(0.05)
+    except asyncio.CancelledError:
+        # The discovery read retains already submitted ordinary-worker work.
+        raise
+
+
+async def _close_compute_repair_recovery() -> None:
+    scheduler = _repair_recovery
+    if scheduler is not None:
+        scheduler.close()
+    task = _repair_discovery_task
+    if task is not None:
+        if not task.done():
+            task.cancel()
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                pass
+        if not task.cancelled():
+            task.result()
+
+
+async def _advance_compute_repair() -> bool:
+    scheduler = _repair_recovery
+    if scheduler is None:
+        return False
+    observation = scheduler.next_candidate(_pending_repair_exclusions())
+    if observation is None:
+        return False
+
+    async def repair():
+        # The grant can resume after a pending application appears or closes.
+        if scheduler._closed or observation.session_id in _pending_repair_exclusions():
+            scheduler.defer_unadmitted(observation)
+            return
+        scheduler.mark_admitted(observation)
+        from twicc.providers.compute_repair import repair_compute_observation
+        started = perf_counter()
+        try:
+            outcome = await run_compute_sync(repair_compute_observation, observation)
+        except Exception:
+            scheduler.settle_attempt(observation, 'failed', failed=True)
+            logger.exception('Compute repair attempt failed: journal_id=%d generation=%d',
+                             observation.journal_id, observation.generation)
+        else:
+            scheduler.settle_attempt(observation, outcome)
+            logger.debug('Compute repair attempt: journal_id=%d generation=%d outcome=%s',
+                         observation.journal_id, observation.generation, outcome)
+        finally:
+            retry = scheduler._retries.get(observation.journal_id)
+            logger.debug('Compute repair hold: ms=%.1f retries=%d retry_delay_seconds=%.1f',
+                         (perf_counter() - started) * 1000, len(scheduler._retries),
+                         max(0.0, retry.retry_deadline - scheduler._clock()) if retry else 0.0)
+
+    granted = await _background_turn(repair, content_activity=False)
+    logger.debug('Compute repair grant: granted=%s journal_id=%d queued=%d',
+                 granted, observation.journal_id, len(scheduler._queued))
+    return granted
+
+
 async def _drain_one() -> bool:
     """Serve foreground FIFO first, then one bounded turn per background class."""
     global _pending_compute
@@ -1840,6 +1969,7 @@ async def _drain_one() -> bool:
                 await _process_thread_message(payload)
         processed |= await _background_turn(ingest)
 
+    processed |= await _advance_compute_repair()
     if _pending_compute is not None:
         processed |= await _advance_pending_compute()
         return processed
@@ -2312,6 +2442,7 @@ async def _db_writer_loop() -> None:
         await _db_writer_loop_body()
     except asyncio.CancelledError:
         _db_writer_stop_event.set()
+        await _close_compute_repair_recovery()
         # Queued pressure cannot survive a writer that can no longer dispatch.
         # Settle it before terminal notifications request their own resources.
         while not _async_queue.empty():
@@ -2350,6 +2481,8 @@ async def _db_writer_loop() -> None:
                     pass
             task.result()
         raise
+    finally:
+        await _close_compute_repair_recovery()
 
 
 async def _db_writer_loop_body() -> None:
@@ -2379,6 +2512,8 @@ async def _db_writer_loop_body() -> None:
         except Exception as exc:
             logger.error(f"DB writer tick crashed: {exc}", exc_info=True)
             await asyncio.sleep(0.05)
+
+    await _close_compute_repair_recovery()
 
     # Final drain: producers are all stopped by the time stop is signalled, so
     # the queues only shrink — apply everything still queued before exiting.
