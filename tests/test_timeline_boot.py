@@ -221,3 +221,14 @@ def test_missing_boot_id_makes_machine_restarted_unknown(project):
     record_event_sync("backend.started", actor="system", data={"pid": 1, "boot_id": "old"})
     reconcile_at_boot(now=timezone.now(), boot_id=None)
     assert rows(kind="backend.started")[1].data["machine_restarted"] is None
+
+
+def test_an_unreadable_version_never_loses_the_reconciliation(project, monkeypatch):
+    def boom():
+        raise OSError("no pyproject")
+
+    monkeypatch.setattr("twicc.core.services.timeline_boot.get_version", boom)
+    stale_run(project)
+    reconcile_at_boot(now=timezone.now(), boot_id="b1")
+    assert [r.kind for r in rows(session_id="s1")] == ["turn.ended", "process.ended"]
+    assert rows(kind="backend.started")[0].data["version"] is None

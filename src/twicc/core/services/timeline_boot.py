@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,8 @@ from twicc.core.services.session_timeline import record_event, record_event_sync
 from twicc.core.timeline import process_transition_events
 from twicc.version import get_version
 
+logger = logging.getLogger(__name__)
+
 _BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
 _UNSET = object()
 BACKFILL_PREFIX = "backfill:"
@@ -28,6 +31,15 @@ def read_boot_id() -> str | None:
     try:
         return _BOOT_ID_PATH.read_text().strip() or None
     except OSError:
+        return None
+
+
+def _safe_version() -> str | None:
+    """The TwiCC version, or ``None`` when it cannot be read (must never break the boot)."""
+    try:
+        return get_version()
+    except Exception:
+        logger.warning("Could not read the TwiCC version for the timeline", exc_info=True)
         return None
 
 
@@ -44,7 +56,7 @@ def _last_evidence(run: ProcessRun, session: Session | None, boot: datetime) -> 
 
 def _reconcile_lost_processes(now: datetime) -> None:
     """Spec §7 step 1. Must run before the bulk DEAD update."""
-    for run in ProcessRun.objects.exclude(state=AgentState.DEAD.value):
+    for run in ProcessRun.objects.exclude(state=AgentState.DEAD.value).order_by("started_at"):
         session = Session.objects.filter(id=run.session_id).first()
         common = dict(
             session_id=run.session_id, project_id=session.project_id if session else None,
@@ -111,7 +123,7 @@ def reconcile_at_boot(*, now: datetime | None = None, boot_id=_UNSET) -> None:
     machine_restarted = None if (boot_id is None or previous_boot_id is None) else boot_id != previous_boot_id
     record_event_sync(
         TimelineKind.BACKEND_STARTED, occurred_at=now, actor=TimelineActor.SYSTEM,
-        data={"pid": os.getpid(), "version": get_version(), "boot_id": boot_id,
+        data={"pid": os.getpid(), "version": _safe_version(), "boot_id": boot_id,
               "machine_restarted": machine_restarted},
     )
 
