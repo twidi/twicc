@@ -33,7 +33,7 @@ def inventory_ready():
     return True
 
 
-def _observe(snapshot, completed, pending, candidates=()):
+def _observe(snapshot, completed, pending, candidates=(), settled_repairs=frozenset()):
     """Resolve current and former work independently, outside writer ownership."""
     fresh = load_compute_repair(snapshot.observation.session_id, snapshot.observation.incarnation)
     if fresh != snapshot:
@@ -55,7 +55,7 @@ def _observe(snapshot, completed, pending, candidates=()):
         key = work.observation.root or ('orphan', snapshot.observation.journal_id)
         required.add(key)
         previous = completed.get(key)
-        previous_valid = previous is not None and tree_work_matches(previous, pending)
+        previous_valid = previous is not None and tree_work_matches(previous, pending, settled_repairs=settled_repairs)
         if (not previous_valid
                 or not set(work.observation.repairs) <= set(previous.observation.repairs)
                 or not work.days <= previous.days or not work.project_ids <= previous.project_ids):
@@ -89,6 +89,7 @@ class TreeAggregateScheduler:
         self._executor = AggregatePreparationExecutor()
         self._snapshots = {}
         self._completed = {}
+        self._settled_repairs = frozenset()
         self._requirements = {}
         self._retry = {}
         self._failures = {}
@@ -112,6 +113,7 @@ class TreeAggregateScheduler:
             old = self._snapshots.get(jid)
             if old is not None and old.observation != snapshot.observation:
                 self._completed.clear()
+                self._settled_repairs = frozenset()
                 self._requirements.clear()
                 self._retry.pop(jid, None)
             self._snapshots[jid] = snapshot
@@ -241,8 +243,10 @@ class TreeAggregateScheduler:
         if eligible and not unobserved:
             from twicc.providers.db_writer import _background_turn
             from twicc.providers.compute_executor import run_compute_sync
-            required = {key for jid in eligible for key in self._requirements[jid]}
-            self._attempt_jids = set(eligible)
+            # One durable journal is one writer unit, regardless of backlog size.
+            jid, snapshot = next(iter(eligible.items()))
+            required = self._requirements[jid]
+            self._attempt_jids = {jid}
             completed = {key: self._completed[key] for key in required}
             async def settle():
                 if not self._inventory_ready():
@@ -252,16 +256,25 @@ class TreeAggregateScheduler:
                         pending = pending_sources()
                         if not self._inventory_ready():
                             return False
-                        if not all(tree_work_matches(completed[key], pending) for key in required):
+                        if not all(tree_work_matches(completed[key], pending,
+                                settled_repairs=self._settled_repairs) for key in required):
                             return False
-                        for snapshot in eligible.values():
-                            settle_compute_repair(snapshot.observation)
+                        settle_compute_repair(snapshot.observation)
                         return True
                 if await run_compute_sync(apply):
-                    for jid in eligible:
-                        self._snapshots.pop(jid, None)
-                self._requirements.clear()
-                self._completed.clear()
+                    self._snapshots.pop(jid, None)
+                    self._requirements.pop(jid, None)
+                    # Preserve the published scope evidence shared by remaining
+                    # journals. This exception applies only to this exact removal.
+                    self._settled_repairs |= frozenset((snapshot,))
+                    if not self._snapshots:
+                        self._requirements.clear()
+                        self._completed.clear()
+                        self._settled_repairs = frozenset()
+                else:
+                    self._requirements.clear()
+                    self._completed.clear()
+                    self._settled_repairs = frozenset()
             return await _background_turn(settle, content_activity=False)
         for jid, snapshot in tuple(self._snapshots.items()):
             if jid in eligible:
@@ -269,8 +282,9 @@ class TreeAggregateScheduler:
             if self._retry.get(jid, 0) > self._clock():
                 continue
             def observe(snapshot=snapshot, jid=jid, pending=pending_sources(),
-                        completed=dict(self._completed), candidates=tuple(self._snapshots.values())):  # noqa: B006 -- capture this submission's snapshot
-                required, works = _observe(snapshot, completed, pending, candidates)
+                        completed=dict(self._completed), candidates=tuple(self._snapshots.values()),  # noqa: B006 -- capture this submission's snapshot
+                        settled_repairs=self._settled_repairs):
+                required, works = _observe(snapshot, completed, pending, candidates, settled_repairs)
                 return jid, required, works
             self._observing_jid = jid
             self._attempt_jids = {jid}

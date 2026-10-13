@@ -315,3 +315,96 @@ def test_later_external_journal_requires_its_new_scope(monkeypatch):
         and late in work.observation.repairs and prepared.kind == 'project'
         and prepared.key == old_project.id for work, prepared in publications)
     assert len(sums) == 1
+
+
+def test_many_shared_journals_settle_one_per_admission_without_republication(monkeypatch):
+    """Foreground demand queued during settlement runs before the next journal."""
+    from threading import Event
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from twicc.providers import db_writer, tree_aggregate_prepare
+    from twicc.providers.write_coordinator import WriteResources
+
+    module = api()
+    root = node('many-root')
+    for index in range(19):
+        node(f'many-child-{index}', root)
+    rows = snapshots()
+    started, release = Event(), Event()
+    settled, admissions, sums, publications = [], [], [], []
+    original_settle = module.settle_compute_repair
+    original_turn = db_writer._background_turn
+    original_own = tree_aggregate_prepare._own_values
+    original_publish = module.publish_aggregate
+
+    def settle(observation):
+        original_settle(observation)
+        settled.append(observation.journal_id)
+        if len(settled) == 1:
+            started.set()
+            assert release.wait(5)
+
+    async def turn(callback, **kwargs):
+        before = len(settled)
+        result = await original_turn(callback, **kwargs)
+        admissions.append(len(settled) - before)
+        return result
+
+    def own(work):
+        with CaptureQueriesContext(connection) as queries:
+            result = original_own(work)
+        sums.extend(row['sql'] for row in queries if 'SUM(' in row['sql'].upper())
+        return result
+
+    def publish(work, prepared, pending):
+        publications.append((prepared.kind, prepared.key))
+        return original_publish(work, prepared, pending)
+
+    monkeypatch.setattr(module, 'settle_compute_repair', settle)
+    monkeypatch.setattr(db_writer, '_background_turn', turn)
+    monkeypatch.setattr(tree_aggregate_prepare, '_own_values', own)
+    monkeypatch.setattr(module, 'publish_aggregate', publish)
+
+    async def run():
+        scheduler = module.TreeAggregateScheduler(inventory_ready=lambda: True)
+        scheduler.discover(rows)
+        foreground_counts = []
+
+        async def foreground():
+            for _ in range(3000):
+                if started.is_set():
+                    break
+                await asyncio.sleep(.001)
+            assert started.is_set()
+            coordinator = db_writer._write_coordinator
+            demand = coordinator.foreground_demand()
+            release.set()
+            try:
+                async with coordinator.foreground_lock(WriteResources.WRITER):
+                    foreground_counts.append(len(settled))
+            finally:
+                demand.release()
+
+        task = asyncio.create_task(foreground())
+        try:
+            for _ in range(3000):
+                await scheduler.advance(lambda: frozenset())
+                if not scheduler._snapshots:
+                    break
+                await asyncio.sleep(.001)
+            await task
+            assert not scheduler._snapshots
+        finally:
+            release.set()
+            await scheduler.close()
+            await task
+        assert foreground_counts == [1]
+
+    asyncio.run(run())
+    assert max(admissions) == 1
+    assert len(settled) == len(rows) == 20
+    assert len(sums) == 1
+    assert sum(kind == 'session' for kind, _ in publications) == 20
+    assert not ComputeAggregateRepair.objects.exists()
+    root.refresh_from_db()
+    assert root.total_cost == Decimal(40)

@@ -107,3 +107,42 @@ def test_existing_project_registration_retains_old_and_new_worktree_scopes():
     snapshot = load_compute_repair('project:p', 'project')
     assert snapshot is not None
     assert snapshot.project_ids >= {'p', 'old-main', 'new-main'}
+
+
+def test_restart_after_one_shared_journal_settles_retains_remaining_obligations(monkeypatch):
+    import asyncio
+    from twicc.providers import tree_aggregate_runtime
+    from twicc.providers.compute_executor import start_compute_executor, stop_compute_executor
+    from twicc.providers import db_writer
+    from twicc.providers.write_coordinator import WriterCoordinator
+    from tests.test_tree_aggregate_runtime import snapshots
+
+    root = node('partial-root')
+    for index in range(5):
+        node(f'partial-child-{index}', root)
+    rows = snapshots()
+    monkeypatch.setattr(db_writer, '_write_coordinator', WriterCoordinator())
+    start_compute_executor()
+
+    async def partial():
+        scheduler = tree_aggregate_runtime.TreeAggregateScheduler(inventory_ready=lambda: True)
+        scheduler.discover(rows)
+        try:
+            for _ in range(1000):
+                await scheduler.advance(lambda: frozenset())
+                if len(scheduler._snapshots) < len(rows):
+                    break
+                await asyncio.sleep(.001)
+            assert len(scheduler._snapshots) == len(rows) - 1
+        finally:
+            await scheduler.close()
+            await stop_compute_executor()
+
+    asyncio.run(partial())
+    assert ComputeAggregateRepair.objects.count() == 5
+    reset_contribution_revisions()
+    drain_aggregates()
+    assert not ComputeAggregateRepair.objects.exists()
+    root.refresh_from_db()
+    assert root.total_cost == Decimal(12)
+    assert Project.objects.get(pk='p').total_cost == Decimal(12)

@@ -176,13 +176,21 @@ def observe_orphan_work(snapshot: RepairSnapshot) -> TreeAggregateWork:
     return _work(None, (), (snapshot,))
 
 
-def tree_work_matches(work: TreeAggregateWork, pending_source_ids: frozenset[str]) -> bool:
+def tree_work_matches(work: TreeAggregateWork, pending_source_ids: frozenset[str], *,
+                      settled_repairs: frozenset[RepairSnapshot] = frozenset()) -> bool:
+    """Validate source fences and exact journals, including known committed removals.
+
+    Only completed publication proofs receive settled_repairs. A missing journal
+    remains invalid unless this scheduler successfully settled that exact snapshot.
+    A recreated journal never matches the prior settlement evidence.
+    """
     observation = work.observation
     if not revisions_match(observation.revisions):
         return False
     for snapshot in observation.repairs:
         key = snapshot.observation
-        if load_compute_repair(key.session_id, key.incarnation) != snapshot:
+        current = load_compute_repair(key.session_id, key.incarnation)
+        if current != snapshot and not (current is None and snapshot in settled_repairs):
             return False
     if observation.root is None:
         if any(Session.objects.filter(pk=snapshot.observation.session_id,

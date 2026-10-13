@@ -212,3 +212,36 @@ def test_tree_matching_does_not_read_item_history(django_assert_num_queries):
     # Root, empty child layer, journal discovery. No item-history query.
     with django_assert_num_queries(3):
         assert tree.tree_work_matches(work, frozenset())
+
+
+@pytest.mark.parametrize('mutation', ['missing', 'recreated', 'generation', 'source', 'pending'])
+def test_partial_settlement_evidence_preserves_all_other_fences(mutation):
+    from twicc.providers.compute_repair_journal import settle_compute_repair
+
+    tree = api()
+    root = node('settlement-root')
+    child = node('settlement-child', root)
+    first = repair(root.id)
+    remaining = repair(child.id)
+    work = tree.observe_tree_work(root.id, frozenset())
+    with transaction.atomic():
+        settle_compute_repair(first.observation)
+    evidence = frozenset((first,))
+    assert not tree.tree_work_matches(work, frozenset())
+    assert tree.tree_work_matches(work, frozenset(), settled_repairs=evidence)
+    pending = frozenset()
+    if mutation == 'missing':
+        with transaction.atomic():
+            settle_compute_repair(remaining.observation)
+    elif mutation == 'recreated':
+        recreated = repair(root.id)
+        assert recreated.observation != first.observation
+    elif mutation == 'generation':
+        changed = repair(child.id)
+        assert changed.observation.generation != remaining.observation.generation
+    elif mutation == 'source':
+        with transaction.atomic():
+            record_contribution_commit(sources=[SourceKey(root.id, root.storage_incarnation)])
+    else:
+        pending = frozenset((child.id,))
+    assert not tree.tree_work_matches(work, pending, settled_repairs=evidence)
