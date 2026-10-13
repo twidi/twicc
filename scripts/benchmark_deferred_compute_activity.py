@@ -358,10 +358,11 @@ class Benchmark:
             await self.invoke(self.executor.close_compute_application_connection)
 
     def reference(self):
-        """Independent raw SQLite oracle, including fractional legacy values.
+        """Raw-source SQL oracle with six-decimal aggregate comparisons.
 
-        SQL SUM order matches SQLite's exact-repair sums. Cache comparisons use
-        DecimalField's persisted six-place representation, never input rounding.
+        Comparisons quantize aggregate values, never individual legacy inputs.
+        They do not prove submicro raw precision. Focused raw fractional tests
+        provide exact precision evidence.
         """
         from django.db import connection
         from twicc.core.enums import ItemKind

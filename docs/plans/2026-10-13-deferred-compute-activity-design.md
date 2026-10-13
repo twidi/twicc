@@ -3,7 +3,10 @@
 Date: 2026-10-13
 Baseline: `b072478b`, branch `fix/content-writer-priority`.
 Status: the user approves the independently reviewed design and implementation plan.
-Product implementation and measured validation accompany this branch. Whole-branch adversarial review remains pending.
+Product implementation and measured validation accompany this branch.
+Final whole-topic review approves spec compliance, code quality, and readiness to merge.
+No Critical or Important finding remains. Two Minor evidence findings receive documentation corrections.
+Scoped re-review of those corrections remains pending and belongs to the controller.
 
 ## Decision
 
@@ -502,4 +505,6 @@ Scoped re-review marks that finding addressed, with no new Critical or Important
 That review stage changes only the design. The user then approves the written design and implementation plan.
 Product implementation and measured validation now accompany this branch.
 Validation evidence is in `docs/plans/2026-10-13-deferred-compute-activity-plan.md`.
-Whole-branch adversarial review remains pending and belongs to the controller’s final gate.
+Final whole-topic review approves spec compliance, code quality, and readiness to merge.
+No Critical or Important finding remains. Two Minor evidence findings receive documentation corrections.
+Scoped re-review of those corrections remains pending and belongs to the controller.

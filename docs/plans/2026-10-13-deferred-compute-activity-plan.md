@@ -706,7 +706,9 @@ The user approves the design and plan. Product implementation and measured valid
 ## Implementation validation (2026-10-13)
 
 The user approves the design and implementation plan. Tasks 1–7 now implement the approved design.
-Whole-branch adversarial review remains pending. The controller owns that final gate.
+Final whole-topic review approves spec compliance, code quality, and readiness to merge.
+No Critical or Important finding remains. Two Minor evidence findings receive documentation corrections.
+Scoped re-review of those corrections remains pending and belongs to the controller.
 
 ### Isolated comparison
 
@@ -721,8 +723,9 @@ Only the asserted synthetic database receives schema setup. No server starts or 
 Both runs use seed `20261013`, SQLite WAL, and `DEBUG=False`. No `DEBUG=True` run occurs.
 The same workload adapter uses actual application/ordinary workers and actual writer coordinator grants.
 It preserves the runtime per-run repaired-bucket cache on both revisions.
-The raw SQLite oracle checks costs, messages, creation counts, provider scopes, and daily/weekly buckets.
-It retains unrounded fractional legacy costs in A’s four children.
+The raw-source SQL oracle checks costs, messages, creation counts, provider scopes, and daily/weekly buckets.
+It compares aggregate costs at six decimal places and retains unrounded fractional legacy inputs in A’s four children.
+It does not prove submicro raw precision. Focused raw fractional tests provide exact precision evidence.
 All oracle checkpoints and foreground-versus-older-background grant assertions pass on both revisions.
 
 - A: 12,000-row root; four 3,000-row children; 2,000-row metadata slices; 30 UTC dates.
@@ -774,7 +777,9 @@ Serialized bytes count JSON parameters sent by those statements.
 ### Remaining atomic holds and foreground work
 
 Transaction timing starts at actual BEGIN and ends after actual backend commit/rollback.
-Grant timing includes admitted worker work. Foreground timing starts when demand registers.
+Grant timing includes admitted worker work.
+Queued foreground timing starts when the foreground coroutine starts, after demand registration.
+It excludes the initial scheduling interval. The foreground grant-order assertion remains independent.
 
 | Workload | Baseline max grant ms | Current max grant ms | Baseline max final transaction ms | Current max final transaction ms |
 |---|---:|---:|---:|---:|
