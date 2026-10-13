@@ -2,7 +2,7 @@
 
 Date: 2026-10-13
 Baseline: `b072478b`, branch `fix/content-writer-priority`.
-Status: independently reviewed design; user review precedes implementation planning.
+Status: independently reviewed design, approved by the user; implementation plan awaits user review.
 No product implementation accompanies this document.
 
 ## Decision
@@ -500,4 +500,6 @@ and discovery shutdown before final writer drainage.
 Scoped re-review marks that finding addressed, with no new Critical or Important findings.
 
 Only this design changes. No product, schema, test, server, or database change occurs at this stage.
-Implementation planning follows user review of this written design.
+The user approves this written design. The independently reviewed implementation plan is
+`docs/plans/2026-10-13-deferred-compute-activity-plan.md`.
+Implementation follows user review of that written plan.
