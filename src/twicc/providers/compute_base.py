@@ -84,7 +84,8 @@ from twicc.providers.goals import GoalEvent, apply_goal_event, preserve_dismisse
 from twicc.providers.task_snapshots import select_tasks_snapshot
 from twicc.providers.history_facts import (
     HistoryFact, HistoryFactContext, HistoryFactKind,
-    append_history_facts, history_facts_are_current, iter_resolver_items, replace_history_facts,
+    append_history_facts, history_facts_are_current, iter_resolver_items, publish_compute_history_facts,
+    replace_history_facts,
 )
 from twicc.providers.plan_docs import (
     FOLDED_SOURCES,
@@ -4004,7 +4005,11 @@ class BaseSessionCompute:
         with timed_sync_phase('compute_final_facts'):
             # Publish the complete fact set only in the final transaction. Item
             # pre-apply chunks do not advance the compute version.
-            replace_history_facts(session_id, [HistoryFact(**fact) for fact in msg['history_facts']])
+            operation = msg.get('_storage_operation')
+            if operation is not None and operation.history_facts_stage is not None:
+                publish_compute_history_facts(operation.history_facts_stage)
+            else:
+                replace_history_facts(session_id, [HistoryFact(**fact) for fact in msg['history_facts']])
 
             if msg.get("async_question_facts"):
                 from twicc.core.services.async_questions import merge_question_facts

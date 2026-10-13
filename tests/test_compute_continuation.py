@@ -1950,3 +1950,118 @@ def test_blocked_discovery_does_not_delay_compute_ack_or_terminal_completion(wal
             release.set()
             await db_writer.stop_db_writer()
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('terminal', ['success', 'superseded', 'invalid', 'publication_failure', 'cancel', 'abandon', 'stop'])
+def test_private_fact_preparation_preserves_current_history_and_drains_worker(wal_runtime, monkeypatch, terminal):
+    from twicc.providers import history_facts
+    from twicc.providers.helpers import get_provider_helpers
+    from django.test.utils import CaptureQueriesContext
+    session, path = wal_runtime
+    current = get_provider_helpers(session.provider).current_compute_version
+    with sqlite3.connect(path) as database:
+        database.execute('UPDATE core_session SET compute_version=? WHERE id=?', (current, session.id))
+        database.execute('INSERT INTO core_sessionhistoryfact(session_id,line_num,kind,key,data) VALUES (?,?,?,?,?)',
+                         (session.id, 1, 'tool_call', 'old', '{"old":true}'))
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+    captured = {}
+    original = history_facts.prepare_compute_history_facts
+    close_connection = db_writer.close_compute_application_connection
+    if terminal == 'publication_failure':
+        from twicc.providers import compute_base
+        publish = compute_base.publish_compute_history_facts
+
+        def fail_publication(stage):
+            publish(stage)
+            raise OSError('injected final fact publication failure')
+
+        monkeypatch.setattr(compute_base, 'publish_compute_history_facts', fail_publication)
+
+    def prepare(*args):
+        captured['pending'] = db_writer._pending_compute
+        with CaptureQueriesContext(connections['default']) as queries:
+            try:
+                stage = original(*args)
+                captured['stage'] = stage
+                return stage
+            finally:
+                captured['queries'] = tuple(query['sql'] for query in queries)
+                started.set()
+                assert release.wait(5)
+                finished.set()
+    monkeypatch.setattr(history_facts, 'prepare_compute_history_facts', prepare)
+
+    def close():
+        with connections['default'].cursor() as cursor:
+            cursor.execute("SELECT name FROM sqlite_temp_master WHERE name LIKE 'compute_history_facts_%'")
+            captured['tables_before_connection_close'] = cursor.fetchall()
+        return close_connection()
+    monkeypatch.setattr(db_writer, 'close_compute_application_connection', close)
+
+    async def scenario():
+        db_writer.start_db_writer()
+        applied = asyncio.Queue()
+        run_id, done = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0,
+                                                       applied_queue=applied)
+        msg = result_message(session, run_id)
+        msg['session_fields']['compute_version'] = current
+        msg['history_facts'] = [{'line_num': 2, 'kind': 'tool_call', 'key': 'new', 'data': {'new': True}}]
+        if terminal == 'invalid':
+            msg['history_facts'].append({'line_num': 0, 'kind': 'tool_call', 'key': 'invalid', 'data': {}})
+        db_writer.get_subprocess_queue().put(msg)
+        stop = None
+        try:
+            assert await asyncio.to_thread(started.wait, 3)
+            pending = captured['pending']
+            assert pending.operation.activity_preparation is None
+            assert not db_writer.get_write_coordinator().demands
+            with sqlite3.connect(path) as database:
+                assert database.execute('SELECT key,data FROM core_sessionhistoryfact').fetchall() == [
+                    ('old', '{"old":true}'),
+                ]
+                assert database.execute('SELECT compute_version FROM core_session WHERE id=?',
+                                         (session.id,)).fetchone()[0] == current
+                if terminal == 'superseded':
+                    database.execute('UPDATE core_session SET last_offset=1 WHERE id=?', (session.id,))
+                # TEMP preparation releases the main writer for independent foreground writes.
+                database.execute("UPDATE core_session SET title='foreground' WHERE id=?", (session.id,))
+            if terminal == 'cancel':
+                writer = db_writer._db_writer_task
+                writer.cancel()
+                await asyncio.sleep(.01)
+                writer.cancel()
+            elif terminal == 'abandon':
+                stop = asyncio.create_task(db_writer.abandon_compute_run(run_id, Provider.CODEX))
+            elif terminal == 'stop':
+                db_writer.get_subprocess_queue().put({'type': 'done', 'provider': 'codex', 'run_id': run_id})
+                stop = asyncio.create_task(db_writer.stop_db_writer())
+            await asyncio.sleep(.02)
+            assert not pending.terminal and not pending.operation.closed and applied.empty()
+            assert not finished.is_set()
+            release.set()
+            if stop is not None:
+                await asyncio.wait_for(stop, 5)
+            if terminal == 'cancel':
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(asyncio.shield(writer), 5)
+            elif terminal != 'abandon':
+                signal = await asyncio.wait_for(applied.get(), 5)
+                assert signal.outcome == {'invalid': 'failed', 'publication_failure': 'failed', 'superseded': 'superseded'}.get(terminal, 'applied')
+            await wait_until(lambda: pending.terminal)
+            assert finished.is_set() and pending.operation.closed
+            assert captured['tables_before_connection_close'] == []
+            if terminal != 'invalid':
+                assert captured['stage'].closed
+                # Preparation contains only TEMP mutations, never a main fact DELETE/INSERT.
+                assert not any(sql.upper().startswith(('DELETE', 'INSERT')) and
+                               'core_sessionhistoryfact' in sql for sql in captured['queries'])
+            with sqlite3.connect(path) as database:
+                assert database.execute('SELECT key FROM core_sessionhistoryfact').fetchall() == [
+                    ('old' if terminal in {'invalid', 'publication_failure', 'superseded', 'cancel', 'abandon'} else 'new',),
+                ]
+        finally:
+            release.set()
+            await db_writer.stop_db_writer()
+            db_writer._compute_states.pop(run_id, None)
+            db_writer._compute_done_events.pop(run_id, None)
+    asyncio.run(scenario())

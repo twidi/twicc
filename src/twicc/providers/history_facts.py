@@ -2,7 +2,13 @@
 
 
 from collections.abc import Iterator, Sequence
+from itertools import islice
+from threading import get_ident
+from time import sleep
 from typing import NamedTuple
+from uuid import uuid4
+
+from django.db import connection, transaction
 
 from twicc.core.content_storage.readers import effective_current, load_current
 from twicc.core.models import HistoryFactKind, Session, SessionHistoryFact, SessionItem
@@ -75,6 +81,87 @@ def replace_history_facts(session_id: str, facts: Sequence[HistoryFact]) -> None
 def append_history_facts(session_id: str, facts: Sequence[HistoryFact]) -> None:
     """Insert fact occurrences idempotently inside the caller's transaction."""
     _insert_rows(_fact_rows(session_id, facts))
+
+
+class ComputeHistoryFactsStage:
+    """Private TEMP rows owned by one operation and its physical connection."""
+
+    def __init__(self, session_id):
+        connection.ensure_connection()
+        self.session_id = session_id
+        self._connection = connection.connection
+        self._thread = get_ident()
+        self.table = connection.ops.quote_name(f'compute_history_facts_{uuid4().hex}')
+        self.closed = False
+
+    def validate_connection(self):
+        if get_ident() != self._thread or connection.connection is not self._connection:
+            raise ValueError('History fact stage requires its owning connection')
+
+    def close(self):
+        self.validate_connection()
+        if not self.closed:
+            with connection.cursor() as cursor:
+                cursor.execute(f'DROP TABLE IF EXISTS temp.{self.table}')
+            self.closed = True
+
+
+def prepare_compute_history_facts(session_id: str, facts: Sequence[HistoryFact]) -> ComputeHistoryFactsStage:
+    """Validate and adapt bounded TEMP batches without taking the main writer.
+
+    Use the model fields and backend checks, including SQLite's JSON validity
+    check. INSERT OR IGNORE retains the first valid duplicate, as bulk_create
+    does. The stage carries source order but never main-table primary keys.
+    """
+    stage = ComputeHistoryFactsStage(session_id)
+    fields = [SessionHistoryFact._meta.get_field(name) for name in ('session', 'line_num', 'kind', 'key', 'data')]
+    columns = ', '.join(connection.ops.quote_name(field.column) for field in fields)
+    definitions = ['source_order integer NOT NULL']
+    for field in fields:
+        name = connection.ops.quote_name(field.column)
+        parameters = field.db_parameters(connection=connection)
+        definition = f'{name} {parameters["type"]} NOT NULL'
+        if parameters['check']:
+            definition += f' CHECK ({parameters["check"]})'
+        definitions.append(definition)
+    definitions.extend(['CHECK (line_num >= 1)', 'UNIQUE (session_id, kind, key, line_num)'])
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(f'CREATE TEMP TABLE {stage.table} ({", ".join(definitions)})')
+        iterator = iter(facts)
+        offset = 0
+        while chunk := list(islice(iterator, _FACT_PAGE_SIZE)):
+            rows = _fact_rows(session_id, chunk)
+            adapted = [
+                (offset + index, *(field.get_db_prep_save(field.value_from_object(row), connection=connection)
+                                   for field in fields))
+                for index, row in enumerate(rows)
+            ]
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.executemany(f'INSERT OR IGNORE INTO temp.{stage.table} (source_order, {columns}) '
+                                   'VALUES (%s, %s, %s, %s, %s, %s)', adapted)
+            offset += len(chunk)
+            sleep(0)
+        return stage
+    except BaseException:
+        stage.close()
+        raise
+
+
+def publish_compute_history_facts(stage: ComputeHistoryFactsStage) -> None:
+    """Replace durable facts only inside the caller's guarded final transaction."""
+    stage.validate_connection()
+    if stage.closed:
+        raise ValueError('History fact stage is closed')
+    if not connection.in_atomic_block:
+        raise transaction.TransactionManagementError('History fact publication requires a caller-owned transaction')
+    table = connection.ops.quote_name(SessionHistoryFact._meta.db_table)
+    columns = ', '.join(connection.ops.quote_name(SessionHistoryFact._meta.get_field(name).column)
+                        for name in ('session', 'line_num', 'kind', 'key', 'data'))
+    with connection.cursor() as cursor:
+        cursor.execute(f'DELETE FROM {table} WHERE session_id = %s', [stage.session_id])
+        cursor.execute(f'INSERT OR IGNORE INTO {table} ({columns}) '
+                       f'SELECT {columns} FROM temp.{stage.table} ORDER BY source_order')
 
 
 def _fact_rows(session_id: str, facts: Sequence[HistoryFact]) -> list[SessionHistoryFact]:

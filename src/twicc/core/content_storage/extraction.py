@@ -30,6 +30,7 @@ from twicc.core.content_storage.types import (
 )
 from twicc.core.models import ContentDictionary, Session, SessionItem, SessionItemContent
 from twicc.providers.compute_repair_journal import RepairSnapshot
+from twicc.sync_diagnostics import timed_sync_phase
 
 logger = logging.getLogger(__name__)
 
@@ -463,6 +464,7 @@ class ComputeStorageOperation:
         self.activity_repair_keys = activity_repair_keys
         self.repair_snapshot: RepairSnapshot | None = None
         self.activity_preparation = None
+        self.history_facts_stage = None
         self.preparation_ms = 0.0
         self.max_publication_ms = 0.0
 
@@ -693,9 +695,31 @@ def final_compute_message(operation, active_ids):
                 '_active_session_ids': active_ids, '_activity_repair_keys': frozenset(operation.activity_repair_keys)}
 
 
+def prepare_compute_history_stage(operation):
+    """Build private facts on the retained worker before activity version sampling."""
+    from twicc.providers.history_facts import HistoryFact, prepare_compute_history_facts
+
+    if operation.phase != 'final' or operation.pending_batch is not None:
+        raise ValueError('Compute storage publication is incomplete')
+    validate_compute_application(operation)
+    if operation.history_facts_stage is None:
+        started = perf_counter()
+        try:
+            with timed_sync_phase('compute_history_facts_preparation'):
+                operation.history_facts_stage = prepare_compute_history_facts(
+                    operation.message['session_id'],
+                    (HistoryFact(**fact) for fact in operation.message['history_facts']),
+                )
+            validate_compute_application(operation)
+        finally:
+            operation.preparation_ms += (perf_counter() - started) * 1000
+
+
 def close_compute_application(operation):
     if not operation.closed:
         try:
+            if operation.history_facts_stage is not None:
+                operation.history_facts_stage.close()
             if operation.activity_preparation is not None:
                 from twicc.providers.activity_preparation import close_activity_preparation
                 close_activity_preparation(operation.activity_preparation)

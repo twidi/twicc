@@ -193,3 +193,137 @@ def test_history_fact_kind_has_exact_supported_family():
         "tool_call", "process_start", "code_cell", "agent_spawn", "turn_start", "code_exec_target",
         "turn_context", "plan_marker", "goal_context", "goal_update", "token_usage",
     }
+
+
+def _private_fact_tables():
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT name FROM sqlite_temp_master WHERE name LIKE 'compute_history_facts_%'")
+        return cursor.fetchall()
+
+
+def test_private_stage_preserves_old_facts_and_exact_first_valid_replacement(session):
+    from django.db import transaction
+    from twicc.providers import history_facts
+    old = HistoryFact(1, HistoryFactKind.TOOL_CALL, 'old', {'old': True})
+    append_history_facts(session.id, [old])
+    other = Session.objects.create(id='other-stage', project=session.project, provider='codex')
+    append_history_facts(other.id, [old])
+    facts = [
+        HistoryFact(5, HistoryFactKind.TOOL_CALL, 'same', {'invalid_json': float('nan')}),
+        HistoryFact(5, HistoryFactKind.TOOL_CALL, 'same', {'nested': (1, 'é'), 7: False}),
+        HistoryFact(5, HistoryFactKind.TOOL_CALL, 'same', {'later': True}),
+        HistoryFact(2, HistoryFactKind.PLAN_MARKER, 'context', {}),
+    ]
+    stage = history_facts.prepare_compute_history_facts(session.id, facts)
+    try:
+        assert list(iter_history_facts(session.id, old.kind, old.key, before_line=10)) == [old]
+        assert len(_private_fact_tables()) == 1
+        with connection.cursor() as cursor:
+            cursor.execute(f'PRAGMA table_info({stage.table})')
+            assert all(row[5] == 0 for row in cursor.fetchall())
+        with transaction.atomic():
+            history_facts.publish_compute_history_facts(stage)
+        assert list(iter_history_facts(session.id, old.kind, 'same', before_line=10)) == [
+            HistoryFact(5, HistoryFactKind.TOOL_CALL, 'same', {'nested': [1, 'é'], '7': False}),
+        ]
+        assert SessionHistoryFact.objects.filter(session=session).count() == 2
+        assert list(iter_history_facts(other.id, old.kind, old.key, before_line=10)) == [old]
+    finally:
+        stage.close()
+        stage.close()
+    assert not _private_fact_tables()
+
+
+def test_private_stage_empty_replacement_rejects_closed_handle(session):
+    from django.db import transaction
+    from twicc.providers import history_facts
+    append_history_facts(session.id, [HistoryFact(1, HistoryFactKind.TOOL_CALL, 'old', {})])
+    stage = history_facts.prepare_compute_history_facts(session.id, [])
+    try:
+        with transaction.atomic():
+            history_facts.publish_compute_history_facts(stage)
+        assert not SessionHistoryFact.objects.filter(session=session).exists()
+    finally:
+        stage.close()
+    with pytest.raises(ValueError, match='closed'), transaction.atomic():
+        history_facts.publish_compute_history_facts(stage)
+
+
+@pytest.mark.parametrize('invalid, error', [
+    (HistoryFact(0, HistoryFactKind.TOOL_CALL, 'bad', {}), ValueError),
+    (HistoryFact(130, HistoryFactKind.TURN_CONTEXT, 'wrong', {}), ValueError),
+    (HistoryFact(130, HistoryFactKind.TOOL_CALL, 'bad', {'unsupported': object()}), TypeError),
+    (HistoryFact(2**80, HistoryFactKind.TOOL_CALL, 'bad', {}), OverflowError),
+])
+def test_private_stage_failure_cleans_partial_table_without_changing_old_facts(session, invalid, error):
+    from twicc.providers import history_facts
+    old = HistoryFact(1, HistoryFactKind.TOOL_CALL, 'old', {})
+    append_history_facts(session.id, [old])
+    facts = [HistoryFact(n, HistoryFactKind.TOOL_CALL, 'new', {}) for n in range(1, 130)]
+    with pytest.raises(error):
+        history_facts.prepare_compute_history_facts(session.id, [*facts, invalid])
+    assert list(iter_history_facts(session.id, old.kind, old.key, before_line=10)) == [old]
+    assert SessionHistoryFact.objects.filter(session=session).count() == 1
+    assert not _private_fact_tables()
+
+
+def test_private_stage_publication_failure_rolls_back_replacement(session):
+    from django.db import IntegrityError, transaction
+    from twicc.providers import history_facts
+    old = HistoryFact(1, HistoryFactKind.TOOL_CALL, 'old', {})
+    append_history_facts(session.id, [old])
+    stage = history_facts.prepare_compute_history_facts(session.id, [HistoryFact(2, old.kind, 'new', {})])
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("CREATE TEMP TRIGGER reject_facts BEFORE INSERT ON core_sessionhistoryfact "
+                           "BEGIN SELECT RAISE(ABORT, 'injected fact publication failure'); END")
+        with pytest.raises(IntegrityError, match='injected'), transaction.atomic():
+            history_facts.publish_compute_history_facts(stage)
+        assert list(iter_history_facts(session.id, old.kind, old.key, before_line=10)) == [old]
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute('DROP TRIGGER IF EXISTS reject_facts')
+        stage.close()
+    assert not _private_fact_tables()
+
+
+def test_private_stage_rejects_other_thread_before_cleanup(session):
+    from concurrent.futures import ThreadPoolExecutor
+    from twicc.providers import history_facts
+    stage = history_facts.prepare_compute_history_facts(session.id, [])
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor, pytest.raises(ValueError, match='connection'):
+            executor.submit(stage.close).result()
+        assert len(_private_fact_tables()) == 1
+    finally:
+        stage.close()
+    assert not _private_fact_tables()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_private_stage_publication_requires_transaction(session):
+    from django.db import transaction
+    from twicc.providers import history_facts
+    old = HistoryFact(1, HistoryFactKind.TOOL_CALL, 'old', {})
+    append_history_facts(session.id, [old])
+    stage = history_facts.prepare_compute_history_facts(session.id, [])
+    try:
+        with pytest.raises(transaction.TransactionManagementError):
+            history_facts.publish_compute_history_facts(stage)
+        assert list(iter_history_facts(session.id, old.kind, old.key, before_line=10)) == [old]
+    finally:
+        stage.close()
+
+
+def test_private_stage_table_allocation_failure_cleans_created_table(session):
+    from twicc.providers import history_facts
+
+    def fail_after_allocation(execute, sql, params, many, context):
+        result = execute(sql, params, many, context)
+        if sql.startswith('CREATE TEMP TABLE "compute_history_facts_'):
+            raise OSError('injected table allocation failure')
+        return result
+
+    with connection.execute_wrapper(fail_after_allocation), pytest.raises(OSError, match='allocation'):
+        history_facts.prepare_compute_history_facts(session.id, [])
+    assert not _private_fact_tables()
