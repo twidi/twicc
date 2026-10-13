@@ -1163,6 +1163,73 @@ def test_compute_diagnostics_accumulate_denied_combined_grant_wait(wal_runtime):
             'diagnostic grant',)
 
 
+@pytest.mark.parametrize('mixed', [False, True])
+def test_creation_activity_skips_preliminary_writer_grants(wal_runtime, monkeypatch, mixed):
+    """Creation keys require exact final repair without preliminary writer grants."""
+    from twicc.core.models import DailyActivity, WeeklyActivity
+    from twicc.providers import activity_preparation
+    session, path = wal_runtime
+    with sqlite3.connect(path) as database:
+        database.execute("UPDATE core_session SET created_at='2026-09-29 00:00:00'")
+        database.execute("UPDATE core_sessionitem SET timestamp='2026-09-29 00:00:00', cost=0.0000012")
+        database.execute("UPDATE core_sessionitem SET kind='user_message' WHERE line_num=1")
+        if mixed:
+            database.execute("UPDATE core_sessionitem SET timestamp='2026-10-13 00:00:00' WHERE line_num=600")
+    captured = {'activity_grants': 0, 'final_repairs': 0}
+    original_turn = db_writer._background_turn
+    original_begin = activity_preparation.begin_activity_preparation
+
+    def begin(operation):
+        state = original_begin(operation)
+        captured['state'] = state
+        return state
+
+    async def turn(factory, *, diagnostics=None, phase=None):
+        if phase == 'final':
+            state = captured['state']
+            captured['inventory'] = len(state.required_keys)
+            captured['reusable'] = len(state.repaired_keys)
+        result = await original_turn(factory, diagnostics=diagnostics, phase=phase)
+        captured['activity_grants'] += int(phase == 'activity' and bool(result))
+        return result
+
+    monkeypatch.setattr(activity_preparation, 'begin_activity_preparation', begin)
+    monkeypatch.setattr(db_writer, '_background_turn', turn)
+    for model in (DailyActivity, WeeklyActivity):
+        original = model.recalculate
+        def recalculate(*args, original=original):
+            if captured.get('inventory') is not None:
+                captured['final_repairs'] += 1
+            return original(*args)
+        monkeypatch.setattr(model, 'recalculate', recalculate)
+
+    async def scenario():
+        db_writer.start_db_writer()
+        applied = asyncio.Queue()
+        run_id, done = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0,
+                                                       applied_queue=applied)
+        msg = result_message(session, run_id)
+        msg['session_fields']['created_at'] = '2026-09-29T00:00:00+00:00'
+        db_writer.get_subprocess_queue().put(msg)
+        db_writer.get_subprocess_queue().put({'type': 'done', 'provider': 'codex', 'run_id': run_id})
+        try:
+            assert (await asyncio.wait_for(applied.get(), 5)).outcome == 'applied'
+        finally:
+            await db_writer.stop_db_writer()
+        assert done.result() == 0
+        assert captured['activity_grants'] == (4 if mixed else 0)
+        assert captured['inventory'] == (8 if mixed else 4)
+        assert captured['reusable'] == (4 if mixed else 0)
+        assert captured['final_repairs'] == 4
+        assert not captured['state'].required_keys and not captured['state'].skipped_keys
+    asyncio.run(scenario())
+    with sqlite3.connect(path) as database:
+        for table in ('core_dailyactivity', 'core_weeklyactivity'):
+            total, count = database.execute(f'SELECT SUM(cost), SUM(session_count) FROM {table}').fetchone()
+            assert total == pytest.approx(.00144, abs=1e-15)
+            assert count == 2
+
+
 @pytest.mark.parametrize('barrier', ['enumeration', 'between_buckets'])
 def test_activity_preparation_keeps_foreground_on_another_worker(wal_runtime, monkeypatch, barrier):
     """Removing private runtime preparation or sharing its worker breaks this barrier."""
@@ -1343,6 +1410,9 @@ def test_optional_activity_failure_finishes_with_exact_no_cache(wal_runtime, mon
 def test_activity_page_terminal_drains_private_proof_before_ack(wal_runtime, monkeypatch, terminal):
     from twicc.providers import activity_preparation
     session, path = wal_runtime
+    with sqlite3.connect(path) as database:
+        database.execute("UPDATE core_session SET created_at='2026-09-29 00:00:00'")
+        database.execute("UPDATE core_sessionitem SET timestamp='2026-09-29 00:00:00'")
     started, release = threading.Event(), threading.Event()
     captured = {}
     original = activity_preparation.prepare_activity_key_page
@@ -1361,6 +1431,7 @@ def test_activity_page_terminal_drains_private_proof_before_ack(wal_runtime, mon
         stop = None
         try:
             assert await asyncio.to_thread(started.wait, 3)
+            assert len(captured['state'].skipped_keys) == 4
             pending = db_writer._pending_compute
             if terminal == 'cancel':
                 db_writer._db_writer_task.cancel()
@@ -1379,6 +1450,7 @@ def test_activity_page_terminal_drains_private_proof_before_ack(wal_runtime, mon
                     await asyncio.wait_for(asyncio.shield(db_writer._db_writer_task), 5)
             assert pending.terminal and pending.operation.closed
             assert not captured['state'].required_keys and not captured['state'].repaired_keys
+            assert not captured['state'].skipped_keys
             assert pending.deferral.released
             if terminal == 'abandon':
                 assert applied.empty()

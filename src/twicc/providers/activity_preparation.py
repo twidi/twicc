@@ -33,6 +33,7 @@ class ActivityPreparation:
         self.thread = get_ident()
         self.data_version = None
         self.required_keys = set()
+        self.skipped_keys = set()
         self.repaired_keys = set()
         self.ordered_keys = ()
         self.enumeration_cursor = -1
@@ -130,14 +131,23 @@ def begin_activity_preparation(operation):
             # This inventory is correctness evidence, independent of the proof cap.
             operation.activity_repair_keys.update(snapshot.activity_keys)
         row = Session.objects.filter(pk=operation.message['session_id']).values(
-            'project_id', 'provider', 'type', 'hidden',
+            'project_id', 'provider', 'type', 'hidden', 'created_at',
         ).get()
         pending = operation.message.get('session_fields', {})
-        if any(pending.get(field, value) != value for field, value in row.items()):
+        fields = ('project_id', 'provider', 'type', 'hidden')
+        if any(pending.get(field, row[field]) != row[field] for field in fields):
             state.disable('metadata_changed')
             return state
         state.scope = row['project_id'], row['provider']
-        state.metadata = tuple(row[field] for field in ('project_id', 'provider', 'type', 'hidden'))
+        state.metadata = tuple(row[field] for field in fields)
+        created = pending.get('created_at', row['created_at'])
+        if isinstance(created, str):
+            created = datetime.fromisoformat(created)
+        # Creation counts always need exact final repair. Keep this exclusion
+        # fixed even when the final before/effective creation metadata changes.
+        state.skipped_keys.update(_activity_keys(*state.scope, row['created_at']))
+        state.skipped_keys.update(_activity_keys(pending.get('project_id', row['project_id']),
+                                               pending.get('provider', row['provider']), created))
         if len(operation.activity_repair_keys) > MAX_REPAIRED_ACTIVITY_BUCKETS:
             state.disable('capacity')
             return state
@@ -180,7 +190,7 @@ def prepare_activity_key_page(state, *, row_budget=ACTIVITY_PAGE_ROWS):
             state.enumeration_cursor = rows[-1][0]
         state.enumeration_complete = len(rows) < row_budget
         if state.enumeration_complete:
-            state.ordered_keys = tuple(sorted(state.required_keys, key=lambda key: (
+            state.ordered_keys = tuple(sorted(state.required_keys - state.skipped_keys, key=lambda key: (
                 key[0]._meta.label, key[1] or '', key[2], key[3],
             )))
         return _page_result(state, len(rows))
@@ -274,6 +284,7 @@ def close_activity_preparation(state, *, reason='closed'):
     """Discard private evidence on cancellation or terminal operation cleanup."""
     state.disable(reason)
     state.required_keys.clear()
+    state.skipped_keys.clear()
     state.ordered_keys = ()
 
 
@@ -317,8 +328,8 @@ def activity_final_policy(state, before_session, effective_fields, *, item_updat
                 elif before != state.metadata or effective != state.metadata:
                     state.disable('metadata_changed')
                 elif (not state.enumeration_complete or state.repair_cursor != len(state.ordered_keys)
-                      or set(state.ordered_keys) != state.required_keys
-                      or state.repaired_keys != state.required_keys
+                      or set(state.ordered_keys) != state.required_keys - state.skipped_keys
+                      or state.repaired_keys != state.required_keys - state.skipped_keys
                       or not state.operation.activity_repair_keys <= state.required_keys
                       or any(key not in state.required_keys for key in extra_activity_keys)):
                     state.disable('missing_key')
@@ -328,8 +339,8 @@ def activity_final_policy(state, before_session, effective_fields, *, item_updat
                     created = effective_fields.get('created_at', before_session.created_at)
                     if isinstance(created, str):
                         created = datetime.fromisoformat(created)
-                    excluded = set(_activity_keys(before_session.project_id, before_session.provider,
-                                                  before_session.created_at))
+                    excluded = state.skipped_keys | set(_activity_keys(
+                        before_session.project_id, before_session.provider, before_session.created_at))
                     excluded.update(_activity_keys(effective[0], effective[1], created))
                     cache = state.repaired_keys - excluded
     required = len(state.required_keys) if state is not None else 0

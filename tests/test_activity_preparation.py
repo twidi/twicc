@@ -66,6 +66,21 @@ def wal_operation(operation, tmp_path):
         replacement.close()
 
 
+@pytest.fixture
+def creation_operation(operation, request):
+    close_compute_application(operation)
+    stored = getattr(request, 'param', True)
+    Session.objects.filter(pk='prepared-session').update(created_at=STAMP if stored else None)
+    operation = begin_compute_application({'session_id': 'prepared-session', 'history_facts': [],
+                                           'session_fields': {'created_at': STAMP.isoformat()}})
+    while operation.phase != 'final':
+        publish_compute_batch(operation, prepare_compute_batch(operation), frozenset())
+    try:
+        yield operation
+    finally:
+        close_compute_application(operation)
+
+
 def enumerate_all(module, state, row_budget=1):
     while not state.enumeration_complete and state.fallback_reason is None:
         module.prepare_activity_key_page(state, row_budget=row_budget)
@@ -83,6 +98,191 @@ def journal(operation, *, keys=(), source_changed=True):
     with transaction.atomic():
         return merge_compute_repair(operation.message['session_id'], operation.message['observed_incarnation'],
                                     activity_keys=keys, source_changed=source_changed)
+
+
+@pytest.mark.parametrize('creation_operation', [False, True], indirect=True)
+def test_creation_only_inventory_needs_no_preliminary_repairs(creation_operation, monkeypatch):
+    # Reusing creation buckets wastes writer grants and can preserve stale counts.
+    operation = creation_operation
+    module = api()
+    state = enumerate_all(module, module.begin_activity_preparation(operation))
+    assert len(state.required_keys) == 4
+    assert len(state.skipped_keys) == 4
+    assert state.ordered_keys == ()
+    assert not state.repaired_keys
+    assert operation.activity_repair_keys <= state.required_keys
+
+    repairs = []
+    for model in (DailyActivity, WeeklyActivity):
+        original = model.recalculate
+        def recalculate(*args, model=model, original=original):
+            repairs.append((model, *args))
+            return original(*args)
+        monkeypatch.setattr(model, 'recalculate', recalculate)
+    final = final_compute_message(operation, frozenset())
+    assert BaseSessionCompute._apply_session_complete_final(final).outcome == 'applied'
+    assert len(repairs) == 4
+    for model in (DailyActivity, WeeklyActivity):
+        with connection.cursor() as cursor:
+            cursor.execute(f'SELECT SUM(cost), SUM(session_count) FROM {model._meta.db_table}')
+            cost, count = cursor.fetchone()
+        assert cost == pytest.approx(0.0000024, abs=1e-15)
+        assert count == 2
+
+
+@pytest.mark.parametrize('durable', [False, True])
+def test_skipped_first_page_does_not_end_mixed_inventory(operation, monkeypatch, durable):
+    # Empty preliminary work on one page must not hide later historical buckets.
+    Session.objects.filter(pk='prepared-session').update(created_at=STAMP)
+    later = STAMP + timedelta(days=14)
+    SessionItem.objects.create(session_id='prepared-session', line_num=2, content='{}', timestamp=later,
+                               cost=Decimal('0.000003'))
+    close_compute_application(operation)
+    operation = begin_compute_application({'session_id': 'prepared-session', 'history_facts': []})
+    try:
+        while operation.phase != 'final':
+            publish_compute_batch(operation, prepare_compute_batch(operation), frozenset())
+        old = (DailyActivity, None, 'codex', STAMP.date() - timedelta(days=50))
+        if durable:
+            journal(operation, keys=operation.activity_repair_keys | {old})
+        module = api()
+        state = module.begin_activity_preparation(operation)
+        page = module.prepare_activity_key_page(state, row_budget=1)
+        assert page.rows == 1 and not page.complete
+        assert len(state.required_keys) == 4 + int(durable) and not state.ordered_keys
+        enumerate_all(module, state)
+        assert state.enumeration_cursor == 2
+        assert len(state.required_keys) == 8 + int(durable)
+        assert len(state.ordered_keys) == 4 + int(durable)
+        if durable:
+            assert old in state.ordered_keys and old in operation.activity_repair_keys
+        repair_all(module, state)
+        assert state.repaired_keys == state.required_keys - state.skipped_keys
+        from tests.test_activity_final_admission import policy
+        assert policy(module, state) == set(state.ordered_keys)
+
+        final_repairs = []
+        for model in (DailyActivity, WeeklyActivity):
+            original = model.recalculate
+            def recalculate(*args, model=model, original=original):
+                final_repairs.append((model, *args))
+                return original(*args)
+            monkeypatch.setattr(model, 'recalculate', recalculate)
+        assert BaseSessionCompute._apply_session_complete_final(
+            final_compute_message(operation, frozenset())).outcome == 'applied'
+        assert len(final_repairs) == 4
+        for model in (DailyActivity, WeeklyActivity):
+            with connection.cursor() as cursor:
+                cursor.execute(f'SELECT SUM(cost), SUM(session_count) FROM {model._meta.db_table}')
+                cost, count = cursor.fetchone()
+            assert cost == pytest.approx(0.0000084, abs=1e-15)
+            assert count == 2
+    finally:
+        close_compute_application(operation)
+
+
+@pytest.mark.parametrize('changed', [None, STAMP + timedelta(days=14)])
+def test_skipped_creation_keys_stay_excluded_after_metadata_changes(creation_operation, changed):
+    # Final metadata must not turn skipped keys into reusable evidence.
+    operation = creation_operation
+    module = api()
+    state = enumerate_all(module, module.begin_activity_preparation(operation))
+    repair_all(module, state)
+    Session.objects.filter(pk='prepared-session').update(created_at=changed)
+    from tests.test_activity_final_admission import policy
+    assert policy(module, state) == set()
+    assert state.fallback_reason is None
+    assert len(state.required_keys) == 4
+    assert not state.repaired_keys
+
+
+@pytest.mark.parametrize('serialized', [False, True])
+def test_stored_and_effective_creation_union_skips_both_dates(operation, serialized):
+    # The worker's new creation date needs exact repair as well as the stored date.
+    close_compute_application(operation)
+    later = STAMP + timedelta(days=14)
+    Session.objects.filter(pk='prepared-session').update(created_at=STAMP)
+    SessionItem.objects.create(session_id='prepared-session', line_num=2, content='{}', timestamp=later)
+    operation = begin_compute_application({'session_id': 'prepared-session', 'history_facts': [],
+        'session_fields': {'created_at': later.isoformat() if serialized else later}})
+    try:
+        while operation.phase != 'final':
+            publish_compute_batch(operation, prepare_compute_batch(operation), frozenset())
+        module = api()
+        state = enumerate_all(module, module.begin_activity_preparation(operation))
+        assert len(state.required_keys) == 8
+        assert state.ordered_keys == ()
+        assert state.skipped_keys == state.required_keys
+        assert operation.activity_repair_keys == state.required_keys
+        assert BaseSessionCompute._apply_session_complete_final(
+            final_compute_message(operation, frozenset())).outcome == 'applied'
+        assert Session.objects.get(pk='prepared-session').created_at == later
+        for model in (DailyActivity, WeeklyActivity):
+            assert model.objects.aggregate(count=Sum('session_count'))['count'] == 2
+            with connection.cursor() as cursor:
+                cursor.execute(f'SELECT SUM(cost) FROM {model._meta.db_table}')
+                assert cursor.fetchone()[0] == pytest.approx(0.0000024, abs=1e-15)
+    finally:
+        close_compute_application(operation)
+
+
+@pytest.mark.parametrize('mutation', ['foreign_commit', 'journal_changed'])
+def test_all_skipped_final_still_checks_version_and_journal(creation_operation, tmp_path, mutation):
+    # Zero preliminary grants must not bypass fixed-version or journal fences.
+    operation = creation_operation
+    path = tmp_path / 'all-skipped.sqlite3'
+    physical = connection.connection
+    replacement = sqlite3.connect(path, isolation_level=None)
+    physical.backup(replacement)
+    replacement.execute('PRAGMA journal_mode=WAL')
+    connection.connection = replacement
+    operation.references._connection = replacement
+    try:
+        check_all_skipped_final(module=api(), operation=operation, path=path, mutation=mutation)
+    finally:
+        close_compute_application(operation)
+        connection.connection = physical
+        replacement.close()
+
+
+def check_all_skipped_final(*, module, operation, path, mutation):
+    snapshot = journal(operation)
+    state = enumerate_all(module, module.begin_activity_preparation(operation))
+    assert state.ordered_keys == ()
+    baseline = state.data_version
+    if mutation == 'foreign_commit':
+        with sqlite3.connect(path) as foreign:
+            foreign.execute('UPDATE core_sessionitem SET cost = 2')
+    else:
+        journal(operation)
+    from tests.test_activity_final_admission import policy
+    assert policy(module, state, repair_snapshot=snapshot) is None
+    assert state.fallback_reason == mutation
+    assert state.data_version == baseline
+    assert module.begin_activity_preparation(operation) is state
+    assert len(state.required_keys) == 4 and not state.repaired_keys
+    assert BaseSessionCompute._apply_session_complete_final(
+        final_compute_message(operation, frozenset())).outcome == 'applied'
+    if mutation == 'foreign_commit':
+        assert DailyActivity.objects.aggregate(cost=Sum('cost'))['cost'] == Decimal(4)
+
+
+def test_all_skipped_superseded_cleanup_preserves_repair_inventory(creation_operation):
+    operation = creation_operation
+    journal(operation)
+    module = api()
+    state = enumerate_all(module, module.begin_activity_preparation(operation))
+    assert state.ordered_keys == ()
+    obligations = set(operation.activity_repair_keys)
+    assert len(obligations) == 4
+    Session.objects.filter(pk='prepared-session').update(history_epoch=operation.message['observed_epoch'] + 1)
+    assert BaseSessionCompute._apply_session_complete_final(
+        final_compute_message(operation, frozenset())).outcome == 'superseded'
+    close_compute_application(operation)
+    assert state.fallback_reason == 'closed'
+    assert not state.required_keys and not state.repaired_keys and not state.skipped_keys
+    assert operation.activity_repair_keys == obligations
+    assert operation.closed
 
 
 def test_preparation_adopts_complete_durable_union_without_clearing_keys(operation):
