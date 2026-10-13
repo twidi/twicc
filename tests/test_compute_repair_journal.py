@@ -212,3 +212,43 @@ def test_migration_creates_only_small_journal_table():
     assert "compute_repair_source_identity" in sql
     assert "core_sessionitem" not in sql.lower()
     assert "SELECT " not in sql.upper()
+
+
+def test_project_tags_round_trip_union_and_generation_without_activity_keys():
+    journal = api()
+    first = merge(journal, activity_keys=[KEY], project_ids=['old', 'old'], source_changed=False)
+    assert first.project_ids == frozenset({'old'})
+    same = merge(journal, project_ids=['old'], source_changed=False)
+    assert same == first
+    changed = merge(journal, project_ids=['new'], source_changed=False)
+    assert changed.project_ids == frozenset({'old', 'new'})
+    assert changed.observation.generation == first.observation.generation + 1
+    assert changed.activity_keys == frozenset({KEY})
+    model = import_module('twicc.core.models').ComputeAggregateRepair
+    assert model.objects.get(pk=changed.observation.journal_id).activity_keys == [
+        ['day', None, 'codex', '2026-10-13'], ['project', 'new'], ['project', 'old']]
+    assert journal.load_compute_repair('source', 'incarnation') == changed
+
+
+def test_legacy_row_has_no_project_obligations():
+    journal = api()
+    snapshot = merge(journal, activity_keys=[KEY], source_changed=True)
+    assert journal.load_compute_repair('source', 'incarnation').project_ids == frozenset()
+
+
+@pytest.mark.parametrize('tag', [['project', ''], ['project', None], ['project', 3], ['project'], ['other', 'id']])
+def test_malformed_project_tag_fails_closed(tag):
+    journal = api()
+    snapshot = merge(journal, source_changed=True)
+    model = import_module('twicc.core.models').ComputeAggregateRepair
+    model.objects.filter(pk=snapshot.observation.journal_id).update(activity_keys=[tag])
+    with pytest.raises(ValueError):
+        journal.load_compute_repair('source', 'incarnation')
+
+
+@pytest.mark.parametrize('project_id', ['', None, 4, ['nested']])
+def test_invalid_project_id_is_rejected_before_writing(project_id):
+    journal = api()
+    with transaction.atomic(), pytest.raises(ValueError):
+        journal.merge_compute_repair('source', 'incarnation', project_ids=[project_id], source_changed=True)
+    assert journal.load_compute_repair('source', 'incarnation') is None

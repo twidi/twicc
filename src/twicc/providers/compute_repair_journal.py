@@ -15,7 +15,8 @@ from django.db.transaction import TransactionManagementError
 from twicc.core.models import ComputeAggregateRepair, DailyActivity, WeeklyActivity
 
 ActivityKey = tuple[type[DailyActivity] | type[WeeklyActivity], str | None, str, date]
-# JSON shape: ["day" | "week", nullable project ID, provider, ISO date].
+# JSON shapes: ["day" | "week", nullable project ID, provider, ISO date]
+# and ["project", nonempty project ID]. Project tags stay outside ActivityKey.
 SerializedActivityKey = list[str | None]
 
 
@@ -30,6 +31,7 @@ class RepairSnapshot(NamedTuple):
     observation: RepairObservation
     activity_keys: frozenset[ActivityKey]
     parent_ids: frozenset[str]
+    project_ids: frozenset[str] = frozenset()
 
 
 class RepairObservationChanged(RuntimeError):
@@ -73,17 +75,25 @@ def _deserialize_key(key: SerializedActivityKey) -> ActivityKey:
 
 
 def _parents(parent_ids: Iterable[str]) -> frozenset[str]:
-    result = frozenset(parent_ids)
+    result = tuple(parent_ids)
     if any(not isinstance(parent_id, str) or not parent_id for parent_id in result):
-        raise ValueError("Parent IDs must be nonempty strings")
-    return result
+        raise ValueError("Parent and project IDs must be nonempty strings")
+    return frozenset(result)
 
 
 def _snapshot(row: ComputeAggregateRepair) -> RepairSnapshot:
+    keys = []
+    projects = set()
+    for tag in row.activity_keys:
+        if isinstance(tag, list) and len(tag) == 2 and tag[0] == "project":
+            projects.update(_parents([tag[1]]))
+        else:
+            keys.append(_deserialize_key(tag))
     return RepairSnapshot(
         RepairObservation(row.pk, row.session_id, row.incarnation, row.generation),
-        frozenset(_deserialize_key(key) for key in row.activity_keys),
+        frozenset(keys),
         _parents(row.parent_ids),
+        frozenset(projects),
     )
 
 
@@ -105,6 +115,7 @@ def merge_compute_repair(
     *,
     activity_keys: Iterable[ActivityKey] = (),
     parent_ids: Iterable[str] = (),
+    project_ids: Iterable[str] = (),
     source_changed: bool,
     create: bool = True,
 ) -> RepairSnapshot | None:
@@ -113,6 +124,7 @@ def merge_compute_repair(
     # Validate the complete input before the first write, including generator inputs.
     keys = frozenset(_deserialize_key(_serialize_key(key)) for key in activity_keys)
     parents = _parents(parent_ids)
+    projects = _parents(project_ids)
     row = ComputeAggregateRepair.objects.filter(session_id=session_id, incarnation=incarnation).first()
     if row is None:
         if not create:
@@ -120,8 +132,8 @@ def merge_compute_repair(
         row = ComputeAggregateRepair.objects.create(
             session_id=session_id,
             incarnation=incarnation,
-            generation=int(source_changed or bool(keys) or bool(parents)),
-            activity_keys=_ordered_keys(keys),
+            generation=int(source_changed or bool(keys) or bool(parents) or bool(projects)),
+            activity_keys=_ordered_keys(keys) + [["project", project] for project in sorted(projects)],
             parent_ids=sorted(parents),
         )
         return _snapshot(row)
@@ -129,9 +141,11 @@ def merge_compute_repair(
     previous = _snapshot(row)
     merged_keys = previous.activity_keys | keys
     merged_parents = previous.parent_ids | parents
-    if source_changed or merged_keys != previous.activity_keys or merged_parents != previous.parent_ids:
+    merged_projects = previous.project_ids | projects
+    if (source_changed or merged_keys != previous.activity_keys or merged_parents != previous.parent_ids
+            or merged_projects != previous.project_ids):
         row.generation += 1
-        row.activity_keys = _ordered_keys(merged_keys)
+        row.activity_keys = _ordered_keys(merged_keys) + [["project", project] for project in sorted(merged_projects)]
         row.parent_ids = sorted(merged_parents)
         row.save(update_fields=["generation", "activity_keys", "parent_ids"])
         return _snapshot(row)
