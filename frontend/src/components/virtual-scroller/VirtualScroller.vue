@@ -531,6 +531,21 @@ onMounted(() => {
     }
 })
 
+/**
+ * The sentinel observer only reports CHANGES of intersection, and its callback
+ * drops every report made while the scroller is suspended. Content that lands
+ * during a suspension (a session left in KeepAlive, a hidden tab) can move the
+ * sentinel out of view without the flag ever hearing of it, and no later report
+ * comes if the restored position leaves it where it already was. Observing the
+ * sentinel again makes the browser deliver its current state, which is exactly
+ * what the resume needs. The chat navigation buttons read the flag.
+ */
+watch(composableSuspended, (isSuspended, wasSuspended) => {
+    if (isSuspended || !wasSuspended || !sentinelObserver || !sentinelRef.value) return
+    sentinelObserver.unobserve(sentinelRef.value)
+    sentinelObserver.observe(sentinelRef.value)
+})
+
 onUnmounted(() => {
     eventMounted.value = false
     rowVisibilityObserver?.disconnect()
