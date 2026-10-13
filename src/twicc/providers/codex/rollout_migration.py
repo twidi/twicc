@@ -374,6 +374,12 @@ def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
     remove_history_memberships(session.id)
     before_session = session_contribution(session)
     before_items = item_contributions(SessionItem.objects.filter(session_id=job.session_id))
+    from twicc.providers.compute_repair import preserve_pending_repair
+
+    pending_repair = preserve_pending_repair(
+        session.id, session.storage_incarnation, before_sessions=[before_session],
+        after_sessions=[before_session], before_items=before_items,
+    )
     # Clear only after deletion commits. A rolled-back replacement keeps retry evidence.
     transaction.on_commit(lambda: clear_session(job.session_id))
     transaction.on_commit(lambda: get_compute().end_session_compute(job.session_id))
@@ -391,7 +397,8 @@ def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
     )
     session.refresh_from_db()
     apply_contribution_changes(before_items, [], before_sessions=[before_session],
-        after_sessions=[session_contribution(session)], repair=True)
+        after_sessions=[session_contribution(session)], repair=True,
+        extra_activity_keys=pending_repair.activity_keys if pending_repair is not None else ())
 
 
 @transaction.atomic
@@ -409,6 +416,12 @@ def _insert_replace_codex_history_chunk(session_id: str, items: list[tuple[int, 
         (SessionItem(session=session, line_num=line_num, content=content), content)
         for line_num, content in items
     ])
+    from twicc.providers.compute_repair import preserve_pending_repair
+    from twicc.providers.live_aggregates import session_contribution
+
+    state = session_contribution(session)
+    preserve_pending_repair(session.id, session.storage_incarnation,
+                            before_sessions=[state], after_sessions=[state])
     return len(items)
 
 
@@ -422,6 +435,12 @@ def _finish_replace_codex_history(job: ReplaceCodexHistoryJob) -> int:
     session.stale = False
     # A rebuilt history is showable again, whatever an earlier attempt said.
     session.unavailable_reason = None
+    from twicc.providers.compute_repair import preserve_pending_repair
+    from twicc.providers.live_aggregates import session_contribution
+
+    state = session_contribution(session)
+    preserve_pending_repair(session.id, session.storage_incarnation,
+                            before_sessions=[state], after_sessions=[state])
     session.save(update_fields=["last_offset", "last_line", "mtime", "stale", "unavailable_reason"])
     return len(job.items)
 

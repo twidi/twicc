@@ -2860,6 +2860,7 @@ def _apply_create_session_payload(payload: CreateSessionPayload) -> tuple[object
         else:
             payload.session.refresh_from_db()
         initialize_ingestion_session(payload.session, invalidate=is_new)
+        before_session = session_contribution(payload.session)
         if payload.items:
             insert_ingested_items(payload.session, [
                 (SessionItem(session=payload.session, line_num=ln, content=ct), ct)
@@ -2869,6 +2870,12 @@ def _apply_create_session_payload(payload: CreateSessionPayload) -> tuple[object
         payload.session.last_line = max(payload.session.last_line, payload.last_line)
         payload.session.mtime = max(payload.session.mtime, payload.mtime)
         payload.session.save(update_fields=["last_offset", "last_line", "mtime"])
+        from twicc.providers.compute_repair import preserve_pending_repair
+
+        preserve_pending_repair(
+            payload.session.id, payload.session.storage_incarnation, before_sessions=[before_session],
+            after_sessions=[session_contribution(payload.session)],
+        )
         apply_contribution_changes([], [], before_sessions=[],
             after_sessions=[session_contribution(payload.session)], repair=True)
     return project, created, adopted
@@ -2900,6 +2907,12 @@ def _apply_update_session_payload(payload: UpdateSessionPayload) -> None:
             payload.session.compute_version = None
             update_fields.append("compute_version")
         payload.session.save(update_fields=update_fields)
+        from twicc.providers.compute_repair import preserve_pending_repair
+
+        preserve_pending_repair(
+            payload.session.id, payload.session.storage_incarnation, before_sessions=[before_session],
+            after_sessions=[session_contribution(payload.session)],
+        )
         apply_contribution_changes([], [], before_sessions=[before_session],
             after_sessions=[session_contribution(payload.session)], repair=needs_repair(payload.session))
 
@@ -2970,8 +2983,15 @@ def _apply_delete_sessions_payload(payload: DeleteSessionsPayload) -> list[str]:
             children = set(Session.objects.filter(parent_session_id__in=pending).values_list('id', flat=True)) - ids
             ids.update(children)
             pending = children
-        if not ids:
-            return []
+        from twicc.providers.compute_repair import settle_deleted_repairs
+        from twicc.providers.compute_repair_journal import load_session_repairs
+
+        # A wrong-provider source excludes its journals. Missing sources have no
+        # provider owner: repair their full inventory without touching source caches.
+        missing_ids = set(payload.session_ids) - set(
+            Session.objects.filter(id__in=payload.session_ids).values_list('id', flat=True)
+        )
+        snapshots = load_session_repairs(ids | missing_ids)
         before_sessions = [session_contribution(s) for s in Session.objects.filter(id__in=ids)]
         before_items = item_contributions(SessionItem.objects.filter(session_id__in=ids))
         for session in Session.objects.filter(id__in=ids).iterator(chunk_size=128):
@@ -2979,6 +2999,10 @@ def _apply_delete_sessions_payload(payload: DeleteSessionsPayload) -> list[str]:
             remove_history_memberships(session.id)
         Session.objects.filter(id__in=ids).delete()
         apply_contribution_changes(before_items, [], before_sessions=before_sessions, after_sessions=[], repair=True)
+        # Recheck absence inside the source transaction before orphan settlement.
+        if Session.objects.filter(id__in={snapshot.observation.session_id for snapshot in snapshots}).exists():
+            raise RuntimeError('Deleted repair source still exists')
+        settle_deleted_repairs(snapshots)
         for project_id in {s.project_id for s in before_sessions}:
             update_project_metadata(project_id)
     return sorted(ids)

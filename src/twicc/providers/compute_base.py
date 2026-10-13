@@ -4231,6 +4231,12 @@ class BaseSessionCompute:
             if line.strip():
                 lines.append(line)
         if not lines:
+            from twicc.providers.compute_repair import preserve_pending_repair
+
+            preserve_pending_repair(
+                session.id, session.storage_incarnation, before_sessions=[before_session],
+                after_sessions=[session_contribution(session)],
+            )
             session.save(update_fields=['last_offset', 'mtime'])
             return LiveSyncUpdates.empty()
 
@@ -4793,8 +4799,18 @@ class BaseSessionCompute:
             session_update_fields.append("goals")
         save_lifecycle(session, update_fields=session_update_fields)
 
+        from twicc.providers.compute_repair import preserve_pending_repair
+
+        inserted_contributions = item_contributions(
+            SessionItem.objects.filter(session=session, line_num__in=new_line_nums),
+        )
+        preserve_pending_repair(
+            session.id, session.storage_incarnation, before_sessions=[before_session],
+            after_sessions=[session_contribution(session)], after_items=inserted_contributions,
+            historical_timestamps=session.items.values_list('timestamp', flat=True),
+        )
         apply_contribution_changes(
-            [], item_contributions(SessionItem.objects.filter(session=session, line_num__in=new_line_nums)),
+            [], inserted_contributions,
             before_sessions=[before_session], after_sessions=[session_contribution(session)],
             repair=repair_aggregates,
         )

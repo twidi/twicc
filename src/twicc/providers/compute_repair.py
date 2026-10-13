@@ -1,6 +1,7 @@
 """Exact aggregate repair and atomic settlement of durable obligations."""
 
 from collections.abc import Iterable, Sequence
+from datetime import datetime
 
 from django.db import transaction
 from django.db.models import F
@@ -52,6 +53,44 @@ def record_compute_repair(
         session.id, session.storage_incarnation, activity_keys=keys,
         parent_ids=(state.parent_session_id for state in states if state.parent_session_id),
         source_changed=source_changed,
+    )
+
+
+def preserve_pending_repair(
+    session_id: str,
+    incarnation: str,
+    *,
+    before_sessions: Sequence[SessionContribution],
+    after_sessions: Sequence[SessionContribution],
+    before_items: Sequence[ItemContribution] = (),
+    after_items: Sequence[ItemContribution] = (),
+    historical_timestamps: Iterable[datetime | None] = (),
+    source_changed: bool = True,
+) -> RepairSnapshot | None:
+    """Retain before/after evidence only for an existing source journal."""
+    _require_transaction()
+    # The absent-journal path performs one indexed read and never walks history.
+    pending = merge_compute_repair(session_id, incarnation, source_changed=False, create=False)
+    if pending is None:
+        return None
+    states = (*before_sessions, *after_sessions)
+    keys = contribution_activity_keys((*before_items, *after_items), states)
+    before = {state.session_id: state for state in before_sessions}
+    scopes_changed = any(
+        (before[state.session_id].project_id, before[state.session_id].provider,
+         before[state.session_id].type, before[state.session_id].hidden)
+        != (state.project_id, state.provider, state.type, state.hidden)
+        for state in after_sessions if state.session_id in before
+    )
+    if scopes_changed:
+        for timestamp in historical_timestamps:
+            keys.update(contribution_activity_keys(
+                sessions=[state._replace(created_at=timestamp) for state in states],
+            ))
+    return merge_compute_repair(
+        session_id, incarnation, activity_keys=keys,
+        parent_ids=(state.parent_session_id for state in states if state.parent_session_id),
+        source_changed=source_changed, create=False,
     )
 
 
