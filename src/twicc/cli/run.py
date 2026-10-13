@@ -207,8 +207,13 @@ async def run_server(port: int):
     # time a producer tries to submit. ``stop_db_writer`` is used at
     # the very end of this function's shutdown path, after every producer
     # has shut down.
-    from twicc.providers.db_writer import start_db_writer, stop_db_writer
+    from twicc.providers.db_writer import start_db_writer, stop_db_writer, wait_db_writer_ready
     start_db_writer()
+    try:
+        await wait_db_writer_ready()
+    except BaseException:
+        await stop_db_writer()
+        raise
 
     # Run even with TWICC_NO_MCP: restoring the password still requires manual
     # reactivation of external access. This precedes all request handling.

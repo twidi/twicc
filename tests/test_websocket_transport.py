@@ -82,7 +82,7 @@ async def transport_app(application, wire=None):
         assert transport._reader.done()
 
 
-def test_ping_overtakes_blocked_session_viewed():
+def test_ping_overtakes_blocked_session_viewed(transactional_db):
     @writer_running()
     async def run():
         started, release = asyncio.Event(), asyncio.Event()
@@ -380,7 +380,7 @@ def test_channels_cleanup_on_transport_and_connection_end(monkeypatch, settings,
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("admitted", [False, True])
-def test_channels_repeated_cancellation_drains_write_and_cleanup(monkeypatch, settings, admitted):
+def test_channels_repeated_cancellation_drains_write_and_cleanup(monkeypatch, settings, admitted, transactional_db):
     @writer_running()
     async def run():
         started, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
@@ -450,7 +450,7 @@ def test_send_failure_wakes_full_fifo_and_discards_only_unadmitted_event():
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("ending", ["receive_failure", "swallowed_send_failure", "disconnect"])
-def test_channels_transport_end_drains_admitted_write(monkeypatch, settings, ending):
+def test_channels_transport_end_drains_admitted_write(monkeypatch, settings, ending, transactional_db):
     @writer_running()
     async def run():
         started, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()

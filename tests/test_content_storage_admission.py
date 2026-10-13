@@ -155,7 +155,7 @@ def test_storage_admission_requires_writer_lifetime():
     asyncio.run(scenario())
 
 
-def test_shutdown_drains_admission_before_clearing_locks():
+def test_shutdown_drains_admission_before_clearing_locks(transactional_db):
     async def scenario():
         db_writer.start_db_writer()
         admitted = asyncio.Event()
@@ -409,7 +409,7 @@ def test_combined_content_snapshot_and_origin_restore_after_failure(coordinated_
     asyncio.run(scenario())
 
 
-def test_shutdown_waits_for_background_grant_across_repeated_cancellation():
+def test_shutdown_waits_for_background_grant_across_repeated_cancellation(transactional_db):
     # A foreground drain sentinel can overtake a queued background resource request.
     from twicc.providers.write_coordinator import WritePriority, WriteResources
     async def scenario():

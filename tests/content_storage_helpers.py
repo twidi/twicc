@@ -74,3 +74,12 @@ def prepare_plaintext_search(session) -> None:
         Session.objects.filter(pk=session.pk).update(content_storage_version=CONTENT_STORAGE_VERSION)
         snapshot = snapshot_root_storage(session.id)
         assert verify_plaintext_root(snapshot)
+
+
+@pytest.fixture(autouse=True)
+def isolated_dictionary_cache():
+    from twicc.core.content_storage.dictionaries import reset_dictionary_cache
+
+    reset_dictionary_cache()
+    yield
+    reset_dictionary_cache()

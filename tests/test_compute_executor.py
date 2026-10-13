@@ -215,7 +215,7 @@ def test_stop_drains_closes_worker_connection_and_allows_restart():
     asyncio.run(scenario())
 
 
-def test_cancelled_writer_stop_finishes_worker_shutdown_before_raising():
+def test_cancelled_writer_stop_finishes_worker_shutdown_before_raising(transactional_db):
     started = threading.Event()
     release = threading.Event()
 

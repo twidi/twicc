@@ -2,7 +2,6 @@
 
 import hashlib
 from codecs import getincrementaldecoder
-from functools import lru_cache
 from time import sleep
 
 import zstandard
@@ -27,11 +26,9 @@ def _binary(value, name: str) -> bytes:
 
 
 def _load_dictionary(dictionary_id: int) -> ContentDictionary:
-    try:
-        dictionary = ContentDictionary.objects.get(pk=dictionary_id)
-    except ContentDictionary.DoesNotExist as error:
-        raise ContentIntegrityError(f"Missing content dictionary {dictionary_id}") from error
-    return _validate_dictionary(dictionary)
+    from twicc.core.content_storage.dictionaries import get_dictionary
+
+    return get_dictionary(dictionary_id).row
 
 
 def _validate_dictionary(dictionary: ContentDictionary) -> ContentDictionary:
@@ -44,14 +41,8 @@ def _validate_dictionary(dictionary: ContentDictionary) -> ContentDictionary:
     return dictionary
 
 
-@lru_cache(maxsize=32)
-def _compression_dictionary(digest: bytes, payload: bytes) -> zstandard.ZstdCompressionDict:
-    # Immutable bytes and digest identify the dictionary across database identities.
-    return zstandard.ZstdCompressionDict(payload, dict_type=zstandard.DICT_TYPE_RAWCONTENT)
-
-
 def _dictionary_data(dictionary: ContentDictionary) -> zstandard.ZstdCompressionDict:
-    return _compression_dictionary(bytes(dictionary.sha256), bytes(dictionary.payload))
+    return zstandard.ZstdCompressionDict(bytes(dictionary.payload), dict_type=zstandard.DICT_TYPE_RAWCONTENT)
 
 
 def encode_plain(text: str) -> EncodedContent:
@@ -66,8 +57,8 @@ def encode_plain(text: str) -> EncodedContent:
 def encode_cold(text: str, dictionary_id: int, policy_version: str) -> tuple[EncodedContent, bool]:
     """Compress only when smaller; the caller records the supplied policy identity."""
     plain = encode_plain(text)
-    dictionary = _load_dictionary(dictionary_id)
-    compressed = zstandard.ZstdCompressor(level=COMPRESSION_LEVEL, dict_data=_dictionary_data(dictionary)).compress(
+    dictionary = _operation_dictionary(dictionary_id, None)
+    compressed = zstandard.ZstdCompressor(level=COMPRESSION_LEVEL, dict_data=dictionary.native).compress(
         plain.payload
     )
     if len(compressed) >= plain.raw_size:
@@ -76,10 +67,12 @@ def encode_cold(text: str, dictionary_id: int, policy_version: str) -> tuple[Enc
 
 
 def _operation_dictionary(dictionary_id, cache):
+    from twicc.core.content_storage.dictionaries import get_dictionary
+
     if cache is None:
-        return _load_dictionary(dictionary_id)
+        return get_dictionary(dictionary_id)
     if dictionary_id not in cache:
-        dictionary = _load_dictionary(dictionary_id)
+        dictionary = get_dictionary(dictionary_id)
         if len(cache) >= 32:
             cache.pop(next(iter(cache)))
         cache[dictionary_id] = dictionary
@@ -106,7 +99,7 @@ def _decode_bytes(row: SessionItemContent, dictionary_cache=None) -> bytes:
             if frame_size not in (row.raw_size, -1):
                 raise ContentIntegrityError('Compressed frame size mismatch')
             # A fresh decoder avoids sharing mutable decoder state between threads.
-            raw = zstandard.ZstdDecompressor(dict_data=_dictionary_data(dictionary)).decompress(
+            raw = zstandard.ZstdDecompressor(dict_data=dictionary.native).decompress(
                 payload, max_output_size=max(row.raw_size, 1), allow_extra_data=False
             )
         except zstandard.ZstdError as error:
@@ -143,7 +136,7 @@ def transcode_content(row: SessionItemContent, dictionary_id: int | None = None,
     else:
         dictionary = _operation_dictionary(dictionary_id, dictionary_cache)
         compressed = zstandard.ZstdCompressor(
-            level=COMPRESSION_LEVEL, dict_data=_dictionary_data(dictionary),
+            level=COMPRESSION_LEVEL, dict_data=dictionary.native,
         ).compress(raw)
         if len(compressed) >= row.raw_size:
             result = plain, True

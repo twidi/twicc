@@ -24,7 +24,8 @@ from twicc.core.content_storage.state import (
     resolve_root_decision, resolve_root_decisions, snapshot_session_promotion,
 )
 from twicc.core.content_storage.types import PreparedRepresentation, RootPromotionCursor, RootStorageSnapshot, SessionPromotionSnapshot
-from twicc.core.models import ContentDictionary, Session, SessionItem, SessionItemContent
+from twicc.core.models import Session, SessionItem, SessionItemContent
+from twicc.core.content_storage.dictionaries import get_provider_dictionary
 from twicc.providers.write_coordinator import WritePriority, write_priority
 
 logger = logging.getLogger(__name__)
@@ -168,7 +169,8 @@ def _owners_cold(row, active):
 
 
 def _dictionary(row):
-    return ContentDictionary.objects.filter(provider=row.dictionary_provider).order_by('-version').first()
+    entry = get_provider_dictionary(row.dictionary_provider)
+    return None if entry is None else entry.row
 
 
 def prepare_representation(content_id: int, policy_version: str, observed=None, dictionary=None,
@@ -189,7 +191,9 @@ def prepare_representation(content_id: int, policy_version: str, observed=None, 
             dictionary_cache = {}
         if dictionary.id not in dictionary_cache and len(dictionary_cache) >= 32:
             dictionary_cache.pop(next(iter(dictionary_cache)))
-        dictionary_cache[dictionary.id] = dictionary
+        from twicc.core.content_storage.dictionaries import get_dictionary
+
+        dictionary_cache[dictionary.id] = get_dictionary(dictionary.id)
         encoded, no_gain = transcode_content(row, dictionary.id, dictionary_cache=dictionary_cache)
     return PreparedRepresentation(row.id, row.codec, row.dictionary_id, encoded, policy_version, no_gain)
 

@@ -133,6 +133,11 @@ def test_server_disables_external_access_before_network_startup(startup_state, m
     monkeypatch.setenv("TWICC_NO_MCP", kill_switch)
     monkeypatch.setattr("twicc.providers.db_writer.start_db_writer", lambda: None)
 
+    async def ready():
+        pass
+
+    monkeypatch.setattr("twicc.providers.db_writer.wait_db_writer_ready", ready)
+
     class StopBeforeNetwork(Exception):
         pass
 

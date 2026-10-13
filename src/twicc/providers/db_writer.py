@@ -663,6 +663,16 @@ class _MarkSessionsIndexedJob(NamedTuple):
 # =============================================================================
 
 
+_db_writer_ready: asyncio.Future | None = None
+
+
+async def wait_db_writer_ready() -> None:
+    """Wait for dictionary validation before starting any producer."""
+    if _db_writer_ready is None:
+        raise RuntimeError("DB writer not started")
+    await asyncio.shield(_db_writer_ready)
+
+
 def start_db_writer() -> None:
     """Create the shared queues and launch the permanent DB writer task.
 
@@ -672,11 +682,14 @@ def start_db_writer() -> None:
     global _thread_queue, _subprocess_queue
     global _db_writer_stop_event, _db_writer_task, _async_queue, _background_async_queue
     global _write_coordinator, _db_write_lock, _storage_admission_lock
-    global _repair_recovery, _repair_discovery_task
+    global _repair_recovery, _repair_discovery_task, _db_writer_ready
 
     if _db_writer_task is not None:
         raise RuntimeError("DB writer already started")
 
+    from twicc.core.content_storage.dictionaries import reset_dictionary_cache
+
+    reset_dictionary_cache()
     # Validate the synchronous entry point before allocating owned workers.
     asyncio.get_running_loop()
     ordinary_started = application_started = False
@@ -689,6 +702,7 @@ def start_db_writer() -> None:
         _subprocess_queue = queue.Queue(maxsize=COMPUTE_QUEUE_MAXSIZE)
         _background_async_queue = asyncio.Queue()
         _async_queue = _ForegroundJobQueue()
+        _db_writer_ready = asyncio.get_running_loop().create_future()
         _db_writer_stop_event = asyncio.Event()
         _write_coordinator = WriterCoordinator()
         _db_write_lock = _write_coordinator.foreground_lock(WriteResources.WRITER)
@@ -700,7 +714,7 @@ def start_db_writer() -> None:
         async def failed_start():
             global _db_writer_task, _db_writer_stop_event, _thread_queue, _subprocess_queue
             global _async_queue, _background_async_queue, _write_coordinator, _db_write_lock, _storage_admission_lock
-            global _repair_recovery, _repair_discovery_task
+            global _repair_recovery, _repair_discovery_task, _db_writer_ready
             try:
                 await _close_compute_repair_recovery()
                 try:
@@ -714,6 +728,8 @@ def start_db_writer() -> None:
                 _thread_queue = _subprocess_queue = _async_queue = _background_async_queue = None
                 _write_coordinator = _db_write_lock = _storage_admission_lock = None
                 _repair_recovery = _repair_discovery_task = None
+                _db_writer_ready = None
+                reset_dictionary_cache()
         # Startup is synchronous. Retain asynchronous drainage as the lifetime
         # task, so stop and restart cannot race a still-running owned worker.
         _db_writer_task = asyncio.create_task(failed_start())
@@ -757,7 +773,7 @@ async def stop_db_writer() -> None:
     """
     global _write_coordinator, _db_write_lock, _storage_admission_lock, _db_writer_task, _db_writer_stop_event
     global _thread_queue, _subprocess_queue, _async_queue, _background_async_queue, _pending_compute
-    global _repair_recovery, _repair_discovery_task
+    global _repair_recovery, _repair_discovery_task, _db_writer_ready
 
     cancelled = False
     transport_errors = []
@@ -821,6 +837,9 @@ async def stop_db_writer() -> None:
         # works, and any stray post-stop queue-API call surfaces a clean
         # ``RuntimeError("DB writer not started")`` instead of returning
         # a drained queue or handing out an orphan lock.
+        from twicc.core.content_storage.dictionaries import reset_dictionary_cache
+
+        reset_dictionary_cache()
         _write_coordinator = None
         _db_write_lock = None
         _storage_admission_lock = None
@@ -831,6 +850,7 @@ async def stop_db_writer() -> None:
         _async_queue = None
         _background_async_queue = None
         _pending_compute = None
+        _db_writer_ready = None
         _repair_recovery = _repair_discovery_task = None
     if cancelled:
         # Our caller wanted us cancelled; honour that AFTER the writer task
@@ -2500,7 +2520,33 @@ async def _settle_async_job(job, apply_fn, label: str) -> None:
 
 async def _db_writer_loop() -> None:
     """Drain normal shutdown; external cancellation closes every owned result."""
+    from twicc.core.content_storage.dictionaries import preload_dictionaries
+
     try:
+        try:
+            await run_compute_sync(preload_dictionaries)
+        except BaseException as error:
+            _db_writer_ready.set_exception(error)
+            # Consume diagnostics even when an old caller does not await readiness.
+            _db_writer_ready.exception()
+            _db_writer_stop_event.set()
+            while not _async_queue.empty():
+                job, demand = _async_queue.get_nowait()
+                try:
+                    _settle_unhandled_async_job(job, error)
+                finally:
+                    demand.release()
+            while not _background_async_queue.empty():
+                _settle_unhandled_async_job(_background_async_queue.get_nowait(), error)
+            while not _thread_queue.empty():
+                message = _thread_queue.get_nowait()
+                if isinstance(message, InitialSyncDoneMarker) and not message.done_future.done():
+                    message.done_future.set_exception(error)
+            for future in _compute_done_events.values():
+                if not future.done():
+                    future.set_exception(error)
+            raise
+        _db_writer_ready.set_result(None)
         await _db_writer_loop_body()
     except asyncio.CancelledError:
         _db_writer_stop_event.set()

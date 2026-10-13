@@ -181,6 +181,9 @@ def test_sync_command_routes_queue_and_always_stops_writer(monkeypatch, fail_syn
     def start():
         events.append('start')
 
+    async def ready():
+        events.append('ready')
+
     async def stop():
         events.append('stop')
 
@@ -193,6 +196,7 @@ def test_sync_command_routes_queue_and_always_stops_writer(monkeypatch, fail_syn
 
     monkeypatch.setattr(db_writer, 'start_db_writer', start)
     monkeypatch.setattr(db_writer, 'stop_db_writer', stop)
+    monkeypatch.setattr(db_writer, 'wait_db_writer_ready', ready)
     monkeypatch.setattr(db_writer, 'get_thread_queue', lambda: queue)
     monkeypatch.setattr(sync, 'sync_all_with_progress', synchronize)
     if fail_sync:
@@ -200,7 +204,7 @@ def test_sync_command_routes_queue_and_always_stops_writer(monkeypatch, fail_syn
             command.handle(reset=False)
     else:
         command.handle(reset=False)
-    assert events == ['start', 'sync', 'stop']
+    assert events == ['start', 'ready', 'sync', 'stop']
 
 
 def test_reset_rollback_restores_project_history_and_membership(monkeypatch):

@@ -482,6 +482,7 @@ def test_server_owns_title_runner_before_provider_start_and_until_teardown(
         monkeypatch.setattr(run, "get_orchestrator_registry", lambda: registry)
         monkeypatch.setattr("twicc.providers.db_writer.start_db_writer", lambda: effects.append("db-start"))
         monkeypatch.setattr("twicc.providers.db_writer.stop_db_writer", db_stop)
+        monkeypatch.setattr("twicc.providers.db_writer.wait_db_writer_ready", noop)
         for name in (
             "sync_all_providers", "_orchestrate_global_search", "start_price_sync_task", "start_quota_wakeup_task",
             "start_content_maintenance_task", "start_peer_purge_task", "start_tmux_cleanup_task",

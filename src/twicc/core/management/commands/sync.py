@@ -38,10 +38,11 @@ class Command(BaseCommand):
         asyncio.run(self._synchronize())
 
     async def _synchronize(self):
-        from twicc.providers.db_writer import get_thread_queue, start_db_writer, stop_db_writer
+        from twicc.providers.db_writer import get_thread_queue, start_db_writer, stop_db_writer, wait_db_writer_ready
 
         start_db_writer()
         try:
+            await wait_db_writer_ready()
             await asyncio.to_thread(sync_all_with_progress, get_thread_queue(), stream=self.stdout)
         finally:
             await stop_db_writer()
