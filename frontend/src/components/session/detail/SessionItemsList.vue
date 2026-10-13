@@ -762,8 +762,8 @@ async function loadSubagentSession() {
  * We only load the last N items initially since sessions open at the bottom.
  * Items at the top will be lazy-loaded when the user scrolls up.
  */
-async function loadSessionData(lastLine) {
-    return store.loadSessionHistory(props.projectId, props.sessionId, lastLine, props.parentSessionId)
+async function loadSessionData(lastLine, options) {
+    return store.loadSessionHistory(props.projectId, props.sessionId, lastLine, props.parentSessionId, options)
 }
 
 // A server snapshot can promote a draft while preserving the session object.
@@ -903,7 +903,8 @@ async function handleRetry() {
 
     const release = beginRevealFlow()
     try {
-        await loadSessionData(lastLine)
+        // Forced: a retry always starts a fresh load, even over a stalled one.
+        await loadSessionData(lastLine, { force: true })
 
         // The error panel stayed on screen during the retry's load: the skeleton
         // starts counting only now.

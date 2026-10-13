@@ -158,6 +158,8 @@ const sessionsLoadInFlight = new Map() // projectId -> Promise<Set<sessionId>>
 
 // Shared by the conversation's first load and reconnect recovery.
 const sessionHistoryInFlight = new Map() // sessionId -> Promise<boolean>
+const sessionHistoryControllers = new Map() // sessionId -> AbortController of the opening load in flight
+const SESSION_HISTORY_TIMEOUT_MS = 30000 // a stalled network request must end in an error, not hang forever
 const itemsCoverageInFlight = new Map() // sessionId -> Promise<boolean>
 
 /**
@@ -2812,11 +2814,14 @@ export const useDataStore = defineStore('data', {
          * Load complete metadata and the opening content window. Both the
          * conversation and reconnect recovery await this same initial load.
          * Subagents open at the top; parent sessions open at the bottom.
+         * `force` (user retry) supersedes a load already in flight: the old one is
+         * aborted and its outcome discarded, so a stalled request can never block a retry.
          * @returns {Promise<boolean>} false when either request failed.
          */
-        async loadSessionHistory(projectId, sessionId, lastLine, parentSessionId = null) {
+        async loadSessionHistory(projectId, sessionId, lastLine, parentSessionId = null, { force = false } = {}) {
             const existing = sessionHistoryInFlight.get(sessionId)
-            if (existing) return existing
+            if (existing && !force) return existing
+            if (existing) sessionHistoryControllers.get(sessionId)?.abort()
             if (!lastLine || isLaunchedEphemeral(this.sessions[sessionId])) return true
 
             this.localState.sessions[sessionId] ||= {}
@@ -2824,6 +2829,9 @@ export const useDataStore = defineStore('data', {
             // object on a first visit, while later store reads return its proxy.
             const local = this.localState.sessions[sessionId]
             const wasFetched = !!local.itemsFetched
+            const controller = new AbortController()
+            const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(SESSION_HISTORY_TIMEOUT_MS)])
+            sessionHistoryControllers.set(sessionId, controller)
             // Register before publishing loading state: a watcher or live item
             // may start coverage while this opening request is still pending.
             const pending = Promise.resolve().then(async () => {
@@ -2836,12 +2844,13 @@ export const useDataStore = defineStore('data', {
                     : `/api/projects/${projectId}/sessions/${sessionId}`
                 try {
                     const [metadata, items] = await Promise.all([
-                        this.loadSessionMetadata(projectId, sessionId, parentSessionId),
-                        apiFetch(`${baseUrl}/items/?range=${first}:${last}`)
+                        this.loadSessionMetadata(projectId, sessionId, parentSessionId, signal),
+                        apiFetch(`${baseUrl}/items/?range=${first}:${last}`, { signal })
                             .then(res => res.ok ? res.json() : null),
                     ])
-                    // An unloaded session must not be populated by an old load.
-                    if (this.localState.sessions[sessionId] !== local || !local.itemsFetched) return false
+                    // An unloaded session, or a load superseded by a retry, must not be populated by an old load.
+                    if (controller.signal.aborted || this.localState.sessions[sessionId] !== local
+                        || !local.itemsFetched) return false
                     if (!metadata || !items) throw new Error('Failed to load session history')
 
                     // Keep live lines delivered during a first load, including
@@ -2855,20 +2864,27 @@ export const useDataStore = defineStore('data', {
                     return true
                 } catch (error) {
                     console.error('Failed to load session history:', error)
+                    if (controller.signal.aborted) return false
                     if (this.localState.sessions[sessionId] === local && local.itemsFetched) {
                         local.itemsFetched = wasFetched
                         local.itemsLoadingError = true
                     }
                     return false
                 } finally {
-                    if (this.localState.sessions[sessionId] === local) local.itemsLoading = false
+                    // A superseded load leaves the loading state to its successor.
+                    if (!controller.signal.aborted && this.localState.sessions[sessionId] === local) {
+                        local.itemsLoading = false
+                    }
                 }
             })
             sessionHistoryInFlight.set(sessionId, pending)
             try {
                 return await pending
             } finally {
-                sessionHistoryInFlight.delete(sessionId)
+                if (sessionHistoryInFlight.get(sessionId) === pending) {
+                    sessionHistoryInFlight.delete(sessionId)
+                    sessionHistoryControllers.delete(sessionId)
+                }
             }
         },
 
@@ -4343,7 +4359,7 @@ export const useDataStore = defineStore('data', {
          * @param {string|null} parentSessionId - If provided, this is a subagent request
          * @returns {Promise<Array|null>} Array of metadata objects or null on error
          */
-        async loadSessionMetadata(projectId, sessionId, parentSessionId = null) {
+        async loadSessionMetadata(projectId, sessionId, parentSessionId = null, signal = undefined) {
             if (isLaunchedEphemeral(this.sessions[sessionId])) return
             if (!parentSessionId) this.loadAsyncQuestions(projectId, sessionId).catch(error => console.warn('Failed to load async questions:', error))
             // Build URL (handle subagent case)
@@ -4352,7 +4368,7 @@ export const useDataStore = defineStore('data', {
                 : `/api/projects/${projectId}/sessions/${sessionId}`
 
             try {
-                const res = await apiFetch(`${baseUrl}/items/metadata/`)
+                const res = await apiFetch(`${baseUrl}/items/metadata/`, { signal })
                 if (!res.ok) {
                     console.error('Failed to load session metadata:', res.status, res.statusText)
                     return null

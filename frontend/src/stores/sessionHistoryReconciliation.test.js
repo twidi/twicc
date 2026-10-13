@@ -37,9 +37,9 @@ function fixture({ fetched = false, lastLine = 2 } = {}) {
     const deps = { hasContent, getParsedContent, clearParsedContent, setParsedContent, INITIAL_ITEMS_COUNT,
         isLaunchedEphemeral: s => !!s.ephemeral,
         itemsCoverageInFlight: new Function(`return ${source.match(/const itemsCoverageInFlight = (new \w+\(\))/)[1]}`)(),
-        sessionHistoryInFlight: new Map(),
+        sessionHistoryInFlight: new Map(), sessionHistoryControllers: new Map(), SESSION_HISTORY_TIMEOUT_MS: 30000,
         lineNumsToRanges: lines => lines.map(line => [line, line]),
-        apiFetch: async url => { requests.push(url); return respond(url) }, console: quiet,
+        apiFetch: async (url, options) => { requests.push(url); return respond(url, options) }, console: quiet,
         getProviderHelpers: () => ({ extractUserMessageText: userMessageText, extractUserMessageAttachmentCount: userMessageAttachmentCount }),
         attachmentMatchKey, attachmentCountForMessage, matchableUserMessage,
     }
@@ -218,4 +218,20 @@ test('a first-load snapshot does not discard live content received while REST is
     pending.resolve()
     assert.equal(await opening, true)
     assert.equal(getParsedContent(store.sessionItems.s[1]).payload.item.content[0].text, 'Answer')
+})
+
+test('a forced load supersedes a stalled one, so a retry always runs', async () => {
+    const { store, respond } = fixture()
+    delete store.localState.sessions.s
+    respond((url, options) => new Promise((resolve, reject) => {
+        options?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+    }))
+    const stalled = store.loadSessionHistory('p', 's', 2)
+    await Promise.resolve()
+    respond(async url => ({ ok: true, json: async () => copy(url.includes('metadata') ? metadata : transcript) }))
+    assert.equal(await store.loadSessionHistory('p', 's', 2, null, { force: true }), true)
+    assert.equal(await stalled, false)
+    assert.equal(store.localState.sessions.s.itemsLoadingError, false)
+    assert.equal(store.localState.sessions.s.itemsLoading, false)
+    assert.equal(store.sessionItems.s[1].kind, 'assistant_message')
 })
