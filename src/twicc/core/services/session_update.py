@@ -145,6 +145,35 @@ async def _lookup_session_for_update(
     return session, project, provider, None
 
 
+def archive_sessions_bulk(ids: set[str]) -> list[str]:
+    """Archive ``ids`` in one transaction and record ``archived.started`` per flipped session.
+
+    Sync; call under the DB write lock from a worker thread. The caller computed
+    ``ids`` before taking the lock, so another request may have archived some of
+    them meanwhile: events are written only for the sessions whose ``archived``
+    is still false here (design §6). The endpoint's candidate filter excluded
+    active, pinned and hidden sessions when it built ``ids``, but the write below
+    filters only by id: the timeline records exactly the sessions that flipped.
+    ``search_version`` is reset for every id, as before, so an interrupted
+    re-index is picked up at the next boot.
+    """
+    from twicc.core.models import Session
+
+    if not ids:
+        return []
+    with transaction.atomic():
+        to_flip = list(
+            Session.objects.filter(id__in=ids, archived=False).values_list("id", "project_id")
+        )
+        Session.objects.filter(id__in=ids).update(archived=True, search_version=0)
+        for session_id, project_id in to_flip:
+            record_event_sync(
+                TimelineKind.ARCHIVED_STARTED, session_id=session_id, project_id=project_id,
+                actor=TimelineActor.USER,
+            )
+    return [session_id for session_id, _ in to_flip]
+
+
 @transaction.atomic
 def persist_session_settings(session_id: str, updates: dict) -> None:
     """Write settings and order widget snapshots under the DB writer lease."""
