@@ -190,3 +190,87 @@ def test_dateless_resolved_root_can_publish_actual_plaintext_readiness():
         assert state.verify_plaintext_root(snapshot)
     root.refresh_from_db()
     assert root.plaintext_verified_epoch == root.content_state_epoch
+
+
+@pytest.mark.parametrize('row_count', [0, 1, 1025])
+def test_plaintext_metadata_query_count_does_not_grow_with_items(row_count):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    root = session('root', content_storage_version=1, storage_incarnation='root-incarnation')
+    plain = SessionItemContent.objects.create(sha256=hashlib.sha256(b'x').digest(), payload=b'x', raw_size=1)
+    SessionItem.objects.bulk_create([
+        SessionItem(session=root, line_num=line, content='', current_content=plain)
+        for line in range(1, row_count + 1)
+    ])
+    with transaction.atomic(), CaptureQueriesContext(connection) as queries:
+        assert state.session_plaintext_metadata(root.id)
+    assert len(queries) <= 2
+
+
+@pytest.mark.parametrize(('change', 'expected'), [
+    ('valid', True), ('absent-original', True), ('missing-session', False),
+    ('incomplete-version', False), ('wrong-version', False), ('missing-incarnation', False),
+    ('empty-incarnation', False), ('legacy', False), ('missing-current', False),
+    ('current-zstd', False), ('original-zstd', False),
+    ('current-dictionary', False), ('original-dictionary', False),
+])
+def test_plaintext_metadata_keeps_version_identity_and_both_reference_checks(change, expected):
+    from tests.content_storage_helpers import _public_dictionary
+
+    root = session('root', content_storage_version=1, storage_incarnation='root-incarnation')
+    current = SessionItemContent.objects.create(sha256=hashlib.sha256(b'current').digest(), payload=b'c', raw_size=1)
+    original = SessionItemContent.objects.create(sha256=hashlib.sha256(b'original').digest(), payload=b'o', raw_size=1)
+    item = SessionItem.objects.create(session=root, line_num=1, content='',
+                                     current_content=current, original_content=original)
+    target_id = root.id
+    if change == 'missing-session':
+        target_id = 'absent'
+    elif change in ('incomplete-version', 'wrong-version'):
+        Session.objects.filter(pk=root.id).update(content_storage_version=None if change == 'incomplete-version' else 2)
+    elif change in ('missing-incarnation', 'empty-incarnation'):
+        Session.objects.filter(pk=root.id).update(storage_incarnation=None if change == 'missing-incarnation' else '')
+    elif change == 'legacy':
+        SessionItem.objects.filter(pk=item.pk).update(content='legacy')
+    elif change == 'missing-current':
+        SessionItem.objects.filter(pk=item.pk).update(current_content=None)
+    elif change == 'absent-original':
+        SessionItem.objects.filter(pk=item.pk).update(original_content=None)
+    elif change.endswith('-zstd'):
+        row = current if change.startswith('current') else original
+        SessionItemContent.objects.filter(pk=row.pk).update(codec='zstd')
+    elif change.endswith('-dictionary'):
+        row = current if change.startswith('current') else original
+        SessionItemContent.objects.filter(pk=row.pk).update(dictionary=_public_dictionary('codex'))
+    with transaction.atomic():
+        assert state.session_plaintext_metadata(target_id) is expected
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('slot', ['current_content', 'original_content'])
+def test_plaintext_metadata_rejects_dangling_reference(slot):
+    from django.db import connection
+
+    root = session('root', content_storage_version=1, storage_incarnation='root-incarnation')
+    plain = SessionItemContent.objects.create(sha256=hashlib.sha256(b'x').digest(), payload=b'x', raw_size=1)
+    item = SessionItem.objects.create(session=root, line_num=1, content='',
+                                     current_content=plain, original_content=plain)
+    with connection.constraint_checks_disabled():
+        try:
+            SessionItem.objects.filter(pk=item.pk).update(**{f'{slot}_id': plain.pk + 1000})
+            with transaction.atomic():
+                assert not state.session_plaintext_metadata(root.id)
+                assert not state.verify_plaintext_root(state.snapshot_root_storage(root.id))
+        finally:
+            SessionItem.objects.filter(pk=item.pk).update(**{f'{slot}_id': plain.pk})
+
+
+@pytest.mark.django_db(transaction=True)
+def test_public_metadata_and_root_verification_require_transaction():
+    root = session('root', content_storage_version=1, storage_incarnation='root-incarnation')
+    with pytest.raises(transaction.TransactionManagementError):
+        state.session_plaintext_metadata(root.id)
+    with transaction.atomic():
+        snapshot = state.snapshot_root_storage(root.id)
+    with pytest.raises(transaction.TransactionManagementError):
+        state.verify_plaintext_root(snapshot)

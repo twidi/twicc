@@ -752,7 +752,9 @@ def validate_final_compute_operation(msg):
 def finish_storage_result(msg):
     """Verify this computed session and optionally certify the root's own plaintext."""
     from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION
-    from twicc.core.content_storage.state import snapshot_root_storage, verify_plaintext_root
+    from twicc.core.content_storage.state import (
+        _session_has_invalid_storage_metadata, snapshot_root_storage, verify_plaintext_root,
+    )
 
     session_id = msg['session_id']
     pending = msg.get('_storage_final_root')
@@ -765,16 +767,14 @@ def finish_storage_result(msg):
         )):
             raise SupersededStorageResult('superseded')
     if SessionItem.objects.filter(session_id=session_id).filter(
-        Q(current_content_id__isnull=True) | ~Q(content=''),
+        Q(current_content__codec__isnull=True) | ~Q(content='')
+        | Q(original_content_id__isnull=False, original_content__codec__isnull=True),
     ).exists():
         raise ContentIntegrityError('Compute storage placement is incomplete')
     decision = resolve_root_decision(session_id, timezone.now(), pending['active_roots'] if pending else frozenset())
-    if (not decision.is_cold or pending and pending['unresolved_active']) and SessionItem.objects.filter(
-        session_id=session_id).filter(
-        (~Q(current_content__codec='plain') | Q(current_content__dictionary_id__isnull=False))
-        | Q(original_content_id__isnull=False) & (
-            ~Q(original_content__codec='plain') | Q(original_content__dictionary_id__isnull=False)),
-    ).exists():
+    if (not decision.is_cold or pending and pending['unresolved_active']) and _session_has_invalid_storage_metadata(
+        session_id,
+    ):
         raise ContentIntegrityError('Hot compute storage requires plaintext through both references')
     Session.objects.filter(pk=session_id).update(content_storage_version=CONTENT_STORAGE_VERSION)
     if decision.resolved and decision.root_id == session_id and not decision.is_cold:

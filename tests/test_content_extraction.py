@@ -654,3 +654,65 @@ def test_failed_preparation_records_elapsed_without_advancing_storage(monkeypatc
         assert operation.preparation_ms == pytest.approx(previous_ms + 250.0)
     finally:
         extraction.close_compute_application(operation)
+
+
+def test_final_apply_logs_remaining_subphase_timings(caplog, monkeypatch):
+    import logging
+    from twicc import sync_diagnostics
+
+    monkeypatch.setattr(sync_diagnostics.logger, 'disabled', False)
+    caplog.set_level(logging.DEBUG, logger='twicc.sync_diagnostics')
+    session = make_session()
+    assert BaseSessionCompute.apply_session_complete(message(session)).outcome == 'applied'
+    phases = {record.args[0] for record in caplog.records if record.msg.startswith('Sync phase operation=')}
+    assert {
+        'compute_final_plan_docs', 'compute_final_titles', 'compute_final_project_directory',
+        'compute_final_stopped_agents', 'compute_final_project_metadata',
+    } <= phases
+
+
+def test_final_title_failure_logs_timing_and_rolls_back_publication(caplog, monkeypatch):
+    import logging
+    from twicc import sync_diagnostics
+
+    monkeypatch.setattr(sync_diagnostics.logger, 'disabled', False)
+    caplog.set_level(logging.DEBUG, logger='twicc.sync_diagnostics')
+    session = make_session()
+
+    def fail(*args, **kwargs):
+        raise RuntimeError('title publication failed')
+
+    monkeypatch.setattr(BaseSessionCompute, '_apply_title_maps', fail)
+    with pytest.raises(RuntimeError, match='title publication failed'):
+        BaseSessionCompute.apply_session_complete(message(session))
+    session.refresh_from_db()
+    assert session.compute_version is None
+    assert session.content_storage_version is None
+    phases = {record.args[0] for record in caplog.records if record.msg.startswith('Sync phase operation=')}
+    assert 'compute_final_titles' in phases
+
+
+@pytest.mark.parametrize('slot', ['current_content', 'original_content'])
+@pytest.mark.parametrize('cold', [False, True])
+def test_final_storage_rejects_dangling_references_before_publication(slot, cold):
+    from datetime import timedelta
+    from django.db import connection
+    from django.utils import timezone
+    from twicc.core.content_storage.codec import ContentIntegrityError
+    from twicc.core.content_storage.extraction import finish_storage_result
+    from twicc.core.models import SessionItemContent
+
+    session = make_session(archived=cold, created_at=timezone.now() - timedelta(days=40))
+    plain = SessionItemContent.objects.create(sha256=b'x' * 32, payload=b'x', raw_size=1)
+    item = SessionItem.objects.create(session=session, line_num=1, content='',
+                                     current_content=plain, original_content=plain)
+    with connection.constraint_checks_disabled():
+        try:
+            SessionItem.objects.filter(pk=item.pk).update(**{f'{slot}_id': plain.pk + 1000})
+            with pytest.raises(ContentIntegrityError), transaction.atomic():
+                finish_storage_result(message(session))
+            session.refresh_from_db()
+            assert session.content_storage_version is None
+            assert session.plaintext_verified_epoch is None
+        finally:
+            SessionItem.objects.filter(pk=item.pk).update(**{f'{slot}_id': plain.pk})

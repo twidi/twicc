@@ -4126,63 +4126,68 @@ class BaseSessionCompute:
             settle_compute_repair(snapshot.observation)
             session.refresh_from_db()
 
-        # 7bis. Fold subagent-detected plan docs into the top-level ancestor
-        folded_ancestor_id: str | None = None
-        parent_plan_doc_events = msg.get('parent_plan_doc_events')
-        if parent_plan_doc_events and session.parent_session_id:
-            folded_ancestor_id = BaseSessionCompute._fold_plan_doc_events_into_ancestor(
-                session,
-                [
-                    (DocEditEvent(d['path'], d['action'], 'subagent'), d.get('timestamp'))
-                    for d in parent_plan_doc_events
-                ],
+        with timed_sync_phase('compute_final_plan_docs'):
+            # 7bis. Fold subagent-detected plan docs into the top-level ancestor
+            folded_ancestor_id: str | None = None
+            parent_plan_doc_events = msg.get('parent_plan_doc_events')
+            if parent_plan_doc_events and session.parent_session_id:
+                folded_ancestor_id = BaseSessionCompute._fold_plan_doc_events_into_ancestor(
+                    session,
+                    [
+                        (DocEditEvent(d['path'], d['action'], 'subagent'), d.get('timestamp'))
+                        for d in parent_plan_doc_events
+                    ],
+                )
+
+        with timed_sync_phase('compute_final_titles'):
+            # 8. Update session titles
+            def apply_provider_title(target_id: str, title: str) -> bool:
+                # Full compute retains its existing lack of Claude protection corrections.
+                if BaseSessionCompute._should_skip_title_echo(target_id, title):
+                    return False
+                return BaseSessionCompute._write_provider_title(target_id, title)
+
+            title_updated_session_ids = BaseSessionCompute._apply_title_maps(
+                msg.get('placeholder_titles', {}), msg.get('provider_titles', {}), apply_provider_title,
             )
 
-        # 8. Update session titles
-        def apply_provider_title(target_id: str, title: str) -> bool:
-            # Full compute retains its existing lack of Claude protection corrections.
-            if BaseSessionCompute._should_skip_title_echo(target_id, title):
-                return False
-            return BaseSessionCompute._write_provider_title(target_id, title)
+        with timed_sync_phase('compute_final_project_directory'):
+            # 9. Update project directory
+            project_id = msg.get('project_id')
+            project_directory = msg.get('project_directory')
+            if project_id and project_directory:
+                ensure_project_directory(project_id, project_directory)
 
-        title_updated_session_ids = BaseSessionCompute._apply_title_maps(
-            msg.get('placeholder_titles', {}), msg.get('provider_titles', {}), apply_provider_title,
-        )
+            # 10. Resolve project git_root if session has git info but project doesn't
+            session_git_dir = session_fields.get('git_directory') if session_fields else None
+            if session_git_dir and project_id and get_project_git_root(project_id) is None:
+                # Pass project_directory explicitly. Step 9's ensure_project_directory
+                # defers its directory-cache write to on_commit, so a bare
+                # ensure_project_git_root(project_id) would fall back to the
+                # pre-step-9 cached directory and resolve git_root from the wrong
+                # path. When project_directory is None, step 9 did not run and the
+                # cache fallback is reliable, so passing None is also correct.
+                ensure_project_git_root(project_id, project_directory)
 
-        # 9. Update project directory
-        project_id = msg.get('project_id')
-        project_directory = msg.get('project_directory')
-        if project_id and project_directory:
-            ensure_project_directory(project_id, project_directory)
+        with timed_sync_phase('compute_final_stopped_agents'):
+            # 11. Update last_stopped_at for subagents that finished naturally.
+            # Same monotonic guard as the live stop step (``run_stop_step``): a batch
+            # recompute of the parent must not re-freeze as "stopped" a resumable
+            # subagent whose live sync already recorded newer activity.
+            agent_stopped = msg.get('agent_stopped')
+            if agent_stopped:
+                for entry in agent_stopped:
+                    stopped_at = datetime.fromisoformat(entry['stopped_at'])
+                    apply_compute_lifecycle(msg, lambda entry=entry, stopped_at=stopped_at: update_lifecycle(
+                        Session.objects.filter(id=entry['agent_session_id']).exclude(
+                            last_updated_at__gt=stopped_at,
+                        ), last_stopped_at=stopped_at, last_updated_at=stopped_at,
+                    ))
 
-        # 10. Resolve project git_root if session has git info but project doesn't
-        session_git_dir = session_fields.get('git_directory') if session_fields else None
-        if session_git_dir and project_id and get_project_git_root(project_id) is None:
-            # Pass project_directory explicitly. Step 9's ensure_project_directory
-            # defers its directory-cache write to on_commit, so a bare
-            # ensure_project_git_root(project_id) would fall back to the
-            # pre-step-9 cached directory and resolve git_root from the wrong
-            # path. When project_directory is None, step 9 did not run and the
-            # cache fallback is reliable, so passing None is also correct.
-            ensure_project_git_root(project_id, project_directory)
-
-        # 11. Update last_stopped_at for subagents that finished naturally.
-        # Same monotonic guard as the live stop step (``run_stop_step``): a batch
-        # recompute of the parent must not re-freeze as "stopped" a resumable
-        # subagent whose live sync already recorded newer activity.
-        agent_stopped = msg.get('agent_stopped')
-        if agent_stopped:
-            for entry in agent_stopped:
-                stopped_at = datetime.fromisoformat(entry['stopped_at'])
-                apply_compute_lifecycle(msg, lambda entry=entry, stopped_at=stopped_at: update_lifecycle(
-                    Session.objects.filter(id=entry['agent_session_id']).exclude(
-                        last_updated_at__gt=stopped_at,
-                    ), last_stopped_at=stopped_at, last_updated_at=stopped_at,
-                ))
-
-        # 12. Update project metadata (sessions_count, mtime, total_cost)
-        if project_id:
-            update_project_metadata(project_id)
+        with timed_sync_phase('compute_final_project_metadata'):
+            # 12. Update project metadata (sessions_count, mtime, total_cost)
+            if project_id:
+                update_project_metadata(project_id)
 
         from twicc.core.content_storage.extraction import finish_storage_result
 

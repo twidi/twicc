@@ -6,12 +6,12 @@ from uuid import uuid4
 
 from django.db import connection, transaction
 from django.db.models import F
-from django.db.models.functions import Coalesce, Length
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from twicc.core.content_storage.policy import COLD_FIELDS, CONTENT_STORAGE_VERSION, cold_from_fields, scratch_cold_from_fields
 from twicc.core.content_storage.types import RootDecision, RootStorageSnapshot, SessionPromotionSnapshot
-from twicc.core.models import Session, SessionItem
+from twicc.core.models import Session, SessionItem, SessionItemContent
 
 TREE_PAGE_SIZE = 128
 ITEM_PAGE_SIZE = 256
@@ -186,8 +186,8 @@ def _snapshot_matches(snapshot: RootStorageSnapshot | SessionPromotionSnapshot) 
 def session_plaintext_metadata(session_id: str) -> bool:
     """Check complete extraction and both plaintext slots for one session without loading content bytes.
 
-    Callers hold one read snapshot or the writer transaction. Metadata pages keep
-    memory bounded. No readiness certificate for a native parent authorizes a child.
+    Callers hold one read snapshot or the writer transaction. SQL probes keep
+    Python memory and query count bounded. A native parent's certificate never authorizes a child.
     """
     if not connection.in_atomic_block:
         raise transaction.TransactionManagementError('Plaintext metadata requires a caller-owned transaction')
@@ -195,26 +195,32 @@ def session_plaintext_metadata(session_id: str) -> bool:
     if (fields is None or fields['content_storage_version'] != CONTENT_STORAGE_VERSION
             or not fields['storage_incarnation']):
         return False
-    after_line = -1
-    while True:
-        rows = list(SessionItem.objects.filter(session_id=session_id, line_num__gt=after_line)
-                    .annotate(legacy_length=Length('content'))
-                    .order_by('line_num').values(
-                        'line_num', 'legacy_length', 'current_content_id', 'original_content_id',
-                        'current_content__codec', 'current_content__dictionary_id',
-                        'original_content__codec', 'original_content__dictionary_id',
-                    )[:ITEM_PAGE_SIZE])
-        if not rows:
-            return True
-        for row in rows:
-            if row['legacy_length'] != 0 or row['current_content_id'] is None:
-                return False
-            for slot in ('current_content', 'original_content'):
-                if row[f'{slot}_id'] is not None and (
-                    row[f'{slot}__codec'] != 'plain' or row[f'{slot}__dictionary_id'] is not None
-                ):
-                    return False
-        after_line = rows[-1]['line_num']
+    return not _session_has_invalid_storage_metadata(session_id)
+
+
+def _session_has_invalid_storage_metadata(session_id: str) -> bool:
+    """Probe invalid rows in the caller's transaction without loading per-item metadata."""
+    if not connection.in_atomic_block:
+        raise transaction.TransactionManagementError('Storage metadata requires a caller-owned transaction')
+    items = connection.ops.quote_name(SessionItem._meta.db_table)
+    contents = connection.ops.quote_name(SessionItemContent._meta.db_table)
+    # SQL comparisons against NULL are UNKNOWN. Test joined IDs explicitly so
+    # dangling references cannot pass, including an optional original reference.
+    invalid = (
+        'item.content IS NULL OR LENGTH(item.content) <> 0 OR current.id IS NULL '
+        "OR current.codec IS NULL OR current.codec <> 'plain' OR current.dictionary_id IS NOT NULL "
+        "OR (item.original_content_id IS NOT NULL AND (original.id IS NULL OR original.codec IS NULL "
+        "OR original.codec <> 'plain' OR original.dictionary_id IS NOT NULL))"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f'SELECT 1 FROM {items} item '
+            f'LEFT JOIN {contents} current ON current.id = item.current_content_id '
+            f'LEFT JOIN {contents} original ON original.id = item.original_content_id '
+            f'WHERE item.session_id = %s AND ({invalid}) LIMIT 1',
+            [session_id],
+        )
+        return cursor.fetchone() is not None
 
 
 def verify_plaintext_root(
