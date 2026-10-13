@@ -67,6 +67,15 @@ def _apply_cleanup_stale_process_runs_job(
     the per-row helper-driven DELETE all commit together; observers can
     not see a halfway-cleaned table.
     """
+    from twicc.core.services.timeline_boot import reconcile_at_boot
+
+    # The timeline must never block the cleanup: its own atomic block rolls back alone.
+    # It runs first, so the stale rows still carry their previous state.
+    try:
+        with transaction.atomic():
+            reconcile_at_boot()
+    except Exception:
+        logger.exception("Timeline boot reconciliation failed")
     with transaction.atomic():
         return _cleanup_stale_process_runs()
 

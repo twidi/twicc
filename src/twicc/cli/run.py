@@ -520,6 +520,12 @@ async def run_server(port: int):
             # Then let every provider tear down its own tasks (in parallel).
             await orchestrators.shutdown_all()
 
+            from twicc.core.services.timeline_boot import record_backend_ended_clean
+            try:
+                await record_backend_ended_clean()
+            except Exception:
+                logger.exception("Could not record the clean backend end")
+
             # Stop the DB writer. Done after every orchestrator has shut
             # down — their blocking shutdown() guarantees no producer thread or
             # subprocess is still alive, so nothing is left pushing onto the
