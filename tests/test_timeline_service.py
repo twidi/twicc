@@ -219,3 +219,12 @@ def test_record_session_created_without_flags_writes_one_row(project):
     session = Session.objects.create(id="s1", file_path="s1.jsonl", project=project, provider="codex")
     record_session_created(session, origin="sync")
     assert kinds("s1") == ["session.created"]
+
+
+def test_async_record_event_never_raises_when_the_writer_is_stopped(project):
+    import asyncio
+
+    # No DB writer started: the write lock refuses the acquisition.
+    event = asyncio.run(record_event(
+        TimelineKind.TURN_STARTED, session_id="s1", project_id=project.id, actor=TimelineActor.AGENT))
+    assert event is None and kinds("s1") == []

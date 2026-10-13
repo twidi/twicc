@@ -84,9 +84,14 @@ async def record_event(kind: str, **kwargs) -> TimelineEvent | None:
     The lock is reentrant for the task that already holds it, so this is safe
     to call from inside another ``run_under_db_write_lock`` callback.
     """
-    return await run_under_db_write_lock(
-        lambda: asyncio.to_thread(lambda: record_event_sync(kind, **kwargs))
-    )
+    try:
+        return await run_under_db_write_lock(
+            lambda: asyncio.to_thread(lambda: record_event_sync(kind, **kwargs))
+        )
+    except Exception:
+        # E.g. the DB writer is stopping. Never let a timeline write break the user action.
+        logger.exception("Timeline event %s could not be written for session %s", kind, kwargs.get("session_id"))
+        return None
 
 
 def latest_event_id(session_id: str, kind: str) -> int | None:
