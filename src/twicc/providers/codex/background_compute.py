@@ -610,7 +610,9 @@ class CodexComputeCoordinator:
             self.initial_classified.add(session_id)
         current = len(self.initial_classified)
         classified = current == self._initial_total
-        completed = classified and not (self.failures or self.deferred or self._prepared or self._forced_rebuild)
+        completed = classified and not (
+            self.failures or self.deferred or self._prepared or self._forced_rebuild or self._unavailable_diagnoses
+        )
         await broadcast_startup_progress(
             "background_compute", current, self._initial_total,
             provider=Provider.CODEX.value, completed=completed, detail=self._detail(),
@@ -726,6 +728,13 @@ class CodexComputeCoordinator:
             self.applied_before_computed.add(session_id)
         self.computed_not_applied.discard(session_id)
 
+        if signal.outcome == "missing":
+            exists = await sync_to_async(Session.objects.filter(id=session_id).exists)()
+            if not exists:
+                self._forget_deleted_recovery(session_id)
+                await self._classify_initial(session_id)
+                return
+
         migrated = session_id in self.migrated_history
         if signal.outcome == "failed":
             error = signal.error or self.worker_errors.get(session_id) or "metadata apply failed"
@@ -739,6 +748,11 @@ class CodexComputeCoordinator:
             ))
             return
 
+        if session_id in self._unavailable_diagnoses and signal.outcome != "applied":
+            await self._record_failure(FailedCandidate(
+                session_id, "metadata apply", f"diagnosed repair application returned {signal.outcome}",
+            ))
+            return
         if signal.outcome == "applied" and session_id in self._unavailable_diagnoses:
             await self._submit_job(MarkSessionUnavailableJob, session_id, None)
             self._unavailable_diagnoses.pop(session_id, None)
@@ -768,6 +782,33 @@ class CodexComputeCoordinator:
 
             request_session_reindex(session_id)
         await self._classify_initial(session_id)
+
+    def _forget_deleted_recovery(self, session_id: str) -> None:
+        """Drop repair intent only after database deletion is confirmed."""
+        self._release_lease(session_id, replay=False, outcome='cancelled')
+        self.migrated_history.discard(session_id)
+        self._unavailable_diagnoses.pop(session_id, None)
+        self.failures.pop(session_id, None)
+        self.failed_this_run.discard(session_id)
+        self._retry_at.pop(session_id, None)
+        self._retry_delays.pop(session_id, None)
+        self._forced_rebuild.discard(session_id)
+        self._prepared.pop(session_id, None)
+        self._prepared_rebuild_generation.pop(session_id, None)
+        self.deferred.discard(session_id)
+        self._started_at.pop(session_id, None)
+
+    async def _prune_deleted_recovery(self, candidate_ids: set[str]) -> None:
+        tracked = set(self.failures) | set(self._unavailable_diagnoses) | self._forced_rebuild
+        unchecked = tracked - candidate_ids - self.submitted - self.computed_not_applied
+        if not unchecked:
+            return
+        existing = await sync_to_async(lambda: set(
+            Session.objects.filter(id__in=unchecked).values_list("id", flat=True),
+        ))()
+        for session_id in unchecked - existing:
+            self._forget_deleted_recovery(session_id)
+            await self._classify_initial(session_id)
 
     async def _initialize_progress(self, candidates: list[CodexComputeCandidate]) -> None:
         self.initial_ids = {
@@ -990,6 +1031,7 @@ class CodexComputeCoordinator:
                         self.ctx.compute_version, forced_ids=frozenset(self._forced_rebuild),
                     )
                     stale_ids = {candidate.session_id for candidate in candidates}
+                    await self._prune_deleted_recovery(stale_ids)
                     for session_id in self.initial_ids - stale_ids:
                         await self._classify_initial(session_id)
 

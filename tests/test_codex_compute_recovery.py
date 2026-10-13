@@ -589,3 +589,84 @@ def test_current_session_with_unavailable_diagnosis_remains_retryable(provider_h
     candidates = asyncio.run(background_compute._load_stale_candidates(123))
     assert [candidate.session_id for candidate in candidates] == [session.id]
     assert candidates[0].unavailable_reason == 'rollout_missing'
+
+
+def test_diagnosed_superseded_metadata_keeps_bounded_repair_pending(monkeypatch):
+    async def run():
+        owner = coordinator()
+        sid = 'diagnosed-superseded'
+        owner.initial_ids = {sid}
+        owner._initial_total = 1
+        owner._unavailable_diagnoses[sid] = 'rollout_missing'
+        owner.failures[sid] = FailedCandidate(sid, 'classify', 'missing', 'rollout_missing')
+        owner._prepared[sid] = PreparedCandidate(sid, None, False)
+        progress = []
+        async def broadcast(*args, **kwargs):
+            progress.append(kwargs['completed'])
+        monkeypatch.setattr(background_compute, 'broadcast_startup_progress', broadcast)
+        await owner._handle_applied(ComputeApplied(sid, 'superseded', run_id=2))
+        assert owner.initial_done.is_set()
+        assert owner._unavailable_diagnoses == {sid: 'rollout_missing'}
+        assert sid in owner.failures
+        assert 0 < owner._retry_at[sid] - background_compute.time.monotonic() <= 60
+        assert owner._retry_delays[sid] <= 60
+        assert sid not in owner._prepared
+        assert progress and not any(progress)
+    asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('deleted', [False, True])
+def test_diagnosed_missing_ack_rechecks_database_before_retaining_retry(monkeypatch, deleted):
+    from twicc.core.models import Project
+    sid = 'diagnosed-missing'
+    session = Session.objects.create(id=sid, provider=Provider.CODEX,
+        project=Project.objects.create(id='diagnosed-missing-project'), file_path='missing.jsonl',
+        unavailable_reason='rollout_missing')
+    if deleted:
+        session.delete()
+    async def run():
+        owner = coordinator()
+        owner.initial_ids = {sid}
+        owner._initial_total = 1
+        owner._unavailable_diagnoses[sid] = 'rollout_missing'
+        owner.failures[sid] = FailedCandidate(sid, 'classify', 'missing', 'rollout_missing')
+        owner._forced_rebuild.add(sid)
+        progress = []
+        async def broadcast(*args, **kwargs):
+            progress.append(kwargs['completed'])
+        monkeypatch.setattr(background_compute, 'broadcast_startup_progress', broadcast)
+        await owner._handle_applied(ComputeApplied(sid, 'missing', run_id=2))
+        assert owner.initial_done.is_set()
+        if deleted:
+            assert not owner._unavailable_diagnoses and not owner.failures
+            assert not owner._retry_at and not owner._forced_rebuild
+            assert progress == [True]
+        else:
+            assert owner._unavailable_diagnoses == {sid: 'rollout_missing'}
+            assert sid in owner.failures
+            assert owner._retry_at[sid] > background_compute.time.monotonic()
+            assert progress == [False]
+    asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_deleted_cooling_diagnosis_does_not_block_completion(monkeypatch):
+    async def run():
+        owner = coordinator()
+        sid = 'deleted-during-cooldown'
+        owner.initial_ids = {sid}
+        owner._initial_total = 1
+        owner._unavailable_diagnoses[sid] = 'rollout_missing'
+        owner.failures[sid] = FailedCandidate(sid, 'classify', 'missing', 'rollout_missing')
+        owner._retry_at[sid] = background_compute.time.monotonic() + 60
+        owner._forced_rebuild.add(sid)
+        progress = []
+        async def broadcast(*args, **kwargs):
+            progress.append(kwargs['completed'])
+        monkeypatch.setattr(background_compute, 'broadcast_startup_progress', broadcast)
+        await owner._prune_deleted_recovery(set())
+        assert not owner._unavailable_diagnoses and not owner.failures
+        assert not owner._retry_at and not owner._forced_rebuild
+        assert owner.initial_done.is_set() and progress == [True]
+    asyncio.run(run())
