@@ -1777,3 +1777,39 @@ def test_startup_failure_after_discovery_allocation_closes_recovery_and_allows_r
         await db_writer.stop_db_writer()
         assert db_writer._repair_recovery is None
     asyncio.run(scenario())
+
+
+def test_blocked_discovery_does_not_delay_compute_ack_or_terminal_completion(wal_runtime, monkeypatch):
+    session, path = wal_runtime
+    entered, release = None, None
+    original_read = db_writer._recovery_discovery_read
+
+    async def blocked_read(function, /, *args):
+        entered.set()
+        await release.wait()
+        return await original_read(function, *args)
+    monkeypatch.setattr(db_writer, '_recovery_discovery_read', blocked_read)
+
+    async def scenario():
+        nonlocal entered, release
+        entered, release = asyncio.Event(), asyncio.Event()
+        db_writer.start_db_writer()
+        applied = asyncio.Queue()
+        try:
+            async with asyncio.timeout(5):
+                await entered.wait()
+                run_id, done = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(),
+                    total_display=0, applied_queue=applied)
+                db_writer.get_subprocess_queue().put(result_message(session, run_id))
+                db_writer.get_subprocess_queue().put({'type': 'done', 'provider': 'codex', 'run_id': run_id})
+                ack = await applied.get()
+                assert ack.outcome == 'applied'
+                assert await done == 0
+                assert db_writer._pending_compute is None
+                assert run_id not in db_writer._compute_states
+                assert not release.is_set()
+                assert not db_writer._repair_discovery_task.done()
+        finally:
+            release.set()
+            await db_writer.stop_db_writer()
+    asyncio.run(scenario())

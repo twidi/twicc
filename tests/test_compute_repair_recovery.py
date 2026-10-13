@@ -212,3 +212,50 @@ def test_empty_maximum_proves_old_failed_rows_disappeared():
     state.settle_attempt(row(100).observation, 'failed', failed=True)
     state.begin_sweep(0)
     assert not state._retries
+
+
+@pytest.mark.parametrize('rediscovered_generation', [1, 2])
+def test_page_completion_during_admitted_failure_preserves_backoff_and_later_candidates(rediscovered_generation):
+    async def scenario():
+        now = [0.0]
+        state = scheduler(lambda: now[0])
+        state.begin_sweep(1)
+        state.page_request()
+        state.observe_page((row(1),), excluded_session_ids=frozenset())
+        observation = state.next_candidate(frozenset())  # Denied grant retains this candidate.
+        now[0] = 1.0
+        state.begin_sweep(2)
+        assert state.page_request() == (0, 2, 15)
+        admitted, page_completed = asyncio.Event(), asyncio.Event()
+
+        async def page():
+            await admitted.wait()
+            state.observe_page((row(1, generation=rediscovered_generation), row(2)),
+                               excluded_session_ids=frozenset())
+            page_completed.set()
+
+        async def attempt():
+            state.mark_admitted(observation)
+            admitted.set()
+            await page_completed.wait()
+            state.settle_attempt(observation, 'failed', failed=True)
+
+        await asyncio.gather(page(), attempt())
+        candidate = state.next_candidate(frozenset())
+        if rediscovered_generation == 1:
+            assert state._retries[1].retry_deadline == 2.0
+            assert candidate.journal_id == 2
+            state.mark_admitted(candidate)
+            state.settle_attempt(candidate, 'repaired')
+            assert state.next_candidate(frozenset()) is None
+            now[0] = 2.0
+            state.begin_sweep(2)
+            state.page_request()
+            state.observe_page((row(1),), excluded_session_ids=frozenset())
+            assert state.next_candidate(frozenset()) == observation
+        else:
+            assert candidate == row(1, generation=2).observation
+            assert not state._retries
+            state.mark_admitted(candidate)
+            assert state.next_candidate(frozenset()).journal_id == 2
+    asyncio.run(scenario())

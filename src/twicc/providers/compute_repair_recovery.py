@@ -87,7 +87,10 @@ class RepairRecoveryScheduler:
         if self._closed:
             return None
         for observation in tuple(self._queued.values()):
-            if observation.session_id in excluded_session_ids:
+            retry = self._retries.get(observation.journal_id)
+            backed_off = (retry is not None and retry.generation == observation.generation
+                          and retry.retry_deadline > self._clock())
+            if observation.session_id in excluded_session_ids or backed_off:
                 self.defer_unadmitted(observation)
         return next(iter(self._queued.values()), None)
 
@@ -104,6 +107,13 @@ class RepairRecoveryScheduler:
         if not failed:
             self._retries.pop(observation.journal_id, None)
             return
+        queued = self._queued.get(observation.journal_id)
+        if queued is not None and queued.generation > observation.generation:
+            # A completed page proves the admitted failure is superseded.
+            return
+        # A page submitted before admission can return during the attempt.
+        # Discard only its matching rediscovery; later generations stay eligible.
+        self.defer_unadmitted(observation)
         previous = self._retries.get(observation.journal_id)
         count = (previous.failure_count if previous and previous.generation == observation.generation else 0) + 1
         delay = min(RECOVERY_RETRY_MAX_SECONDS, RECOVERY_RETRY_BASE_SECONDS * 2 ** min(count - 1, 6))
