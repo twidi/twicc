@@ -104,18 +104,16 @@ def test_source_rollback_restores_source_and_journal():
     project = Project.objects.create(id="project")
     session = Session.objects.create(id="source", project=project, provider="codex")
     first = merge(journal, source_changed=True)
-    with pytest.raises(ValueError, match="rollback"):
-        with transaction.atomic():
-            Session.objects.filter(pk=session.pk).update(hidden=True)
-            journal.merge_compute_repair("source", "incarnation", activity_keys=[KEY], source_changed=True)
-            raise ValueError("rollback")
+    with pytest.raises(ValueError, match="rollback"), transaction.atomic():
+        Session.objects.filter(pk=session.pk).update(hidden=True)
+        journal.merge_compute_repair("source", "incarnation", activity_keys=[KEY], source_changed=True)
+        raise ValueError("rollback")
     session.refresh_from_db()
     assert session.hidden is False
     assert journal.load_compute_repair("source", "incarnation") == first
-    with pytest.raises(ValueError, match="rollback"):
-        with transaction.atomic():
-            journal.merge_compute_repair("new", "incarnation", source_changed=True)
-            raise ValueError("rollback")
+    with pytest.raises(ValueError, match="rollback"), transaction.atomic():
+        journal.merge_compute_repair("new", "incarnation", source_changed=True)
+        raise ValueError("rollback")
     assert journal.load_compute_repair("new", "incarnation") is None
 
 

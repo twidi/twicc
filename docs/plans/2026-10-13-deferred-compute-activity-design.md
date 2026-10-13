@@ -2,8 +2,8 @@
 
 Date: 2026-10-13
 Baseline: `b072478b`, branch `fix/content-writer-priority`.
-Status: independently reviewed design, approved by the user; implementation plan awaits user review.
-No product implementation accompanies this document.
+Status: the user approves the independently reviewed design and implementation plan.
+Product implementation and measured validation accompany this branch. Whole-branch adversarial review remains pending.
 
 ## Decision
 
@@ -499,7 +499,7 @@ The amendment adds independent discovery, finite fair sweeps, retry backoff, pen
 and discovery shutdown before final writer drainage.
 Scoped re-review marks that finding addressed, with no new Critical or Important findings.
 
-Only this design changes. No product, schema, test, server, or database change occurs at this stage.
-The user approves this written design. The independently reviewed implementation plan is
-`docs/plans/2026-10-13-deferred-compute-activity-plan.md`.
-Implementation follows user review of that written plan.
+That review stage changes only the design. The user then approves the written design and implementation plan.
+Product implementation and measured validation now accompany this branch.
+Validation evidence is in `docs/plans/2026-10-13-deferred-compute-activity-plan.md`.
+Whole-branch adversarial review remains pending and belongs to the controller’s final gate.

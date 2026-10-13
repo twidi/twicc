@@ -1847,28 +1847,24 @@ async def _discover_compute_repairs() -> None:
     """Independent writer-lifetime bounded reads on the ordinary worker."""
     from twicc.providers.compute_repair_journal import compute_repair_upper_id
     scheduler = _repair_recovery
-    try:
-        while scheduler is not None and not scheduler._closed:
-            try:
-                if scheduler.sweep_ready:
-                    upper_id = await _recovery_discovery_read(compute_repair_upper_id)
-                    scheduler.begin_sweep(upper_id)
-                request = scheduler.page_request()
-                if request is not None:
-                    rows, stale = await _recovery_discovery_read(_read_recovery_page, *request)
-                    scheduler.observe_page(rows, excluded_session_ids=_pending_repair_exclusions())
-                    for observation in stale:
-                        scheduler.defer_unadmitted(observation)
-                    logger.debug('Compute repair discovery: rows=%d queued=%d retries=%d stale=%d',
-                                 len(rows), len(scheduler._queued), len(scheduler._retries), len(stale))
-            except Exception:
-                logger.exception('Compute repair discovery failed')
-                # Failed reads also wait before retrying; they never busy-spin.
-                await asyncio.sleep(RECOVERY_POLL_SECONDS)
-            await asyncio.sleep(0.05)
-    except asyncio.CancelledError:
-        # The discovery read retains already submitted ordinary-worker work.
-        raise
+    while scheduler is not None and not scheduler._closed:
+        try:
+            if scheduler.sweep_ready:
+                upper_id = await _recovery_discovery_read(compute_repair_upper_id)
+                scheduler.begin_sweep(upper_id)
+            request = scheduler.page_request()
+            if request is not None:
+                rows, stale = await _recovery_discovery_read(_read_recovery_page, *request)
+                scheduler.observe_page(rows, excluded_session_ids=_pending_repair_exclusions())
+                for observation in stale:
+                    scheduler.defer_unadmitted(observation)
+                logger.debug('Compute repair discovery: rows=%d queued=%d retries=%d stale=%d',
+                             len(rows), len(scheduler._queued), len(scheduler._retries), len(stale))
+        except Exception:
+            logger.exception('Compute repair discovery failed')
+            # Failed reads also wait before retrying; they never busy-spin.
+            await asyncio.sleep(RECOVERY_POLL_SECONDS)
+        await asyncio.sleep(0.05)
 
 
 async def _close_compute_repair_recovery() -> None:

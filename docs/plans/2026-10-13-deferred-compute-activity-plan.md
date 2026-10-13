@@ -700,4 +700,145 @@ It also specifies compact failed-identity retry metadata, the shared benchmark e
 Scoped re-review accepts the exclusion correction but identifies a new retry-cap fairness issue.
 A second amendment removes the retry metadata count cap and adds a many-failures/later-row progress regression.
 Second scoped re-review marks both findings addressed, with no new Critical or Important findings.
-User review remains pending. No implementation accompanies this plan.
+The user approves the design and plan. Product implementation and measured validation now accompany this branch.
+
+
+## Implementation validation (2026-10-13)
+
+The user approves the design and implementation plan. Tasks 1–7 now implement the approved design.
+Whole-branch adversarial review remains pending. The controller owns that final gate.
+
+### Isolated comparison
+
+Baseline `b072478b` is exported with `git archive` into `/tmp/task7-baseline-export`.
+The export is disposable and is not a Git worktree.
+Both revisions run `scripts/benchmark_deferred_compute_activity.py` from the current branch.
+The adapter launches each target through `uv run --project` with a separate disposable `TWICC_DATA_DIR`.
+Before database work, it asserts the imported source path and SQLite path belong to the selected isolated paths.
+It refuses existing databases and copies no DB, provider home, `.env`, index, scratch, artifacts, or `.venv`.
+Only the asserted synthetic database receives schema setup. No server starts or running-instance migration occurs.
+
+Both runs use seed `20261013`, SQLite WAL, and `DEBUG=False`. No `DEBUG=True` run occurs.
+The same workload adapter uses actual application/ordinary workers and actual writer coordinator grants.
+It preserves the runtime per-run repaired-bucket cache on both revisions.
+The raw SQLite oracle checks costs, messages, creation counts, provider scopes, and daily/weekly buckets.
+It retains unrounded fractional legacy costs in A’s four children.
+All oracle checkpoints and foreground-versus-older-background grant assertions pass on both revisions.
+
+- A: 12,000-row root; four 3,000-row children; 2,000-row metadata slices; 30 UTC dates.
+- B: twenty 2,400-row roots share four project/global daily/weekly buckets.
+- C: 12,000-row root; sole timestamp removal; creation move; two committed slices; application-worker restart; replacement; deletion.
+- D: foreground append during metadata, blocked bucket preparation, orphan recovery, and forced exact-final fallback.
+- E: three live child appends supersede the stale parent’s shared root placement observation; bounded retries then complete.
+
+Final commands:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/content-writer-priority && TWICC_DATA_DIR=$PWD TWICC_ACTIVITY_BENCHMARK=1 TWICC_ACTIVITY_BENCHMARK_CHECKOUT=/tmp/task7-baseline-export uv run pytest tests/test_deferred_compute_activity_benchmark.py -q -s
+cd /home/twidi/dev/twicc-poc/.worktrees/content-writer-priority && TWICC_DATA_DIR=$PWD TWICC_ACTIVITY_BENCHMARK=1 uv run pytest tests/test_deferred_compute_activity_benchmark.py -q -s
+```
+
+Baseline RED: `1 failed, 1 passed in 150.39s`; only the zero-metadata-scan characterization fails.
+Current GREEN: `2 passed in 141.80s`.
+Baseline records 550 metadata cost aggregate/history reads and 218 metadata bucket repairs.
+Current records zero for both counters. Both runs inventory 74 distinct keys.
+History counters include unbounded cost-enumeration reads and raw SUM queries; they exclude bounded ID/line reads and COUNT-only queries.
+Activity repair counters wrap real repair calls.
+The measured adapter totals are 145046.799 ms baseline and 136408.768 ms current.
+Totals include fixture creation and oracle work, but exclude uv/schema startup.
+These local samples establish correctness and work removal. They do not establish machine-independent speed or latency bounds.
+
+| Workload | Source rows published | Metadata chunks | Baseline cost reads/repairs | Current cost reads/repairs | Baseline work ms | Current work ms |
+|---|---:|---:|---:|---:|---:|---:|
+| A | 24000 | 14 | 176/70 | 0/0 | 19698.977 | 17966.479 |
+| B | 48000 | 40 | 124/4 | 0/0 | 46788.083 | 43609.212 |
+| C | 16001 | 9 | 31/4 | 0/0 | 10136.608 | 10383.500 |
+| D | 14001 | 8 | 94/70 | 0/0 | 16094.245 | 13707.686 |
+| E | 21000 | 11 | 125/70 | 0/0 | 16935.327 | 15643.628 |
+
+C published rows include replay after interruption and the one-row replacement.
+D includes one foreground precondition row and one 2,000-row orphan slice.
+E includes child metadata, three interrupted 2,000-row parent slices, and the complete parent publication.
+
+| Workload | Current journal writes | Current serialized JSON bytes | Retries (both revisions) |
+|---|---:|---:|---:|
+| A | 14 | 50702 | 0 |
+| B | 40 | 8400 | 0 |
+| C | 9 | 5218 | 0 |
+| D | 9 | 25529 | 0 |
+| E | 11 | 39803 | 3 |
+
+Journal writes count real INSERT/UPDATE statements, including generation fences.
+Serialized bytes count JSON parameters sent by those statements.
+
+### Remaining atomic holds and foreground work
+
+Transaction timing starts at actual BEGIN and ends after actual backend commit/rollback.
+Grant timing includes admitted worker work. Foreground timing starts when demand registers.
+
+| Workload | Baseline max grant ms | Current max grant ms | Baseline max final transaction ms | Current max final transaction ms |
+|---|---:|---:|---:|---:|
+| A | 385.769 | 154.459 | 146.580 | 154.121 |
+| B | 169.630 | 171.996 | 97.284 | 87.706 |
+| C | 882.904 | 813.041 | 252.083 | 324.228 |
+| D | 422.681 | 386.748 | 382.387 | 386.361 |
+| E | 408.889 | 178.251 | 168.710 | 176.293 |
+
+C’s maximum grant includes replacement/deletion work.
+D’s orphan recovery transaction remains atomic: 270.177 ms baseline; 273.557 ms current.
+Foreground wins the next grant, but it cannot preempt an admitted transaction.
+Exact final fallback and orphan recovery retain atomic holds.
+Shared buckets still receive repeated exact final scans as each root completes.
+The baseline has no journal; its orphan comparator uses the same exact bucket reference.
+
+| D foreground phase (execution order) | Baseline completion ms | Current completion ms |
+|---|---:|---:|
+| Metadata | 444.372 | 111.043 |
+| Bucket preparation | 20.679 | 21.210 |
+| Forced exact final | 401.380 | 406.794 |
+| Orphan recovery | 294.753 | 298.561 |
+
+E retains 225 foreground cost aggregate/history reads on each revision across three live child appends.
+That foreground repair amplification remains unchanged.
+E completion samples are 593.436/534.378/710.022 ms baseline and 425.984/437.398/466.759 ms current.
+The adapter respects each root-placement supersession and records three retries.
+
+| Current live append | Indexed journal probes | Probe SQL time ms | Total append ms |
+|---|---:|---:|---:|
+| No journal | 1 | 0.048585 | 22.524526 |
+| Pending journal | 2 | 0.074446 | 22.131705 |
+
+Neither live append scans historical source. The pending append writes one 210-byte journal JSON payload.
+Probe SQL timing excludes materialization and ORM processing.
+C restarts the actual application worker. Focused tests own durable process-lifetime recovery contracts.
+Temporary exports, SQLite files, and standalone JSON reports remain outside Git.
+
+### Correctness checks
+
+Focused journal/publication/preparation/mutation/recovery/continuation/live suites: `232 passed in 50.08s`.
+Authorized Ruff cleanup covering tests: `76 passed in 30.79s`.
+Remaining changed final-admission/activity-obligation suites: `139 passed in 22.49s`.
+One full-suite run completes: `10535 passed, 28 skipped, 3 warnings in 413.83s`.
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/content-writer-priority && TWICC_DATA_DIR=$PWD uv run pytest -q
+```
+
+Skipped: 18 opt-in Codex runtime tests, 7 opt-in Claude runtime tests, 2 opt-in benchmark tests, and 1 device-node test.
+Runtime integration flags remain disabled. The device-node test requires host permission to create device nodes.
+The benchmark tests pass separately with `TWICC_ACTIVITY_BENCHMARK=1`.
+
+All three warnings are RuntimeWarnings in untouched test files:
+
+- `test_codex_sdk_wrappers.py::test_turn_forwards_auto_review`: unawaited `AsyncMockMixin._execute_mock_call`, line 133.
+- `test_codex_sdk_wrappers.py::test_turn_forwards_fast_service_tier`: the same unawaited mock coroutine, line 152.
+- `test_shell_notice_codex.py::test_turn_openings_restart_the_delay`: unawaited `BaseAgent._notify_state_change`, helper line 31.
+
+No warning names a changed-topic test. No full-suite rerun occurs.
+Changed Python Ruff passes, including both new benchmark files.
+`makemigrations --check --dry-run` reports `No changes detected` with the asserted worktree database path.
+`git diff --check` passes.
+No Codex binary/provider integration, live diagnostic, or frontend build is required for this implementation.
+The baseline archive’s normal package build runs its own build hook during uv project resolution.
+No dependency, changelog, server, running-instance migration, merge, or push changes occur.
+The user must restart their instance through `devctl.py`; startup applies the journal migration.

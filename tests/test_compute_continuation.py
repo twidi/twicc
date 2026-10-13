@@ -1419,7 +1419,7 @@ def test_recovery_writer_lifetime_with_no_metadata_and_same_process_restart(wal_
             repaired.clear()
             db_writer.start_db_writer()
             try:
-                def journal():
+                def journal(iteration=iteration):
                     return ComputeAggregateRepair.objects.create(session_id=f'orphan-{iteration}',
                                                                   incarnation='gone', generation=1).pk
                 journal_id = await db_writer.run_compute_sync(journal)
@@ -1430,7 +1430,7 @@ def test_recovery_writer_lifetime_with_no_metadata_and_same_process_restart(wal_
                 assert await done == 0
                 async with asyncio.timeout(5):
                     await asyncio.to_thread(repaired.wait)
-                def retained():
+                def retained(journal_id=journal_id):
                     return ComputeAggregateRepair.objects.filter(pk=journal_id).exists()
                 assert not await db_writer.run_compute_sync(retained)
             finally:
