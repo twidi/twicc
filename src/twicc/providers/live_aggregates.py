@@ -34,6 +34,7 @@ class SessionContribution(NamedTuple):
     hidden: bool
     created_at: datetime | None
     user_message_count: int
+    storage_incarnation: str = ""
 
 
 def persisted_cost(value: Decimal | str | float | None) -> Decimal | None:
@@ -43,7 +44,8 @@ def persisted_cost(value: Decimal | str | float | None) -> Decimal | None:
 
 def session_contribution(session: Session) -> SessionContribution:
     return SessionContribution(session.id, session.project_id, session.provider, session.parent_session_id,
-                               session.type, session.hidden, session.created_at, session.user_message_count)
+                               session.type, session.hidden, session.created_at, session.user_message_count,
+                               session.storage_incarnation)
 
 
 def item_contributions(queryset) -> list[ItemContribution]:
@@ -80,7 +82,16 @@ def contribution_activity_keys(items=(), sessions=()) -> set[tuple]:
 def _save_session_aggregates(session: Session) -> None:
     total = (session.self_cost or ZERO) + (session.subagents_cost or ZERO)
     session.total_cost = total if total > 0 else None
-    session.save(update_fields=['self_cost', 'subagents_cost', 'total_cost', 'user_message_count'])
+    save_derived_costs(session, update_fields=['self_cost', 'subagents_cost', 'total_cost', 'user_message_count'])
+
+
+def save_derived_costs(session: Session, *, update_fields) -> None:
+    from twicc.providers.contribution_revisions import record_cost_publication
+
+    previous = Session.objects.filter(pk=session.pk).values_list('self_cost', 'subagents_cost', 'total_cost').first()
+    session.save(update_fields=update_fields)
+    if previous != (session.self_cost, session.subagents_cost, session.total_cost):
+        record_cost_publication(session)
 
 
 def _apply_activity_delta(key: tuple, delta: list) -> None:
@@ -121,6 +132,11 @@ def apply_contribution_changes(
     """
     if not connection.in_atomic_block:
         raise RuntimeError('Contribution changes require a caller-owned transaction')
+    from twicc.providers.contribution_revisions import record_source_changes
+
+    extra_activity_keys = tuple(extra_activity_keys)
+    record_source_changes(before_items, after_items, before_sessions=before_sessions,
+                          after_sessions=after_sessions, extra_activity_keys=extra_activity_keys)
     before = {s.session_id: s for s in before_sessions}
     after = {s.session_id: s for s in after_sessions}
     session_ids = set(before) | set(after) | {i.session_id for i in (*before_items, *after_items)}
@@ -148,7 +164,7 @@ def apply_contribution_changes(
         children = Session.objects.filter(parent_session_id__in=session_ids)
         for child in children:
             child.recalculate_costs()
-            child.save(update_fields=['self_cost', 'subagents_cost', 'total_cost'])
+            save_derived_costs(child, update_fields=['self_cost', 'subagents_cost', 'total_cost'])
         for sid in repair_ids:
             if session := sessions.get(sid):
                 session.recalculate_costs()
@@ -200,6 +216,9 @@ def apply_contribution_changes(
             if old:
                 for key in _activity_keys(old.project_id, old.provider, item.timestamp):
                     buckets[key]
+        if metadata_changed:
+            record_source_changes(before_items, after_items, before_sessions=before_sessions,
+                                  after_sessions=after_sessions, extra_activity_keys=buckets)
         from twicc.providers.compute_repair import repair_activity_key
 
         for key, delta in buckets.items():

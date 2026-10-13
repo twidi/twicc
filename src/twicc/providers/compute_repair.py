@@ -20,7 +20,7 @@ from twicc.providers.compute_repair_journal import (
 )
 from twicc.providers.live_aggregates import (
     ItemContribution, SessionContribution, apply_contribution_changes, contribution_activity_keys,
-    needs_repair, session_contribution,
+    needs_repair, session_contribution, save_derived_costs,
 )
 
 
@@ -48,7 +48,12 @@ def record_compute_repair(
                                                 provider=prospective_session.provider)
                                   for item in (*before_items, *after_items))
         keys.update(contribution_activity_keys(prospective_items))
+    extra_activity_keys = tuple(extra_activity_keys)
     keys.update(extra_activity_keys)
+    from twicc.providers.contribution_revisions import record_source_changes
+
+    record_source_changes(before_items, after_items, before_sessions=[before_session],
+                          after_sessions=[session_contribution(session)], extra_activity_keys=extra_activity_keys)
     return merge_compute_repair(
         session.id, session.storage_incarnation, activity_keys=keys,
         parent_ids=(state.parent_session_id for state in states if state.parent_session_id),
@@ -69,6 +74,11 @@ def preserve_pending_repair(
 ) -> RepairSnapshot | None:
     """Retain before/after evidence only for an existing source journal."""
     _require_transaction()
+    from twicc.providers.contribution_revisions import SourceKey, record_source_changes
+
+    record_source_changes(before_items, after_items, before_sessions=before_sessions,
+                          after_sessions=after_sessions,
+                          force_sources=[SourceKey(session_id, incarnation)] if source_changed else ())
     # The absent-journal path performs one indexed read and never walks history.
     pending = merge_compute_repair(session_id, incarnation, source_changed=False, create=False)
     if pending is None:
@@ -87,6 +97,8 @@ def preserve_pending_repair(
             keys.update(contribution_activity_keys(
                 sessions=[state._replace(created_at=timestamp) for state in states],
             ))
+        record_source_changes(before_items, after_items, before_sessions=before_sessions,
+                              after_sessions=after_sessions, extra_activity_keys=keys)
     return merge_compute_repair(
         session_id, incarnation, activity_keys=keys,
         parent_ids=(state.parent_session_id for state in states if state.parent_session_id),
@@ -99,7 +111,7 @@ def repair_retained_parents(parent_ids: Iterable[str]) -> None:
     _require_transaction()
     for parent in Session.objects.filter(id__in=set(parent_ids)):
         parent.recalculate_costs()
-        parent.save(update_fields=["self_cost", "subagents_cost", "total_cost"])
+        save_derived_costs(parent, update_fields=["self_cost", "subagents_cost", "total_cost"])
 
 
 def repair_activity_key(key: ActivityKey) -> None:

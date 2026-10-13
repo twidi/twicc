@@ -4539,6 +4539,12 @@ class BaseSessionCompute:
 
         # Bulk create all items
         items_only = [item for item, _ in items_to_create]
+        # A replay can enrich an existing row even when insertion ignores it.
+        # Retain its old contribution before the bounded second-pass writes.
+        existing_live_items = SessionItem.objects.filter(
+            session=session, line_num__in=[item.line_num for item in items_only],
+        )
+        before_existing_live = item_contributions(existing_live_items)
         inserted_line_nums = insert_ingested_items(
             session, [(item, source_texts[item.line_num]) for item in items_only], promote=False,
         )
@@ -4814,9 +4820,14 @@ class BaseSessionCompute:
         inserted_contributions = item_contributions(
             SessionItem.objects.filter(session=session, line_num__in=new_line_nums),
         )
+        # Only replayed rows require a second bounded read. New rows already
+        # have their persisted evidence in inserted_contributions.
+        after_existing_live = item_contributions(existing_live_items.exclude(line_num__in=new_line_nums)) \
+            if before_existing_live else []
         preserve_pending_repair(
             session.id, session.storage_incarnation, before_sessions=[before_session],
-            after_sessions=[session_contribution(session)], after_items=inserted_contributions,
+            after_sessions=[session_contribution(session)], before_items=before_existing_live,
+            after_items=[*inserted_contributions, *after_existing_live],
             historical_timestamps=session.items.values_list('timestamp', flat=True),
         )
         apply_contribution_changes(

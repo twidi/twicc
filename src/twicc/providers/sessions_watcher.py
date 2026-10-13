@@ -613,6 +613,9 @@ class BaseSessionsWatcher:
         from twicc.core.content_storage.ingestion import initialize_ingestion_session
         from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION
 
+        from twicc.providers.contribution_revisions import record_source_changes
+        from twicc.providers.live_aggregates import session_contribution
+
         compute = self.get_compute()
         if parsed.type == SessionType.SUBAGENT:
             if parent_session is None:
@@ -630,6 +633,7 @@ class BaseSessionsWatcher:
                 ),
             )
             initialize_ingestion_session(session, invalidate=True, invalidate_mappings=True)
+            record_source_changes(after_sessions=[session_contribution(session)])
             return session
         kwargs: dict = {
             'content_storage_version': CONTENT_STORAGE_VERSION,
@@ -666,6 +670,7 @@ class BaseSessionsWatcher:
                 kwargs["layout"] = pending.layout
         session = Session.objects.create(**kwargs)
         initialize_ingestion_session(session, invalidate=True, invalidate_mappings=True)
+        record_source_changes(after_sessions=[session_contribution(session)])
         return session
 
     # ------------------------------------------------------------------

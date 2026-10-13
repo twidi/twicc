@@ -15,6 +15,8 @@ from twicc.providers.write_coordinator import WritePriority, write_priority
 
 logger = logging.getLogger(__name__)
 LIFECYCLE_FIELDS = (*COLD_FIELDS, 'type', 'parent_session_id')
+CONTRIBUTION_FIELDS = ('storage_incarnation', 'project_id', 'provider', 'user_message_count',
+                       'self_cost', 'subagents_cost', 'total_cost')
 active_session_ids: ContextVar[frozenset[str]] = ContextVar('content_active_session_ids', default=frozenset())
 _promotion_wakeup: Callable[..., None] | None = None
 
@@ -39,7 +41,7 @@ def _metadata(ids):
     for offset in range(0, len(ids), TREE_PAGE_SIZE):
         metadata.update({row['id']: row for row in Session.objects.filter(
             pk__in=ids[offset:offset + TREE_PAGE_SIZE],
-        ).values('id', *LIFECYCLE_FIELDS)})
+        ).values('id', *LIFECYCLE_FIELDS, *CONTRIBUTION_FIELDS)})
     return metadata
 
 
@@ -55,11 +57,26 @@ def lifecycle_change(session_ids: Iterable[str]):
     """Invalidate changed lifecycle metadata and both native roots in the actual write transaction."""
     with transaction.atomic():
         ids = tuple(set(session_ids))
+        from twicc.providers.contribution_revisions import record_source_changes, record_cost_publication
+        from twicc.providers.live_aggregates import session_contribution
+
         before = _metadata(ids)
+        contribution_before = {sid: Session(**row) for sid, row in before.items()}
         old_roots = _root_map(ids)
         yield
         after = _metadata(ids)
-        changed = {session_id for session_id in ids if before.get(session_id) != after.get(session_id)}
+        contribution_after = {sid: Session(**row) for sid, row in after.items()}
+        record_source_changes(
+            before_sessions=[session_contribution(row) for row in contribution_before.values()],
+            after_sessions=[session_contribution(row) for row in contribution_after.values()],
+        )
+        for sid, row in contribution_after.items():
+            old = contribution_before.get(sid)
+            if old is None or (old.self_cost, old.subagents_cost, old.total_cost) != (
+                    row.self_cost, row.subagents_cost, row.total_cost):
+                record_cost_publication(row)
+        changed = {sid for sid in ids if sid not in before or sid not in after
+                   or any(before[sid][field] != after[sid][field] for field in LIFECYCLE_FIELDS)}
         if not changed:
             return
         roots = set(_root_map(changed).values())

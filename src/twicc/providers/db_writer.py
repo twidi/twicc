@@ -3124,7 +3124,7 @@ def _apply_create_session_payload(payload: CreateSessionPayload) -> tuple[object
             payload.session.id, payload.session.storage_incarnation, before_sessions=[before_session],
             after_sessions=[session_contribution(payload.session)],
         )
-        apply_contribution_changes([], [], before_sessions=[],
+        apply_contribution_changes([], [], before_sessions=[] if is_new else [before_session],
             after_sessions=[session_contribution(payload.session)], repair=True)
     return project, created, adopted
 
