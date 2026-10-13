@@ -118,14 +118,16 @@ def _check_hidden_invariants(session) -> list[SessionVisibilityError]:
 
 
 def _apply_visibility_flag(session_id: str, new_hidden: bool):
-    """Commit eligibility and all affected activity buckets together."""
+    """Commit eligibility and retained aggregate scopes together."""
     from django.db import transaction
-    from twicc.core.models import Session, SessionItem
+    from twicc.core.models import Session
     from twicc.providers.compute_repair import preserve_pending_repair
     from twicc.providers.live_aggregates import apply_contribution_changes, session_contribution
 
     with transaction.atomic():
         session = Session.objects.get(id=session_id)
+        from twicc.core.content_storage.ingestion import initialize_ingestion_session
+        initialize_ingestion_session(session)
         before = session_contribution(session)
         session.hidden = new_hidden
         from twicc.core.content_storage.lifecycle import save_lifecycle
@@ -133,7 +135,6 @@ def _apply_visibility_flag(session_id: str, new_hidden: bool):
         preserve_pending_repair(
             session.id, session.storage_incarnation, before_sessions=[before],
             after_sessions=[session_contribution(session)],
-            historical_timestamps=SessionItem.objects.filter(session_id=session.id).values_list('timestamp', flat=True),
         )
         save_lifecycle(session, update_fields=['hidden'])
         apply_contribution_changes([], [], before_sessions=[before],

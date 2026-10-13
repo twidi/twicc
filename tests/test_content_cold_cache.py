@@ -1,4 +1,6 @@
 """Committed metadata reuse must preserve current native-root policy."""
+
+from tests.tree_aggregate_helpers import begin_history_replacement
 from datetime import timedelta
 
 import pytest
@@ -254,10 +256,9 @@ def test_reference_only_ingestion_invalidation_reuses_lifecycle_metadata():
 
 def test_history_replacement_keeps_committed_lifecycle_cache():
     from tests.test_content_history_lifecycle import job
-    from twicc.providers.codex import rollout_migration
     root = make_session('root', created_at=timezone.now() - timedelta(days=31))
     assert decisions(['root'])['root'].is_cold
-    rollout_migration._begin_replace_codex_history(job(root))
+    begin_history_replacement(job(root))
     with CaptureQueriesContext(connection) as queries:
         assert decisions(['root'])['root'].is_cold
     assert len(queries) == 0

@@ -1,5 +1,7 @@
 """History epochs protect active and durable event state through replacements."""
 
+from tests.tree_aggregate_helpers import begin_history_replacement
+
 import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
@@ -21,7 +23,6 @@ from twicc.mcp.events.methods import SubscriptionSnapshot
 from twicc.mcp.events.runtime import CursorWrite, RebaseWrite, TurnWrite
 from twicc.providers.codex.rollout_migration import (
     ReplaceCodexHistoryJob,
-    _begin_replace_codex_history,
     _finish_replace_codex_history,
     _insert_replace_codex_history_chunk,
 )
@@ -170,11 +171,11 @@ def test_load_and_reload_recover_arrival_before_begin_or_mid_replacement(env, nu
 
 
 def test_partial_replacement_repair_keeps_pending_until_current_compute(env):
-    _begin_replace_codex_history(job(env))
+    begin_history_replacement(job(env))
     _insert_replace_codex_history_chunk(env.session.id, [(1, '{}')])
     env.runtime._load_monitors()
     assert env.runtime.monitors[env.row.id].pending_rebase
-    _begin_replace_codex_history(job(env, 2))
+    begin_history_replacement(job(env, 2))
     assert not SessionItem.objects.filter(session=env.session).exists()
     _finish_replace_codex_history(job(env, 2))
     env.runtime._tick()
@@ -269,17 +270,17 @@ def test_begin_epoch_reset_is_atomic_and_wakeup_runs_only_after_commit(env):
     events.set_runtime(SimpleNamespace(rebase=wake))
     assert events.get_runtime() is not None
     with transaction.atomic():
-        _begin_replace_codex_history(job(env))
+        begin_history_replacement(job(env))
         assert observed == []
         env.session.refresh_from_db()
         assert env.session.history_epoch == 1 and env.session.last_offset == 0 and env.session.compute_version is None
     assert observed == [(1, 0, False)]
     with pytest.raises(RuntimeError), transaction.atomic():
-        _begin_replace_codex_history(job(env))
+        begin_history_replacement(job(env))
         raise RuntimeError("rollback")
     env.session.refresh_from_db()
     assert env.session.history_epoch == 1 and observed == [(1, 0, False)]
-    _begin_replace_codex_history(job(env))
+    begin_history_replacement(job(env))
     assert observed == [(1, 0, False), (2, 0, False)]
 
 
@@ -287,6 +288,6 @@ def test_offline_or_disabled_runtime_begin_has_no_wakeup_dependency(env, monkeyp
     monkeypatch.setenv("TWICC_NO_MCP", "1")
     assert events.get_runtime() is None
     events.rebase(env.session.id)
-    _begin_replace_codex_history(job(env))
+    begin_history_replacement(job(env))
     env.session.refresh_from_db()
     assert env.session.history_epoch == 1

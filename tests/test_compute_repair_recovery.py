@@ -103,25 +103,6 @@ def test_close_clears_private_state_and_prohibits_retry():
     assert not state._retries
 
 
-def test_pending_admission_recheck_defers_without_sql(monkeypatch):
-    async def scenario():
-        state = scheduler()
-        state.begin_sweep(1)
-        state.page_request()
-        state.observe_page((row(1, 'pending'),), excluded_session_ids=frozenset())
-        monkeypatch.setattr(db_writer, '_repair_recovery', state, raising=False)
-        monkeypatch.setattr(db_writer, '_pending_compute', None)
-        async def grant(factory, **kwargs):
-            db_writer._pending_compute = SimpleNamespace(message={'session_id': 'pending'})
-            await factory()
-            return True
-        async def forbidden(*args, **kwargs):
-            pytest.fail('Excluded target reaches SQL')
-        monkeypatch.setattr(db_writer, '_background_turn', grant)
-        monkeypatch.setattr(db_writer, 'run_compute_sync', forbidden)
-        assert await db_writer._advance_compute_repair()
-        assert state.next_candidate(frozenset()) is None
-    asyncio.run(scenario())
 
 
 def test_retry_escalates_to_sixty_seconds_and_generation_clears_it():
@@ -163,48 +144,12 @@ def test_finite_upper_id_excludes_later_insertions():
     assert state.page_request() is None
 
 
-@pytest.mark.parametrize('stage', ['begin', 'prepare', 'publish', 'activity', 'final', 'terminal'])
+@pytest.mark.parametrize('stage', ['begin', 'prepare', 'publish', 'facts', 'final'])
 def test_all_pending_stages_exclude_all_incarnations(monkeypatch, stage):
-    async def scenario():
-        state = scheduler()
-        state.begin_sweep(2)
-        state.page_request()
-        state.observe_page((row(1, 'pending'), row(2, 'other')), excluded_session_ids=frozenset())
-        monkeypatch.setattr(db_writer, '_repair_recovery', state, raising=False)
-        monkeypatch.setattr(db_writer, '_pending_compute', SimpleNamespace(message={'session_id': 'pending'}, stage=stage))
-        calls = []
-        async def grant(factory, **kwargs):
-            await factory()
-            return True
-        async def run(function, observation):
-            calls.append(observation.session_id)
-            return 'repaired'
-        monkeypatch.setattr(db_writer, '_background_turn', grant)
-        monkeypatch.setattr(db_writer, 'run_compute_sync', run)
-        assert await db_writer._advance_compute_repair()
-        assert calls == ['other']
-        assert not state._queued
-    asyncio.run(scenario())
-
-
-def test_foreground_demand_denies_recovery_without_consuming_candidate(monkeypatch):
-    from twicc.providers.write_coordinator import WriterCoordinator
-    async def scenario():
-        state = scheduler()
-        state.begin_sweep(1)
-        state.page_request()
-        state.observe_page((row(1),), excluded_session_ids=frozenset())
-        coordinator = WriterCoordinator()
-        demand = coordinator.foreground_demand()
-        monkeypatch.setattr(db_writer, '_repair_recovery', state)
-        monkeypatch.setattr(db_writer, '_write_coordinator', coordinator)
-        monkeypatch.setattr(db_writer, '_pending_compute', None)
-        try:
-            assert not await db_writer._advance_compute_repair()
-            assert state.next_candidate(frozenset()) == row(1).observation
-        finally:
-            demand.release()
-    asyncio.run(scenario())
+    pending = SimpleNamespace(message={'session_id': 'pending'}, stage=stage, terminal=False)
+    monkeypatch.setattr(db_writer, '_pending_compute', pending)
+    monkeypatch.setattr(db_writer, '_subprocess_queue', db_writer.ComputeIngressQueue())
+    assert db_writer._pending_repair_exclusions() == frozenset({'pending'})
 
 
 def test_empty_maximum_proves_old_failed_rows_disappeared():

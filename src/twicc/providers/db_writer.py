@@ -55,7 +55,7 @@ from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 from django.db import transaction
 
-from twicc.sync_diagnostics import log_slow, sync_timing_context, timed_sync_phase
+from twicc.sync_diagnostics import log_slow, sync_timing_context
 
 from twicc.core.enums import Provider
 from twicc.logging_context import provider_log_context
@@ -165,6 +165,7 @@ class DeleteSessionsPayload(NamedTuple):
 
     provider: Provider
     session_ids: list[str]
+    aggregate_evidence: object = None
 
 
 class UpdateProjectMetadataPayload(NamedTuple):
@@ -282,6 +283,9 @@ _async_queue: asyncio.Queue | None = None
 _background_async_queue: asyncio.Queue | None = None
 _pending_compute: PendingComputeApplication | None = None
 _repair_recovery: RepairRecoveryScheduler | None = None
+_tree_aggregates = None
+_pending_ingestion = None
+_removal_preparation_lock = None
 _repair_discovery_task: asyncio.Task | None = None
 
 
@@ -682,7 +686,8 @@ def start_db_writer() -> None:
     global _thread_queue, _subprocess_queue
     global _db_writer_stop_event, _db_writer_task, _async_queue, _background_async_queue
     global _write_coordinator, _db_write_lock, _storage_admission_lock
-    global _repair_recovery, _repair_discovery_task, _db_writer_ready
+    global _repair_recovery, _repair_discovery_task, _db_writer_ready, _tree_aggregates, _pending_ingestion
+    global _removal_preparation_lock
 
     if _db_writer_task is not None:
         raise RuntimeError("DB writer already started")
@@ -699,7 +704,7 @@ def start_db_writer() -> None:
         start_compute_application_executor()
         application_started = True
         _thread_queue = queue.Queue(maxsize=INITIAL_SYNC_QUEUE_MAXSIZE)
-        _subprocess_queue = queue.Queue(maxsize=COMPUTE_QUEUE_MAXSIZE)
+        _subprocess_queue = ComputeIngressQueue(maxsize=COMPUTE_QUEUE_MAXSIZE)
         _background_async_queue = asyncio.Queue()
         _async_queue = _ForegroundJobQueue()
         _db_writer_ready = asyncio.get_running_loop().create_future()
@@ -707,6 +712,10 @@ def start_db_writer() -> None:
         _write_coordinator = WriterCoordinator()
         _db_write_lock = _write_coordinator.foreground_lock(WriteResources.WRITER)
         _storage_admission_lock = _write_coordinator.foreground_lock(WriteResources.ADMISSION)
+        from twicc.providers.tree_aggregate_runtime import TreeAggregateScheduler
+        _pending_ingestion = None
+        _removal_preparation_lock = asyncio.Lock()
+        _tree_aggregates = TreeAggregateScheduler()
         _repair_recovery = RepairRecoveryScheduler()
         _repair_discovery_task = asyncio.create_task(_discover_compute_repairs())
         _db_writer_task = asyncio.create_task(_db_writer_loop())
@@ -714,7 +723,8 @@ def start_db_writer() -> None:
         async def failed_start():
             global _db_writer_task, _db_writer_stop_event, _thread_queue, _subprocess_queue
             global _async_queue, _background_async_queue, _write_coordinator, _db_write_lock, _storage_admission_lock
-            global _repair_recovery, _repair_discovery_task, _db_writer_ready
+            global _repair_recovery, _repair_discovery_task, _db_writer_ready, _tree_aggregates, _pending_ingestion
+            global _removal_preparation_lock
             try:
                 await _close_compute_repair_recovery()
                 try:
@@ -728,6 +738,9 @@ def start_db_writer() -> None:
                 _thread_queue = _subprocess_queue = _async_queue = _background_async_queue = None
                 _write_coordinator = _db_write_lock = _storage_admission_lock = None
                 _repair_recovery = _repair_discovery_task = None
+                _pending_ingestion = None
+                _removal_preparation_lock = None
+                _tree_aggregates = None
                 _db_writer_ready = None
                 reset_dictionary_cache()
         # Startup is synchronous. Retain asynchronous drainage as the lifetime
@@ -773,7 +786,9 @@ async def stop_db_writer() -> None:
     """
     global _write_coordinator, _db_write_lock, _storage_admission_lock, _db_writer_task, _db_writer_stop_event
     global _thread_queue, _subprocess_queue, _async_queue, _background_async_queue, _pending_compute
-    global _repair_recovery, _repair_discovery_task, _db_writer_ready
+    global _repair_recovery, _repair_discovery_task, _db_writer_ready, _tree_aggregates, _pending_ingestion
+
+    global _removal_preparation_lock
 
     cancelled = False
     transport_errors = []
@@ -852,6 +867,9 @@ async def stop_db_writer() -> None:
         _pending_compute = None
         _db_writer_ready = None
         _repair_recovery = _repair_discovery_task = None
+        _pending_ingestion = None
+        _removal_preparation_lock = None
+        _tree_aggregates = None
     if cancelled:
         # Our caller wanted us cancelled; honour that AFTER the writer task
         # has actually drained and we've cleared module state.
@@ -1065,6 +1083,32 @@ async def put_thread_message(
     return False
 
 
+class ComputeIngressQueue(queue.Queue):
+    """Track accepted source applications through their final commit or release."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.pending_sources = defaultdict(int)
+
+    def _put(self, item):
+        message = orjson.loads(item) if isinstance(item, (str, bytes, bytearray)) else item
+        if isinstance(message, dict) and message.get('type') == 'session_complete':
+            self.pending_sources[(message.get('run_id'), message['session_id'])] += 1
+        super()._put(item)
+
+
+def _release_source_application(message):
+    ingress = _subprocess_queue
+    if not isinstance(ingress, ComputeIngressQueue) or message.get('type') != 'session_complete':
+        return
+    key = message.get('run_id'), message['session_id']
+    with ingress.mutex:
+        count = ingress.pending_sources.get(key, 0)
+        if count > 1:
+            ingress.pending_sources[key] = count - 1
+        else:
+            ingress.pending_sources.pop(key, None)
+
+
 def get_subprocess_queue():
     """Return the bounded process-local ingress (never pass it to a worker)."""
     if _subprocess_queue is None:
@@ -1257,6 +1301,11 @@ async def submit_async_job(job) -> object:
     (the global shutdown stops every orchestrator before the writer, so a
     live periodic task always has a live writer to talk to).
     """
+    from twicc.providers.codex.rollout_migration import ReplaceCodexHistoryJob
+    if isinstance(job, ReplaceCodexHistoryJob) and job.aggregate_evidence is None:
+        from twicc.providers.aggregate_removal import prepare_removal
+        evidence = await _prepare_removal_async(prepare_removal, [job.session_id])
+        job = job._replace(aggregate_evidence=evidence)
     enqueue_async_job(job)
     # ``asyncio.shield`` guards ``job.future`` against producer-task cancellation.
     # asyncio normally cancels the Future a cancelled Task is awaiting (via
@@ -1888,7 +1937,11 @@ async def _background_turn(factory, *, content_activity=True, diagnostics=None, 
 
 def _pending_repair_exclusions() -> frozenset[str]:
     pending = _pending_compute
-    return frozenset({pending.message['session_id']}) if pending is not None else frozenset()
+    ids = {pending.message['session_id']} if pending is not None and not pending.terminal else set()
+    if isinstance(_subprocess_queue, ComputeIngressQueue):
+        with _subprocess_queue.mutex:
+            ids.update(sid for (_, sid) in _subprocess_queue.pending_sources)
+    return frozenset(ids)
 
 
 def _read_recovery_page(after_id: int, upper_id: int, limit: int):
@@ -1904,6 +1957,32 @@ def _read_recovery_page(after_id: int, upper_id: int, limit: int):
                   if (target := targets.get(row.observation.session_id)) is not None
                   and target.storage_incarnation == row.observation.incarnation and needs_repair(target))
     return rows, stale
+
+
+async def _prepare_removal_async(function, /, *args):
+    """One removal reader at a time, independent of foreground SQL workers."""
+    from twicc.providers.tree_aggregate_prepare import AggregatePreparationExecutor
+    if _removal_preparation_lock is None:
+        raise RuntimeError('DB writer not started')
+    async with _removal_preparation_lock:
+        executor = AggregatePreparationExecutor()
+        cancelled = False
+        try:
+            future = asyncio.wrap_future(executor.submit(function, *args))
+            while not future.done():
+                try:
+                    await asyncio.shield(future)
+                except asyncio.CancelledError:
+                    cancelled = True
+            result = future.result()
+        finally:
+            try:
+                await executor.aclose()
+            except asyncio.CancelledError:
+                cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError()
+        return result
 
 
 async def _recovery_discovery_read(function, /, *args):
@@ -1933,7 +2012,11 @@ async def _discover_compute_repairs() -> None:
             request = scheduler.page_request()
             if request is not None:
                 rows, stale = await _recovery_discovery_read(_read_recovery_page, *request)
-                scheduler.observe_page(rows, excluded_session_ids=_pending_repair_exclusions())
+                scheduler.observe_page(rows, excluded_session_ids=frozenset())
+                if _tree_aggregates is not None:
+                    _tree_aggregates.discover(rows)
+                for row in rows:
+                    scheduler.mark_admitted(row.observation)
                 for observation in stale:
                     scheduler.defer_unadmitted(observation)
                 logger.debug('Compute repair discovery: rows=%d queued=%d retries=%d stale=%d',
@@ -1949,6 +2032,8 @@ async def _close_compute_repair_recovery() -> None:
     scheduler = _repair_recovery
     if scheduler is not None:
         scheduler.close()
+    if _tree_aggregates is not None:
+        await _tree_aggregates.close()
     task = _repair_discovery_task
     if task is not None:
         if not task.done():
@@ -1963,41 +2048,9 @@ async def _close_compute_repair_recovery() -> None:
 
 
 async def _advance_compute_repair() -> bool:
-    scheduler = _repair_recovery
-    if scheduler is None:
+    if _tree_aggregates is None:
         return False
-    observation = scheduler.next_candidate(_pending_repair_exclusions())
-    if observation is None:
-        return False
-
-    async def repair():
-        # The grant can resume after a pending application appears or closes.
-        if scheduler._closed or observation.session_id in _pending_repair_exclusions():
-            scheduler.defer_unadmitted(observation)
-            return
-        scheduler.mark_admitted(observation)
-        from twicc.providers.compute_repair import repair_compute_observation
-        started = perf_counter()
-        try:
-            outcome = await run_compute_sync(repair_compute_observation, observation)
-        except Exception:
-            scheduler.settle_attempt(observation, 'failed', failed=True)
-            logger.exception('Compute repair attempt failed: journal_id=%d generation=%d',
-                             observation.journal_id, observation.generation)
-        else:
-            scheduler.settle_attempt(observation, outcome)
-            logger.debug('Compute repair attempt: journal_id=%d generation=%d outcome=%s',
-                         observation.journal_id, observation.generation, outcome)
-        finally:
-            retry = scheduler._retries.get(observation.journal_id)
-            logger.debug('Compute repair hold: ms=%.1f retries=%d retry_delay_seconds=%.1f',
-                         (perf_counter() - started) * 1000, len(scheduler._retries),
-                         max(0.0, retry.retry_deadline - scheduler._clock()) if retry else 0.0)
-
-    granted = await _background_turn(repair, content_activity=False)
-    logger.debug('Compute repair grant: granted=%s journal_id=%d queued=%d',
-                 granted, observation.journal_id, len(scheduler._queued))
-    return granted
+    return await _tree_aggregates.advance(_pending_repair_exclusions)
 
 
 async def _drain_one() -> bool:
@@ -2036,12 +2089,30 @@ async def _drain_one() -> bool:
         async def initialize():
             await _dispatch_queued_job(_background_async_queue.get_nowait())
         processed |= await _background_turn(initialize)
-    if not _thread_queue.empty():
-        async def ingest():
-            payload = _thread_queue.get_nowait()
-            with provider_log_context(getattr(payload, 'provider', None)):
-                await _process_thread_message(payload)
-        processed |= await _background_turn(ingest)
+    global _pending_ingestion
+    if _pending_ingestion is None and not _thread_queue.empty():
+        payload = _thread_queue.get_nowait()
+        preparation = None
+        if isinstance(payload, DeleteSessionsPayload):
+            preparation = asyncio.create_task(_prepare_removal_async(_prepare_delete_payload, payload))
+        _pending_ingestion = (payload, preparation)
+    if _pending_ingestion is not None:
+        payload, preparation = _pending_ingestion
+        if preparation is None or preparation.done():
+            if preparation is not None:
+                try:
+                    payload = preparation.result()
+                except Exception:
+                    logger.exception('Initial-sync deletion preparation failed')
+                    _initial_sync_failures[payload.provider] += 1
+                    _pending_ingestion = None
+                    return True
+            async def ingest():
+                global _pending_ingestion
+                _pending_ingestion = None
+                with provider_log_context(getattr(payload, 'provider', None)):
+                    await _process_thread_message(payload)
+            processed |= await _background_turn(ingest)
 
     processed |= await _advance_compute_repair()
     if _pending_compute is not None:
@@ -2058,6 +2129,7 @@ async def _drain_one() -> bool:
         msg = orjson.loads(raw) if isinstance(raw, (str, bytes, bytearray)) else raw
         provider = _provider_from_compute_message(msg)
         if provider is None:
+            _release_source_application(msg)
             return True
         state = _compute_states.get(msg.get('run_id'))
         if msg.get('type') == 'session_complete' and state is not None and not state.abandoned:
@@ -2104,7 +2176,6 @@ async def _advance_pending_compute_body() -> bool:
     )
     from twicc.providers.compute_base import BaseSessionCompute, ComputeApplyResult
     from twicc.content_maintenance_task import defer_background_promotions
-    from twicc.providers.activity_preparation import begin_activity_preparation, prepare_activity_key_page, publish_activity_key
 
     pending = _pending_compute
     state = _compute_states.get(pending.run_id)
@@ -2139,31 +2210,6 @@ async def _advance_pending_compute_body() -> bool:
                     run_compute_application_sync(prepare_compute_history_stage, pending.operation), context=context,
                 )
                 return True
-            activity = pending.operation.activity_preparation
-            # The pinned worker serves only this pending operation. Ordinary
-            # foreground/bulk/init jobs retain run_compute_sync on another worker.
-            # Reuse the one retained future/batch slot for bounded activity pages.
-            pending.batch = None
-            if activity is None or (activity.fallback_reason is None and not activity.enumeration_complete):
-                def prepare_activity():
-                    with timed_sync_phase('compute_activity_enumeration'):
-                        activity = begin_activity_preparation(pending.operation)
-                        page = prepare_activity_key_page(activity)
-                    logger.debug('Compute activity enumeration: rows=%d cursor=%d complete=%s fallback=%s retry_count=0',
-                                 page.rows, page.cursor, page.complete, page.fallback_reason or 'none')
-                    return page
-                context = contextvars.copy_context()
-                context.run(write_priority.set, WritePriority.BACKGROUND)
-                pending.preparation = asyncio.create_task(
-                    run_compute_application_sync(prepare_activity), context=context,
-                )
-                return True
-            if activity.fallback_reason is None and activity.repair_cursor < len(activity.ordered_keys):
-                key = activity.ordered_keys[activity.repair_cursor]
-                async def publish_activity():
-                    _require_live_compute_run(pending)
-                    await run_compute_application_sync(publish_activity_key, activity, key)
-                return await _background_turn(publish_activity, diagnostics=pending, phase='activity')
             async def finalize():
                 _require_live_compute_run(pending)
                 active = _active_compute_ids()
@@ -2239,6 +2285,7 @@ async def _finish_pending_compute(pending, *, notify=True):
             if pending.deferral is not None:
                 pending.deferral.release()
             pending.terminal = True
+            _release_source_application(pending.message)
     task = asyncio.create_task(cleanup())
     cancelled = False
     while not task.done():
@@ -2634,7 +2681,7 @@ async def _db_writer_loop_body() -> None:
     while True:
         try:
             if not await _drain_one():
-                if (_pending_compute is None and _async_queue.empty() and _background_async_queue.empty()
+                if (_pending_compute is None and _pending_ingestion is None and _async_queue.empty() and _background_async_queue.empty()
                         and _thread_queue.empty() and _subprocess_queue.empty()):
                     break
                 await asyncio.sleep(0.05)
@@ -2675,6 +2722,13 @@ async def _apply_compute_items_in_chunks(msg: dict) -> tuple[dict, str]:
 
 
 async def _process_compute_message(msg: dict) -> None:
+    try:
+        await _process_compute_message_body(msg)
+    finally:
+        _release_source_application(msg)
+
+
+async def _process_compute_message_body(msg: dict) -> None:
     """Handle control messages and direct synchronous adapter invocations.
 
     The permanent loop routes live session results through pending phases.
@@ -2791,6 +2845,8 @@ async def _complete_compute_result(msg, result, state, received_at, apply_starte
     if result.outcome != "applied":
         return
 
+    if _tree_aggregates is not None:
+        _tree_aggregates.note_source_applied(msg["session_id"])
     from twicc.inline_artifacts.share_exports import get_inline_export_coordinator
     get_inline_export_coordinator().publication_changed(msg["session_id"])
 
@@ -3213,47 +3269,56 @@ def _apply_mark_sessions_stale_payload(payload: MarkSessionsStalePayload) -> Non
             )
 
 
+def _deletion_ids(payload):
+    from twicc.core.models import Session
+    ids = set(Session.objects.filter(id__in=payload.session_ids, provider=payload.provider).values_list('id', flat=True))
+    frontier = ids
+    while frontier:
+        frontier = set(Session.objects.filter(parent_session_id__in=frontier).values_list('id', flat=True)) - ids
+        ids.update(frontier)
+    return ids
+
+
+def _prepare_delete_payload(payload):
+    from twicc.providers.aggregate_removal import prepare_removal
+    return payload._replace(aggregate_evidence=prepare_removal(_deletion_ids(payload)))
+
+
 def _apply_delete_sessions_payload(payload: DeleteSessionsPayload) -> list[str]:
-    """Delete sessions and their descendants with exact aggregate repair."""
-    from twicc.providers.live_aggregates import apply_contribution_changes, item_contributions, session_contribution
-    from twicc.core.models import Session, SessionItem
+    """Delete sources atomically with prepared, durable aggregate obligations."""
+    from twicc.providers.live_aggregates import apply_contribution_changes, session_contribution
+    from twicc.core.models import Session
     from twicc.core.content_storage.ingestion import initialize_ingestion_session
     from twicc.core.content_storage.references import remove_history_memberships
     from twicc.projects import update_project_metadata
 
     if not payload.session_ids:
         return []
+    from twicc.providers.aggregate_removal import require_removal
+    if payload.aggregate_evidence is None:
+        payload = _prepare_delete_payload(payload)
     with transaction.atomic():
-        ids = set(Session.objects.filter(id__in=payload.session_ids, provider=payload.provider)
-                  .values_list('id', flat=True))
-        pending = ids
-        while pending:
-            children = set(Session.objects.filter(parent_session_id__in=pending).values_list('id', flat=True)) - ids
-            ids.update(children)
-            pending = children
-        from twicc.providers.compute_repair import settle_deleted_repairs
-        from twicc.providers.compute_repair_journal import load_session_repairs
-
+        ids = _deletion_ids(payload)
+        evidence = payload.aggregate_evidence
+        require_removal(evidence)
+        if ids != {state.session_id for state in evidence.states}:
+            raise RuntimeError('Deletion membership changed before admission')
         # A wrong-provider source excludes its journals. Missing sources have no
         # provider owner: repair their full inventory without touching source caches.
         missing_ids = set(payload.session_ids) - set(
             Session.objects.filter(id__in=payload.session_ids).values_list('id', flat=True)
         )
-        snapshots = load_session_repairs(ids | missing_ids)
-        before_sessions = [session_contribution(s) for s in Session.objects.filter(id__in=ids)]
-        before_items = item_contributions(SessionItem.objects.filter(session_id__in=ids))
+        before_sessions = []
+        before_items = evidence.items
         for session in Session.objects.filter(id__in=ids).iterator(chunk_size=128):
             initialize_ingestion_session(session, invalidate=True)
+            before_sessions.append(session_contribution(session))
             remove_history_memberships(session.id)
         Session.objects.filter(id__in=ids).delete()
         from twicc.core.content_storage.cold_cache import schedule_cold_invalidation
 
         schedule_cold_invalidation(ids | missing_ids, mappings=True)
         apply_contribution_changes(before_items, [], before_sessions=before_sessions, after_sessions=[], repair=True)
-        # Recheck absence inside the source transaction before orphan settlement.
-        if Session.objects.filter(id__in={snapshot.observation.session_id for snapshot in snapshots}).exists():
-            raise RuntimeError('Deleted repair source still exists')
-        settle_deleted_repairs(snapshots)
         for project_id in {s.project_id for s in before_sessions}:
             update_project_metadata(project_id)
     return sorted(ids)

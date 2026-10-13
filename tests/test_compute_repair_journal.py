@@ -10,6 +10,7 @@ from django.db import transaction
 from django.db.transaction import TransactionManagementError
 
 from twicc.core.models import DailyActivity, Project, Session, WeeklyActivity
+from twicc.providers.compute_repair_journal import merge_compute_repair, load_compute_repair
 
 pytestmark = pytest.mark.django_db(transaction=True)
 DAY = date(2026, 10, 13)
@@ -252,3 +253,32 @@ def test_invalid_project_id_is_rejected_before_writing(project_id):
     with transaction.atomic(), pytest.raises(ValueError):
         journal.merge_compute_repair('source', 'incarnation', project_ids=[project_id], source_changed=True)
     assert journal.load_compute_repair('source', 'incarnation') is None
+
+
+def test_mixed_scope_project_activity_and_baseline_tags_roundtrip():
+    from datetime import date
+    from twicc.providers.compute_repair_journal import own_baseline_pending, clear_own_baseline_pending
+    day = (DailyActivity, 'old', 'codex', date(2026, 10, 13))
+    with transaction.atomic():
+        first = merge_compute_repair('mixed-scope', 'inc', activity_keys=[day], project_ids=['old'],
+            activity_scopes=[('old', 'codex'), (None, 'codex')], source_changed=True, baseline_pending=True)
+        second = merge_compute_repair('mixed-scope', 'inc', project_ids=['new'],
+            activity_scopes=[('new', 'claude_code'), (None, 'claude_code')], source_changed=False)
+    assert second.activity_keys == frozenset({day})
+    assert second.project_ids == frozenset({'old', 'new'})
+    assert second.activity_scopes == frozenset({('old', 'codex'), (None, 'codex'),
+                                               ('new', 'claude_code'), (None, 'claude_code')})
+    assert second.observation.generation == first.observation.generation + 1
+    assert load_compute_repair('mixed-scope', 'inc') == second
+    assert own_baseline_pending('mixed-scope', 'inc')
+    with transaction.atomic():
+        clear_own_baseline_pending('mixed-scope', 'inc')
+    assert load_compute_repair('mixed-scope', 'inc') == second
+    assert not own_baseline_pending('mixed-scope', 'inc')
+
+
+@pytest.mark.parametrize('scope', [('p', ''), ('', 'codex'), (3, 'codex'), ('p', None), ('p',), 'p'])
+def test_invalid_activity_scope_rolls_back_before_writes(scope):
+    with pytest.raises(ValueError), transaction.atomic():
+        merge_compute_repair('invalid-scope', 'inc', activity_scopes=[scope], source_changed=True)
+    assert load_compute_repair('invalid-scope', 'inc') is None

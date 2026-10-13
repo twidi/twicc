@@ -31,6 +31,7 @@ class RevisionObservation(NamedTuple):
     projects: tuple[tuple[str, int], ...]
     identity: tuple
     generation: int
+    day_scopes: tuple = ()
 
 
 _lock = RLock()
@@ -56,7 +57,9 @@ def observe_revisions(*, sources: Iterable[SourceKey] = (), roots: Iterable[Sour
     with _lock:
         observations = tuple(tuple((key, _revisions.get((identity, domain, key), 0)) for key in keys)
                              for domain, keys in enumerate(domains))
-        return RevisionObservation(*observations, identity, _generation)
+        scopes = {(scope, key.provider) for key in domains[2] for scope in (key.project_id, None)}
+        scope_revisions = tuple((scope, _revisions.get((identity, 5, scope), 0)) for scope in scopes)
+        return RevisionObservation(*observations, identity, _generation, scope_revisions)
 
 
 def revisions_match(observation: RevisionObservation) -> bool:
@@ -64,14 +67,16 @@ def revisions_match(observation: RevisionObservation) -> bool:
     with _lock:
         return (observation.identity == identity and observation.generation == _generation
                 and all(_revisions.get((identity, domain, key), 0) == revision
-                        for domain, pairs in enumerate(observation[:5]) for key, revision in pairs))
+                        for domain, pairs in enumerate(observation[:5]) for key, revision in pairs)
+                and all(_revisions.get((identity, 5, key), 0) == revision
+                        for key, revision in observation.day_scopes))
 
 
 def record_contribution_commit(*, sources: Iterable[SourceKey] = (), roots: Iterable[SourceKey] = (),
                                days: Iterable[DailyKey] = (), costs: Iterable[SourceKey] = (),
-                               projects: Iterable[str] = ()) -> None:
+                               projects: Iterable[str] = (), day_scopes: Iterable[tuple] = ()) -> None:
     identity = _identity()
-    domains = tuple(frozenset(keys) for keys in (sources, roots, days, costs, projects))
+    domains = tuple(frozenset(keys) for keys in (sources, roots, days, costs, projects, day_scopes))
 
     def committed():
         with _lock:
@@ -137,8 +142,13 @@ def record_source_changes(before_items=(), after_items=(), *, before_sessions=()
             for state, mapping in ((old, before), (new, after)):
                 if state is not None and (root := _native_root(state, mapping)) is not None:
                     roots.add(root)
+    day_scopes = set()
+    for sid in before.keys() & after.keys():
+        old, new = before[sid], after[sid]
+        if (old.project_id, old.provider, old.type, old.hidden) != (new.project_id, new.provider, new.type, new.hidden):
+            day_scopes.update((scope, state.provider) for state in (old, new) for scope in (state.project_id, None))
     record_contribution_commit(
-        sources=sources, roots=roots,
+        sources=sources, roots=roots, day_scopes=day_scopes,
         days=(DailyKey(project, provider, day) for model, project, provider, day in keys if model is DailyActivity),
         projects=(state.project_id for state in (*before_sessions, *after_sessions)
                   if state.type == SessionType.SESSION),

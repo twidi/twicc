@@ -3834,17 +3834,7 @@ class BaseSessionCompute:
             initialize_compute_session(session_id)
             session.refresh_from_db()
         before_session = session_contribution(session)
-        from twicc.providers.compute_repair_journal import load_compute_repair
 
-        # Capture the journal before known own lifecycle/cache writes. The final
-        # policy also checks its generation after merging final obligations.
-        final_repair_snapshot = load_compute_repair(session_id, session.storage_incarnation)
-        operation = msg.get('_storage_operation')
-        activity_preparation = operation.activity_preparation if operation is not None else None
-        if activity_preparation is not None:
-            current_observation = final_repair_snapshot.observation if final_repair_snapshot is not None else None
-            if current_observation != activity_preparation.repair_observation:
-                activity_preparation.disable('journal_changed')
         changed = SessionItem.objects.filter(session_id=session_id,
             id__in=[u['id'] for u in msg.get('item_updates', [])])
         before_items = item_contributions(changed)
@@ -4098,37 +4088,20 @@ class BaseSessionCompute:
                 share.save(update_fields=["options"])
 
         with timed_sync_phase('compute_final_aggregates'):
-            # Publish an exact baseline in this same transaction before the
-            # new compute version becomes visible to the next live operation.
+            # Retain the own-baseline marker with source readiness. Live
+            # updates must not apply deltas until guarded own publication.
             session = Session.objects.get(id=session_id)
-            from twicc.providers.compute_repair import record_compute_repair, repair_retained_parents
-            from twicc.providers.compute_repair_journal import settle_compute_repair
+            from twicc.providers.compute_repair import record_compute_repair
 
             after_items = item_contributions(changed)
-            snapshot = record_compute_repair(
+            record_compute_repair(
                 session, before_items, after_items, before_session=before_session,
                 prospective_session=session_contribution(session),
                 extra_activity_keys=msg.get('_activity_repair_keys', ()),
                 source_changed=bool(msg.get('item_updates') or msg.get('content_overrides')),
             )
-            from twicc.providers.activity_preparation import activity_final_policy
-
-            prepared_keys = activity_final_policy(
-                activity_preparation,
-                before_session, session_fields or {},
-                item_updates=msg.get('item_updates', ()), content_overrides=msg.get('content_overrides', ()),
-                extra_activity_keys=snapshot.activity_keys, repair_snapshot=final_repair_snapshot,
-            )
-            # SQL owns the complete inventory, even when private proof fails.
-            apply_contribution_changes(
-                before_items, after_items, before_sessions=[before_session],
-                after_sessions=[session_contribution(session)], repair=True,
-                repaired_activity_buckets=prepared_keys,
-                extra_activity_keys=snapshot.activity_keys,
-            )
-            already_repaired = {before_session.parent_session_id, session.parent_session_id}
-            repair_retained_parents(snapshot.parent_ids - already_repaired)
-            settle_compute_repair(snapshot.observation)
+            # Source readiness is independent of complete native-tree publication.
+            # The durable journal owns every aggregate obligation after commit.
             session.refresh_from_db()
 
         with timed_sync_phase('compute_final_plan_docs'):
@@ -4828,10 +4801,9 @@ class BaseSessionCompute:
             session.id, session.storage_incarnation, before_sessions=[before_session],
             after_sessions=[session_contribution(session)], before_items=before_existing_live,
             after_items=[*inserted_contributions, *after_existing_live],
-            historical_timestamps=session.items.values_list('timestamp', flat=True),
         )
         apply_contribution_changes(
-            [], inserted_contributions,
+            before_existing_live, [*inserted_contributions, *after_existing_live],
             before_sessions=[before_session], after_sessions=[session_contribution(session)],
             repair=repair_aggregates,
         )

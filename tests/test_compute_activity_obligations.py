@@ -15,12 +15,15 @@ from twicc.core.content_storage.extraction import (
 )
 from twicc.providers.compute_base import BaseSessionCompute
 from twicc.providers.live_aggregates import _activity_keys
+from twicc.providers.helpers import get_provider_helpers
+from tests.tree_aggregate_helpers import drain_aggregates
 
 pytestmark = pytest.mark.django_db(transaction=True)
 STAMP = datetime(2026, 9, 29, tzinfo=UTC)
 
 
 def make_session(**fields):
+    fields.setdefault('compute_version', get_provider_helpers(Provider.CLAUDE_CODE).current_compute_version)
     project = Project.objects.create(id='obligation-project')
     return Session.objects.create(id='obligation-session', project=project, provider=Provider.CLAUDE_CODE,
                                   file_path='unused', **fields)
@@ -54,6 +57,7 @@ def test_removed_last_timestamp_retained_for_exact_final_repair():
         # Simulate discarded optimization state: the retained inventory must survive.
         final['_repaired_activity_buckets'] = set(_activity_keys(session.project_id, session.provider, STAMP))
         assert BaseSessionCompute._apply_session_complete_final(final).outcome == 'applied'
+        drain_aggregates()
         assert not DailyActivity.objects.exists()
         assert not WeeklyActivity.objects.exists()
     finally:
@@ -73,6 +77,7 @@ def test_legacy_cache_cannot_preserve_fractional_normalization_error():
         '_repaired_activity_buckets': legacy, 'item_fields': ['cost'],
         'item_updates': [{'id': item.id, 'cost': '0.000001'} for item in items]})
     assert result.outcome == 'applied'
+    drain_aggregates()
     for model in (DailyActivity, WeeklyActivity):
         for scope in (session.project_id, None):
             assert raw_cost(model, scope) == pytest.approx(0.000002, abs=1e-15)
@@ -84,6 +89,11 @@ def test_legacy_cache_cannot_preserve_fractional_normalization_error():
 @pytest.mark.parametrize('hidden,child', [(False, False), (True, False), (False, True)])
 def test_creation_count_repair_preserves_raw_fractional_cost(created, effective, hidden, child):
     session = make_session(created_at=created, hidden=hidden, type='subagent' if child else 'session')
+    if child:
+        parent = Session.objects.create(id='obligation-parent', project=session.project, provider=session.provider,
+            storage_incarnation='parent-inc', compute_version=session.compute_version)
+        session.parent_session = parent
+        session.save(update_fields=['parent_session'])
     SessionItem.objects.create(session=session, line_num=1, content='{}', timestamp=STAMP,
                                kind=ItemKind.USER_MESSAGE)
     with connection.cursor() as cursor:
@@ -93,6 +103,7 @@ def test_creation_count_repair_preserves_raw_fractional_cost(created, effective,
         model.recalculate(scope, day, Provider(provider))
     assert BaseSessionCompute.apply_session_complete({'session_id': session.id, 'history_facts': [],
         '_repaired_activity_buckets': legacy, 'session_fields': {'created_at': effective.isoformat() if effective else None}}).outcome == 'applied'
+    drain_aggregates()
     for model in (DailyActivity, WeeklyActivity):
         for scope in (session.project_id, None):
             with connection.cursor() as cursor:

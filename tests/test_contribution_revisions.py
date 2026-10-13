@@ -36,6 +36,8 @@ before_items=before_existing_live and after_items=inserted + existing rows.
 Legacy apply_contribution_changes still receives inserted_contributions only.
 Task 9 must retain the replay evidence in its new delta/preparation path.
 """
+
+from tests.tree_aggregate_helpers import begin_history_replacement, publish_session_values, publish_project_values
 from datetime import date
 from decimal import Decimal
 
@@ -131,6 +133,7 @@ def test_derived_publication_preserves_tree_source_observation():
     with transaction.atomic():
         state = session_contribution(session)
         apply_contribution_changes([], [], before_sessions=[state], after_sessions=[state], repair=True)
+    publish_session_values(session)
     assert revisions.revisions_match(source)
     assert not revisions.revisions_match(cost)
     assert not revisions.revisions_match(project)
@@ -142,6 +145,7 @@ def test_project_output_does_not_advance_project_input_revision():
     observed = revisions.observe_revisions(projects=['p'])
     with transaction.atomic():
         update_project_total_cost('p')
+    publish_project_values('p')
     assert Project.objects.get(pk='p').total_cost == 3
     assert revisions.revisions_match(observed)
 
@@ -230,14 +234,14 @@ def test_creation_invalidates_existing_root_membership():
 @pytest.mark.parametrize('phase', ['begin', 'insert', 'finish'])
 def test_history_replacement_without_journal_invalidates_source(phase):
     from twicc.providers.codex.rollout_migration import (
-        ReplaceCodexHistoryJob, _begin_replace_codex_history, _insert_replace_codex_history_chunk,
+        ReplaceCodexHistoryJob, _insert_replace_codex_history_chunk,
         _finish_replace_codex_history,
     )
     session = make_session('replacement')
     job = ReplaceCodexHistoryJob(session.provider, session.id, [(1, '{}')], 100, 1, 2.0, None)
     observed = observe_source(session)
     if phase == 'begin':
-        _begin_replace_codex_history(job)
+        begin_history_replacement(job)
     elif phase == 'insert':
         _insert_replace_codex_history_chunk(session.id, job.items)
     else:
@@ -298,19 +302,18 @@ def test_hidden_root_cost_publication_invalidates_project_input():
     with transaction.atomic():
         state = session_contribution(session)
         apply_contribution_changes([], [], before_sessions=[state], after_sessions=[state], repair=True)
+    publish_session_values(session)
     assert not revisions.revisions_match(project)
     assert revisions.revisions_match(tree)
 
 
 def test_other_root_derived_repair_invalidates_project_only():
-    from twicc.providers.compute_repair import repair_retained_parents
     root = make_session('prepared-root')
     other = make_session('published-root')
     SessionItem.objects.create(session=other, line_num=1, content='{}', cost=1)
     project = revisions.observe_revisions(projects=['p'])
     tree = observe_source(root)
-    with transaction.atomic():
-        repair_retained_parents([other.id])
+    publish_session_values(other)
     assert not revisions.revisions_match(project)
     assert revisions.revisions_match(tree)
 

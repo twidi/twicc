@@ -4,7 +4,8 @@ The scheduler establishes authoritative inventory admission before preparing and
 again under writer ownership. It owns one executor for its lifetime, polls the
 returned future, and retries ChangedPreparation outside writer ownership.
 Commit child publications before preparing ancestors, and session publications
-before preparing days or projects. Release cached work when each job ends.
+before preparing days or projects. Retain at most one valid tree source cache;
+release abandoned work and close the cache with the scheduler.
 """
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -146,9 +147,19 @@ def _checked(prepared):
     return prepared
 
 
+def _own_source_signature(work):
+    observation = work.observation
+    keys = {member.source for member in observation.members}
+    revisions = observation.revisions
+    return (observation.root, observation.members,
+            tuple(pair for pair in revisions.sources if pair[0] in keys),
+            revisions.roots, revisions.identity, revisions.generation)
+
+
 def _own_values(work):
     cached = getattr(_worker, 'cache', None)
-    if cached is not None and cached[0] == work.observation:
+    if cached is not None and cached[2] == _own_source_signature(work):
+        _worker.cache = work.observation, cached[1], cached[2]
         return cached[1]
     ids = [member.source.session_id for member in work.observation.members]
     costs = dict(SessionItem.objects.filter(session_id__in=ids, cost__isnull=False).order_by()
@@ -156,7 +167,7 @@ def _own_values(work):
     counts = dict(SessionItem.objects.filter(session_id__in=ids, kind=ItemKind.USER_MESSAGE).order_by()
                   .values('session_id').annotate(value=Count('pk')).values_list('session_id', 'value'))
     values = {sid: (costs.get(sid), counts.get(sid, 0)) for sid in ids}
-    _worker.cache = work.observation, values
+    _worker.cache = work.observation, values, _own_source_signature(work)
     return values
 
 
@@ -211,7 +222,8 @@ def prepare_project_values(work: TreeAggregateWork, project_id: str) -> Prepared
         keys = tuple(SourceKey(*row) for row in roots.order_by().values_list('id', 'storage_incarnation'))
         costs = observe_revisions(costs=keys)
         total = roots.aggregate(value=Sum('total_cost'))['value'] or Decimal(0)
-        values = AggregateValues(total if total > 0 else None)
+        visible_count = roots.filter(hidden=False, created_at__isnull=False, user_message_count__gt=0).count()
+        values = AggregateValues(total if total > 0 else None, session_count=visible_count)
     _checked(PreparedAggregate('project', project_id, values, observation))
     return _checked(PreparedAggregate('project', project_id, values, observation._replace(costs=costs.costs)))
 
@@ -234,6 +246,8 @@ def publish_aggregate(work: TreeAggregateWork, prepared: PreparedAggregate,
         ).get(pk=key.session_id, storage_incarnation=key.incarnation)
         Session.objects.filter(pk=session.id).update(self_cost=values.self_cost, subagents_cost=values.subagents_cost,
                                                     total_cost=values.cost, user_message_count=values.message_count)
+        from twicc.providers.compute_repair_journal import clear_own_baseline_pending
+        clear_own_baseline_pending(session.id, session.storage_incarnation)
         record_cost_publication(session)
         # Creation-day counts depend on derived own-message eligibility. This
         # output change does not invalidate the tree's source/membership proof.
@@ -252,7 +266,7 @@ def publish_aggregate(work: TreeAggregateWork, prepared: PreparedAggregate,
                 defaults={'cost': values.cost, 'user_message_count': values.message_count,
                           'session_count': values.session_count})
     elif prepared.kind == 'project':
-        Project.objects.filter(pk=prepared.key).update(total_cost=values.cost)
+        Project.objects.filter(pk=prepared.key).update(total_cost=values.cost, sessions_count=values.session_count)
     else:
         raise ValueError('Unknown aggregate kind')
     return 'published'

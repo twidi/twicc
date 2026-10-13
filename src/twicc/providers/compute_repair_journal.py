@@ -12,11 +12,12 @@ from django.db import connection
 from django.db.models import Max
 from django.db.transaction import TransactionManagementError
 
-from twicc.core.models import ComputeAggregateRepair, DailyActivity, WeeklyActivity
+from twicc.core.models import ComputeAggregateRepair, DailyActivity, WeeklyActivity, Project
 
 ActivityKey = tuple[type[DailyActivity] | type[WeeklyActivity], str | None, str, date]
 # JSON shapes: ["day" | "week", nullable project ID, provider, ISO date]
-# and ["project", nonempty project ID]. Project tags stay outside ActivityKey.
+# plus ["project", ID], ["scope", nullable project ID, provider], and
+# ["baseline_pending"]. Scope/project markers stay outside ActivityKey.
 SerializedActivityKey = list[str | None]
 
 
@@ -32,6 +33,7 @@ class RepairSnapshot(NamedTuple):
     activity_keys: frozenset[ActivityKey]
     parent_ids: frozenset[str]
     project_ids: frozenset[str] = frozenset()
+    activity_scopes: frozenset[tuple[str | None, str]] = frozenset()
 
 
 class RepairObservationChanged(RuntimeError):
@@ -81,11 +83,32 @@ def _parents(parent_ids: Iterable[str]) -> frozenset[str]:
     return frozenset(result)
 
 
+def _activity_scope(scope):
+    if not isinstance(scope, (tuple, list)) or len(scope) != 2:
+        raise ValueError('Activity scope must contain project and provider')
+    project, provider = scope
+    if project is not None and (not isinstance(project, str) or not project):
+        raise ValueError('Activity scope project must be a nonempty string or null')
+    if not isinstance(provider, str) or not provider:
+        raise ValueError('Activity scope provider must be a nonempty string')
+    return project, provider
+
+
+def _ordered_scopes(scopes):
+    return [['scope', project, provider] for project, provider in sorted(scopes,
+        key=lambda scope: (scope[0] is not None, scope[0] or '', scope[1]))]
+
+
 def _snapshot(row: ComputeAggregateRepair) -> RepairSnapshot:
     keys = []
     projects = set()
+    scopes = set()
     for tag in row.activity_keys:
-        if isinstance(tag, list) and len(tag) == 2 and tag[0] == "project":
+        if tag == ["baseline_pending"]:
+            continue
+        if isinstance(tag, list) and len(tag) == 3 and tag[0] == "scope":
+            scopes.add(_activity_scope(tag[1:]))
+        elif isinstance(tag, list) and len(tag) == 2 and tag[0] == "project":
             projects.update(_parents([tag[1]]))
         else:
             keys.append(_deserialize_key(tag))
@@ -94,6 +117,7 @@ def _snapshot(row: ComputeAggregateRepair) -> RepairSnapshot:
         frozenset(keys),
         _parents(row.parent_ids),
         frozenset(projects),
+        frozenset(scopes),
     )
 
 
@@ -116,15 +140,20 @@ def merge_compute_repair(
     activity_keys: Iterable[ActivityKey] = (),
     parent_ids: Iterable[str] = (),
     project_ids: Iterable[str] = (),
+    activity_scopes: Iterable[tuple[str | None, str]] = (),
     source_changed: bool,
     create: bool = True,
+    baseline_pending: bool = False,
 ) -> RepairSnapshot | None:
     """Retain old obligations and advance generation for every source mutation."""
     _require_transaction()
     # Validate the complete input before the first write, including generator inputs.
     keys = frozenset(_deserialize_key(_serialize_key(key)) for key in activity_keys)
+    scopes = frozenset(_activity_scope(scope) for scope in activity_scopes)
     parents = _parents(parent_ids)
     projects = _parents(project_ids)
+    projects = projects | frozenset(Project.objects.filter(pk__in=projects, worktree_of__isnull=False).values_list(
+        'worktree_of_id', flat=True))
     row = ComputeAggregateRepair.objects.filter(session_id=session_id, incarnation=incarnation).first()
     if row is None:
         if not create:
@@ -132,8 +161,9 @@ def merge_compute_repair(
         row = ComputeAggregateRepair.objects.create(
             session_id=session_id,
             incarnation=incarnation,
-            generation=int(source_changed or bool(keys) or bool(parents) or bool(projects)),
-            activity_keys=_ordered_keys(keys) + [["project", project] for project in sorted(projects)],
+            generation=int(source_changed or bool(keys) or bool(parents) or bool(projects) or bool(scopes)),
+            activity_keys=_ordered_keys(keys) + [["project", project] for project in sorted(projects)]
+                + _ordered_scopes(scopes) + ([["baseline_pending"]] if baseline_pending else []),
             parent_ids=sorted(parents),
         )
         return _snapshot(row)
@@ -142,10 +172,14 @@ def merge_compute_repair(
     merged_keys = previous.activity_keys | keys
     merged_parents = previous.parent_ids | parents
     merged_projects = previous.project_ids | projects
+    merged_scopes = previous.activity_scopes | scopes
     if (source_changed or merged_keys != previous.activity_keys or merged_parents != previous.parent_ids
-            or merged_projects != previous.project_ids):
+            or merged_projects != previous.project_ids or merged_scopes != previous.activity_scopes
+            or (baseline_pending and ["baseline_pending"] not in row.activity_keys)):
         row.generation += 1
-        row.activity_keys = _ordered_keys(merged_keys) + [["project", project] for project in sorted(merged_projects)]
+        pending = baseline_pending or ["baseline_pending"] in row.activity_keys
+        row.activity_keys = (_ordered_keys(merged_keys) + [["project", project] for project in sorted(merged_projects)]
+                             + _ordered_scopes(merged_scopes) + ([["baseline_pending"]] if pending else []))
         row.parent_ids = sorted(merged_parents)
         row.save(update_fields=["generation", "activity_keys", "parent_ids"])
         return _snapshot(row)
@@ -190,3 +224,18 @@ def read_compute_repair_page(after_id: int, upper_id: int, *, limit: int = 64) -
 
 def compute_repair_upper_id() -> int:
     return ComputeAggregateRepair.objects.aggregate(upper_id=Max("id"))["upper_id"] or 0
+
+
+def own_baseline_pending(session_id: str, incarnation: str) -> bool:
+    keys = ComputeAggregateRepair.objects.filter(session_id=session_id, incarnation=incarnation).values_list(
+        'activity_keys', flat=True).first()
+    return keys is not None and ['baseline_pending'] in keys
+
+
+def clear_own_baseline_pending(session_id: str, incarnation: str) -> None:
+    """Discharge derived work without changing the source generation fence."""
+    _require_transaction()
+    row = ComputeAggregateRepair.objects.filter(session_id=session_id, incarnation=incarnation).first()
+    if row is not None and ['baseline_pending'] in row.activity_keys:
+        row.activity_keys = [tag for tag in row.activity_keys if tag != ['baseline_pending']]
+        row.save(update_fields=['activity_keys'])

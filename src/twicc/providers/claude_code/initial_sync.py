@@ -173,7 +173,7 @@ def _sync_session_subagents(
         if agent_id in db_subagents:
             # Subagent already in DB — push an update payload if items changed.
             subagent = db_subagents[agent_id]
-            to_insert = read_session_items_from_file(subagent, file_path)
+            to_insert = read_session_items_from_file(subagent, file_path, on_error=lambda error: stats.__setitem__("inventory_complete", 0))
             if to_insert is None:
                 continue
             stats["items_added"] += to_insert.actually_new_count
@@ -197,7 +197,7 @@ def _sync_session_subagents(
             ))
         else:
             # New subagent.
-            if not check_file_has_content(file_path):
+            if not check_file_has_content(file_path, on_error=lambda error: stats.__setitem__("inventory_complete", 0)):
                 continue
 
             subagent = Session(
@@ -208,7 +208,7 @@ def _sync_session_subagents(
                 type=SessionType.SUBAGENT,
                 parent_session_id=session.id,
             )
-            to_insert = read_session_items_from_file(subagent, file_path)
+            to_insert = read_session_items_from_file(subagent, file_path, on_error=lambda error: stats.__setitem__("inventory_complete", 0))
             if to_insert is None:
                 # File vanished between scan and read.
                 continue
@@ -306,6 +306,7 @@ def sync_project(
         "sessions_created": 0,
         "sessions_stale": 0,
         "items_added": 0,
+        "inventory_complete": 1,
     }
 
     # Try to get existing project (read-only).
@@ -342,6 +343,7 @@ def sync_project(
                 "  Sync interrupted for project %s (after %d/%d sessions)",
                 project_id, idx - 1, total_sessions,
             )
+            stats["inventory_complete"] = 0
             return stats
 
         file_path = session_files[session_id]
@@ -349,7 +351,7 @@ def sync_project(
         if session_id in db_session_ids:
             # Existing session — push an update payload if items changed.
             session = db_sessions[session_id]
-            to_insert = read_session_items_from_file(session, file_path)
+            to_insert = read_session_items_from_file(session, file_path, on_error=lambda error: stats.__setitem__("inventory_complete", 0))
 
             if to_insert is not None:
                 stats["items_added"] += to_insert.actually_new_count
@@ -376,7 +378,7 @@ def sync_project(
             continue
 
         # New session.
-        if not check_file_has_content(file_path):
+        if not check_file_has_content(file_path, on_error=lambda error: stats.__setitem__("inventory_complete", 0)):
             # Empty file (0 lines) — skip creating session.
             if on_session_progress:
                 on_session_progress(session_id, idx, total_sessions)
@@ -394,7 +396,7 @@ def sync_project(
             file_path=str(file_path.relative_to(claude_projects_dir())),
             type=SessionType.SESSION,
         )
-        to_insert = read_session_items_from_file(session, file_path)
+        to_insert = read_session_items_from_file(session, file_path, on_error=lambda error: stats.__setitem__("inventory_complete", 0))
         if to_insert is None:
             # File vanished between scan and read.
             if on_session_progress:
@@ -521,6 +523,7 @@ def sync_all(
         "sessions_created": 0,
         "sessions_stale": 0,
         "items_added": 0,
+        "inventory_complete": 1,
     }
 
     disk_project_ids = scan_projects()
@@ -561,11 +564,14 @@ def sync_all(
         stats["sessions_created"] += project_stats["sessions_created"]
         stats["sessions_stale"] += project_stats["sessions_stale"]
         stats["items_added"] += project_stats["items_added"]
+        stats["inventory_complete"] &= project_stats["inventory_complete"]
 
         if on_project_done:
             on_project_done(project_id, project_stats)
 
     interrupted = stop_event is not None and stop_event.is_set()
+    if interrupted:
+        stats["inventory_complete"] = 0
 
     # Resolve git_root for every project with a directory. Enqueued as a
     # single marker, not a producer-side query + one payload per project:

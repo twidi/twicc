@@ -125,6 +125,7 @@ class ClaudeCodeOrchestrator(BaseOrchestrator):
         # This provider owns both phases — reset the inherited pre-set
         # events so the CLI actually waits for our broadcasts.
         self.initial_sync_done = asyncio.Event()
+        self.initial_sync_succeeded = False
         self.compute_done = asyncio.Event()
 
         # Cooperative stop event for the initial sync thread
@@ -181,6 +182,7 @@ class ClaudeCodeOrchestrator(BaseOrchestrator):
         # exit on the first ``is_set()`` check.
         self._sync_stop_event.clear()
         self.initial_sync_done.clear()
+        self.initial_sync_succeeded = False
         self.compute_done.clear()
 
         self._sync_task = self._create_task(self._initial_sync_task())
@@ -424,7 +426,7 @@ class ClaudeCodeOrchestrator(BaseOrchestrator):
         # shutdown() then pushes its own drain marker.
         sync_error: Exception | None = None
         try:
-            await asyncio.shield(self._sync_thread_future)
+            sync_stats = await asyncio.shield(self._sync_thread_future)
         except Exception as exc:
             sync_error = exc
 
@@ -451,6 +453,9 @@ class ClaudeCodeOrchestrator(BaseOrchestrator):
             # initial_sync_done is safe to release — re-raise for the
             # _initial_sync_task wrapper to log.
             raise sync_error
+
+        self.initial_sync_succeeded = (failed_payloads == 0
+            and sync_stats.get('inventory_complete') == 1 and not self._sync_stop_event.is_set())
 
         if failed_payloads:
             logger.error(

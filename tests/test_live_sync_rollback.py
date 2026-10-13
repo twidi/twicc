@@ -348,7 +348,9 @@ def test_commit_failure_restores_enrichment_and_caller_checkpoint(live_case, mon
 @pytest.mark.django_db(transaction=True)
 def test_failed_billing_pass_retries_token_baseline_and_message_counter(tmp_path, monkeypatch):
     project = Project.objects.create(id="billing-project")
-    session = Session.objects.create(id="billing-session", project=project, provider=Provider.CODEX)
+    from twicc.providers.helpers import get_provider_helpers
+    session = Session.objects.create(id="billing-session", project=project, provider=Provider.CODEX,
+        compute_version=get_provider_helpers(Provider.CODEX).current_compute_version)
     path = tmp_path / "billing.jsonl"
     records = [
         {"type": "event_msg", "payload": {"type": "item_completed", "item": {

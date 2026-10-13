@@ -82,7 +82,7 @@ class BackpressureSyncQueue:
                 continue
 
 
-def check_file_has_content(file_path: Path) -> bool:
+def check_file_has_content(file_path: Path, on_error: Callable[[OSError], None] | None = None) -> bool:
     """
     Check if a JSONL file has any valid lines (non-empty, non-whitespace).
 
@@ -105,7 +105,9 @@ def check_file_has_content(file_path: Path) -> bool:
             for line in f:
                 if line.strip():
                     return True
-    except OSError:
+    except OSError as error:
+        if on_error is not None:
+            on_error(error)
         return False
     return False
 

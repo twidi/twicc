@@ -1,4 +1,6 @@
 """Supported source mutations retain durable aggregate obligations."""
+
+from tests.tree_aggregate_helpers import begin_history_replacement, drain_aggregates
 from datetime import timedelta
 from decimal import Decimal
 
@@ -15,9 +17,10 @@ from twicc.providers.db_writer import (
     _apply_update_session_payload,
 )
 from twicc.providers.live_aggregates import contribution_activity_keys, session_contribution
+from twicc.providers.helpers import get_provider_helpers
 from tests.test_compute_repair_exact import make_session, record, raw_state, reference, STAMP
 
-pytestmark = pytest.mark.django_db
+pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def test_absent_journal_probe_does_not_enumerate_history():
@@ -29,9 +32,8 @@ def test_absent_journal_probe_does_not_enumerate_history():
         assert compute_repair.preserve_pending_repair(
             session.id, session.storage_incarnation, before_sessions=[session_contribution(session)],
             after_sessions=[session_contribution(session)], historical_timestamps=forbidden(),
-        ) is None
-    assert len(queries) == 1
-    assert 'CORE_SESSIONITEM' not in queries[0]['sql'].upper()
+        ).project_ids == frozenset({'p'})
+    assert all('CORE_SESSIONITEM' not in query['sql'].upper() for query in queries)
 
 
 @pytest.mark.parametrize('old_created, new_created', [(STAMP, None), (None, STAMP)])
@@ -48,8 +50,8 @@ def test_scope_parent_and_null_creation_preservation(old_created, new_created):
             session.id, session.storage_incarnation, before_sessions=[before], after_sessions=[after],
             historical_timestamps=[stamp, None],
         )
-    historical = [state._replace(created_at=stamp) for state in (before, after)]
-    assert pending.activity_keys >= old.activity_keys | contribution_activity_keys(sessions=historical)
+    assert pending.activity_keys >= old.activity_keys
+    assert pending.project_ids == {'p', 'new-project'}
     assert pending.parent_ids == {'old-parent', 'new-parent'}
     assert pending.observation.generation > old.observation.generation
 
@@ -82,7 +84,8 @@ def test_live_append_invalidates_pending_generation(tmp_path):
     ClaudeCodeSessionCompute().sync_session_slice(session.id, path, limits=LiveSyncLimits())
     pending = journal.load_compute_repair(session.id, session.storage_incarnation)
     assert pending.observation.generation > old.observation.generation
-    assert compute_repair.repair_compute_observation(old.observation) == 'changed'
+    with pytest.raises(journal.RepairObservationChanged), transaction.atomic():
+        journal.require_compute_repair(old.observation)
     from twicc.providers.compute_base import BaseSessionCompute
     from twicc.providers.helpers import get_provider_helpers
 
@@ -94,6 +97,7 @@ def test_live_append_invalidates_pending_generation(tmp_path):
         'session_id': session.id, 'observed_last_offset': session.last_offset, 'history_facts': [],
         'session_fields': {'compute_version': get_provider_helpers(session.provider).current_compute_version},
     }).outcome == 'applied'
+    drain_aggregates()
     assert journal.load_compute_repair(session.id, session.storage_incarnation) is None
     assert raw_state() == reference(pending.activity_keys, [session])
 
@@ -108,8 +112,8 @@ def test_visibility_preserves_history_and_keeps_journal():
     _apply_visibility_flag(session.id, True)
     pending = journal.load_compute_repair(session.id, session.storage_incarnation)
     assert pending.observation.generation > old.observation.generation
-    assert pending.activity_keys >= contribution_activity_keys(sessions=[session_contribution(session)._replace(created_at=stamp)])
-    assert compute_repair.repair_compute_observation(pending.observation) == 'repaired'
+    assert session.project_id in pending.project_ids
+    drain_aggregates()
     assert raw_state() == reference(pending.activity_keys, [session])
 
 
@@ -130,6 +134,7 @@ def test_deletion_settles_all_deleted_incarnations_and_retained_parent(shape):
         root.delete()
     deleted = _apply_delete_sessions_payload(DeleteSessionsPayload(Provider.CLAUDE_CODE, [requested_id]))
     assert deleted == ([] if shape == 'missing' else sorted(deleted_session_ids))
+    drain_aggregates()
     assert journal.load_session_repairs(deleted_session_ids) == ()
     assert raw_state() == reference(keys, [parent])
 
@@ -142,12 +147,12 @@ def test_wrong_provider_delete_preserves_source_and_all_journals():
     assert type(session).objects.filter(pk=session.id).exists()
 
 
-def test_delete_rolls_back_source_and_journal_on_bucket_failure(monkeypatch):
+def test_delete_rolls_back_source_and_journal_on_journal_failure(monkeypatch):
     session = make_session('rollback')
     old = record(session.id, session.storage_incarnation)
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise RuntimeError('bucket failure')
-    monkeypatch.setattr(compute_repair, 'repair_activity_key', fail)
+    monkeypatch.setattr(journal, 'merge_compute_repair', fail)
     with pytest.raises(RuntimeError, match='bucket failure'):
         _apply_delete_sessions_payload(DeleteSessionsPayload(Provider.CLAUDE_CODE, [session.id]))
     assert type(session).objects.filter(pk=session.id).exists()
@@ -163,7 +168,7 @@ def test_stale_flag_alone_does_not_change_journal():
 
 def test_replacement_retains_removed_keys_and_invalidates_each_raw_phase():
     from twicc.providers.codex.rollout_migration import (
-        ReplaceCodexHistoryJob, _begin_replace_codex_history, _insert_replace_codex_history_chunk,
+        ReplaceCodexHistoryJob, _insert_replace_codex_history_chunk,
         _finish_replace_codex_history,
     )
     session = make_session('replace')
@@ -183,7 +188,7 @@ def test_replacement_retains_removed_keys_and_invalidates_each_raw_phase():
     SessionItem.objects.create(session=session, line_num=1, content='{}', timestamp=stamp, cost=1)
     job = ReplaceCodexHistoryJob(Provider.CLAUDE_CODE, session.id, [(1, '{}')], 100, 1, 2.0, None)
     generation = old.observation.generation
-    for mutate in (lambda: _begin_replace_codex_history(job),
+    for mutate in (lambda: begin_history_replacement(job),
                    lambda: _insert_replace_codex_history_chunk(session.id, job.items),
                    lambda: _finish_replace_codex_history(job)):
         mutate()
@@ -191,8 +196,8 @@ def test_replacement_retains_removed_keys_and_invalidates_each_raw_phase():
         assert pending.activity_keys >= old.activity_keys
         assert pending.observation.generation > generation
         generation = pending.observation.generation
-        assert not DailyActivity.objects.filter(date=removed_day).exists()
-        assert not WeeklyActivity.objects.filter(date=removed_week).exists()
+        assert DailyActivity.objects.filter(date=removed_day).exists()
+        assert WeeklyActivity.objects.filter(date=removed_week).exists()
     assert pending.activity_keys >= contribution_activity_keys(
         sessions=[session_contribution(session)._replace(created_at=stamp)],
     )
@@ -200,8 +205,9 @@ def test_replacement_retains_removed_keys_and_invalidates_each_raw_phase():
 
     assert BaseSessionCompute.apply_session_complete({
         'session_id': session.id, 'observed_last_offset': job.last_offset, 'history_facts': [],
-        'session_fields': {'compute_version': 123},
+        'session_fields': {'compute_version': get_provider_helpers(session.provider).current_compute_version},
     }).outcome == 'applied'
+    drain_aggregates()
     assert raw_state() == reference(pending.activity_keys, [session])
     assert journal.load_session_repairs([session.id]) == ()
 
@@ -215,6 +221,7 @@ def test_missing_source_deletion_repairs_cross_provider_orphans_only():
     DailyActivity.objects.create(project_id=None, provider=Provider.CODEX, date=STAMP.date(), cost=99)
     before = raw_state()[0]
     assert _apply_delete_sessions_payload(DeleteSessionsPayload(Provider.CLAUDE_CODE, ['missing'])) == []
+    drain_aggregates()
     assert raw_state()[0] == before
     assert journal.load_session_repairs(['missing']) == ()
     assert not DailyActivity.objects.filter(provider=Provider.CODEX).exists()

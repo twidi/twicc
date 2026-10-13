@@ -6,14 +6,13 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import NamedTuple
 
-from django.db import connection, transaction
+from django.db import connection
 
 from twicc.core.enums import ItemKind
-from twicc.core.models import DailyActivity, Session, SessionItem, SessionType, WeeklyActivity
+from twicc.core.models import DailyActivity, Session, SessionType, WeeklyActivity
 
 ZERO = Decimal(0)
 COST_QUANTUM = Decimal("0.000001")
-MAX_REPAIRED_ACTIVITY_BUCKETS = 4096
 
 
 class ItemContribution(NamedTuple):
@@ -109,26 +108,16 @@ def _apply_activity_delta(key: tuple, delta: list) -> None:
         row.save(update_fields=['user_message_count', 'session_count', 'cost'])
 
 
-def _remember_repaired_bucket(repaired: set[tuple], key: tuple) -> None:
-    if len(repaired) >= MAX_REPAIRED_ACTIVITY_BUCKETS:
-        repaired.clear()
-    repaired.add(key)
-
-
 def apply_contribution_changes(
     before_items: Sequence[ItemContribution], after_items: Sequence[ItemContribution], *,
     before_sessions: Sequence[SessionContribution], after_sessions: Sequence[SessionContribution], repair: bool,
     repaired_activity_buckets: set[tuple] | None = None,
     extra_activity_keys: Iterable[tuple] = (),
 ) -> None:
-    """Maintain aggregates after source writes, under the caller's transaction.
+    """Retain source obligations and update established live baselines by delta.
 
-    Full repair deliberately reads stored history. Current-version appends
-    use only changed rows and indexed existence probes for nullable costs.
-    A compute run may reuse an exact, committed activity bucket and apply
-    later persisted deltas. Other callers continue to repair each bucket.
-    extra_activity_keys retains removed keys independently of that cache.
-    With repair=True, each extra key receives exact repair on a cache miss.
+    Invalid baselines and scope changes await guarded tree continuation. The
+    compatibility cache argument has no effect; no historical repair runs here.
     """
     if not connection.in_atomic_block:
         raise RuntimeError('Contribution changes require a caller-owned transaction')
@@ -148,7 +137,28 @@ def apply_contribution_changes(
                                                         after[sid].type, after[sid].hidden)
         for sid, b in before.items() if sid in after
     )
-    repair = repair or metadata_changed or any(needs_repair(sessions[pid]) for pid in parents if pid in sessions)
+    from twicc.providers.compute_repair_journal import merge_compute_repair, own_baseline_pending
+
+    keys = contribution_activity_keys((*before_items, *after_items), (*before_sessions, *after_sessions))
+    keys.update(extra_activity_keys)
+    invalid = False
+    for sid in session_ids:
+        states = [state for state in (*before_sessions, *after_sessions) if state.session_id == sid]
+        if not states:
+            continue
+        incarnation = states[-1].storage_incarnation
+        if not incarnation:
+            continue
+        baseline_pending = sid in sessions and (needs_repair(sessions[sid])
+            or (repair and tuple(before_items) != tuple(after_items)))
+        invalid |= baseline_pending or own_baseline_pending(sid, incarnation)
+        merge_compute_repair(sid, incarnation, activity_keys=keys,
+            parent_ids=[state.parent_session_id for state in states if state.parent_session_id],
+            project_ids=[state.project_id for state in states], source_changed=True,
+            activity_scopes=((scope, state.provider) for state in states for scope in (state.project_id, None)),
+            baseline_pending=baseline_pending)
+    if repair or metadata_changed or invalid:
+        return
     cost_delta = defaultdict(lambda: ZERO)
     count_delta = defaultdict(int)
     for sign, items in ((-1, before_items), (1, after_items)):
@@ -156,42 +166,27 @@ def apply_contribution_changes(
             cost_delta[item.session_id] += sign * (item.cost or ZERO)
             count_delta[item.session_id] += sign * (item.kind == ItemKind.USER_MESSAGE)
     old_self = {sid: s.self_cost for sid, s in sessions.items()}
-    if repair:
-        # An explicit parent repair also repairs its children's cached costs.
-        # Repairing one child only needs that child and the parent's raw sum;
-        # it must not recalculate every sibling for each child.
-        repair_ids = session_ids | parents
-        children = Session.objects.filter(parent_session_id__in=session_ids)
-        for child in children:
-            child.recalculate_costs()
-            save_derived_costs(child, update_fields=['self_cost', 'subagents_cost', 'total_cost'])
-        for sid in repair_ids:
-            if session := sessions.get(sid):
-                session.recalculate_costs()
-                if sid in session_ids:
-                    session.user_message_count = session.items.filter(kind=ItemKind.USER_MESSAGE).count()
-                _save_session_aggregates(session)
-    else:
-        for sid in session_ids:
-            if session := sessions.get(sid):
-                session.self_cost = ((session.self_cost or ZERO) + cost_delta[sid]
-                                     if session.items.filter(cost__isnull=False).exists() else None)
-                session.user_message_count += count_delta[sid]
-                _save_session_aggregates(session)
-        parent_delta = defaultdict(lambda: ZERO)
-        for sid in session_ids:
-            b, a = before.get(sid), after.get(sid)
-            if b and b.parent_session_id:
-                # Deleted sessions do not have a row in ``sessions``.
-                previous = old_self.get(sid, sum((i.cost or ZERO for i in before_items if i.session_id == sid), ZERO))
-                parent_delta[b.parent_session_id] -= previous or ZERO
-            if a and a.parent_session_id and sid in sessions:
-                parent_delta[a.parent_session_id] += sessions[sid].self_cost or ZERO
-        for pid in parents:
-            if parent := sessions.get(pid):
-                parent.subagents_cost = ((parent.subagents_cost or ZERO) + parent_delta[pid]
-                    if Session.objects.filter(parent_session_id=pid, self_cost__isnull=False).exists() else None)
-                _save_session_aggregates(parent)
+    for sid in session_ids:
+        if session := sessions.get(sid):
+            session.self_cost = ((session.self_cost or ZERO) + cost_delta[sid]
+                                 if session.items.filter(cost__isnull=False).exists() else None)
+            session.user_message_count += count_delta[sid]
+            _save_session_aggregates(session)
+    parent_delta = defaultdict(lambda: ZERO)
+    for sid in session_ids:
+        b, a = before.get(sid), after.get(sid)
+        if b and b.parent_session_id:
+            # Deleted sessions do not have a row in ``sessions``.
+            previous = old_self.get(sid, sum((i.cost or ZERO for i in before_items if i.session_id == sid), ZERO))
+            parent_delta[b.parent_session_id] -= previous or ZERO
+        if a and a.parent_session_id and sid in sessions:
+            parent_delta[a.parent_session_id] += sessions[sid].self_cost or ZERO
+    for pid in parents:
+        if (parent := sessions.get(pid)) and not needs_repair(parent) and not own_baseline_pending(
+                parent.id, parent.storage_incarnation):
+            parent.subagents_cost = ((parent.subagents_cost or ZERO) + parent_delta[pid]
+                if Session.objects.filter(parent_session_id=pid, self_cost__isnull=False).exists() else None)
+            _save_session_aggregates(parent)
     # Session counts use the cached count, exactly as PeriodicActivity does.
     after = {sid: session_contribution(sessions[sid]) for sid in after if sid in sessions}
     buckets = defaultdict(lambda: [0, 0, ZERO])
@@ -207,32 +202,5 @@ def apply_contribution_changes(
                 buckets[key][1] += sign * int(_eligible(state) and state.user_message_count > 0)
     for key in extra_activity_keys:
         buckets[key]
-    if repair:
-        # Cover unchanged historical buckets as well as removed/moved rows.
-        for item in item_contributions(SessionItem.objects.filter(session_id__in=session_ids)):
-            for key in _activity_keys(item.project_id, item.provider, item.timestamp):
-                buckets[key]
-            old = before.get(item.session_id)
-            if old:
-                for key in _activity_keys(old.project_id, old.provider, item.timestamp):
-                    buckets[key]
-        if metadata_changed:
-            record_source_changes(before_items, after_items, before_sessions=before_sessions,
-                                  after_sessions=after_sessions, extra_activity_keys=buckets)
-        from twicc.providers.compute_repair import repair_activity_key
-
-        for key, delta in buckets.items():
-            # Project, provider, visibility, and session type change the
-            # contribution of unchanged historical items. Their delta is not
-            # represented by before_items/after_items, so recalculate them.
-            if repaired_activity_buckets is not None and key in repaired_activity_buckets and not metadata_changed:
-                _apply_activity_delta(key, delta)
-                continue
-            repair_activity_key(key)
-            if repaired_activity_buckets is not None:
-                transaction.on_commit(
-                    lambda key=key: _remember_repaired_bucket(repaired_activity_buckets, key),
-                )
-        return
     for key, delta in buckets.items():
         _apply_activity_delta(key, delta)

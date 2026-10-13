@@ -1,5 +1,7 @@
 """Destructive history boundaries retain content and reconcile exact owners."""
 
+from tests.tree_aggregate_helpers import begin_history_replacement
+
 from uuid import uuid4
 
 import pytest
@@ -48,7 +50,7 @@ def test_replacement_interruptions_reconcile_both_slots_and_retry():
     share = Share.objects.create(kind='session', session=owner, options={
         'mode': 'snapshot', 'frozen_at_line': 1, rollout_migration.SNAPSHOT_ANCHOR_KEY: anchor,
     })
-    rollout_migration._begin_replace_codex_history(replacement)
+    begin_history_replacement(replacement)
     owner.refresh_from_db()
     assert owner.last_offset == 0
     assert owner.history_epoch == 1
@@ -87,13 +89,13 @@ def test_replacement_begin_rollback_restores_history_and_memberships(monkeypatch
     with monkeypatch.context() as patch:
         patch.setattr(live_aggregates, 'apply_contribution_changes', fail)
         with pytest.raises(RuntimeError):
-            rollout_migration._begin_replace_codex_history(job(owner))
+            begin_history_replacement(job(owner))
     assert SessionItem.objects.filter(pk=row.pk).exists()
     assert SessionItemContent.objects.get(pk=row.current_content_id).session_ids == [owner.id]
     assert SessionItemContent.objects.get(pk=row.original_content_id).session_ids == [owner.id]
     owner.refresh_from_db()
     assert owner.history_epoch == 0
-    rollout_migration._begin_replace_codex_history(job(owner))
+    begin_history_replacement(job(owner))
     assert not SessionItem.objects.filter(session=owner).exists()
     assert SessionItemContent.objects.get(pk=row.current_content_id).session_ids == []
 
@@ -237,7 +239,7 @@ def test_replacement_chunk_rollback_retries_with_known_originals(monkeypatch):
 
     owner = session('chunk-rollback')
     replacement = job(owner)
-    rollout_migration._begin_replace_codex_history(replacement)
+    begin_history_replacement(replacement)
 
     def fail(*args, **kwargs):
         raise RuntimeError('chunk interrupted')

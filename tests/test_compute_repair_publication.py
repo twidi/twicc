@@ -13,6 +13,9 @@ from twicc.core.models import ComputeAggregateRepair, DailyActivity, Project, Se
 from twicc.providers.compute_base import BaseSessionCompute
 from twicc.providers.compute_repair_journal import load_compute_repair, merge_compute_repair
 from twicc.providers.live_aggregates import _activity_keys
+from twicc.providers.helpers import get_provider_helpers
+from tests.tree_aggregate_helpers import drain_aggregates
+CURRENT = get_provider_helpers("codex").current_compute_version
 
 pytestmark = pytest.mark.django_db(transaction=True)
 STAMP = datetime(2026, 9, 29, tzinfo=UTC)
@@ -73,11 +76,12 @@ def test_restart_adopts_removed_timestamp_without_private_inventory():
         close_compute_application(operation)
     assert ComputeAggregateRepair.objects.filter(session_id=session.id).exists()
     assert BaseSessionCompute.apply_session_complete({'session_id': session.id, 'history_facts': [],
-        'session_fields': {'compute_version': 123}}).outcome == 'applied'
+        'session_fields': {'compute_version': CURRENT}}).outcome == 'applied'
+    drain_aggregates()
     assert not DailyActivity.objects.exists() and not WeeklyActivity.objects.exists()
     assert not ComputeAggregateRepair.objects.exists()
     session.refresh_from_db()
-    assert session.self_cost is None and session.compute_version == 123
+    assert session.self_cost is None and session.compute_version == CURRENT
 
 
 def test_final_failure_preserves_committed_source_and_journal(monkeypatch):
@@ -93,10 +97,10 @@ def test_final_failure_preserves_committed_source_and_journal(monkeypatch):
     assert snapshot is not None
     def fail(*args, **kwargs):
         raise RuntimeError('final rollback')
-    monkeypatch.setattr(DailyActivity, 'recalculate', fail)
+    monkeypatch.setattr('twicc.providers.compute_repair.record_compute_repair', fail)
     with pytest.raises(RuntimeError, match='final rollback'):
         BaseSessionCompute.apply_session_complete({'session_id': session.id, 'history_facts': [],
-            'session_fields': {'compute_version': 123}})
+            'session_fields': {'compute_version': CURRENT}})
     session.refresh_from_db()
     item.refresh_from_db()
     assert session.compute_version == 0 and session.self_cost == 99
@@ -109,14 +113,18 @@ def test_direct_final_initializes_valid_incarnation():
     item.delete()
     assert not session.storage_incarnation
     assert BaseSessionCompute._apply_session_complete_final({'session_id': session.id,
-        'history_facts': [], 'session_fields': {'compute_version': 123}}).outcome == 'applied'
+        'history_facts': [], 'session_fields': {'compute_version': CURRENT}}).outcome == 'applied'
     session.refresh_from_db()
     assert session.storage_incarnation not in (None, '', 'None')
+    assert session.self_cost == 99
+    assert ComputeAggregateRepair.objects.exists()
+    drain_aggregates()
+    session.refresh_from_db()
     assert session.self_cost is None
     assert not ComputeAggregateRepair.objects.exists()
 
 
-def test_final_adopts_more_than_preparation_capacity():
+def test_source_final_retains_more_than_former_preparation_capacity():
     session, _ = source()
     from twicc.core.content_storage.extraction import initialize_compute_session
     with transaction.atomic():
@@ -127,8 +135,12 @@ def test_final_adopts_more_than_preparation_capacity():
         merge_compute_repair(session.id, session.storage_incarnation, activity_keys=keys, source_changed=True)
     assert BaseSessionCompute.apply_session_complete({'session_id': session.id,
         'history_facts': []}).outcome == 'applied'
-    assert not ComputeAggregateRepair.objects.exists()
-    assert not DailyActivity.objects.filter(date=(STAMP + timedelta(days=4099)).date()).exists()
+    snapshot = load_compute_repair(session.id, session.storage_incarnation)
+    assert len(snapshot.activity_keys) >= 4100
+    assert DailyActivity.objects.filter(date=(STAMP + timedelta(days=4099)).date()).exists()
+    # Source readiness never drains a journal, irrespective of its size.
+    session.refresh_from_db()
+    assert session.compute_version == 0
 
 
 def test_journal_failure_rolls_back_source_and_private_mirrors(monkeypatch):
@@ -153,29 +165,17 @@ def test_journal_failure_rolls_back_source_and_private_mirrors(monkeypatch):
         close_compute_application(operation)
 
 
-def test_conditional_settlement_mismatch_aborts_final(monkeypatch):
-    from django.db.models import F
+def test_source_final_does_not_settle_journal(monkeypatch):
     from twicc.providers import compute_repair_journal
     session, item = source()
-    operation = begin_compute_application({'session_id': session.id, 'history_facts': [],
-        'item_fields': ['cost'], 'item_updates': [{'id': item.id, 'cost': 2}]})
-    try:
-        metadata(operation)
-    finally:
-        close_compute_application(operation)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('source final must not settle aggregates')
+    monkeypatch.setattr(compute_repair_journal, 'settle_compute_repair', forbidden)
+    assert BaseSessionCompute.apply_session_complete({'session_id': session.id, 'history_facts': [],
+        'session_fields': {'compute_version': CURRENT}}).outcome == 'applied'
     session.refresh_from_db()
-    snapshot = load_compute_repair(session.id, session.storage_incarnation)
-    settle = compute_repair_journal.settle_compute_repair
-    def mismatch(observation):
-        ComputeAggregateRepair.objects.filter(pk=observation.journal_id).update(generation=F('generation') + 1)
-        settle(observation)
-    monkeypatch.setattr(compute_repair_journal, 'settle_compute_repair', mismatch)
-    with pytest.raises(compute_repair_journal.RepairObservationChanged):
-        BaseSessionCompute.apply_session_complete({'session_id': session.id, 'history_facts': [],
-            'session_fields': {'compute_version': 123}})
-    session.refresh_from_db()
-    assert session.compute_version == 0 and session.self_cost == 99
-    assert load_compute_repair(session.id, session.storage_incarnation) == snapshot
+    assert session.compute_version == CURRENT and session.self_cost == 99
+    assert load_compute_repair(session.id, session.storage_incarnation) is not None
     assert not DailyActivity.objects.exists()
 
 
@@ -191,7 +191,8 @@ def test_final_restores_target_children_and_retained_parent_raw_costs():
     SessionItem.objects.create(session=new_parent, line_num=1, content='{}', cost=5)
     SessionItem.objects.create(session=child, line_num=1, content='{}', cost=7)
     session.parent_session = old_parent
-    session.save(update_fields=['parent_session'])
+    session.type = 'subagent'
+    session.save(update_fields=['parent_session', 'type'])
     operation = begin_compute_application({'session_id': session.id, 'history_facts': [],
         'item_fields': ['cost'], 'item_updates': [{'id': item.id, 'cost': 2}]})
     try:
@@ -202,11 +203,17 @@ def test_final_restores_target_children_and_retained_parent_raw_costs():
     Session.objects.filter(pk=session.id).update(parent_session=new_parent)
     assert BaseSessionCompute.apply_session_complete({'session_id': session.id, 'history_facts': []}).outcome == 'applied'
     for row in (session, child, old_parent, new_parent):
+        Session.objects.filter(pk=row.pk).update(compute_version=CURRENT, storage_incarnation=row.id + '-inc')
+    # Preserve the source incarnation recorded by the real final application.
+    source_snapshot = ComputeAggregateRepair.objects.get(session_id=session.id)
+    Session.objects.filter(pk=session.pk).update(storage_incarnation=source_snapshot.incarnation)
+    drain_aggregates()
+    for row in (session, child, old_parent, new_parent):
         row.refresh_from_db()
     assert session.self_cost == 2 and session.subagents_cost == 7 and session.total_cost == 9
     assert child.self_cost == 7
     assert old_parent.self_cost == 3 and old_parent.subagents_cost is None and old_parent.total_cost == 3
-    assert new_parent.self_cost == 5 and new_parent.subagents_cost == 2 and new_parent.total_cost == 7
+    assert new_parent.self_cost == 5 and new_parent.subagents_cost == 9 and new_parent.total_cost == 14
     assert not ComputeAggregateRepair.objects.exists()
 
 
@@ -220,7 +227,8 @@ def test_zero_item_final_retains_worker_and_creation_scopes():
         for model, scope, provider, day in _activity_keys(session.project_id, session.provider, stamp):
             model.objects.get_or_create(project_id=scope, provider=provider, date=day, defaults={'cost': 99})
     assert BaseSessionCompute.apply_session_complete({'session_id': session.id, 'history_facts': [],
-        'affected_days': [future.date().isoformat()], 'session_fields': {'created_at': None}}).outcome == 'applied'
+        'affected_days': [future.date().isoformat()], 'session_fields': {'created_at': None, 'compute_version': CURRENT}}).outcome == 'applied'
+    drain_aggregates()
     assert not DailyActivity.objects.exists() and not WeeklyActivity.objects.exists()
     assert not ComputeAggregateRepair.objects.exists()
 
@@ -237,22 +245,22 @@ def test_append_supersedes_final_and_keeps_committed_journal():
     snapshot = load_compute_repair(session.id, session.storage_incarnation)
     Session.objects.filter(pk=session.id).update(last_offset=1)
     result = BaseSessionCompute.apply_session_complete({'session_id': session.id, 'observed_last_offset': 0,
-        'history_facts': [], 'session_fields': {'compute_version': 123}})
+        'history_facts': [], 'session_fields': {'compute_version': CURRENT}})
     assert result.outcome == 'superseded'
     session.refresh_from_db()
     assert session.compute_version == 0
     assert load_compute_repair(session.id, session.storage_incarnation) == snapshot
 
 
-def test_compatibility_wrapper_retains_exact_chunks_without_creating_journal():
+def test_compatibility_wrapper_retains_source_and_journal_without_repair():
     from twicc.core.content_storage.extraction import prepare_compute_result
     session, item = source()
     final = prepare_compute_result({'session_id': session.id, 'history_facts': [],
         'item_fields': ['cost'], 'item_updates': [{'id': item.id, 'cost': 2}]})
     session.refresh_from_db()
-    assert session.self_cost == 2
-    assert DailyActivity.objects.get(project=session.project).cost == 2
-    assert not ComputeAggregateRepair.objects.exists()
+    assert session.self_cost == 99
+    assert not DailyActivity.objects.exists()
+    assert ComputeAggregateRepair.objects.exists()
     assert BaseSessionCompute._apply_session_complete_final(final).outcome == 'applied'
 
 
@@ -273,7 +281,7 @@ def test_compatibility_chunk_extends_existing_journal_generation_and_keys():
     assert after.observation.generation > before.observation.generation
     assert after.activity_keys >= before.activity_keys | set(_activity_keys(session.project_id, session.provider, future))
     session.refresh_from_db()
-    assert session.self_cost == 3
+    assert session.self_cost == 99
 
 
 def test_runtime_final_repairs_raw_precision_over_unfinished_peer():
@@ -290,7 +298,7 @@ def test_runtime_final_repairs_raw_precision_over_unfinished_peer():
     operation = begin_compute_application({'session_id': session.id, 'history_facts': [],
         'item_fields': ['cost', 'kind'], 'item_updates': [{'id': item.id, 'cost': '0.000001',
                                                         'kind': ItemKind.USER_MESSAGE}],
-        'session_fields': {'compute_version': 123, 'created_at': STAMP.isoformat()}})
+        'session_fields': {'compute_version': CURRENT, 'created_at': STAMP.isoformat()}})
     try:
         while operation.phase != 'final':
             publish_compute_batch(operation, prepare_compute_batch(operation), frozenset())
@@ -299,6 +307,7 @@ def test_runtime_final_repairs_raw_precision_over_unfinished_peer():
         assert BaseSessionCompute._apply_session_complete_final(final).outcome == 'applied'
     finally:
         close_compute_application(operation)
+    drain_aggregates()
     for model in (DailyActivity, WeeklyActivity):
         with connection.cursor() as cursor:
             cursor.execute(f'SELECT cost, user_message_count, session_count FROM {model._meta.db_table}')

@@ -97,6 +97,7 @@ def _project_ids(rows, repairs):
     parents = set()
     for snapshot in repairs:
         projects.update(snapshot.project_ids)
+        projects.update(project for project, _ in snapshot.activity_scopes if project is not None)
         projects.update(project for _, project, _, _ in snapshot.activity_keys if project is not None)
         parents.update(snapshot.parent_ids)
     projects.update(Session.objects.filter(pk__in=parents).values_list('project_id', flat=True))
@@ -107,6 +108,8 @@ def _work(root, rows, repairs):
     days = set()
     projects = _project_ids(rows, repairs)
     parents = set()
+    retained_scopes = {scope for snapshot in repairs for scope in snapshot.activity_scopes}
+    retained_projects = {scope for snapshot in repairs for scope in snapshot.project_ids}
     for snapshot in repairs:
         parents.update(snapshot.parent_ids)
         for model, project, provider, day in snapshot.activity_keys:
@@ -116,13 +119,15 @@ def _work(root, rows, repairs):
         if row.created_at:
             day = row.created_at.astimezone(UTC).date()
             days.update(DailyKey(project, row.provider, day) for project in (row.project_id, None))
+            days.update(DailyKey(project, provider, day) for project, provider in retained_scopes)
     scopes = {row.id: (row.project_id, row.provider) for row in rows}
     # Indexed session filtering materializes timestamps without loading content.
     for sid, timestamp in SessionItem.objects.filter(session_id__in=scopes, timestamp__isnull=False).order_by().values_list(
             'session_id', 'timestamp').distinct():
         project, provider = scopes[sid]
         day = timestamp.astimezone(UTC).date()
-        days.update((DailyKey(project, provider, day), DailyKey(None, provider, day)))
+        days.update(DailyKey(scope, provider, day) for scope in (project, *retained_projects, None))
+        days.update(DailyKey(scope, old_provider, day) for scope, old_provider in retained_scopes)
     members = tuple(_identity(row) for row in rows)
     root_key = SourceKey(root.id, root.storage_incarnation) if root else None
     observation = TreeObservation(root_key, members,
@@ -135,7 +140,8 @@ def _work(root, rows, repairs):
 
 
 def observe_tree_work(session_id: str, pending_source_ids: frozenset[str], *,
-                      retained_repairs: tuple[RepairSnapshot, ...] = ()) -> TreeAggregateWork | None:
+                      retained_repairs: tuple[RepairSnapshot, ...] = (),
+                      candidate_repairs: tuple[RepairSnapshot, ...] = ()) -> TreeAggregateWork | None:
     """Observe one eligible tree independently of its shared former-tree work."""
     root = _root(session_id)
     if root is None:
@@ -143,6 +149,9 @@ def observe_tree_work(session_id: str, pending_source_ids: frozenset[str], *,
     rows = _members(root)
     if not _ready(rows, pending_source_ids):
         return None
+    member_ids = {row.id for row in rows}
+    retained_repairs += tuple(snapshot for snapshot in candidate_repairs
+        if snapshot.observation.session_id in member_ids or snapshot.parent_ids & member_ids)
     return _work(root, rows, _repairs(rows, retained_repairs))
 
 

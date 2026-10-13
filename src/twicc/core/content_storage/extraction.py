@@ -528,7 +528,6 @@ class ComputeStorageOperation:
         # that metadata commits can remove from that history independently.
         self.activity_repair_keys = activity_repair_keys
         self.repair_snapshot: RepairSnapshot | None = None
-        self.activity_preparation = None
         self.history_facts_stage = None
         self.preparation_ms = 0.0
         self.max_publication_ms = 0.0
@@ -779,9 +778,7 @@ def close_compute_application(operation):
         try:
             if operation.history_facts_stage is not None:
                 operation.history_facts_stage.close()
-            if operation.activity_preparation is not None:
-                from twicc.providers.activity_preparation import close_activity_preparation
-                close_activity_preparation(operation.activity_preparation)
+
             operation.references.close()
         finally:
             operation.reconciled_contents.clear()

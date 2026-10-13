@@ -1080,13 +1080,13 @@ def test_postcommit_progress_rechecks_run_after_project_await(wal_runtime, monke
 def test_compute_diagnostics_separate_final_hold_and_preparation(wal_runtime, monkeypatch, caplog):
     import logging
     import time
-    from twicc.providers import compute_base
+    from twicc.providers import compute_repair
     from twicc import sync_diagnostics
-    original = compute_base.apply_contribution_changes
+    original = compute_repair.record_compute_repair
     def delayed_aggregates(*args, **kwargs):
         time.sleep(.03)
         return original(*args, **kwargs)
-    monkeypatch.setattr(compute_base, 'apply_contribution_changes', delayed_aggregates)
+    monkeypatch.setattr(compute_repair, 'record_compute_repair', delayed_aggregates)
     for logger in (sync_diagnostics.logger, extraction.logger):
         monkeypatch.setattr(logger, 'disabled', False)
         monkeypatch.setattr(logger, 'handlers', [caplog.handler])
@@ -1124,12 +1124,7 @@ def test_compute_diagnostics_separate_final_hold_and_preparation(wal_runtime, mo
                      if 'operation=compute_final_aggregates ' in record.getMessage())
     assert float(aggregate.split('elapsed_ms=')[1].split()[0]) >= 30
     assert any('Compute storage preparation:' in record.getMessage() for record in caplog.records)
-    enumeration = [record.getMessage() for record in caplog.records
-                   if 'Compute activity enumeration:' in record.getMessage()]
-    assert any('rows=256 cursor=256 complete=False fallback=none retry_count=0' in row for row in enumeration)
-    assert any('rows=88 cursor=600 complete=True fallback=none retry_count=0' in row for row in enumeration)
-    assert any('operation=compute_activity_enumeration ' in record.getMessage() for record in caplog.records)
-    assert all('legacy ' not in row and 'SELECT ' not in row and 'UPDATE ' not in row for row in enumeration)
+    assert not any('Compute activity enumeration:' in record.getMessage() for record in caplog.records)
 
 
 def test_compute_diagnostics_accumulate_denied_combined_grant_wait(wal_runtime):
@@ -1163,307 +1158,14 @@ def test_compute_diagnostics_accumulate_denied_combined_grant_wait(wal_runtime):
             'diagnostic grant',)
 
 
-@pytest.mark.parametrize('mixed', [False, True])
-def test_creation_activity_skips_preliminary_writer_grants(wal_runtime, monkeypatch, mixed):
-    """Creation keys require exact final repair without preliminary writer grants."""
-    from twicc.core.models import DailyActivity, WeeklyActivity
-    from twicc.providers import activity_preparation
-    session, path = wal_runtime
-    with sqlite3.connect(path) as database:
-        database.execute("UPDATE core_session SET created_at='2026-09-29 00:00:00'")
-        database.execute("UPDATE core_sessionitem SET timestamp='2026-09-29 00:00:00', cost=0.0000012")
-        database.execute("UPDATE core_sessionitem SET kind='user_message' WHERE line_num=1")
-        if mixed:
-            database.execute("UPDATE core_sessionitem SET timestamp='2026-10-13 00:00:00' WHERE line_num=600")
-    captured = {'activity_grants': 0, 'final_repairs': 0}
-    original_turn = db_writer._background_turn
-    original_begin = activity_preparation.begin_activity_preparation
-
-    def begin(operation):
-        state = original_begin(operation)
-        captured['state'] = state
-        return state
-
-    async def turn(factory, *, diagnostics=None, phase=None):
-        if phase == 'final':
-            state = captured['state']
-            captured['inventory'] = len(state.required_keys)
-            captured['reusable'] = len(state.repaired_keys)
-        result = await original_turn(factory, diagnostics=diagnostics, phase=phase)
-        captured['activity_grants'] += int(phase == 'activity' and bool(result))
-        return result
-
-    monkeypatch.setattr(activity_preparation, 'begin_activity_preparation', begin)
-    monkeypatch.setattr(db_writer, '_background_turn', turn)
-    for model in (DailyActivity, WeeklyActivity):
-        original = model.recalculate
-        def recalculate(*args, original=original):
-            if captured.get('inventory') is not None:
-                captured['final_repairs'] += 1
-            return original(*args)
-        monkeypatch.setattr(model, 'recalculate', recalculate)
-
-    async def scenario():
-        db_writer.start_db_writer()
-        applied = asyncio.Queue()
-        run_id, done = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0,
-                                                       applied_queue=applied)
-        msg = result_message(session, run_id)
-        msg['session_fields']['created_at'] = '2026-09-29T00:00:00+00:00'
-        db_writer.get_subprocess_queue().put(msg)
-        db_writer.get_subprocess_queue().put({'type': 'done', 'provider': 'codex', 'run_id': run_id})
-        try:
-            assert (await asyncio.wait_for(applied.get(), 5)).outcome == 'applied'
-        finally:
-            await db_writer.stop_db_writer()
-        assert done.result() == 0
-        assert captured['activity_grants'] == (4 if mixed else 0)
-        assert captured['inventory'] == (8 if mixed else 4)
-        assert captured['reusable'] == (4 if mixed else 0)
-        assert captured['final_repairs'] == 4
-        assert not captured['state'].required_keys and not captured['state'].skipped_keys
-    asyncio.run(scenario())
-    with sqlite3.connect(path) as database:
-        for table in ('core_dailyactivity', 'core_weeklyactivity'):
-            total, count = database.execute(f'SELECT SUM(cost), SUM(session_count) FROM {table}').fetchone()
-            assert total == pytest.approx(.00144, abs=1e-15)
-            assert count == 2
 
 
-@pytest.mark.parametrize('barrier', ['enumeration', 'between_buckets'])
-def test_activity_preparation_keeps_foreground_on_another_worker(wal_runtime, monkeypatch, barrier):
-    """Removing private runtime preparation or sharing its worker breaks this barrier."""
-    from twicc.providers import activity_preparation
-    session, path = wal_runtime
-    with sqlite3.connect(path) as database:
-        database.execute("UPDATE core_sessionitem SET timestamp='2026-09-29 00:00:00', cost=0.0000012")
-    started, release = threading.Event(), threading.Event()
-    captured = {}
-    original_page = activity_preparation.prepare_activity_key_page
-    original_publish = activity_preparation.publish_activity_key
-
-    def page(state, **kwargs):
-        captured['state'] = state
-        if barrier == 'enumeration' and not started.is_set():
-            captured['application_thread'] = threading.get_ident()
-            started.set()
-            assert release.wait(5)
-        return original_page(state, **kwargs)
-
-    async def turn(factory, *, diagnostics=None, phase=None):
-        result = await original_turn(factory, diagnostics=diagnostics, phase=phase)
-        if barrier == 'between_buckets' and phase == 'activity' and result and not started.is_set():
-            captured['application_thread'] = captured['state'].thread
-            started.set()
-            await asyncio.to_thread(release.wait, 5)
-        return result
-
-    def publish(state, key):
-        captured['state'] = state
-        return original_publish(state, key)
-
-    original_turn = db_writer._background_turn
-    monkeypatch.setattr(activity_preparation, 'prepare_activity_key_page', page)
-    monkeypatch.setattr(activity_preparation, 'publish_activity_key', publish)
-    monkeypatch.setattr(db_writer, '_background_turn', turn)
-
-    async def scenario():
-        db_writer.start_db_writer()
-        applied = asyncio.Queue()
-        run_id, done = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0,
-                                                       applied_queue=applied)
-        db_writer.get_subprocess_queue().put(result_message(session, run_id))
-        db_writer.get_subprocess_queue().put({'type': 'done', 'provider': 'codex', 'run_id': run_id})
-        try:
-            assert await asyncio.to_thread(started.wait, 3), 'Runtime never enters activity preparation'
-            async def foreground():
-                def write():
-                    captured['foreground_thread'] = threading.get_ident()
-                    rows = Session.objects.filter(pk=session.id).update(title='activity foreground')
-                    captured['foreground_connection'] = connections['default'].connection
-                    return rows
-                return await db_writer.run_compute_sync(write)
-            assert await asyncio.wait_for(db_writer.run_under_db_write_lock(foreground), .5) == 1
-            assert captured['application_thread'] != captured['foreground_thread']
-            assert captured['foreground_connection'] is not None
-            assert captured['state'].physical_connection is not captured['foreground_connection']
-            assert applied.empty() and not done.done()
-            release.set()
-            assert (await asyncio.wait_for(applied.get(), 5)).outcome == 'applied'
-        finally:
-            release.set()
-            await db_writer.stop_db_writer()
-        assert captured['state'].fallback_reason == 'foreign_commit'
-        assert captured['state'].repaired_keys == set()
-        assert captured['state'].required_keys == set()
-        assert done.result() == 0
-    asyncio.run(scenario())
 
 
-def test_queued_foreground_commits_before_second_activity_bucket(wal_runtime, monkeypatch):
-    from twicc.providers import activity_preparation
-    session, path = wal_runtime
-    with sqlite3.connect(path) as database:
-        database.execute("UPDATE core_sessionitem SET timestamp='2026-09-29 00:00:00', cost=0.0000012")
-    captured = {'publications': 0}
-    original = activity_preparation.publish_activity_key
-
-    def publish(state, key):
-        result = original(state, key)
-        captured['state'] = state
-        captured['publications'] += int(result.published)
-        if result.published:
-            def enqueue():
-                future = asyncio.get_running_loop().create_future()
-                captured['foreground'] = future
-                db_writer.enqueue_async_job(db_writer._RetireSessionsJob(
-                    None, {session.id: {'title': 'between activity buckets'}}, future))
-            captured['loop'].call_soon_threadsafe(enqueue)
-        return result
-
-    monkeypatch.setattr(activity_preparation, 'publish_activity_key', publish)
-    async def scenario():
-        captured['loop'] = asyncio.get_running_loop()
-        db_writer.start_db_writer()
-        applied = asyncio.Queue()
-        run_id, done = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0,
-                                                       applied_queue=applied)
-        db_writer.get_subprocess_queue().put(result_message(session, run_id))
-        db_writer.get_subprocess_queue().put({'type': 'done', 'provider': 'codex', 'run_id': run_id})
-        try:
-            assert (await asyncio.wait_for(applied.get(), 5)).outcome == 'applied'
-            assert captured['foreground'].done() and captured['foreground'].result() == 1
-            assert captured['publications'] == 1
-            assert captured['state'].fallback_reason == 'foreign_commit'
-        finally:
-            await db_writer.stop_db_writer()
-        assert done.done() and done.result() == 0
-    asyncio.run(scenario())
-    with sqlite3.connect(path) as database:
-        assert database.execute('SELECT title, compute_version FROM core_session WHERE id=?', (session.id,)).fetchone() == (
-            'between activity buckets', 123)
-        assert database.execute('SELECT SUM(cost) FROM core_dailyactivity').fetchone()[0] == pytest.approx(.00144)
 
 
-@pytest.mark.parametrize('failure', ['rollback', 'callback', 'capacity'])
-def test_optional_activity_failure_finishes_with_exact_no_cache(wal_runtime, monkeypatch, failure):
-    from twicc.providers import activity_preparation, compute_base
-    from twicc.core.models import DailyActivity
-    session, path = wal_runtime
-    with sqlite3.connect(path) as database:
-        database.execute("UPDATE core_sessionitem SET timestamp='2026-09-29 00:00:00', cost=0.0000012")
-    captured = {}
-    original_begin = activity_preparation.begin_activity_preparation
-    def begin(operation):
-        state = original_begin(operation)
-        captured['state'] = state
-        return state
-    monkeypatch.setattr(activity_preparation, 'begin_activity_preparation', begin)
-    if failure == 'capacity':
-        monkeypatch.setattr(activity_preparation, 'MAX_REPAIRED_ACTIVITY_BUCKETS', 1)
-    elif failure == 'rollback':
-        original_recalculate = DailyActivity.recalculate
-        def recalculate(*args):
-            if not captured.get('failed'):
-                captured['failed'] = True
-                raise RuntimeError('one optional activity rollback')
-            return original_recalculate(*args)
-        monkeypatch.setattr(DailyActivity, 'recalculate', recalculate)
-    else:
-        original_commit = activity_preparation.transaction.on_commit
-        def on_commit(callback, *args, **kwargs):
-            original_commit(callback, *args, **kwargs)
-            if callback.__name__ == 'settle' and not captured.get('failed'):
-                captured['failed'] = True
-                def fail():
-                    raise RuntimeError('one optional activity callback failure')
-                original_commit(fail)
-        monkeypatch.setattr(activity_preparation.transaction, 'on_commit', on_commit)
-    original_helper = compute_base.apply_contribution_changes
-    def helper(*args, **kwargs):
-        captured['final_cache'] = kwargs['repaired_activity_buckets']
-        return original_helper(*args, **kwargs)
-    monkeypatch.setattr(compute_base, 'apply_contribution_changes', helper)
-    async def scenario():
-        db_writer.start_db_writer()
-        applied = asyncio.Queue()
-        run_id, done = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0,
-                                                       applied_queue=applied)
-        db_writer.get_subprocess_queue().put(result_message(session, run_id))
-        db_writer.get_subprocess_queue().put({'type': 'done', 'provider': 'codex', 'run_id': run_id})
-        try:
-            assert (await asyncio.wait_for(applied.get(), 5)).outcome == 'applied'
-            assert captured['final_cache'] is None
-            assert captured['state'].fallback_reason == ('capacity' if failure == 'capacity' else 'publication_failed')
-            assert not captured['state'].repaired_keys and not captured['state'].required_keys
-        finally:
-            await db_writer.stop_db_writer()
-        assert done.result() == 0
-    asyncio.run(scenario())
-    with sqlite3.connect(path) as database:
-        assert database.execute('SELECT SUM(cost) FROM core_dailyactivity').fetchone()[0] == pytest.approx(.00144)
-        assert database.execute('SELECT compute_version, content_storage_version FROM core_session WHERE id=?',
-                                (session.id,)).fetchone() == (123, 1)
 
 
-@pytest.mark.parametrize('terminal', ['cancel', 'abandon', 'stop'])
-def test_activity_page_terminal_drains_private_proof_before_ack(wal_runtime, monkeypatch, terminal):
-    from twicc.providers import activity_preparation
-    session, path = wal_runtime
-    with sqlite3.connect(path) as database:
-        database.execute("UPDATE core_session SET created_at='2026-09-29 00:00:00'")
-        database.execute("UPDATE core_sessionitem SET timestamp='2026-09-29 00:00:00'")
-    started, release = threading.Event(), threading.Event()
-    captured = {}
-    original = activity_preparation.prepare_activity_key_page
-    def page(state, **kwargs):
-        captured['state'] = state
-        started.set()
-        assert release.wait(5)
-        return original(state, **kwargs)
-    monkeypatch.setattr(activity_preparation, 'prepare_activity_key_page', page)
-    async def scenario():
-        db_writer.start_db_writer()
-        applied = asyncio.Queue()
-        run_id, done = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0,
-                                                       applied_queue=applied)
-        db_writer.get_subprocess_queue().put(result_message(session, run_id))
-        stop = None
-        try:
-            assert await asyncio.to_thread(started.wait, 3)
-            assert len(captured['state'].skipped_keys) == 4
-            pending = db_writer._pending_compute
-            if terminal == 'cancel':
-                db_writer._db_writer_task.cancel()
-            elif terminal == 'abandon':
-                stop = asyncio.create_task(db_writer.abandon_compute_run(run_id, Provider.CODEX))
-            else:
-                db_writer.get_subprocess_queue().put({'type': 'done', 'provider': 'codex', 'run_id': run_id})
-                stop = asyncio.create_task(db_writer.stop_db_writer())
-            await asyncio.sleep(.02)
-            assert not pending.terminal and not pending.operation.closed and applied.empty()
-            release.set()
-            if stop is not None:
-                await asyncio.wait_for(stop, 5)
-            if terminal == 'cancel':
-                with pytest.raises(asyncio.CancelledError):
-                    await asyncio.wait_for(asyncio.shield(db_writer._db_writer_task), 5)
-            assert pending.terminal and pending.operation.closed
-            assert not captured['state'].required_keys and not captured['state'].repaired_keys
-            assert not captured['state'].skipped_keys
-            assert pending.deferral.released
-            if terminal == 'abandon':
-                assert applied.empty()
-            else:
-                signal = applied.get_nowait()
-                assert signal.outcome == ('failed' if terminal == 'cancel' else 'applied')
-                assert applied.empty()
-        finally:
-            release.set()
-            await db_writer.stop_db_writer()
-            db_writer._compute_states.pop(run_id, None)
-            db_writer._compute_done_events.pop(run_id, None)
-    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize('terminal', ['abandoned', 'cancelled'])
@@ -1531,52 +1233,6 @@ def test_terminal_diagnostics_settle_denied_grant_once(wal_runtime, monkeypatch,
         assert database.execute('SELECT compute_version FROM core_session WHERE id=?', (session.id,)).fetchone() == (None,)
 
 
-def test_recovery_writer_lifetime_with_no_metadata_and_same_process_restart(wal_runtime, monkeypatch):
-    """Real orphan settlement outlives provider completion on the ordinary worker."""
-    from twicc.core.models import ComputeAggregateRepair
-    from twicc.providers.compute_repair import repair_compute_observation
-    session, path = wal_runtime
-    calls = []
-    repaired = threading.Event()
-    original = db_writer.run_compute_sync
-
-    def record(function, args, kwargs):
-        result = function(*args, **kwargs)
-        if function is repair_compute_observation:
-            calls.append(threading.current_thread().name)
-            repaired.set()
-        return result
-
-    async def worker(function, /, *args, **kwargs):
-        return await original(record, function, args, kwargs)
-    monkeypatch.setattr(db_writer, 'run_compute_sync', worker)
-
-    async def scenario():
-        for iteration in range(2):
-            repaired.clear()
-            db_writer.start_db_writer()
-            try:
-                def journal(iteration=iteration):
-                    return ComputeAggregateRepair.objects.create(session_id=f'orphan-{iteration}',
-                                                                  incarnation='gone', generation=1).pk
-                journal_id = await db_writer.run_compute_sync(journal)
-                run_id, done = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(),
-                                                                 total_display=0)
-                db_writer.get_subprocess_queue().put({'type': 'done', 'provider': 'codex', 'run_id': run_id,
-                                                       'failed': 0})
-                assert await done == 0
-                async with asyncio.timeout(5):
-                    await asyncio.to_thread(repaired.wait)
-                def retained(journal_id=journal_id):
-                    return ComputeAggregateRepair.objects.filter(pk=journal_id).exists()
-                assert not await db_writer.run_compute_sync(retained)
-            finally:
-                await db_writer.stop_db_writer()
-            assert db_writer._repair_recovery is None
-            assert db_writer._repair_discovery_task is None
-        assert len(calls) == 2
-        assert all('application' not in name for name in calls)
-    asyncio.run(scenario())
 
 
 def test_stale_recovery_discovery_is_read_only_and_old_incarnation_is_eligible(wal_runtime):
@@ -1604,243 +1260,14 @@ def test_stale_recovery_discovery_is_read_only_and_old_incarnation_is_eligible(w
     asyncio.run(scenario())
 
 
-def test_sixteen_pending_old_incarnations_release_capacity_for_orphan(wal_runtime, monkeypatch):
-    from twicc.core.models import ComputeAggregateRepair
-    from twicc.providers.compute_repair_recovery import RepairRecoveryScheduler
-    from types import SimpleNamespace
-    from twicc.providers.compute_repair import repair_compute_observation
-    session, path = wal_runtime
-    page_ready = None
-    orphan_repaired = None
-    permitted = False
-    maximum_queue = []
-    original_observe = RepairRecoveryScheduler.observe_page
-    original_advance = db_writer._advance_compute_repair
-    original_worker = db_writer.run_compute_sync
-
-    def observe(state, rows, **kwargs):
-        original_observe(state, rows, **kwargs)
-        maximum_queue.append(len(state._queued))
-        if len(state._queued) == 16:
-            page_ready.set()
-    monkeypatch.setattr(RepairRecoveryScheduler, 'observe_page', observe)
-
-    async def advance():
-        return await original_advance() if permitted else False
-    monkeypatch.setattr(db_writer, '_advance_compute_repair', advance)
-
-    async def keep_pending():
-        return False
-    monkeypatch.setattr(db_writer, '_advance_pending_compute', keep_pending)
-
-    async def worker(function, /, *args, **kwargs):
-        result = await original_worker(function, *args, **kwargs)
-        if function is repair_compute_observation and args[0].session_id == 'eligible-orphan':
-            orphan_repaired.set()
-        return result
-    monkeypatch.setattr(db_writer, 'run_compute_sync', worker)
-
-    async def scenario():
-        nonlocal page_ready, orphan_repaired, permitted
-        page_ready, orphan_repaired = asyncio.Event(), asyncio.Event()
-        db_writer.start_db_writer()
-        try:
-            def journals():
-                from twicc.providers.helpers import get_provider_helpers
-                Session.objects.filter(pk=session.id).update(
-                    compute_version=get_provider_helpers(session.provider).current_compute_version)
-                ComputeAggregateRepair.objects.bulk_create([
-                    ComputeAggregateRepair(session_id=session.id, incarnation=f'old-{n}', generation=1)
-                    for n in range(16)])
-                ComputeAggregateRepair.objects.create(session_id='eligible-orphan', incarnation='gone', generation=1)
-            await db_writer.run_compute_sync(journals)
-            async with asyncio.timeout(5):
-                await page_ready.wait()
-                db_writer._pending_compute = SimpleNamespace(message={'session_id': session.id})
-                permitted = True
-                await orphan_repaired.wait()
-            def retained():
-                return (ComputeAggregateRepair.objects.filter(session_id=session.id).count(),
-                        ComputeAggregateRepair.objects.filter(session_id='eligible-orphan').exists())
-            assert await db_writer.run_compute_sync(retained) == (16, False)
-            assert db_writer._pending_compute is not None
-            assert max(maximum_queue) <= 16
-        finally:
-            db_writer._pending_compute = None
-            await db_writer.stop_db_writer()
-    asyncio.run(scenario())
 
 
-def test_shutdown_closes_discovery_before_final_drain(wal_runtime, monkeypatch):
-    from twicc.core.models import ComputeAggregateRepair
-    from twicc.providers.compute_repair_recovery import RepairRecoveryScheduler
-    from twicc.providers.compute_repair import repair_compute_observation
-    session, path = wal_runtime
-    closed = []
-    discovery_after_close = []
-    attempts = []
-    original_close = RepairRecoveryScheduler.close
-    original_worker = db_writer.run_compute_sync
-
-    def close(state):
-        closed.append(True)
-        original_close(state)
-    monkeypatch.setattr(RepairRecoveryScheduler, 'close', close)
-
-    async def worker(function, /, *args, **kwargs):
-        if function is db_writer._read_recovery_page and closed:
-            discovery_after_close.append(function)
-        if function is repair_compute_observation:
-            attempts.append(args[0])
-        return await original_worker(function, *args, **kwargs)
-    monkeypatch.setattr(db_writer, 'run_compute_sync', worker)
-
-    async def scenario():
-        db_writer.start_db_writer()
-        try:
-            def journal():
-                return ComputeAggregateRepair.objects.create(session_id='unadmitted-orphan',
-                                                               incarnation='gone', generation=1).pk
-            journal_id = await db_writer.run_compute_sync(journal)
-            # A held foreground resource denies all recovery publication grants.
-            lease = await db_writer.get_write_coordinator().acquire(
-                db_writer.WriteResources.WRITER, db_writer.WritePriority.FOREGROUND)
-            db_writer._db_writer_stop_event.set()
-            lease.release()
-        finally:
-            await db_writer.stop_db_writer()
-        with sqlite3.connect(path) as db:
-            assert db.execute('SELECT count(*) FROM core_computeaggregaterepair WHERE id = ?',
-                              (journal_id,)).fetchone()[0] == 1
-        assert not discovery_after_close
-        assert not attempts
-    asyncio.run(scenario())
 
 
-def test_failed_recovery_row_retains_journal_and_later_row_repairs(wal_runtime, monkeypatch):
-    from twicc.core.models import ComputeAggregateRepair
-    from twicc.providers.compute_repair import repair_compute_observation
-    from twicc.providers.compute_repair_recovery import RepairRecoveryScheduler
-    session, path = wal_runtime
-    now = [0.0]
-    real_scheduler = RepairRecoveryScheduler
-    monkeypatch.setattr(db_writer, 'RepairRecoveryScheduler', lambda: real_scheduler(clock=lambda: now[0]))
-    original_worker = db_writer.run_compute_sync
-    repaired = None
-    attempts = []
-
-    async def worker(function, /, *args, **kwargs):
-        if function is repair_compute_observation:
-            attempts.append(args[0].session_id)
-            if args[0].session_id == 'failed-orphan':
-                raise OSError('Injected exact repair failure')
-        result = await original_worker(function, *args, **kwargs)
-        if function is repair_compute_observation:
-            repaired.set()
-        return result
-    monkeypatch.setattr(db_writer, 'run_compute_sync', worker)
-
-    async def scenario():
-        nonlocal repaired
-        repaired = asyncio.Event()
-        db_writer.start_db_writer()
-        try:
-            def journals():
-                ComputeAggregateRepair.objects.create(session_id='failed-orphan', incarnation='gone', generation=1)
-                ComputeAggregateRepair.objects.create(session_id='later-orphan', incarnation='gone', generation=1)
-            await db_writer.run_compute_sync(journals)
-            # Initial empty sweep cannot poll until the fake clock advances.
-            now[0] = 1.0
-            async with asyncio.timeout(5):
-                await repaired.wait()
-            def retained():
-                return tuple(ComputeAggregateRepair.objects.values_list('session_id', flat=True))
-            assert await db_writer.run_compute_sync(retained) == ('failed-orphan',)
-            assert attempts == ['failed-orphan', 'later-orphan']
-            assert next(iter(db_writer._repair_recovery._retries.values())).retry_deadline >= now[0] + 1
-        finally:
-            await db_writer.stop_db_writer()
-    asyncio.run(scenario())
 
 
-def test_cancelled_admitted_recovery_finishes_once_and_retains_unadmitted_journal(wal_runtime, monkeypatch):
-    from twicc.core.models import ComputeAggregateRepair
-    from twicc.providers.compute_repair import repair_compute_observation
-    session, path = wal_runtime
-    started, release = threading.Event(), threading.Event()
-    original_worker = db_writer.run_compute_sync
-    attempts = []
-
-    def attempt(observation):
-        attempts.append(observation.session_id)
-        started.set()
-        assert release.wait(5)
-        return repair_compute_observation(observation)
-
-    async def worker(function, /, *args, **kwargs):
-        return await original_worker(attempt if function is repair_compute_observation else function, *args, **kwargs)
-    monkeypatch.setattr(db_writer, 'run_compute_sync', worker)
-
-    async def scenario():
-        db_writer.start_db_writer()
-        try:
-            def journals():
-                ComputeAggregateRepair.objects.create(session_id='first-orphan', incarnation='gone', generation=1)
-                ComputeAggregateRepair.objects.create(session_id='second-orphan', incarnation='gone', generation=1)
-            await db_writer.run_compute_sync(journals)
-            async with asyncio.timeout(5):
-                await asyncio.to_thread(started.wait)
-            db_writer._db_writer_task.cancel()
-            release.set()
-        finally:
-            release.set()
-            await db_writer.stop_db_writer()
-        with sqlite3.connect(path) as db:
-            assert db.execute('SELECT session_id FROM core_computeaggregaterepair').fetchall() == [('second-orphan',)]
-        assert attempts == ['first-orphan']
-        assert db_writer._repair_discovery_task is None
-    asyncio.run(scenario())
 
 
-def test_recovery_foreign_commit_invalidates_pinned_activity_preparation(wal_runtime, monkeypatch):
-    from twicc.core.models import ComputeAggregateRepair
-    from twicc.providers.compute_repair import repair_compute_observation
-    from twicc.providers.compute_repair_journal import RepairObservation
-    from twicc.providers import activity_preparation
-    session, path = wal_runtime
-
-    async def paused_recovery():
-        return False
-    monkeypatch.setattr(db_writer, '_advance_compute_repair', paused_recovery)
-
-    async def scenario():
-        db_writer.start_db_writer()
-        try:
-            def orphan():
-                row = ComputeAggregateRepair.objects.create(session_id='foreign-orphan', incarnation='gone', generation=1)
-                return RepairObservation(row.pk, row.session_id, row.incarnation, row.generation)
-            observation = await db_writer.run_compute_sync(orphan)
-            def prepare():
-                operation = extraction.begin_compute_application(result_message(session, None))
-                while operation.phase != 'final':
-                    extraction.publish_compute_batch(operation, extraction.prepare_compute_batch(operation), frozenset())
-                state = activity_preparation.begin_activity_preparation(operation)
-                while not state.enumeration_complete and state.fallback_reason is None:
-                    activity_preparation.prepare_activity_key_page(state)
-                return operation, state
-            operation, state = await db_writer.run_compute_application_sync(prepare)
-            assert state.fallback_reason is None
-            # Use the ordinary worker while the pending application's connection stays pinned.
-            assert await db_writer.run_compute_sync(repair_compute_observation, observation) == 'repaired'
-            def check():
-                activity_preparation.prepare_activity_key_page(state)
-                reason = state.fallback_reason
-                extraction.close_compute_application(operation)
-                return reason
-            assert await db_writer.run_compute_application_sync(check) == 'foreign_commit'
-        finally:
-            await db_writer.stop_db_writer()
-    asyncio.run(scenario())
 
 
 def test_discovery_shutdown_awaits_submitted_read_after_cancelled_stop(wal_runtime, monkeypatch):
@@ -1952,6 +1379,8 @@ def test_blocked_discovery_does_not_delay_compute_ack_or_terminal_completion(wal
     asyncio.run(scenario())
 
 
+
+
 @pytest.mark.parametrize('terminal', ['success', 'superseded', 'invalid', 'publication_failure', 'cancel', 'abandon', 'stop'])
 def test_private_fact_preparation_preserves_current_history_and_drains_worker(wal_runtime, monkeypatch, terminal):
     from twicc.providers import history_facts
@@ -2013,7 +1442,7 @@ def test_private_fact_preparation_preserves_current_history_and_drains_worker(wa
         try:
             assert await asyncio.to_thread(started.wait, 3)
             pending = captured['pending']
-            assert pending.operation.activity_preparation is None
+            assert session.id in db_writer._pending_repair_exclusions()
             assert not db_writer.get_write_coordinator().demands
             with sqlite3.connect(path) as database:
                 assert database.execute('SELECT key,data FROM core_sessionhistoryfact').fetchall() == [
@@ -2049,6 +1478,7 @@ def test_private_fact_preparation_preserves_current_history_and_drains_worker(wa
                 assert signal.outcome == {'invalid': 'failed', 'publication_failure': 'failed', 'superseded': 'superseded'}.get(terminal, 'applied')
             await wait_until(lambda: pending.terminal)
             assert finished.is_set() and pending.operation.closed
+            await wait_until(lambda: session.id not in db_writer._pending_repair_exclusions())
             assert captured['tables_before_connection_close'] == []
             if terminal != 'invalid':
                 assert captured['stage'].closed

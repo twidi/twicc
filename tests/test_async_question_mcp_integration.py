@@ -1,5 +1,7 @@
 """Optional questions preserve MCP conclusions and history replacement contracts."""
 
+from tests.tree_aggregate_helpers import begin_history_replacement
+
 from copy import deepcopy
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -20,7 +22,6 @@ from twicc.mcp.events.runtime import RebaseWrite
 from twicc.providers.codex.async_questions import QuestionFact, extract_async_question_facts
 from twicc.providers.codex.rollout_migration import (
     ReplaceCodexHistoryJob,
-    _begin_replace_codex_history,
     _finish_replace_codex_history,
     _insert_replace_codex_history_chunk,
 )
@@ -121,7 +122,7 @@ def test_history_replacement_preserves_question_decisions_until_mcp_adopts_new_e
     monkeypatch.setattr(events, "_runtime", env.runtime)
     replacement = [(line, orjson.dumps(value).decode()) for line, value in enumerate(records, 11)]
     job = ReplaceCodexHistoryJob(Provider.CODEX, env.session.id, replacement, 2000, 15, 42.0, None)
-    _begin_replace_codex_history(job)
+    begin_history_replacement(job)
     env.runtime._drain_commands()
     env.runtime._tick()
     assert env.monitor.pending_rebase and env.emissions == env.writes == []
