@@ -96,7 +96,7 @@ A session's intervals are *derived* by pairing begin and end rows in order. An u
 |---|---|---|
 | `session.created` | The `Session` row is first created (watcher or initial sync). `occurred_at` is the row-creation time (`Session.created_at` is nullable and set later by compute, so it is not used live). | `origin`: `twicc` = a `ProcessRun` already exists for the session id when the watcher creates the row (TwiCC always creates it before the JSONL file appears), `external` = the watcher creates the row and no `ProcessRun` exists, `sync` = rows created by the initial sync and by the backfill (a TwiCC-started session found by the initial sync is `sync`: its `settings` is null); `provider`; `settings`: the non-null fields of the closed agent-settings bundle (all eight), read from the created `Session` row, so the stored (clamped) value and not the request, and only when `origin` is `twicc` (otherwise null); `spawned_by`: id of the session that created this one (`Session.spawned_by_id`), when set. |
 | *(initial flags)* | The row is created already `hidden` or `muted` (creation payload, or `pending_session_attributes` applied when the row appears; `pinned` is not part of that flow and is always unset at creation). | Not a kind: creation also emits the matching `hidden.started` / `muted.started` rows, same `occurred_at`, `caused_by=<session.created>`. |
-| `title.changed` | The title changes. | `source`: `auto` / `user` / `agent`; `old` (previous title, null when none or unknown); `new`. |
+| `title.changed` | The title changes. | `source`: `auto` / `user` / `agent`; `old` (previous title, null when none or unknown); `new`. The title set when the session row is created is part of `session.created`; it writes no `title.changed`. |
 | `settings.changed` | Any field of the closed agent-settings bundle changes. | `changes`: `{field: [old, new]}`. |
 | `process.started` | A `ProcessRun` is created. | `provider`; `cause`: `new` / `resume` (v1: the manager only knows whether it resumes); `twicc_pid`; `hybrid`: the agent runs in hybrid CLI mode. |
 | `process.ended` | The process is `DEAD`. | `reason` (column); `error` text when any; `upper_bound` (section 7); inherited: `provider`, `cause`, `twicc_pid`, `hybrid`. |
@@ -184,7 +184,7 @@ Boot reconciliation (inside the DB-writer job that already runs `_cleanup_stale_
 
 Goals: give every existing session a believable starting point; never invent facts.
 
-- **Mechanism.** A background job in the style of `compute_version` (idempotent, batched, resumable), not a heavy schema migration. The migration creates the empty table only. Backfill logic is written inline in the job and does not import application models' helper code into a migration.
+- **Mechanism.** An idempotent background task started at boot after the stale-run cleanup; it walks sessions by id in locked batches and skips any subject that already has a row, not a heavy schema migration. The migration creates the empty table only. Backfill logic is written inline in the job and does not import application models' helper code into a migration.
 - **Idempotency.** Every backfilled row carries `dedupe_key = "backfill:<kind>[:<detail>]"`. A second run inserts nothing.
 - **Marker.** Backfilled rows have `recorded_at` far after `occurred_at`; `precision` says how much to trust them.
 
@@ -204,7 +204,7 @@ What the backfill deliberately does **not** do:
 
 ## 9. Consequences and limits
 
-- **No cascade.** `session_id` is not a FK. Rows survive a session purge. Sessions are never deleted by policy, so this is acceptable; a purge path, if one appears, must delete the timeline rows explicitly.
+- **No cascade.** `session_id` is not a FK. Rows survive a session purge. The one session delete in the code base (`_apply_delete_sessions_payload`, internal Codex rollouts) deletes the timeline rows of the purged sessions explicitly; any future purge path must do the same.
 - **Volume.** About two `turn.*` rows per assistant turn, one more `turn.ended` per change of background work while idle, plus occasional others; SQLite handles it. A retention policy for `turn.*` is a later option, not a v1 need.
 - **Estimated times are bounded, not exact.** A `lost` end can be earlier than the true crash by the time between the last visible activity and the crash.
 - **External sessions** (terminal `claude`, `codex`) appear in the timeline only through `session.created` and the user's flag changes. TwiCC sees only their JSONL files.
