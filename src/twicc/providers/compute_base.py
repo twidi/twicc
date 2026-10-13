@@ -3833,6 +3833,17 @@ class BaseSessionCompute:
             initialize_compute_session(session_id)
             session.refresh_from_db()
         before_session = session_contribution(session)
+        from twicc.providers.compute_repair_journal import load_compute_repair
+
+        # Capture the journal before known own lifecycle/cache writes. The final
+        # policy also checks its generation after merging final obligations.
+        final_repair_snapshot = load_compute_repair(session_id, session.storage_incarnation)
+        operation = msg.get('_storage_operation')
+        activity_preparation = operation.activity_preparation if operation is not None else None
+        if activity_preparation is not None:
+            current_observation = final_repair_snapshot.observation if final_repair_snapshot is not None else None
+            if current_observation != activity_preparation.repair_observation:
+                activity_preparation.disable('journal_changed')
         changed = SessionItem.objects.filter(session_id=session_id,
             id__in=[u['id'] for u in msg.get('item_updates', [])])
         before_items = item_contributions(changed)
@@ -4095,12 +4106,19 @@ class BaseSessionCompute:
                 extra_activity_keys=msg.get('_activity_repair_keys', ()),
                 source_changed=bool(msg.get('item_updates') or msg.get('content_overrides')),
             )
-            # Durable proof admission arrives separately. SQL owns the complete
-            # inventory, even after the worker loses all private state.
+            from twicc.providers.activity_preparation import activity_final_policy
+
+            prepared_keys = activity_final_policy(
+                activity_preparation,
+                before_session, session_fields or {},
+                item_updates=msg.get('item_updates', ()), content_overrides=msg.get('content_overrides', ()),
+                extra_activity_keys=snapshot.activity_keys, repair_snapshot=final_repair_snapshot,
+            )
+            # SQL owns the complete inventory, even when private proof fails.
             apply_contribution_changes(
                 before_items, after_items, before_sessions=[before_session],
                 after_sessions=[session_contribution(session)], repair=True,
-                repaired_activity_buckets=None,
+                repaired_activity_buckets=prepared_keys,
                 extra_activity_keys=snapshot.activity_keys,
             )
             already_repaired = {before_session.parent_session_id, session.parent_session_id}

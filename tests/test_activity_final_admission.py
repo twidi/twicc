@@ -38,6 +38,9 @@ def policy(module, state, fields=None, **kwargs):
         guard_storage(msg['session_id'], msg['observed_incarnation'], msg['observed_epoch'],
                       msg['observed_upper_line'], msg.get('observed_last_offset'))
         before = session_contribution(Session.objects.get(pk=msg['session_id']))
+        if 'repair_snapshot' not in kwargs and state.repair_observation is not None:
+            from twicc.providers.compute_repair_journal import load_compute_repair
+            kwargs['repair_snapshot'] = load_compute_repair(msg['session_id'], msg['observed_incarnation'])
         return module.activity_final_policy(state, before, fields or {}, **kwargs)
 
 
@@ -64,12 +67,71 @@ def test_final_reuses_committed_historical_keys_without_aggregate_reload(operati
     assert raw_totals() == [pytest.approx((0.0000024, 0), abs=1e-15)] * 2
 
 
+def test_noop_final_journal_merge_preserves_prepared_noncreation_hits(operation):
+    from twicc.core.content_storage.extraction import (
+        begin_compute_application, close_compute_application, prepare_compute_batch, publish_compute_batch,
+    )
+    close_compute_application(operation)
+    operation = begin_compute_application({'session_id': 'prepared-session', 'history_facts': [],
+        'session_fields': {'last_updated_at': STAMP.isoformat(), 'compute_version': 123}})
+    while operation.phase != 'final':
+        publish_compute_batch(operation, prepare_compute_batch(operation), frozenset())
+    snapshot = preparation_tests.journal(operation)
+    module, state = prepared(operation)
+    merged = preparation_tests.journal(operation, source_changed=False)
+    assert merged == snapshot
+    assert policy(module, state, repair_snapshot=snapshot) == state.required_keys
+    final = final_compute_message(operation, frozenset())
+    with CaptureQueriesContext(connection) as queries:
+        assert BaseSessionCompute._apply_session_complete_final(final).outcome == 'applied'
+    assert not any('UPDATE "core_dailyactivity"' in q['sql'] or 'UPDATE "core_weeklyactivity"' in q['sql']
+                   for q in queries)
+    assert raw_totals() == [pytest.approx((0.0000024, 0), abs=1e-15)] * 2
+    close_compute_application(operation)
+
+
+@pytest.mark.parametrize('enlarge', [False, True])
+def test_changed_final_journal_forces_complete_exact_fallback(operation, enlarge):
+    snapshot = preparation_tests.journal(operation)
+    module, state = prepared(operation)
+    old = (DailyActivity, None, 'codex', STAMP.date() - timedelta(days=90))
+    if enlarge:
+        DailyActivity.objects.create(project_id=None, provider='codex', date=old[3], cost=99)
+    else:
+        with connection.cursor() as cursor:
+            cursor.execute('UPDATE core_sessionitem SET cost=0.0000036 WHERE session_id=%s', ['prepared-session'])
+    preparation_tests.journal(operation, keys={old} if enlarge else (), source_changed=not enlarge)
+    assert policy(module, state, repair_snapshot=snapshot) is None
+    assert state.fallback_reason == 'journal_changed'
+    assert BaseSessionCompute._apply_session_complete_final(final_compute_message(operation, frozenset())).outcome == 'applied'
+    assert not DailyActivity.objects.filter(date=old[3]).exists()
+    for model in (DailyActivity, WeeklyActivity):
+        with connection.cursor() as cursor:
+            cursor.execute(f'SELECT SUM(cost) FROM {model._meta.db_table}')
+            assert cursor.fetchone()[0] == pytest.approx(.0000024 if enlarge else .0000072, abs=1e-15)
+
+
+@pytest.mark.parametrize('recreate', [False, True])
+def test_removed_or_recreated_journal_identity_rejects_prepared_keys(operation, recreate):
+    from twicc.core.models import ComputeAggregateRepair
+    snapshot = preparation_tests.journal(operation)
+    module, state = prepared(operation)
+    ComputeAggregateRepair.objects.filter(pk=snapshot.observation.journal_id).delete()
+    if recreate:
+        replacement = preparation_tests.journal(operation)
+        assert replacement.observation.generation == snapshot.observation.generation
+        assert replacement.observation.journal_id != snapshot.observation.journal_id
+    assert policy(module, state, repair_snapshot=snapshot) is None
+    assert state.fallback_reason == 'journal_changed'
+
+
 @pytest.mark.parametrize('old,new', [(None, STAMP), (STAMP, None), (STAMP, STAMP),
                                     (STAMP, STAMP + timedelta(days=8))])
 @pytest.mark.parametrize('hidden,child', [(False, False), (True, False), (False, True)])
 @pytest.mark.parametrize('cached_count', [0, 1, 3])
+@pytest.mark.parametrize('durable', [False, True])
 def test_creation_union_recalculates_despite_legacy_cache_and_count_stability(
-        operation, old, new, hidden, child, cached_count):
+        operation, old, new, hidden, child, cached_count, durable):
     parent = (Session.objects.create(id='prepared-parent', project_id='prepared-project', provider='codex',
                                      file_path='/fixture/prepared-parent.jsonl')
               if child else None)
@@ -85,6 +147,11 @@ def test_creation_union_recalculates_despite_legacy_cache_and_count_stability(
     try:
         while operation.phase != 'final':
             publish_compute_batch(operation, prepare_compute_batch(operation), frozenset())
+        if durable:
+            from twicc.providers.live_aggregates import _activity_keys
+            keys = set(_activity_keys('prepared-project', 'codex', old))
+            keys.update(_activity_keys('prepared-project', 'codex', new))
+            preparation_tests.journal(operation, keys=keys)
         module, state = prepared(operation)
         cache = policy(module, state, operation.message['session_fields'])
         for key in cache:
@@ -103,7 +170,10 @@ def test_creation_union_recalculates_despite_legacy_cache_and_count_stability(
 
 @pytest.mark.parametrize('failure', ['missing', 'capacity', 'incomplete', 'updates', 'overrides',
                                    'project', 'provider', 'type', 'hidden'])
-def test_failed_final_gate_selects_no_cache(operation, failure):
+@pytest.mark.parametrize('durable', [False, True])
+def test_failed_final_gate_selects_no_cache(operation, failure, durable):
+    if durable:
+        preparation_tests.journal(operation)
     module, state = prepared(operation)
     fields, kwargs = {}, {}
     if failure == 'missing':

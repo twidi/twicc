@@ -15,6 +15,9 @@ from django.db import connection, transaction
 
 from twicc.core.enums import Provider
 from twicc.core.models import Session, SessionItem
+from twicc.providers.compute_repair_journal import (
+    RepairObservation, RepairObservationChanged, RepairSnapshot, load_compute_repair, require_compute_repair,
+)
 from twicc.providers.live_aggregates import MAX_REPAIRED_ACTIVITY_BUCKETS, _activity_keys
 
 ACTIVITY_PAGE_ROWS = 256
@@ -38,6 +41,7 @@ class ActivityPreparation:
         self.fallback_reason = None
         self.scope = None
         self.metadata = None
+        self.repair_observation: RepairObservation | None = None
 
     def disable(self, reason, *, discard=True):
         if self.fallback_reason is None:
@@ -119,6 +123,12 @@ def begin_activity_preparation(operation):
     try:
         state.data_version = _data_version()
         _validate_operation(state)
+        snapshot = load_compute_repair(operation.message['session_id'], operation.message['observed_incarnation'])
+        operation.repair_snapshot = snapshot
+        if snapshot is not None:
+            state.repair_observation = snapshot.observation
+            # This inventory is correctness evidence, independent of the proof cap.
+            operation.activity_repair_keys.update(snapshot.activity_keys)
         row = Session.objects.filter(pk=operation.message['session_id']).values(
             'project_id', 'provider', 'type', 'hidden',
         ).get()
@@ -217,6 +227,12 @@ def publish_activity_key(state, key):
             _validate_operation(state)
             if not _check_version(state):
                 raise _ActivityFallback()
+            if state.repair_observation is not None:
+                try:
+                    require_compute_repair(state.repair_observation)
+                except RepairObservationChanged:
+                    state.disable('journal_changed')
+                    raise _ActivityFallback()
             model, project_id, provider, day = key
             model.recalculate(project_id, day, Provider(provider))
             sampled_version = _data_version()
@@ -262,7 +278,7 @@ def close_activity_preparation(state, *, reason='closed'):
 
 
 def activity_final_policy(state, before_session, effective_fields, *, item_updates=(), content_overrides=(),
-                          extra_activity_keys=()):
+                          extra_activity_keys=(), repair_snapshot: RepairSnapshot | None = None):
     """Admit private zero-delta keys under the final transaction's writer lock.
 
     Initial storage validation occurs before final source/lifecycle writes.
@@ -277,6 +293,19 @@ def activity_final_policy(state, before_session, effective_fields, *, item_updat
         elif _check_state(state, fresh=False):
             try:
                 version_matches = _check_version(state)
+                if version_matches and state.repair_observation is not None:
+                    if repair_snapshot is None or repair_snapshot.observation != state.repair_observation:
+                        version_matches = state.disable('journal_changed')
+                    else:
+                        # The final no-op merge may retain generation. A changed
+                        # union or actual source write cannot reuse this proof.
+                        current = require_compute_repair(state.repair_observation)
+                        if not current.activity_keys <= state.required_keys:
+                            version_matches = state.disable('missing_key')
+                elif version_matches and repair_snapshot is not None:
+                    version_matches = state.disable('journal_changed')
+            except RepairObservationChanged:
+                version_matches = state.disable('journal_changed')
             except Exception:
                 version_matches = state.disable('final_validation_failed')
             if version_matches:

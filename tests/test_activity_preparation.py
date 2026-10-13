@@ -78,6 +78,46 @@ def repair_all(module, state):
             assert module.publish_activity_key(state, key).published
 
 
+def journal(operation, *, keys=(), source_changed=True):
+    from twicc.providers.compute_repair_journal import merge_compute_repair
+    with transaction.atomic():
+        return merge_compute_repair(operation.message['session_id'], operation.message['observed_incarnation'],
+                                    activity_keys=keys, source_changed=source_changed)
+
+
+def test_preparation_adopts_complete_durable_union_without_clearing_keys(operation):
+    module = api()
+    old = (DailyActivity, None, 'codex', STAMP.date() - timedelta(days=50))
+    snapshot = journal(operation, keys={old})
+    state = enumerate_all(module, module.begin_activity_preparation(operation))
+    assert state.repair_observation == snapshot.observation
+    assert operation.repair_snapshot == snapshot
+    assert old in state.required_keys
+    assert module.publish_activity_key(state, state.ordered_keys[0]).published
+    from twicc.providers.compute_repair_journal import load_compute_repair
+    assert load_compute_repair(snapshot.observation.session_id, snapshot.observation.incarnation) == snapshot
+
+
+def test_same_connection_generation_change_rejects_bucket_publication(operation):
+    module = api()
+    journal(operation)
+    state = enumerate_all(module, module.begin_activity_preparation(operation))
+    journal(operation)  # Same keys and same physical connection; actual source generation changes.
+    assert not module.publish_activity_key(state, state.ordered_keys[0]).published
+    assert state.fallback_reason == 'journal_changed'
+
+
+def test_durable_capacity_keeps_unbounded_inventory(operation):
+    module = api()
+    keys = {(DailyActivity, None, 'codex', STAMP.date() - timedelta(days=day)) for day in range(4097)}
+    snapshot = journal(operation, keys=keys)
+    state = module.begin_activity_preparation(operation)
+    assert state.fallback_reason == 'capacity'
+    assert operation.activity_repair_keys >= keys
+    from twicc.providers.compute_repair_journal import load_compute_repair
+    assert load_compute_repair(snapshot.observation.session_id, snapshot.observation.incarnation) == snapshot
+
+
 def test_one_bucket_per_guarded_publication_preserves_raw_sum(operation):
     module = api()
     state = enumerate_all(module, module.begin_activity_preparation(operation))
@@ -103,9 +143,11 @@ def test_one_bucket_per_guarded_publication_preserves_raw_sum(operation):
 
 @pytest.mark.parametrize('position', ['enumeration', 'between_repairs'])
 @pytest.mark.parametrize('mutation', ['unrelated', 'current_replay'])
-def test_foreign_commits_discard_all_keys_and_keep_exact_obligations(wal_operation, position, mutation):
+@pytest.mark.parametrize('durable', [False, True])
+def test_foreign_commits_discard_all_keys_and_keep_exact_obligations(wal_operation, position, mutation, durable):
     module = api()
     operation, path = wal_operation
+    snapshot = journal(operation) if durable else None
     old_key = (DailyActivity, 'prepared-project', 'codex', STAMP.date() - timedelta(days=1))
     operation.activity_repair_keys.add(old_key)
     state = enumerate_all(module, module.begin_activity_preparation(operation))
@@ -123,6 +165,9 @@ def test_foreign_commits_discard_all_keys_and_keep_exact_obligations(wal_operati
     assert state.repaired_keys == set()
     assert old_key in operation.activity_repair_keys
     assert module.begin_activity_preparation(operation) is state  # No restart loop.
+    if durable:
+        from twicc.providers.compute_repair_journal import load_compute_repair
+        assert load_compute_repair(snapshot.observation.session_id, snapshot.observation.incarnation) == snapshot
     final = final_compute_message(operation, frozenset())
     assert BaseSessionCompute._apply_session_complete_final(final).outcome == 'applied'
     assert old_key in final['_activity_repair_keys']
@@ -163,9 +208,12 @@ def test_foreign_commit_before_completion_callback_keeps_fixed_version(wal_opera
     assert state.repaired_keys == set()
 
 
-def test_same_version_replacement_connection_does_not_prove_identity(wal_operation):
+@pytest.mark.parametrize('durable', [False, True])
+def test_same_version_replacement_connection_does_not_prove_identity(wal_operation, durable):
     module = api()
     operation, path = wal_operation
+    if durable:
+        journal(operation)
     state = enumerate_all(module, module.begin_activity_preparation(operation))
     physical = connection.connection
     replacement = sqlite3.connect(path, isolation_level=None)
@@ -258,7 +306,10 @@ def test_capacity_selects_fallback_without_losing_retained_obligations(operation
     assert not state.repaired_keys
 
 
-def test_missing_or_unknown_key_disables_preparation(operation):
+@pytest.mark.parametrize('durable', [False, True])
+def test_missing_or_unknown_key_disables_preparation(operation, durable):
+    if durable:
+        journal(operation)
     module = api()
     state = enumerate_all(module, module.begin_activity_preparation(operation))
     missing = state.ordered_keys[0]
@@ -276,7 +327,9 @@ def test_source_phase_change_disables_preparation(operation):
     assert state.fallback_reason == 'source_incomplete'
 
 
-def test_close_and_cancel_release_operation_evidence(operation):
+@pytest.mark.parametrize('durable', [False, True])
+def test_close_and_cancel_release_operation_evidence(operation, durable):
+    snapshot = journal(operation) if durable else None
     module = api()
     state = enumerate_all(module, module.begin_activity_preparation(operation))
     assert module.publish_activity_key(state, state.ordered_keys[0]).published
@@ -286,6 +339,9 @@ def test_close_and_cancel_release_operation_evidence(operation):
     assert module.begin_activity_preparation(operation) is state
     close_compute_application(operation)
     assert operation.closed
+    if durable:
+        from twicc.providers.compute_repair_journal import load_compute_repair
+        assert load_compute_repair(snapshot.observation.session_id, snapshot.observation.incarnation) == snapshot
 
 
 def test_enumeration_reads_bounded_metadata_and_unions_removed_keys(operation):
@@ -385,7 +441,9 @@ def test_closed_physical_connection_selects_explicit_fallback(wal_operation):
     assert state.fallback_reason == 'connection_unusable'
 
 
-def test_callback_failure_after_settlement_cannot_leave_new_evidence(operation, monkeypatch):
+@pytest.mark.parametrize('durable', [False, True])
+def test_callback_failure_after_settlement_cannot_leave_new_evidence(operation, monkeypatch, durable):
+    snapshot = journal(operation) if durable else None
     module = api()
     state = enumerate_all(module, module.begin_activity_preparation(operation))
     original = connection.run_and_clear_commit_hooks
@@ -397,6 +455,9 @@ def test_callback_failure_after_settlement_cannot_leave_new_evidence(operation, 
     assert state.repaired_keys == set()
     assert state.repair_cursor == 0
     assert state.fallback_reason == 'publication_failed'
+    if durable:
+        from twicc.providers.compute_repair_journal import load_compute_repair
+        assert load_compute_repair(snapshot.observation.session_id, snapshot.observation.incarnation) == snapshot
 
 
 def test_preparation_repairs_normalized_costs_after_metadata_without_legacy_cache():
