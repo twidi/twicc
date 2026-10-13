@@ -88,3 +88,17 @@ Validate cancellation and intentional shutdown: no retry or process spawn follow
 Run the full Python suite from this worktree with `TWICC_DATA_DIR=$PWD`.
 Run scoped ruff and `git diff --check`.
 Keep devctl stopped. Live startup on the copied user database requires the user's start instruction.
+
+## Completed validation
+
+Implementation and independent lifecycle reviews complete on 2026-10-13.
+The integrated review finds no remaining required fixes after the shutdown correction.
+
+- Standard full suite: `TWICC_DATA_DIR=$PWD uv run pytest -q -o faulthandler_timeout=60`.
+- Final result: 10,586 passed, 28 skipped, three pre-existing warnings, exit code 0, 448.45 seconds.
+- The first full run identifies two stale watcher reconstruction assertions. Their updated integration path verifies real final application before release and replay.
+- Focused final coverage: 145 passed, including deterministic shutdown interleavings, repeated cancellation, real worker recovery, and foreground progress.
+- Scoped ruff and diff checks pass.
+- Real writer, SQLite WAL, processes, and pipes run against isolated test databases. External metadata factories remain deterministic test replacements.
+- One earlier targeted stall does not reproduce in diagnostic runs or either full suite. Its cause remains unknown.
+- Worktree devctl stays stopped. The copied user database and provider histories remain untouched by this correction.
