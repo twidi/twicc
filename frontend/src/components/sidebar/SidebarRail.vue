@@ -189,7 +189,13 @@ function activate(item) {
                         @wa-hide="handleEntryTooltipHide(`session:${row.session.id}`, $event)"
                         force interactive hoist placement="right" lazy class="rail-session-tooltip"
                     >
-                        <div class="rail-session-preview">
+                        <div
+                            class="rail-session-preview"
+                            @pointerdown.passive="longPress.holdAutoHide(`session:${row.session.id}`)"
+                            @pointerup.passive="longPress.releaseAutoHide(`session:${row.session.id}`)"
+                            @pointercancel.passive="longPress.releaseAutoHide(`session:${row.session.id}`)"
+                            @scroll.capture.passive="longPress.extendAutoHide(`session:${row.session.id}`)"
+                        >
                             <SessionListItem
                                 :session="row.session" :active="row.session.id === currentSessionId" :highlight-active="false"
                                 id-prefix="rail-preview-" :show-menu="false" :selection-enabled="false"

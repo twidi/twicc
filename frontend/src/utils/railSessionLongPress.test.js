@@ -157,3 +157,37 @@ test('switching to a mouse press clears automatic dismissal', t => {
     assert.deepEqual(f.hidden, [])
     assert.deepEqual(f.shown, ['one'])
 })
+
+test('a touch inside the open preview postpones the dismissal until three seconds after the last event', t => {
+    const f = fixture(t)
+    f.down(); t.mock.timers.tick(450); f.pointer('pointerup')
+    t.mock.timers.tick(2000)
+    f.controller.holdAutoHide('one')
+    t.mock.timers.tick(10000)
+    assert.deepEqual(f.hidden, [], 'no dismissal while the finger is down')
+    f.controller.releaseAutoHide('one')
+    t.mock.timers.tick(2000)
+    f.controller.extendAutoHide('one')
+    t.mock.timers.tick(2999); assert.deepEqual(f.hidden, [], 'a scroll event restarts the wait')
+    t.mock.timers.tick(1); assert.deepEqual(f.hidden, ['one'])
+})
+
+test('scroll events do not restart the wait while the finger is held', t => {
+    const f = fixture(t)
+    f.down(); t.mock.timers.tick(450)
+    f.controller.holdAutoHide('one')
+    f.controller.extendAutoHide('one')
+    t.mock.timers.tick(10000)
+    assert.deepEqual(f.hidden, [])
+})
+
+test('hold, release and extend ignore an entry that has no automatic dismissal', t => {
+    const f = fixture(t)
+    f.down(); t.mock.timers.tick(450)
+    f.controller.holdAutoHide('two'); f.controller.releaseAutoHide('two'); f.controller.extendAutoHide('two')
+    t.mock.timers.tick(3000)
+    assert.deepEqual(f.hidden, ['one'])
+    f.controller.releaseAutoHide('one')
+    t.mock.timers.tick(10000)
+    assert.deepEqual(f.hidden, ['one'], 'no timer is armed after the dismissal')
+})

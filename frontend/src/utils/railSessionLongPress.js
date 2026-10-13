@@ -8,12 +8,43 @@ export function createRailSessionLongPress({ document, show, hide, isOpen }) {
     let disposed = false
     let autoHideTimer = null
     let autoHideId = null
+    let held = false
 
     function clearAutoHide(id) {
         if (id !== undefined && id !== autoHideId) return
         clearTimeout(autoHideTimer)
         autoHideTimer = null
         autoHideId = null
+        held = false
+    }
+
+    function armAutoHide(id) {
+        clearTimeout(autoHideTimer)
+        autoHideId = id
+        autoHideTimer = setTimeout(() => {
+            clearAutoHide()
+            hide(id)
+        }, AUTO_HIDE_DELAY_MS)
+    }
+
+    // A touch inside the open preview (scrolling a long title) postpones the automatic dismissal:
+    // it waits while the finger is down, then restarts after the last release or scroll event.
+    function holdAutoHide(id) {
+        if (id !== autoHideId) return
+        held = true
+        clearTimeout(autoHideTimer)
+        autoHideTimer = null
+    }
+
+    function releaseAutoHide(id) {
+        if (id !== autoHideId) return
+        held = false
+        armAutoHide(id)
+    }
+
+    function extendAutoHide(id) {
+        if (id !== autoHideId || held) return
+        armAutoHide(id)
     }
 
     function clearPending() {
@@ -50,11 +81,7 @@ export function createRailSessionLongPress({ document, show, hide, isOpen }) {
                 return
             }
             show(press.id)
-            autoHideId = press.id
-            autoHideTimer = setTimeout(() => {
-                clearAutoHide()
-                hide(press.id)
-            }, AUTO_HIDE_DELAY_MS)
+            armAutoHide(press.id)
         }, 450)
     }
 
@@ -92,5 +119,5 @@ export function createRailSessionLongPress({ document, show, hide, isOpen }) {
         for (const [type, listener] of listeners) document.removeEventListener(type, listener, { capture: true })
     }
 
-    return { start, consumeClick, cancel, dispose, clearAutoHide }
+    return { start, consumeClick, cancel, dispose, clearAutoHide, holdAutoHide, releaseAutoHide, extendAutoHide }
 }
