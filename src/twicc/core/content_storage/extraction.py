@@ -29,6 +29,7 @@ from twicc.core.content_storage.types import (
     PreparedComputeBatch, ComputeStorageProgress, ComputeStorageObservation,
 )
 from twicc.core.models import ContentDictionary, Session, SessionItem, SessionItemContent
+from twicc.providers.compute_repair_journal import RepairSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -457,6 +458,7 @@ class ComputeStorageOperation:
         # Current history is enumerated by final exact repair. Keep obligations
         # that metadata commits can remove from that history independently.
         self.activity_repair_keys = activity_repair_keys
+        self.repair_snapshot: RepairSnapshot | None = None
         self.activity_preparation = None
         self.preparation_ms = 0.0
         self.max_publication_ms = 0.0
@@ -520,7 +522,7 @@ def _validate_observation(observation, expected_epoch):
     return True
 
 
-def begin_compute_application(msg):
+def begin_compute_application(msg, *, defer_aggregate_repair=True):
     """Capture exact target/root observations under a short write-first guard."""
     from twicc.core.content_storage.references import SessionReferenceOperation
     from twicc.providers.compute_base import BaseSessionCompute
@@ -535,13 +537,17 @@ def begin_compute_application(msg):
         initialize_compute_session(msg['session_id'])
         session = Session.objects.get(pk=msg['session_id'])
         state = session_contribution(session)
-        prospective = msg.get('session_fields', {}).get('created_at', state.created_at)
-        if isinstance(prospective, str):
-            prospective = datetime.fromisoformat(prospective)
+        fields = msg.get('session_fields', {})
+        changes = {name: fields[name] for name in state._fields if name != 'session_id' and name in fields}
+        if isinstance(changes.get('created_at'), str):
+            changes['created_at'] = datetime.fromisoformat(changes['created_at'])
+        prospective = state._replace(**changes)
         days = [ItemContribution(state.session_id, state.project_id, state.provider,
                                  datetime.fromisoformat(day).replace(tzinfo=UTC), None, None)
                 for day in msg.get('affected_days') or ()]
-        activity_repair_keys = contribution_activity_keys(days, (state, state._replace(created_at=prospective)))
+        prospective_days = [day._replace(project_id=prospective.project_id, provider=prospective.provider)
+                            for day in days]
+        activity_repair_keys = contribution_activity_keys((*days, *prospective_days), (state, prospective))
         upper_line = msg.get('observed_upper_line')
         if upper_line is None:
             upper_line = max(session.last_line,
@@ -567,7 +573,10 @@ def begin_compute_application(msg):
         references.uses_counts = False
         references.initialized = True
     references.validate_connection()
-    return ComputeStorageOperation(msg, observation, placement, references, activity_repair_keys)
+    operation = ComputeStorageOperation(msg, observation, placement, references, activity_repair_keys)
+    operation.defer_aggregate_repair = defer_aggregate_repair
+    operation.prospective_session = prospective
+    return operation
 
 
 def prepare_compute_batch(operation):
@@ -638,7 +647,13 @@ def publish_compute_batch(operation, batch, active_ids):
                 msg['session_id'], msg.get('observed_last_offset'), msg.get('item_fields', []),
                 list(batch.rows), [], msg.get('_repaired_activity_buckets'),
                 msg['observed_incarnation'], msg['observed_epoch'], msg['observed_upper_line'],
-                activity_repair_keys=operation.activity_repair_keys)
+                activity_repair_keys=operation.activity_repair_keys,
+                defer_aggregate_repair=operation.defer_aggregate_repair, prospective_session=operation.prospective_session,
+                extra_activity_keys=operation.activity_repair_keys)
+            from twicc.providers.compute_repair_journal import load_compute_repair
+
+            snapshot = load_compute_repair(msg['session_id'], msg['observed_incarnation'])
+            transaction.on_commit(lambda: setattr(operation, 'repair_snapshot', snapshot))
             if outcome != 'ok':
                 raise SupersededStorageResult(outcome)
         elif batch.phase == 'overrides':
@@ -693,7 +708,7 @@ def prepare_compute_result(msg, item_row_budget=2000):
         raise ValueError('Metadata row budget must be positive')
     if msg.get('_storage_prepared'):
         return msg
-    operation = begin_compute_application(msg)
+    operation = begin_compute_application(msg, defer_aggregate_repair=False)
     operation.item_row_budget = item_row_budget
     try:
         while operation.phase != 'final':

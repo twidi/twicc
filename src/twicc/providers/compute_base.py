@@ -33,7 +33,7 @@ import logging
 import os
 import re
 from collections import Counter, OrderedDict
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, UTC
 from pathlib import Path
@@ -76,8 +76,9 @@ from twicc.providers.enrichment_cache import BorrowedEnrichment, EnrichmentCache
 from twicc.providers.live_sync import LiveSyncLimits, LiveSyncResult, LiveSyncUpdates, RawLiveSlice, read_live_slice
 from twicc.providers.live_aggregates import (
     ItemContribution, contribution_activity_keys, apply_contribution_changes, item_contributions, needs_repair,
-    persisted_cost, session_contribution,
+    persisted_cost, session_contribution, SessionContribution,
 )
+from twicc.providers.compute_repair_journal import ActivityKey
 from twicc.sync_diagnostics import timed_sync_phase
 from twicc.providers.goals import GoalEvent, apply_goal_event, preserve_dismissed_flags
 from twicc.providers.task_snapshots import select_tasks_snapshot
@@ -3705,14 +3706,18 @@ class BaseSessionCompute:
         observed_incarnation: str | None = None, observed_epoch: int | None = None,
         observed_upper_line: int | None = None,
         activity_repair_keys: set[tuple] | None = None,
+        *,
+        defer_aggregate_repair: bool = False,
+        prospective_session: SessionContribution | None = None,
+        extra_activity_keys: Iterable[ActivityKey] = (),
     ) -> str:
         """Apply one slice of a compute result's item writes in its own transaction.
 
         The DB writer feeds a large result to the dedicated compute worker
         in slices. Each publication releases its transaction and writer
-        lease. The row budget bounds source writes, while inherited aggregate
-        repair remains atomic and can scan full history. Each slice re-checks
-        the revision guard;
+        lease. Deferred runtime publications record durable obligations and
+        skip aggregate repair. Standalone callers retain exact aggregate repair.
+        Each slice re-checks the revision guard;
         returns its outcome (``"ok"`` / ``"superseded"`` / ``"missing"``).
         A slice applied before a later ``superseded`` is harmless: the
         session's ``compute_version`` never advances, the next recompute
@@ -3735,6 +3740,17 @@ class BaseSessionCompute:
             keys = contribution_activity_keys((*before_items, *after_items), (before_session,))
             transaction.on_commit(lambda: activity_repair_keys.update(keys))
         with timed_sync_phase('compute_metadata_aggregates', rows=len(item_updates)):
+            from twicc.providers.compute_repair import record_compute_repair
+            from twicc.providers.compute_repair_journal import load_compute_repair
+
+            if defer_aggregate_repair or load_compute_repair(session.id, session.storage_incarnation) is not None:
+                record_compute_repair(
+                    session, before_items, after_items, before_session=before_session,
+                    prospective_session=prospective_session, extra_activity_keys=extra_activity_keys,
+                    source_changed=True,
+                )
+            if defer_aggregate_repair:
+                return "ok"
             apply_contribution_changes(
                 before_items, after_items, before_sessions=[before_session],
                 after_sessions=[session_contribution(session)], repair=needs_repair(session),
@@ -3810,7 +3826,13 @@ class BaseSessionCompute:
         if 'history_facts' not in msg:
             raise ValueError("session_complete is missing history_facts")
 
-        before_session = session_contribution(Session.objects.get(id=session_id))
+        session = Session.objects.get(id=session_id)
+        if not session.storage_incarnation:
+            from twicc.core.content_storage.extraction import initialize_compute_session
+
+            initialize_compute_session(session_id)
+            session.refresh_from_db()
+        before_session = session_contribution(session)
         changed = SessionItem.objects.filter(session_id=session_id,
             id__in=[u['id'] for u in msg.get('item_updates', [])])
         before_items = item_contributions(changed)
@@ -4063,23 +4085,27 @@ class BaseSessionCompute:
             # Publish an exact baseline in this same transaction before the
             # new compute version becomes visible to the next live operation.
             session = Session.objects.get(id=session_id)
-            from twicc.providers.activity_preparation import activity_final_policy
+            from twicc.providers.compute_repair import record_compute_repair, repair_retained_parents
+            from twicc.providers.compute_repair_journal import settle_compute_repair
 
-            operation = msg.get('_storage_operation')
-            activity_cache = activity_final_policy(
-                operation.activity_preparation if operation is not None else None,
-                before_session,
-                {field: getattr(session, field) for field in ('project_id', 'provider', 'type', 'hidden', 'created_at')},
-                item_updates=msg.get('item_updates', ()), content_overrides=msg.get('content_overrides', ()),
+            after_items = item_contributions(changed)
+            snapshot = record_compute_repair(
+                session, before_items, after_items, before_session=before_session,
+                prospective_session=session_contribution(session),
                 extra_activity_keys=msg.get('_activity_repair_keys', ()),
+                source_changed=bool(msg.get('item_updates') or msg.get('content_overrides')),
             )
+            # Durable proof admission arrives separately. SQL owns the complete
+            # inventory, even after the worker loses all private state.
             apply_contribution_changes(
-                before_items, item_contributions(changed), before_sessions=[before_session],
+                before_items, after_items, before_sessions=[before_session],
                 after_sessions=[session_contribution(session)], repair=True,
-                # This private filtered set never contains legacy run-cache proof.
-                repaired_activity_buckets=activity_cache,
-                extra_activity_keys=msg.get('_activity_repair_keys', ()),
+                repaired_activity_buckets=None,
+                extra_activity_keys=snapshot.activity_keys,
             )
+            already_repaired = {before_session.parent_session_id, session.parent_session_id}
+            repair_retained_parents(snapshot.parent_ids - already_repaired)
+            settle_compute_repair(snapshot.observation)
             session.refresh_from_db()
 
         # 7bis. Fold subagent-detected plan docs into the top-level ancestor

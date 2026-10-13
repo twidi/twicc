@@ -49,7 +49,8 @@ def test_removed_last_timestamp_retained_for_exact_final_repair():
     try:
         final = complete(operation)
         for model, scope, provider, day in _activity_keys(session.project_id, session.provider, STAMP):
-            model.objects.create(project_id=scope, provider=provider, date=day, cost=Decimal(99))
+            model.objects.update_or_create(project_id=scope, provider=provider, date=day,
+                                           defaults={'cost': Decimal(99)})
         # Simulate discarded optimization state: the retained inventory must survive.
         final['_repaired_activity_buckets'] = set(_activity_keys(session.project_id, session.provider, STAMP))
         assert BaseSessionCompute._apply_session_complete_final(final).outcome == 'applied'
@@ -114,7 +115,7 @@ def test_failed_metadata_transaction_does_not_publish_repair_obligations(monkeyp
         batch = prepare_compute_batch(operation)
         def fail(*args):
             raise RuntimeError('rollback inventory')
-        monkeypatch.setattr(DailyActivity, 'recalculate', fail)
+        monkeypatch.setattr(BaseSessionCompute, 'apply_item_updates', fail)
         with pytest.raises(RuntimeError, match='rollback inventory'):
             publish_compute_batch(operation, batch, frozenset())
         assert operation.activity_repair_keys == original

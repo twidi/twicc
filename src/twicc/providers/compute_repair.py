@@ -14,9 +14,45 @@ from twicc.providers.compute_repair_journal import (
     RepairSnapshot,
     _require_transaction,
     require_compute_repair,
+    merge_compute_repair,
     settle_compute_repair,
 )
-from twicc.providers.live_aggregates import apply_contribution_changes, needs_repair, session_contribution
+from twicc.providers.live_aggregates import (
+    ItemContribution, SessionContribution, apply_contribution_changes, contribution_activity_keys,
+    needs_repair, session_contribution,
+)
+
+
+def record_compute_repair(
+    session: Session,
+    before_items: Sequence[ItemContribution],
+    after_items: Sequence[ItemContribution],
+    *,
+    before_session: SessionContribution,
+    prospective_session: SessionContribution | None,
+    extra_activity_keys: Iterable[ActivityKey],
+    source_changed: bool,
+) -> RepairSnapshot:
+    """Record bounded source obligations in the source writer transaction."""
+    _require_transaction()
+    if not session.storage_incarnation or session.storage_incarnation == "None":
+        raise ValueError("Compute repair requires a valid persisted incarnation")
+    states = (before_session, session_contribution(session))
+    if prospective_session is not None:
+        states += (prospective_session,)
+    keys = contribution_activity_keys((*before_items, *after_items), states)
+    # Prospective project/provider scopes must cover worker-provided dates too.
+    if prospective_session is not None:
+        prospective_items = tuple(item._replace(project_id=prospective_session.project_id,
+                                                provider=prospective_session.provider)
+                                  for item in (*before_items, *after_items))
+        keys.update(contribution_activity_keys(prospective_items))
+    keys.update(extra_activity_keys)
+    return merge_compute_repair(
+        session.id, session.storage_incarnation, activity_keys=keys,
+        parent_ids=(state.parent_session_id for state in states if state.parent_session_id),
+        source_changed=source_changed,
+    )
 
 
 def repair_retained_parents(parent_ids: Iterable[str]) -> None:
