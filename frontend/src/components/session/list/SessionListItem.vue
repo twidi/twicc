@@ -33,6 +33,7 @@ import ProcessIndicator from '../../ui/ProcessIndicator.vue'
 import ProcessDuration from '../../ui/ProcessDuration.vue'
 import CostDisplay from '../../ui/CostDisplay.vue'
 import AppTooltip from '../../ui/AppTooltip.vue'
+import ScrollableText from '../../ui/ScrollableText.vue'
 import { getProviderLabel, getProviderIcon } from '../../../providers'
 import ProviderIcon from '../../ui/ProviderIcon.vue'
 
@@ -520,7 +521,7 @@ function handleMenuSelect(event) {
                 <AppTooltip :hoist="!!idPrefix" v-if="showWorktreeIcon" :for="rowId('session-worktree')">
                     <ProjectBadge :project-id="session.project_id" :dot="false" />
                 </AppTooltip>
-                <span class="session-name">{{ getSessionDisplayName(session) }}</span>
+                <ScrollableText class="session-name" :text="getSessionDisplayName(session)" />
                 <!-- Compact mode: code comments indicator -->
                 <wa-icon
                     v-if="compactView && hasCodeComments"
@@ -776,10 +777,6 @@ function handleMenuSelect(event) {
 .session-name {
     font-size: var(--wa-font-size-s);
     font-weight: 700;
-    /* Truncate with ellipsis */
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     /* Visual space for dropdown button */
     margin-right: 1.5rem;
 }

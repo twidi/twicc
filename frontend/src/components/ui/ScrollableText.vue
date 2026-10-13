@@ -1,13 +1,15 @@
 <script setup>
-// One-line title. With a mouse it is cut with a native ellipsis (the caller adds a tooltip).
+// One-line text (a title, a name). With a mouse it is cut with a native ellipsis (the caller adds a tooltip).
 // On a touch screen it scrolls under the finger, with an ellipsis on each side that hides
 // some text, and goes back to its start shortly after the finger is up (utils/titleScroll.js).
 import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { createTitleScrollReturn, hiddenEdges } from '../../../utils/titleScroll'
+import { createTitleScrollReturn, hiddenEdges } from '../../utils/titleScroll'
 
 const props = defineProps({
     id: { type: String, default: undefined },
     text: { type: String, required: true },
+    // The element holding the text: a heading in a header, a span in a list row.
+    tag: { type: String, default: 'span' },
 })
 
 const scroller = ref(null)
@@ -40,7 +42,7 @@ onBeforeUnmount(() => {
     scrollReturn?.destroy()
 })
 
-// A new title starts at its beginning. Its width does not change the box, so no resize event.
+// A new text starts at its beginning. Its width does not change the box, so no resize event.
 watch(() => props.text, async () => {
     scrollReturn?.reset()
     await nextTick()
@@ -49,33 +51,32 @@ watch(() => props.text, async () => {
 </script>
 
 <template>
-    <div class="scrollable-title" :class="{ 'has-start': edges.start, 'has-end': edges.end }">
-        <h2
+    <div class="scrollable-text-root" :class="{ 'has-start': edges.start, 'has-end': edges.end }">
+        <component
+            :is="tag"
+            class="scrollable-text"
             :id="id"
             ref="scroller"
             @scroll.passive="onScroll"
             @touchstart.passive="scrollReturn?.onTouchStart()"
             @touchend.passive="scrollReturn?.onTouchEnd()"
             @touchcancel.passive="scrollReturn?.onTouchEnd()"
-        >{{ text }}</h2>
+        >{{ text }}</component>
         <span class="edge-ellipsis edge-ellipsis--start" aria-hidden="true">…</span>
         <span class="edge-ellipsis edge-ellipsis--end" aria-hidden="true">…</span>
     </div>
 </template>
 
 <style scoped>
-.scrollable-title {
+.scrollable-text-root {
     position: relative;
-    flex: 1 1 0;
     min-width: 0;
-    margin-right: var(--wa-space-xs);
-    font-size: var(--wa-font-size-l);
-    font-weight: 650;
-    letter-spacing: -0.015em;
-    color: var(--wa-color-text-normal);
+    /* The typography, the margins and the flex sizing come from the caller (class on this root). */
 }
 
-h2 {
+.scrollable-text {
+    /* A span must be a block for its overflow to apply. */
+    display: block;
     margin: 0;
     font: inherit;
     letter-spacing: inherit;
@@ -91,7 +92,7 @@ h2 {
 }
 
 @media (pointer: coarse) {
-    .scrollable-title {
+    .scrollable-text-root {
         /* The width of an ellipsis, and the fade that hides the text under it. */
         --ellipsis-width: 0.9em;
         --ellipsis-fade: 0.5em;
@@ -100,16 +101,16 @@ h2 {
         --end-clear: 0px;
         --end-full: 0px;
     }
-    .scrollable-title.has-start {
+    .scrollable-text-root.has-start {
         --start-clear: var(--ellipsis-width);
         --start-full: calc(var(--ellipsis-width) + var(--ellipsis-fade));
     }
-    .scrollable-title.has-end {
+    .scrollable-text-root.has-end {
         --end-clear: var(--ellipsis-width);
         --end-full: calc(var(--ellipsis-width) + var(--ellipsis-fade));
     }
 
-    h2 {
+    .scrollable-text {
         overflow-x: auto;
         /* The ellipses are drawn by the component, on the side that hides text. */
         text-overflow: clip;
@@ -122,7 +123,7 @@ h2 {
             transparent var(--start-clear), #000 var(--start-full),
             #000 calc(100% - var(--end-full)), transparent calc(100% - var(--end-clear)));
     }
-    h2::-webkit-scrollbar {
+    .scrollable-text::-webkit-scrollbar {
         display: none;
     }
 

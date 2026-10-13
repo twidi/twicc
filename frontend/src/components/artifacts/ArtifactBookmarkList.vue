@@ -37,6 +37,7 @@ import { SESSION_TIME_FORMAT } from '../../constants'
 import ProjectBadge from '../project/ProjectBadge.vue'
 import ProjectMark from '../project/ProjectMark.vue'
 import AppTooltip from '../ui/AppTooltip.vue'
+import ScrollableText from '../ui/ScrollableText.vue'
 import ArtifactBookmarkDialog from './ArtifactBookmarkDialog.vue'
 import ArtifactsHelpButton from './ArtifactsHelpButton.vue'
 import SidebarListSeparator from '../sidebar/SidebarListSeparator.vue'
@@ -638,7 +639,7 @@ defineExpose({ handleKeyNavigation })
                     </AppTooltip>
                     <!-- File-type icon, before the name (both modes) -->
                     <wa-icon class="bookmark-type" :name="artifactTypeIcon(b.file_ext)"></wa-icon>
-                    <span class="bookmark-name">{{ b.name }}</span>
+                    <ScrollableText class="bookmark-name" :text="b.name" />
                 </div>
                 <!-- Non-compact: project badge (left) + last-update time (right) -->
                 <div v-if="!compactView" class="bookmark-meta">
@@ -773,9 +774,6 @@ defineExpose({ handleKeyNavigation })
 .bookmark-name {
     font-size: var(--wa-font-size-s);
     font-weight: 700;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     min-width: 0;
     /* Visual space for the actions menu overlaying the row's top-right corner,
        so a long name ellipsizes before it rather than running underneath
