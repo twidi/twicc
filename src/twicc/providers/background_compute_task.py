@@ -65,8 +65,8 @@ logger = logging.getLogger(__name__)
 _mp_ctx = multiprocessing.get_context("spawn")
 
 COMPUTE_STALE_RETRY_DELAYS = (1.0, 2.0, 4.0)
-COMPUTE_STALE_RECOVERY_DELAYS = (15.0, 30.0, 60.0, 120.0)
-COMPUTE_STALE_RECOVERY_INTERVAL = 5 * 60.0
+COMPUTE_STALE_RECOVERY_DELAYS = (15.0, 30.0, 60.0)
+COMPUTE_STALE_RECOVERY_INTERVAL = 60.0
 
 
 class ComputeRetryResult(NamedTuple):
@@ -86,6 +86,26 @@ async def _wait_for_retry_delay(stop_event: asyncio.Event, delay: float) -> bool
     return False
 
 
+async def read_compute_state[T](
+    read: Callable[[list[str]], Awaitable[T]],
+    session_ids: list[str],
+    stop_event: asyncio.Event,
+    wait_for_delay: Callable[[asyncio.Event, float], Awaitable[bool]] = _wait_for_retry_delay,
+    stopped: T | None = None,
+) -> T | None:
+    """Retry state reads without holding writer admission; stop interrupts waits."""
+    delay = 1.0
+    while not stop_event.is_set():
+        try:
+            return await read(session_ids)
+        except Exception:
+            logger.exception("Background compute state read failed; retrying")
+        if not await wait_for_delay(stop_event, delay):
+            break
+        delay = min(delay * 2, 60.0)
+    return stopped
+
+
 async def run_compute_with_stale_retries(
     initial_session_ids: list[str],
     *,
@@ -103,27 +123,29 @@ async def run_compute_with_stale_retries(
     its delay. A changing session waits for a later window instead of starting
     another full compute that is already likely to become stale.
 
-    Compute failures are not stale-revision conflicts. They stop immediate
-    retries and remain eligible for the next backend start.
+    Failed sessions remain eligible. Query stored versions after each pass;
+    partial commits and successful sessions need no repeat computation.
     """
 
     session_ids = list(initial_session_ids)
     if not session_ids or stop_event.is_set():
         return ComputeRetryResult(0, session_ids)
 
-    failed_count = await run_pass(session_ids)
-    if failed_count or stop_event.is_set():
+    failed_count = await _run_recoverable_pass(run_pass, session_ids)
+    if stop_event.is_set():
         return ComputeRetryResult(failed_count, session_ids)
 
-    remaining = await load_remaining(session_ids)
+    remaining = await read_compute_state(load_remaining, session_ids, stop_event, wait_for_delay, session_ids)
+    if failed_count and len(remaining) > 1:
+        remaining = remaining[1:] + remaining[:1]
     for retry_number, delay in enumerate(retry_delays, start=1):
         if not remaining or stop_event.is_set():
             break
 
-        offsets_before = await load_offsets(remaining)
+        offsets_before = await read_compute_state(load_offsets, remaining, stop_event, wait_for_delay, {})
         if not await wait_for_delay(stop_event, delay):
             break
-        offsets_after = await load_offsets(remaining)
+        offsets_after = await read_compute_state(load_offsets, remaining, stop_event, wait_for_delay, {})
         stable = [
             session_id
             for session_id in remaining
@@ -131,6 +153,10 @@ async def run_compute_with_stale_retries(
             and offsets_before[session_id] == offsets_after.get(session_id)
         ]
 
+        if failed_count and len(stable) > 1:
+            # Cool the last rotated candidate for one pass. A crashing worker
+            # must not fence healthy results before the writer can apply them.
+            stable = stable[:-1]
         if stable:
             logger.info(
                 "Background compute: stale retry %d/%d for %d quiet session(s)",
@@ -138,13 +164,13 @@ async def run_compute_with_stale_retries(
                 len(retry_delays),
                 len(stable),
             )
-            failed_count = await run_pass(stable)
-            if failed_count:
-                return ComputeRetryResult(failed_count, remaining)
+            failed_count = await _run_recoverable_pass(run_pass, stable)
 
-        remaining = await load_remaining(remaining)
+        remaining = await read_compute_state(load_remaining, remaining, stop_event, wait_for_delay, remaining)
+        if failed_count and len(remaining) > 1:
+            remaining = remaining[1:] + remaining[:1]
 
-    return ComputeRetryResult(failed_count, remaining)
+    return ComputeRetryResult(failed_count if remaining else 0, remaining)
 
 
 async def recover_stale_compute_sessions(
@@ -176,11 +202,12 @@ async def recover_stale_compute_sessions(
         else:
             delay = recovery_interval
         delay_index += 1
+        delay = min(delay, 60.0)
 
-        offsets_before = await load_offsets(remaining)
+        offsets_before = await read_compute_state(load_offsets, remaining, stop_event, wait_for_delay, {})
         if not await wait_for_delay(stop_event, delay):
             break
-        offsets_after = await load_offsets(remaining)
+        offsets_after = await read_compute_state(load_offsets, remaining, stop_event, wait_for_delay, {})
         stable = [
             session_id
             for session_id in remaining
@@ -188,19 +215,66 @@ async def recover_stale_compute_sessions(
             and offsets_before[session_id] == offsets_after.get(session_id)
         ]
 
+        if failed_count and len(stable) > 1:
+            # Cool the last rotated candidate for one pass. A crashing worker
+            # must not fence healthy results before the writer can apply them.
+            stable = stable[:-1]
         if stable:
             logger.info(
                 "Background compute: recovery pass for %d quiet session(s) after %.0fs",
                 len(stable),
                 delay,
             )
-            failed_count = await run_pass(stable)
-            if failed_count:
-                return ComputeRetryResult(failed_count, remaining)
+            failed_count = await _run_recoverable_pass(run_pass, stable)
 
-        remaining = await load_remaining(remaining)
+        remaining = await read_compute_state(load_remaining, remaining, stop_event, wait_for_delay, remaining)
+        if failed_count and len(remaining) > 1:
+            remaining = remaining[1:] + remaining[:1]
 
-    return ComputeRetryResult(failed_count, remaining)
+    return ComputeRetryResult(failed_count if remaining else 0, remaining)
+
+
+async def _run_recoverable_pass(
+    run_pass: Callable[[list[str]], Awaitable[int]], session_ids: list[str],
+) -> int:
+    try:
+        return await run_pass(session_ids)
+    except Exception:
+        logger.exception("Background compute run failed; outdated sessions remain eligible")
+        return len(session_ids)
+
+
+async def retire_compute_run(ctx: ComputeContext, completion: asyncio.Future | None = None) -> None:
+    """Fence and drain one run without stopping its provider.
+
+    Retain cleanup ownership through repeated cancellation. The caller retains
+    the completion future because writer abandonment removes its registry entry.
+    """
+    from twicc.providers.db_writer import abandon_compute_run
+
+    async def cleanup():
+        if ctx.result_stream is not None:
+            ctx.result_stream.stop_admission()
+        try:
+            await abandon_compute_run(ctx.run_id, ctx.provider)
+        finally:
+            if completion is not None:
+                if not completion.done():
+                    completion.cancel()
+                elif not completion.cancelled():
+                    completion.exception()
+            await stop_compute_worker(ctx)
+
+    owned = asyncio.create_task(cleanup())
+    cancelled = False
+    while not owned.done():
+        try:
+            await asyncio.shield(owned)
+        except asyncio.CancelledError:
+            cancelled = True
+    owned.result()
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 @dataclass
@@ -586,8 +660,8 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
       which serializes writes across providers and phases
 
     This task processes all sessions with outdated or missing compute_version.
-    It completes startup progress after the quick retry phase, then keeps a
-    low-cost recovery monitor alive for sessions that remain stale. New
+    It keeps startup progress pending until every selected session is current.
+    A low-cost recovery monitor retries sessions that remain outdated. New
     sessions created by the watcher get compute_version set at creation time,
     so they don't need background reprocessing.
     """
@@ -595,32 +669,41 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
     from twicc.projects import load_project_directories, load_project_git_roots
     from twicc.providers.db_writer import arm_compute_completion
 
+    async def query(read):
+        async def load(_session_ids):
+            return await sync_to_async(read)()
+        return await read_compute_state(load, [], ctx.stop_event, stopped=[])
+
     provider_value = ctx.provider.value
 
     # Count sessions needing computation
-    total_to_compute = await sync_to_async(Session.objects.filter(
+    total_to_compute = await query(Session.objects.filter(
         provider=ctx.provider,
     ).exclude(
         compute_version=ctx.compute_version
-    ).count)()
+    ).count)
+
+    if ctx.stop_event.is_set():
+        return
 
     if total_to_compute == 0:
         logger.info("Background compute: no sessions to process")
         # Report the total session count so the frontend can show "N/N" instead of "0/0"
-        total_display = await sync_to_async(
+        total_display = await query(
             Session.objects.filter(
                 provider=ctx.provider, type=SessionType.SESSION,
             ).count
-        )()
-        await broadcast_startup_progress(
-            "background_compute", total_display, total_display,
-            provider=provider_value, completed=True,
         )
+        if not ctx.stop_event.is_set():
+            await broadcast_startup_progress(
+                "background_compute", total_display, total_display,
+                provider=provider_value, completed=True,
+            )
         return
 
     # Count only real sessions (not subagents) for progress display.
     # The actual compute processes ALL sessions, but users only care about session count.
-    sessions_to_display = await sync_to_async(
+    sessions_to_display = await query(
         lambda: set(
             Session.objects.filter(
                 provider=ctx.provider, type=SessionType.SESSION,
@@ -628,7 +711,7 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
             .exclude(compute_version=ctx.compute_version)
             .values_list("id", flat=True)
         )
-    )()
+    )
     total_display = len(sessions_to_display)
 
     # Broadcast initial progress state (0/N) — using display total (sessions only)
@@ -637,12 +720,12 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
     )
 
     # Load project caches at startup
-    await sync_to_async(load_project_directories)()
-    await sync_to_async(load_project_git_roots)()
+    await query(load_project_directories)
+    await query(load_project_git_roots)
 
     try:
         # Load all session IDs needing computation in one query, ordered by most recent first
-        session_ids_to_compute = await sync_to_async(
+        session_ids_to_compute = await query(
             lambda: list(
                 Session.objects
                 .filter(provider=ctx.provider)
@@ -650,10 +733,14 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
                 .order_by('-mtime')
                 .values_list('id', flat=True)
             )
-        )()
+        )
 
         async def run_pass(session_ids: list[str]) -> int:
-            display_ids = await sync_to_async(
+            # A failed teardown retains its resources. Never arm a replacement
+            # until another retirement attempt closes the previous transport.
+            if ctx.process is not None or ctx.result_stream is not None:
+                await retire_compute_run(ctx)
+            display_ids = await query(
                 lambda: set(
                     Session.objects.filter(
                         id__in=session_ids,
@@ -661,7 +748,10 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
                         type=SessionType.SESSION,
                     ).values_list("id", flat=True)
                 )
-            )()
+            )
+
+            if ctx.stop_event.is_set():
+                return 0
 
             # Arm each pass before spawning its worker. A new run_id prevents a
             # completed retry from accepting messages from the previous worker.
@@ -671,45 +761,32 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
                 len(display_ids),
             )
             ctx.run_id = run_id
-            start_compute_process(ctx)
+            try:
+                start_compute_process(ctx)
+                initialization_failed = 0
+                for session_id in session_ids:
+                    if ctx.stop_event.is_set():
+                        break
+                    from twicc.providers.db_writer import InitializeComputeStorageJob, submit_async_job
 
-            for session_id in session_ids:
-                if ctx.stop_event.is_set():
-                    break
-                from twicc.providers.db_writer import InitializeComputeStorageJob, submit_async_job
-
-                await submit_async_job(InitializeComputeStorageJob(
-                    ctx.provider, session_id, asyncio.get_running_loop().create_future(),
-                ))
-                ctx.command_queue.put({"session_id": session_id})
-            ctx.command_queue.put(None)
-
-            logger.info(
-                "Background compute: all %d sessions sent to worker (run_id=%d)",
-                len(session_ids),
-                run_id,
-            )
-
-            # The Future resolves after the writer drains this run. The worker
-            # has already sent its done marker and must exit before a retry can
-            # reuse the command queue with a new run_id.
-            failed_count = await done_future
-            process = ctx.process
-            if process is not None:
-                await asyncio.to_thread(process.join, 2.0)
-                if process.is_alive():
-                    raise RuntimeError(
-                        f"Compute worker {process.pid} did not exit after run {run_id} completed"
-                    )
-                process.close()
-                ctx.process = None
-            from twicc.providers.db_writer import close_compute_result_stream
-            await close_compute_result_stream(run_id)
-            ctx.result_stream = None
-            return failed_count
+                    try:
+                        await submit_async_job(InitializeComputeStorageJob(
+                            ctx.provider, session_id, asyncio.get_running_loop().create_future(),
+                        ))
+                    except Exception:
+                        initialization_failed += 1
+                        logger.exception("Compute storage initialization failed for %s", session_id)
+                        continue
+                    ctx.command_queue.put({"session_id": session_id})
+                ctx.command_queue.put(None)
+                # Shield retains the future for retirement after task cancellation.
+                failed_count = await asyncio.shield(done_future)
+                return failed_count + initialization_failed
+            finally:
+                await retire_compute_run(ctx, done_future)
 
         async def load_remaining(candidate_ids: list[str]) -> list[str]:
-            outdated = await sync_to_async(
+            outdated = await query(
                 lambda: set(
                     Session.objects.filter(
                         id__in=candidate_ids,
@@ -718,18 +795,18 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
                         compute_version=ctx.compute_version,
                     ).values_list("id", flat=True)
                 )
-            )()
+            )
             return [session_id for session_id in candidate_ids if session_id in outdated]
 
         async def load_offsets(candidate_ids: list[str]) -> dict[str, int]:
-            pairs = await sync_to_async(
+            pairs = await query(
                 lambda: list(
                     Session.objects.filter(
                         id__in=candidate_ids,
                         provider=ctx.provider,
                     ).values_list("id", "last_offset")
                 )
-            )()
+            )
             return dict(pairs)
 
         logger.info(f"Background compute task started ({total_to_compute} sessions to process)")
@@ -741,53 +818,25 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
             stop_event=ctx.stop_event,
         )
 
-        if retry_result.failed_count:
-            logger.error(
-                "Background compute for %s finished with %d session(s) that "
-                "failed to compute or apply — they will be recomputed on the "
-                "next start", provider_value, retry_result.failed_count,
-            )
-
-        # Broadcast completion (using display total — sessions only, not subagents)
-        await broadcast_startup_progress(
-            "background_compute", total_display, total_display,
-            provider=provider_value, completed=True,
-        )
-
-        if (
-            retry_result.remaining_session_ids
-            and not retry_result.failed_count
-            and not ctx.stop_event.is_set()
-        ):
+        if retry_result.remaining_session_ids and not ctx.stop_event.is_set():
             logger.warning(
-                "Background compute for %s left %d session(s) outdated after "
-                "%d quick retry windows — automatic recovery will continue",
-                provider_value,
-                len(retry_result.remaining_session_ids),
-                len(COMPUTE_STALE_RETRY_DELAYS),
+                "Background compute for %s left %d outdated session(s); recovery continues",
+                provider_value, len(retry_result.remaining_session_ids),
             )
-            recovery_result = await recover_stale_compute_sessions(
+            retry_result = await recover_stale_compute_sessions(
                 retry_result.remaining_session_ids,
-                run_pass=run_pass,
-                load_remaining=load_remaining,
-                load_offsets=load_offsets,
-                stop_event=ctx.stop_event,
+                run_pass=run_pass, load_remaining=load_remaining,
+                load_offsets=load_offsets, stop_event=ctx.stop_event,
             )
-            if recovery_result.failed_count:
-                logger.error(
-                    "Background compute recovery for %s stopped after %d "
-                    "session(s) failed to compute or apply — they will be "
-                    "recomputed on the next start",
-                    provider_value,
-                    recovery_result.failed_count,
-                )
-            elif not recovery_result.remaining_session_ids:
-                logger.info(
-                    "Background compute recovery for %s completed",
-                    provider_value,
-                )
+
+        if not retry_result.remaining_session_ids and not ctx.stop_event.is_set():
+            await broadcast_startup_progress(
+                "background_compute", total_display, total_display,
+                provider=provider_value, completed=True,
+            )
+
     finally:
         # Stop the worker process. Idempotent if it has already exited.
-        await stop_background_task(ctx)
+        await retire_compute_run(ctx)
 
     logger.info("Background compute task completed")

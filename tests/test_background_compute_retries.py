@@ -77,35 +77,35 @@ def test_stale_compute_stops_after_three_changing_windows():
     assert result.remaining_session_ids == ["active"]
 
 
-def test_stale_compute_does_not_retry_a_failed_pass():
-    remaining_calls = 0
+def test_failed_pass_retries_only_outdated_sessions():
+    current = set()
+    attempts = []
 
-    async def run_pass(_session_ids):
-        return 1
+    async def run_pass(session_ids):
+        attempts.append(list(session_ids))
+        current.add("healthy")
+        if len(attempts) == 1:
+            return 1
+        current.add("failed")
+        return 0
 
-    async def load_remaining(_session_ids):
-        nonlocal remaining_calls
-        remaining_calls += 1
-        return ["failed"]
+    async def load_remaining(session_ids):
+        return [sid for sid in session_ids if sid not in current]
 
-    async def load_offsets(_session_ids):
-        raise AssertionError("offsets must not be loaded after a failed pass")
+    async def load_offsets(session_ids):
+        return dict.fromkeys(session_ids, 10)
 
     async def wait_for_delay(_stop_event, _delay):
-        raise AssertionError("a failed pass must not wait for a retry")
+        return True
 
     result = asyncio.run(run_compute_with_stale_retries(
-        ["failed"],
-        run_pass=run_pass,
-        load_remaining=load_remaining,
-        load_offsets=load_offsets,
-        stop_event=asyncio.Event(),
-        wait_for_delay=wait_for_delay,
+        ["failed", "healthy"], run_pass=run_pass,
+        load_remaining=load_remaining, load_offsets=load_offsets,
+        stop_event=asyncio.Event(), wait_for_delay=wait_for_delay,
     ))
-
-    assert remaining_calls == 0
-    assert result.failed_count == 1
-    assert result.remaining_session_ids == ["failed"]
+    assert current == {"healthy", "failed"}
+    assert attempts == [["failed", "healthy"], ["failed"]]
+    assert result == (0, [])
 
 
 def test_stale_compute_recovery_keeps_monitoring_until_the_session_is_quiet():
@@ -142,3 +142,103 @@ def test_stale_compute_recovery_keeps_monitoring_until_the_session_is_quiet():
     assert delays == [15.0, 30.0, 60.0, 60.0]
     assert result.failed_count == 0
     assert result.remaining_session_ids == []
+
+def test_dead_run_rotates_faulty_newest_session_before_retry():
+    current = set()
+    attempts = []
+
+    async def run_pass(session_ids):
+        attempts.append(list(session_ids))
+        for sid in session_ids:
+            if sid == 'faulty':
+                raise RuntimeError('worker died')
+            current.add(sid)
+        return 0
+
+    async def load_remaining(session_ids):
+        return [sid for sid in session_ids if sid not in current]
+
+    async def load_offsets(session_ids):
+        return dict.fromkeys(session_ids, 10)
+
+    async def wait(_stop_event, _delay):
+        return True
+
+    result = asyncio.run(run_compute_with_stale_retries(
+        ['faulty', 'older'], run_pass=run_pass, load_remaining=load_remaining,
+        load_offsets=load_offsets, stop_event=asyncio.Event(), wait_for_delay=wait,
+    ))
+    assert current == {'older'}
+    assert result.remaining_session_ids == ['faulty']
+    assert attempts[1] == ['older']
+
+def test_repeated_failures_back_off_until_explicit_stop():
+    stop = asyncio.Event()
+    delays = []
+    attempts = []
+
+    async def run_pass(ids):
+        attempts.append(list(ids))
+        return 1
+
+    async def remaining(ids):
+        return ids
+
+    async def offsets(ids):
+        return dict.fromkeys(ids, 10)
+
+    async def wait(event, delay):
+        delays.append(delay)
+        if len(delays) == 6:
+            event.set()
+            return False
+        return True
+
+    result = asyncio.run(background_compute_task.recover_stale_compute_sessions(
+        ['failed'], run_pass=run_pass, load_remaining=remaining,
+        load_offsets=offsets, stop_event=stop, wait_for_delay=wait,
+    ))
+    assert delays == [15, 30, 60, 60, 60, 60]
+    assert len(attempts) == 5
+    assert result == (1, ['failed'])
+
+
+def test_explicit_stop_interrupts_retry_wait():
+    async def scenario():
+        stop = asyncio.Event()
+        waiting = asyncio.create_task(background_compute_task._wait_for_retry_delay(stop, 60))
+        await asyncio.sleep(0)
+        stop.set()
+        assert await asyncio.wait_for(waiting, .2) is False
+    asyncio.run(scenario())
+
+def test_candidate_read_failure_recovers_after_completed_pass():
+    reads = 0
+    current = set()
+    delays = []
+
+    async def run_pass(ids):
+        current.update(ids)
+        return 0
+
+    async def remaining(ids):
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            from django.db import OperationalError
+            raise OperationalError('temporary database read failure')
+        return [sid for sid in ids if sid not in current]
+
+    async def offsets(ids):
+        return dict.fromkeys(ids, 10)
+
+    async def wait(_event, delay):
+        delays.append(delay)
+        return True
+
+    result = asyncio.run(run_compute_with_stale_retries(
+        ['healthy'], run_pass=run_pass, load_remaining=remaining,
+        load_offsets=offsets, stop_event=asyncio.Event(), wait_for_delay=wait,
+    ))
+    assert result == (0, [])
+    assert delays == [1]
