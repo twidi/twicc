@@ -16,6 +16,7 @@ from django.db.models import BinaryField, F, Max, Q
 from django.db.models.functions import Cast, Length
 from django.utils import timezone
 
+from twicc.core.content_storage.dictionaries import get_provider_dictionary
 from twicc.core.content_storage.codec import ContentIntegrityError, encode_plain, transcode_content
 from twicc.core.content_storage.policy import (
     COLD_FIELDS, CONTENT_STORAGE_VERSION, cold_from_fields, compression_policy_version,
@@ -26,11 +27,12 @@ from twicc.core.content_storage.references import (
 from twicc.core.content_storage.state import resolve_root_decision
 from twicc.core.content_storage.cold_cache import cached_root_decisions
 from twicc.core.content_storage.types import (
-    ContentBinding, StorageCursor, ItemStorageObservation, ContentRepresentationObservation,
+    ContentBinding, StorageCursor, ItemStorageObservation,
     PreparedComputeBatch, ComputeStorageProgress, ComputeStorageObservation,
+    ContentMetadataObservation, ReconciliationAction,
 )
 from twicc.core.content_storage.writes import write_item_content_assignments
-from twicc.core.models import ContentDictionary, Session, SessionItem, SessionItemContent
+from twicc.core.models import Session, SessionItem, SessionItemContent
 from twicc.providers.compute_repair_journal import RepairSnapshot
 from twicc.sync_diagnostics import timed_sync_phase
 
@@ -307,6 +309,8 @@ def reconcile_storage_slice(msg, cursor, row_budget=ROW_BUDGET, byte_budget=BYTE
     batch = _prepare_reconciliation(msg, cursor, row_budget, byte_budget)
     result = _publish_reconciliation(msg, batch)
     msg['_storage_reconcile_position'] = batch.cursor
+    if batch.done:
+        msg.pop('_storage_reconciled_contents', None)
     return result
 
 
@@ -323,6 +327,9 @@ def _prepare_reconciliation(msg, cursor, row_budget=ROW_BUDGET, byte_budget=BYTE
         stored_size=Length('payload'), owner_size=Length(Cast('session_ids', BinaryField())),
     ).values('id', 'codec', 'raw_size', 'stored_size', 'owner_size')}
     prepared = []
+    observations = {}
+    eligibility = {}
+    representations = {}
     visited = []
     admitted = set()
     size = 0
@@ -330,6 +337,9 @@ def _prepare_reconciliation(msg, cursor, row_budget=ROW_BUDGET, byte_budget=BYTE
     owner_cache = {}
     dictionaries = {}
     dictionary_cache = {}
+    placement = _placement.get()
+    operation = placement.get('operation') if placement else None
+    seen = operation.reconciled_contents if operation else msg.setdefault('_storage_reconciled_contents', {})
     incoming_cold = cold_placement(msg['session_id'])
     stopped = False
     for item_line, current, original in rows:
@@ -347,21 +357,26 @@ def _prepare_reconciliation(msg, cursor, row_budget=ROW_BUDGET, byte_budget=BYTE
             if not skip:
                 admitted.add(pk)
                 size += cost
-                row = SessionItemContent.objects.get(pk=pk)
+                row = SessionItemContent.objects.defer('payload').get(pk=pk)
+                observed = _metadata_observation(row)
+                observations[pk] = observed
                 owners_cold = _owners_cold(row, owner_cache)
+                eligibility[pk] = owners_cold
                 if owners_cold or row.codec != 'plain':
                     if owners_cold:
                         if row.dictionary_provider not in dictionaries:
-                            dictionaries[row.dictionary_provider] = ContentDictionary.objects.filter(
-                                provider=row.dictionary_provider).order_by('-version').first()
+                            entry = get_provider_dictionary(row.dictionary_provider)
+                            dictionaries[row.dictionary_provider] = entry.row if entry else None
                         dictionary = dictionaries[row.dictionary_provider]
                         if dictionary is not None:
                             policy = compression_policy_version(
                                 row.dictionary_provider, dictionary.id, dictionary=dictionary,
                             )
-                            if row.codec == 'zstd' and row.dictionary_id == dictionary.id:
-                                encoded, _ = transcode_content(row, dictionary.id, dictionary_cache=dictionary_cache)
-                                prepared.append((row, encoded, policy, False))
+                            if seen.get(pk) == (observed, owners_cold, policy):
+                                pass
+                            elif row.codec == 'zstd' and row.dictionary_id == dictionary.id:
+                                if row.compression_attempt_version != policy or row.compression_no_gain:
+                                    prepared.append((row, None, policy, False))
                             elif not (row.compression_attempt_version == policy and row.compression_no_gain):
                                 try:
                                     encoded, no_gain = transcode_content(
@@ -372,7 +387,8 @@ def _prepare_reconciliation(msg, cursor, row_budget=ROW_BUDGET, byte_budget=BYTE
                                 except Exception:
                                     logger.warning('Optional initial content compression failed', exc_info=True)
                                 else:
-                                    prepared.append((row, encoded, policy, no_gain))
+                                    representation = None if no_gain and row.codec == 'plain' else encoded
+                                    prepared.append((row, representation, policy, no_gain))
                     else:
                         encoded, _ = transcode_content(row, dictionary_cache=dictionary_cache)
                         prepared.append((row, encoded, row.compression_attempt_version, row.compression_no_gain))
@@ -385,11 +401,20 @@ def _prepare_reconciliation(msg, cursor, row_budget=ROW_BUDGET, byte_budget=BYTE
     done = position[1] == 1 and not SessionItem.objects.filter(
         session_id=msg['session_id'], line_num__gt=last_line, line_num__lte=msg['observed_upper_line'],
     ).exists()
-    immutable = tuple((ContentRepresentationObservation(*(bytes(getattr(row, name)) if name in ('payload', 'sha256')
-                       else tuple(row.session_ids) if name == 'session_ids' else getattr(row, name)
-                       for name in ContentRepresentationObservation._fields)), encoded, policy, no_gain)
-                      for row, encoded, policy, no_gain in prepared)
-    return PreparedComputeBatch('reconciliation', position, tuple(visited), immutable, None, size, done, last_line)
+    actions = []
+    for row, encoded, policy, no_gain in prepared:
+        actions.append(ReconciliationAction(row.id, observations[row.id], encoded, policy, no_gain))
+        if 'payload' in row.__dict__:
+            representations[row.id] = bytes(row.payload)
+    return PreparedComputeBatch('reconciliation', position, tuple(visited), tuple(actions), None, size, done,
+                                last_line, tuple(observations.values()), tuple(representations.items()),
+                                tuple(eligibility.items()))
+
+
+def _metadata_observation(row):
+    return ContentMetadataObservation(*(bytes(row.sha256) if name == 'sha256' else
+                                       tuple(row.session_ids) if name == 'session_ids' else getattr(row, name)
+                                       for name in ContentMetadataObservation._fields))
 
 
 @_publication_decisions()
@@ -405,21 +430,41 @@ def _publish_reconciliation(msg, batch):
                for item_line, item_slot, pk in visited):
             raise SupersededStorageResult('superseded')
         publication_cache = {}
-        for observed, encoded, policy, no_gain in prepared:
-            actual = SessionItemContent.objects.get(pk=observed.id)
-            if (actual.codec != observed.codec or actual.dictionary_id != observed.dictionary_id
-                    or tuple(actual.session_ids) != observed.session_ids or bytes(actual.payload) != bytes(observed.payload)
-                    or actual.raw_size != observed.raw_size or bytes(actual.sha256) != bytes(observed.sha256)
-                    or actual.dictionary_provider != observed.dictionary_provider
-                    or actual.compression_attempt_version != observed.compression_attempt_version
-                    or actual.compression_no_gain != observed.compression_no_gain):
+        actual_rows = {}
+        representations = dict(batch.representations)
+        eligibility = dict(batch.eligibility)
+        for observed in batch.observations:
+            actual = SessionItemContent.objects.defer('payload').get(pk=observed.id)
+            if _metadata_observation(actual) != observed:
                 raise SupersededStorageResult('superseded')
-            if encoded.codec == 'zstd' and not _owners_cold(actual, publication_cache):
+            if _owners_cold(actual, publication_cache) != eligibility[observed.id]:
                 raise SupersededStorageResult('superseded')
-            SessionItemContent.objects.filter(pk=actual.id).update(
-                payload=encoded.payload, codec=encoded.codec, dictionary_id=encoded.dictionary_id,
-                compression_attempt_version=policy, compression_no_gain=no_gain,
-            )
+            actual_rows[observed.id] = actual
+        for content_id, observed, encoded, policy, no_gain in prepared:
+            actual = actual_rows[content_id]
+            if content_id in representations and bytes(actual.payload) != representations[content_id]:
+                raise SupersededStorageResult('superseded')
+            if (encoded.codec == 'zstd' if encoded is not None else actual.codec == 'zstd') and not _owners_cold(
+                actual, publication_cache,
+            ):
+                raise SupersededStorageResult('superseded')
+            updates = dict(compression_attempt_version=policy, compression_no_gain=no_gain)
+            if encoded is not None:
+                updates.update(payload=encoded.payload, codec=encoded.codec, dictionary_id=encoded.dictionary_id)
+            SessionItemContent.objects.filter(pk=actual.id).update(**updates)
+            for name, value in updates.items():
+                setattr(actual, name, value)
+        placement = _placement.get()
+        operation = placement.get('operation') if placement else None
+        seen = operation.reconciled_contents if operation else msg.setdefault('_storage_reconciled_contents', {})
+        settled = {}
+        for pk, actual in actual_rows.items():
+            policy = None
+            if eligibility[pk]:
+                dictionary = get_provider_dictionary(actual.dictionary_provider)
+                policy = dictionary.policy_version if dictionary else None
+            settled[pk] = (_metadata_observation(actual), eligibility[pk], policy)
+        transaction.on_commit(lambda: seen.update(settled))
     return StorageCursor(batch.line_num, len({entry[0] for entry in visited}), batch.bytes, batch.done)
 
 
@@ -478,6 +523,7 @@ class ComputeStorageOperation:
         self.closed = False
         self.item_row_budget = 2000
         self.pending_batch = None
+        self.reconciled_contents = {}
         # Current history is enumerated by final exact repair. Keep obligations
         # that metadata commits can remove from that history independently.
         self.activity_repair_keys = activity_repair_keys
@@ -738,6 +784,7 @@ def close_compute_application(operation):
                 close_activity_preparation(operation.activity_preparation)
             operation.references.close()
         finally:
+            operation.reconciled_contents.clear()
             operation.closed = True
             operation.pending_batch = None
 

@@ -101,6 +101,26 @@ class ContentRepresentationObservation(NamedTuple):
     compression_no_gain: bool
 
 
+class ContentMetadataObservation(NamedTuple):
+    id: int
+    codec: str
+    dictionary_id: int | None
+    sha256: bytes
+    raw_size: int
+    session_ids: tuple[str, ...]
+    dictionary_provider: str
+    compression_attempt_version: str | None
+    compression_no_gain: bool
+
+
+class ReconciliationAction(NamedTuple):
+    content_id: int
+    observed: ContentMetadataObservation
+    encoded: EncodedContent | None
+    policy_version: str | None
+    no_gain: bool
+
+
 class PreparedComputeBatch(NamedTuple):
     """One bounded phase input; cursor is proposed until publication commits."""
     phase: str
@@ -111,6 +131,9 @@ class PreparedComputeBatch(NamedTuple):
     bytes: int
     done: bool
     line_num: int = -1
+    observations: tuple = ()
+    representations: tuple = ()
+    eligibility: tuple = ()
 
 
 class ComputeStorageProgress(NamedTuple):

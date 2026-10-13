@@ -416,7 +416,7 @@ def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_
             break
         last = metadata['id']
         size += cost
-        row = SessionItemContent.objects.get(pk=last)
+        row = SessionItemContent.objects.defer('payload').get(pk=last)
         if not _owners_cold(row, frozenset()):
             continue
         if row.dictionary_provider not in dictionaries:
