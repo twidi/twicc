@@ -1980,9 +1980,14 @@ class BaseSessionCompute:
     @staticmethod
     def apply_placeholder_title(target_session_id: str, title: str) -> bool:
         """Stamp an initial title only if the database title is still NULL."""
-        return bool(Session.objects.filter(id=target_session_id, title__isnull=True).update(
+        from twicc.core.services.session_timeline import record_title_change
+
+        changed = bool(Session.objects.filter(id=target_session_id, title__isnull=True).update(
             title=title, title_origin='auto',
         ))
+        if changed:
+            record_title_change(target_session_id, title, source="auto", old=None)
+        return changed
 
     @staticmethod
     def _should_skip_title_echo(target_session_id: str, title: str) -> bool:
@@ -1994,9 +1999,15 @@ class BaseSessionCompute:
     @staticmethod
     def _write_provider_title(target_session_id: str, title: str) -> bool:
         """Stamp NULL transitions; leave the origin of existing titles intact."""
+        from twicc.core.services.session_timeline import record_title_change
+
         if BaseSessionCompute.apply_placeholder_title(target_session_id, title):
             return True
-        return bool(Session.objects.filter(id=target_session_id).exclude(title=title).update(title=title))
+        old_title = Session.objects.filter(id=target_session_id).values_list('title', flat=True).first()
+        changed = bool(Session.objects.filter(id=target_session_id).exclude(title=title).update(title=title))
+        if changed:
+            record_title_change(target_session_id, title, source="agent", old=old_title)
+        return changed
 
     def apply_session_title(self, target_session_id: str, title: str) -> bool:
         """Apply a provider title unless it is a delayed automatic echo."""

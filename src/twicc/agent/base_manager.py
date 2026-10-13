@@ -890,15 +890,23 @@ class BaseAgentManager:
         leave the in-memory protection in place.
         """
         from twicc.core.models import Session
+        from twicc.core.services.session_timeline import record_title_change
         from twicc.providers.helpers import get_provider_helpers
 
         session_id = agent.session_id
 
         try:
             async def _persist_session_title() -> int:
-                return await sync_to_async(
+                old_title = await sync_to_async(
+                    lambda: Session.objects.filter(id=session_id).values_list("title", flat=True).first()
+                )()
+                updated = await sync_to_async(
                     Session.objects.filter(id=session_id).update
                 )(title=pending, title_origin="user")
+                # Retries of a failed provider rename re-run this update: only a real change is an event.
+                if updated and old_title != pending:
+                    await asyncio.to_thread(record_title_change, session_id, pending, source="user", old=old_title)
+                return updated
             rows_updated = await run_under_db_write_lock(_persist_session_title)
         except Exception as e:
             logger.warning(

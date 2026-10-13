@@ -357,13 +357,16 @@ class HybridClaudeAgent(BaseAgent):
 
         from channels.layers import get_channel_layer
 
-        from twicc.core.models import Session
+        from twicc.core.models import Session, TimelineActor
         from twicc.core.serializers import serialize_session
         from twicc.core.services.session_update import persist_session_settings
         from twicc.providers.db_writer import run_under_db_write_lock
 
         await run_under_db_write_lock(
-            lambda: sync_to_async(persist_session_settings)(self.session_id, {"claude_in_chrome": False})
+            lambda: sync_to_async(persist_session_settings)(
+                self.session_id, {"claude_in_chrome": False},
+                actor=TimelineActor.SYSTEM, reason="hybrid_switch",
+            )
         )
         session = await sync_to_async(Session.objects.select_related("project").filter(id=self.session_id).first)()
         channel_layer = get_channel_layer()

@@ -3406,14 +3406,20 @@ def _apply_retire_sessions_job(job: _RetireSessionsJob) -> int:
     and the DB writer's apply) contribute 0 to the count — a transient miss,
     not an error. Returns the number of rows actually updated.
     """
-    from twicc.core.models import Session
+    from twicc.core.models import Session, TimelineActor
+    from twicc.core.services.session_update import bundle_fields, record_settings_change
 
     if not job.updates:
         return 0
     count = 0
     with transaction.atomic():
         for session_id, fields in job.updates.items():
+            bundle = bundle_fields(fields)
+            before = Session.objects.filter(id=session_id).values(*bundle).first() if bundle else None
             count += Session.objects.filter(id=session_id).update(**fields)
+            record_settings_change(
+                session_id, before, fields, actor=TimelineActor.SYSTEM, reason="model_retired",
+            )
     return count
 
 

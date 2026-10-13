@@ -64,6 +64,7 @@ def _apply_sync_session_titles_job(job: SyncSessionTitlesJob) -> list[dict]:
     """
     from twicc.core.models import Session
     from twicc.core.serializers import serialize_session
+    from twicc.core.services.session_timeline import record_title_change
 
     with transaction.atomic():
         sessions = list(Session.objects.filter(
@@ -78,6 +79,9 @@ def _apply_sync_session_titles_job(job: SyncSessionTitlesJob) -> list[dict]:
                 )
                 if not stamped:
                     Session.objects.filter(id=session.id).update(title=new_title)
+                record_title_change(
+                    session.id, new_title, source="auto" if stamped else "agent", old=session.title,
+                )
                 session.refresh_from_db(fields=["title", "title_origin"])
                 changed.append(session)
     return [serialize_session(s) for s in changed if not s.hidden]

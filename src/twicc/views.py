@@ -42,6 +42,7 @@ from twicc.core.session_queries import (
 )
 from twicc.core.text_filter import match_text_query
 from twicc.core.services.project_mutation import clean_project_agent_defaults
+from twicc.core.services.session_timeline import record_title_change
 from twicc.paths import path_to_project_id
 from twicc.projects import register_project
 from twicc.providers.db_writer import run_under_db_write_lock
@@ -1181,11 +1182,16 @@ async def session_detail(request, project_id, session_id, parent_session_id=None
             title = validation.title
 
             # 1. Update DB immediately, under the shared DB write lock.
+            old_title = session.title
             session.title = title
             session.title_origin = "user"
-            await run_under_db_write_lock(
-                lambda: session.asave(update_fields=["title", "title_origin"])
-            )
+
+            async def _save_title() -> None:
+                await session.asave(update_fields=["title", "title_origin"])
+                if title != old_title:
+                    await asyncio.to_thread(record_title_change, session.id, title, source="user", old=old_title)
+
+            await run_under_db_write_lock(_save_title)
             needs_broadcast = True
 
             # 2. Re-index for full-text search (title is a searchable document)

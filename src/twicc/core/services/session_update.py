@@ -63,7 +63,7 @@ from django.utils import timezone
 
 from twicc.core.enums import Provider
 from twicc.core.models import TimelineActor, TimelineKind
-from twicc.core.services.session_timeline import record_event_sync
+from twicc.core.services.session_timeline import project_id_of, record_event_sync, record_title_change
 from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
 from twicc.providers.state import (
@@ -174,15 +174,42 @@ def archive_sessions_bulk(ids: set[str]) -> list[str]:
     return [session_id for session_id, _ in to_flip]
 
 
+def bundle_fields(updates: dict) -> list[str]:
+    """Names in ``updates`` that belong to the ``AgentSettings`` bundle."""
+    return [name for name in updates if name in AgentSettings._fields]
+
+
+def record_settings_change(session_id: str, before: dict | None, updates: dict, *,
+                           actor: str, reason: str = "") -> None:
+    """Write ``settings.changed`` for the bundle fields of ``updates`` whose value changed.
+
+    ``before`` is the row's values for ``bundle_fields(updates)`` read before the update.
+    """
+    if not before:
+        return
+    changes = {name: [before[name], updates[name]] for name in before if before[name] != updates[name]}
+    if not changes:
+        return
+    record_event_sync(
+        TimelineKind.SETTINGS_CHANGED, session_id=session_id, project_id=project_id_of(session_id),
+        actor=actor, reason=reason, data={"changes": changes},
+    )
+
+
 @transaction.atomic
-def persist_session_settings(session_id: str, updates: dict) -> None:
+def persist_session_settings(
+    session_id: str, updates: dict, *, actor: str = TimelineActor.USER, reason: str = "",
+) -> None:
     """Write settings and order widget snapshots under the DB writer lease."""
     from twicc.core.models import Session
 
     previous = None
     if "question_widget" in updates:
         previous = Session.objects.filter(id=session_id).values("provider", "question_widget").first()
+    bundle = bundle_fields(updates)
+    before = Session.objects.filter(id=session_id).values(*bundle).first() if bundle else None
     Session.objects.filter(id=session_id).update(**updates)
+    record_settings_change(session_id, before, updates, actor=actor, reason=reason)
     if previous is not None and previous["provider"] == Provider.CODEX:
         from twicc.core.services.async_questions import refresh_question_widget_snapshot
 
@@ -371,11 +398,16 @@ async def update_session_title_from_payload(payload: dict) -> UpdateSessionResul
 
     # --- DB write under the write lock ---------------------------------
     # Confirming unchanged text also validates the title as a user choice.
+    old_title = session.title
     session.title = title
     session.title_origin = "user"
-    await run_under_db_write_lock(
-        lambda: session.asave(update_fields=["title", "title_origin"])
-    )
+
+    async def _save_title() -> None:
+        await session.asave(update_fields=["title", "title_origin"])
+        if title != old_title:
+            await asyncio.to_thread(record_title_change, session.id, title, source="user", old=old_title)
+
+    await run_under_db_write_lock(_save_title)
 
     # --- search reindex (non-critical) ---------------------------------
     # The title is part of the full-text search document; if reindex fails,

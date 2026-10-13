@@ -11,6 +11,7 @@ Both inbound actions (via ``dispatch``) and outbound on-connect messages
 ``claude_code:auth_updated`` (outbound).
 """
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 
@@ -86,14 +87,28 @@ async def update_session_permission_mode(session_id: str, permission_mode: str) 
 
     Skips the DB update and broadcast if the value is already the same.
     """
-    from twicc.core.models import Session
-    from twicc.core.serializers import serialize_session
+    from django.db import transaction
 
-    rows = await run_under_db_write_lock(
-        lambda: Session.objects.filter(id=session_id)
-            .exclude(permission_mode=permission_mode)
-            .aupdate(permission_mode=permission_mode)
-    )
+    from twicc.core.models import Session, TimelineActor
+    from twicc.core.serializers import serialize_session
+    from twicc.core.services.session_update import record_settings_change
+
+    def _update() -> int:
+        with transaction.atomic():
+            before = Session.objects.filter(id=session_id).values("permission_mode").first()
+            rows = (
+                Session.objects.filter(id=session_id)
+                .exclude(permission_mode=permission_mode)
+                .update(permission_mode=permission_mode)
+            )
+            if rows:
+                record_settings_change(
+                    session_id, before, {"permission_mode": permission_mode},
+                    actor=TimelineActor.USER, reason="set_mode",
+                )
+            return rows
+
+    rows = await run_under_db_write_lock(lambda: asyncio.to_thread(_update))
     if not rows:
         return
 

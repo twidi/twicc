@@ -1,5 +1,6 @@
 """One automatic title check, including its conditional apply and provider push."""
 
+import asyncio
 import logging
 from datetime import datetime
 
@@ -10,6 +11,7 @@ from twicc.agent.registry import get_agent_manager_registry
 from twicc.agent.states import AgentState
 from twicc.core.enums import Provider
 from twicc.core.models import Session, SessionType
+from twicc.core.services.session_timeline import record_title_change
 from twicc.core.services.title_suggestion import suggest_title
 from twicc.pending_titles import get_pending_title
 from twicc.providers.db_writer import broadcast_session_updated, run_under_db_write_lock
@@ -111,6 +113,8 @@ async def _apply_check(
                 result = "changed"
         if not await _snapshot_rows(snapshot).aupdate(**updates):
             return "discarded"
+        if result == "changed":
+            await asyncio.to_thread(record_title_change, snapshot.id, title, source="auto", old=snapshot.title)
         return result
 
     return await run_under_db_write_lock(apply)
