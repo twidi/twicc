@@ -17,6 +17,7 @@ import { compactHeight, rootFontSizePx } from '../../../utils/compactHeight'
 import { getAgentDisplay } from '../../../utils/agentLabel'
 import { stopSubagent, interruptSession } from '../../../composables/useWebSocket'
 import { stopSessionProcess, hardKillSessionProcess } from '../../../composables/useStopSessionProcess'
+import ScrollableTitle from './ScrollableTitle.vue'
 import ProjectBadge from '../../project/ProjectBadge.vue'
 import ProcessIndicator from '../../ui/ProcessIndicator.vue'
 import CodeCommentsIndicator from '../../ui/CodeCommentsIndicator.vue'
@@ -543,7 +544,7 @@ defineExpose({
                 class="session-provider-icon"
             />
 
-            <h2 :id="`session-header-${sessionId}-title`">{{ displayName }}</h2>
+            <ScrollableTitle :id="`session-header-${sessionId}-title`" :text="displayName" />
             <AppTooltip :for="`session-header-${sessionId}-title`">{{ displayName }}</AppTooltip>
 
             <!-- Compact status (visible only at compact height, panel closed: the panel shows the same things).
@@ -1131,21 +1132,6 @@ defineExpose({
 }
 .session-header.actions-labels .action-label {
     display: inline;
-}
-
-.session-title h2 {
-    margin: 0;
-    font-size: var(--wa-font-size-l);
-    font-weight: 650;
-    letter-spacing: -0.015em;
-    color: var(--wa-color-text-normal);
-    margin-right: var(--wa-space-xs);
-    flex: 1 1 0;
-    min-width: 0;
-    /* Truncate with ellipsis */
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .session-project {
