@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Scrollable titles** — On touch screens, swipe a truncated session title or artifact name to read the rest.
 
+### Changed
+
+- **Codex runtime** — Update from v0.162.0 to v0.162.1.
+
 ## [1.96.2] - 2026-10-09
 
 ### Summary
