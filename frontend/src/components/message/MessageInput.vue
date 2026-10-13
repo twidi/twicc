@@ -2324,7 +2324,7 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
                 <!-- Settings trigger: button (with summary) + popover -->
                 <wa-button
                     :id="settingsButtonId"
-                    appearance="plain"
+                    appearance="outlined"
                     variant="neutral"
                     size="small"
                     class="settings-button"
@@ -2642,8 +2642,14 @@ body.sidebar-toggle-floating .message-input-toolbar {
     }
     min-width: 0;
     flex-shrink: 1;
+    align-self: stretch;
+    /* Same outlined look as the Cancel button. No vertical padding so a
+       two-line summary fits; the button stretches to the row height (set by the
+       regular small buttons next to it, e.g. Cancel) and the content stays centered. */
     &::part(base) {
-        padding-inline: 0;
+        padding-block: 0;
+        padding-inline: var(--wa-space-s);
+        height: 100%;
     }
     /* Bound the summary to the button's allotted width so its own graduated
        flex-shrink can kick in: min-width:0 lets the label shrink below its
