@@ -14,6 +14,7 @@ import { expandWorktreeTemplate } from '../../utils/worktreePath'
 import DirectoryPickerPopup from '../files/DirectoryPickerPopup.vue'
 import ProjectBadge from './ProjectBadge.vue'
 import TabBar from '../ui/TabBar.vue'
+import FilterableSelect from '../ui/FilterableSelect.vue'
 
 const emit = defineEmits(['resolved'])
 
@@ -309,6 +310,23 @@ function applySuggestion(suggestion) {
     branchInputRef.value?.focus()
 }
 
+// Options of the "Start from" picker: Current HEAD first, then the branches in
+// the order given by the backend (most recently committed first).
+const startFromOptions = computed(() => [
+    { value: '', label: 'Current HEAD' },
+    ...branches.value.map(b => ({ value: b.name, label: b.name })),
+])
+
+// Options of the "Existing worktree" picker, in the backend order.
+const worktreeOptions = computed(() =>
+    worktrees.value.map(wt => ({
+        value: wt.path,
+        label: wt.branch || worktreeLeaf(wt),
+        tag: optionTag(wt),
+        disabled: !wt.usable,
+    })),
+)
+
 // Display value bound to the select; empty when nothing is picked.
 const selectedPath = computed(() => selectedWorktree.value?.path || '')
 
@@ -327,8 +345,7 @@ function optionTag(wt) {
     return ''
 }
 
-function onSelectWorktree(event) {
-    const path = event.target.value
+function onSelectWorktree(path) {
     selectedWorktree.value = worktrees.value.find(w => w.path === path) || null
 }
 
@@ -525,14 +542,11 @@ defineExpose({
 
                     <div v-if="branchIsNew && branches.length > 0" class="form-group">
                         <label class="form-label">Start from</label>
-                        <wa-select
-                            :value.prop="localStartFrom"
-                            @change="localStartFrom = $event.target.value"
+                        <FilterableSelect
+                            v-model="localStartFrom"
+                            :options="startFromOptions"
                             size="small"
-                        >
-                            <wa-option value="">Current HEAD</wa-option>
-                            <wa-option v-for="b in branches" :key="b.name" :value="b.name">{{ b.name }}</wa-option>
-                        </wa-select>
+                        />
                         <div class="form-hint">The new branch starts from this ref</div>
                     </div>
 
@@ -552,22 +566,12 @@ defineExpose({
                     <template v-else>
                         <div v-if="worktrees.length" class="form-group">
                             <div class="form-hint">Open a session in a worktree of this repo that already exists on disk.</div>
-                            <wa-select
+                            <FilterableSelect
+                                :model-value="selectedPath"
+                                :options="worktreeOptions"
                                 placeholder="Select a worktree…"
-                                :value.prop="selectedPath"
-                                @change="onSelectWorktree"
-                            >
-                                <wa-option
-                                    v-for="wt in worktrees"
-                                    :key="wt.path"
-                                    :value="wt.path"
-                                    :label="wt.branch || worktreeLeaf(wt)"
-                                    :disabled="!wt.usable"
-                                >
-                                    {{ wt.branch || worktreeLeaf(wt) }}
-                                    <span v-if="optionTag(wt)" slot="end" class="wt-option-tag">{{ optionTag(wt) }}</span>
-                                </wa-option>
-                            </wa-select>
+                                @update:model-value="onSelectWorktree"
+                            />
                             <div v-if="selectedWorktree" class="form-hint worktree-path-hint">{{ selectedWorktree.path }}</div>
                         </div>
                         <div v-else-if="!existingError" class="existing-empty">
@@ -778,13 +782,6 @@ defineExpose({
     padding: var(--wa-space-l) var(--wa-space-s);
     text-align: center;
     color: var(--wa-color-text-quiet);
-}
-
-/* Muted, readable (not 2xs) tag after a branch in the dropdown: 'detached' or
-   'unavailable'. */
-.wt-option-tag {
-    color: var(--wa-color-text-quiet);
-    font-size: var(--wa-font-size-s);
 }
 
 /* The selected worktree's absolute path, shown under the select for

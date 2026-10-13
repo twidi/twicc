@@ -190,13 +190,14 @@ def get_current_branch(git_directory: str) -> str | None:
 
 
 def get_branches(git_directory: str) -> list[str]:
-    """Return the list of local branch names, sorted alphabetically.
+    """Return the list of local branch names, most recently committed first.
 
     The current branch (if any) is always first in the list.
     """
     try:
         result = subprocess.run(
-            ["git", "-C", git_directory, "branch", "--format=%(refname:short)"],
+            ["git", "-C", git_directory, "for-each-ref", "--sort=-committerdate",
+             "--format=%(refname:short)", "refs/heads"],
             capture_output=True,
             text=True,
             timeout=_GIT_TIMEOUT,
@@ -208,13 +209,26 @@ def get_branches(git_directory: str) -> list[str]:
         current = get_current_branch(git_directory)
         if current and current in branches:
             branches.remove(current)
-            branches.sort()
             branches.insert(0, current)
-        else:
-            branches.sort()
         return branches
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return []
+
+
+def get_commit_timestamp(git_directory: str, rev: str) -> int:
+    """Return the committer timestamp (Unix seconds) of ``rev``, or 0 if unknown."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", git_directory, "log", "-1", "--format=%ct", rev, "--"],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+        if result.returncode != 0:
+            return 0
+        return int(result.stdout.strip() or 0)
+    except (subprocess.TimeoutExpired, FileNotFoundError, ValueError):
+        return 0
 
 
 class WorktreeInfo(NamedTuple):

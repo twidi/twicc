@@ -364,7 +364,7 @@ async def project_branches(request, project_id):
 
     Returns ``{"branches": [{"name": str, "checked_out": bool}, ...]}`` where
     ``checked_out`` flags branches already checked out in a worktree (including
-    the main checkout). Order: current branch first, then alphabetical.
+    the main checkout). Order: current branch first, then most recently committed.
     """
     from twicc.git import get_branches, get_worktree_branches
 
@@ -459,12 +459,13 @@ def _serialize_worktrees(repo_root: str) -> list[dict]:
     repo when underneath it, else absolute), the checked-out ``branch`` (or
     ``detached``), ``locked`` / ``prunable`` flags + reasons, a ``usable``
     flag (false when the directory is gone, prunable, or bare — those rows are
-    shown disabled in the UI), and the TwiCC project link if one already
+    shown disabled in the UI), ``committed_at`` (timestamp of the worktree's
+    HEAD commit, 0 if unknown), and the TwiCC project link if one already
     exists (``project_id`` / ``sessions_count`` / ``archived``). Sorted
-    usable-first, then by branch, then by path. Sync (subprocess + filesystem
+    usable-first, then most recently committed first, then by path. Sync (subprocess + filesystem
     + DB reads) — call via ``sync_to_async``.
     """
-    from twicc.git import list_worktrees, resolve_worktree_main_repo
+    from twicc.git import get_commit_timestamp, list_worktrees, resolve_worktree_main_repo
 
     main_root = resolve_worktree_main_repo(repo_root) or repo_root
     main_root_real = os.path.realpath(main_root)
@@ -479,6 +480,7 @@ def _serialize_worktrees(repo_root: str) -> list[dict]:
         else:
             relative = wt.path
         exists = os.path.isdir(wt_real)
+        usable = exists and not wt.is_prunable and not wt.is_bare
         proj = (
             Project.objects.filter(id=path_to_project_id(wt_real))
             .only("id", "sessions_count", "archived")
@@ -493,13 +495,14 @@ def _serialize_worktrees(repo_root: str) -> list[dict]:
             "locked_reason": wt.locked_reason,
             "prunable": wt.is_prunable,
             "prunable_reason": wt.prunable_reason,
-            "usable": exists and not wt.is_prunable and not wt.is_bare,
+            "usable": usable,
+            "committed_at": get_commit_timestamp(repo_root, wt.head) if usable and wt.head else 0,
             "project_id": proj.id if proj else None,
             "sessions_count": proj.sessions_count if proj else 0,
             "archived": bool(proj.archived) if proj else False,
         })
 
-    out.sort(key=lambda w: (not w["usable"], (w["branch"] or "￿").lower(), w["path"]))
+    out.sort(key=lambda w: (not w["usable"], -w["committed_at"], w["path"]))
     return out
 
 
