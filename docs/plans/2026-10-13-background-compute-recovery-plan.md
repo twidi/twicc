@@ -69,6 +69,8 @@ Fence worker status, apply acknowledgments, and completion callbacks by generati
 No delayed old event may mutate a new run, clear its state, or release its leases.
 Do not signal successful completion while eligible failed work remains.
 Preserve watcher startup/replay semantics and existing unavailable-source explanations.
+Keep startup classification separate from successful repair completion for both providers.
+The Claude orchestrator must receive initial classification even while its recovery task remains alive.
 
 Cover: failed initialization after migration preparation, failed final apply, unexpected process death,
 late old apply/status/future callback after restart, failed newest session fairness,
