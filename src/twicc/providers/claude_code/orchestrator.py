@@ -200,6 +200,10 @@ class ClaudeCodeOrchestrator(BaseOrchestrator):
         # Make sure the initial sync thread cooperates if it's still running
         self._sync_stop_event.set()
 
+        # Fence recovery before shutdown yields to any provider task.
+        if self._compute_ctx is not None:
+            self._compute_ctx.stop_event.set()
+
         # Unblock the CLI in case it was awaiting either lifecycle event:
         # if a task was cancelled before reaching its natural ``set()``,
         # the CLI's ``wait_initial_sync_done`` / ``wait_compute_done``
@@ -279,8 +283,10 @@ class ClaudeCodeOrchestrator(BaseOrchestrator):
             # run's sessions are recomputed on the next start.
             from twicc.providers.db_writer import abandon_compute_run
             await abandon_compute_run(self._compute_ctx.run_id, self.provider)
-            await stop_background_task(self._compute_ctx)
+            # The producer owns retirement, including cancellation-safe joins.
+            # Drain it before the idempotent worker-cleanup fallback.
             await _cancel_task(self._compute_task, "Background compute task")
+            await stop_background_task(self._compute_ctx)
         else:
             logger.info("Background compute was not started, skipping")
 

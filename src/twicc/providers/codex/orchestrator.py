@@ -182,6 +182,10 @@ class CodexOrchestrator(BaseOrchestrator):
         # Make sure the initial sync thread cooperates if it's still running
         self._sync_stop_event.set()
 
+        # Fence recovery before shutdown yields to any provider task.
+        if self._compute_ctx is not None:
+            self._compute_ctx.stop_event.set()
+
         # Unblock the CLI in case it was awaiting either lifecycle event
         # before our natural ``set()`` could run. Both calls are idempotent.
         self.initial_sync_done.set()
@@ -257,7 +261,6 @@ class CodexOrchestrator(BaseOrchestrator):
             # run's sessions are recomputed on the next start.
             from twicc.providers.db_writer import abandon_compute_run
             await abandon_compute_run(self._compute_ctx.run_id, self.provider)
-            self._compute_ctx.stop_event.set()
             await _cancel_task(self._compute_task, "Codex background compute task")
             await stop_background_task(self._compute_ctx)
         else:

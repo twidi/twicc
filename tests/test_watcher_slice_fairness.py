@@ -892,6 +892,7 @@ def test_recreated_source_does_not_defer_on_old_migrating_identity(tmp_path, mon
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize('replacement_text', ['new', 'new and larger'])
 def test_paginated_replacement_reaches_real_gated_reconstruction_and_release(tmp_path, monkeypatch, replacement_text):
+    import queue
     import orjson
     from twicc.core.models import Project, Session, SessionItem
     from twicc.providers import db_writer
@@ -899,6 +900,8 @@ def test_paginated_replacement_reaches_real_gated_reconstruction_and_release(tmp
     from twicc.providers.codex.background_compute import CodexComputeCandidate, CodexComputeCoordinator, FailedCandidate
     from twicc.providers.codex.rollout_migration import ReplaceCodexHistoryJob
     from twicc.providers.codex.sessions_watcher import CodexSessionsWatcher
+    from twicc.providers.compute_executor import run_compute_sync
+    from twicc.providers.db_writer import InitializeComputeStorageJob
 
     monkeypatch.setattr(migration_gate, '_rebuild_requests', set())
     watcher = CodexSessionsWatcher()
@@ -924,7 +927,8 @@ def test_paginated_replacement_reaches_real_gated_reconstruction_and_release(tmp
         def notify(release):
             releases.append(release)
             watcher.notify_migration_released(release)
-        coordinator = CodexComputeCoordinator(SimpleNamespace(), asyncio.Event(), on_migration_released=notify)
+        ctx = SimpleNamespace(provider='codex', compute_version=watcher.get_compute().compute_version, run_id=0)
+        coordinator = CodexComputeCoordinator(ctx, asyncio.Event(), on_migration_released=notify)
         # The external agent manager is irrelevant; all database jobs and source reads stay real.
         coordinator._is_agent_active = lambda sid: False
         db_writer.start_db_writer()
@@ -962,7 +966,7 @@ def test_paginated_replacement_reaches_real_gated_reconstruction_and_release(tmp
             prepared = await coordinator.prepare_candidate(candidate)
             assert prepared.migrated_history and prepared.kind == 'replaced'
             assert prepared.migration_lease.locked()
-            assert session.id not in coordinator._forced_rebuild
+            assert session.id in coordinator._forced_rebuild
             assert path in watcher._replaced_paths
             rebuilt = await Session.objects.aget(id=session.id)
             assert rebuilt.last_offset == path.stat().st_size
@@ -974,8 +978,34 @@ def test_paginated_replacement_reaches_real_gated_reconstruction_and_release(tmp
             actual = [effective_current(item) for item in rebuilt_items]
             assert actual == [record.decode() for record in new_records]
             coordinator.migration_leases[session.id] = prepared.migration_lease
-            coordinator._release_lease(session.id)
+            coordinator.migrated_history.add(session.id)
+            coordinator._prepared[session.id] = prepared
+            coordinator._prepared_rebuild_generation[session.id] = coordinator._rebuild_generation[session.id]
+            run_id, completion = db_writer.arm_compute_completion(
+                ctx.provider, {session.id}, 1, coordinator.applied_queue,
+            )
+            ctx.run_id = run_id
+            await coordinator._submit_job(InitializeComputeStorageJob, session.id)
+            results = queue.Queue()
+            compute = watcher.get_compute()
+            await run_compute_sync(compute.compute_session_metadata, session.id, results, run_id=run_id)
+            while not results.empty():
+                db_writer.get_subprocess_queue().put_nowait(orjson.loads(results.get_nowait()))
+            signal = await asyncio.wait_for(coordinator.applied_queue.get(), 5)
+            assert signal.outcome == 'applied' and signal.run_id == run_id
+            applied = await Session.objects.aget(id=session.id)
+            assert applied.compute_version == compute.compute_version
+            # Real application completes before acknowledgment releases the
+            # migration gate and lets the watcher replay the rewritten source.
+            assert prepared.migration_lease.locked()
+            assert session.id in coordinator._forced_rebuild
+            assert path in watcher._replaced_paths
+            assert [release.outcome for release in releases] == ['failed']
+            await coordinator._handle_applied(signal)
             await watcher._consumer_task
+            db_writer.get_subprocess_queue().put_nowait({'type': 'done', 'provider': 'codex', 'run_id': run_id})
+            assert await asyncio.wait_for(completion, 5) == 0
+            assert session.id not in coordinator._forced_rebuild
             assert releases[-1].outcome == 'ready' and releases[-1].path == path and releases[-1].replay
             assert path not in watcher._replaced_paths
             assert watcher._queue.idle and not prepared.migration_lease.locked()

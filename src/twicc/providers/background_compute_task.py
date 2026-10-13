@@ -579,10 +579,14 @@ def compute_worker_main(
                     handler.flush()
 
     # Signal the DB writer that the worker is done
-    result_queue.put(orjson.dumps({'type': 'done', 'provider': provider_value, 'run_id': run_id}))
-    worker_logger.info("Compute worker sent 'done' signal")
-
-    result_queue.close()
+    try:
+        result_queue.put(orjson.dumps({'type': 'done', 'provider': provider_value, 'run_id': run_id}))
+        worker_logger.info("Compute worker sent 'done' signal")
+    except BrokenPipeError:
+        # Retirement can close receiver admission before the terminal frame.
+        pass
+    finally:
+        result_queue.close()
 
     worker_logger.info("Compute worker process stopped")
 
