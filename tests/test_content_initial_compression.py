@@ -142,7 +142,7 @@ def test_shared_owner_without_storage_completion_keeps_plain():
 
 
 def test_optional_encoding_failure_does_not_block_extraction(monkeypatch):
-    from twicc.core.content_storage import extraction
+    from twicc.core.content_storage import extraction, references
 
     _public_dictionary('codex')
     old = timezone.now() - timedelta(days=60)
@@ -150,7 +150,7 @@ def test_optional_encoding_failure_does_not_block_extraction(monkeypatch):
     item = SessionItem.objects.create(session=session, line_num=1, content='repeat ' * 1000)
     def fail(*args, **kwargs):
         raise RuntimeError('optional encoding failure')
-    monkeypatch.setattr(extraction, 'encode_cold', fail)
+    monkeypatch.setattr(references, 'encode_cold', fail)
     monkeypatch.setattr(extraction, 'transcode_content', fail)
     assert BaseSessionCompute.apply_session_complete(message(session)).outcome == 'applied'
     item.refresh_from_db()
@@ -160,18 +160,18 @@ def test_optional_encoding_failure_does_not_block_extraction(monkeypatch):
 
 def test_encoding_runs_outside_write_transactions(monkeypatch):
     from django.db import connection
-    from twicc.core.content_storage import extraction
+    from twicc.core.content_storage import references
 
     _public_dictionary('codex')
     old = timezone.now() - timedelta(days=60)
     session = make_session(archived=True, created_at=old)
     SessionItem.objects.create(session=session, line_num=1, content='repeat ' * 1000)
-    original = extraction.encode_cold
+    original = references.encode_cold
     blocks = []
     def observe(*args, **kwargs):
         blocks.append(connection.in_atomic_block)
         return original(*args, **kwargs)
-    monkeypatch.setattr(extraction, 'encode_cold', observe)
+    monkeypatch.setattr(references, 'encode_cold', observe)
     assert BaseSessionCompute.apply_session_complete(message(session)).outcome == 'applied'
     assert blocks and not any(blocks)
 
@@ -191,18 +191,18 @@ def test_final_lifecycle_retry_does_not_mutate_worker_message():
 
 def test_root_epoch_change_during_preparation_rejects_result(monkeypatch):
     from django.db.models import F
-    from twicc.core.content_storage import extraction
+    from twicc.core.content_storage import references
     from twicc.core.models import Session
 
     _public_dictionary('codex')
     old = timezone.now() - timedelta(days=60)
     session = make_session(archived=True, created_at=old)
     SessionItem.objects.create(session=session, line_num=1, content='repeat ' * 1000)
-    original = extraction.encode_cold
+    original = references.encode_cold
     def change_epoch(*args, **kwargs):
         Session.objects.filter(pk=session.id).update(content_state_epoch=F('content_state_epoch') + 1)
         return original(*args, **kwargs)
-    monkeypatch.setattr(extraction, 'encode_cold', change_epoch)
+    monkeypatch.setattr(references, 'encode_cold', change_epoch)
     assert BaseSessionCompute.apply_session_complete(message(session)).outcome == 'superseded'
     session.refresh_from_db()
     assert session.compute_version != 123
@@ -238,7 +238,7 @@ def test_new_active_child_between_prepare_and_publish_supersedes_compressed_cand
     try:
         _advance_storage_operation(operation, 'extraction')
         batch = extraction.prepare_compute_batch(operation)
-        assert any(encoded.codec == 'zstd' for _, encoded in batch.prepared)
+        assert any(record.encoded is not None and record.encoded.codec == 'zstd' for _, record in batch.prepared)
         with pytest.raises(extraction.SupersededStorageResult):
             extraction.publish_compute_batch(operation, batch, frozenset({child.id}))
         item.refresh_from_db()
@@ -319,7 +319,7 @@ def test_elapsed_cold_threshold_is_fresh_between_storage_phases(monkeypatch):
     try:
         _advance_storage_operation(operation, 'extraction')
         batch = extraction.prepare_compute_batch(operation)
-        assert not batch.prepared
+        assert all(record.policy_version is None for _, record in batch.prepared)
         monkeypatch.setattr(extraction.timezone, 'now', lambda: initial + timedelta(days=2))
         extraction.publish_compute_batch(operation, batch, frozenset())
         _advance_storage_operation(operation, 'final')

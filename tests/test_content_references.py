@@ -5,9 +5,9 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from twicc.core.content_storage import references
-from twicc.core.content_storage.codec import ContentIntegrityError, decode_content, encode_cold
+from twicc.core.content_storage.codec import ContentIntegrityError, decode_content
 from twicc.core.content_storage.types import ContentBinding
-from twicc.core.models import ContentDictionary, Project, Session, SessionItem, SessionItemContent
+from twicc.core.models import Project, Session, SessionItem, SessionItemContent
 
 pytestmark = pytest.mark.django_db
 
@@ -52,7 +52,7 @@ def test_collision_is_not_silent(monkeypatch):
     digest = bytes(SessionItemContent.objects.get(pk=first['first']).sha256)
     monkeypatch.setattr(references, 'encode_plain', lambda text: real(text)._replace(sha256=digest))
     with transaction.atomic(), pytest.raises(ContentIntegrityError):
-        references.intern_contents(['second'], 'codex')
+        references.intern_contents(['first', 'second'], 'codex')
 
 
 def test_shared_large_original_and_small_result_keep_both_owners():
@@ -105,17 +105,18 @@ def test_hot_compressed_bind_invalidates_and_rollback_restores(content_row_facto
 
 
 def test_prepared_requires_guard_and_exact_bytes():
-    dictionary = ContentDictionary.objects.get(provider='codex', version=1)
     text = 'compress me ' * 1000
-    encoded, _ = encode_cold(text, dictionary.id, 'v1')
+    prepared = references.prepare_intern_contents([text], 'codex', cold=True)
+    digest, record = next(iter(prepared.items()))
+    encoded = record.encoded
     with transaction.atomic(), pytest.raises(ContentIntegrityError):
-        references.intern_contents([text], 'codex', {encoded.sha256: encoded})
+        references.intern_contents([text], 'codex', prepared)
     with transaction.atomic(), references.prepared_content_guard(lambda: True):
-        ids = references.intern_contents([text], 'codex', {encoded.sha256: encoded})
+        ids = references.intern_contents([text], 'codex', prepared)
     assert SessionItemContent.objects.get(pk=ids[text]).codec == 'zstd'
     bad = encoded._replace(raw_size=1)
     with transaction.atomic(), references.prepared_content_guard(lambda: True), pytest.raises(ContentIntegrityError):
-        references.intern_contents([text], 'codex', {encoded.sha256: bad})
+        references.intern_contents([text], 'codex', {digest: record._replace(encoded=bad)})
 
 
 def test_count_operation_both_slots_savepoint_rollback_and_retry():
@@ -215,17 +216,18 @@ def test_reference_writes_require_caller_transaction():
 def test_prepared_guard_rechecks_and_reuse_does_not_overwrite(content_row_factory):
     root = session('cold', archived=True, created_at=timezone.now() - timedelta(days=31))
     text = 'eligible source' * 1000
-    dictionary = ContentDictionary.objects.get(provider='codex', version=1)
-    encoded, _ = encode_cold(text, dictionary.id, 'v1')
+    prepared = references.prepare_intern_contents([text], 'codex', cold=True)
+    digest, record = next(iter(prepared.items()))
+    encoded = record.encoded
     proof = lambda: Session.objects.filter(pk=root.id, archived=True).exists()
     with transaction.atomic(), references.prepared_content_guard(proof):
         Session.objects.filter(pk=root.id).update(archived=False)
         with pytest.raises(ContentIntegrityError):
-            references.intern_contents([text], 'codex', {encoded.sha256: encoded})
+            references.intern_contents([text], 'codex', prepared)
     assert not SessionItemContent.objects.filter(sha256=encoded.sha256).exists()
     existing = content_row_factory(text, False)
     with transaction.atomic(), references.prepared_content_guard(proof):
-        assert references.intern_contents([text], 'claude', {encoded.sha256: encoded}) == {text: existing.id}
+        assert references.intern_contents([text], 'claude', prepared) == {text: existing.id}
     existing.refresh_from_db()
     assert existing.codec == 'plain' and existing.dictionary_provider == 'codex'
 

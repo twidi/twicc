@@ -16,12 +16,12 @@ from django.db.models import BinaryField, F, Max, Q
 from django.db.models.functions import Cast, Length
 from django.utils import timezone
 
-from twicc.core.content_storage.codec import ContentIntegrityError, encode_cold, encode_plain, transcode_content
+from twicc.core.content_storage.codec import ContentIntegrityError, encode_plain, transcode_content
 from twicc.core.content_storage.policy import (
     COLD_FIELDS, CONTENT_STORAGE_VERSION, cold_from_fields, compression_policy_version,
 )
 from twicc.core.content_storage.references import (
-    bind_persisted_items, intern_contents, prepared_content_guard, reconcile_session_memberships,
+    bind_persisted_items, intern_contents, prepare_intern_contents, prepared_content_guard, reconcile_session_memberships,
 )
 from twicc.core.content_storage.state import resolve_root_decision
 from twicc.core.content_storage.cold_cache import cached_root_decisions
@@ -128,21 +128,7 @@ def _cold_placement(session_id):
 
 
 def prepare_texts(texts, provider, session_id):
-    if not cold_placement(session_id):
-        return {}
-    dictionary = ContentDictionary.objects.filter(provider=provider).order_by('-version').first()
-    if dictionary is None:
-        return {}
-    policy = compression_policy_version(provider, dictionary.id)
-    prepared = {}
-    for text in texts:
-        try:
-            encoded, _ = encode_cold(text, dictionary.id, policy)
-        except Exception:
-            logger.warning('Optional initial content compression failed', exc_info=True)
-            continue
-        prepared[encoded.sha256] = encoded
-    return prepared
+    return prepare_intern_contents(texts, provider, cold=cold_placement(session_id))
 
 
 def _read_page(session_id, upper_line, cursor, row_budget, byte_budget):
@@ -201,10 +187,10 @@ def _publish_extraction(session_id, observed_incarnation, observed_epoch, upper_
             expected[item.id] != (item.content, item.current_content_id, item.original_content_id) for item in actual
         ):
             raise SupersededStorageResult('superseded')
-        if any(encoded.codec == 'zstd' for encoded in prepared.values()) and not cold_placement(session_id):
+        if any(record.policy_version is not None for record in prepared.values()) and not cold_placement(session_id):
             raise SupersededStorageResult('superseded')
         with prepared_content_guard(lambda: cold_placement(session_id)):
-            ids = intern_contents(texts, provider, prepared)
+            ids = intern_contents(texts, provider, prepared, initial_owners=[session_id])
         bindings = []
         changed = [item for item in actual if item.current_content_id is None or item.content != '']
         for item in changed:
@@ -271,10 +257,10 @@ def _publish_overrides(msg, batch, operation):
                         raise SupersededStorageResult('superseded')
             if item.current_content_id is not None:
                 displaced.append(item.current_content_id)
-        if any(encoded.codec == 'zstd' for encoded in prepared.values()) and not cold_placement(msg['session_id']):
+        if any(record.policy_version is not None for record in prepared.values()) and not cold_placement(msg['session_id']):
             raise SupersededStorageResult('superseded')
         with prepared_content_guard(lambda: cold_placement(msg['session_id'])):
-            ids = intern_contents(texts, provider, prepared)
+            ids = intern_contents(texts, provider, prepared, initial_owners=[msg['session_id']])
         changed = []
         for item_id, text in assignments.items():
             item = items[item_id]

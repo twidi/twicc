@@ -14,6 +14,16 @@ class EncodedContent(NamedTuple):
     sha256: bytes
 
 
+class PreparedInternContent(NamedTuple):
+    text: str
+    sha256: bytes
+    raw_size: int
+    existing_id: int | None
+    encoded: EncodedContent | None
+    policy_version: str | None
+    no_gain: bool
+
+
 class ContentBinding(NamedTuple):
     item_id: int
     session_id: str

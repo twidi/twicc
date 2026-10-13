@@ -54,9 +54,9 @@ def encode_plain(text: str) -> EncodedContent:
     return EncodedContent(raw, 'plain', None, len(raw), hashlib.sha256(raw).digest())
 
 
-def encode_cold(text: str, dictionary_id: int, policy_version: str) -> tuple[EncodedContent, bool]:
+def encode_cold(text: str, dictionary_id: int, policy_version: str, *, plain: EncodedContent | None = None) -> tuple[EncodedContent, bool]:
     """Compress only when smaller; the caller records the supplied policy identity."""
-    plain = encode_plain(text)
+    plain = encode_plain(text) if plain is None else plain
     dictionary = _operation_dictionary(dictionary_id, None)
     compressed = zstandard.ZstdCompressor(level=COMPRESSION_LEVEL, dict_data=dictionary.native).compress(
         plain.payload

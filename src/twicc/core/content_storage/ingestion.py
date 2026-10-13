@@ -110,7 +110,7 @@ def promote_ingested_items(session: Session, items: Sequence[tuple[SessionItem, 
         rows = list(SessionItemContent.objects.filter(pk__in=actual_ids).exclude(codec='plain')
                     .only('id', 'payload', 'codec', 'dictionary_id'))
         for row in rows:
-            # intern_contents already validates exact text against stored digest.
+            # intern_contents trusts digest identity; actual reads validate payload integrity.
             row.payload = text_by_id[row.id].encode('utf-8')
             row.codec = 'plain'
             row.dictionary_id = None

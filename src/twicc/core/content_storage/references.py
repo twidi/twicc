@@ -5,6 +5,7 @@ Each item mutation, accounting delta, and membership mutation shares one atomic
 transaction. No helper writes item assignments or guesses ignored insert results.
 """
 
+import logging
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -17,9 +18,9 @@ from django.db import connection, transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from twicc.core.content_storage.codec import ContentIntegrityError, decode_content, encode_plain
+from twicc.core.content_storage.codec import ContentIntegrityError, encode_plain, encode_cold
 from twicc.core.content_storage.state import invalidate_roots, resolve_root_decision
-from twicc.core.content_storage.types import ContentBinding, EncodedContent
+from twicc.core.content_storage.types import ContentBinding, PreparedInternContent
 from twicc.core.content_storage.writes import write_content_owners
 from twicc.core.models import SessionItem, SessionItemContent
 
@@ -39,7 +40,9 @@ def prepared_content_guard(validate: Callable[[], bool]) -> Iterator[None]:
     """Install the caller's guarded owner/root/final-date eligibility validation.
 
     The callback runs inside intern_contents' transaction before each compressed
-    insertion candidate. It must recheck the caller's snapshot/fence and all
+    insertion candidate. Guarded assignment paths may seed known initial owners
+    after their persisted source checks, including plain hot placement. Binding
+    still validates the final assignments. The callback must recheck the snapshot/fence and all
     owners' eligibility, including active roots. A true constant is not a proof.
     Callers retain their writer lease while this guard is installed.
     """
@@ -50,43 +53,116 @@ def prepared_content_guard(validate: Callable[[], bool]) -> Iterator[None]:
         _prepared_guard.reset(token)
 
 
-def intern_contents(
-    texts: Sequence[str], provider: str, prepared: Mapping[bytes, EncodedContent] | None = None,
-) -> dict[str, int]:
-    """Intern a bounded exact-text batch; preserve the first stored representation."""
-    _require_transaction()
-    candidates = {}
-    for text in texts:
+def prepare_intern_contents(
+    texts: Sequence[str], provider: str, *, cold: bool,
+) -> dict[bytes, PreparedInternContent]:
+    """Retain each exact identity before optional representation preparation.
+
+    Digest reuse trusts SHA-256 identity. Payload integrity remains enforced by
+    actual reads. Known conflicting strings inside this batch fail immediately.
+    """
+    from twicc.core.content_storage.dictionaries import get_provider_dictionary
+
+    identities = {}
+    for text in dict.fromkeys(texts):
         plain = encode_plain(text)
-        previous = candidates.get(plain.sha256)
-        if previous is not None and previous[0] != text:
+        if plain.sha256 in identities and identities[plain.sha256][0] != text:
             raise ContentIntegrityError('Content digest collision within input batch')
-        encoded = prepared.get(plain.sha256, plain) if prepared is not None else plain
-        candidate = SessionItemContent(
-            sha256=encoded.sha256, payload=encoded.payload, codec=encoded.codec,
-            dictionary_id=encoded.dictionary_id, raw_size=encoded.raw_size, dictionary_provider=provider,
-        )
-        if encoded.sha256 != plain.sha256 or decode_content(candidate) != text:
-            raise ContentIntegrityError('Prepared content does not match exact logical text')
-        candidates[plain.sha256] = (text, candidate)
-    existing = {bytes(row.sha256): row for row in SessionItemContent.objects.filter(sha256__in=candidates)}
+        identities[plain.sha256] = (text, plain)
+    existing = dict(SessionItemContent.objects.filter(sha256__in=identities).values_list('sha256', 'id'))
+    existing = {bytes(digest): row_id for digest, row_id in existing.items()}
+    dictionary = get_provider_dictionary(provider) if cold and identities.keys() - existing.keys() else None
+    result = {}
+    for digest, (text, plain) in identities.items():
+        row_id = existing.get(digest)
+        encoded, policy, no_gain = (None if row_id is not None else plain), None, False
+        if row_id is None and dictionary is not None:
+            try:
+                encoded, no_gain = encode_cold(text, dictionary.row.id, dictionary.policy_version, plain=plain)
+                policy = dictionary.policy_version
+            except Exception:
+                logging.getLogger(__name__).warning('Optional initial content compression failed', exc_info=True)
+        result[digest] = PreparedInternContent(text, digest, plain.raw_size, row_id, encoded, policy, no_gain)
+    return result
+
+
+def intern_contents(
+    texts: Sequence[str], provider: str, prepared: Mapping[bytes, PreparedInternContent] | None = None,
+    *, initial_owners: Sequence[str] = (),
+) -> dict[str, int]:
+    """Publish retained exact identities; preserve the first stored representation."""
+    from twicc.core.content_storage.dictionaries import get_dictionary, get_provider_dictionary
+
+    _require_transaction()
+    if prepared is None:
+        prepared = prepare_intern_contents(texts, provider, cold=False)
+    records = {}
+    by_text = {}
+    for digest, record in prepared.items():
+        if not isinstance(record, PreparedInternContent):
+            raise ContentIntegrityError('Invalid prepared content identity')
+        if (digest != record.sha256 or len(digest) != 32 or type(record.raw_size) is not int
+                or record.raw_size != len(record.text.encode('utf-8'))):
+            raise ContentIntegrityError('Prepared content metadata mismatch')
+        if record.text in by_text and by_text[record.text] != digest:
+            raise ContentIntegrityError('Conflicting prepared content identities')
+        by_text[record.text] = digest
+        records[digest] = record
+    if set(texts) != set(by_text):
+        raise ContentIntegrityError('Prepared content differs from exact input texts')
+    existing = {bytes(digest): (row_id, size) for digest, row_id, size in
+                SessionItemContent.objects.filter(sha256__in=records).values_list('sha256', 'id', 'raw_size')}
     inserts = []
-    for digest, (_, candidate) in candidates.items():
+    for digest, record in records.items():
+        if record.encoded is not None and (record.encoded.sha256 != digest
+                or record.encoded.raw_size != record.raw_size):
+            raise ContentIntegrityError('Prepared representation metadata mismatch')
         if digest in existing:
+            if (existing[digest][1] != record.raw_size
+                    or record.existing_id not in (None, existing[digest][0])):
+                raise ContentIntegrityError('Stored content identity size mismatch')
             continue
-        if candidate.codec == 'zstd':
+        encoded = record.encoded
+        if encoded is None or encoded.sha256 != digest or encoded.raw_size != record.raw_size:
+            raise ContentIntegrityError('Prepared representation metadata mismatch')
+        if encoded.codec == 'plain':
+            if encoded.dictionary_id is not None or encoded.payload != record.text.encode('utf-8'):
+                raise ContentIntegrityError('Prepared plain content mismatch')
+        elif encoded.codec == 'zstd':
+            if encoded.dictionary_id is None or not encoded.payload or len(encoded.payload) >= record.raw_size:
+                raise ContentIntegrityError('Invalid prepared compressed content')
+        else:
+            raise ContentIntegrityError('Invalid prepared content codec')
+        if record.policy_version is not None:
+            dictionary = (get_dictionary(encoded.dictionary_id) if encoded.dictionary_id is not None else
+                          get_provider_dictionary(provider))
+            if (dictionary is None or dictionary.row.provider != provider
+                    or dictionary.policy_version != record.policy_version
+                    or record.no_gain != (encoded.codec == 'plain')):
+                raise ContentIntegrityError('Prepared dictionary or policy mismatch')
+        elif encoded.codec != 'plain' or record.no_gain:
+            raise ContentIntegrityError('Prepared compression requires policy metadata')
+        if initial_owners and _prepared_guard.get() is None:
+            raise ContentIntegrityError('Initial owners require guarded assignment publication')
+        if encoded.codec == 'zstd' or record.policy_version is not None:
             guard = _prepared_guard.get()
             if guard is None or not guard():
                 raise ContentIntegrityError('Compressed insertion requires guarded caller eligibility proof')
-        inserts.append(candidate)
+        inserts.append(SessionItemContent(
+            sha256=digest, payload=encoded.payload, codec=encoded.codec,
+            dictionary_id=encoded.dictionary_id, raw_size=record.raw_size, dictionary_provider=provider,
+            compression_attempt_version=record.policy_version, compression_no_gain=record.no_gain,
+            session_ids=sorted(set(initial_owners)),
+        ))
     SessionItemContent.objects.bulk_create(inserts, ignore_conflicts=True)
-    rows = {bytes(row.sha256): row for row in SessionItemContent.objects.filter(sha256__in=candidates)}
+    rows = {bytes(digest): (row_id, size) for digest, row_id, size in
+            SessionItemContent.objects.filter(sha256__in=records).values_list('sha256', 'id', 'raw_size')}
     result = {}
-    for digest, (text, _) in candidates.items():
+    for digest, record in records.items():
         row = rows.get(digest)
-        if row is None or decode_content(row) != text:
-            raise ContentIntegrityError('Stored content digest collision or missing insert')
-        result[text] = row.id
+        if row is None or row[1] != record.raw_size:
+            raise ContentIntegrityError('Stored content identity mismatch or missing insert')
+        result[record.text] = row[0]
     return result
 
 
