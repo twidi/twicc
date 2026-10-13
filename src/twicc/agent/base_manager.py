@@ -649,6 +649,7 @@ class BaseAgentManager:
         """
         from django.utils import timezone
 
+        from twicc.agent.timeline_hooks import record_process_started
         from twicc.core.models import ProcessRun, Session
         from twicc.core.content_storage.lifecycle import update_lifecycle
         from twicc.providers.db_writer import storage_admission
@@ -691,6 +692,7 @@ class BaseAgentManager:
                     return pr
 
             agent.process_run = await asyncio.to_thread(persist)
+            await asyncio.to_thread(record_process_started, agent, resume=resume)
 
         admission = contextlib.nullcontext() if getattr(agent, "ephemeral", False) else storage_admission()
         async with admission:
@@ -1086,6 +1088,7 @@ class BaseAgentManager:
         if agent.process_run is None or getattr(agent, "ephemeral", False):
             return
 
+        from twicc.agent.timeline_hooks import record_process_changes, snapshot_of
         from twicc.core.models import ProcessRun
         from twicc.logging_context import provider_log_context
 
@@ -1093,12 +1096,19 @@ class BaseAgentManager:
 
         async def _persist() -> None:
             current = agent.background_work_snapshot()
+            prev = snapshot_of(agent.process_run) if agent.process_run is not None else None
             await asyncio.to_thread(
                 lambda: ProcessRun.objects.filter(pk=pr_pk).update(
                     background_work_in_progress=current,
                 )
             )
             if agent.process_run is not None:
+                if prev is not None:
+                    await asyncio.to_thread(
+                        lambda: record_process_changes(
+                            agent, prev, new_state=prev.state, new_awaiting=prev.awaiting, new_work=current,
+                        )
+                    )
                 agent.process_run.background_work_in_progress = current
 
         with provider_log_context(agent.provider):
@@ -1172,6 +1182,7 @@ class BaseAgentManager:
 
         from django.utils import timezone
 
+        from twicc.agent.timeline_hooks import record_process_changes, record_process_ended, snapshot_of
         from twicc.core.models import ProcessRun
         from twicc.logging_context import provider_log_context
         from twicc.providers.helpers import get_provider_helpers
@@ -1193,6 +1204,7 @@ class BaseAgentManager:
             if state != AgentState.DEAD:
                 async def _persist_update() -> None:
                     background_work = agent.background_work_snapshot()
+                    prev = snapshot_of(agent.process_run) if agent.process_run is not None else None
                     await asyncio.to_thread(
                         lambda: ProcessRun.objects.filter(pk=pr_pk).update(
                             state=state_value,
@@ -1202,6 +1214,12 @@ class BaseAgentManager:
                             background_work_in_progress=background_work,
                         )
                     )
+                    if prev is not None:
+                        await asyncio.to_thread(
+                            lambda: record_process_changes(
+                                agent, prev, new_state=state_value, new_awaiting=awaiting, new_work=background_work,
+                            )
+                        )
                     if agent.process_run is not None:
                         agent.process_run.state = state_value
                         agent.process_run.last_state_change_at = now
@@ -1223,6 +1241,8 @@ class BaseAgentManager:
             helper = get_provider_helpers(agent.provider)
 
             async def _settle_dead() -> None:
+                prev = snapshot_of(agent.process_run)
+                await asyncio.to_thread(lambda: record_process_ended(agent, prev))
                 keep = await asyncio.to_thread(
                     lambda: helper.should_keep_dead_process_run(
                         agent.process_run, agent=agent,
