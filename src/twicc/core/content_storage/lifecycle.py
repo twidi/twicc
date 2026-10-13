@@ -65,6 +65,12 @@ def lifecycle_change(session_ids: Iterable[str]):
         roots = set(_root_map(changed).values())
         for session_id in changed:
             roots.add(old_roots[session_id])
+        from twicc.core.content_storage.cold_cache import schedule_cold_invalidation
+
+        mappings = any(before.get(identity) is None or after.get(identity) is None
+                       or any(before[identity][field] != after[identity][field]
+                              for field in ('type', 'parent_session_id')) for identity in changed)
+        schedule_cold_invalidation(changed | roots, mappings=mappings)
         invalidate_roots(roots, promotion_targets=changed)
 
 

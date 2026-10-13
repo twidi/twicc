@@ -629,7 +629,7 @@ class BaseSessionsWatcher:
                     compute.compute_version if parsed.compute_ready_on_create else None
                 ),
             )
-            initialize_ingestion_session(session, invalidate=True)
+            initialize_ingestion_session(session, invalidate=True, invalidate_mappings=True)
             return session
         kwargs: dict = {
             'content_storage_version': CONTENT_STORAGE_VERSION,
@@ -665,7 +665,7 @@ class BaseSessionsWatcher:
             if pending.layout:
                 kwargs["layout"] = pending.layout
         session = Session.objects.create(**kwargs)
-        initialize_ingestion_session(session, invalidate=True)
+        initialize_ingestion_session(session, invalidate=True, invalidate_mappings=True)
         return session
 
     # ------------------------------------------------------------------

@@ -24,6 +24,7 @@ from twicc.core.content_storage.references import (
     bind_persisted_items, intern_contents, prepared_content_guard, reconcile_session_memberships,
 )
 from twicc.core.content_storage.state import resolve_root_decision
+from twicc.core.content_storage.cold_cache import cached_root_decisions
 from twicc.core.content_storage.types import (
     ContentBinding, StorageCursor, ItemStorageObservation, ContentRepresentationObservation,
     PreparedComputeBatch, ComputeStorageProgress, ComputeStorageObservation,
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 ROW_BUDGET = 256
 BYTE_BUDGET = 8 * 1024 * 1024
+_publication_cold: ContextVar[dict | None] = ContextVar('publication_cold_decisions', default=None)
 _placement: ContextVar[dict | None] = ContextVar('compute_content_placement', default=None)
 
 
@@ -64,7 +66,7 @@ def guard_storage(session_id, incarnation, epoch, upper_line, offset=None):
 
 
 def pending_root_fields(session_id, pending, active_roots):
-    decision = resolve_root_decision(session_id, timezone.now(), active_roots)
+    decision = cached_root_decisions([session_id], timezone.now(), active_roots)[session_id]
     if not decision.resolved:
         return None, None
     fields = Session.objects.filter(pk=decision.root_id).values(
@@ -79,7 +81,26 @@ def pending_root_fields(session_id, pending, active_roots):
     return decision.root_id, effective
 
 
+@contextmanager
+def _publication_decisions():
+    """Reuse eligibility only during one guarded publication with its writer lease."""
+    token = _publication_cold.set({})
+    try:
+        yield
+    finally:
+        _publication_cold.reset(token)
+
+
 def cold_placement(session_id):
+    cache = _publication_cold.get()
+    if cache is None:
+        return _cold_placement(session_id)
+    if session_id not in cache:
+        cache[session_id] = _cold_placement(session_id)
+    return cache[session_id]
+
+
+def _cold_placement(session_id):
     """Recheck real native ancestry and guarded final lifecycle values."""
     placement = _placement.get()
     if placement is None or placement['unresolved_active']:
@@ -162,6 +183,7 @@ def _prepare_extraction(session_id, upper_line, cursor, row_budget, byte_budget)
     return PreparedComputeBatch('extraction', last_line, rows, tuple(prepared.items()), provider, size, done)
 
 
+@_publication_decisions()
 def _publish_extraction(session_id, observed_incarnation, observed_epoch, upper_line, batch):
     rows, size, provider = batch.rows, batch.bytes, batch.provider
     texts = [item.content for item in rows if item.current_content_id is None]
@@ -215,6 +237,7 @@ def _prepare_overrides(msg, overrides):
                                 sum(len(text.encode('utf-8')) for text in texts), False)
 
 
+@_publication_decisions()
 def _publish_overrides(msg, batch, operation):
     overrides, provider = batch.rows, batch.provider
     texts = [override['content'] for override in overrides]
@@ -374,6 +397,7 @@ def _prepare_reconciliation(msg, cursor, row_budget=ROW_BUDGET, byte_budget=BYTE
     return PreparedComputeBatch('reconciliation', position, tuple(visited), immutable, None, size, done, last_line)
 
 
+@_publication_decisions()
 def _publish_reconciliation(msg, batch):
     visited, prepared = batch.rows, batch.prepared
     with transaction.atomic():
@@ -489,14 +513,9 @@ def _compute_scope(operation, active_ids):
 
 def _refresh_active_placement(placement, active_ids):
     now = timezone.now()
-    roots = set()
-    unresolved = False
-    for identity in active_ids:
-        decision = resolve_root_decision(identity, now, frozenset())
-        if decision.resolved:
-            roots.add(decision.root_id)
-        else:
-            unresolved = True
+    decisions = cached_root_decisions(active_ids, now, frozenset())
+    roots = {decision.root_id for decision in decisions.values() if decision.resolved}
+    unresolved = any(not decision.resolved for decision in decisions.values())
     placement.update(active_roots=frozenset(roots), unresolved_active=unresolved, now=now)
 
 
@@ -646,7 +665,6 @@ def publish_compute_batch(operation, batch, active_ids):
     with _compute_scope(operation, active_ids) as placement, transaction.atomic():
         guard_storage(msg['session_id'], msg['observed_incarnation'], msg['observed_epoch'],
                       msg['observed_upper_line'], msg.get('observed_last_offset'))
-        _refresh_active_placement(placement, active_ids)
         if batch.phase == 'metadata' and batch.rows:
             outcome = BaseSessionCompute.apply_session_items_chunk(
                 msg['session_id'], msg.get('observed_last_offset'), msg.get('item_fields', []),

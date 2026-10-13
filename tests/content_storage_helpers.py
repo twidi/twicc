@@ -79,7 +79,11 @@ def prepare_plaintext_search(session) -> None:
 @pytest.fixture(autouse=True)
 def isolated_dictionary_cache():
     from twicc.core.content_storage.dictionaries import reset_dictionary_cache
+    from twicc.core.content_storage.cold_cache import reset_cold_cache
 
+    # Database flushes replace lifecycle rows without changing the file identity.
     reset_dictionary_cache()
+    reset_cold_cache()
     yield
     reset_dictionary_cache()
+    reset_cold_cache()

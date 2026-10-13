@@ -27,7 +27,7 @@ class Command(BaseCommand):
             # Delete Projects first - cascades to Session and SessionItem
             with transaction.atomic():
                 for session in Session.objects.all().iterator(chunk_size=128):
-                    initialize_ingestion_session(session, invalidate=True)
+                    initialize_ingestion_session(session, invalidate=True, invalidate_mappings=True)
                     remove_history_memberships(session.id)
                 Project.objects.all().delete()
             self.stdout.write("Database cleared.")

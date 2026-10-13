@@ -21,8 +21,14 @@ def _require_transaction() -> None:
         raise transaction.TransactionManagementError('Content ingestion requires a caller-owned transaction')
 
 
-def initialize_ingestion_session(session: Session, *, invalidate: bool = False) -> None:
+def initialize_ingestion_session(
+    session: Session, *, invalidate: bool = False, invalidate_mappings: bool = False,
+) -> None:
     """Prepare touched session/root identities without claiming legacy extraction."""
+    if invalidate_mappings:
+        from twicc.core.content_storage.cold_cache import schedule_cold_invalidation
+
+        schedule_cold_invalidation([session.id], mappings=True)
     session.storage_incarnation = ensure_storage_incarnation(session.id)
     decision = resolve_root_decision(session.id, timezone.now(), active_session_ids.get())
     if decision.resolved:
@@ -80,7 +86,9 @@ def insert_ingested_items(
 def promote_ingested_items(session: Session, items: Sequence[tuple[SessionItem, str]]) -> None:
     """Place only this batch's persisted references in plaintext under final policy."""
     _require_transaction()
-    decision = resolve_root_decision(session.id, timezone.now(), active_session_ids.get())
+    from twicc.core.content_storage.cold_cache import cached_root_decisions
+
+    decision = cached_root_decisions([session.id], timezone.now(), active_session_ids.get())[session.id]
     if decision.is_cold:
         return
     source = iter(items)

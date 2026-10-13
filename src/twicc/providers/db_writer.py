@@ -3107,7 +3107,7 @@ def _apply_create_session_payload(payload: CreateSessionPayload) -> tuple[object
             payload.session.save()
         else:
             payload.session.refresh_from_db()
-        initialize_ingestion_session(payload.session, invalidate=is_new)
+        initialize_ingestion_session(payload.session, invalidate=is_new, invalidate_mappings=is_new)
         before_session = session_contribution(payload.session)
         if payload.items:
             insert_ingested_items(payload.session, [
@@ -3246,6 +3246,9 @@ def _apply_delete_sessions_payload(payload: DeleteSessionsPayload) -> list[str]:
             initialize_ingestion_session(session, invalidate=True)
             remove_history_memberships(session.id)
         Session.objects.filter(id__in=ids).delete()
+        from twicc.core.content_storage.cold_cache import schedule_cold_invalidation
+
+        schedule_cold_invalidation(ids | missing_ids, mappings=True)
         apply_contribution_changes(before_items, [], before_sessions=before_sessions, after_sessions=[], repair=True)
         # Recheck absence inside the source transaction before orphan settlement.
         if Session.objects.filter(id__in={snapshot.observation.session_id for snapshot in snapshots}).exists():
