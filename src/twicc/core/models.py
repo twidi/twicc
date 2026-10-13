@@ -396,6 +396,22 @@ class DailyActivity(PeriodicActivity):
         return date_start, date_start + timedelta(days=1)
 
 
+class ComputeAggregateRepair(models.Model):
+    """Durable aggregate obligations, retained independently of source deletion."""
+
+    id = models.BigAutoField(primary_key=True)
+    session_id = models.CharField(max_length=255)
+    incarnation = models.CharField(max_length=36)
+    generation = models.PositiveBigIntegerField(default=0)
+    activity_keys = models.JSONField(default=list)
+    parent_ids = models.JSONField(default=list)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["session_id", "incarnation"], name="compute_repair_source_identity"),
+        ]
+
+
 class Session(models.Model):
     """A session corresponds to a *.jsonl file, or a subagent file in {session_id}/subagents/"""
 
