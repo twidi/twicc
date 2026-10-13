@@ -59,8 +59,11 @@ import orjson
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 from django.db import transaction
+from django.utils import timezone
 
 from twicc.core.enums import Provider
+from twicc.core.models import TimelineActor, TimelineKind
+from twicc.core.services.session_timeline import record_event_sync
 from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
 from twicc.providers.state import (
@@ -438,6 +441,7 @@ async def apply_session_archived_change(
     from twicc.terminal import kill_all_tmux_terminals
 
     was_archived = session.archived
+    was_pinned = session.pinned
     fields = ["archived"]
     session.archived = archived
     if also_unpin:
@@ -446,9 +450,25 @@ async def apply_session_archived_change(
 
     from twicc.core.content_storage.lifecycle import save_lifecycle
 
-    await run_under_db_write_lock(
-        lambda: sync_to_async(save_lifecycle)(session, update_fields=fields), content_activity=True,
-    )
+    async def _save_and_record() -> None:
+        await sync_to_async(save_lifecycle)(session, update_fields=fields)
+        archive_event = None
+        if archived != was_archived:
+            archive_event = await asyncio.to_thread(
+                record_event_sync,
+                TimelineKind.ARCHIVED_STARTED if archived else TimelineKind.ARCHIVED_ENDED,
+                session_id=session.id, project_id=session.project_id, actor=TimelineActor.USER,
+            )
+        if also_unpin and was_pinned is not None:
+            # ``also_unpin`` clears ``pinned`` itself: the pin service is not called.
+            # The ``scope`` of the row is inherited from ``pinned.started`` by the service.
+            await asyncio.to_thread(
+                record_event_sync, TimelineKind.PINNED_ENDED,
+                session_id=session.id, project_id=session.project_id, actor=TimelineActor.USER,
+                caused_by=archive_event,
+            )
+
+    await run_under_db_write_lock(_save_and_record, content_activity=True)
 
     # Search reindex — non-critical because the next full rebuild reconciles
     # if this attempt fails. The ``archived`` flag is denormalised into every
@@ -607,18 +627,49 @@ async def apply_session_pinned_change(session, pinned) -> None:
     so a payload combining several field updates (e.g. archived + pinned
     set together by the UI's archive flow) only fires one frame.
     """
+    was_pinned = session.pinned
     session.pinned = pinned
-    await run_under_db_write_lock(
-        lambda: session.asave(update_fields=["pinned"])
-    )
+
+    def _record() -> None:
+        # One ``occurred_at`` for the pair of a scope change. ``pinned.ended`` is
+        # written first, so its inherited ``scope`` is the OLD one (the latest
+        # ``pinned.started`` is still the old pin); the new ``started`` row is
+        # ``caused_by`` it.
+        common = dict(
+            session_id=session.id, project_id=session.project_id, actor=TimelineActor.USER,
+            occurred_at=timezone.now(),
+        )
+        ended = None
+        if was_pinned is not None:
+            ended = record_event_sync(TimelineKind.PINNED_ENDED, **common)
+        if pinned is not None:
+            record_event_sync(
+                TimelineKind.PINNED_STARTED, caused_by=ended, data={"scope": pinned}, **common,
+            )
+
+    async def _save_and_record() -> None:
+        await session.asave(update_fields=["pinned"])
+        if pinned != was_pinned:
+            await asyncio.to_thread(_record)
+
+    await run_under_db_write_lock(_save_and_record)
 
 
 async def apply_session_mute_on_user_turn_change(session, mute_on_user_turn: bool) -> None:
     """Persist the per-session finished-working notification gate."""
+    was_muted = session.mute_on_user_turn
     session.mute_on_user_turn = mute_on_user_turn
-    await run_under_db_write_lock(
-        lambda: session.asave(update_fields=["mute_on_user_turn"])
-    )
+
+    async def _save_and_record() -> None:
+        await session.asave(update_fields=["mute_on_user_turn"])
+        if mute_on_user_turn != was_muted:
+            await asyncio.to_thread(
+                record_event_sync,
+                TimelineKind.MUTED_STARTED if mute_on_user_turn else TimelineKind.MUTED_ENDED,
+                session_id=session.id, project_id=session.project_id, actor=TimelineActor.USER,
+            )
+
+    await run_under_db_write_lock(_save_and_record)
 
 
 async def apply_session_layout_change(session, layout: dict) -> None:
