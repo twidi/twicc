@@ -716,3 +716,144 @@ def test_final_storage_rejects_dangling_references_before_publication(slot, cold
             assert session.plaintext_verified_epoch is None
         finally:
             SessionItem.objects.filter(pk=item.pk).update(**{f'{slot}_id': plain.pk})
+
+
+@pytest.mark.parametrize('row_count', [0, 1, 1025])
+def test_final_hot_root_probes_plaintext_metadata_once(row_count):
+    """Repeated root validation adds another full metadata scan inside the writer grant."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from twicc.core.content_storage.extraction import prepare_compute_result
+
+    session = make_session()
+    Session.objects.filter(pk=session.id).update(last_line=row_count)
+    session.refresh_from_db()
+    SessionItem.objects.bulk_create([
+        SessionItem(session=session, line_num=line, content=f'line {line}')
+        for line in range(1, row_count + 1)
+    ])
+    prepared = prepare_compute_result(message(session))
+    with CaptureQueriesContext(connection) as queries:
+        assert BaseSessionCompute._apply_session_complete_final(prepared).outcome == 'applied'
+    probes = [query['sql'] for query in queries.captured_queries
+              if query['sql'].startswith('SELECT 1 FROM') and ' item LEFT JOIN ' in query['sql']]
+    assert len(probes) == 1
+    session.refresh_from_db()
+    assert session.content_storage_version == 1
+    assert session.plaintext_verified_epoch == session.content_state_epoch
+
+
+@pytest.mark.parametrize('change', ['version', 'incarnation', 'epoch', 'ancestry', 'cold'])
+def test_final_root_certification_rechecks_snapshot_fences(monkeypatch, change):
+    """A root transition after snapshot creation must prevent final certification."""
+    from datetime import timedelta
+    from django.db.models import F
+    from django.utils import timezone
+    from twicc.core.content_storage import state
+    from twicc.core.content_storage.extraction import finish_storage_result
+
+    session = make_session(created_at=timezone.now() - timedelta(days=40))
+    parent = make_session(id='other-root')
+    snapshot = state.snapshot_root_storage
+
+    def transition(root_id):
+        observed = snapshot(root_id)
+        changes = {
+            'version': {'content_storage_version': None},
+            'incarnation': {'storage_incarnation': 'new-incarnation'},
+            'epoch': {'content_state_epoch': F('content_state_epoch') + 1},
+            'ancestry': {'type': 'subagent', 'parent_session': parent},
+            'cold': {'archived': True},
+        }
+        Session.objects.filter(pk=root_id).update(**changes[change])
+        return observed
+
+    monkeypatch.setattr(state, 'snapshot_root_storage', transition)
+    with transaction.atomic():
+        finish_storage_result(message(session))
+    session.refresh_from_db()
+    assert session.plaintext_verified_epoch is None
+
+
+def test_final_active_native_child_keeps_cold_root_plaintext_ready():
+    """Removing active native-root resolution leaves an active archived root uncertified."""
+    from datetime import timedelta
+    from django.utils import timezone
+
+    session = make_session(archived=True, created_at=timezone.now() - timedelta(days=40))
+    child = make_session(id='active-child', type='subagent', parent_session=session)
+    SessionItem.objects.create(session=session, line_num=1, content='active root')
+    result = BaseSessionCompute.apply_session_complete(message(session, _active_session_ids=frozenset({child.id})))
+    assert result.outcome == 'applied'
+    session.refresh_from_db()
+    assert session.content_storage_version == 1
+    assert session.plaintext_verified_epoch == session.content_state_epoch
+
+
+def test_public_verification_rescans_metadata_after_final_root_certification():
+    """A final certificate must not let public verification skip changed original content."""
+    from twicc.core.content_storage import state
+    from twicc.core.models import SessionItemContent
+
+    session = make_session()
+    SessionItem.objects.create(session=session, line_num=1, content='original')
+    assert BaseSessionCompute.apply_session_complete(message(session)).outcome == 'applied'
+    item = SessionItem.objects.get(session=session)
+    original = SessionItemContent.objects.create(sha256=b'o' * 32, payload=b'o', raw_size=1, codec='zstd')
+    SessionItem.objects.filter(pk=item.pk).update(original_content=original)
+    with transaction.atomic():
+        assert not state.session_plaintext_metadata(session.id)
+        assert not state.verify_plaintext_root(state.snapshot_root_storage(session.id))
+
+
+@pytest.mark.parametrize('slot', ['current_content', 'original_content'])
+@pytest.mark.parametrize('change', ['zstd', 'dictionary'])
+def test_final_hot_root_rejects_nonplaintext_metadata_before_publication(slot, change):
+    """Final certification must validate both content slots before publishing the version."""
+    from tests.content_storage_helpers import _public_dictionary
+    from twicc.core.content_storage.codec import ContentIntegrityError
+    from twicc.core.content_storage.extraction import finish_storage_result
+    from twicc.core.models import SessionItemContent
+
+    session = make_session()
+    plain = SessionItemContent.objects.create(sha256=b'p' * 32, payload=b'p', raw_size=1)
+    invalid = SessionItemContent.objects.create(sha256=b'i' * 32, payload=b'i', raw_size=1)
+    if change == 'zstd':
+        SessionItemContent.objects.filter(pk=invalid.pk).update(codec='zstd')
+    else:
+        SessionItemContent.objects.filter(pk=invalid.pk).update(dictionary=_public_dictionary('codex'))
+    item = SessionItem.objects.create(session=session, line_num=1, content='',
+                                     current_content=plain, original_content=plain)
+    SessionItem.objects.filter(pk=item.pk).update(**{f'{slot}_id': invalid.pk})
+    with pytest.raises(ContentIntegrityError, match='Hot compute storage requires plaintext'), transaction.atomic():
+        finish_storage_result(message(session))
+    session.refresh_from_db()
+    assert session.content_storage_version is None
+    assert session.plaintext_verified_epoch is None
+
+
+def test_final_hot_root_requires_caller_transaction_before_version_publication():
+    from twicc.core.content_storage.extraction import finish_storage_result
+
+    session = make_session()
+    with pytest.raises(transaction.TransactionManagementError):
+        finish_storage_result(message(session))
+    session.refresh_from_db()
+    assert session.content_storage_version is None
+    assert session.plaintext_verified_epoch is None
+
+
+def test_final_child_validation_does_not_certify_its_root():
+    from twicc.core.content_storage.extraction import finish_storage_result
+
+    root = make_session()
+    SessionItem.objects.create(session=root, line_num=1, content='unextracted root')
+    child = make_session(id='child', type='subagent', parent_session=root)
+    with transaction.atomic():
+        finish_storage_result(message(child))
+    child.refresh_from_db()
+    root.refresh_from_db()
+    assert child.content_storage_version == 1
+    assert child.plaintext_verified_epoch is None
+    assert root.content_storage_version is None
+    assert root.plaintext_verified_epoch is None

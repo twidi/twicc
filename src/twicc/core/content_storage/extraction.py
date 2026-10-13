@@ -777,7 +777,7 @@ def finish_storage_result(msg):
     """Verify this computed session and optionally certify the root's own plaintext."""
     from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION
     from twicc.core.content_storage.state import (
-        _session_has_invalid_storage_metadata, snapshot_root_storage, verify_plaintext_root,
+        _finish_plaintext_root_storage, _session_has_invalid_storage_metadata,
     )
 
     session_id = msg['session_id']
@@ -796,14 +796,14 @@ def finish_storage_result(msg):
     ).exists():
         raise ContentIntegrityError('Compute storage placement is incomplete')
     decision = resolve_root_decision(session_id, timezone.now(), pending['active_roots'] if pending else frozenset())
-    if (not decision.is_cold or pending and pending['unresolved_active']) and _session_has_invalid_storage_metadata(
-        session_id,
-    ):
-        raise ContentIntegrityError('Hot compute storage requires plaintext through both references')
-    Session.objects.filter(pk=session_id).update(content_storage_version=CONTENT_STORAGE_VERSION)
     if decision.resolved and decision.root_id == session_id and not decision.is_cold:
-        verify_plaintext_root(snapshot_root_storage(decision.root_id),
-                              active_root_ids=pending['active_roots'] if pending else frozenset())
+        _finish_plaintext_root_storage(session_id, active_root_ids=pending['active_roots'] if pending else frozenset())
+    else:
+        if (not decision.is_cold or pending and pending['unresolved_active']) and _session_has_invalid_storage_metadata(
+            session_id,
+        ):
+            raise ContentIntegrityError('Hot compute storage requires plaintext through both references')
+        Session.objects.filter(pk=session_id).update(content_storage_version=CONTENT_STORAGE_VERSION)
     operation = msg.get('_storage_operation')
     if operation is not None:
         epoch = (Session.objects.values_list('content_state_epoch', flat=True).get(pk=decision.root_id)

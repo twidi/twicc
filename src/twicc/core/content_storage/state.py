@@ -241,6 +241,33 @@ def verify_plaintext_root(
     ).update(plaintext_verified_epoch=snapshot.epoch))
 
 
+def _finish_plaintext_root_storage(root_id: str, *, active_root_ids: frozenset[str]) -> bool:
+    """Validate and certify one final compute root in the caller's guarded writer transaction.
+
+    This path owns its metadata probe and version publication. It accepts no
+    prior validation evidence. Public verification always performs its own probe.
+    """
+    from twicc.core.content_storage.codec import ContentIntegrityError
+
+    _require_writer_transaction()
+    if _session_has_invalid_storage_metadata(root_id):
+        raise ContentIntegrityError('Hot compute storage requires plaintext through both references')
+    Session.objects.filter(pk=root_id).update(content_storage_version=CONTENT_STORAGE_VERSION)
+    snapshot = snapshot_root_storage(root_id)
+    if not _snapshot_matches(snapshot):
+        return False
+    decision = resolve_root_decision(root_id, timezone.now(), active_root_ids)
+    if not decision.resolved or decision.root_id != root_id or decision.is_cold:
+        return False
+    fields = Session.objects.filter(pk=root_id).values('content_storage_version', 'storage_incarnation').first()
+    if (fields is None or fields['content_storage_version'] != CONTENT_STORAGE_VERSION
+            or not fields['storage_incarnation']):
+        return False
+    return bool(Session.objects.filter(
+        pk=root_id, storage_incarnation=snapshot.incarnation, content_state_epoch=snapshot.epoch,
+    ).update(plaintext_verified_epoch=snapshot.epoch))
+
+
 def extract_storage_slice(session_id: str, observed_incarnation: str, observed_epoch: int,
                           upper_line: int, cursor: int, row_budget: int, byte_budget: int):
     """Expose the shared bounded extraction interface without an import cycle."""
