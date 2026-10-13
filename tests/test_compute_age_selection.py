@@ -4,6 +4,7 @@ import asyncio
 from contextlib import closing
 import sqlite3
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -86,6 +87,136 @@ def test_recent_only_classifies_waits_rechecks_and_stops(recovery_runtime, monke
             await background.retire_compute_run(ctx)
             await db_writer.stop_db_writer()
     asyncio.run(scenario())
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('backoff', [-1.0, .05])
+def test_codex_recent_failure_polls_at_selection_interval(recovery_runtime, monkeypatch, backoff):
+    """Expired or earlier backoff cannot poll before source age permits work."""
+    from django.db import connection
+    path, _ = recovery_runtime
+    wall = [1000.0]
+    update_sources(path, faulty=wall[0])
+    with closing(sqlite3.connect(path)) as database:
+        database.execute("UPDATE core_session SET provider='codex'")
+        database.execute("UPDATE core_session SET compute_version=123 WHERE id='healthy'")
+        database.commit()
+    monkeypatch.setattr(codex, 'time', SimpleNamespace(time=lambda: wall[0], monotonic=time.monotonic))
+    monkeypatch.setattr(codex, 'load_project_directories', lambda: None)
+    monkeypatch.setattr(codex, 'load_project_git_roots', lambda: None)
+    monkeypatch.setattr(codex, 'broadcast_startup_progress', background.broadcast_startup_progress)
+    reads = []
+    ordinary_reader = background.sync_to_async
+    def reader(function):
+        def wrapped():
+            def record(execute, sql, params, many, context):
+                if 'ORDER BY' in sql and 'mtime' in sql:
+                    reads.append(time.monotonic())
+                return execute(sql, params, many, context)
+            with connection.execute_wrapper(record):
+                return function()
+        return ordinary_reader(wrapped)
+    monkeypatch.setattr(codex, 'sync_to_async', reader)
+
+    async def scenario():
+        db_writer.start_db_writer()
+        ctx = background.ComputeContext(Provider.CODEX, 123, 'tests.test_codex_compute_recovery:CodexRecoveryCompute')
+        owner = codex.CodexComputeCoordinator(ctx, asyncio.Event())
+        owner.failures['faulty'] = codex.FailedCandidate('faulty', 'compute', 'previous failure')
+        owner._retry_at['faulty'] = time.monotonic() + backoff
+        admitted = []
+        async def prepare(candidate):
+            admitted.append(candidate.session_id)
+            return codex.PreparedCandidate(candidate.session_id, None, False)
+        owner.prepare_candidate = prepare
+        task = asyncio.create_task(owner.run())
+        try:
+            await asyncio.wait_for(owner.initial_done.wait(), 2)
+            reads.clear()
+            for _ in range(20):
+                await asyncio.sleep(.01)
+            assert len(reads) <= 1, reads
+            assert admitted == []
+            wall[0] = 1031.0
+            async with asyncio.timeout(5):
+                while versions(path)['faulty'] != 123:
+                    await asyncio.sleep(.01)
+            assert admitted == ['faulty']
+            ctx.stop_event.set()
+            await asyncio.wait_for(task, 2)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await db_writer.stop_db_writer()
+    asyncio.run(scenario())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_claude_indexes_after_recent_startup_sweep(recovery_runtime, monkeypatch):
+    """A deferred startup session enters real search without a source write."""
+    import orjson
+    from django.conf import settings
+    from twicc import paths, search
+    from twicc.core.enums import ItemKind
+    from twicc.core.models import SessionItem
+    from twicc.core.content_storage import readers
+    from twicc import search_indexing_task as indexing
+    path, _ = recovery_runtime
+    wall = [1000.0]
+    update_sources(path, faulty=1000.0, healthy=1000.0)
+    with closing(sqlite3.connect(path)) as database:
+        database.execute("UPDATE core_session SET last_line=1 WHERE id='faulty'")
+        database.commit()
+    monkeypatch.setattr(background, 'time', SimpleNamespace(time=lambda: wall[0], monotonic=time.monotonic))
+    monkeypatch.setattr(settings, 'CLAUDE_CODE_COMPUTE_VERSION', 123)
+    monkeypatch.setattr(paths, 'get_search_dir', lambda: path.parent / 'search-index')
+    monkeypatch.setattr(indexing, '_pending_reindex_ids', set())
+    monkeypatch.setattr(indexing, '_indexing_tasks', [])
+    monkeypatch.setattr(indexing, '_session_reindex_task', None)
+    monkeypatch.setattr(indexing, '_indexing_run_lock', None)
+    monkeypatch.setattr(indexing, '_shutting_down', False)
+    monkeypatch.setattr(indexing, '_stop_event', None)
+    def reader(function):
+        async def call(*args, **kwargs):
+            return await background.sync_to_async(lambda: function(*args, **kwargs))()
+        return call
+    monkeypatch.setattr(indexing, 'sync_to_async', reader)
+    monkeypatch.setattr(readers, 'sync_to_async', reader)
+    monkeypatch.setattr(indexing, 'broadcast_startup_progress', background.broadcast_startup_progress)
+    search.init_search_index()
+
+    async def scenario():
+        db_writer.start_db_writer()
+        await background.sync_to_async(lambda: SessionItem.objects.create(
+            session_id='faulty', line_num=1, kind=ItemKind.USER_MESSAGE,
+            content=orjson.dumps({'type': 'user', 'message': {'role': 'user', 'content': 'deferredsearchtoken'}}).decode(),
+        ))()
+        ctx = background.ComputeContext(Provider.CLAUDE_CODE, 123, 'tests.test_background_compute_recovery:RecoveryCompute')
+        barrier = asyncio.Event()
+        task = asyncio.create_task(background.start_background_compute_task(ctx, barrier))
+        try:
+            await asyncio.wait_for(barrier.wait(), 2)
+            await indexing.start_search_index_task()
+            assert versions(path)['faulty'] is None
+            assert search.search('deferredsearchtoken').total_sessions == 0
+            wall[0] = 1031.0
+            await asyncio.wait_for(task, 6)
+            async with asyncio.timeout(3):
+                while search.search('deferredsearchtoken').total_sessions == 0:
+                    await asyncio.sleep(.01)
+            result = search.search('deferredsearchtoken')
+            assert [item.session_id for item in result.results] == ['faulty']
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            for index_task in indexing.get_active_indexing_tasks():
+                await index_task
+            await background.retire_compute_run(ctx)
+            await db_writer.stop_db_writer()
+    try:
+        asyncio.run(scenario())
+    finally:
+        search.shutdown_search_index()
 
 
 def clone_session(path, session_id, mtime, *, session_type='session'):

@@ -1134,10 +1134,17 @@ class CodexComputeCoordinator:
                             # normal paths; this is a belt-and-braces guard.
                             self.initial_done.set()
 
-                    delays = [max(0.01, ready - time.monotonic()) for sid, ready in self._retry_at.items()
-                              if sid in stale_ids
-                              and sid not in self.submitted and sid not in self.computed_not_applied
-                              and sid not in self.deferred and not healthy_pending]
+                    retry_now = time.monotonic()
+                    # Only a future backoff can wake selection early. A source
+                    # must also reach its independent wall-clock age threshold.
+                    delays = [
+                        max(compute_age_delay(item.mtime, source_now), self._retry_at[item.session_id] - retry_now)
+                        for item in candidates
+                        if self._retry_at.get(item.session_id, 0) > retry_now
+                        and item.session_id not in self.submitted
+                        and item.session_id not in self.computed_not_applied
+                        and item.session_id not in self.deferred and not healthy_pending
+                    ]
                     try:
                         event_type, payload = await asyncio.wait_for(
                             self.events.get(), timeout=min([COMPUTE_SELECTION_POLL_SECONDS, *delays]),

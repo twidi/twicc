@@ -640,6 +640,10 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
                         retry_at.pop(sid, None)
                         retry_delays.pop(sid, None)
                         process_delay = 1.0
+                        if signal.outcome == "applied":
+                            from twicc.search_indexing_task import request_session_reindex
+
+                            request_session_reindex(sid)
                     await progress({sid})
                 if completion is not None and completion.done():
                     # An unexpected terminal frame or broken transport retires
