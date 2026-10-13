@@ -721,6 +721,7 @@ def test_forced_rebuild_is_discovered_after_older_compute_restores_current_versi
             coordinator.run_active = False
         coordinator._start_run = start_run
         coordinator._finish_run = finish_run
+        coordinator._retire_run = finish_run
         monkeypatch.setattr(background_compute, 'stop_background_task', AsyncMock())
         db_writer.start_db_writer()
         task = None
@@ -769,7 +770,7 @@ def test_forced_rebuild_is_discovered_after_older_compute_restores_current_versi
             await _wait_until(lambda: not ctx.command_queue.empty(), timeout=5)
             assert ctx.command_queue.get_nowait() == {'session_id': sid}
             assert coordinator._prepared[sid].kind == 'replaced'
-            assert sid not in coordinator._forced_rebuild
+            assert sid in coordinator._forced_rebuild
             assert gate_for(sid).locked()
             from twicc.core.content_storage.readers import aload_current, effective_current
 
@@ -788,6 +789,7 @@ def test_forced_rebuild_is_discovered_after_older_compute_restores_current_versi
             await coordinator.events.put(('applied', ComputeApplied(sid, applied.outcome)))
             await _wait_until(lambda: sid not in coordinator._prepared, timeout=5)
             await watcher._consumer_task
+            assert sid not in coordinator._forced_rebuild
             assert not gate_for(sid).locked() and path not in watcher._replaced_paths
             assert watcher._queue.idle
         finally:

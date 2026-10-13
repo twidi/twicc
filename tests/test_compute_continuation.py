@@ -186,7 +186,7 @@ def test_blocked_preparation_leaves_foreground_worker_available(wal_runtime, mon
             release.set()
             db_writer.get_subprocess_queue().put({'type': 'done', 'provider': 'codex', 'run_id': run_id})
             await db_writer.stop_db_writer()
-        assert applied.get_nowait() == db_writer.ComputeApplied(session.id, 'applied')
+        assert applied.get_nowait() == db_writer.ComputeApplied(session.id, 'applied', run_id=run_id)
         assert applied.empty()
         assert done.result() == 0
         with sqlite3.connect(path) as db:
@@ -258,7 +258,7 @@ def test_preparation_terminal_drains_before_deferral_release(wal_runtime, monkey
         elif terminal == 'abandoned':
             assert applied.empty()
         else:
-            assert applied.get_nowait() == db_writer.ComputeApplied(session.id, 'failed', 'Compute application cancelled')
+            assert applied.get_nowait() == db_writer.ComputeApplied(session.id, 'failed', 'Compute application cancelled', run_id)
         assert applied.empty()
     asyncio.run(scenario())
 
@@ -1441,7 +1441,7 @@ def test_terminal_diagnostics_settle_denied_grant_once(wal_runtime, monkeypatch,
                 assert applied.empty()
             else:
                 assert applied.get_nowait() == db_writer.ComputeApplied(
-                    session.id, 'failed', 'Compute application cancelled')
+                    session.id, 'failed', 'Compute application cancelled', run_id)
                 assert applied.empty()
                 assert not done.done()
         finally:

@@ -65,6 +65,9 @@ from twicc.projects import load_project_directories, load_project_git_roots
 from twicc.provider_homes import codex_sessions_dir
 from twicc.providers.background_compute_task import (
     ComputeContext,
+    _wait_for_retry_delay,
+    read_compute_state,
+    retire_compute_run,
     start_compute_process,
     stop_background_task,
     stop_compute_worker,
@@ -225,10 +228,16 @@ class CodexComputeCoordinator:
         self.applied_before_computed: set[str] = set()
         self.deferred: set[str] = set()
         self.failed_this_run: set[str] = set()
+        self._retry_at: dict[str, float] = {}
+        self._retry_delays: dict[str, float] = {}
+        self._process_delay = 1.0
+        self._retired_run_ids: set[int] = set()
         self.failures: dict[str, FailedCandidate] = {}
         self.migration_leases: dict[str, asyncio.Lock] = {}
         self.migration_paths: dict[str, Path] = {}
         self._forced_rebuild: set[str] = set()
+        self._rebuild_generation: dict[str, int] = {}
+        self._prepared_rebuild_generation: dict[str, int] = {}
         self.migrated_history: set[str] = set()
         self.worker_errors: dict[str, str] = {}
         self.in_flight: str | None = None
@@ -434,10 +443,9 @@ class CodexComputeCoordinator:
                     history.last_line,
                     history.mtime,
                 )
-                # Only successful gated reconstruction consumes the request.
-                # A classification, active-session deferral, or failed write
-                # must not downgrade the next attempt to metadata-only compute.
-                self._forced_rebuild.discard(session_id)
+                # Retain reconstruction intent until final metadata application.
+                # Partial storage commits remain safe inputs for another rebuild.
+                self._forced_rebuild.add(session_id)
                 if search.is_initialized():
                     phase = "search invalidation"
                     await asyncio.to_thread(search.delete_session_documents, session_id)
@@ -484,7 +492,7 @@ class CodexComputeCoordinator:
     # Event pumps
     # ------------------------------------------------------------------
 
-    async def _status_pump_loop(self, status_queue) -> None:
+    async def _status_pump_loop(self, status_queue, run_id) -> None:
         while not self.ctx.stop_event.is_set():
             try:
                 status = status_queue.get_nowait()
@@ -497,6 +505,8 @@ class CodexComputeCoordinator:
                 except TimeoutError:
                     pass
                 continue
+            if isinstance(status, dict):
+                status = {**status, "_run_id": run_id}
             await self.events.put(("worker", status))
 
     async def _applied_pump(self) -> None:
@@ -633,6 +643,8 @@ class CodexComputeCoordinator:
 
         path = self.migration_paths.pop(session_id, None)
         lease = self.migration_leases.pop(session_id, None)
+        if path is None and lease is None and fallback_path is None:
+            return
         gate = gate_for(session_id)
         if gate.locked() and (lease is gate or (lease is None and path is not None)):
             gate.release()
@@ -656,15 +668,20 @@ class CodexComputeCoordinator:
             logger.exception("Codex watcher replay failed for session %s", session_id)
 
     async def _record_failure(self, failure: FailedCandidate) -> None:
-        if failure.session_id in self.failed_this_run:
-            return
         self.failed_this_run.add(failure.session_id)
         self.failures[failure.session_id] = failure
+        if failure.session_id in self.migrated_history:
+            self._forced_rebuild.add(failure.session_id)
         self.deferred.discard(failure.session_id)
         self._release_lease(failure.session_id, replay=False, outcome='failed', error=failure.error)
         self._prepared.pop(failure.session_id, None)
+        self._prepared_rebuild_generation.pop(failure.session_id, None)
         self._record_outcome(failure.session_id, "unavailable" if failure.unavailable_reason else "failed")
-        await self._classify_initial(failure.session_id)
+        delay = min(self._retry_delays.get(failure.session_id, 0.5) * 2, 60.0)
+        self._retry_delays[failure.session_id] = delay
+        self._retry_at[failure.session_id] = time.monotonic() + delay
+        if failure.unavailable_reason:
+            await self._classify_initial(failure.session_id)
         logger.error(
             "Codex background compute failed: session=%s phase=%s error=%s%s",
             failure.session_id,
@@ -675,6 +692,9 @@ class CodexComputeCoordinator:
 
     async def _handle_worker_status(self, status: object) -> None:
         if not isinstance(status, dict):
+            return
+        run_id = status.get('_run_id', getattr(self.ctx, 'run_id', None))
+        if run_id in self._retired_run_ids or run_id != getattr(self.ctx, 'run_id', None):
             return
         if status.get('type') == 'transport_failed':
             raise RuntimeError(status.get('error') or 'compute transport interrupted')
@@ -692,6 +712,10 @@ class CodexComputeCoordinator:
             self.computed_not_applied.add(session_id)
 
     async def _handle_applied(self, signal: ComputeApplied) -> None:
+        if signal.run_id is not None and (
+            signal.run_id in self._retired_run_ids or signal.run_id != getattr(self.ctx, "run_id", None)
+        ):
+            return
         session_id = signal.session_id
         arrived_before_computed = session_id in self.submitted
         if arrived_before_computed:
@@ -712,6 +736,16 @@ class CodexComputeCoordinator:
             return
 
         self.deferred.discard(session_id)
+        self.failed_this_run.discard(session_id)
+        self.failures.pop(session_id, None)
+        self._retry_at.pop(session_id, None)
+        self._retry_delays.pop(session_id, None)
+        self._process_delay = 1.0
+        if migrated and signal.outcome == "applied" and (
+            self._prepared_rebuild_generation.get(session_id, 0) == self._rebuild_generation.get(session_id, 0)
+        ):
+            self._forced_rebuild.discard(session_id)
+        self._prepared_rebuild_generation.pop(session_id, None)
         self._release_lease(session_id)
         prepared = self._prepared.pop(session_id, None)
         kind = prepared.kind if prepared is not None else "compute"
@@ -778,8 +812,10 @@ class CodexComputeCoordinator:
 
         for session_id in take_rebuild_requests():
             self._forced_rebuild.add(session_id)
+            self._rebuild_generation[session_id] = self._rebuild_generation.get(session_id, 0) + 1
             self.failed_this_run.discard(session_id)
             self.failures.pop(session_id, None)
+            self._retry_at.pop(session_id, None)
             self.deferred.discard(session_id)
 
     # ------------------------------------------------------------------
@@ -795,12 +831,13 @@ class CodexComputeCoordinator:
             total_display=0,
             applied_queue=self.applied_queue,
         )
+        self._retired_run_ids.clear()
         self.ctx.run_id = run_id
         self._done_future = done_future
         def run_finished(future):
-            if not future.cancelled() and future.exception() is not None:
+            if not future.cancelled() and future.exception() is not None and not self.ctx.stop_event.is_set():
                 self.events.put_nowait(('worker', {
-                    'type': 'transport_failed', 'error': str(future.exception()),
+                    'type': 'transport_failed', 'error': str(future.exception()), '_run_id': run_id,
                 }))
         done_future.add_done_callback(run_finished)
         if self._queues_closed:
@@ -808,9 +845,9 @@ class CodexComputeCoordinator:
             self._queues_closed = False
         elif self.ctx.status_queue is None:
             self.ctx.status_queue = self._new_queues()[1]
-        start_compute_process(self.ctx)
-        self._status_pump = asyncio.create_task(self._status_pump_loop(self.ctx.status_queue))
         self.run_active = True
+        start_compute_process(self.ctx)
+        self._status_pump = asyncio.create_task(self._status_pump_loop(self.ctx.status_queue, run_id))
 
     async def _finish_run(self) -> None:
         """Stop the worker once nothing is queued, keeping the coordinator alive."""
@@ -823,6 +860,7 @@ class CodexComputeCoordinator:
             failed_count = await self._done_future
             if failed_count and not self.failures:
                 logger.error("Codex DB writer reported %d failed compute result(s)", failed_count)
+        self._retired_run_ids.add(self.ctx.run_id)
         self._done_future = None
         if self._status_pump is not None:
             self._status_pump.cancel()
@@ -833,6 +871,63 @@ class CodexComputeCoordinator:
         # which is the coordinator's own exit condition.
         await stop_compute_worker(self.ctx)
         self._queues_closed = True
+
+    async def _retire_run(self) -> None:
+        """Drain owned cleanup even when cancellation repeats."""
+        await self._drain_owned_cleanup(self._drain_run())
+
+    @staticmethod
+    async def _drain_owned_cleanup(cleanup: Awaitable[None]) -> None:
+        owned = asyncio.create_task(cleanup)
+        cancelled = False
+        while not owned.done():
+            try:
+                await asyncio.shield(owned)
+            except asyncio.CancelledError:
+                cancelled = True
+        owned.result()
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _drain_run(self) -> None:
+        """Fence and drain the old writer before releasing migration gates."""
+        run_id = getattr(self.ctx, "run_id", None)
+        if run_id is not None:
+            self._retired_run_ids.add(run_id)
+        self.run_active = False
+        if self._status_pump is not None:
+            self._status_pump.cancel()
+            with suppress(Exception, asyncio.CancelledError):
+                await self._status_pump
+            self._status_pump = None
+        delay = 1.0
+        while True:
+            try:
+                await retire_compute_run(self.ctx, self._done_future)
+                break
+            except Exception:
+                logger.exception("Codex run retirement failed; retaining old resources for retry")
+            if not await _wait_for_retry_delay(self.ctx.stop_event, delay):
+                # Shutdown still drains owned resources, but never starts a new run.
+                await retire_compute_run(self.ctx, self._done_future)
+                break
+            delay = min(delay * 2, 60.0)
+        self._clear_retired_run()
+
+    def _clear_retired_run(self) -> None:
+        self._done_future = None
+        self._queues_closed = True
+        self._forced_rebuild.update(self.migrated_history)
+        for session_id in set(self.migration_leases) | set(self.migration_paths):
+            self._release_lease(session_id, replay=False, outcome='failed', error='compute run retired')
+        self.submitted.clear()
+        self.computed_not_applied.clear()
+        self.applied_before_computed.clear()
+        self.worker_errors.clear()
+        self._prepared.clear()
+        self._prepared_rebuild_generation.clear()
+        self._started_at.clear()
+        self.in_flight = None
 
     @staticmethod
     def _new_queues():
@@ -845,9 +940,15 @@ class CodexComputeCoordinator:
 
     async def run(self) -> None:
         self._absorb_rebuild_requests()
-        initial_candidates = await _load_stale_candidates(
-            self.ctx.compute_version, forced_ids=frozenset(self._forced_rebuild),
-        )
+        async def load_initial(_ids):
+            self._absorb_rebuild_requests()
+            return await _load_stale_candidates(
+                self.ctx.compute_version, forced_ids=frozenset(self._forced_rebuild),
+            )
+        initial_candidates = await read_compute_state(load_initial, [], self.ctx.stop_event)
+        if initial_candidates is None or self.ctx.stop_event.is_set():
+            self.initial_done.set()
+            return
         await self._initialize_progress(initial_candidates)
         if initial_candidates:
             sources, self._legacy_ids = await asyncio.to_thread(self._classify_sources, initial_candidates)
@@ -876,108 +977,144 @@ class CodexComputeCoordinator:
 
         try:
             while not self.ctx.stop_event.is_set():
-                self._absorb_rebuild_requests()
-                candidates = await _load_stale_candidates(
-                    self.ctx.compute_version, forced_ids=frozenset(self._forced_rebuild),
-                )
-                stale_ids = {candidate.session_id for candidate in candidates}
-                for session_id in self.initial_ids - stale_ids:
-                    await self._classify_initial(session_id)
-
-                candidate = next((
-                    item
-                    for item in candidates
-                    if item.session_id not in self.submitted
-                    and item.session_id not in self.computed_not_applied
-                    and item.session_id not in self.failed_this_run
-                    and item.session_id not in self.deferred
-                ), None)
-
-                if self.in_flight is None and candidate is not None:
-                    if not self.run_active:
-                        self._start_run()
-                    prepared = await self.prepare_candidate(candidate)
-                    if isinstance(prepared, DeferredCandidate):
-                        self.deferred.add(prepared.session_id)
-                        if prepared.session_id not in self._logged_deferred:
-                            self._logged_deferred.add(prepared.session_id)
-                            self._record_outcome(
-                                prepared.session_id, None,
-                                log="deferred: " + (
-                                    "a TwiCC agent is running it" if prepared.reason == "active"
-                                    else "another Codex process holds its writer lock"
-                                ),
-                            )
-                        await self._classify_initial(prepared.session_id)
-                        continue
-                    if isinstance(prepared, FailedCandidate):
-                        await self._record_failure(prepared)
-                        continue
-
-                    if prepared.migration_lease is not None:
-                        self.migration_leases[prepared.session_id] = prepared.migration_lease
-                    if prepared.migrated_history:
-                        self.migrated_history.add(prepared.session_id)
-                    self._prepared[prepared.session_id] = prepared
-                    self.submitted.add(prepared.session_id)
-                    self.in_flight = prepared.session_id
-                    await self._submit_job(InitializeComputeStorageJob, prepared.session_id)
-                    self.ctx.command_queue.put_nowait({"session_id": prepared.session_id})
-                    continue
-
-                pending = bool(self.submitted or self.computed_not_applied)
-                if (
-                    self.run_active
-                    and candidate is None
-                    and not pending
-                    and self.in_flight is None
-                    and not self.deferred
-                ):
-                    # Nothing left to feed the worker and no busy session to
-                    # retry shortly: stop it, stay alive. Deferred sessions
-                    # keep the idle worker around rather than respawning it
-                    # at every 30-second retry.
-                    await self._finish_run()
-                    if not self.initial_done.is_set():
-                        # Every initial session was classified through the
-                        # normal paths; this is a belt-and-braces guard.
-                        self.initial_done.set()
-
-                event_type, payload = await self.events.get()
-                if event_type == "worker":
-                    await self._handle_worker_status(payload)
-                elif event_type == "applied" and isinstance(payload, ComputeApplied):
-                    await self._handle_applied(payload)
-                elif event_type == "wake":
-                    self.deferred.clear()
-        finally:
-            await self.runner.stop()
-            for task in self._pumps:
-                task.cancel()
-            for task in self._pumps:
-                with suppress(Exception, asyncio.CancelledError):
-                    await task
-            if self._status_pump is not None:
-                self._status_pump.cancel()
-                with suppress(Exception, asyncio.CancelledError):
-                    await self._status_pump
-            for session_id in set(self.migration_leases) | set(self.migration_paths):
-                self._release_lease(session_id, replay=False, outcome='cancelled')
-            for task in self._replays:
-                task.cancel()
-            if self._replays:
-                await asyncio.gather(*self._replays, return_exceptions=True)
-            await stop_background_task(self.ctx)
-            if not self.initial_done.is_set():
-                self.initial_done.set()
-            if self.failures:
-                for failure in self.failures.values():
-                    logger.error(
-                        "Codex migration failure summary: session=%s phase=%s error=%s",
-                        failure.session_id,
-                        failure.phase,
-                        failure.error,
+                try:
+                    self._absorb_rebuild_requests()
+                    candidates = await _load_stale_candidates(
+                        self.ctx.compute_version, forced_ids=frozenset(self._forced_rebuild),
                     )
+                    stale_ids = {candidate.session_id for candidate in candidates}
+                    for session_id in self.initial_ids - stale_ids:
+                        await self._classify_initial(session_id)
+
+                    candidates.sort(key=lambda item: item.session_id in self.failures)
+                    healthy_pending = (self.submitted | self.computed_not_applied) - self.failures.keys()
+                    candidate = next((
+                        item
+                        for item in candidates
+                        if item.session_id not in self.submitted
+                        and item.session_id not in self.computed_not_applied
+                        and self._retry_at.get(item.session_id, 0) <= time.monotonic()
+                        and not (item.session_id in self.failures and self.failures[item.session_id].unavailable_reason)
+                        and item.session_id not in self.deferred
+                        and not (item.session_id in self.failures and healthy_pending)
+                    ), None)
+
+                    if self.in_flight is None and candidate is not None:
+                        if not self.run_active:
+                            self._start_run()
+                        prepared = await self.prepare_candidate(candidate)
+                        if isinstance(prepared, DeferredCandidate):
+                            self.deferred.add(prepared.session_id)
+                            if prepared.session_id not in self._logged_deferred:
+                                self._logged_deferred.add(prepared.session_id)
+                                self._record_outcome(
+                                    prepared.session_id, None,
+                                    log="deferred: " + (
+                                        "a TwiCC agent is running it" if prepared.reason == "active"
+                                        else "another Codex process holds its writer lock"
+                                    ),
+                                )
+                            await self._classify_initial(prepared.session_id)
+                            continue
+                        if isinstance(prepared, FailedCandidate):
+                            await self._record_failure(prepared)
+                            continue
+
+                        if prepared.migration_lease is not None:
+                            self.migration_leases[prepared.session_id] = prepared.migration_lease
+                        if prepared.migrated_history:
+                            self.migrated_history.add(prepared.session_id)
+                        self._prepared[prepared.session_id] = prepared
+                        self._prepared_rebuild_generation[prepared.session_id] = self._rebuild_generation.get(
+                            prepared.session_id, 0,
+                        )
+                        self.submitted.add(prepared.session_id)
+                        self.in_flight = prepared.session_id
+                        try:
+                            await self._submit_job(InitializeComputeStorageJob, prepared.session_id)
+                        except Exception as error:
+                            self.submitted.discard(prepared.session_id)
+                            self.in_flight = None
+                            await self._record_failure(FailedCandidate(prepared.session_id, "initialize", str(error)))
+                            continue
+                        self.ctx.command_queue.put_nowait({"session_id": prepared.session_id})
+                        continue
+
+                    pending = bool(self.submitted or self.computed_not_applied)
+                    if (
+                        self.run_active
+                        and candidate is None
+                        and not pending
+                        and self.in_flight is None
+                        and not self.deferred
+                    ):
+                        # Nothing left to feed the worker and no busy session to
+                        # retry shortly: stop it, stay alive. Deferred sessions
+                        # keep the idle worker around rather than respawning it
+                        # at every 30-second retry.
+                        await self._finish_run()
+                        if not self.initial_done.is_set() and not self.failures:
+                            # Every initial session was classified through the
+                            # normal paths; this is a belt-and-braces guard.
+                            self.initial_done.set()
+
+                    delays = [max(0.01, ready - time.monotonic()) for sid, ready in self._retry_at.items()
+                              if sid in stale_ids and not self.failures[sid].unavailable_reason
+                              and sid not in self.submitted and sid not in self.computed_not_applied
+                              and sid not in self.deferred and not healthy_pending]
+                    try:
+                        event_type, payload = await asyncio.wait_for(self.events.get(), timeout=min(delays) if delays else None)
+                    except TimeoutError:
+                        continue
+                    if event_type == "worker":
+                        await self._handle_worker_status(payload)
+                    elif event_type == "applied" and isinstance(payload, ComputeApplied):
+                        await self._handle_applied(payload)
+                    elif event_type == "wake":
+                        self.deferred.clear()
+                except Exception:
+                    logger.exception("Codex compute run failed; retiring before recovery")
+                    faulty = self.in_flight
+                    await self._retire_run()
+                    if faulty is not None:
+                        await self._record_failure(FailedCandidate(faulty, "transport", "compute run interrupted"))
+                    if not await _wait_for_retry_delay(self.ctx.stop_event, self._process_delay):
+                        break
+                    self._process_delay = min(self._process_delay * 2, 60.0)
+        finally:
+            await self._drain_owned_cleanup(self._shutdown())
+
+    async def _shutdown(self) -> None:
+        """Drain provider cleanup before cancellation leaves the coordinator."""
+        await self.runner.stop()
+        for task in self._pumps:
+            task.cancel()
+        for task in self._pumps:
+            with suppress(Exception, asyncio.CancelledError):
+                await task
+        if self._status_pump is not None:
+            self._status_pump.cancel()
+            with suppress(Exception, asyncio.CancelledError):
+                await self._status_pump
+        if self._done_future is not None or self.run_active:
+            await self._retire_run()
+        for session_id in set(self.migration_leases) | set(self.migration_paths):
+            self._release_lease(session_id, replay=False, outcome='cancelled')
+        for task in self._replays:
+            task.cancel()
+        if self._replays:
+            await asyncio.gather(*self._replays, return_exceptions=True)
+        await stop_background_task(self.ctx)
+        if not self.initial_done.is_set():
+            self.initial_done.set()
+        if self.failures:
+            for failure in self.failures.values():
+                logger.error(
+                    "Codex migration failure summary: session=%s phase=%s error=%s",
+                    failure.session_id,
+                    failure.phase,
+                    failure.error,
+                )
 
 
 async def start_codex_background_compute_task(

@@ -1,0 +1,470 @@
+import asyncio
+from types import SimpleNamespace
+
+from twicc.providers.codex import background_compute
+from twicc.providers.codex.background_compute import CodexComputeCoordinator, FailedCandidate
+from twicc.providers.codex.migration_gate import gate_for
+from twicc.providers.db_writer import ComputeApplied
+
+
+import os
+import queue
+import contextlib
+from pathlib import Path
+
+import orjson
+import pytest
+from django.db import connections
+from twicc.core.enums import Provider
+from twicc.providers import background_compute_task as background, db_writer
+from twicc.providers.codex.background_compute import PreparedCandidate, CodexComputeCandidate
+from twicc.core.models import Session, SessionType
+from tests.test_background_compute_recovery import versions
+
+pytest_plugins = ["tests.test_background_compute_recovery"]
+
+
+def coordinator():
+    return CodexComputeCoordinator(SimpleNamespace(stop_event=asyncio.Event(), compute_version=2, run_id=2), asyncio.Event())
+
+
+def test_failed_initial_session_keeps_startup_pending():
+    async def run():
+        owner = coordinator()
+        owner.initial_ids = {'failed'}
+        owner._initial_total = 1
+        await owner._record_failure(FailedCandidate('failed', 'initialize', 'disk full'))
+        assert not owner.initial_done.is_set()
+        assert 'failed' not in owner.initial_classified
+        assert owner._retry_at['failed'] > background_compute.time.monotonic()
+    asyncio.run(run())
+
+
+def test_old_apply_cannot_release_new_migration():
+    async def run():
+        owner = coordinator()
+        lease = gate_for('late-apply')
+        await lease.acquire()
+        owner.migration_leases['late-apply'] = lease
+        owner.submitted.add('late-apply')
+        try:
+            await owner._handle_applied(ComputeApplied('late-apply', 'applied', run_id=1))
+            assert lease.locked()
+            assert owner.submitted == {'late-apply'}
+            assert not owner.stats
+        finally:
+            owner._release_lease('late-apply', replay=False, outcome='cancelled')
+    asyncio.run(run())
+
+
+def test_old_worker_status_cannot_clear_new_submission():
+    async def run():
+        owner = coordinator()
+        owner.in_flight = 'session'
+        owner.submitted.add('session')
+        await owner._handle_worker_status({'type': 'computed', 'session_id': 'session', '_run_id': 1})
+        assert owner.in_flight == 'session'
+        assert owner.submitted == {'session'}
+    asyncio.run(run())
+
+
+def test_retirement_fences_writer_before_releasing_migration(monkeypatch):
+    async def run():
+        owner = coordinator()
+        owner.run_active = True
+        lease = gate_for('retired')
+        await lease.acquire()
+        owner.migration_leases['retired'] = lease
+        owner.migrated_history.add('retired')
+        owner.submitted.add('retired')
+        completion = asyncio.get_running_loop().create_future()
+        owner._done_future = completion
+        entered, drain = asyncio.Event(), asyncio.Event()
+        async def retire(ctx, future):
+            assert future is completion
+            entered.set()
+            await drain.wait()
+            future.cancel()
+        monkeypatch.setattr(background_compute, 'retire_compute_run', retire)
+        task = asyncio.create_task(owner._retire_run())
+        await entered.wait()
+        assert lease.locked()
+        assert not owner.run_active
+        drain.set()
+        await task
+        assert not lease.locked()
+        assert owner._forced_rebuild == {'retired'}
+        assert not owner.submitted
+        assert completion.cancelled()
+    asyncio.run(run())
+
+
+class CodexRecoveryCompute:
+    provider = Provider.CODEX
+
+    def __init__(self):
+        connections['default'].settings_dict = {
+            **connections['default'].settings_dict, 'NAME': os.environ['RECOVERY_TEST_DB'],
+        }
+
+    def enable_batch_queue_cache(self):
+        pass
+
+    def compute_session_metadata(self, session_id, result_queue, run_id):
+        if os.environ.get('RECOVERY_TEST_CRASH') == session_id:
+            os._exit(42)
+        session = Session.objects.get(pk=session_id)
+        result_queue.put(orjson.dumps({
+            'type': 'session_complete', 'provider': 'codex', 'run_id': run_id,
+            'session_id': session_id, 'observed_last_offset': session.last_offset,
+            'observed_incarnation': session.storage_incarnation, 'observed_epoch': session.history_epoch,
+            'observed_upper_line': session.last_line, 'history_facts': [],
+            'session_fields': {'compute_version': 123},
+        }))
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('failure', ['initialize', 'apply', 'process'])
+def test_real_codex_pipeline_recovers_without_restart(recovery_runtime, monkeypatch, failure):
+    path, progress = recovery_runtime
+    from twicc.core.content_storage import extraction
+    from twicc.providers.compute_base import BaseSessionCompute
+    failed = False
+    original_initialize = extraction.initialize_compute_session
+    attempts = []
+
+    def initialize(sid):
+        nonlocal failed
+        attempts.append((sid, Session.objects.get(pk=sid).compute_version))
+        if failure == 'initialize' and sid == 'faulty' and not failed:
+            failed = True
+            raise RuntimeError('one initialization failure')
+        return original_initialize(sid)
+
+    original_apply = BaseSessionCompute._apply_session_complete_final
+
+    def apply(message):
+        nonlocal failed
+        if failure == 'apply' and message['session_id'] == 'faulty' and not failed:
+            failed = True
+            raise RuntimeError('one final apply failure')
+        return original_apply(message)
+
+    monkeypatch.setattr(extraction, 'initialize_compute_session', initialize)
+    monkeypatch.setattr(BaseSessionCompute, '_apply_session_complete_final', staticmethod(apply))
+    monkeypatch.setattr(background_compute, 'sync_to_async', background.sync_to_async)
+    monkeypatch.setattr(background_compute, 'load_project_directories', lambda: None)
+    monkeypatch.setattr(background_compute, 'load_project_git_roots', lambda: None)
+
+    async def broadcast(*args, **kwargs):
+        progress.append((args[1:3], kwargs.get('completed', False)))
+    monkeypatch.setattr(background_compute, 'broadcast_startup_progress', broadcast)
+    if failure == 'process':
+        monkeypatch.setenv('RECOVERY_TEST_CRASH', 'faulty')
+
+    async def run():
+        ctx = background.ComputeContext(Provider.CODEX, 123, f'{__name__}:CodexRecoveryCompute')
+        owner = CodexComputeCoordinator(ctx, asyncio.Event())
+        releases = []
+        owner.on_migration_released = releases.append
+        async def load(_version, *, forced_ids=frozenset()):
+            current = versions(path)
+            return [CodexComputeCandidate(sid, Path('/test') / sid, SessionType.SESSION, 10)
+                    for sid in ['faulty', 'healthy'] if current[sid] != 123 or sid in forced_ids]
+        monkeypatch.setattr(background_compute, '_load_stale_candidates', load)
+        async def prepare(candidate):
+            sid = candidate.session_id
+            if sid != 'faulty':
+                return PreparedCandidate(sid, None, False)
+            lease = gate_for(sid)
+            await lease.acquire()
+            owner.migration_paths[sid] = candidate.file_path
+            owner._forced_rebuild.add(sid)
+            return PreparedCandidate(sid, lease, True, kind='replaced')
+        owner.prepare_candidate = prepare
+        db_writer.start_db_writer()
+        task = asyncio.create_task(owner.run())
+        try:
+            async with asyncio.timeout(15):
+                while versions(path)['healthy'] != 123:
+                    if task.done():
+                        await task
+                    await asyncio.sleep(.02)
+            if failure == 'process':
+                assert versions(path)['faulty'] != 123
+                assert not owner.initial_done.is_set()
+                assert not any(done for _, done in progress)
+                monkeypatch.delenv('RECOVERY_TEST_CRASH')
+            async with asyncio.timeout(15):
+                while not owner.initial_done.is_set():
+                    if task.done():
+                        await task
+                    await asyncio.sleep(.02)
+            assert versions(path) == {'faulty': 123, 'healthy': 123}
+            assert not task.done() and not ctx.stop_event.is_set()
+            assert not owner._forced_rebuild
+            assert not gate_for('faulty').locked()
+            assert [release.outcome for release in releases if release.session_id == 'faulty'][-1] == 'ready'
+            assert not any(sid == 'healthy' and version == 123 for sid, version in attempts)
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            await db_writer.stop_db_writer()
+    asyncio.run(run())
+
+
+def test_cancellation_during_retirement_drains_lease_cleanup(monkeypatch):
+    async def run():
+        owner = coordinator()
+        owner.run_active = True
+        lease = gate_for('cancel-retirement')
+        await lease.acquire()
+        owner.migration_leases['cancel-retirement'] = lease
+        entered, drain = asyncio.Event(), asyncio.Event()
+        async def retire(ctx, future):
+            entered.set()
+            try:
+                await drain.wait()
+            except asyncio.CancelledError:
+                await drain.wait()
+                raise
+        monkeypatch.setattr(background_compute, 'retire_compute_run', retire)
+        task = asyncio.create_task(owner._retire_run())
+        await entered.wait()
+        task.cancel()
+        await asyncio.sleep(0)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        assert lease.locked()
+        drain.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not lease.locked()
+        assert not owner.run_active
+    asyncio.run(run())
+
+
+def test_initial_candidate_read_recovers_and_stop_does_not_start_worker(monkeypatch):
+    async def run():
+        owner = coordinator()
+        reads = 0
+        async def load(*args, **kwargs):
+            nonlocal reads
+            reads += 1
+            if reads == 1:
+                raise RuntimeError('temporary read failure')
+            owner.ctx.stop_event.set()
+            return []
+        async def broadcast(*args, **kwargs):
+            pass
+        monkeypatch.setattr(background_compute, '_load_stale_candidates', load)
+        monkeypatch.setattr(background_compute, 'broadcast_startup_progress', broadcast)
+        monkeypatch.setattr(background_compute, 'stop_background_task', lambda ctx: asyncio.sleep(0))
+        await owner.run()
+        assert reads == 2
+        assert not owner.run_active
+    asyncio.run(run())
+
+
+def test_failure_cooldown_is_bounded_and_keeps_session_eligible():
+    async def run():
+        owner = coordinator()
+        for _ in range(10):
+            before = background_compute.time.monotonic()
+            await owner._record_failure(FailedCandidate('bad', 'compute', 'broken'))
+            after = background_compute.time.monotonic()
+            assert 0 < owner._retry_at['bad'] - before <= 60 + after - before
+        assert owner._retry_delays['bad'] == 60
+        assert not owner.failures['bad'].unavailable_reason
+        assert not owner.migration_leases
+    asyncio.run(run())
+
+
+def test_old_completion_callback_keeps_new_run_state(monkeypatch):
+    async def run():
+        owner = coordinator()
+        owner.ctx.command_queue = queue.Queue()
+        owner.ctx.status_queue = queue.Queue()
+        first, second = (asyncio.get_running_loop().create_future() for _ in range(2))
+        completions = iter([(1, first), (2, second)])
+        monkeypatch.setattr(background_compute, 'arm_compute_completion', lambda *a, **kw: next(completions))
+        monkeypatch.setattr(background_compute, 'start_compute_process', lambda ctx: None)
+        owner._start_run()
+        owner._status_pump.cancel()
+        await asyncio.gather(owner._status_pump, return_exceptions=True)
+        owner._retired_run_ids.add(1)
+        owner._start_run()
+        owner.submitted.add('new')
+        owner.in_flight = 'new'
+        first.set_exception(RuntimeError('late old transport failure'))
+        await asyncio.sleep(0)
+        event_type, payload = await owner.events.get()
+        assert event_type == 'worker'
+        await owner._handle_worker_status(payload)
+        assert owner.in_flight == 'new' and owner.submitted == {'new'}
+        assert owner._done_future is second and owner.run_active
+        owner._status_pump.cancel()
+        await asyncio.gather(owner._status_pump, return_exceptions=True)
+        second.cancel()
+    asyncio.run(run())
+
+
+def test_new_rebuild_request_survives_older_migrated_apply():
+    async def run():
+        owner = coordinator()
+        owner.migrated_history.add('rebuild')
+        owner._forced_rebuild.add('rebuild')
+        owner._rebuild_generation['rebuild'] = 2
+        owner._prepared_rebuild_generation['rebuild'] = 1
+        await owner._handle_applied(ComputeApplied('rebuild', 'applied', run_id=2))
+        assert 'rebuild' in owner._forced_rebuild
+    asyncio.run(run())
+
+
+def test_failed_migration_emits_one_release():
+    async def run():
+        owner = coordinator()
+        releases = []
+        owner.on_migration_released = releases.append
+        lease = gate_for('one-release')
+        await lease.acquire()
+        owner.migration_leases['one-release'] = lease
+        owner.migration_paths['one-release'] = Path('/test/one-release')
+        owner._release_lease('one-release', replay=False, outcome='failed')
+        await owner._record_failure(FailedCandidate('one-release', 'initialize', 'disk full'))
+        assert len(releases) == 1
+        assert not lease.locked()
+    asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_other_provider_and_foreground_write_finish_while_codex_cools(recovery_runtime, monkeypatch):
+    import sqlite3
+    from contextlib import closing
+    from twicc.core.content_storage import extraction
+    path, _progress = recovery_runtime
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("UPDATE core_session SET provider='codex' WHERE id='faulty'")
+        db.commit()
+    original = extraction.initialize_compute_session
+    attempts = 0
+    def initialize(sid):
+        nonlocal attempts
+        if sid == 'faulty':
+            attempts += 1
+            raise RuntimeError('persistent faulty initialization')
+        return original(sid)
+    monkeypatch.setattr(extraction, 'initialize_compute_session', initialize)
+    monkeypatch.setattr(background_compute, 'sync_to_async', background.sync_to_async)
+    monkeypatch.setattr(background_compute, 'load_project_directories', lambda: None)
+    monkeypatch.setattr(background_compute, 'load_project_git_roots', lambda: None)
+    monkeypatch.setattr(background_compute, 'broadcast_startup_progress', lambda *a, **kw: asyncio.sleep(0))
+    async def load(*args, **kwargs):
+        return [CodexComputeCandidate('faulty', Path('/test/faulty'), SessionType.SESSION, 10)]
+    monkeypatch.setattr(background_compute, '_load_stale_candidates', load)
+    async def run():
+        codex_ctx = background.ComputeContext(Provider.CODEX, 123, f'{__name__}:CodexRecoveryCompute')
+        owner = CodexComputeCoordinator(codex_ctx, asyncio.Event())
+        owner.prepare_candidate = lambda candidate: _prepared(candidate.session_id)
+        claude_ctx = background.ComputeContext(Provider.CLAUDE_CODE, 123,
+            'tests.test_background_compute_recovery:RecoveryCompute')
+        db_writer.start_db_writer()
+        codex_task = asyncio.create_task(owner.run())
+        claude_task = None
+        try:
+            async with asyncio.timeout(5):
+                while 'faulty' not in owner._retry_at:
+                    await asyncio.sleep(.01)
+            assert not gate_for('faulty').locked()
+            claude_task = asyncio.create_task(background.start_background_compute_task(claude_ctx))
+            future = asyncio.get_running_loop().create_future()
+            job = db_writer._RetireSessionsJob(None, {'healthy': {'title': 'foreground'}}, future)
+            assert await asyncio.wait_for(db_writer.submit_async_job(job), 2) == 1
+            await asyncio.wait_for(claude_task, 10)
+            assert versions(path)['healthy'] == 123
+            with closing(sqlite3.connect(path)) as db:
+                assert db.execute("SELECT title FROM core_session WHERE id='healthy'").fetchone() == ('foreground',)
+            assert not codex_task.done() and not owner.initial_done.is_set()
+            assert 1 <= attempts <= 5
+        finally:
+            codex_task.cancel()
+            if claude_task is not None:
+                claude_task.cancel()
+            await asyncio.gather(codex_task, *([claude_task] if claude_task else []), return_exceptions=True)
+            await background.retire_compute_run(claude_ctx)
+            await db_writer.stop_db_writer()
+    asyncio.run(run())
+
+
+async def _prepared(sid):
+    return PreparedCandidate(sid, None, False)
+
+
+def test_failed_anchored_migration_keeps_reconstruction_intent():
+    async def run():
+        owner = coordinator()
+        owner.migrated_history.add('anchored')
+        await owner._handle_applied(ComputeApplied('anchored', 'failed', 'apply failed', run_id=2))
+        assert 'anchored' in owner._forced_rebuild
+    asyncio.run(run())
+
+
+def test_repeated_cancellation_drains_coordinator_shutdown(monkeypatch):
+    async def run():
+        owner = coordinator()
+        entered, drain, stopped = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        async def stop_runner():
+            entered.set()
+            await drain.wait()
+        owner.runner = SimpleNamespace(stop=stop_runner)
+        monkeypatch.setattr(background_compute, '_load_stale_candidates', lambda *a, **kw: _empty_candidates())
+        monkeypatch.setattr(background_compute, 'broadcast_startup_progress', lambda *a, **kw: asyncio.sleep(0))
+        async def stop_context(ctx):
+            stopped.set()
+        monkeypatch.setattr(background_compute, 'stop_background_task', stop_context)
+        task = asyncio.create_task(owner.run())
+        await owner.initial_done.wait()
+        task.cancel()
+        await entered.wait()
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        drain.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert stopped.is_set()
+        assert all(pump.done() for pump in owner._pumps)
+    asyncio.run(run())
+
+
+async def _empty_candidates():
+    return []
+
+
+def test_retirement_failure_retries_before_releasing_old_lease(monkeypatch):
+    async def run():
+        owner = coordinator()
+        lease = gate_for('retire-retry')
+        await lease.acquire()
+        owner.migration_leases['retire-retry'] = lease
+        attempts, delays = [], []
+        async def retire(ctx, future):
+            attempts.append(lease.locked())
+            if len(attempts) == 1:
+                raise RuntimeError('temporary abandonment failure')
+        async def wait(stop, delay):
+            delays.append(delay)
+            assert lease.locked()
+            return True
+        monkeypatch.setattr(background_compute, 'retire_compute_run', retire)
+        monkeypatch.setattr(background_compute, '_wait_for_retry_delay', wait)
+        try:
+            await owner._retire_run()
+            assert attempts == [True, True]
+            assert delays == [1.0]
+            assert not lease.locked()
+        finally:
+            owner._release_lease('retire-retry', replay=False, outcome='cancelled')
+    asyncio.run(run())

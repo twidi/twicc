@@ -253,6 +253,7 @@ class ComputeApplied(NamedTuple):
     session_id: str
     outcome: Literal["applied", "superseded", "missing", "failed"]
     error: str | None = None
+    run_id: int | None = None
 
 
 # =============================================================================
@@ -2223,7 +2224,7 @@ async def _finish_pending_compute(pending, *, notify=True):
                 if pending.result.outcome == 'failed':
                     state.failed_count += 1
                     if state.applied_queue is not None:
-                        state.applied_queue.put_nowait(ComputeApplied(pending.message['session_id'], 'failed', pending.error))
+                        state.applied_queue.put_nowait(ComputeApplied(pending.message['session_id'], 'failed', pending.error, state.run_id))
                 else:
                     await _complete_compute_result(pending.message, pending.result, state,
                                                    pending.received_at, pending.apply_started)
@@ -2643,7 +2644,7 @@ async def _process_compute_message(msg: dict) -> None:
             state.failed_count += 1
             session_id = msg.get("session_id")
             if state.applied_queue is not None and isinstance(session_id, str):
-                state.applied_queue.put_nowait(ComputeApplied(session_id, "failed", error))
+                state.applied_queue.put_nowait(ComputeApplied(session_id, "failed", error, state.run_id))
         return
 
     if msg_type != "session_complete":
@@ -2697,7 +2698,7 @@ async def _process_compute_message(msg: dict) -> None:
         logger.exception("Error applying session_complete")
         state.failed_count += 1
         if state.applied_queue is not None:
-            state.applied_queue.put_nowait(ComputeApplied(msg["session_id"], "failed", str(e)))
+            state.applied_queue.put_nowait(ComputeApplied(msg["session_id"], "failed", str(e), state.run_id))
         return
 
     await _complete_compute_result(msg, result, state, received_at, apply_started)
@@ -2722,7 +2723,7 @@ async def _complete_compute_result(msg, result, state, received_at, apply_starte
         line_count, len(msg.get('history_facts', [])),
     )
     if state.applied_queue is not None:
-        state.applied_queue.put_nowait(ComputeApplied(msg["session_id"], result.outcome))
+        state.applied_queue.put_nowait(ComputeApplied(msg["session_id"], result.outcome, run_id=state.run_id))
     if result.outcome != "applied":
         return
 

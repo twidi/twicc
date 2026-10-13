@@ -38,7 +38,7 @@ def _run_compute_message(monkeypatch, outcome: str):
                 "run_id": run_id,
                 "session_id": "session-1",
             })
-            return applied_queue.get_nowait()
+            return applied_queue.get_nowait(), run_id
         finally:
             db_writer._compute_states.pop(run_id, None)
             db_writer._compute_done_events.pop(run_id, None)
@@ -49,9 +49,9 @@ def _run_compute_message(monkeypatch, outcome: str):
 
 @pytest.mark.parametrize("outcome", ["superseded", "missing"])
 def test_db_writer_emits_non_applied_compute_outcomes(monkeypatch, outcome):
-    signal = _run_compute_message(monkeypatch, outcome)
+    signal, run_id = _run_compute_message(monkeypatch, outcome)
 
-    assert signal == db_writer.ComputeApplied("session-1", outcome)
+    assert signal == db_writer.ComputeApplied("session-1", outcome, run_id=run_id)
 
 
 def test_db_writer_emits_apply_exception(monkeypatch):
@@ -76,15 +76,15 @@ def test_db_writer_emits_apply_exception(monkeypatch):
                 "run_id": run_id,
                 "session_id": "session-2",
             })
-            return applied_queue.get_nowait()
+            return applied_queue.get_nowait(), run_id
         finally:
             db_writer._compute_states.pop(run_id, None)
             db_writer._compute_done_events.pop(run_id, None)
             await db_writer.stop_compute_executor()
 
-    signal = asyncio.run(scenario())
+    signal, run_id = asyncio.run(scenario())
 
-    assert signal == db_writer.ComputeApplied("session-2", "failed", "apply failed")
+    assert signal == db_writer.ComputeApplied("session-2", "failed", "apply failed", run_id)
 
 
 def test_db_writer_emits_worker_error(monkeypatch):
@@ -104,14 +104,14 @@ def test_db_writer_emits_worker_error(monkeypatch):
                 "session_id": "session-3",
                 "error": "worker failed",
             })
-            return applied_queue.get_nowait()
+            return applied_queue.get_nowait(), run_id
         finally:
             db_writer._compute_states.pop(run_id, None)
             db_writer._compute_done_events.pop(run_id, None)
 
-    signal = asyncio.run(scenario())
+    signal, run_id = asyncio.run(scenario())
 
-    assert signal == db_writer.ComputeApplied("session-3", "failed", "worker failed")
+    assert signal == db_writer.ComputeApplied("session-3", "failed", "worker failed", run_id)
 
 
 @pytest.mark.django_db(transaction=True)
@@ -139,13 +139,13 @@ def test_invalid_final_facts_emit_failure_without_publishing_version():
                     "compute_version": get_provider_helpers(Provider.CODEX).current_compute_version,
                 },
             })
-            return applied_queue.get_nowait()
+            return applied_queue.get_nowait(), run_id
         finally:
             db_writer._compute_states.pop(run_id, None)
             db_writer._compute_done_events.pop(run_id, None)
             await db_writer.stop_compute_executor()
 
-    signal = asyncio.run(scenario())
+    signal, run_id = asyncio.run(scenario())
 
     session.refresh_from_db()
     assert signal.session_id == session.id
