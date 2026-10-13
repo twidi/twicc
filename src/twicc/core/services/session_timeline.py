@@ -143,26 +143,30 @@ def record_session_created(session: Session, *, origin: str) -> TimelineEvent | 
     """
     from twicc.providers.helpers import AgentSettings
 
-    now = timezone.now()
-    common = dict(session_id=session.id, project_id=session.project_id, occurred_at=now)
-    settings = None
-    if origin == "twicc":
-        settings = {
-            name: value for name, value in AgentSettings.from_session(session)._asdict().items()
-            if value is not None
-        }
-    created = record_event_sync(
-        TimelineKind.SESSION_CREATED, actor=TimelineActor.SYSTEM,
-        data={"origin": origin, "provider": session.provider, "settings": settings,
-              "spawned_by": session.spawned_by_id}, **common,
-    )
-    if created is None:
+    try:
+        now = timezone.now()
+        common = dict(session_id=session.id, project_id=session.project_id, occurred_at=now)
+        settings = None
+        if origin == "twicc":
+            settings = {
+                name: value for name, value in AgentSettings.from_session(session)._asdict().items()
+                if value is not None
+            }
+        created = record_event_sync(
+            TimelineKind.SESSION_CREATED, actor=TimelineActor.SYSTEM,
+            data={"origin": origin, "provider": session.provider, "settings": settings,
+                  "spawned_by": session.spawned_by_id}, **common,
+        )
+        if created is None:
+            return None
+        if session.hidden:
+            record_event_sync(TimelineKind.HIDDEN_STARTED, actor=TimelineActor.USER, caused_by=created, **common)
+        if session.mute_on_user_turn:
+            record_event_sync(TimelineKind.MUTED_STARTED, actor=TimelineActor.USER, caused_by=created, **common)
+        return created
+    except Exception:
+        logger.exception("Timeline creation events could not be written for session %s", session.id)
         return None
-    if session.hidden:
-        record_event_sync(TimelineKind.HIDDEN_STARTED, actor=TimelineActor.USER, caused_by=created, **common)
-    if session.mute_on_user_turn:
-        record_event_sync(TimelineKind.MUTED_STARTED, actor=TimelineActor.USER, caused_by=created, **common)
-    return created
 
 
 def record_title_change(session_id: str, title: str, *, source: str, old: str | None = None) -> None:
@@ -173,11 +177,14 @@ def record_title_change(session_id: str, title: str, *, source: str, old: str | 
     Subagent sessions get no event (decision D2): the compute fills titles for
     every session it processes, subagents included.
     """
-    row = Session.objects.filter(id=session_id).values_list("project_id", "type").first()
-    if row is None or row[1] == SessionType.SUBAGENT:
-        return
-    record_event_sync(
-        TimelineKind.TITLE_CHANGED, session_id=session_id, project_id=row[0],
-        actor=TimelineActor.USER if source == "user" else TimelineActor.AGENT,
-        data={"source": source, "new": title, "old": old},
-    )
+    try:
+        row = Session.objects.filter(id=session_id).values_list("project_id", "type").first()
+        if row is None or row[1] == SessionType.SUBAGENT:
+            return
+        record_event_sync(
+            TimelineKind.TITLE_CHANGED, session_id=session_id, project_id=row[0],
+            actor=TimelineActor.USER if source == "user" else TimelineActor.AGENT,
+            data={"source": source, "new": title, "old": old},
+        )
+    except Exception:
+        logger.exception("Timeline title change could not be written for session %s", session_id)

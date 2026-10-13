@@ -185,15 +185,18 @@ def record_settings_change(session_id: str, before: dict | None, updates: dict, 
 
     ``before`` is the row's values for ``bundle_fields(updates)`` read before the update.
     """
-    if not before:
-        return
-    changes = {name: [before[name], updates[name]] for name in before if before[name] != updates[name]}
-    if not changes:
-        return
-    record_event_sync(
-        TimelineKind.SETTINGS_CHANGED, session_id=session_id, project_id=project_id_of(session_id),
-        actor=actor, reason=reason, data={"changes": changes},
-    )
+    try:
+        if not before:
+            return
+        changes = {name: [before[name], updates[name]] for name in before if before[name] != updates[name]}
+        if not changes:
+            return
+        record_event_sync(
+            TimelineKind.SETTINGS_CHANGED, session_id=session_id, project_id=project_id_of(session_id),
+            actor=actor, reason=reason, data={"changes": changes},
+        )
+    except Exception:
+        logger.exception("Timeline settings change could not be written for session %s", session_id)
 
 
 @transaction.atomic

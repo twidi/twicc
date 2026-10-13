@@ -23,5 +23,5 @@ def run_with_writer(factory):
 def kinds(session_id):
     """Kinds recorded for ``session_id``, in order."""
     return list(
-        TimelineEvent.objects.filter(session_id=session_id).order_by("occurred_at", "id").values_list("kind", flat=True)
+        TimelineEvent.objects.filter(session_id=session_id).order_by("id").values_list("kind", flat=True)
     )

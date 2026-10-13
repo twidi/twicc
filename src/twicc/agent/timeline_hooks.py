@@ -112,7 +112,7 @@ def record_process_ended(agent, prev: ProcessSnapshot | None) -> None:
     ``provider``, ``cause``, ``twicc_pid`` and ``hybrid`` of the row are inherited
     from ``process.started`` by the recording service.
     """
-    if prev is None or not _enabled(agent):
+    if prev is None or prev.state == AgentState.DEAD.value or not _enabled(agent):
         return
     now = timezone.now()
     specs = process_transition_events(

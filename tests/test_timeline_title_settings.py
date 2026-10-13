@@ -115,10 +115,10 @@ def test_set_mode_suggestion_records_a_user_settings_change_once(project):
 
 def test_hybrid_switch_resets_claude_in_chrome_as_system(project):
     make(project, claude_in_chrome=True)
-    persist_session_settings("s1", {"claude_in_chrome": False}, actor="system", reason="hybrid_switch")
+    persist_session_settings("s1", {"claude_in_chrome": False}, actor="system", reason="switch-hybrid")
     row = TimelineEvent.objects.get(session_id="s1")
     assert row.data == {"changes": {"claude_in_chrome": [True, False]}}
-    assert row.actor == "system" and row.reason == "hybrid_switch"
+    assert row.actor == "system" and row.reason == "switch-hybrid"
 
 
 def test_automatic_title_check_records_source_auto(env, session):  # noqa: F811
@@ -156,3 +156,21 @@ def test_pending_title_flush_records_source_user(project):
     run_with_writer(lambda: BaseAgentManager._try_flush_pending_title(
         manager, SimpleNamespace(session_id="s1", provider="codex"), "Chosen"))
     assert TimelineEvent.objects.get(session_id="s1").data == {"source": "user", "new": "Chosen", "old": None}
+
+
+def test_record_title_change_never_raises(project, monkeypatch):
+    from twicc.core.services.session_timeline import record_title_change
+
+    make(project)
+    monkeypatch.setattr("twicc.core.services.session_timeline.Session.objects",
+                        type("M", (), {"filter": staticmethod(lambda **k: (_ for _ in ()).throw(RuntimeError("db")))})())
+    assert record_title_change("s1", "New", source="user") is None
+
+
+def test_settings_write_survives_a_failing_timeline_lookup(project, monkeypatch):
+    make(project, permission_mode="default")
+    monkeypatch.setattr("twicc.core.services.session_update.project_id_of",
+                        lambda sid: (_ for _ in ()).throw(RuntimeError("db")))
+    persist_session_settings("s1", {"permission_mode": "acceptEdits"})
+    assert Session.objects.get(id="s1").permission_mode == "acceptEdits"
+    assert kinds("s1") == []

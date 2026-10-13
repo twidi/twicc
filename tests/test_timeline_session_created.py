@@ -100,3 +100,12 @@ def test_deleting_sessions_purges_their_timeline_rows(project):
         record_session_created(Session.objects.get(id=sid), origin="sync")
     _apply_delete_sessions_payload(DeleteSessionsPayload(provider=Provider.CODEX, session_ids=["gone"]))
     assert kinds("gone") == [] and kinds("kept") == ["session.created"]
+
+
+def test_a_failing_settings_read_never_blocks_session_creation(project, monkeypatch):
+    monkeypatch.setattr("twicc.providers.helpers.AgentSettings.from_session",
+                        classmethod(lambda cls, session: (_ for _ in ()).throw(RuntimeError("boom"))))
+    session = Session.objects.create(id="boom", file_path="boom.jsonl", project=project, provider="codex")
+    assert record_session_created(session, origin="twicc") is None
+    assert Session.objects.filter(id="boom").exists()
+    assert kinds("boom") == []

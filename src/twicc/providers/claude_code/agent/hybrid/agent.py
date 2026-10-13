@@ -365,7 +365,7 @@ class HybridClaudeAgent(BaseAgent):
         await run_under_db_write_lock(
             lambda: sync_to_async(persist_session_settings)(
                 self.session_id, {"claude_in_chrome": False},
-                actor=TimelineActor.SYSTEM, reason="hybrid_switch",
+                actor=TimelineActor.SYSTEM, reason="switch-hybrid",
             )
         )
         session = await sync_to_async(Session.objects.select_related("project").filter(id=self.session_id).first)()

@@ -200,3 +200,13 @@ def test_an_agent_without_project_id_still_records(project):
     del agent.project_id
     transition(agent, AgentState.ASSISTANT_TURN)
     assert TimelineEvent.objects.get(session_id="s1").project_id is None
+
+
+def test_a_second_death_notification_with_a_kept_row_writes_no_second_process_ended(project):
+    agent = make_agent(project)
+    agent.kill_reason = "manual"
+    transition(agent, AgentState.DEAD)
+    from twicc.agent.timeline_hooks import record_process_ended
+
+    record_process_ended(agent, SimpleNamespace(state=AgentState.DEAD.value, awaiting=False, work=None))
+    assert kinds("s1").count("process.ended") == 1
