@@ -727,6 +727,11 @@ class BaseSessionsWatcher:
         session = Session.objects.create(**kwargs)
         initialize_ingestion_session(session, invalidate=True, invalidate_mappings=True)
         apply_contribution_changes([], [], before_sessions=[], after_sessions=[session_contribution(session)])
+        from twicc.core.models import ProcessRun
+        from twicc.core.services.session_timeline import record_session_created
+
+        origin = "twicc" if ProcessRun.objects.filter(session_id=session.id).exists() else "external"
+        record_session_created(session, origin=origin)
         return session
 
     # ------------------------------------------------------------------

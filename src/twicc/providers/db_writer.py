@@ -3056,11 +3056,12 @@ def _apply_create_session_payload(
     FK.
     """
     from twicc.providers.live_aggregates import apply_contribution_changes, session_contribution
-    from twicc.core.models import Session, SessionItem
+    from twicc.core.models import Session, SessionItem, SessionType
     from twicc.core.content_storage.ingestion import (
         initialize_ingestion_session, insert_ingested_items, prepare_ingestion_contents,
     )
     from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION
+    from twicc.core.services.session_timeline import record_session_created
     from twicc.projects import register_project_db_only
 
     if prepared is _UNPREPARED_INGESTION:
@@ -3086,6 +3087,9 @@ def _apply_create_session_payload(
         if is_new:
             payload.session.content_storage_version = CONTENT_STORAGE_VERSION
             payload.session.save()
+            # Only the writer that creates the row records its creation.
+            if payload.session.type == SessionType.SESSION:
+                record_session_created(payload.session, origin="sync")
         else:
             payload.session.refresh_from_db()
         initialize_ingestion_session(payload.session, invalidate=is_new, invalidate_mappings=is_new)
@@ -3205,7 +3209,7 @@ def _deletion_ids(payload):
 def _apply_delete_sessions_payload(payload: DeleteSessionsPayload) -> list[str]:
     """Delete sources and enqueue surviving native roots in one transaction."""
     from twicc.providers.live_aggregates import apply_contribution_changes, session_contribution
-    from twicc.core.models import Session
+    from twicc.core.models import Session, TimelineEvent
     from twicc.core.content_storage.ingestion import initialize_ingestion_session
     from twicc.core.content_storage.references import remove_history_memberships
     from twicc.projects import update_project_metadata
@@ -3225,6 +3229,7 @@ def _apply_delete_sessions_payload(payload: DeleteSessionsPayload) -> list[str]:
             before_sessions.append(session_contribution(session))
             remove_history_memberships(session.id)
         Session.objects.filter(id__in=ids).delete()
+        TimelineEvent.objects.filter(session_id__in=ids).delete()
         from twicc.core.content_storage.cold_cache import schedule_cold_invalidation
 
         schedule_cold_invalidation(ids | missing_ids, mappings=True)
