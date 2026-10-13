@@ -4,8 +4,9 @@ DB writer.
 A single permanent coroutine that owns every database write coming from the
 two boot-time "big jobs": the per-provider initial sync (producers run in
 ``asyncio.to_thread`` threads) and the background metadata compute (producers
-run in ``multiprocessing`` subprocesses). Both push onto process-wide shared
-queues; this DB writer drains them and applies every write inside
+run in ``multiprocessing`` subprocesses). Initial-sync producers use a shared
+local queue. Per-run receiver threads decode compute Pipes into another local
+queue. This DB writer drains these queues and applies every write inside
 ``transaction.atomic`` from one place — so the SQLite write lock is never
 contended between providers, nor between the initial-sync phase and the
 compute phase.
@@ -88,8 +89,8 @@ COMPUTE_QUEUE_MAXSIZE = 200
 # runtime prepares on a separate worker and grants one publication per turn.
 COMPUTE_APPLY_CHUNK_SIZE = 2000
 
-# "spawn" context — the compute result queue is created here and passed to
-# the spawn workers, so it must come from the same context they use.
+
+
 _mp_ctx = multiprocessing.get_context("spawn")
 
 
@@ -258,9 +259,11 @@ class ComputeApplied(NamedTuple):
 # Module state
 # =============================================================================
 
-# The two process-wide shared queues, created by start_db_writer().
+# The two process-local ingress queues, created by start_db_writer().
 _thread_queue: queue.Queue | None = None
-_subprocess_queue: object | None = None  # _mp_ctx.Queue()
+_subprocess_queue: queue.Queue | None = None
+_compute_streams: dict[int, object] = {}
+_compute_transport_failures: set[asyncio.Task] = set()
 
 # The permanent DB writer task and its stop signal.
 _db_writer_task: asyncio.Task | None = None
@@ -481,7 +484,7 @@ def _lease_admits_current() -> bool:
 # completion Future isolated. arm_compute_completion() mints the ids.
 _compute_run_id_seq = itertools.count(1)
 
-# run_id -> the completion Future the orchestrator awaits. The mp.Queue cannot
+# run_id -> the completion Future the orchestrator awaits. A Pipe cannot
 # transport a Future, so arm_compute_completion() keeps one here and the
 # DB writer resolves it (with the run's failed-session count) when it drains
 # that run's 'done' message.
@@ -680,7 +683,7 @@ def start_db_writer() -> None:
         start_compute_application_executor()
         application_started = True
         _thread_queue = queue.Queue(maxsize=INITIAL_SYNC_QUEUE_MAXSIZE)
-        _subprocess_queue = _mp_ctx.Queue(maxsize=COMPUTE_QUEUE_MAXSIZE)
+        _subprocess_queue = queue.Queue(maxsize=COMPUTE_QUEUE_MAXSIZE)
         _background_async_queue = asyncio.Queue()
         _async_queue = _ForegroundJobQueue()
         _db_writer_stop_event = asyncio.Event()
@@ -753,10 +756,25 @@ async def stop_db_writer() -> None:
     global _thread_queue, _subprocess_queue, _async_queue, _background_async_queue, _pending_compute
     global _repair_recovery, _repair_discovery_task
 
-    if _db_writer_stop_event is not None:
-        _db_writer_stop_event.set()
     cancelled = False
+    transport_errors = []
     try:
+        async def close_streams():
+            for run_id in list(_compute_streams):
+                try:
+                    await close_compute_result_stream(run_id)
+                except Exception as error:
+                    transport_errors.append(error)
+            if _compute_transport_failures:
+                await asyncio.gather(*list(_compute_transport_failures), return_exceptions=True)
+        stream_cleanup = asyncio.create_task(close_streams())
+        cancelled |= await _shielded_shutdown_wait(
+            stream_cleanup,
+            external_cancel_log=lambda: logger.error('Compute stream cleanup cancelled externally'),
+            unexpected_exception_log=lambda error: logger.error('Compute stream cleanup failed: %s', error),
+        )
+        if _db_writer_stop_event is not None:
+            _db_writer_stop_event.set()
         if _db_writer_task is not None:
             # Wait for the writer task to finish its final drain.
             cancelled |= await _shielded_shutdown_wait(
@@ -815,6 +833,8 @@ async def stop_db_writer() -> None:
         # Our caller wanted us cancelled; honour that AFTER the writer task
         # has actually drained and we've cleared module state.
         raise asyncio.CancelledError()
+    if transport_errors:
+        raise ExceptionGroup('compute transport shutdown failed', transport_errors)
     logger.info("DB writer stopped")
 
 
@@ -1023,16 +1043,43 @@ async def put_thread_message(
 
 
 def get_subprocess_queue():
-    """Return the shared compute result queue (passed to a compute worker).
-
-    Raises :class:`RuntimeError` if the DB writer is not started — the
-    explicit guard survives ``python -O`` (where ``assert`` is stripped)
-    and matches the same shape used by :func:`get_db_write_lock` and
-    :func:`run_under_db_write_lock`.
-    """
+    """Return the bounded process-local ingress (never pass it to a worker)."""
     if _subprocess_queue is None:
         raise RuntimeError("DB writer not started")
     return _subprocess_queue
+
+
+def create_compute_result_stream(provider: Provider, run_id: int, status_queue=None):
+    """Register the reader before spawn; each run owns its pipe and thread."""
+    from twicc.providers.compute_ipc import ComputeResultStream
+
+    ingress = get_subprocess_queue()
+    future = _compute_done_events.get(run_id)
+
+    def failed(error):
+        if future is None or future.done():
+            return
+        async def settle():
+            try:
+                await abandon_compute_run(run_id, provider)
+            finally:
+                if not future.done():
+                    future.set_exception(RuntimeError(error))
+        task = asyncio.create_task(settle())
+        _compute_transport_failures.add(task)
+        task.add_done_callback(_compute_transport_failures.discard)
+
+    stream = ComputeResultStream(ingress, status_queue, provider.value, run_id, failed)
+    _compute_streams[run_id] = stream
+    return stream
+
+
+async def close_compute_result_stream(run_id: int):
+    stream = _compute_streams.get(run_id)
+    if stream is not None:
+        await stream.close()
+        if _compute_streams.get(run_id) is stream:
+            _compute_streams.pop(run_id, None)
 
 
 def arm_compute_completion(

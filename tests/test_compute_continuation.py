@@ -1,6 +1,7 @@
 """Real WAL compute continuation barriers and terminal ordering."""
 
 import asyncio
+from contextlib import closing
 import queue
 import sqlite3
 import threading
@@ -69,6 +70,70 @@ async def wait_until(predicate):
     async with asyncio.timeout(3):
         while not predicate():
             await asyncio.sleep(.001)
+
+
+@pytest.mark.parametrize('identity', ['existing', 'legacy', 'missing'])
+def test_compute_initialization_survives_uncoordinated_auth_write(wal_runtime, identity):
+    """A login must not invalidate initialization's read snapshot before its first write."""
+    session, path = wal_runtime
+    if identity == 'legacy':
+        with closing(sqlite3.connect(path)) as database, database:
+            database.execute('UPDATE core_session SET storage_incarnation = NULL WHERE id = ?', (session.id,))
+    target_id = 'missing' if identity == 'missing' else session.id
+
+    def initialize_with_login():
+        login = sqlite3.connect(path, timeout=0)
+        attempted = False
+
+        def save_login():
+            login.execute(
+                "INSERT INTO django_session(session_key, session_data, expire_date) VALUES (?, ?, ?)",
+                ('concurrent-login', 'auth', '2099-01-01 00:00:00'),
+            )
+            login.commit()
+
+        def after_first_read(execute, sql, params, many, context):
+            nonlocal attempted
+            result = execute(sql, params, many, context)
+            if not attempted and sql.lstrip().upper().startswith('SELECT'):
+                attempted = True
+                try:
+                    save_login()
+                except sqlite3.OperationalError as exc:
+                    # A write-first transaction already owns SQLite's writer reservation.
+                    assert exc.sqlite_errorcode == sqlite3.SQLITE_BUSY
+                    login.rollback()
+            return result
+
+        try:
+            with connections['default'].execute_wrapper(after_first_read):
+                extraction.initialize_compute_session(target_id)
+            assert attempted
+            if not login.execute('SELECT 1 FROM django_session WHERE session_key = ?',
+                                 ('concurrent-login',)).fetchone():
+                save_login()
+            stored = login.execute('SELECT storage_incarnation FROM core_session WHERE id = ?',
+                                   (target_id,)).fetchone()
+            if identity == 'missing':
+                assert stored is None
+            elif identity == 'legacy':
+                assert stored[0]
+                extraction.initialize_compute_session(target_id)
+                assert login.execute('SELECT storage_incarnation FROM core_session WHERE id = ?',
+                                     (target_id,)).fetchone() == stored
+            else:
+                assert stored[0] == session.storage_incarnation
+        finally:
+            login.close()
+
+    async def scenario():
+        compute_executor.start_compute_executor()
+        try:
+            await db_writer.run_compute_sync(initialize_with_login)
+        finally:
+            await compute_executor.stop_compute_executor()
+
+    asyncio.run(scenario())
 
 
 def test_queued_foreground_pressure_precedes_background_grant(wal_runtime):

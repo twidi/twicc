@@ -676,6 +676,8 @@ class CodexComputeCoordinator:
     async def _handle_worker_status(self, status: object) -> None:
         if not isinstance(status, dict):
             return
+        if status.get('type') == 'transport_failed':
+            raise RuntimeError(status.get('error') or 'compute transport interrupted')
         session_id = status.get("session_id")
         if not isinstance(session_id, str):
             return
@@ -795,6 +797,12 @@ class CodexComputeCoordinator:
         )
         self.ctx.run_id = run_id
         self._done_future = done_future
+        def run_finished(future):
+            if not future.cancelled() and future.exception() is not None:
+                self.events.put_nowait(('worker', {
+                    'type': 'transport_failed', 'error': str(future.exception()),
+                }))
+        done_future.add_done_callback(run_finished)
         if self._queues_closed:
             self.ctx.command_queue, self.ctx.status_queue = self._new_queues()
             self._queues_closed = False
@@ -829,7 +837,7 @@ class CodexComputeCoordinator:
     @staticmethod
     def _new_queues():
         spawn = multiprocessing.get_context("spawn")
-        return spawn.Queue(), spawn.Queue()
+        return spawn.Queue(), queue.Queue(maxsize=200)
 
     # ------------------------------------------------------------------
     # Main loop

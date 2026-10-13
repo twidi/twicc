@@ -10,9 +10,9 @@ Architecture:
 - A separate Process per provider handles CPU-intensive work (JSON parsing,
   metadata computation). The worker process only READS from the database
   (WAL mode supports multiple readers).
-- The worker pushes its results onto the process-wide shared compute result
-  queue owned by :mod:`twicc.providers.db_writer`; the DB writer
-  applies every write. This module is purely the *producer* side — it never
+- Each worker sends results and optional status on its own Pipe. An owned
+  receiver thread decodes complete frames into process-local bounded queues.
+  The DB writer applies the results. This module is purely the *producer* side — it never
   writes to the database from the main process.
 
 This module is provider-agnostic: each provider's orchestrator builds a
@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import orjson
 from asgiref.sync import sync_to_async
 
+from twicc.providers.compute_ipc import ComputeResultStream, ComputeStatusSender, ComputeStopFlag
 from twicc.core.enums import Provider
 from twicc.logging_context import current_provider
 from twicc.startup_progress import broadcast_startup_progress
@@ -225,9 +226,9 @@ class ComputeContext:
       module before ``django.setup()`` has run in the child process. The
       module is imported lazily on first :meth:`get_compute` call.
 
-    The worker's result queue is NOT held here — it is the process-wide
-    shared queue owned by :mod:`twicc.providers.db_writer`. Only the
-    ``command_queue`` (one-way main→worker) is per-context.
+    ``result_stream`` owns this run's result/status Pipe and receiver thread.
+    ``command_queue`` has a parent-only producer and is replaced each run.
+    The worker stop flag is advisory and has no process-owned lock.
     """
 
     provider: Provider
@@ -236,8 +237,9 @@ class ComputeContext:
     command_queue: _mp_ctx.Queue = field(default_factory=_mp_ctx.Queue)
     # Codex enables this optional worker→coordinator channel. Claude uses
     # the generic producer and must not accumulate status messages it never reads.
-    status_queue: _mp_ctx.Queue | None = None
-    worker_stop_event: _mp_ctx.Event = field(default_factory=_mp_ctx.Event)
+    status_queue: queue.Queue | None = None
+    worker_stop_event: ComputeStopFlag = field(default_factory=lambda: ComputeStopFlag(_mp_ctx))
+    result_stream: ComputeResultStream | None = None
     stop_event: asyncio.Event = field(default_factory=asyncio.Event)
     process: _mp_ctx.Process | None = None
     # Set by start_background_compute_task before the worker is spawned. The
@@ -282,21 +284,26 @@ async def stop_compute_worker(ctx: ComputeContext) -> None:
     """Stop the worker process and close the context's queues, nothing else.
 
     Leaves ``ctx.stop_event`` alone so the caller keeps running.
-    ``start_compute_process`` recreates ``worker_stop_event`` for the next
-    run; the caller recreates the queues.
+    ``start_compute_process`` recreates the worker stop flag and queues for
+    the next run.
 
     Async so the blocking ``process.join()`` calls can run off the event loop:
     joining on the loop thread would freeze the DB writer task,
     and a worker blocked on a full result queue only makes progress (drains,
     then exits) while that DB writer keeps running.
     """
-    # Signal worker process to stop via multiprocessing event
+    # Stop receiver admission first. Abandonment fencing belongs to the
+    # orchestrator; it must precede provider shutdown.
+    if ctx.result_stream is not None:
+        ctx.result_stream.stop_admission()
+    # This advisory flag never acquires a process-owned lock.
     ctx.worker_stop_event.set()
     logger.info("stop_compute_worker: worker_stop_event set")
 
     # Send stop signal to worker process via queue (backup)
     try:
-        ctx.command_queue.put_nowait(None)  # None = stop signal
+        if ctx.process is not None and ctx.process.is_alive():
+            ctx.command_queue.put_nowait(None)  # None = stop signal
         logger.info("stop_compute_worker: stop signal sent to queue")
     except Exception as e:
         logger.warning(f"stop_compute_worker: failed to send stop signal to queue: {e}")
@@ -318,20 +325,22 @@ async def stop_compute_worker(ctx: ComputeContext) -> None:
                 await asyncio.to_thread(ctx.process.join, 0.5)
         else:
             logger.info("stop_compute_worker: worker process exited gracefully")
-        ctx.process = None
     else:
         logger.info("stop_compute_worker: no worker process to stop")
+    if ctx.process is not None:
+        if ctx.process.is_alive():
+            raise RuntimeError(f'Compute worker {ctx.process.pid} did not exit after kill')
+        ctx.process.close()
+        ctx.process = None
 
-    # Cancel the command queue's feeder thread to prevent blocking on shutdown.
-    # The result queue is the process-wide shared queue owned by db_writer —
-    # it is NOT closed here; it outlives every per-provider compute run.
+    # Do not wait on the command feeder. The unused parent reader is closed
+    # after spawn, so worker exit also releases a feeder blocked in send.
     with suppress(Exception):
         ctx.command_queue.cancel_join_thread()
         ctx.command_queue.close()
-    if ctx.status_queue is not None:
-        with suppress(Exception):
-            ctx.status_queue.cancel_join_thread()
-            ctx.status_queue.close()
+    from twicc.providers.db_writer import close_compute_result_stream
+    await close_compute_result_stream(ctx.run_id)
+    ctx.result_stream = None
 
     logger.info("stop_compute_worker: shutdown complete")
 
@@ -388,7 +397,7 @@ def compute_worker_main(
     Main function running in the compute worker process.
 
     Receives session_ids via command_queue, computes metadata (READ-ONLY DB access),
-    sends update batches via result_queue (the process-wide shared queue).
+    sends update batches via the synchronous result_queue Pipe adapter.
 
     This function runs in a separate process and must initialize Django itself.
     ``compute_factory`` is the dotted ``"module:attribute"`` path of the
@@ -499,17 +508,7 @@ def compute_worker_main(
     result_queue.put(orjson.dumps({'type': 'done', 'provider': provider_value, 'run_id': run_id}))
     worker_logger.info("Compute worker sent 'done' signal")
 
-    # Drain command queue before exiting to prevent blocking
-    worker_logger.info("Compute worker draining command queue...")
-    drained = 0
-    while True:
-        try:
-            command_queue.get_nowait()
-            drained += 1
-        except queue.Empty:
-            break
-    if drained:
-        worker_logger.info(f"Compute worker drained {drained} commands from queue")
+    result_queue.close()
 
     worker_logger.info("Compute worker process stopped")
 
@@ -517,30 +516,62 @@ def compute_worker_main(
 def start_compute_process(ctx: ComputeContext) -> None:
     """Start the compute worker process if not already running.
 
-    The worker writes onto the process-wide shared compute result queue
-    owned by :mod:`twicc.providers.db_writer` (lazy-imported here so this
-    module is never dragged into the spawn subprocess before Django setup).
+    The worker gets only its Pipe writer. The parent closes its writer after
+    spawn, so worker exit produces EOF even during a partial frame. The
+    DB writer remains lazy-imported to keep model imports out of spawn setup.
     """
     if ctx.process is None or not ctx.process.is_alive():
-        from twicc.providers.db_writer import get_subprocess_queue
+        from twicc.providers.db_writer import create_compute_result_stream
 
-        result_queue = get_subprocess_queue()
-        # Reset stop event for new process
-        ctx.worker_stop_event = _mp_ctx.Event()
-        ctx.process = _mp_ctx.Process(
-            target=compute_worker_main,
-            args=(
-                ctx.command_queue,
-                result_queue,
-                ctx.status_queue,
-                ctx.worker_stop_event,
-                ctx.compute_factory,
-                ctx.run_id,
-            ),
-            daemon=True,
-            name="compute-worker",
-        )
-        ctx.process.start()
+        # Parent-only producers never read this queue. Recreate it for each
+        # run: a killed child can retain its reader lock.
+        with suppress(Exception):
+            ctx.command_queue.cancel_join_thread()
+            ctx.command_queue.close()
+        ctx.command_queue = _mp_ctx.Queue()
+        # Private Queue switch: EPIPE means this run has no consumer. Stop the
+        # feeder instead of logging one traceback per abandoned command.
+        ctx.command_queue._ignore_epipe = True
+        if ctx.status_queue is not None:
+            ctx.status_queue = queue.Queue(maxsize=200)
+        ctx.worker_stop_event = ComputeStopFlag(_mp_ctx)
+        stream = create_compute_result_stream(ctx.provider, ctx.run_id, ctx.status_queue)
+        ctx.result_stream = stream
+        spawned = False
+        try:
+            ctx.process = _mp_ctx.Process(
+                target=compute_worker_main,
+                args=(
+                    ctx.command_queue,
+                    stream.sender,
+                    ComputeStatusSender(stream.sender) if ctx.status_queue is not None else None,
+                    ctx.worker_stop_event,
+                    ctx.compute_factory,
+                    ctx.run_id,
+                ),
+                daemon=True,
+                name="compute-worker",
+            )
+            ctx.process.start()
+            spawned = True
+            # Private stdlib endpoint: parent never consumes commands. Closing
+            # its reader ensures worker death wakes the parent's queue feeder
+            # with BrokenPipe instead of leaving a blocked daemon thread.
+            ctx.command_queue._reader.close()
+            stream.start()
+        except BaseException as error:
+            stream.failed(f'compute transport spawn failed: {error}')
+            stream.stop_admission()
+            stream.reader.close()
+            with suppress(Exception):
+                ctx.command_queue.cancel_join_thread()
+                ctx.command_queue.close()
+            if not spawned:
+                ctx.process = None
+            raise
+        finally:
+            # A retained parent writer would prevent EOF on a partial frame.
+            stream.sender.close()
         logger.info(f"Started compute worker process (PID: {ctx.process.pid})")
 
 
@@ -670,7 +701,11 @@ async def start_background_compute_task(ctx: ComputeContext) -> None:
                     raise RuntimeError(
                         f"Compute worker {process.pid} did not exit after run {run_id} completed"
                     )
+                process.close()
                 ctx.process = None
+            from twicc.providers.db_writer import close_compute_result_stream
+            await close_compute_result_stream(run_id)
+            ctx.result_stream = None
             return failed_count
 
         async def load_remaining(candidate_ids: list[str]) -> list[str]:

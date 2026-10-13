@@ -12,7 +12,7 @@ from time import perf_counter
 from datetime import UTC, datetime
 
 from django.db import transaction
-from django.db.models import BinaryField, Max, Q
+from django.db.models import BinaryField, F, Max, Q
 from django.db.models.functions import Cast, Length
 from django.utils import timezone
 
@@ -409,6 +409,9 @@ def initialize_compute_session(session_id):
     from twicc.core.content_storage.state import snapshot_root_storage
 
     with transaction.atomic():
+        # Reserve SQLite's writer before reading. Django session saves can
+        # commit outside our coordinator and invalidate a deferred read snapshot.
+        Session.objects.filter(pk=session_id).update(storage_incarnation=F('storage_incarnation'))
         session = Session.objects.filter(pk=session_id).first()
         if session is None:
             return
