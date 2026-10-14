@@ -22,6 +22,7 @@ from channels.layers import get_channel_layer
 
 from twicc.agent.auto_deny import AUTO_DENY_CHECK_INTERVAL_SECONDS, AUTO_DENY_DELAY_SECONDS
 from twicc.agent.shell_notice import OwnerFacts, ShellLookup, ShellNoticeState, ShellResolution
+from twicc.agent.stop_origin import StopOriginMixin
 from twicc.agent.work_dir_autoapprove import all_targets_within_work_dirs
 from twicc.agent.work_dirs import resolve_and_create_work_dirs
 from twicc.context_injection import clear_context, reconcile, reset_baseline
@@ -40,7 +41,7 @@ StateChangeCallback = Callable[["BaseAgent"], Coroutine[Any, Any, None]]
 BackgroundWorkCallback = Callable[["BaseAgent", "dict | None"], Coroutine[Any, Any, None]]
 
 
-class BaseAgent:
+class BaseAgent(StopOriginMixin):
     """Skeleton for a single agent instance.
 
     Subclasses must implement ``start``, ``send`` and ``interrupt_or_kill``.
@@ -103,7 +104,9 @@ class BaseAgent:
         # ``BaseAgentManager._state_based_timeout``.
         self.last_pending_resolved_at: float = 0.0
         self.error: str | None = None
-        self.kill_reason: str | None = None
+        # Property from StopOriginMixin: the reason and the origin of the request that asked for the stop
+        # are assigned together (design 2026-10-14, section 7).
+        self.kill_reason = None
 
         # Cached ``Session.hidden`` for this agent, gating every live-update
         # broadcast (see ``_is_session_hidden``). ``None`` = not resolved yet.

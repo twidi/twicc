@@ -1008,7 +1008,10 @@ class HybridClaudeAgent(BaseAgent):
                     "Hybrid CLI exited for session %s (pane_dead=%s)",
                     self.session_id, dead,
                 )
-                self.kill_reason = self.kill_reason or "cli-exit"
+                if self.kill_reason is None:
+                    # Never re-assign a reason already set: this runs in the agent's own task, and the
+                    # setter would capture the stale context of the request that started it as the stopper.
+                    self.kill_reason = "cli-exit"
                 self._clear_all_pendings("delete")
                 if self._first_paste_task is not None:
                     self._first_paste_task.cancel()
