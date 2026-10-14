@@ -1,5 +1,10 @@
 # Content storage and tree aggregate optimization
 
+> Compute selection and aggregate publication are superseded by the
+> [root compute and unified statistics specification](2026-10-14-root-compute-and-unified-statistics-spec.md).
+> Content-storage requirements remain applicable. This document does not plan the new calculator.
+
+
 Date: 2026-10-13.
 Status: adversarially reviewed; ready for user review before implementation planning.
 Scope: behavior and correctness contracts. This document does not authorize product implementation.

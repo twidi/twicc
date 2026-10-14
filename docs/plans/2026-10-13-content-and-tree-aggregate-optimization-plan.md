@@ -1,5 +1,10 @@
 # Content and Tree Aggregate Optimization Implementation Plan
 
+> Compute selection and aggregate publication are superseded by the
+> [root compute and unified statistics specification](2026-10-14-root-compute-and-unified-statistics-spec.md).
+> Content-storage requirements remain applicable. This document does not plan the new calculator.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Remove redundant storage work and publish exact tree aggregates without blocking foreground writes with historical calculations.
