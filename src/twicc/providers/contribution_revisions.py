@@ -177,9 +177,9 @@ def observe_own_cost_invalidations() -> RevisionObservation:
         return RevisionObservation((), (), (), (), (), identity, _generation, own_costs=costs)
 
 
-def restrict_own_cost_observation(observation: RevisionObservation, source: SourceKey) -> RevisionObservation:
+def restrict_own_cost_observation(observation: RevisionObservation, source: SourceKey, lookup: dict | None = None) -> RevisionObservation:
     """Keep one source counter, including an implicit zero captured before reads."""
-    return observation._replace(own_costs=((source, dict(observation.own_costs).get(source, 0)),))
+    return observation._replace(own_costs=((source, (dict(observation.own_costs) if lookup is None else lookup).get(source, 0)),))
 
 
 def record_own_cost_invalidation(session_id: str, storage_incarnation: str) -> None:

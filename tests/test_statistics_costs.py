@@ -179,3 +179,19 @@ def test_subagents_preserve_null_and_zero(source, own, expected):
     source('child', own=own, parent='root')
     result, _ = prepare('root')
     assert {row.session_id: row.subagents_cost for row in result.session_costs}['root'] == expected
+
+
+def test_dirty_members_share_one_revision_lookup(source, monkeypatch):
+    from twicc.providers import statistics_prepare
+    original = statistics_prepare.restrict_own_cost_observation
+    lookups = []
+
+    def restrict(observation, key, lookup=None):
+        lookups.append(lookup)
+        return original(observation, key, lookup)
+
+    monkeypatch.setattr(statistics_prepare, 'restrict_own_cost_observation', restrict)
+    source('root'); source('child', parent='root')
+    prepare('root')
+    assert len(lookups) == 2
+    assert lookups[0] is not None and lookups[0] is lookups[1]

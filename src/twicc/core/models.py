@@ -1243,33 +1243,48 @@ class Workflow(models.Model):
 
     @staticmethod
     def compute_costs(run_id: str, envelope: dict) -> tuple[Decimal, dict]:
-        """``(total, phases_cost)`` for a run, from its agent sessions + envelope.
+        """Sum disjoint workflow regions and retain each region's phase.
 
-        A workflow agent is a :class:`Session` keyed ``<run_id>:<agent_id>`` whose
-        ``total_cost`` already rolls up its nested subagents. ``total`` sums them
-        all; ``phases_cost`` is ``{phaseIndex: cost}`` — each agent's cost added to
-        the 1-based phase it was stamped with in ``envelope.workflowProgress``
-        (orphan agents with no phaseIndex count toward ``total`` but no phase).
-        Phase values are floats (JSON-friendly); ``total`` stays Decimal for the
-        ``cost`` column. One query; called at each row write.
+        Every run-prefixed session owns its launcher subtree until the next
+        run-prefixed session. Nonlisted descendants retain their owner's phase.
+        Repeated envelope entries use the first non-null phase deterministically.
+        Orphan agents contribute to the total without phase attribution.
         """
         prefix = f"{run_id}:"
-        by_agent = {
-            sid[len(prefix):]: cost
-            for sid, cost in Session.objects.filter(id__startswith=prefix).values_list("id", "total_cost")
-        }
-        total = sum((c for c in by_agent.values() if c is not None), Decimal(0))
+        costs = dict(Session.objects.filter(id__startswith=prefix).values_list("id", "total_cost"))
+        if not costs:
+            return Decimal(0), {}
+        # Links may pass through non-workflow intermediates. Follow the complete
+        # persisted launcher graph to find the nearest owning workflow boundary.
+        parents = {}
+        frontier = set(costs)
+        visited_links = set()
+        while frontier:
+            links = dict(AgentLink.objects.filter(agent_id__in=frontier).values_list('agent_id', 'session_id'))
+            parents.update(links)
+            visited_links.update(frontier)
+            frontier = set(links.values()) - visited_links
+        regions = {sid: cost or Decimal(0) for sid, cost in costs.items()}
+        for sid, cost in costs.items():
+            visited = {sid}
+            parent = parents.get(sid)
+            while parent is not None and parent not in visited:
+                if parent in costs:
+                    regions[parent] -= cost or Decimal(0)
+                    break
+                visited.add(parent)
+                parent = parents.get(parent)
+        phases_by_agent = {}
+        for entry in (envelope or {}).get('workflowProgress', []):
+            if entry.get('type') == 'workflow_agent' and entry.get('phaseIndex') is not None:
+                phases_by_agent.setdefault(prefix + str(entry.get('agentId')), str(entry['phaseIndex']))
         phases: dict[str, Decimal] = {}
-        for entry in (envelope or {}).get("workflowProgress", []):
-            if entry.get("type") != "workflow_agent":
-                continue
-            idx = entry.get("phaseIndex")
-            cost = by_agent.get(entry.get("agentId"))
-            if idx is None or cost is None:
-                continue
-            key = str(idx)
-            phases[key] = phases.get(key, Decimal(0)) + cost
-        return total, {k: float(v) for k, v in phases.items()}
+        for sid, cost in regions.items():
+            if sid in phases_by_agent and costs[sid] is not None:
+                phase = phases_by_agent[sid]
+                phases[phase] = phases.get(phase, Decimal(0)) + cost
+        return sum(regions.values(), Decimal(0)), {key: float(value) for key, value in phases.items()}
+
 
 
 class ModelPrice(models.Model):
