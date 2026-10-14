@@ -173,16 +173,26 @@ def record_events_bulk_sync(specs: list[EventSpec]) -> int:
         return 0
 
 
+# Each lookup query binds two IN lists of at most this many values (SQLite's variable limit is 32766).
+_DEDUPE_LOOKUP_CHUNK = 2000
+
+
 def _drop_duplicates(built: list[tuple[EventSpec, TimelineEvent]]) -> list[tuple[EventSpec, TimelineEvent]]:
-    """Drop the rows whose ``(session_id, dedupe_key)`` already exists in the table or earlier in the batch."""
+    """Drop the rows whose ``(session_id, dedupe_key)`` already exists in the table or earlier in the batch.
+
+    The table lookup is chunked so a very large keyed batch stays under SQLite's variable limit.
+    """
     keyed = [row for _, row in built if row.dedupe_key is not None]
     if not keyed:
         return built
-    existing = set(
-        TimelineEvent.objects.filter(
-            session_id__in={row.session_id for row in keyed}, dedupe_key__in={row.dedupe_key for row in keyed},
-        ).values_list("session_id", "dedupe_key")
-    )
+    existing: set[tuple[str, str]] = set()
+    for start in range(0, len(keyed), _DEDUPE_LOOKUP_CHUNK):
+        chunk = keyed[start:start + _DEDUPE_LOOKUP_CHUNK]
+        existing.update(
+            TimelineEvent.objects.filter(
+                session_id__in={row.session_id for row in chunk}, dedupe_key__in={row.dedupe_key for row in chunk},
+            ).values_list("session_id", "dedupe_key")
+        )
     kept = []
     for spec, row in built:
         if row.dedupe_key is not None:

@@ -41,6 +41,16 @@ def test_search_version_is_reset_for_every_requested_session(project):
     assert Session.objects.get(id="a").search_version == 0
 
 
+def test_search_version_is_reset_for_an_already_archived_session_with_a_null_version(project):
+    Session.objects.create(id="a", file_path="a.jsonl", project=project, provider="codex",
+                           archived=True, search_version=None)
+    Session.objects.create(id="b", file_path="b.jsonl", project=project, provider="codex",
+                           archived=True, search_version=5)
+    assert archive_sessions_bulk({"a", "b"}) == []
+    assert Session.objects.get(id="a").search_version == 0
+    assert Session.objects.get(id="b").search_version == 0
+
+
 def test_empty_set_is_a_noop():
     assert archive_sessions_bulk(set()) == []
 

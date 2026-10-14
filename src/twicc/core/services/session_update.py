@@ -161,8 +161,9 @@ def archive_sessions_bulk(ids: set[str]) -> list[str]:
     A session archived meanwhile is not returned (no event: it did not flip here); one unarchived
     meanwhile is returned (flipped here, so an event is recorded). A deleted row is neither.
     The set is passed as one JSON parameter (``json_each``), so there is no variable limit.
-    ``search_version`` is reset for every id, as before, so an interrupted re-index is picked up
-    at the next boot: the flipped rows in the first statement, the already-archived ones in the second.
+    ``search_version`` is reset to 0 for every id, as before, so an interrupted re-index is picked up
+    at the next boot: the flipped rows in the first statement, the already-archived ones in the second
+    (``IS NOT 0``, not ``!= 0``: the column is nullable and ``NULL != 0`` is NULL, which would skip them).
     """
     from twicc.core.models import Session
 
@@ -180,7 +181,7 @@ def archive_sessions_bulk(ids: set[str]) -> list[str]:
             flipped = cursor.fetchall()
             cursor.execute(
                 f"UPDATE {table} SET search_version = 0 "
-                f"WHERE id IN (SELECT value FROM json_each(%s)) AND archived = 1 AND search_version != 0",
+                f"WHERE id IN (SELECT value FROM json_each(%s)) AND archived = 1 AND search_version IS NOT 0",
                 [ids_json],
             )
         record_events_bulk_sync([
