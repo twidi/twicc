@@ -3737,6 +3737,9 @@ class BaseSessionCompute:
         with timed_sync_phase('compute_metadata_source', rows=len(item_updates)):
             Session.objects.filter(pk=session_id).update(items_cost_computed_through_at=None)
             session.items_cost_computed_through_at = None
+            from twicc.providers.contribution_revisions import record_own_cost_invalidation
+
+            record_own_cost_invalidation(session.id, session.storage_incarnation)
             BaseSessionCompute.apply_item_updates(item_fields, item_updates)
             BaseSessionCompute.apply_content_overrides(content_overrides)
         after_items = item_contributions(changed)
@@ -3838,6 +3841,9 @@ class BaseSessionCompute:
             session.refresh_from_db()
         Session.objects.filter(pk=session_id).update(items_cost_computed_through_at=None)
         session.items_cost_computed_through_at = None
+        from twicc.providers.contribution_revisions import record_own_cost_invalidation
+
+        record_own_cost_invalidation(session.id, session.storage_incarnation)
         before_session = session_contribution(session)
 
         changed = SessionItem.objects.filter(session_id=session_id,

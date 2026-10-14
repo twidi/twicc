@@ -32,6 +32,7 @@ class RevisionObservation(NamedTuple):
     identity: tuple
     generation: int
     day_scopes: tuple = ()
+    own_costs: tuple[tuple[SourceKey, int], ...] = ()
 
 
 _lock = RLock()
@@ -69,7 +70,9 @@ def revisions_match(observation: RevisionObservation) -> bool:
                 and all(_revisions.get((identity, domain, key), 0) == revision
                         for domain, pairs in enumerate(observation[:5]) for key, revision in pairs)
                 and all(_revisions.get((identity, 5, key), 0) == revision
-                        for key, revision in observation.day_scopes))
+                        for key, revision in observation.day_scopes)
+                and all(_revisions.get((identity, 6, key), 0) == revision
+                        for key, revision in observation.own_costs))
 
 
 def record_contribution_commit(*, sources: Iterable[SourceKey] = (), roots: Iterable[SourceKey] = (),
@@ -163,3 +166,36 @@ def record_cost_publication(session):
         costs=[SourceKey(session.id, session.storage_incarnation)],
         projects=[session.project_id] if session.type == SessionType.SESSION else (),
     )
+
+
+def observe_own_cost_invalidations() -> RevisionObservation:
+    """Capture background-only counters before opening a statistics snapshot."""
+    identity = _identity()
+    with _lock:
+        costs = tuple((key, revision) for (scope, domain, key), revision in _revisions.items()
+                      if scope == identity and domain == 6)
+        return RevisionObservation((), (), (), (), (), identity, _generation, own_costs=costs)
+
+
+def restrict_own_cost_observation(observation: RevisionObservation, source: SourceKey) -> RevisionObservation:
+    """Keep one source counter, including an implicit zero captured before reads."""
+    return observation._replace(own_costs=((source, dict(observation.own_costs).get(source, 0)),))
+
+
+def record_own_cost_invalidation(session_id: str, storage_incarnation: str) -> None:
+    """Advance only after background item-cost or final metadata publication commits.
+
+    Call inside the transaction which resets the own-cost marker. Writer admission
+    must enclose commit, including this callback, and publication validation.
+    """
+    if not connection.in_atomic_block:
+        raise RuntimeError('Own-cost invalidation requires the source transaction')
+    identity = _identity()
+    source = SourceKey(session_id, storage_incarnation)
+
+    def committed():
+        with _lock:
+            key = identity, 6, source
+            _revisions[key] = _revisions.get(key, 0) + 1
+
+    transaction.on_commit(committed)
