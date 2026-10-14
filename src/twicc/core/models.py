@@ -512,6 +512,7 @@ class Session(models.Model):
 
     # Lifecycle timestamps (datetime, unlike mtime which is a raw float for the JSONL file)
     last_started_at = models.DateTimeField(null=True, blank=True)  # Last time the session was started or resumed
+    items_cost_computed_through_at = models.DateTimeField(null=True, blank=True)
     last_updated_at = models.DateTimeField(null=True, blank=True)  # Last time meaningful content was added
     last_stopped_at = models.DateTimeField(null=True, blank=True)  # Last time the session process stopped (our processes only)
 
@@ -2277,3 +2278,10 @@ class McpEventSubscription(models.Model):
     # Generation stays fixed on refresh; replacement creates a new generation.
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+
+class StatisticsQueueEntry(models.Model):
+    """Durable root invalidation; repeated roots retain distinct commit boundaries."""
+
+    id = models.BigAutoField(primary_key=True)
+    root_session_id = models.CharField(max_length=255)
