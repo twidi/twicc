@@ -3516,6 +3516,7 @@ class BaseSessionCompute:
         compute_ms = (compute_completed_at - compute_started) * 1000
         result_queue.put(orjson.dumps({
             'type': 'session_complete',
+            'tree_completion': getattr(self, '_tree_completion', None),
             'provider': self.provider.value,
             'run_id': run_id,
             'session_id': session_id,
@@ -3734,6 +3735,8 @@ class BaseSessionCompute:
         changed = SessionItem.objects.filter(session_id=session_id, id__in=[u['id'] for u in item_updates])
         before_items = item_contributions(changed)
         with timed_sync_phase('compute_metadata_source', rows=len(item_updates)):
+            Session.objects.filter(pk=session_id).update(items_cost_computed_through_at=None)
+            session.items_cost_computed_through_at = None
             BaseSessionCompute.apply_item_updates(item_fields, item_updates)
             BaseSessionCompute.apply_content_overrides(content_overrides)
         after_items = item_contributions(changed)
@@ -3833,6 +3836,8 @@ class BaseSessionCompute:
 
             initialize_compute_session(session_id)
             session.refresh_from_db()
+        Session.objects.filter(pk=session_id).update(items_cost_computed_through_at=None)
+        session.items_cost_computed_through_at = None
         before_session = session_contribution(session)
 
         changed = SessionItem.objects.filter(session_id=session_id,
@@ -4007,6 +4012,29 @@ class BaseSessionCompute:
 
                 merge_question_facts(session_id, [QuestionFact(**fact) for fact in msg["async_question_facts"]])
 
+        # Root readiness and its queue entry share this final source transaction.
+        # This reload catches members discovered after coordinator admission.
+        completion_context = msg.get('tree_completion')
+        root_completion = completion_context is not None or (
+            session.parent_session_id is None and msg.get('session_fields', {}).get('compute_version') is not None
+        )
+        if root_completion:
+            from twicc.providers.compute_tree import NativeTreeError, load_native_tree
+            from twicc.providers.compute_selection import select_required_source_ids
+
+            try:
+                tree = load_native_tree(completion_context['root_id'] if completion_context else session_id)
+            except NativeTreeError:
+                return ComputeApplyResult("superseded")
+            if completion_context and set(tree.member_ids) != set(completion_context['member_ids']):
+                return ComputeApplyResult("superseded")
+            target_version = msg['session_fields']['compute_version']
+            if completion_context and completion_context['compute_version'] != target_version:
+                return ComputeApplyResult("superseded")
+            required = select_required_source_ids(tree, target_version)
+            if any(sid != session_id for sid in required):
+                return ComputeApplyResult("superseded")
+
         with timed_sync_phase('compute_final_source'):
             # 5. Update session fields (always includes compute_version)
             session_fields = dict(msg.get('session_fields', {}))
@@ -4042,6 +4070,7 @@ class BaseSessionCompute:
                     session_fields['tasks'] = select_tasks_snapshot(db_tasks or {}, session_fields['tasks'])
                 if 'compute_version' in session_fields:
                     session_fields['search_version'] = None
+                    session_fields['items_cost_computed_through_at'] = None
                 rows = apply_compute_lifecycle(msg, lambda: update_lifecycle(
                     Session.objects.filter(id=session_id), **session_fields,
                 ))
@@ -4086,6 +4115,11 @@ class BaseSessionCompute:
                 new_options.pop(snapshot_anchor_key, None)
                 share.options = new_options
                 share.save(update_fields=["options"])
+
+        if root_completion:
+            from twicc.providers.statistics_queue import append_roots
+
+            append_roots((tree.root_id,))
 
         with timed_sync_phase('compute_final_aggregates'):
             # Retain the own-baseline marker with source readiness. Live

@@ -15,6 +15,7 @@ class NativeTree(NamedTuple):
     root_id: str
     member_ids: tuple[str, ...]
     ordered_source_ids: tuple[str, ...]
+    source_levels: tuple[tuple[str, ...], ...] = ()
 
 
 def resolve_native_root(session_id: str) -> str:
@@ -72,7 +73,11 @@ def load_native_tree(root_id: str) -> NativeTree:
 
     mtimes = dict(Session.objects.filter(pk__in=members).values_list('id', 'mtime'))
     ordered = tuple(sorted(members - {root_id}, key=lambda sid: (-depths[sid], -mtimes[sid], sid)))
-    return NativeTree(root_id, (root_id, *sorted(members - {root_id})), (*ordered, root_id))
+    levels = tuple(
+        tuple(sid for sid in ordered if depths[sid] == depth)
+        for depth in sorted({depths[sid] for sid in ordered}, reverse=True)
+    )
+    return NativeTree(root_id, (root_id, *sorted(members - {root_id})), (*ordered, root_id), (*levels, (root_id,)))
 
 
 def select_outdated_roots(provider: str, compute_version: int) -> tuple[str, ...]:

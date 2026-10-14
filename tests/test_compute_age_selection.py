@@ -110,7 +110,7 @@ def test_codex_recent_failure_polls_at_selection_interval(recovery_runtime, monk
     def reader(function):
         def wrapped():
             def record(execute, sql, params, many, context):
-                if 'ORDER BY' in sql and 'mtime' in sql:
+                if 'ORDER BY' in sql and 'mtime' in sql and 'file_path' in sql:
                     reads.append(time.monotonic())
                 return execute(sql, params, many, context)
             with connection.execute_wrapper(record):
@@ -242,6 +242,10 @@ def test_bounds_unapplied_results_and_reselects_modified_sources(recovery_runtim
     clone_session(path, 'child', now - 110, session_type='subagent')
     clone_session(path, 'recent', now + 1000)
     update_sources(path, faulty=now - 40, healthy=now - 50)
+    clone_session(path, 'root', now - 35)
+    with closing(sqlite3.connect(path)) as database:
+        database.execute("UPDATE core_session SET parent_session_id='root', type='subagent' WHERE id IN ('faulty', 'healthy', 'child')")
+        database.commit()
     entered, release = threading.Event(), threading.Event()
     dispatched = []
     statuses = []
@@ -311,9 +315,9 @@ def test_bounds_unapplied_results_and_reselects_modified_sources(recovery_runtim
             update_sources(path, third=now + 2000)
             release.set()
             async with asyncio.timeout(4):
-                while versions(path)['child'] != 123 or not barrier.is_set():
+                while versions(path)['root'] != 123 or not barrier.is_set():
                     await asyncio.sleep(.01)
-            assert dispatched == ['faulty', 'healthy', 'child']
+            assert dispatched == ['faulty', 'healthy', 'child', 'root']
             assert versions(path)['third'] is None
             assert len(streams) == 1
             # Give third and recent the same age. The ID breaks the tie.
@@ -321,13 +325,13 @@ def test_bounds_unapplied_results_and_reselects_modified_sources(recovery_runtim
             if provider == Provider.CODEX:
                 async with asyncio.timeout(6):
                     while (not all(version == 123 for version in versions(path).values())
-                           or len(owner.initial_ready) != 4):
+                           or len(owner.initial_ready) != 3):
                         await asyncio.sleep(.01)
                 ctx.stop_event.set()
             await asyncio.wait_for(task, 6)
-            assert dispatched == ['faulty', 'healthy', 'child', 'third', 'recent']
-            assert all(total == 4 for (_, total), _ in progress)
-            assert progress[-1] == ((4, 4), True)
+            assert dispatched == ['faulty', 'healthy', 'child', 'root', 'recent', 'third']
+            assert all(total == 3 for (_, total), _ in progress)
+            assert progress[-1] == ((3, 3), True)
             if provider == Provider.CLAUDE_CODE:
                 assert len(streams) == 1
             assert all(stream.reader.closed for stream in streams)

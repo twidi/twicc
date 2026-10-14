@@ -37,6 +37,7 @@ def test_native_members_order_by_launcher_depth_then_source_mtime(source):
     assert resolve_native_root('c') == 'root'
     assert tree.member_ids == ('root', 'a', 'b', 'c', 'tie', 'unlinked')
     assert tree.ordered_source_ids == ('c', 'b', 'unlinked', 'a', 'tie', 'root')
+    assert tree.source_levels == (('c',), ('b',), ('unlinked', 'a', 'tie'), ('root',))
 
 
 def test_discovery_rereads_native_members_and_launcher_links(source):

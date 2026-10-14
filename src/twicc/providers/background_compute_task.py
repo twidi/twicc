@@ -402,6 +402,7 @@ def compute_worker_main(
             if session_id:
                 try:
                     # This function reads DB and sends batches via result_queue
+                    compute._tree_completion = command.get("tree_completion")
                     compute.compute_session_metadata(session_id, result_queue, run_id)
                     if status_queue is not None:
                         status_queue.put({"type": "computed", "session_id": session_id, "_run_id": run_id})
@@ -508,7 +509,7 @@ def start_compute_process(ctx: ComputeContext) -> None:
 
 
 async def start_background_compute_task(ctx: ComputeContext, initial_done: asyncio.Event | None = None) -> None:
-    """Compute the newest eligible outdated source with bounded worker admission.
+    """Compute one native tree at a time with bounded admission within each depth.
 
     Startup classification includes deferred sources. Ready progress uses a fixed
     initial top-level cohort and only advances after database confirmation.
@@ -530,6 +531,19 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
     if ctx.stop_event.is_set():
         return
     initial_ids = {sid for sid, _, _ in initial}
+    def initial_groups():
+        from twicc.providers.compute_tree import NativeTreeError, resolve_native_root
+
+        groups = {}
+        for sid in initial_ids:
+            try:
+                root = resolve_native_root(sid)
+            except (NativeTreeError, Session.DoesNotExist):
+                root = sid
+            groups.setdefault(root, set()).add(sid)
+        return {sid: group for group in groups.values() for sid in group}
+
+    classification_groups = await query(initial_groups)
     display_ids = {sid for sid, kind, _ in initial if kind == SessionType.SESSION}
     total = len(display_ids)
     ready: set[str] = set()
@@ -558,8 +572,8 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
             completed=completed and len(confirmed) == total,
         )
 
-    def classify(sid):
-        unclassified.discard(sid)
+    def classify(sid, *, blocked=False):
+        unclassified.difference_update(classification_groups.get(sid, {sid}) if blocked else {sid})
         if initial_done is not None and not unclassified:
             initial_done.set()
 
@@ -567,7 +581,7 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
         delay = min(retry_delays.get(sid, .5) * 2, 60.0)
         retry_delays[sid] = delay
         retry_at[sid] = time.monotonic() + delay
-        classify(sid)
+        classify(sid, blocked=True)
 
     async def retire():
         nonlocal completion
@@ -634,7 +648,10 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
                     pending.discard(sid)
                     next_selection_poll = 0.0
                     classify(sid)
-                    if signal.outcome == "failed":
+                    rejected_outdated = signal.outcome != "applied" and await query(
+                        lambda sid=sid: outdated().filter(pk=sid).exists()
+                    )
+                    if signal.outcome == "failed" or rejected_outdated:
                         failed(sid)
                     else:
                         retry_at.pop(sid, None)
@@ -658,7 +675,7 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
                         outdated().filter(mtime__gt=cutoff, id__in=ids).values_list("id", flat=True)
                     ))
                     for sid in recent:
-                        classify(sid)
+                        classify(sid, blocked=True)
                     still_outdated = await query(lambda ids=remaining_initial: set(
                         outdated().filter(id__in=ids).values_list("id", flat=True)
                     ))
@@ -675,10 +692,20 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
                     cooling.update(retry_delays)
                 candidates = []
                 if len(outstanding) < 2 and time.monotonic() >= next_selection_poll:
-                    candidates = await query(lambda cutoff=cutoff, excluded=outstanding | cooling: list(
-                        outdated().filter(mtime__lte=cutoff).exclude(id__in=excluded)
-                        .order_by("-mtime", "-id").values_list("id", flat=True)[:1]
-                    ))
+                    from twicc.providers.compute_selection import select_native_tree_source
+
+                    def select_source():
+                        invalid_roots = set()
+                        candidate = select_native_tree_source(
+                            ctx.provider, ctx.compute_version, cutoff=cutoff,
+                            outstanding=outstanding, excluded=cooling, invalid_roots=invalid_roots,
+                        )
+                        return candidate, invalid_roots
+
+                    candidate, invalid_roots = await query(select_source) or (None, ())
+                    for root_id in invalid_roots:
+                        classify(root_id, blocked=True)
+                    candidates = [candidate] if candidate else []
                     if not candidates:
                         next_selection_poll = time.monotonic() + COMPUTE_SELECTION_POLL_SECONDS
                 if candidates:
@@ -705,7 +732,10 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
                         continue
                     pending.add(sid)
                     awaiting_status[sid] = None
-                    ctx.command_queue.put_nowait({"session_id": sid})
+                    from twicc.providers.compute_selection import tree_completion_context
+
+                    context = await query(lambda: tree_completion_context(sid, ctx.compute_version))
+                    ctx.command_queue.put_nowait({"session_id": sid, "tree_completion": context})
                     next_selection_poll = 0.0
                     continue
                 if not outstanding and not await query(outdated().exists):

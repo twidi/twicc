@@ -825,6 +825,13 @@ def test_codex_failed_result_keeps_admission_bounded(codex_recovery_runtime, mon
 
     path, _ = codex_recovery_runtime
     clone_session(path, 'third', 1)
+    # Bounded overlap is within one native tree, at a shared launcher depth.
+    clone_session(path, 'root', 0)
+    import sqlite3
+    from contextlib import closing
+    with closing(sqlite3.connect(path)) as database:
+        database.execute("UPDATE core_session SET parent_session_id='root', type='subagent' WHERE id != 'root'")
+        database.commit()
     monkeypatch.setenv('RECOVERY_TEST_FAIL_ONCE', str(path.parent / 'failed-once'))
     entered, release = threading.Event(), threading.Event()
     initialized, prepared = [], []

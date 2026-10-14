@@ -623,6 +623,25 @@ class CodexComputeCoordinator:
         ))()
         self.initial_ready.update(ready)
 
+    async def _classify_blocked_tree(self, session_id: str) -> None:
+        """Release startup classification for a root blocked by a native member."""
+        if not self.initial_ids:
+            return
+        if session_id in self.initial_ids:
+            if session_id not in self.initial_classified:
+                await self._classify_initial(session_id, confirm_ready=False)
+            return
+        if self.initial_done.is_set():
+            return
+        from twicc.providers.compute_tree import NativeTreeError, resolve_native_root
+
+        try:
+            root_id = await sync_to_async(lambda: resolve_native_root(session_id))()
+        except (NativeTreeError, Session.DoesNotExist):
+            return
+        if root_id in self.initial_ids:
+            await self._classify_initial(root_id, confirm_ready=False)
+
     async def _classify_initial(self, session_id: str, *, confirm_ready: bool = True) -> None:
         if session_id not in self.initial_ids and not self.initial_done.is_set():
             return
@@ -710,6 +729,7 @@ class CodexComputeCoordinator:
         self._retry_delays[failure.session_id] = delay
         self._retry_at[failure.session_id] = time.monotonic() + delay
         await self._classify_initial(failure.session_id)
+        await self._classify_blocked_tree(failure.session_id)
         logger.error(
             "Codex background compute failed: session=%s phase=%s error=%s%s",
             failure.session_id,
@@ -775,6 +795,16 @@ class CodexComputeCoordinator:
                 session_id, "metadata apply", f"diagnosed repair application returned {signal.outcome}",
             ))
             return
+        if signal.outcome == "superseded":
+            outdated = await sync_to_async(lambda: Session.objects.filter(pk=session_id).exclude(
+                compute_version=self.ctx.compute_version,
+            ).exists())()
+            if outdated:
+                await self._record_failure(FailedCandidate(
+                    session_id, "metadata apply", "source revision superseded before publication",
+                ))
+                return
+
         if signal.outcome == "applied" and session_id in self._unavailable_diagnoses:
             await self._submit_job(MarkSessionUnavailableJob, session_id, None)
             self._unavailable_diagnoses.pop(session_id, None)
@@ -1064,19 +1094,35 @@ class CodexComputeCoordinator:
                     age_deferred = {
                         item.session_id for item in candidates if compute_age_delay(item.mtime, source_now) > 0
                     }
-                    for session_id in age_deferred & (self.initial_ids - self.initial_classified):
-                        await self._classify_initial(session_id, confirm_ready=False)
+                    for session_id in age_deferred:
+                        await self._classify_blocked_tree(session_id)
                     healthy_pending = (self.submitted | self.computed_not_applied) - self.failures.keys()
-                    candidate = next((
-                        item
-                        for item in candidates
-                        if item.session_id not in age_deferred
-                        and item.session_id not in self.submitted
-                        and item.session_id not in self.computed_not_applied
-                        and self._retry_at.get(item.session_id, 0) <= time.monotonic()
-                        and item.session_id not in self.deferred
-                        and not (item.session_id in self.failures and healthy_pending)
-                    ), None)
+                    from twicc.providers.compute_selection import select_native_tree_source
+
+                    excluded = age_deferred | self.deferred | {
+                        sid for sid, deadline in self._retry_at.items() if deadline > time.monotonic()
+                    }
+                    if healthy_pending:
+                        excluded.update(self.failures)
+                    # Unavailable diagnostics retain the provider's existing
+                    # eligibility, including histories whose version is current.
+                    forced = self._forced_rebuild | {
+                        item.session_id for item in candidates if item.unavailable_reason is not None
+                    }
+                    def select_source():
+                        invalid_roots = set()
+                        selected = select_native_tree_source(
+                            Provider.CODEX, self.ctx.compute_version,
+                            cutoff=float("inf"), eligible_source_ids=stale_ids,
+                            outstanding=self.submitted | self.computed_not_applied,
+                            excluded=excluded, forced_source_ids=forced, invalid_roots=invalid_roots,
+                        )
+                        return selected, invalid_roots
+
+                    selected, invalid_roots = await sync_to_async(select_source)()
+                    for root_id in invalid_roots:
+                        await self._classify_blocked_tree(root_id)
+                    candidate = next((item for item in candidates if item.session_id == selected), None)
 
                     if (
                         self.in_flight is None
@@ -1098,6 +1144,7 @@ class CodexComputeCoordinator:
                                     ),
                                 )
                             await self._classify_initial(prepared.session_id)
+                            await self._classify_blocked_tree(prepared.session_id)
                             continue
                         if isinstance(prepared, FailedCandidate):
                             await self._record_failure(prepared)
@@ -1120,7 +1167,16 @@ class CodexComputeCoordinator:
                             self.in_flight = None
                             await self._record_failure(FailedCandidate(prepared.session_id, "initialize", str(error)))
                             continue
-                        self.ctx.command_queue.put_nowait({"session_id": prepared.session_id})
+                        from twicc.providers.compute_selection import tree_completion_context
+
+                        context = await sync_to_async(lambda: tree_completion_context(
+                            prepared.session_id, self.ctx.compute_version,
+                            forced_source_ids=forced,
+                            outstanding=(self.submitted | self.computed_not_applied) - {prepared.session_id},
+                        ))()
+                        self.ctx.command_queue.put_nowait({
+                            "session_id": prepared.session_id, "tree_completion": context,
+                        })
                         continue
 
                     pending = bool(self.submitted or self.computed_not_applied)
