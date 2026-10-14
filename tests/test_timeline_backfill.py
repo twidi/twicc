@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from twicc.core.models import Project, Session, SessionType, TimelineEvent
 from twicc.core.services import timeline_backfill
-from twicc.core.services.session_timeline import record_event_sync
+from twicc.core.services.session_timeline import insert_event_rows, record_event_sync
 from twicc.core.services.timeline_backfill import (
     BackfillStatus, backfill_session_sync, candidate_ids, run_timeline_backfill,
 )
@@ -193,7 +193,7 @@ def fail_inserts(monkeypatch, *, times, only_session=None):
         calls.append(rows[0].session_id)
         if (only_session is None or rows[0].session_id == only_session) and (times is None or len(calls) <= times):
             raise RuntimeError("database is locked")
-        real(rows)
+        return real(rows)
 
     monkeypatch.setattr(timeline_backfill, "_insert_rows", flaky)
     return calls
@@ -331,8 +331,64 @@ def test_raw_insert_sql_is_built_from_the_model_metadata(project):
     assert '"id"' not in sql
 
 
-def test_raw_insert_propagates_a_duplicate(project):
-    timeline_backfill._insert_rows(_parity_rows("dup", project))
+def _raw(session_id, project, key, kind="turn.started"):
+    return TimelineEvent(
+        session_id=session_id, project_id=project.id, kind=kind, occurred_at=timezone.now(), actor="agent",
+        dedupe_key=key,
+    )
+
+
+def test_raw_insert_sql_has_the_on_conflict_clause_built_from_the_metadata(project):
+    with CaptureQueriesContext(connection) as captured:
+        insert_event_rows(_parity_rows("meta2", project))
+    sql = next(q["sql"] for q in captured.captured_queries if "INSERT" in q["sql"])
+    assert sql.endswith('ON CONFLICT ("session_id", "dedupe_key") WHERE "dedupe_key" IS NOT NULL DO NOTHING')
+
+
+def test_raw_insert_skips_duplicate_keys_and_counts_only_inserted_rows(project):
+    insert_event_rows([_raw("d", project, "k1")])
+    rows = [_raw("d", project, "k1"), _raw("d", project, "k2"), _raw("d", project, "k2"), _raw("e", project, "k1")]
+    assert insert_event_rows(rows) == 2
+    assert sorted(TimelineEvent.objects.values_list("session_id", "dedupe_key")) == [
+        ("d", "k1"), ("d", "k2"), ("e", "k1"),
+    ]
+    assert insert_event_rows([_raw("d", project, "k1")]) == 0
+    assert insert_event_rows([]) == 0
+
+
+def test_raw_insert_never_deduplicates_null_keys(project):
+    assert insert_event_rows([_raw("n", project, None) for _ in range(3)]) == 3
+    assert TimelineEvent.objects.filter(session_id="n", dedupe_key__isnull=True).count() == 3
+
+
+def test_raw_insert_still_raises_on_another_constraint_violation(project):
+    bad = _raw("x", project, "k")
+    bad.kind = None  # NOT NULL violation: not covered by the ON CONFLICT clause
     with pytest.raises(IntegrityError), transaction.atomic():
-        timeline_backfill._insert_rows(_parity_rows("dup", project))
-    assert TimelineEvent.objects.filter(session_id="dup").count() == 2
+        insert_event_rows([_raw("x", project, "ok"), bad])
+    assert TimelineEvent.objects.filter(session_id="x").count() == 0
+
+
+def test_a_rerun_on_a_backfilled_session_writes_nothing_and_raises_nothing(project):
+    make(project, created_at=timezone.now(), archived=True)
+    assert backfill_session_sync("s1").rows == 2
+    TimelineEvent.objects.filter(session_id="s1", kind="session.created").delete()  # let the session be re-processed
+    outcome = backfill_session_sync("s1")
+    assert outcome.status == BackfillStatus.WRITTEN and outcome.rows == 1
+    assert TimelineEvent.objects.filter(session_id="s1").count() == 2
+    assert backfill_session_sync("s1").status == BackfillStatus.SKIPPED
+
+
+def test_a_non_conflict_error_rolls_the_backfill_session_back_as_a_whole(project, monkeypatch):
+    make(project, created_at=timezone.now(), archived=True)
+    real = timeline_backfill._build_rows
+
+    def with_a_bad_last_row(session, existing):
+        rows = real(session, existing)
+        rows[-1].kind = None
+        return rows
+
+    monkeypatch.setattr(timeline_backfill, "_build_rows", with_a_bad_last_row)
+    with pytest.raises(IntegrityError):
+        backfill_session_sync("s1")
+    assert TimelineEvent.objects.count() == 0

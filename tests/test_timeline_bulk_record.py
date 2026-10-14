@@ -55,20 +55,18 @@ def test_dedupe_keys_are_checked_against_the_table_and_inside_the_batch(project)
     assert TimelineEvent.objects.filter(kind="session.created").count() == 2
 
 
-def test_a_keyed_batch_larger_than_the_lookup_chunk_is_deduplicated_across_chunks(project, monkeypatch):
-    assert session_timeline._DEDUPE_LOOKUP_CHUNK < 32766
-    monkeypatch.setattr(session_timeline, "_DEDUPE_LOOKUP_CHUNK", 3)
+def test_a_large_keyed_batch_is_deduplicated_by_the_database(project):
     data = {"origin": "sync", "provider": "codex", "settings": None, "spawned_by": None}
     record_event_sync(TimelineKind.SESSION_CREATED, session_id="s0", dedupe_key="k",
                       actor=TimelineActor.SYSTEM, data=data)
     specs = [
         EventSpec(TimelineKind.SESSION_CREATED, session_id=f"s{i}", dedupe_key="k", actor=TimelineActor.SYSTEM,
                   data=data)
-        for i in range(8)
+        for i in range(3000)
     ]
-    specs.append(specs[7])  # duplicate inside the batch, in a later chunk
-    assert record_events_bulk_sync(specs) == 7
-    assert TimelineEvent.objects.filter(kind="session.created").count() == 8
+    specs.append(specs[2999])
+    assert record_events_bulk_sync(specs) == 2999
+    assert TimelineEvent.objects.filter(kind="session.created").count() == 3000
 
 
 def test_a_failing_batch_falls_back_to_row_by_row_and_never_raises(project, monkeypatch):

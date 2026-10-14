@@ -103,19 +103,11 @@ def _build_rows(session: Session, existing: set[str]) -> list[TimelineEvent]:
     return rows
 
 
-def _drop_present(session_id: str, rows: list[TimelineEvent]) -> list[TimelineEvent]:
-    """Drop the rows whose ``dedupe_key`` already exists: that counts as written, not as a failure."""
-    present = set(
-        TimelineEvent.objects.filter(session_id=session_id, dedupe_key__in=[r.dedupe_key for r in rows])
-        .values_list("dedupe_key", flat=True)
-    )
-    return [row for row in rows if row.dedupe_key not in present]
-
-
-def _insert_rows(rows: list[TimelineEvent]) -> None:
+def _insert_rows(rows: list[TimelineEvent]) -> int:
     """The backfill's own insert path: errors propagate (no swallowing) so the session's
-    transaction rolls back as a whole. See :func:`insert_event_rows`."""
-    insert_event_rows(rows)
+    transaction rolls back as a whole. A key already present is skipped by the database and not
+    counted (it counts as written, not as a failure). See :func:`insert_event_rows`."""
+    return insert_event_rows(rows)
 
 
 def backfill_session_sync(session_id: str) -> SessionOutcome:
@@ -137,10 +129,7 @@ def backfill_session_sync(session_id: str) -> SessionOutcome:
         )
         if TimelineKind.SESSION_CREATED in existing:
             return SessionOutcome(BackfillStatus.SKIPPED)
-        rows = _drop_present(session_id, _build_rows(session, existing))
-        if rows:
-            _insert_rows(rows)
-        return SessionOutcome(BackfillStatus.WRITTEN, len(rows))
+        return SessionOutcome(BackfillStatus.WRITTEN, _insert_rows(_build_rows(session, existing)))
 
 
 #: Pauses (seconds) before each retry round of the sessions that failed: three rounds, growing,

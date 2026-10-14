@@ -95,20 +95,40 @@ class EventSpec(NamedTuple):
     dedupe_key: str | None = None
 
 
-def insert_event_rows(rows: list[TimelineEvent]) -> None:
-    """Insert unsaved ``rows`` with ONE ``executemany``. Errors propagate (no swallowing, no savepoint).
+def _conflict_clause() -> str:
+    """``ON CONFLICT ... DO NOTHING`` matching the partial unique constraint on ``(session_id, dedupe_key)``.
+
+    The target is built from the model metadata and must match the partial unique index exactly
+    (same columns, same ``WHERE dedupe_key IS NOT NULL``), otherwise SQLite rejects the statement.
+    Only a conflict on that index is skipped: a NOT NULL / CHECK / FK violation still raises, and
+    rows with a NULL ``dedupe_key`` never conflict.
+    """
+    quote = connection.ops.quote_name
+    constraint = next(c for c in TimelineEvent._meta.constraints if c.name == "uniq_timeline_dedupe")
+    columns = [TimelineEvent._meta.get_field(name).column for name in constraint.fields]
+    key_column = TimelineEvent._meta.get_field("dedupe_key").column
+    return f"ON CONFLICT ({', '.join(quote(c) for c in columns)}) WHERE {quote(key_column)} IS NOT NULL DO NOTHING"
+
+
+def insert_event_rows(rows: list[TimelineEvent]) -> int:
+    """Insert unsaved ``rows`` with ONE ``executemany``. Returns the number of rows really inserted.
 
     A raw statement built from the model metadata (the project convention, see
     ``apply_item_updates``): each value goes through the field's ``get_db_prep_save``, the bytes
     ``Model.save()`` would write. Primary keys are not assigned back to the objects.
+
+    A row whose ``(session_id, dedupe_key)`` already exists (in the table or earlier in the batch)
+    is skipped by the database (``ON CONFLICT ... DO NOTHING``) and not counted: ``rowcount`` of an
+    ``executemany`` is the sum of the modified rows. Any other error propagates (no swallowing,
+    no savepoint).
     """
     if not rows:
-        return
+        return 0
     fields = [f for f in TimelineEvent._meta.concrete_fields if not f.primary_key]
     quote = connection.ops.quote_name
     sql = (
         f"INSERT INTO {quote(TimelineEvent._meta.db_table)} ({', '.join(quote(f.column) for f in fields)}) "
-        f"VALUES ({', '.join(['%s'] * len(fields))})"
+        f"VALUES ({', '.join(['%s'] * len(fields))}) {_conflict_clause()}"
     )
     params = [
         [
@@ -121,6 +141,7 @@ def insert_event_rows(rows: list[TimelineEvent]) -> None:
     ]
     with connection.cursor() as cursor:
         cursor.executemany(sql, params)
+        return cursor.rowcount
 
 
 def record_events_bulk_sync(specs: list[EventSpec]) -> int:
@@ -128,7 +149,7 @@ def record_events_bulk_sync(specs: list[EventSpec]) -> int:
 
     Same rules as :func:`record_event_sync` for each spec: payload validation (an invalid spec is
     logged and skipped, the others are kept), ``STARTED_OF`` inheritance, ``dedupe_key`` duplicates
-    (against the table and inside the batch) skipped. The valid rows go in ONE ``executemany``
+    (against the table and inside the batch) skipped by the database itself. The valid rows go in ONE ``executemany``
     inside a savepoint. If that batch fails, each row is retried alone through
     :func:`record_event_sync`, so one bad row costs only itself. Call it under the DB write lock.
     """
@@ -150,14 +171,12 @@ def record_events_bulk_sync(specs: list[EventSpec]) -> int:
                 )))
             except Exception:
                 logger.exception("Timeline event %s could not be built for session %s", spec.kind, spec.session_id)
-        built = _drop_duplicates(built)
         if not built:
             return 0
         rows = [row for _, row in built]
         try:
             with transaction.atomic():
-                insert_event_rows(rows)
-            return len(rows)
+                return insert_event_rows(rows)
         except Exception:
             logger.exception("Timeline batch insert failed (%s rows); retrying row by row", len(rows))
             return sum(
@@ -171,37 +190,6 @@ def record_events_bulk_sync(specs: list[EventSpec]) -> int:
     except Exception:
         logger.exception("Timeline batch of %s events could not be written", len(specs))
         return 0
-
-
-# Each lookup query binds two IN lists of at most this many values (SQLite's variable limit is 32766).
-_DEDUPE_LOOKUP_CHUNK = 2000
-
-
-def _drop_duplicates(built: list[tuple[EventSpec, TimelineEvent]]) -> list[tuple[EventSpec, TimelineEvent]]:
-    """Drop the rows whose ``(session_id, dedupe_key)`` already exists in the table or earlier in the batch.
-
-    The table lookup is chunked so a very large keyed batch stays under SQLite's variable limit.
-    """
-    keyed = [row for _, row in built if row.dedupe_key is not None]
-    if not keyed:
-        return built
-    existing: set[tuple[str, str]] = set()
-    for start in range(0, len(keyed), _DEDUPE_LOOKUP_CHUNK):
-        chunk = keyed[start:start + _DEDUPE_LOOKUP_CHUNK]
-        existing.update(
-            TimelineEvent.objects.filter(
-                session_id__in={row.session_id for row in chunk}, dedupe_key__in={row.dedupe_key for row in chunk},
-            ).values_list("session_id", "dedupe_key")
-        )
-    kept = []
-    for spec, row in built:
-        if row.dedupe_key is not None:
-            key = (row.session_id, row.dedupe_key)
-            if key in existing:
-                continue
-            existing.add(key)
-        kept.append((spec, row))
-    return kept
 
 
 async def record_event(kind: str, **kwargs) -> TimelineEvent | None:
