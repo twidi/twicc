@@ -89,7 +89,7 @@ async def update_session_permission_mode(session_id: str, permission_mode: str) 
     """
     from django.db import transaction
 
-    from twicc.core.models import Session, TimelineActor
+    from twicc.core.models import Session
     from twicc.core.serializers import serialize_session
     from twicc.core.services.session_update import record_settings_change
 
@@ -104,7 +104,7 @@ async def update_session_permission_mode(session_id: str, permission_mode: str) 
             if rows:
                 record_settings_change(
                     session_id, before, {"permission_mode": permission_mode},
-                    actor=TimelineActor.USER, reason="set_mode",
+                    reason="set_mode",
                 )
             return rows
 

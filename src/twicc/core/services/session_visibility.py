@@ -120,7 +120,7 @@ def _check_hidden_invariants(session) -> list[SessionVisibilityError]:
 def _apply_visibility_flag(session_id: str, new_hidden: bool):
     """Commit eligibility and retained aggregate scopes together."""
     from django.db import transaction
-    from twicc.core.models import Session, TimelineActor, TimelineKind
+    from twicc.core.models import Session, TimelineKind
     from twicc.core.services.session_timeline import record_event_sync
     from twicc.providers.live_aggregates import apply_contribution_changes, session_contribution
 
@@ -139,7 +139,7 @@ def _apply_visibility_flag(session_id: str, new_hidden: bool):
         if was_hidden != new_hidden:
             record_event_sync(
                 TimelineKind.HIDDEN_STARTED if new_hidden else TimelineKind.HIDDEN_ENDED,
-                session_id=session.id, project_id=session.project_id, actor=TimelineActor.USER,
+                session_id=session.id, project_id=session.project_id,
             )
         session.refresh_from_db()
     return session

@@ -84,7 +84,10 @@ def test_the_bulk_archive_endpoint_records_one_user_event_per_archived_session(p
     got = {r.session_id: r for r in TimelineEvent.objects.filter(kind="archived.started")}
     assert sorted(got) == ["a", "b", "c"]
     assert {sid: r.project_id for sid, r in got.items()} == {"a": project.id, "b": project.id, "c": other.id}
-    assert all(r.actor == "user" and r.reason == "" for r in got.values())
+    assert all(
+        (r.actor, r.via, r.actor_ref, r.actor_name) == ("user", "ui", None, None) and r.reason == ""
+        for r in got.values()
+    )
     assert kinds("p") == []
 
 

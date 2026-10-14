@@ -62,7 +62,7 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from twicc.core.enums import Provider
-from twicc.core.models import TimelineActor, TimelineKind
+from twicc.core.models import TimelineKind
 from twicc.core.services.session_timeline import (
     EventSpec, project_id_of, record_event_sync, record_events_bulk_sync, record_title_change,
 )
@@ -72,6 +72,7 @@ from twicc.providers.state import (
     ProviderDisabledError,
     ensure_provider_running,
 )
+from twicc.request_origin import capture_origin
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +170,9 @@ def archive_sessions_bulk(ids: set[str]) -> list[str]:
 
     if not ids:
         return []
+    # One origin for the whole batch (design section 6, requirement 4): resolved once, here, in the
+    # awaited chain of the request, then given to every row.
+    origin = capture_origin()
     table = connection.ops.quote_name(Session._meta.db_table)
     ids_json = orjson.dumps(sorted(ids)).decode()
     with transaction.atomic():
@@ -185,8 +189,7 @@ def archive_sessions_bulk(ids: set[str]) -> list[str]:
                 [ids_json],
             )
         record_events_bulk_sync([
-            EventSpec(TimelineKind.ARCHIVED_STARTED, session_id=session_id, project_id=project_id,
-                      actor=TimelineActor.USER)
+            EventSpec(TimelineKind.ARCHIVED_STARTED, session_id=session_id, project_id=project_id, origin=origin)
             for session_id, project_id in flipped
         ])
     return [session_id for session_id, _ in flipped]
@@ -198,8 +201,11 @@ def bundle_fields(updates: dict) -> list[str]:
 
 
 def record_settings_change(session_id: str, before: dict | None, updates: dict, *,
-                           actor: str, reason: str = "") -> None:
+                           actor: str | None = None, reason: str = "") -> None:
     """Write ``settings.changed`` for the bundle fields of ``updates`` whose value changed.
+
+    ``actor=None`` means a request-caused change (the carrier, else the default); an explicit actor
+    (system writers) leaves the origin fields NULL.
 
     ``before`` is the row's values for ``bundle_fields(updates)`` read before the update.
     """
@@ -219,7 +225,7 @@ def record_settings_change(session_id: str, before: dict | None, updates: dict, 
 
 @transaction.atomic
 def persist_session_settings(
-    session_id: str, updates: dict, *, actor: str = TimelineActor.USER, reason: str = "",
+    session_id: str, updates: dict, *, actor: str | None = None, reason: str = "",
 ) -> None:
     """Write settings and order widget snapshots under the DB writer lease."""
     from twicc.core.models import Session
@@ -539,14 +545,14 @@ async def apply_session_archived_change(
             archive_event = await asyncio.to_thread(
                 record_event_sync,
                 TimelineKind.ARCHIVED_STARTED if archived else TimelineKind.ARCHIVED_ENDED,
-                session_id=session.id, project_id=session.project_id, actor=TimelineActor.USER,
+                session_id=session.id, project_id=session.project_id,
             )
         if also_unpin and was_pinned is not None:
             # ``also_unpin`` clears ``pinned`` itself: the pin service is not called.
             # The ``scope`` of the row is inherited from ``pinned.started`` by the service.
             await asyncio.to_thread(
                 record_event_sync, TimelineKind.PINNED_ENDED,
-                session_id=session.id, project_id=session.project_id, actor=TimelineActor.USER,
+                session_id=session.id, project_id=session.project_id,
                 caused_by=archive_event,
             )
 
@@ -718,7 +724,7 @@ async def apply_session_pinned_change(session, pinned) -> None:
         # ``pinned.started`` is still the old pin); the new ``started`` row is
         # ``caused_by`` it.
         common = {
-            "session_id": session.id, "project_id": session.project_id, "actor": TimelineActor.USER,
+            "session_id": session.id, "project_id": session.project_id,
             "occurred_at": timezone.now(),
         }
         ended = None
@@ -748,7 +754,7 @@ async def apply_session_mute_on_user_turn_change(session, mute_on_user_turn: boo
             await asyncio.to_thread(
                 record_event_sync,
                 TimelineKind.MUTED_STARTED if mute_on_user_turn else TimelineKind.MUTED_ENDED,
-                session_id=session.id, project_id=session.project_id, actor=TimelineActor.USER,
+                session_id=session.id, project_id=session.project_id,
             )
 
     await run_under_db_write_lock(_save_and_record)
