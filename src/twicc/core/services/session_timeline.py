@@ -23,7 +23,8 @@ from twicc.core.models import (
 from twicc.core.timeline import STARTED_OF, inherit_started_fields, validate_data
 from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.request_origin import (
-    ACTOR_NAME_MAX_LENGTH, ACTOR_REF_MAX_LENGTH, VIA_VALUES, RequestOrigin, resolve_event_origin,
+    ACTOR_NAME_MAX_LENGTH, ACTOR_REF_MAX_LENGTH, DEFAULT_ORIGIN, VIA_VALUES, RequestOrigin,
+    resolve_event_origin,
 )
 
 logger = logging.getLogger(__name__)
@@ -287,7 +288,9 @@ def project_id_of(session_id: str) -> str | None:
     return Session.objects.filter(id=session_id).values_list("project_id", flat=True).first()
 
 
-def record_session_created(session: Session, *, origin: str) -> TimelineEvent | None:
+def record_session_created(
+    session: Session, *, origin: str, creator: RequestOrigin | None = None,
+) -> TimelineEvent | None:
     """Write ``session.created`` and the initial flag intervals of a new row.
 
     A session created already hidden or muted gets the matching ``*.started``
@@ -297,12 +300,18 @@ def record_session_created(session: Session, *, origin: str) -> TimelineEvent | 
     ``settings`` and ``spawned_by`` are read from the row just created (the
     stored, clamped values, not the request). ``settings`` is kept only for
     ``origin == "twicc"``; ``spawned_by`` is ``Session.spawned_by_id``.
+
+    Who caused the rows (design 2026-10-14, section 6.6): for ``origin == "twicc"`` the creating
+    request, captured with the pending creation attributes (``creator``), else the default ``user`` /
+    ``ui``; for any other ``origin`` the explicit ``system`` actor with NULL origin fields. These rows are
+    written long after the request, so the carrier is never read.
     """
     from twicc.providers.helpers import AgentSettings
 
     try:
         now = timezone.now()
         common = {"session_id": session.id, "project_id": session.project_id, "occurred_at": now}
+        who = {"origin": creator or DEFAULT_ORIGIN} if origin == "twicc" else {"actor": TimelineActor.SYSTEM}
         settings = None
         if origin == "twicc":
             settings = {
@@ -310,26 +319,32 @@ def record_session_created(session: Session, *, origin: str) -> TimelineEvent | 
                 if value is not None
             }
         created = record_event_sync(
-            TimelineKind.SESSION_CREATED, actor=TimelineActor.SYSTEM,
+            TimelineKind.SESSION_CREATED,
             data={"origin": origin, "provider": session.provider, "settings": settings,
-                  "spawned_by": session.spawned_by_id}, **common,
+                  "spawned_by": session.spawned_by_id}, **who, **common,
         )
         if created is None:
             return None
         if session.hidden:
-            record_event_sync(TimelineKind.HIDDEN_STARTED, actor=TimelineActor.USER, caused_by=created, **common)
+            record_event_sync(TimelineKind.HIDDEN_STARTED, caused_by=created, **who, **common)
         if session.mute_on_user_turn:
-            record_event_sync(TimelineKind.MUTED_STARTED, actor=TimelineActor.USER, caused_by=created, **common)
+            record_event_sync(TimelineKind.MUTED_STARTED, caused_by=created, **who, **common)
         return created
     except Exception:
         logger.exception("Timeline creation events could not be written for session %s", session.id)
         return None
 
 
-def record_title_change(session_id: str, title: str, *, source: str, old: str | None = None) -> None:
+def record_title_change(
+    session_id: str, title: str, *, source: str, old: str | None = None, origin: RequestOrigin | None = None,
+) -> None:
     """Write ``title.changed``. ``source`` is ``"auto"``, ``"user"`` or ``"agent"``.
 
     ``old`` is the previous title when the caller knows it (``None`` otherwise).
+
+    A ``user`` title is request-caused: it takes ``origin`` when the caller captured one (a deferred
+    flush), else the carrier, else the default. A title from another source comes from compute, the
+    watcher or a Codex job, not from a request: actor ``agent``, NULL origin fields.
 
     Subagent sessions get no event (decision D2): the compute fills titles for
     every session it processes, subagents included.
@@ -338,10 +353,10 @@ def record_title_change(session_id: str, title: str, *, source: str, old: str | 
         row = Session.objects.filter(id=session_id).values_list("project_id", "type").first()
         if row is None or row[1] == SessionType.SUBAGENT:
             return
+        who = {"origin": origin} if source == "user" else {"actor": TimelineActor.AGENT}
         record_event_sync(
             TimelineKind.TITLE_CHANGED, session_id=session_id, project_id=row[0],
-            actor=TimelineActor.USER if source == "user" else TimelineActor.AGENT,
-            data={"source": source, "new": title, "old": old},
+            data={"source": source, "new": title, "old": old}, **who,
         )
     except Exception:
         logger.exception("Timeline title change could not be written for session %s", session_id)

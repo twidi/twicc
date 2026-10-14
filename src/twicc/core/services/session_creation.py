@@ -36,6 +36,7 @@ from twicc.pending_agent_settings import set_pending_agent_settings
 from twicc.pending_session_attributes import set_pending_session_attributes
 from twicc.pending_titles import set_pending_title
 from twicc.projects import register_project
+from twicc.request_origin import capture_origin
 from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
 from twicc.providers.state import (
@@ -436,7 +437,7 @@ async def _create_session_from_payload(
     # --- stash title and agent settings (consumed by the watcher when it
     #     creates the Session row from the JSONL) ----------------------
     if title is not None and not ephemeral:
-        set_pending_title(session_id, title)
+        set_pending_title(session_id, title, origin=capture_origin())
     set_pending_agent_settings(session_id, agent_settings)
 
     # --- compose the TwiCC system-prompt addendum --------------------
@@ -499,6 +500,7 @@ async def _create_session_from_payload(
         hybrid=hybrid,
         layout=layout,
         ephemeral=ephemeral,
+        origin=capture_origin(),
     )
 
     # --- invoke the agent manager --------------------------------

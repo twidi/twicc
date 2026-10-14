@@ -26,6 +26,8 @@ from __future__ import annotations
 import logging
 from typing import NamedTuple
 
+from twicc.request_origin import RequestOrigin
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,6 +49,9 @@ class PendingSessionAttributes(NamedTuple):
     # ``{}`` = single pane; falls through to the model default.
     layout: dict
     ephemeral: bool = False
+    # Origin of the creating request (design 2026-10-14, section 6.6): ``session.created`` and its
+    # flag rows are written by the watcher long after the request, so they take it from here.
+    origin: RequestOrigin | None = None
 
 
 # session_id -> PendingSessionAttributes
@@ -65,6 +70,7 @@ def set_pending_session_attributes(
     hybrid: bool = False,
     layout: dict | None = None,
     ephemeral: bool = False,
+    origin: RequestOrigin | None = None,
 ) -> None:
     """Store pending structural attributes to be applied at row creation."""
     _pending[session_id] = PendingSessionAttributes(
@@ -77,6 +83,7 @@ def set_pending_session_attributes(
         hybrid=hybrid,
         layout=layout or {},
         ephemeral=ephemeral,
+        origin=origin,
     )
     logger.debug(
         "Set pending session attributes for %s: hidden=%s mute_on_user_turn=%s spawned_by_id=%s "
@@ -93,6 +100,19 @@ def pop_pending_session_attributes(
 ) -> PendingSessionAttributes | None:
     """Get and remove the pending attributes for a session, or ``None``."""
     return _pending.pop(session_id, None)
+
+
+def rekey_pending_session_attributes(old_id: str, new_id: str) -> bool:
+    """Move the whole pending entry from ``old_id`` to ``new_id`` (Codex draft -> canonical id).
+
+    The entry moves as one object, so a field added to :class:`PendingSessionAttributes` later cannot
+    be forgotten by the re-key. Returns whether there was an entry to move.
+    """
+    entry = _pending.pop(old_id, None)
+    if entry is None:
+        return False
+    _pending[new_id] = entry
+    return True
 
 
 def get_pending_session_attributes(

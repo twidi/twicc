@@ -567,46 +567,22 @@ class BaseAgentManager:
                         if pending is not None:
                             set_pending_agent_settings(agent.session_id, pending)
 
-                        # Same rationale for pending_titles: the WS handler stored it under
-                        # the draft id we received; re-key under the canonical id so the
-                        # Codex manager's ASSISTANT_TURN flush actually finds it. No-op for
-                        # Claude Code where draft id == canonical id.
-                        from twicc.pending_titles import (
-                            pop_pending_title,
-                            set_pending_title,
-                        )
+                        # Same rationale for pending_titles: the creation service stored the title
+                        # (with the origin of the creating request) under the draft id. Move the
+                        # whole entry under the canonical id so the Codex manager's ASSISTANT_TURN
+                        # flush finds it. No-op for Claude Code where draft id == canonical id.
+                        from twicc.pending_titles import rekey_pending_title
 
-                        pending_title = pop_pending_title(session_id)
-                        if pending_title is not None:
-                            set_pending_title(agent.session_id, pending_title)
+                        rekey_pending_title(session_id, agent.session_id)
 
-                        # Same rationale for pending_session_attributes (hidden,
-                        # mute-on-user-turn, spawned links, system-prompt addendum,
-                        # hybrid, dockable layout): the create-session service stashed
-                        # them under the draft id, but the watcher pops them when it
-                        # creates the row keyed on the canonical id Codex writes into
-                        # the JSONL. Re-key here so the pop finds them — every field
-                        # must be forwarded, or it silently reverts to its default (the
-                        # draft's customized ``layout`` would drop to single pane).
-                        from twicc.pending_session_attributes import (
-                            pop_pending_session_attributes,
-                            set_pending_session_attributes,
-                        )
+                        # Same rationale for pending_session_attributes (hidden, mute-on-user-turn,
+                        # spawned links, system-prompt addendum, hybrid, dockable layout, creating
+                        # origin): stashed under the draft id, popped by the watcher under the
+                        # canonical id Codex writes into the JSONL. The whole entry moves, so a
+                        # field added later cannot silently revert to its default here.
+                        from twicc.pending_session_attributes import rekey_pending_session_attributes
 
-                        pending_attrs = pop_pending_session_attributes(session_id)
-                        if pending_attrs is not None:
-                            set_pending_session_attributes(
-                                agent.session_id,
-                                hidden=pending_attrs.hidden,
-                                mute_on_user_turn=pending_attrs.mute_on_user_turn,
-                                spawned_by_id=pending_attrs.spawned_by_id,
-                                spawn_root_id=pending_attrs.spawn_root_id,
-                                annotations=pending_attrs.annotations,
-                                system_prompt_addendum=pending_attrs.system_prompt_addendum,
-                                hybrid=pending_attrs.hybrid,
-                                layout=pending_attrs.layout,
-                                ephemeral=pending_attrs.ephemeral,
-                            )
+                        rekey_pending_session_attributes(session_id, agent.session_id)
 
                     await self.notify_session_bound(
                         draft_session_id=session_id,
@@ -894,6 +870,13 @@ class BaseAgentManager:
         from twicc.providers.helpers import get_provider_helpers
 
         session_id = agent.session_id
+        # A deferred writer never reads the carrier: it runs inside the state-change funnel (system
+        # marker) or in a retry task with a stale context. Use the origin captured when the title was
+        # stored, else the explicit default (design 2026-10-14, section 6.5).
+        from twicc.pending_titles import get_pending_title_origin
+        from twicc.request_origin import DEFAULT_ORIGIN
+
+        origin = get_pending_title_origin(session_id) or DEFAULT_ORIGIN
 
         try:
             async def _persist_session_title() -> int:
@@ -905,7 +888,9 @@ class BaseAgentManager:
                 )(title=pending, title_origin="user")
                 # Retries of a failed provider rename re-run this update: only a real change is an event.
                 if updated and old_title != pending:
-                    await asyncio.to_thread(record_title_change, session_id, pending, source="user", old=old_title)
+                    await asyncio.to_thread(
+                        record_title_change, session_id, pending, source="user", old=old_title, origin=origin,
+                    )
                 return updated
             rows_updated = await run_under_db_write_lock(_persist_session_title)
         except Exception as e:
