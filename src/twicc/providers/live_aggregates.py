@@ -157,14 +157,32 @@ def apply_contribution_changes(
             project_ids=[state.project_id for state in states], source_changed=True,
             activity_scopes=((scope, state.provider) for state in states for scope in (state.project_id, None)),
             baseline_pending=baseline_pending)
-    if repair or metadata_changed or invalid:
-        return
     cost_delta = defaultdict(lambda: ZERO)
     count_delta = defaultdict(int)
     for sign, items in ((-1, before_items), (1, after_items)):
         for item in items:
             cost_delta[item.session_id] += sign * (item.cost or ZERO)
             count_delta[item.session_id] += sign * (item.kind == ItemKind.USER_MESSAGE)
+    from twicc.providers.contribution_revisions import DailyKey, record_contribution_commit
+
+    # Timestamp-null messages still change creation-day session eligibility.
+    # Fence other trees' prepared activity before either count publication path.
+    for sid, delta in count_delta.items():
+        session = sessions.get(sid)
+        if (session and session.created_at and _eligible(session_contribution(session))
+                and bool(session.user_message_count) != bool(max(0, session.user_message_count + delta))):
+            record_contribution_commit(days=[
+                DailyKey(scope, session.provider, session.created_at.astimezone(UTC).date())
+                for scope in (session.project_id, None)
+            ])
+    if repair or metadata_changed or invalid:
+        # Live message visibility is independent of the pending cost baseline.
+        # Replayed rows contribute only their bounded before/after difference.
+        # A stale zero count may underflow; exact tree publication replaces it.
+        for sid, delta in count_delta.items():
+            if delta and (session := sessions.get(sid)):
+                Session.objects.filter(pk=sid).update(user_message_count=max(0, session.user_message_count + delta))
+        return
     old_self = {sid: s.self_cost for sid, s in sessions.items()}
     for sid in session_ids:
         if session := sessions.get(sid):

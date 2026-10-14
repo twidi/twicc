@@ -6,7 +6,9 @@ from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
-from tests.content_storage_helpers import content_row_factory
+from tests.content_storage_helpers import content_row_factory as _content_row_factory
+
+content_row_factory = _content_row_factory
 from tests.test_content_extraction import make_session, message
 from twicc.core.content_storage import extraction
 from twicc.core.content_storage.policy import compression_policy_version
@@ -66,6 +68,68 @@ def test_current_no_gain_is_not_retried(content_row_factory):
         batch = reconcile(owner)
     assert batch.prepared == ()
     assert not any('core_sessionitemcontent' in q['sql'] and '"payload"' in q['sql'] and 'SELECT' in q['sql'] and 'LENGTH(' not in q['sql'] for q in queries)
+
+
+def test_publication_validates_content_metadata_in_one_batch(content_row_factory):
+    """Distinct unchanged contents do not add one writer query per payload."""
+    owner = make_session(archived=True, created_at=timezone.now() - timedelta(days=60))
+    rows = [content_row_factory(f'unchanged {line}' * 100, True, session_ids=[owner.id]) for line in range(8)]
+    for row in rows:
+        row.compression_attempt_version = compression_policy_version('codex', row.dictionary_id)
+        row.save(update_fields=['compression_attempt_version'])
+    for line in range(1, 9):
+        SessionItem.objects.create(session=owner, line_num=line, content='',
+                                   current_content=rows[line - 1], original_content=rows[line % 8])
+    operation = extraction.begin_compute_application(message(owner))
+    try:
+        with extraction._compute_scope(operation, frozenset()):
+            batch = extraction._prepare_reconciliation(operation.message, -1)
+            assert len(batch.observations) == 8
+            assert batch.prepared == ()
+            with CaptureQueriesContext(connection) as queries:
+                extraction._publish_reconciliation(operation.message, batch)
+        content_reads = [q['sql'] for q in queries if q['sql'].startswith('SELECT')
+                         and 'core_sessionitemcontent' in q['sql']]
+        assert len(content_reads) == 1
+        assert '"payload"' not in content_reads[0]
+    finally:
+        extraction.close_compute_application(operation)
+
+
+@pytest.mark.parametrize('mutation', ['owners', 'epoch', 'codec', 'dictionary', 'missing'])
+def test_batched_publication_rejects_changed_content_evidence(content_row_factory, mutation):
+    from tests.content_storage_helpers import _public_dictionary
+    from twicc.core.content_storage.codec import encode_plain
+    from twicc.core.models import Session
+    owner = make_session(archived=True, created_at=timezone.now() - timedelta(days=60))
+    text = 'retained content ' * 100
+    row = content_row_factory(text, True, session_ids=[owner.id])
+    row.compression_attempt_version = compression_policy_version('codex', row.dictionary_id)
+    row.save(update_fields=['compression_attempt_version'])
+    item = SessionItem.objects.create(session=owner, line_num=1, content='', current_content=row, original_content=row)
+    operation = extraction.begin_compute_application(message(owner))
+    try:
+        with extraction._compute_scope(operation, frozenset()):
+            batch = extraction._prepare_reconciliation(operation.message, -1)
+            if mutation == 'owners':
+                row.session_ids.append('new-owner')
+                row.save(update_fields=['session_ids'])
+            elif mutation == 'epoch':
+                Session.objects.filter(pk=owner.id).update(history_epoch=owner.history_epoch + 1)
+            elif mutation == 'codec':
+                row.codec, row.dictionary_id, row.payload = 'plain', None, encode_plain(text).payload
+                row.save(update_fields=['codec', 'dictionary_id', 'payload'])
+            elif mutation == 'dictionary':
+                row.dictionary_id = _public_dictionary('claude_code').id
+                row.save(update_fields=['dictionary_id'])
+            else:
+                item.delete()
+                row.delete()
+            with pytest.raises(extraction.SupersededStorageResult):
+                extraction._publish_reconciliation(operation.message, batch)
+        assert operation.reconciled_contents == {}
+    finally:
+        extraction.close_compute_application(operation)
 
 
 def test_hot_owner_added_after_preparation_rejects_compression(content_row_factory):
@@ -162,3 +226,30 @@ def test_maintenance_conforming_content_skips_payload(content_row_factory):
     assert entries == ()
     assert not any('core_sessionitemcontent' in q['sql'] and '"payload"' in q['sql']
                    and 'SELECT' in q['sql'] and 'LENGTH(' not in q['sql'] for q in queries)
+
+
+def test_rolled_back_publication_does_not_skip_representation_retry(content_row_factory):
+    """A rollback must not mark an uncommitted compression as visited."""
+    from django.db import transaction
+    from tests.content_storage_helpers import _public_dictionary
+    _public_dictionary('codex')
+    owner = make_session(archived=True, created_at=timezone.now() - timedelta(days=60))
+    row = content_row_factory('rollback payload ' * 100, False, session_ids=[owner.id])
+    SessionItem.objects.create(session=owner, line_num=1, content='', current_content=row)
+    operation = extraction.begin_compute_application(message(owner))
+    try:
+        with extraction._compute_scope(operation, frozenset()):
+            first = extraction._prepare_reconciliation(operation.message, -1)
+            assert first.prepared
+            with transaction.atomic():
+                extraction._publish_reconciliation(operation.message, first)
+                transaction.set_rollback(True)
+            row.refresh_from_db()
+            assert row.codec == 'plain'
+            retry = extraction._prepare_reconciliation(operation.message, -1)
+            assert retry.prepared
+            extraction._publish_reconciliation(operation.message, retry)
+        row.refresh_from_db()
+        assert row.codec == 'zstd'
+    finally:
+        extraction.close_compute_application(operation)

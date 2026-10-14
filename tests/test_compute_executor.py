@@ -60,18 +60,15 @@ def test_heavy_work_does_not_block_channels_cleanup(monkeypatch):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("path", ["completed", "abandoned"])
-def test_final_apply_aggregate_does_not_block_channels_or_repeat_at_finalization(monkeypatch, path):
-    started = threading.Event()
-    release = threading.Event()
+def test_source_finalization_retains_aggregate_work_without_historical_repair(monkeypatch, path):
+    from twicc.core.models import ComputeAggregateRepair
     project = Project.objects.create(id='aggregate-project')
     session = Session.objects.create(id='aggregate-session', project=project, provider=Provider.CODEX,
                                      created_at=datetime(2026, 9, 29, tzinfo=UTC))
     calls = []
-    original = DailyActivity.recalculate
-    def recalculate(project_id, day, provider):
-        calls.append((project_id, day, provider))
-        _blocked_work(started, release)
-        original(project_id, day, provider)
+    def recalculate(*args):
+        calls.append(args)
+        raise AssertionError('Source completion must not repair historical activity')
     monkeypatch.setattr(DailyActivity, 'recalculate', staticmethod(recalculate))
 
     async def no_broadcast(_session_id):
@@ -81,31 +78,29 @@ def test_final_apply_aggregate_does_not_block_channels_or_repeat_at_finalization
     async def scenario():
         db_writer.start_db_writer()
         run_id, future = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0)
-        task = asyncio.create_task(db_writer._process_compute_message({
-            'type': 'session_complete', 'provider': Provider.CODEX.value,
-            'run_id': run_id, 'session_id': session.id, 'history_facts': [],
-            'observed_last_offset': 0,
-        }))
         try:
-            assert await _shared_cleanup_completes_while_blocked(started) == 'channels-ready'
-        finally:
-            release.set()
-            await task
-            count = len(calls)
-            assert count == 2  # Project and global buckets, maintained in final apply.
+            await asyncio.wait_for(db_writer._process_compute_message({
+                'type': 'session_complete', 'provider': Provider.CODEX.value,
+                'run_id': run_id, 'session_id': session.id, 'history_facts': [],
+                'observed_last_offset': 0,
+            }), 3)
             assert db_writer._compute_states[run_id].failed_count == 0
+            assert await database_sync_to_async(ComputeAggregateRepair.objects.filter(session_id=session.id).exists)()
             if path == 'completed':
                 await db_writer._finalize_compute_run(run_id, Provider.CODEX)
                 assert future.done() and future.result() == 0
             else:
                 await db_writer._finalize_abandoned_run(run_id, Provider.CODEX)
-            assert len(calls) == count
+        finally:
             await db_writer.stop_db_writer()
     asyncio.run(scenario())
+    assert calls == []
+    assert ComputeAggregateRepair.objects.filter(session_id=session.id).exists()
 
 
 @pytest.mark.django_db(transaction=True)
-def test_compute_run_without_private_proof_repairs_activity_for_each_result(monkeypatch):
+def test_compute_run_retains_shared_activity_until_tree_publication(monkeypatch):
+    from twicc.providers.helpers import get_provider_helpers
     project = Project.objects.create(id='shared-activity-project')
     stamp = datetime(2026, 9, 29, tzinfo=UTC)
     sessions = [Session.objects.create(id=f'activity-{index}', project=project, provider=Provider.CODEX,
@@ -140,6 +135,7 @@ def test_compute_run_without_private_proof_repairs_activity_for_each_result(monk
                     'type': 'session_complete', 'provider': Provider.CODEX.value,
                     'run_id': run_id, 'session_id': session.id, 'history_facts': [],
                     'observed_last_offset': 0,
+                    'session_fields': {'compute_version': get_provider_helpers(Provider.CODEX).current_compute_version},
                 })
             assert db_writer._compute_states[run_id].failed_count == 0
         finally:
@@ -148,7 +144,11 @@ def test_compute_run_without_private_proof_repairs_activity_for_each_result(monk
             await db_writer.stop_compute_executor()
 
     asyncio.run(scenario())
-    assert len(calls) == 4  # Compatibility results have no private preparation proof.
+    from tests.tree_aggregate_helpers import drain_aggregates
+    assert calls == []
+    assert not DailyActivity.objects.exists()
+    drain_aggregates()
+    assert calls == []
     assert {row.session_count for row in DailyActivity.objects.all()} == {2}
     for scope in (project.id, None):
         with connections['default'].cursor() as cursor:

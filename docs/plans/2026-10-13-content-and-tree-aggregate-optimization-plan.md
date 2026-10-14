@@ -346,9 +346,9 @@ assert repair_journal_exists is True
 
 **Interfaces:** Consume the final storage and tree continuation APIs. Do not introduce another runtime API or change the 2,000-item metadata batch size.
 
-- [ ] Write deterministic contention tests: pause background preparation, perform a foreground watcher append, then resume. Assert foreground completion, rejected stale preparation, exact eventual values, and no duplicate contribution.
-- [ ] Block an actual preparation executor query with a barrier. Assert foreground SQL completes through its separate executor while the historical read remains blocked.
-- [ ] Write a publication-turn test with queued foreground demand. Assert foreground runs before the next background unit and that a stale retry does not invoke SUM under writer.
+- [x] Write deterministic contention tests: pause background preparation, perform a foreground watcher append, then resume. Assert foreground completion, rejected stale preparation, exact eventual values, and no duplicate contribution.
+- [x] Block an actual preparation executor query with a barrier. Assert foreground SQL completes through its separate executor while the historical read remains blocked.
+- [x] Write a publication-turn test with queued foreground demand. Assert foreground runs before the next background unit and that a stale retry does not invoke SUM under writer.
 
 **Assertion anchor — blocked historical executor, foreground append:**
 ```python
@@ -357,14 +357,14 @@ assert eventual_aggregate_values == independent_reference_values
 assert duplicate_contribution_count == 0
 ```
 
-- [ ] Run contention tests and verify they pass on the implementation. Use barriers/events rather than timing-sensitive sleeps for correctness assertions.
+- [x] Run contention tests and verify they pass on the implementation. Use barriers/events rather than timing-sensitive sleeps for correctness assertions.
 - [ ] Run the complete backend suite: `TWICC_DATA_DIR=$PWD uv run pytest`. Run frontend tests only if serializer/frontend code changed; they are not planned here. Run `uvx ruff check <changed-python-files>`.
-- [ ] Audit every spec section against implemented tests and every contribution writer against the mutation coverage matrix. Check external CLI/front payload content remains at the existing field with no N+1 policy imposed globally.
-- [ ] Use the proven devctl SQLite backup method (`source.backup(target, pages=-1)`, read-only source) to create a throwaway DB copy. Do not start DevCTL or apply branch migrations manually. Check source/target and resolved Django DB paths before any benchmark.
-- [ ] Compare baseline and implementation from identical backup snapshots and dictionaries. Include hot/cold sessions, 32/64/256-item content batches, medium/large individual payloads, shared contents, no-gain rows, and the large 145,950/186,496-item sessions when available. Record dictionary queries, compression/decode calls, owner/payload writes, and preparation/publication phase times.
-- [ ] Exercise foreground watcher/lifecycle writes during each benchmark. Record writer hold P50/P90/P95/P99/max, foreground wait distribution, event-loop heartbeat delay, source throughput, and whole-tree aggregate completion time. Separate first-read/cache effects from repeat samples.
-- [ ] Keep 256/8 MiB as the initial content publication budgets. Evaluate 64 rows only after removing redundant work; select the smallest change justified by measured foreground holds and overall throughput. No new universal latency guarantee is inferred from a memory-only test.
-- [ ] Treat any routinely observed background hold of one second or more as a failed result. Attribute oversized content, guard, SQL, and commit components; do not accept averages that conceal the failure. If a remaining representation write cannot meet foreground needs, stop for a revised bounded-publication design rather than silently changing schema or weakening integrity.
+- [x] Audit every spec section against implemented tests and every contribution writer against the mutation coverage matrix. Check external CLI/front payload content remains at the existing field with no N+1 policy imposed globally.
+- [x] Use the proven devctl SQLite backup method (`source.backup(target, pages=-1)`, read-only source) to create a throwaway DB copy. Do not start DevCTL or apply branch migrations manually. Check source/target and resolved Django DB paths before any benchmark.
+- [x] Compare baseline and implementation from identical backup snapshots and dictionaries. Include hot/cold sessions, 32/64/256-item content batches, medium/large individual payloads, shared contents, no-gain rows, and the large 145,950/186,496-item sessions when available. Record dictionary queries, compression/decode calls, owner/payload writes, and preparation/publication phase times.
+- [x] Exercise foreground watcher/lifecycle writes during each benchmark. Record writer hold P50/P90/P95/P99/max, foreground wait distribution, event-loop heartbeat delay, source throughput, and whole-tree aggregate completion time. Separate first-read/cache effects from repeat samples.
+- [x] Keep 256/8 MiB as the initial content publication budgets. Evaluate 64 rows only after removing redundant work; select the smallest change justified by measured foreground holds and overall throughput. No new universal latency guarantee is inferred from a memory-only test.
+- [x] Treat any routinely observed background hold of one second or more as a failed result. Attribute oversized content, guard, SQL, and commit components; do not accept averages that conceal the failure. If a remaining representation write cannot meet foreground needs, stop for a revised bounded-publication design rather than silently changing schema or weakening integrity.
 - [ ] Review the whole branch independently, correct findings, and rerun affected checks. Commit the contention coverage and final evidence with `test(compute): verify bounded tree aggregate publication`.
 
 ## Spec coverage and completion handoff
@@ -394,3 +394,362 @@ Round two identifies one additional gap: durable project scopes for timestamp-nu
 The corrected plan addresses all nine. Both reviewers pass the final round with no remaining material findings.
 Self-review checks spec coverage, task dependencies, interface consistency, assertion anchors, and document/test paths.
 These reviews validate the plan, not product correctness or performance. Implementation and measurements remain pending.
+
+
+## Task 10 implementation and permanent validation evidence
+
+Affected verification: **1,186 passed in 198.65 seconds** after all production changes and the WAL replay fixture correction.
+Scoped Ruff reports `All checks passed!`; `git diff --check` passes.
+The complete backend suite and independent branch review remain controller-owned and pending at this commit.
+The controller's earlier integration run on `9dd4df48` has 54 failed, 10,610 passed, 28 skipped, 37 errors, and 3 baseline warnings.
+The clean baseline has 10,688 passed, 28 skipped, and those same 3 warnings.
+
+The fixes retain immediate bounded live user-message deltas when own-cost baselines await exact repair.
+Creation-day revisions fence zero-crossing eligibility, including timestamp-null messages.
+Completed tree proofs reuse validated date inventories. Exact journal and content metadata guards use batched reads.
+Daily cost sums restore the existing partial cost index; null-cost rows remain in message and session counts.
+WAL barriers prove foreground commit, stale preparation rejection, exact eventual cost, and no duplicate contribution.
+Real watcher tests preserve immediate new-session costs, callback success, and exact replay checkpoints.
+The shared-memory SQLite failure is an unsupported test topology; production queue/retry behavior does not change.
+External RPC/CLI/serializer tests preserve decoded content fields and shapes. No frontend or global N+1 policy changes.
+The report audits every specification section and contribution writer family against concrete regression suites.
+
+Nonblocking residuals: private malformed prepared-field types can raise ordinary Python errors; mapping eviction stays conservative;
+Django callback-tuple inspection remains an installed-version dependency; retained journal/proof memory scales with backlog.
+No new eviction policy or weaker publication guard is introduced. The benchmark limitations below remain review concerns.
+
+## Benchmark safety and reproducibility
+
+Canonical immutable input: `/tmp/twicc-content-optimization-bench-20261014/snapshot.sqlite` (24,781,836,288 bytes).
+The controller creates it with read-only SQLite `source.backup(target, pages=-1)` in 129.466 seconds.
+No whole-database integrity pass is claimed: the earlier read-only `quick_check` is explicitly stopped.
+Only `/tmp/twicc-content-optimization-bench-20261014/working/db/data.sqlite` receives benchmark writes.
+One full working copy exists at a time. Restore deletes only this owned disposable copy before copying the canonical snapshot.
+Every benchmark asserts `twicc.__file__` and the resolved Django database path before data writes.
+No benchmark opens provider homes or starts servers.
+
+Scripts and JSONL output stay outside tracked product files under `/tmp/twicc-content-optimization-bench-20261014/`.
+Scripts log aggregate metrics and source IDs, never user content.
+Baseline source comes from `git archive ccb18ba7`; it runs through the existing staging Python environment with explicit `PYTHONPATH`.
+Both revisions use the identical persisted dictionaries: Claude dictionary 1 has 16,384 bytes; Codex dictionary 2 has 12,496 bytes.
+No dictionary training or schema migration occurs. The source inventory contains 4,538 roots and 10,107 subagents.
+Operating-system file caches are not forcibly cleared; "first" means first operation in a fresh process/database restore,
+not a claim of physically cold storage. Repeat cases and canonical restore scope are labeled separately.
+The synthetic extraction cases use the full database copy and real production preparation/publication functions.
+Whole-source passes exercise already-stored source reconciliation. The synthetic matrix exercises missing-content extraction.
+Whole-source elapsed times cover the continuation loop after `begin_compute_application`, through the final-ready boundary.
+They exclude provider JSONL parsing, metadata recomputation, operation creation, and the separate aggregate scheduler.
+Synthetic case elapsed times include fixture creation and operation creation as well as the continuation loop.
+The final current run adds preparation samples and total counter output without changing benchmark operations.
+The last restore takes 140.091 seconds and copies exactly 24,781,836,288 bytes.
+
+### M1 date enumeration
+
+Read-only canonical query covers root `01a08171-a93c-7b21-9689-b34ffc2f73fc` and 413 native children.
+It returns 447,032 distinct session/timestamp pairs.
+SQL enumeration: first 7.975 seconds; repeats 0.758, 0.795, 0.755 seconds.
+These measurements exclude Python UTC conversion and scope expansion, so they understate `_work` cost.
+They establish that per-journal enumeration is material. Proof reuse is validated by the SQL-count regression.
+Log: `readonly-observation.jsonl`; script: `scripts/readonly_observation.py`.
+
+### M2 blocked-backlog memory
+
+`tracemalloc` measurements with inventory explicitly blocked:
+
+| Journal count | Separate day keys per journal | Waiting retained bytes | Completed shared proof bytes | Half-settled bytes |
+| --- | --- | ---: | ---: | ---: |
+| 10,000 | 2 | 11,300,162 | 13,836,970 | 13,281,258 |
+| 100 | 4,100 | 55,842,650 | 56,429,490 | 56,420,738 |
+
+The generator creates separate date/key objects for each journal. These figures do not assume globally shared key tuples.
+Snapshots retain IDs, dates, scopes, generations, and proof references. They retain no item payloads.
+Memory grows with retained obligations; finite discovery pages are not a global memory bound.
+The canonical database has zero existing repair journals, so these are synthetic backlog limits, not production backlog measurements.
+No eviction is added without an observed workload need. A much larger simultaneous 4,100-key backlog remains a documented scaling risk.
+The synthetic completed proof shares the actual snapshot objects. Half settlement retains them through the remaining shared proof.
+This explains why half settlement does not free half the retained memory. Final runtime drain clears the completed/settled collections.
+The largest measured peaks are 14,532,634 and 56,432,754 bytes respectively.
+These synthetic proof measurements omit database member objects and executor cost caches; they isolate journal retention.
+Log: `memory-final.jsonl`; earlier waiting-only log: `memory.jsonl`; script: `scripts/memory.py`.
+
+### Legacy aggregate comparison
+
+The real 414-member giant root repair holds the old writer for 10.216 seconds, then 2.987 seconds on repeat.
+It executes 872 historical SUM queries per repair. Foreground waits are 10.218 and 2.985 seconds respectively.
+Heartbeat maximum is 56.001 ms. Commit maximum is 4.616 ms, so historical work causes the long holds.
+This measures one legacy root repair, including its affected activity and direct project total.
+It does not claim the old per-child full compute pass completes in this time, or imply a direct end-to-end speed ratio.
+Log: `baseline-aggregate.jsonl`; script: `scripts/baseline_aggregate.py`.
+
+### Final giant aggregate result
+
+The final scheduler completes the 414-member tree and settles all 414 journals in 105.911 seconds.
+This includes 414 own/root publications, 36 daily publications, derived weekly/project units, shared observation, and bounded settlement.
+Its independent raw SQL root-cost error is exactly 0.0. No journal remains for the tree.
+The measured runtime executes one own-tree historical SUM and 36 daily historical SUMs. Weekly work uses persisted daily rows.
+The scheduler performs one timestamp inventory scan; four explicit completed-proof observations perform zero additional date scans.
+
+| Runtime measurement, ms | P50 | P90 | P95 | P99 | Maximum | Samples |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Background writer hold | 63.05 | 72.88 | 89.15 | 145.35 | 161.23 | 873 |
+| Foreground wait plus service | 23.53 | 71.84 | 77.41 | 141.85 | 528.68 | 2,775 |
+| Heartbeat delay | 1.18 | 5.23 | 5.73 | 12.37 | 69.13 | 14,377 |
+| Individual tree guard | 33.79 | 50.85 | 57.46 | 115.77 | 135.40 | 2,188 |
+
+Foreground latency includes SQL service and thread scheduling, so its maximum can exceed the maximum background lease.
+The broader run's foreground maximum is 571.67 ms during initial observation, and heartbeat maximum is 70.00 ms.
+Fixture setup and the explicit diagnostic observations remain separately labeled in the raw output.
+No one-second background lease occurs in this final aggregate run.
+Settlement admits one journal per unit, but exact proof validation still scales with tree membership and retained repair snapshots.
+The measured 414-member tree does not establish a universal bound for arbitrarily larger trees.
+No membership, generation, source-revision, pending-source, or settled-snapshot guard is weakened to improve these timings.
+Log: `current-aggregate-final.jsonl`. The 105.911 seconds excludes the separate diagnostic observation/guard probes before scheduler start.
+
+### Measured fixes and incomplete diagnostic runs
+
+- `current-aggregate.jsonl` is intentionally interrupted after measuring repeated 340–360 ms aggregate leases.
+  About 340 ms is guard work; SQL execution is about 23 ms and commit time is negligible.
+  It demonstrates per-journal ORM overhead. It is not a completed aggregate run.
+- `current-verified.jsonl` completes a source repeat and byte-budget cases, then stops the unindexed aggregate diagnostic.
+  The daily phase advances only a few units across 90–180 seconds. This run is not an aggregate completion claim.
+- `day-index.jsonl` uses a read-only connection and EXPLAIN on the disposable database.
+  Without the cost-only predicate, the plan uses `idx_session_kind_line` and the global query exceeds a 10-second cutoff.
+  With the predicate, the plan uses `idx_item_cost_session` and completes in 92.73 ms.
+  The project-scoped pair completes in 485.17 and 2.83 ms and returns equal cost within 0.000001.
+  The censored global old query supplies no exact value comparison; the independent regression oracle supplies that coverage.
+- The initial current giant-source maximum is 354.19 ms. That sample is explicitly unpaired and cannot receive an exact phase attribution.
+  The subsequent paired repeat reproduces slow reconciliation: 246.76 ms for 256 items / 512 pointer slots / 854,553 bytes.
+  SQL execution is 7.58 ms, storage guards 5.56 ms, and commit 0.033 ms.
+  A later paired sample reaches 330.70 ms for 1,351,436 bytes, again with negligible commit and low SQL/guard time.
+  Inspection identifies repeated per-content ORM metadata fetches; the metadata batch regression and final rerun assess their removal.
+
+### Final stored-source comparison
+
+| Source rows | Revision | Elapsed seconds | Units | Hold P50 | P90 | P95 | P99 | Maximum, ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 186,496 | Baseline original | 293.034 | 2192 | 38.51 | 157.60 | 162.37 | 172.73 | 202.77 |
+| 186,496 | Current final | 166.706 | 2192 | 15.63 | 39.79 | 40.75 | 44.89 | 243.17 |
+| 145,950 | Baseline original | 73.366 | 1715 | 10.05 | 35.72 | 36.56 | 38.82 | 51.28 |
+| 145,950 | Current final | 77.229 | 1715 | 9.53 | 34.55 | 35.48 | 38.00 | 48.95 |
+
+The baseline source samples retain their original run; they are not rerun with the final matrix.
+Both source passes start from the canonical snapshot, but current foreground work also includes lifecycle updates.
+The 186,496-row source has a maximum regression: **202.77 → 243.17 ms**, despite lower P95 and elapsed time.
+The 145,950-row source takes **73.37 → 77.23 seconds**. No throughput improvement is claimed for that source.
+
+| Current stored source | Dictionary queries | Native compression | Content decodes | Byte decodes | Payload inserts | Payload updates | Owner/metadata updates |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 186,496 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| 145,950 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### Final matched storage matrix
+
+Each cell lists **baseline / current**. Holds, waits, and heartbeat delays use milliseconds. Elapsed time uses seconds.
+Foreground wait includes admission and SQL service. Both final runs include the same lifecycle writes.
+
+| Case | Maximum writer hold, ms | Maximum foreground wait, ms | Maximum heartbeat delay, ms | Elapsed, s |
+| --- | ---: | ---: | ---: | ---: |
+| hot-32-0 | 38.64 / 18.69 | 84.51 / 4481.15 | 5.22 / 4.27 | 0.23 / 4.60 |
+| hot-32-1 | 45.75 / 17.08 | 49.81 / 27.84 | 5.16 / 2.10 | 0.14 / 0.11 |
+| cold-32-0 | 103.38 / 17.14 | 121.38 / 36.88 | 3.59 / 1.60 | 0.26 / 0.14 |
+| cold-32-1 | 83.91 / 19.94 | 91.37 / 64.46 | 10.49 / 1.33 | 0.26 / 0.21 |
+| shared-32-0 | 35.24 / 12.95 | 41.43 / 19.88 | 2.46 / 1.67 | 0.14 / 0.12 |
+| shared-32-1 | 33.75 / 12.95 | 38.37 / 24.71 | 4.78 / 2.74 | 0.14 / 0.12 |
+| no_gain-32-0 | 30.52 / 15.03 | 37.21 / 33.81 | 5.21 / 5.30 | 0.18 / 0.13 |
+| no_gain-32-1 | 39.85 / 25.35 | 46.67 / 42.87 | 4.83 / 4.65 | 0.18 / 0.14 |
+| medium-32-0 | 31.53 / 27.73 | 49.00 / 95.55 | 1.61 / 8.22 | 0.16 / 0.25 |
+| medium-32-1 | 40.72 / 13.78 | 54.42 / 23.15 | 6.59 / 3.24 | 0.15 / 0.13 |
+| large-32-0 | 42.25 / 17.10 | 51.74 / 28.89 | 2.76 / 2.25 | 0.17 / 0.13 |
+| large-32-1 | 33.80 / 17.39 | 43.32 / 46.59 | 3.82 / 2.31 | 0.15 / 0.15 |
+| oversized-32-0 | 452.31 / 228.75 | 464.60 / 274.00 | 96.63 / 100.20 | 1.09 / 0.73 |
+| oversized-32-1 | 430.24 / 227.46 | 442.09 / 271.83 | 102.81 / 99.42 | 1.03 / 0.83 |
+| bytecap-32-0 | 124.68 / 24.38 | 168.21 / 250.82 | 14.96 / 5.12 | 0.69 / 0.52 |
+| bytecap-32-1 | 135.66 / 23.75 | 177.95 / 224.57 | 6.88 / 9.77 | 0.73 / 0.49 |
+| hot-64-0 | 101.37 / 24.67 | 104.01 / 31.10 | 5.26 / 2.17 | 0.20 / 0.14 |
+| hot-64-1 | 75.50 / 42.28 | 78.07 / 53.79 | 5.21 / 2.03 | 0.21 / 0.17 |
+| cold-64-0 | 178.79 / 22.01 | 189.61 / 39.66 | 5.72 / 3.11 | 0.41 / 0.18 |
+| cold-64-1 | 197.86 / 23.62 | 207.26 / 51.92 | 5.31 / 2.70 | 0.46 / 0.19 |
+| shared-64-0 | 53.95 / 14.80 | 61.75 / 56.21 | 5.15 / 2.55 | 0.19 / 0.16 |
+| shared-64-1 | 53.81 / 14.43 | 57.58 / 20.64 | 5.15 / 4.04 | 0.18 / 0.12 |
+| no_gain-64-0 | 94.40 / 21.49 | 108.36 / 52.39 | 5.16 / 13.93 | 0.31 / 0.15 |
+| no_gain-64-1 | 55.82 / 20.40 | 64.48 / 45.13 | 6.03 / 6.45 | 0.26 / 0.16 |
+| medium-64-0 | 30.48 / 14.38 | 43.74 / 56.39 | 1.46 / 2.17 | 0.13 / 0.17 |
+| medium-64-1 | 31.99 / 14.49 | 70.64 / 19.22 | 2.52 / 1.78 | 0.19 / 0.12 |
+| large-64-0 | 40.44 / 16.32 | 44.51 / 23.75 | 5.31 / 5.08 | 0.14 / 0.13 |
+| large-64-1 | 49.81 / 16.01 | 65.24 / 53.74 | 2.03 / 2.31 | 0.16 / 0.17 |
+| oversized-64-0 | 438.56 / 203.36 | 451.53 / 230.19 | 75.69 / 88.98 | 1.05 / 0.74 |
+| oversized-64-1 | 422.29 / 207.33 | 432.32 / 248.14 | 134.19 / 103.25 | 1.03 / 0.79 |
+| bytecap-64-0 | 124.99 / 24.87 | 146.17 / 232.77 | 2.96 / 7.16 | 0.67 / 0.54 |
+| bytecap-64-1 | 121.61 / 24.42 | 150.24 / 211.75 | 10.16 / 5.22 | 0.65 / 0.52 |
+| hot-256-0 | 222.91 / 103.67 | 235.71 / 117.69 | 5.38 / 5.90 | 0.46 / 0.32 |
+| hot-256-1 | 229.51 / 106.63 | 242.50 / 120.31 | 5.30 / 5.34 | 0.37 / 0.29 |
+| cold-256-0 | 595.78 / 95.68 | 606.33 / 119.24 | 14.66 / 6.34 | 1.19 / 0.43 |
+| cold-256-1 | 580.92 / 108.08 | 583.86 / 141.60 | 16.49 / 15.19 | 1.20 / 0.45 |
+| shared-256-0 | 253.07 / 24.65 | 255.61 / 35.38 | 63.75 / 5.73 | 0.57 / 0.16 |
+| shared-256-1 | 191.16 / 25.84 | 201.54 / 82.78 | 6.04 / 7.52 | 0.48 / 0.22 |
+| no_gain-256-0 | 153.05 / 48.30 | 158.89 / 55.04 | 5.41 / 6.81 | 0.73 / 0.35 |
+| no_gain-256-1 | 162.45 / 72.78 | 167.43 / 95.16 | 5.64 / 5.34 | 0.74 / 0.37 |
+| medium-256-0 | 30.36 / 14.16 | 156.10 / 20.10 | 3.48 / 4.12 | 0.16 / 0.12 |
+| medium-256-1 | 37.90 / 14.36 | 45.56 / 21.96 | 2.47 / 4.80 | 0.14 / 0.12 |
+| large-256-0 | 40.25 / 16.23 | 44.42 / 48.71 | 7.10 / 2.38 | 0.17 / 0.16 |
+| large-256-1 | 36.02 / 16.13 | 46.82 / 23.87 | 2.26 / 2.41 | 0.16 / 0.13 |
+| oversized-256-0 | 406.07 / 180.75 | 419.99 / 195.15 | 90.43 / 89.03 | 1.09 / 0.63 |
+| oversized-256-1 | 421.42 / 170.66 | 433.34 / 186.49 | 92.50 / 86.15 | 1.13 / 0.61 |
+| bytecap-256-0 | 128.79 / 25.63 | 169.53 / 164.82 | 6.64 / 2.68 | 0.69 / 0.43 |
+| bytecap-256-1 | 123.97 / 27.49 | 158.08 / 148.78 | 8.20 / 2.55 | 0.69 / 0.42 |
+
+All quantiles, preparation times, commits, storage guards, SQL categories, and throughput remain in the two JSONL logs.
+Small cases have few lease samples; their maximum is more informative than an interpolated percentile.
+Repeat cold/no-gain cases use new identities. Shared repeats reuse the same exact content identity.
+
+### Final storage and source distributions
+
+| Run / phase / metric | P50 | P90 | P95 | P99 | Maximum | Samples |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Baseline matrix / hold | 9.76 | 123.97 | 178.79 | 438.56 | 595.78 | 252 |
+| Baseline matrix / foreground_wait | 5.98 | 15.34 | 43.74 | 194.18 | 606.33 | 1700 |
+| Baseline matrix / heartbeat | 0.36 | 1.19 | 2.46 | 5.83 | 134.19 | 5930 |
+| Baseline matrix / guard | 3.49 | 3.87 | 4.33 | 6.02 | 15.89 | 456 |
+| Baseline matrix / commit | 0.07 | 0.14 | 0.32 | 24.14 | 115.84 | 2002 |
+| Current matrix and sources / hold | 14.13 | 38.04 | 40.00 | 44.02 | 243.17 | 4159 |
+| Current matrix and sources / foreground_wait | 17.29 | 45.77 | 49.94 | 61.23 | 4481.15 | 9510 |
+| Current matrix and sources / heartbeat | 0.54 | 2.06 | 3.15 | 5.39 | 228.19 | 46431 |
+| Current matrix and sources / guard | 3.04 | 3.76 | 3.85 | 4.78 | 15.55 | 6970 |
+| Current matrix and sources / commit | 0.07 | 0.40 | 0.53 | 9.53 | 118.16 | 15021 |
+| Current whole-source-01a0160e-e2cf-7060-8282-35f7a88ee295 / hold | 15.63 | 39.79 | 40.75 | 44.89 | 243.17 | 2192 |
+| Current whole-source-01a0160e-e2cf-7060-8282-35f7a88ee295 / foreground_wait | 24.56 | 48.57 | 52.19 | 62.55 | 256.09 | 4869 |
+| Current whole-source-01a0160e-e2cf-7060-8282-35f7a88ee295 / heartbeat | 0.64 | 2.47 | 3.69 | 6.13 | 228.19 | 27438 |
+| Current whole-source-01a0160e-e2cf-7060-8282-35f7a88ee295 / storage_guard | 2.90 | 3.63 | 3.74 | 4.32 | 11.18 | 3655 |
+| Current whole-source-01a0160e-e2cf-7060-8282-35f7a88ee295 / commit | 0.06 | 0.42 | 0.49 | 9.48 | 32.40 | 7791 |
+| Current whole-source-01a0160e-e2cf-7060-8282-35f7a88ee295 / preparation | 14.84 | 139.46 | 146.21 | 158.01 | 302.04 | 2192 |
+| Current whole-source-01a08171-a93c-7b21-9689-b34ffc2f73fc / hold | 9.53 | 34.55 | 35.48 | 38.00 | 48.95 | 1715 |
+| Current whole-source-01a08171-a93c-7b21-9689-b34ffc2f73fc / foreground_wait | 11.86 | 42.85 | 45.37 | 51.76 | 77.35 | 3303 |
+| Current whole-source-01a08171-a93c-7b21-9689-b34ffc2f73fc / heartbeat | 0.48 | 1.59 | 2.41 | 4.75 | 58.91 | 13456 |
+| Current whole-source-01a08171-a93c-7b21-9689-b34ffc2f73fc / storage_guard | 3.14 | 3.82 | 3.88 | 4.62 | 15.55 | 2859 |
+| Current whole-source-01a08171-a93c-7b21-9689-b34ffc2f73fc / commit | 0.06 | 0.12 | 4.53 | 9.54 | 19.43 | 5590 |
+| Current whole-source-01a08171-a93c-7b21-9689-b34ffc2f73fc / preparation | 15.87 | 27.91 | 50.06 | 302.51 | 650.07 | 1715 |
+
+Combined matrix-plus-source distributions are not paired matrix comparisons. Per-case rows above provide paired comparisons.
+
+### Representation work for the complete matrix
+
+Dictionary and payload/owner counts measure SQL statements, including bulk statements; they do not count affected rows.
+Compression and decode counts measure function calls. Each cell lists baseline/current.
+
+| Case | Preparation P95, ms B/C | Dictionary queries B/C | Native compression B/C | Decode calls B/C | Byte decodes B/C | Payload inserts B/C | Payload updates B/C | Owner/metadata updates B/C |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| hot-32-0 | 5.22 / 15.79 | 0 / 0 | 0 / 0 | 64 / 0 | 64 / 0 | 1 / 1 | 0 / 0 | 1 / 0 |
+| hot-32-1 | 4.33 / 15.47 | 0 / 0 | 0 / 0 | 64 / 0 | 64 / 0 | 1 / 1 | 0 / 0 | 1 / 0 |
+| cold-32-0 | 39.35 / 18.68 | 102 / 1 | 32 / 32 | 64 / 0 | 96 / 0 | 1 / 1 | 32 / 0 | 1 / 0 |
+| cold-32-1 | 29.98 / 19.53 | 102 / 0 | 32 / 32 | 64 / 0 | 96 / 0 | 1 / 1 | 32 / 0 | 1 / 0 |
+| shared-32-0 | 25.49 / 4.44 | 71 / 0 | 32 / 1 | 33 / 0 | 34 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| shared-32-1 | 29.53 / 4.84 | 70 / 0 | 32 / 0 | 33 / 0 | 34 / 1 | 0 / 0 | 1 / 1 | 1 / 1 |
+| no_gain-32-0 | 33.36 / 17.37 | 38 / 0 | 64 / 32 | 64 / 0 | 96 / 0 | 1 / 1 | 32 / 0 | 1 / 0 |
+| no_gain-32-1 | 30.30 / 20.51 | 38 / 0 | 64 / 32 | 64 / 0 | 96 / 0 | 1 / 1 | 32 / 0 | 1 / 0 |
+| medium-32-0 | 11.77 / 14.31 | 9 / 0 | 1 / 1 | 2 / 0 | 3 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| medium-32-1 | 14.45 / 10.87 | 9 / 0 | 1 / 1 | 2 / 0 | 3 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| large-32-0 | 14.80 / 13.44 | 9 / 0 | 1 / 1 | 2 / 0 | 3 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| large-32-1 | 15.38 / 13.76 | 9 / 0 | 1 / 1 | 2 / 0 | 3 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| oversized-32-0 | 84.85 / 85.57 | 9 / 0 | 1 / 1 | 2 / 0 | 3 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| oversized-32-1 | 81.62 / 87.67 | 9 / 0 | 1 / 1 | 2 / 0 | 3 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| bytecap-32-0 | 49.92 / 45.31 | 106 / 0 | 32 / 32 | 64 / 0 | 96 / 0 | 2 / 2 | 32 / 0 | 2 / 0 |
+| bytecap-32-1 | 51.34 / 46.76 | 106 / 0 | 32 / 32 | 64 / 0 | 96 / 0 | 2 / 2 | 32 / 0 | 2 / 0 |
+| hot-64-0 | 6.86 / 20.21 | 0 / 0 | 0 / 0 | 128 / 0 | 128 / 0 | 1 / 1 | 0 / 0 | 1 / 0 |
+| hot-64-1 | 8.84 / 27.26 | 0 / 0 | 0 / 0 | 128 / 0 | 128 / 0 | 1 / 1 | 0 / 0 | 1 / 0 |
+| cold-64-0 | 58.58 / 45.79 | 198 / 0 | 64 / 64 | 128 / 0 | 192 / 0 | 1 / 1 | 64 / 0 | 1 / 0 |
+| cold-64-1 | 53.25 / 44.87 | 198 / 0 | 64 / 64 | 128 / 0 | 192 / 0 | 1 / 1 | 64 / 0 | 1 / 0 |
+| shared-64-0 | 46.61 / 8.96 | 132 / 0 | 64 / 0 | 65 / 0 | 65 / 0 | 0 / 0 | 0 / 0 | 1 / 1 |
+| shared-64-1 | 45.41 / 6.32 | 132 / 0 | 64 / 0 | 65 / 0 | 65 / 0 | 0 / 0 | 0 / 0 | 1 / 1 |
+| no_gain-64-0 | 56.94 / 37.73 | 70 / 0 | 128 / 64 | 128 / 0 | 192 / 0 | 1 / 1 | 64 / 0 | 1 / 0 |
+| no_gain-64-1 | 55.45 / 37.45 | 70 / 0 | 128 / 64 | 128 / 0 | 192 / 0 | 1 / 1 | 64 / 0 | 1 / 0 |
+| medium-64-0 | 12.26 / 9.47 | 9 / 0 | 1 / 1 | 2 / 0 | 3 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| medium-64-1 | 11.58 / 9.86 | 9 / 0 | 1 / 1 | 2 / 0 | 3 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| large-64-0 | 13.52 / 13.63 | 9 / 0 | 1 / 1 | 2 / 0 | 3 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| large-64-1 | 13.14 / 12.63 | 9 / 0 | 1 / 1 | 2 / 0 | 3 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| oversized-64-0 | 86.17 / 91.72 | 9 / 0 | 1 / 1 | 2 / 0 | 3 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| oversized-64-1 | 80.41 / 87.93 | 9 / 0 | 1 / 1 | 2 / 0 | 3 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| bytecap-64-0 | 48.11 / 51.15 | 106 / 0 | 32 / 32 | 64 / 0 | 96 / 0 | 2 / 2 | 32 / 0 | 2 / 0 |
+| bytecap-64-1 | 46.49 / 60.05 | 106 / 0 | 32 / 32 | 64 / 0 | 96 / 0 | 2 / 2 | 32 / 0 | 2 / 0 |
+| hot-256-0 | 14.36 / 56.40 | 0 / 0 | 0 / 0 | 512 / 0 | 512 / 0 | 1 / 1 | 0 / 0 | 1 / 0 |
+| hot-256-1 | 13.96 / 52.19 | 0 / 0 | 0 / 0 | 512 / 0 | 512 / 0 | 1 / 1 | 0 / 0 | 1 / 0 |
+| cold-256-0 | 186.84 / 152.45 | 774 / 0 | 256 / 256 | 512 / 0 | 768 / 0 | 1 / 1 | 256 / 0 | 1 / 0 |
+| cold-256-1 | 196.24 / 150.37 | 774 / 0 | 256 / 256 | 512 / 0 | 768 / 0 | 1 / 1 | 256 / 0 | 1 / 0 |
+| shared-256-0 | 165.15 / 15.79 | 516 / 0 | 256 / 0 | 257 / 0 | 257 / 0 | 0 / 0 | 0 / 0 | 1 / 1 |
+| shared-256-1 | 170.85 / 18.40 | 516 / 0 | 256 / 0 | 257 / 0 | 257 / 0 | 0 / 0 | 0 / 0 | 1 / 1 |
+| no_gain-256-0 | 187.05 / 146.60 | 262 / 0 | 512 / 256 | 512 / 0 | 768 / 0 | 1 / 1 | 256 / 0 | 1 / 0 |
+| no_gain-256-1 | 195.84 / 134.11 | 262 / 0 | 512 / 256 | 512 / 0 | 768 / 0 | 1 / 1 | 256 / 0 | 1 / 0 |
+| medium-256-0 | 11.96 / 10.84 | 9 / 0 | 1 / 1 | 2 / 0 | 3 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| medium-256-1 | 14.06 / 8.71 | 9 / 0 | 1 / 1 | 2 / 0 | 3 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| large-256-0 | 15.74 / 14.35 | 9 / 0 | 1 / 1 | 2 / 0 | 3 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| large-256-1 | 16.95 / 13.61 | 9 / 0 | 1 / 1 | 2 / 0 | 3 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| oversized-256-0 | 103.00 / 94.80 | 9 / 0 | 1 / 1 | 2 / 0 | 3 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| oversized-256-1 | 101.34 / 88.72 | 9 / 0 | 1 / 1 | 2 / 0 | 3 / 0 | 1 / 1 | 1 / 0 | 1 / 0 |
+| bytecap-256-0 | 51.02 / 51.44 | 106 / 0 | 32 / 32 | 64 / 0 | 96 / 0 | 2 / 2 | 32 / 0 | 2 / 0 |
+| bytecap-256-1 | 51.53 / 56.27 | 106 / 0 | 32 / 32 | 64 / 0 | 96 / 0 | 2 / 2 | 32 / 0 | 2 / 0 |
+
+Necessary new-owner changes are distinct from unchanged payload writes. Raw logs retain all SQL category totals.
+
+### Final outliers, acceptance, and limitations
+
+All 48 matched current cases have lower maximum background holds than their baseline cases.
+This does not imply every foreground sample improves. The complete table preserves each foreground maximum, including regressions.
+The final storage/source run has no background hold of one second or more; its maximum is 243.17 ms.
+The giant aggregate maximum is 161.23 ms. These are measured workload results, not universal latency guarantees.
+
+- The final 186,496-row source has a paired reconciliation outlier of 243.17 ms.
+  It covers 256 items, 512 pointer slots, and 527,708 accounted bytes.
+  SQL execution takes 0.919 ms, the storage guard takes 5.505 ms, and commit takes 0.036 ms.
+  The residual Python/thread-scheduling time is not further attributed. No GC explanation is claimed.
+  This differs from the original unpaired 354.19 ms sample and from the earlier 246.76 ms metadata-read sample.
+- The indivisible 16.8 MB synthetic payload has a maximum current hold of 228.75 ms.
+  Its paired record attributes 118.16 ms to commit. The 8 MiB budget still permits one oversized indivisible item.
+- The first hot case contains a **4,481.15 ms foreground wait-plus-service** sample.
+  Its maximum background hold is **18.69 ms**. Application-worker SQL totals **4.423 seconds** for that case.
+  That SQL total includes fixture creation, operation setup, preparation, publication, and cleanup.
+  Five preparation units each take at most 15.79 ms; five background holds each take at most 18.69 ms.
+  Thus most SQL time lies outside those measured continuation units. The fixture uses the foreground coordinator.
+  The exact original slow SQL and its first-read cause remain unresolved. Foreground samples use their completion-phase label.
+  The sample stays in all tables and totals; it is not removed from acceptance evidence.
+- One bounded diagnostic uses the same owned working copy and only two hot 32-item cases.
+  Its initial corpus read takes 2.770 seconds; fixture holds take 19.53 and 11.61 ms.
+  Its first foreground admission is 0.033 ms, thread queue 1.614 ms, service 17.012 ms, and SQL 1.755 ms.
+  Its maximum foreground sample is 47.75 ms. Warm non-reproduction is not proof of the original cause.
+  Script: `scripts/foreground_diagnostic.py`; log: `foreground-diagnostic.jsonl`.
+- The 256/8 MiB content budgets and 2,000-item metadata batch remain unchanged.
+  Current first cold cases have maximum holds of 17.14, 22.01, and 95.68 ms at 32, 64, and 256 rows.
+  Their complete case times are 0.140, 0.184, and 0.434 seconds respectively.
+  The 15.36 MB byte-budget cases split 32 items into two extraction and two reconciliation units.
+  No measured routine hold justifies another budget or architecture change.
+
+The controller's independent review judges the unresolved foreground outlier and the source maximum regression.
+The final comprehensive suite remains controller-owned. The baseline/source comparator limitations remain explicit above.
+
+
+## Reproduction commands
+
+Run each Python command from `/tmp/twicc-content-optimization-implementation-20261013`.
+Runtime: Python 3.13.14 and Django 6.1.2 in the staging `.venv`.
+The script asserts its imported `twicc.__file__` and exact disposable database path before writes.
+The two final matrix commands use the same `BENCH_RUN_TAG` and separate restores of the same canonical snapshot.
+
+```bash
+cd /tmp/twicc-content-optimization-implementation-20261013 && TWICC_DATA_DIR=/tmp/twicc-content-optimization-bench-20261014/working BENCH_CODE_ROOT=/tmp/twicc-content-optimization-bench-20261014/baseline-code PYTHONPATH=/tmp/twicc-content-optimization-bench-20261014/baseline-code/src BENCH_RUN_TAG=final-matched- .venv/bin/python /tmp/twicc-content-optimization-bench-20261014/scripts/benchmark.py > /tmp/twicc-content-optimization-bench-20261014/baseline-final.jsonl 2>&1
+cd /tmp/twicc-content-optimization-implementation-20261013 && TWICC_DATA_DIR=/tmp/twicc-content-optimization-bench-20261014/working BENCH_CODE_ROOT=$PWD PYTHONPATH=$PWD/src BENCH_RUN_TAG=final-matched- BENCH_LARGE_SESSIONS=1 .venv/bin/python /tmp/twicc-content-optimization-bench-20261014/scripts/benchmark.py > /tmp/twicc-content-optimization-bench-20261014/current-final.jsonl 2>&1
+```
+
+Before each command, close all benchmark workers, remove only the owned working database and its WAL/SHM files,
+and restore `snapshot.sqlite` to `working/db/data.sqlite`. Never copy over an open SQLite database.
+The final aggregate uses the same current command with `BENCH_SKIP_MATRIX=1 BENCH_AGGREGATES=1`, without `BENCH_LARGE_SESSIONS`.
+The legacy aggregate uses the baseline environment with `scripts/baseline_aggregate.py` and default one-root scope.
+The memory script uses `scripts/memory.py`; it constructs synthetic journal snapshots and does not write source data.
+
+Affected verification:
+
+```bash
+cd /tmp/twicc-content-optimization-implementation-20261013 && bash /tmp/twicc-content-optimization-bench-20261014/scripts/run-affected.sh
+cd /tmp/twicc-content-optimization-implementation-20261013 && uvx ruff check $(git diff --name-only -- '*.py') tests/test_tree_aggregate_contention.py
+cd /tmp/twicc-content-optimization-implementation-20261013 && git diff --check
+```
+
+The controller runs the complete backend suite after independent review and integration.
+No frontend files or serializer contracts change, so no frontend build or test run is required by this task.

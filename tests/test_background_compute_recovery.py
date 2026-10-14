@@ -65,6 +65,14 @@ def recovery_runtime(tmp_path, monkeypatch):
         connections['default'].settings_dict = {**connections['default'].settings_dict, 'NAME': str(path)}
         return function(*args, **kwargs)
 
+    # Historical preparation owns a separate worker and must read this WAL copy.
+    from twicc.providers.tree_aggregate_prepare import AggregatePreparationExecutor
+    submit = AggregatePreparationExecutor.submit
+
+    def preparation(executor, function, /, *args, **kwargs):
+        return submit(executor, configured, function, args, kwargs)
+
+    monkeypatch.setattr(AggregatePreparationExecutor, 'submit', preparation)
     ordinary = db_writer.run_compute_sync
     application = compute_executor.run_compute_application_sync
 

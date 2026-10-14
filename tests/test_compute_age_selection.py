@@ -472,7 +472,8 @@ def test_codex_own_migration_mtime_does_not_defer_its_leased_compute(recovery_ru
         task = asyncio.create_task(owner.run())
         try:
             async with asyncio.timeout(5):
-                while versions(path)['faulty'] != 123 or gate_for('faulty').locked():
+                while (versions(path)['faulty'] != 123 or gate_for('faulty').locked()
+                           or not progress or progress[-1] != ((1, 1), True)):
                     if task.done():
                         await task
                     await asyncio.sleep(.01)

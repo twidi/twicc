@@ -1,5 +1,5 @@
 """Native tree barriers and retained repair scopes use real database evidence."""
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from importlib import import_module, util
 
 import pytest
@@ -143,7 +143,7 @@ def test_old_incarnation_obligation_survives_source_replacement():
 def test_legacy_week_expands_seven_days_and_current_item_dates():
     tree = api()
     root = node('root')
-    SessionItem.objects.create(session=root, line_num=1, content='{}', timestamp=datetime(2026,10,20,tzinfo=timezone.utc))
+    SessionItem.objects.create(session=root, line_num=1, content='{}', timestamp=datetime(2026,10,20,tzinfo=UTC))
     repair(root.id, activity_keys=[(WeeklyActivity, 'legacy', 'codex', date(2026,10,12))])
     work = tree.observe_tree_work(root.id, frozenset())
     assert {key.day for key in work.days if key.project_id == 'legacy'} == {

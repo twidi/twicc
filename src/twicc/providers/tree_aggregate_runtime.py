@@ -47,6 +47,23 @@ def _observe(snapshot, completed, pending, candidates=(), settled_repairs=frozen
     works = []
     required = set()
     for sid in sorted(dependencies, key=lambda value: value or ''):
+        # A completed proof already contains the historical date inventory.
+        # Reuse only when every retained scope is covered and all source,
+        # membership, pending-source, and journal fences still match.
+        reused = False
+        for key, previous in completed.items():
+            members = {member.source.session_id for member in previous.observation.members}
+            if sid not in members or snapshot not in previous.observation.repairs:
+                continue
+            related = {candidate for candidate in candidates
+                       if candidate.observation.session_id in members or candidate.parent_ids & members}
+            if (related <= set(previous.observation.repairs)
+                    and tree_work_matches(previous, pending, settled_repairs=settled_repairs)):
+                required.add(key)
+                reused = True
+                break
+        if reused:
+            continue
         work = (observe_orphan_work(snapshot) if sid is None else
                 observe_tree_work(sid, pending, retained_repairs=(snapshot,), candidate_repairs=candidates))
         if work is None:

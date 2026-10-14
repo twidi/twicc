@@ -226,7 +226,7 @@ def test_partial_chunk_then_failed_final_then_live_append(tmp_path):
     result = ClaudeCodeSessionCompute().sync_session_slice(session.id, path, limits=LiveSyncLimits(1))
     assert result.lines_processed == 1
     session.refresh_from_db()
-    assert session.user_message_count == 0
+    assert session.user_message_count == 1
     assert session.self_cost is None
     assert session.compute_version is None
     assert BaseSessionCompute.apply_session_complete({'session_id': session.id,
@@ -513,3 +513,49 @@ def test_current_child_zero_to_null_updates_parent_partial_index():
         apply(child, old)
     parent.refresh_from_db()
     assert parent.subagents_cost is None and parent.total_cost is None
+
+
+@pytest.mark.parametrize('pending', [False, True])
+def test_live_message_count_advances_while_own_cost_baseline_waits(pending):
+    """Pending costs must not suppress watcher message visibility or replay deltas."""
+    from twicc.providers.compute_repair_journal import merge_compute_repair
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    session = make_session('live-count', compute_version=get_provider_helpers(Provider.CLAUDE_CODE).current_compute_version if pending else 0,
+                           self_cost=Decimal(99), total_cost=Decimal(99))
+    if pending:
+        with transaction.atomic():
+            merge_compute_repair(session.id, session.storage_incarnation, source_changed=True, baseline_pending=True)
+    with CaptureQueriesContext(connection) as queries:
+        before = session_contribution(session)
+        with transaction.atomic():
+            item = SessionItem.objects.create(session=session, line_num=1, kind=ItemKind.USER_MESSAGE, cost=Decimal(2))
+            contribution = item_contributions(SessionItem.objects.filter(pk=item.pk))
+            apply_contribution_changes([], contribution, before_sessions=[before], after_sessions=[before], repair=not pending)
+        session.refresh_from_db()
+        assert session.user_message_count == 1
+        assert session.total_cost == Decimal(99)
+        with transaction.atomic():
+            state = session_contribution(session)
+            apply_contribution_changes(contribution, contribution, before_sessions=[state], after_sessions=[state], repair=not pending)
+        session.refresh_from_db()
+        assert session.user_message_count == 1
+    assert not any('SUM(' in query['sql'].upper() for query in queries)
+
+
+def test_pending_zero_message_count_accepts_negative_replay_delta():
+    """An invalid zero baseline cannot make a reclassified source row unwritable."""
+    from twicc.providers.compute_repair_journal import merge_compute_repair
+    session = make_session('zero-count')
+    item = SessionItem.objects.create(session=session, line_num=1, kind=ItemKind.USER_MESSAGE)
+    before_items = item_contributions(SessionItem.objects.filter(pk=item.pk))
+    with transaction.atomic():
+        merge_compute_repair(session.id, session.storage_incarnation, source_changed=True, baseline_pending=True)
+        SessionItem.objects.filter(pk=item.pk).update(kind=ItemKind.ASSISTANT_MESSAGE)
+        state = session_contribution(session)
+        apply_contribution_changes(before_items, item_contributions(SessionItem.objects.filter(pk=item.pk)),
+            before_sessions=[state], after_sessions=[state], repair=False)
+    session.refresh_from_db()
+    assert session.user_message_count == 0
+    item.refresh_from_db()
+    assert item.kind == ItemKind.ASSISTANT_MESSAGE

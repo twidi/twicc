@@ -207,7 +207,7 @@ def prepare_daily_values(work: TreeAggregateWork, key: DailyKey) -> PreparedAggr
             sessions = sessions.filter(project_id=key.project_id)
         count = items.filter(kind=ItemKind.USER_MESSAGE, session__type=SessionType.SESSION,
                              session__hidden=False).count()
-        cost = items.aggregate(value=Sum('cost'))['value'] or Decimal(0)
+        cost = items.filter(cost__isnull=False).aggregate(value=Sum('cost'))['value'] or Decimal(0)
         values = AggregateValues(cost, count, sessions.count())
     return _checked(PreparedAggregate('day', key, values, observation))
 

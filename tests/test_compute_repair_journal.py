@@ -233,7 +233,7 @@ def test_project_tags_round_trip_union_and_generation_without_activity_keys():
 
 def test_legacy_row_has_no_project_obligations():
     journal = api()
-    snapshot = merge(journal, activity_keys=[KEY], source_changed=True)
+    merge(journal, activity_keys=[KEY], source_changed=True)
     assert journal.load_compute_repair('source', 'incarnation').project_ids == frozenset()
 
 
@@ -259,12 +259,13 @@ def test_mixed_scope_project_activity_and_baseline_tags_roundtrip():
     from datetime import date
     from twicc.providers.compute_repair_journal import own_baseline_pending, clear_own_baseline_pending
     day = (DailyActivity, 'old', 'codex', date(2026, 10, 13))
+    week = (WeeklyActivity, None, 'codex', date(2026, 10, 12))
     with transaction.atomic():
-        first = merge_compute_repair('mixed-scope', 'inc', activity_keys=[day], project_ids=['old'],
+        first = merge_compute_repair('mixed-scope', 'inc', activity_keys=[day, week], project_ids=['old'],
             activity_scopes=[('old', 'codex'), (None, 'codex')], source_changed=True, baseline_pending=True)
         second = merge_compute_repair('mixed-scope', 'inc', project_ids=['new'],
             activity_scopes=[('new', 'claude_code'), (None, 'claude_code')], source_changed=False)
-    assert second.activity_keys == frozenset({day})
+    assert second.activity_keys == frozenset({day, week})
     assert second.project_ids == frozenset({'old', 'new'})
     assert second.activity_scopes == frozenset({('old', 'codex'), (None, 'codex'),
                                                ('new', 'claude_code'), (None, 'claude_code')})

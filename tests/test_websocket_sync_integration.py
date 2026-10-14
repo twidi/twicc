@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+import sqlite3
 from contextlib import suppress
 from unittest.mock import AsyncMock
 
@@ -9,6 +10,8 @@ import orjson
 import pytest
 from watchfiles import Change
 from django.contrib.sessions.backends.db import SessionStore
+from asgiref.sync import sync_to_async
+from django.db import connection, connections
 
 from tests.test_history_fact_extraction import call, output
 from tests.test_websocket_transport import DISCONNECT, PING, PONG, TrackingLayer, Wire
@@ -113,10 +116,43 @@ def records_for(provider):
             assistant('message-2', [{'type': 'text', 'text': 'stream duplicate'}])]
 
 
+@pytest.fixture
+def replay_wal_database(tmp_path, monkeypatch):
+    """Historical readers and foreground writes require the production WAL topology."""
+    connection.ensure_connection()
+    original = connection.connection
+    path = tmp_path / 'replay.sqlite3'
+    database = sqlite3.connect(path)
+    try:
+        original.backup(database)
+        assert database.execute('PRAGMA journal_mode=WAL').fetchone()[0] == 'wal'
+    finally:
+        database.close()
+    # Worker wrappers inherit this settings dictionary. Keep pytest's original
+    # in-memory connection alive so its teardown still owns the original database.
+    monkeypatch.setitem(connection.settings_dict, 'NAME', str(path))
+    monkeypatch.setitem(connections.databases['default'], 'NAME', str(path))
+
+    def reset_reader():
+        db = connections['default']
+        db.close()
+        db.settings_dict = connections.databases['default']
+
+    asyncio.run(sync_to_async(reset_reader)())
+    connection.connection = None
+    try:
+        connection.ensure_connection()
+        yield path
+    finally:
+        asyncio.run(sync_to_async(reset_reader)())
+        connection.close()
+        connection.connection = original
+
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize('provider', ['claude_code', 'codex'])
 @pytest.mark.parametrize('current', [False, True])
-def test_fair_queues_preserve_history_links_costs_and_checkpoints(tmp_path, monkeypatch, provider, current):
+def test_fair_queues_preserve_history_links_costs_and_checkpoints(tmp_path, monkeypatch, provider, current, replay_wal_database):
     """Removing requeue, prior-line resolution, or bounded dedup breaks parity."""
     from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
     from twicc.providers.codex.compute import CodexSessionCompute
@@ -169,6 +205,7 @@ def test_fair_queues_preserve_history_links_costs_and_checkpoints(tmp_path, monk
             await db_writer.stop_db_writer()
 
     asyncio.run(run())
+    assert all(disposition != 'failed' for _, disposition in turns), turns
     assert turns[0] == (str(paths['large']), 'ready')
     assert turns[1] == (str(paths['small']), 'drained')
 
@@ -184,6 +221,22 @@ def test_fair_queues_preserve_history_links_costs_and_checkpoints(tmp_path, monk
     assert Session.objects.get(id='small').last_line == 1
     assert list(Session.objects.get(id='large').tool_result_links.order_by('tool_result_line_num')
                 .values_list('tool_use_line_num', flat=True))[:2] == [1, 502]
+    if not current:
+        from tests.tree_aggregate_helpers import drain_aggregates
+        from twicc.providers.compute_base import BaseSessionCompute
+        assert snapshot('large')[2] is None
+        for name in ('large', 'small', 'reference'):
+            session = Session.objects.get(pk=name)
+            result = BaseSessionCompute.apply_session_complete({
+                'session_id': name, 'observed_last_offset': session.last_offset,
+                'observed_incarnation': session.storage_incarnation,
+                'observed_epoch': session.history_epoch, 'observed_upper_line': session.last_line,
+                'history_facts': list(session.history_facts.values('line_num', 'kind', 'key', 'data')),
+                'session_fields': {'compute_version': compute.compute_version},
+            })
+            assert result.outcome == 'applied'
+        drain_aggregates()
+        assert snapshot('large') == snapshot('reference')
     if provider == 'claude_code':
         assert snapshot('large')[2] > 0
     if provider == 'codex':
@@ -192,3 +245,28 @@ def test_fair_queues_preserve_history_links_costs_and_checkpoints(tmp_path, monk
         assert compute._lookup_exec_command_call_id('large', 506, 42, 'missing') == 'reuse'
         assert compute._lookup_tool_call('large', 502, 'reuse')[1] == 1
         assert compute._lookup_tool_call('large', 506, 'absent') is None
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('provider', ['claude_code', 'codex'])
+def test_new_watcher_session_has_immediate_live_baseline(tmp_path, provider):
+    """A newly watched session must not depend on a completed startup compute job."""
+    from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
+    from twicc.providers.codex.compute import CodexSessionCompute
+    compute = ClaudeCodeSessionCompute() if provider == 'claude_code' else CodexSessionCompute()
+    project = Project.objects.create(id='new-live', directory=str(tmp_path))
+    watcher = BaseSessionsWatcher()
+    watcher.get_compute = lambda: compute
+    session = watcher.create_session_sync(ParsedSessionFile(project.id, 'new-live', 'session', 'new-live.jsonl'), project)
+    assert session.compute_version == compute.compute_version
+    path = tmp_path / 'new-live.jsonl'
+    user = ({'type': 'user', 'message': {'role': 'user', 'content': 'hello'}} if provider == 'claude_code' else
+            {'type': 'event_msg', 'payload': {'type': 'item_completed', 'item': {
+             'type': 'UserMessage', 'id': 'first', 'content': [{'type': 'text', 'text': 'hello'}]}}})
+    records = [user, *records_for(provider)]
+    path.write_bytes(b''.join(orjson.dumps(row) + b'\n' for row in records))
+    compute.sync_session_slice(session.id, path, limits=LiveSyncLimits(1000))
+    session.refresh_from_db()
+    assert session.user_message_count == 1
+    if provider == 'claude_code':
+        assert session.self_cost > 0

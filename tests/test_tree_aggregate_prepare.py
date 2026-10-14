@@ -39,6 +39,69 @@ def test_null_timestamp_cost_is_included():
     assert prepared.values.self_cost == Decimal('1.234567')
 
 
+def test_daily_cost_query_uses_existing_partial_cost_index():
+    """Global daily SUM must avoid scanning timestamped rows with no cost."""
+    from datetime import UTC, datetime
+    from twicc.providers.contribution_revisions import DailyKey
+    root = node('indexed-day')
+    stamp = datetime(2026, 10, 13, tzinfo=UTC)
+    SessionItem.objects.bulk_create([
+        SessionItem(session=root, line_num=line, timestamp=stamp, cost=Decimal(2) if line == 1 else None)
+        for line in range(1, 101)
+    ])
+    work = observe_tree_work(root.id, frozenset())
+    plans = []
+    def prepare():
+        def capture(execute, sql, params, many, context):
+            if sql.startswith('SELECT') and 'SUM(' in sql and 'core_sessionitem' in sql:
+                with connection.cursor() as cursor:
+                    cursor.execute('EXPLAIN QUERY PLAN ' + sql, params)
+                    plans.extend(row[3] for row in cursor.fetchall())
+            return execute(sql, params, many, context)
+        with connection.execute_wrapper(capture):
+            return api().prepare_daily_values(work, DailyKey(None, 'codex', stamp.date()))
+    with api().AggregatePreparationExecutor() as executor:
+        prepared = executor.submit(prepare).result()
+    assert prepared.values.cost == Decimal(2)
+    assert any('idx_item_cost_' in plan for plan in plans), plans
+
+
+@pytest.mark.parametrize('costs', [
+    [None, None], [None, Decimal(0)], [Decimal(-2), None],
+    [Decimal('0.123456'), Decimal('0.654321'), None],
+])
+def test_indexed_daily_cost_preserves_null_rows_counts_and_exact_scope(costs):
+    from datetime import UTC, datetime, timedelta
+    from twicc.core.enums import ItemKind
+    from twicc.providers.contribution_revisions import DailyKey
+    root = node('cost-values')
+    start = datetime(2026, 10, 13, tzinfo=UTC)
+    end = start + timedelta(days=1)
+    Session.objects.filter(pk=root.id).update(created_at=start, user_message_count=len(costs))
+    for line, cost in enumerate(costs, 1):
+        SessionItem.objects.create(session=root, line_num=line, timestamp=start,
+                                   kind=ItemKind.USER_MESSAGE, cost=cost)
+    for line, stamp in ((100, start - timedelta(microseconds=1)), (101, end)):
+        SessionItem.objects.create(session=root, line_num=line, timestamp=stamp, cost=Decimal(999))
+    other_project = Project.objects.create(id='other-project')
+    for sid, project, provider in [('other-provider', root.project, 'claude_code'),
+                                   ('other-project', other_project, 'codex')]:
+        other = Session.objects.create(id=sid, file_path=f'/{sid}', project=project, provider=provider)
+        SessionItem.objects.create(session=other, line_num=1, timestamp=start, cost=Decimal(999))
+    work = observe_tree_work(root.id, frozenset())
+    with api().AggregatePreparationExecutor() as executor:
+        prepared = executor.submit(api().prepare_daily_values, work, DailyKey('p', 'codex', start.date())).result()
+    with connection.cursor() as cursor:
+        cursor.execute('SELECT SUM(i.cost) FROM core_sessionitem i JOIN core_session s ON s.id = i.session_id '
+                       'WHERE s.project_id = %s AND s.provider = %s AND i.timestamp >= %s AND i.timestamp < %s',
+                       ['p', 'codex', start.strftime('%Y-%m-%d %H:%M:%S'), end.strftime('%Y-%m-%d %H:%M:%S')])
+        raw = cursor.fetchone()[0]
+    assert prepared.values.cost == Decimal(str(raw or 0)).quantize(Decimal('0.000001'))
+    assert prepared.values.cost == sum((cost for cost in costs if cost is not None), Decimal(0))
+    assert prepared.values.message_count == len(costs)
+    assert prepared.values.session_count == 1
+
+
 def test_root_total_counts_each_member_once():
     module = api()
     root = node('root')
@@ -49,8 +112,8 @@ def test_root_total_counts_each_member_once():
     work = observe_tree_work(root.id, frozenset())
     with module.AggregatePreparationExecutor() as executor:
         prepared = executor.submit(module.prepare_session_values, work, root.id).result()
-    assert prepared.values.cost == Decimal('6')
-    assert prepared.values.subagents_cost == Decimal('5')
+    assert prepared.values.cost == Decimal(6)
+    assert prepared.values.subagents_cost == Decimal(5)
 
 
 def test_changed_observation_rejects_publication():
@@ -84,7 +147,7 @@ def test_preparation_has_no_writer_lease_or_source_write():
         assert module.publish_aggregate(work, prepared, frozenset()) == 'published'
     assert not any('core_sessionitem' in q['sql'] for q in queries)
     root.refresh_from_db()
-    assert root.total_cost == Decimal('2')
+    assert root.total_cost == Decimal(2)
 
 
 def test_job_release_discards_own_cache_and_uses_one_source_sum_per_tree():
@@ -101,10 +164,10 @@ def test_job_release_discards_own_cache_and_uses_one_source_sum_per_tree():
         assert sum('SUM(' in q['sql'] and 'core_sessionitem' in q['sql'] for q in queries) == 1
         return result
     with module.AggregatePreparationExecutor() as executor:
-        assert executor.submit(prepare_both).result().values.cost == Decimal('3')
+        assert executor.submit(prepare_both).result().values.cost == Decimal(3)
         assert hasattr(executor, 'release_work'), 'completed tree cache must have explicit ownership release'
         executor.release_work(work).result()
-        assert executor.submit(prepare_both).result().values.cost == Decimal('3')
+        assert executor.submit(prepare_both).result().values.cost == Decimal(3)
 
 
 def test_executor_enforces_one_outstanding_read_and_drains_cancelled_consumer():
@@ -170,7 +233,7 @@ def test_project_observes_hidden_and_spawned_session_contributions():
     work = observe_tree_work(root.id, frozenset())
     with module.AggregatePreparationExecutor() as executor:
         prepared = executor.submit(module.prepare_project_values, work, 'p').result()
-    assert prepared.values.cost == Decimal('9')
+    assert prepared.values.cost == Decimal(9)
     record_contribution_commit(costs=[SourceKey(hidden.id, hidden.storage_incarnation)])
     with transaction.atomic():
         assert module.publish_aggregate(work, prepared, frozenset()) == 'changed'
@@ -197,7 +260,7 @@ def test_daily_values_match_reference_and_reject_other_tree_change(scope):
     reference = DailyActivity.objects.get(project_id=scope, provider='codex', date=now.date())
     with module.AggregatePreparationExecutor() as executor:
         prepared = executor.submit(module.prepare_daily_values, work, key).result()
-    assert prepared.values.cost == reference.cost == Decimal('6')
+    assert prepared.values.cost == reference.cost == Decimal(6)
     assert prepared.values.message_count == reference.user_message_count == 1
     assert prepared.values.session_count == reference.session_count == 1
     record_contribution_commit(days=[key])
@@ -255,7 +318,7 @@ def test_publishing_child_invalidates_old_parent_preparation_without_resumming_s
     with transaction.atomic():
         assert module.publish_aggregate(work, fresh, frozenset()) == 'published'
     root.refresh_from_db()
-    assert root.total_cost == Decimal('3')
+    assert root.total_cost == Decimal(3)
 
 
 def test_pending_member_defers_publication():
@@ -297,7 +360,7 @@ def test_preparation_connection_is_dedicated_and_read_only_without_inherited_lea
         return result
     try:
         with module.AggregatePreparationExecutor() as executor:
-            assert executor.submit(read).result().values.cost == Decimal('1')
+            assert executor.submit(read).result().values.cost == Decimal(1)
     finally:
         _db_write_lock_lease.reset(lease_token)
     root.refresh_from_db()
@@ -400,3 +463,68 @@ def test_own_count_publication_invalidates_prepared_creation_day_only():
     assert revisions_match(other_day)
     with transaction.atomic():
         assert module.publish_aggregate(work, day, frozenset()) == 'changed'
+
+
+def test_project_replacement_preserves_direct_worktree_project_scope():
+    """Project storage totals match the direct-project reference, before UI aggregation."""
+    from twicc.core.models import Project
+    root = node('main-root')
+    worktree = Project.objects.create(id='worktree', worktree_of_id='p')
+    other = node('worktree-root')
+    Session.objects.filter(pk=root.id).update(total_cost='2')
+    Session.objects.filter(pk=other.id).update(project=worktree, total_cost='3')
+    work = observe_tree_work(root.id, frozenset())
+    with api().AggregatePreparationExecutor() as executor:
+        prepared = executor.submit(api().prepare_project_values, work, 'p').result()
+    assert prepared.values.cost == Decimal(2)
+    main = Project.objects.get(pk='p')
+    main.recalculate_total_cost()
+    assert main.total_cost == prepared.values.cost
+    other_work = observe_tree_work(other.id, frozenset())
+    with api().AggregatePreparationExecutor() as executor:
+        prepared = executor.submit(api().prepare_project_values, other_work, worktree.id).result()
+    assert prepared.values.cost == Decimal(3)
+
+
+@pytest.mark.parametrize('pending', [False, True])
+@pytest.mark.parametrize('remove', [False, True])
+def test_live_count_eligibility_rejects_other_tree_creation_day_preparation(pending, remove):
+    """Timestamp-null live rows still change the source's creation-day session count."""
+    from datetime import UTC, datetime
+    from twicc.core.enums import ItemKind
+    from twicc.providers.compute_repair_journal import merge_compute_repair
+    from twicc.providers.contribution_revisions import DailyKey
+    from twicc.providers.live_aggregates import apply_contribution_changes, item_contributions, session_contribution
+    ready = node('ready-tree')
+    changing = node('changing-tree')
+    stamp = datetime(2026, 10, 13, tzinfo=UTC)
+    Session.objects.filter(pk__in=[ready.id, changing.id]).update(created_at=stamp)
+    if remove:
+        Session.objects.filter(pk=changing.id).update(user_message_count=1)
+        SessionItem.objects.create(session=changing, line_num=1, kind=ItemKind.USER_MESSAGE)
+        from twicc.core.models import DailyActivity, WeeklyActivity
+        from twicc.core.enums import Provider
+        from datetime import timedelta
+        for scope in ('p', None):
+            DailyActivity.recalculate(scope, stamp.date(), Provider.CODEX)
+            WeeklyActivity.recalculate(scope, stamp.date() - timedelta(days=stamp.weekday()), Provider.CODEX)
+    if pending:
+        with transaction.atomic():
+            merge_compute_repair(changing.id, changing.storage_incarnation, source_changed=True, baseline_pending=True)
+    work = observe_tree_work(ready.id, frozenset())
+    key = DailyKey('p', 'codex', stamp.date())
+    with api().AggregatePreparationExecutor() as executor:
+        prepared = executor.submit(api().prepare_daily_values, work, key).result()
+    assert prepared.values.session_count == int(remove)
+    changing.refresh_from_db()
+    before = session_contribution(changing)
+    before_items = item_contributions(SessionItem.objects.filter(session=changing))
+    with transaction.atomic():
+        if remove:
+            SessionItem.objects.filter(session=changing).update(kind=ItemKind.ASSISTANT_MESSAGE)
+        else:
+            SessionItem.objects.create(session=changing, line_num=1, kind=ItemKind.USER_MESSAGE)
+        apply_contribution_changes(before_items, item_contributions(SessionItem.objects.filter(session=changing)),
+            before_sessions=[before], after_sessions=[before], repair=False)
+    with transaction.atomic():
+        assert api().publish_aggregate(work, prepared, frozenset()) == 'changed'

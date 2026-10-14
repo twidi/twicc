@@ -11,7 +11,7 @@ from datetime import UTC, timedelta
 from typing import NamedTuple
 
 from twicc.core.models import DailyActivity, Session, SessionItem, SessionType
-from twicc.providers.compute_repair_journal import RepairSnapshot, load_compute_repair, load_session_repairs
+from twicc.providers.compute_repair_journal import RepairSnapshot, load_session_repairs
 from twicc.providers.contribution_revisions import (
     DailyKey, RevisionObservation, SourceKey, observe_revisions, revisions_match,
 )
@@ -187,9 +187,13 @@ def tree_work_matches(work: TreeAggregateWork, pending_source_ids: frozenset[str
     observation = work.observation
     if not revisions_match(observation.revisions):
         return False
+    current_repairs = {
+        (snapshot.observation.session_id, snapshot.observation.incarnation): snapshot
+        for snapshot in load_session_repairs(snapshot.observation.session_id for snapshot in observation.repairs)
+    }
     for snapshot in observation.repairs:
         key = snapshot.observation
-        current = load_compute_repair(key.session_id, key.incarnation)
+        current = current_repairs.get((key.session_id, key.incarnation))
         if current != snapshot and not (current is None and snapshot in settled_repairs):
             return False
     if observation.root is None:

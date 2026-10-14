@@ -364,3 +364,19 @@ def test_pending_scope_movement_records_preserved_historical_keys():
         preserve_pending_repair(session.id, session.storage_incarnation, before_sessions=[state],
                                 after_sessions=[session_contribution(session)], historical_timestamps=[historical])
     assert not revisions.revisions_match(observed)
+
+
+def test_database_identity_does_not_share_contribution_revisions(tmp_path, monkeypatch):
+    """Equal source IDs in another SQLite database cannot accept a cached proof."""
+    from django.db import connection
+    source = revisions.SourceKey('same-session', 'same-incarnation')
+    original = revisions.observe_revisions(sources=[source])
+    other = tmp_path / 'other.sqlite'
+    other.touch()
+    with monkeypatch.context() as context:
+        context.setitem(connection.settings_dict, 'NAME', str(other))
+        assert not revisions.revisions_match(original)
+        other_observation = revisions.observe_revisions(sources=[source])
+        revisions.record_contribution_commit(sources=[source])
+        assert not revisions.revisions_match(other_observation)
+    assert revisions.revisions_match(original)

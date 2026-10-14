@@ -430,16 +430,17 @@ def _publish_reconciliation(msg, batch):
                for item_line, item_slot, pk in visited):
             raise SupersededStorageResult('superseded')
         publication_cache = {}
-        actual_rows = {}
+        actual_rows = {row.id: row for row in SessionItemContent.objects.defer('payload').filter(
+            pk__in={observed.id for observed in batch.observations},
+        )}
         representations = dict(batch.representations)
         eligibility = dict(batch.eligibility)
         for observed in batch.observations:
-            actual = SessionItemContent.objects.defer('payload').get(pk=observed.id)
-            if _metadata_observation(actual) != observed:
+            actual = actual_rows.get(observed.id)
+            if actual is None or _metadata_observation(actual) != observed:
                 raise SupersededStorageResult('superseded')
             if _owners_cold(actual, publication_cache) != eligibility[observed.id]:
                 raise SupersededStorageResult('superseded')
-            actual_rows[observed.id] = actual
         for content_id, observed, encoded, policy, no_gain in prepared:
             actual = actual_rows[content_id]
             if content_id in representations and bytes(actual.payload) != representations[content_id]:
@@ -448,7 +449,7 @@ def _publish_reconciliation(msg, batch):
                 actual, publication_cache,
             ):
                 raise SupersededStorageResult('superseded')
-            updates = dict(compression_attempt_version=policy, compression_no_gain=no_gain)
+            updates = {'compression_attempt_version': policy, 'compression_no_gain': no_gain}
             if encoded is not None:
                 updates.update(payload=encoded.payload, codec=encoded.codec, dictionary_id=encoded.dictionary_id)
             SessionItemContent.objects.filter(pk=actual.id).update(**updates)
