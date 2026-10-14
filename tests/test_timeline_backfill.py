@@ -156,3 +156,80 @@ def test_the_statements_per_session_do_not_depend_on_its_timeline_size(project):
     with CaptureQueriesContext(connection) as busy:
         backfill_session_sync("busy")
     assert len(busy) == len(empty) <= 12
+
+
+@pytest.fixture
+def no_pauses(monkeypatch):
+    monkeypatch.setattr(timeline_backfill, "RETRY_PAUSES", (0.0, 0.0, 0.0))
+
+
+def fail_inserts(monkeypatch, *, times, only_session=None):
+    """Make ``_insert_rows`` raise ``times`` times (None = always), then work. Returns the call list."""
+    calls = []
+    real = timeline_backfill._insert_rows
+
+    def flaky(rows):
+        calls.append(rows[0].session_id)
+        if (only_session is None or rows[0].session_id == only_session) and (times is None or len(calls) <= times):
+            raise RuntimeError("database is locked")
+        real(rows)
+
+    monkeypatch.setattr(timeline_backfill, "_insert_rows", flaky)
+    return calls
+
+
+def test_a_transient_failure_is_retried_in_the_same_run(project, monkeypatch, no_pauses):
+    make(project, created_at=timezone.now())
+    calls = fail_inserts(monkeypatch, times=2)
+    run_all()
+    assert kinds("s1") == ["session.created"]
+    assert len(calls) == 3
+
+
+def test_a_permanent_failure_is_bounded_and_the_run_ends(project, monkeypatch, no_pauses):
+    make(project, created_at=timezone.now())
+    calls = fail_inserts(monkeypatch, times=None)
+    run_all()
+    assert kinds("s1") == []
+    assert len(calls) == 1 + len(timeline_backfill.RETRY_PAUSES)
+    assert candidate_ids() == ["s1"]
+
+
+def test_a_failing_session_does_not_stop_the_others(project, monkeypatch, no_pauses):
+    now = timezone.now()
+    make(project, "bad", created_at=now, mtime=10.0)
+    make(project, "good", created_at=now, mtime=5.0)
+    fail_inserts(monkeypatch, times=None, only_session="bad")
+    run_all()
+    assert kinds("good") == ["session.created"] and kinds("bad") == []
+
+
+def test_the_writer_stopping_ends_the_run_without_retries(project, monkeypatch, no_pauses):
+    now = timezone.now()
+    make(project, "a", created_at=now, mtime=2.0)
+    make(project, "b", created_at=now, mtime=1.0)
+    calls = []
+
+    def stopping(session_id):
+        calls.append(session_id)
+        raise RuntimeError("DB writer is stopping")
+
+    monkeypatch.setattr(timeline_backfill, "backfill_session_sync", stopping)
+    run_all()
+    assert calls == ["a"]
+
+
+def test_only_the_stopping_error_of_the_writer_is_recognised():
+    assert timeline_backfill._writer_is_stopping(RuntimeError("DB writer is stopping"))
+    assert not timeline_backfill._writer_is_stopping(RuntimeError("boom"))
+    assert not timeline_backfill._writer_is_stopping(ValueError("DB writer is stopping"))
+
+
+def test_a_second_run_has_no_candidate_and_takes_no_lock(project, monkeypatch):
+    make(project, created_at=timezone.now())
+    run_all()
+    calls = []
+    real = timeline_backfill.backfill_session_sync
+    monkeypatch.setattr(timeline_backfill, "backfill_session_sync", lambda sid: calls.append(sid) or real(sid))
+    run_all()
+    assert calls == []

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections import Counter
 from enum import StrEnum
 from typing import NamedTuple
 
@@ -139,17 +141,69 @@ def backfill_session_sync(session_id: str) -> SessionOutcome:
         return SessionOutcome(BackfillStatus.WRITTEN, len(rows))
 
 
-async def run_timeline_backfill() -> None:
-    """Process every candidate session, one lock acquisition each, newest first (single pass)."""
-    session_ids = await asyncio.to_thread(candidate_ids)
-    written = rows = 0
+#: Pauses (seconds) before each retry round of the sessions that failed: three rounds, growing,
+#: under about 10 s in total. They happen outside the lock.
+RETRY_PAUSES = (1.0, 3.0, 5.0)
+
+_WRITER_STOPPING = "DB writer is stopping"
+
+
+class _WriterStopping(Exception):
+    """The DB writer refuses new work: the run ends. It is not a session failure."""
+
+
+def _writer_is_stopping(exc: BaseException) -> bool:
+    return isinstance(exc, RuntimeError) and _WRITER_STOPPING in str(exc)
+
+
+async def _run_pass(session_ids: list[str], stats: Counter) -> dict[str, str]:
+    """One pass over ``session_ids``, one lock acquisition each. Returns ``{failed id: cause}``."""
+    failed: dict[str, str] = {}
     for session_id in session_ids:
-        outcome = await run_under_db_write_lock(
-            lambda current=session_id: asyncio.to_thread(backfill_session_sync, current)
-        )
-        if outcome.status == BackfillStatus.WRITTEN:
-            written += 1
-            rows += outcome.rows
+        try:
+            outcome = await run_under_db_write_lock(
+                lambda current=session_id: asyncio.to_thread(backfill_session_sync, current)
+            )
+        except Exception as exc:  # noqa: BLE001 - a failed session must never stop the run
+            if _writer_is_stopping(exc):
+                raise _WriterStopping from exc
+            logger.warning("Timeline backfill: session %s failed: %s", session_id, exc, exc_info=True)
+            failed[session_id] = repr(exc)
+            continue
+        stats[outcome.status] += 1
+        stats["rows"] += outcome.rows
         await asyncio.sleep(0)
-    if written:
-        logger.info("Timeline backfill wrote %d row(s) for %d session(s)", rows, written)
+    return failed
+
+
+async def run_timeline_backfill() -> None:
+    """Process every candidate session, one lock acquisition each, newest first.
+
+    Sessions that failed are retried after the list is exhausted, at most ``len(RETRY_PAUSES)``
+    more times with a growing pause; the ones still failing are logged at error level and left
+    for the next boot. ``CancelledError`` propagates (shutdown).
+    """
+    started = time.monotonic()
+    stats: Counter = Counter()
+    session_ids = await asyncio.to_thread(candidate_ids)
+    failed: dict[str, str] = {}
+    try:
+        failed = await _run_pass(session_ids, stats)
+        for pause in RETRY_PAUSES:
+            if not failed:
+                break
+            await asyncio.sleep(pause)
+            failed = await _run_pass(list(failed), stats)
+    except _WriterStopping:
+        logger.info("Timeline backfill stopped: the DB writer is stopping")
+        return
+    for session_id, cause in failed.items():
+        logger.error(
+            "Timeline backfill gave up on session %s after %d retries: %s", session_id, len(RETRY_PAUSES), cause,
+        )
+    if session_ids:
+        logger.info(
+            "Timeline backfill: %d session(s) written (%d row(s)), %d skipped, %d failed in %.1f s",
+            stats[BackfillStatus.WRITTEN], stats["rows"], stats[BackfillStatus.SKIPPED], len(failed),
+            time.monotonic() - started,
+        )
