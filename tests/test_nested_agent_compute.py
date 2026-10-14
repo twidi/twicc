@@ -73,6 +73,11 @@ def compute(session, apply=True):
     get_compute().compute_session_metadata(session.id, queue, "nested-test")
     messages = [orjson.loads(queue.get()) for _ in range(queue.qsize())]
     msg = next(m for m in messages if m["type"] == "session_complete")
+    # Direct source-evidence recomputation does not declare a completed tree.
+    # Keep uncomputed descendants intact: their historical fallback is tested.
+    # Real root readiness is covered by test_root_compute_completion.
+    if session.parent_session_id is None:
+        msg["session_fields"].pop("compute_version", None)
     if apply:
         assert get_compute().apply_session_complete(msg).outcome == "applied"
     return msg

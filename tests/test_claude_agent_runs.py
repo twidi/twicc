@@ -224,6 +224,10 @@ def recompute(session, compute=None):
     compute.compute_session_metadata(session.id, queue, "claude-runs-test")
     messages = [orjson.loads(queue.get()) for _ in range(queue.qsize())]
     msg = next(m for m in messages if m["type"] == "session_complete")
+    # Source-evidence replay does not declare a completed native tree.
+    # Descendant versions stay unchanged so history fallback remains real.
+    if session.parent_session_id is None:
+        msg["session_fields"].pop("compute_version", None)
     assert compute.apply_session_complete(msg).outcome == "applied"
     return msg
 

@@ -237,6 +237,10 @@ def test_fair_queues_preserve_history_links_costs_and_checkpoints(tmp_path, monk
             assert result.outcome == 'applied'
         drain_aggregates()
         assert snapshot('large') == snapshot('reference')
+    # Source counts and checkpoints are immediate; costs converge through the queue.
+    from tests.statistics_helpers import drain_statistics
+    drain_statistics()
+    assert snapshot('large') == snapshot('reference')
     if provider == 'claude_code':
         assert snapshot('large')[2] > 0
     if provider == 'codex':
@@ -268,5 +272,8 @@ def test_new_watcher_session_has_immediate_live_baseline(tmp_path, provider):
     compute.sync_session_slice(session.id, path, limits=LiveSyncLimits(1000))
     session.refresh_from_db()
     assert session.user_message_count == 1
+    from tests.statistics_helpers import drain_statistics
+    drain_statistics()
+    session.refresh_from_db()
     if provider == 'claude_code':
         assert session.self_cost > 0

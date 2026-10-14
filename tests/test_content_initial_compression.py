@@ -42,19 +42,22 @@ def test_initial_compute_uses_final_root_dates_before_compression(final_hot, mon
         assert session.plaintext_verified_epoch == session.content_state_epoch
 
 
-def test_recent_root_compute_does_not_wait_for_old_descendant_metadata():
+def test_recent_root_waits_for_descendant_before_certifying_storage():
     session = make_session()
     child = make_session(id='older-child', type='subagent', parent_session=session)
     SessionItem.objects.create(session=session, line_num=1, content='recent')
     SessionItem.objects.create(session=child, line_num=1, content='old')
+    assert BaseSessionCompute.apply_session_complete(message(session)).outcome == 'superseded'
+    session.refresh_from_db()
+    assert session.compute_version is None
+    assert BaseSessionCompute.apply_session_complete(message(child)).outcome == 'applied'
     assert BaseSessionCompute.apply_session_complete(message(session)).outcome == 'applied'
     session.refresh_from_db()
     child.refresh_from_db()
-    assert session.compute_version == 123
-    assert session.content_storage_version == 1
-    assert child.content_storage_version is None
+    assert session.compute_version == child.compute_version == 123
+    assert session.content_storage_version == child.content_storage_version == 1
     assert session.plaintext_verified_epoch == session.content_state_epoch
-    assert SessionItem.objects.get(session=child, line_num=1).current_content_id is None
+    assert read_current(SessionItem.objects.get(session=child, line_num=1)) == 'old'
 
 
 @pytest.mark.parametrize('active_child', [False, True])
@@ -64,7 +67,7 @@ def test_active_native_tree_prevents_initial_compression(active_child):
     session = make_session(archived=True, created_at=old)
     active = session
     if active_child:
-        active = make_session(id='active-child', type='subagent', parent_session=session)
+        active = make_session(id='active-child', type='subagent', parent_session=session, compute_version=123)
     item = SessionItem.objects.create(session=session, line_num=1, content='repeat ' * 1000)
     msg = message(session, _active_session_ids=frozenset({active.id}))
     assert BaseSessionCompute.apply_session_complete(msg).outcome == 'applied'

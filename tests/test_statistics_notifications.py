@@ -55,6 +55,14 @@ def test_batch_notifies_published_values_and_activity(monkeypatch, cost):
     assert by_type['project_updated']['project']['id'] == 'notify'
     assert len([m for m in messages if m['type'] == 'session_updated']) == 1
     root.refresh_from_db()
+    child.refresh_from_db()
+    project.refresh_from_db()
+    expected = float(cost) if cost is not None else None
+    assert by_type['session_updated']['session']['total_cost'] == expected
+    assert by_type['session_updated']['session']['subagents_cost'] == expected
+    assert by_type['project_updated']['project']['total_cost'] == expected
+    assert child.total_cost == cost
+    assert project.total_cost == cost
     assert root.total_cost == cost
     assert not StatisticsQueueEntry.objects.exists()
 
@@ -133,3 +141,23 @@ def test_startup_consumes_existing_queue_after_provider_initial_sync_failure(mon
             await db_writer.stop_db_writer()
     asyncio.run(scenario())
     assert not StatisticsQueueEntry.objects.exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_statistics_notification_serialization_stays_off_event_loop(monkeypatch):
+    from threading import current_thread, main_thread
+    from twicc.core import serializers
+    from twicc.core.models import Project, Session
+    from twicc.providers.statistics_publication import notify_statistics_published
+    project = Project.objects.create(id='notification-thread')
+    root = Session.objects.create(id='notification-thread-root', project=project,
+        provider='codex', user_message_count=1)
+    threads = []
+    for name in ('serialize_session', 'serialize_project'):
+        original = getattr(serializers, name)
+        def serialize(value, original=original):
+            threads.append(current_thread() is main_thread())
+            return original(value)
+        monkeypatch.setattr(serializers, name, serialize)
+    asyncio.run(notify_statistics_published((root.id,), (project.id,), ()))
+    assert threads == [False, False]

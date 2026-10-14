@@ -34,6 +34,7 @@ def _coordinator():
     return CodexComputeCoordinator(ctx, asyncio.Event())
 
 
+@pytest.mark.django_db(transaction=True)
 def test_normal_superseded_apply_is_successful():
     async def scenario():
         coordinator = _coordinator()
@@ -230,10 +231,10 @@ class _FakeCommandQueue:
 
 
 @pytest.mark.django_db(transaction=True)
-def test_worker_dispatches_next_only_after_computed_not_applied(monkeypatch):
+def test_worker_dispatches_next_root_only_after_writer_ack(monkeypatch):
     project = Project.objects.create(id="dispatch-project")
     for sid in ["newest", "older"]:
-        Session.objects.create(id=sid, project=project, provider=Provider.CODEX, compute_version=2, file_path=sid)
+        Session.objects.create(id=sid, project=project, provider=Provider.CODEX, compute_version=1, file_path=sid, mtime=2 if sid == "newest" else 1)
     async def scenario():
         loop = asyncio.get_running_loop()
         done_future = loop.create_future()
@@ -263,6 +264,7 @@ def test_worker_dispatches_next_only_after_computed_not_applied(monkeypatch):
 
         async def handle_applied(signal):
             stale.discard(signal.session_id)
+            await Session.objects.filter(pk=signal.session_id).aupdate(compute_version=2)
             await original_handle(signal)
 
         monkeypatch.setattr(background_compute, "_load_stale_candidates", load)
@@ -285,15 +287,18 @@ def test_worker_dispatches_next_only_after_computed_not_applied(monkeypatch):
 
         task = asyncio.create_task(coordinator.run())
         await _wait_until(lambda: len(command_queue.commands) == 1)
-        assert command_queue.commands == [{"session_id": "newest"}]
+        assert command_queue.commands == [{"session_id": "newest", "tree_completion": {
+            "root_id": "newest", "member_ids": ("newest",), "compute_version": 2}}]
 
         status_queue.put({"type": "computed", "session_id": "newest"})
+        await _wait_until(lambda: "newest" in coordinator.computed_not_applied)
+        assert len(command_queue.commands) == 1
+        await coordinator.applied_queue.put(ComputeApplied("newest", "applied"))
         await _wait_until(lambda: len(command_queue.commands) == 2)
-        assert command_queue.commands[1] == {"session_id": "older"}
-        assert "newest" in coordinator.computed_not_applied
+        assert command_queue.commands[1] == {"session_id": "older", "tree_completion": {
+            "root_id": "older", "member_ids": ("older",), "compute_version": 2}}
 
         status_queue.put({"type": "computed", "session_id": "older"})
-        await coordinator.applied_queue.put(ComputeApplied("newest", "applied"))
         await coordinator.applied_queue.put(ComputeApplied("older", "applied"))
         # Nothing left: the worker is stopped (``None``), the coordinator stays
         # alive for runtime rebuild requests.
@@ -744,7 +749,8 @@ def test_forced_rebuild_is_discovered_after_older_compute_restores_current_versi
             await watcher._observe_source(path)
             task = asyncio.create_task(coordinator.run())
             await _wait_until(lambda: not ctx.command_queue.empty(), timeout=5)
-            assert ctx.command_queue.get_nowait() == {'session_id': sid}
+            assert ctx.command_queue.get_nowait() == {'session_id': sid, 'tree_completion': {
+                'root_id': sid, 'member_ids': (sid,), 'compute_version': compute.compute_version}}
             assert coordinator._prepared[sid].kind == 'compute'
             assert not gate_for(sid).locked()
             result_queue = queue.Queue()
@@ -783,7 +789,8 @@ def test_forced_rebuild_is_discovered_after_older_compute_restores_current_versi
                 await coordinator.events.put(('worker', {'type': 'computed', 'session_id': sid}))
 
             await _wait_until(lambda: not ctx.command_queue.empty(), timeout=5)
-            assert ctx.command_queue.get_nowait() == {'session_id': sid}
+            assert ctx.command_queue.get_nowait() == {'session_id': sid, 'tree_completion': {
+                'root_id': sid, 'member_ids': (sid,), 'compute_version': compute.compute_version}}
             assert coordinator._prepared[sid].kind == 'replaced'
             assert sid in coordinator._forced_rebuild
             assert gate_for(sid).locked()

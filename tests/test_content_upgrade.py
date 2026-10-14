@@ -24,8 +24,8 @@ def release_targets(settings):
 
 
 def test_combined_release_targets():
-    assert settings.CLAUDE_CODE_COMPUTE_VERSION == 115
-    assert settings.CODEX_COMPUTE_VERSION == 56
+    assert settings.CLAUDE_CODE_COMPUTE_VERSION == 116
+    assert settings.CODEX_COMPUTE_VERSION == 57
 
 
 @pytest.mark.parametrize('provider,old,target', [('claude_code', 114, 115), ('codex', 55, 56)])

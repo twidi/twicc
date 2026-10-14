@@ -2828,29 +2828,26 @@ async def _finalize_abandoned_run(run_id: int, provider: Provider) -> None:
 
 
 async def broadcast_session_updated(session_id: str) -> None:
-    """Broadcast session_updated for a real, user-visible session.
-
-    Used after a compute apply, and by the Codex migration jobs that flip
-    what the UI shows for a session (``compute_version`` reset, unavailable
-    flag) without going through a compute.
-    """
+    """Broadcast a visible session after loading and serialization off-loop."""
     from twicc.core.models import Session, SessionType
-    from twicc.core.serializers import serialize_session
+
+    def payload():
+        # Serializer/provider imports can initialize substantial provider code
+        # on their first use. Keep that work off the main asyncio thread too.
+        from twicc.core.serializers import serialize_session
+        session = Session.objects.get(id=session_id)
+        if session.user_message_count == 0 or session.type != SessionType.SESSION or session.hidden:
+            return None
+        return serialize_session(session)
 
     try:
-        session = await sync_to_async(Session.objects.get)(id=session_id)
-        if session.user_message_count == 0 or session.type != SessionType.SESSION:
-            return
-        if session.hidden:
-            return
-        channel_layer = get_channel_layer()
-        await channel_layer.group_send(
-            "updates",
-            {"type": "broadcast", "data": {
-                "type": "session_updated",
-                "session": serialize_session(session),
-            }},
-        )
+        if (data := await sync_to_async(payload)()) is not None:
+            channel_layer = get_channel_layer()
+            await channel_layer.group_send(
+                "updates", {"type": "broadcast", "data": {
+                    "type": "session_updated", "session": data,
+                }},
+            )
     except Session.DoesNotExist:
         logger.warning(f"Session {session_id} not found for broadcast")
     except Exception as e:
@@ -2879,18 +2876,20 @@ async def _broadcast_project_added(project) -> None:
 
 
 async def _broadcast_project_updated(project_id: str) -> None:
-    """Broadcast project_updated for a single project."""
-    from twicc.core.models import Project
-    from twicc.core.serializers import serialize_project
+    """Broadcast a project after loading and serialization off-loop."""
+    def payload():
+        from twicc.core.models import Project
+        from twicc.core.serializers import serialize_project
+        if project := Project.objects.filter(id=project_id).first():
+            return serialize_project(project)
+        return None
 
     try:
-        if project := await sync_to_async(Project.objects.filter(id=project_id).first)():
+        if (data := await sync_to_async(payload)()) is not None:
             channel_layer = get_channel_layer()
             await channel_layer.group_send(
-                "updates",
-                {"type": "broadcast", "data": {
-                    "type": "project_updated",
-                    "project": serialize_project(project),
+                "updates", {"type": "broadcast", "data": {
+                    "type": "project_updated", "project": data,
                 }},
             )
     except Exception as e:

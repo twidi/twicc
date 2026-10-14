@@ -781,7 +781,7 @@ def test_final_active_native_child_keeps_cold_root_plaintext_ready():
     from django.utils import timezone
 
     session = make_session(archived=True, created_at=timezone.now() - timedelta(days=40))
-    child = make_session(id='active-child', type='subagent', parent_session=session)
+    child = make_session(id='active-child', type='subagent', parent_session=session, compute_version=123)
     SessionItem.objects.create(session=session, line_num=1, content='active root')
     result = BaseSessionCompute.apply_session_complete(message(session, _active_session_ids=frozenset({child.id})))
     assert result.outcome == 'applied'

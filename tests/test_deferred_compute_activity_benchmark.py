@@ -28,25 +28,18 @@ def report(tmp_path_factory):
     return result
 
 
-def test_metadata_deferral_characterization(report):
-    assert report['metadata_history_scan_count'] == 0
-    assert report['metadata_bucket_repair_count'] == 0
+def test_metadata_reads_stay_outside_writer(report):
+    assert report['historical_queries_inside_writer'] == []
+    assert report['writer_hold_ms']['max'] < 1000
 
 
-def test_exact_reference_and_foreground_admission(report):
+def test_exact_reference_cache_and_recovery(report):
     assert report['debug'] is False
-    assert set(report['workloads']) == {'A', 'B', 'C', 'D', 'E'}
+    assert set(report['workloads']) == {'small', 'medium', 'large', 'very_large', 'cache400'}
     assert report['final_state_matches_independent_reference'], report['oracle_errors']
-    assert report['foreground_wins_next_background_grant']
-    assert report['workloads']['A']['source_rows'] == 24_000
-    assert report['workloads']['B']['source_rows'] == 48_000
-    assert report['workloads']['C']['fixture_source_rows'] == 12_000
-    assert report['workloads']['D']['foreground_phases'] == [
-        'metadata', 'bucket_preparation', 'orphan_recovery', 'forced_exact_final',
-    ]
-    assert report['workloads']['E']['foreground_history_scan_count'] > 0
-    assert report['workloads']['E']['retries'] == 3
-    assert all(report['workloads'][name]['final_transaction_hold_ms'] > 0 for name in 'ABCDE')
-    if report['journal_available']:
-        assert report['live_append']['with_journal']['presence_probe_count'] > 0
-        assert report['live_append']['without_journal']['presence_probe_count'] > 0
+    assert report['queue_rows_remaining'] == 0
+    assert report['workloads']['cache400']['one_changed_own_reads'] == 1
+    for label, size in [('small', 499), ('medium', 9753), ('large', 59004), ('very_large', 458192)]:
+        assert report['workloads'][label]['source_rows'] == size
+        assert report['workloads'][label]['first_ms'] > 0
+        assert report['workloads'][label]['warm_ms'] > 0

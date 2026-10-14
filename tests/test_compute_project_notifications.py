@@ -5,7 +5,6 @@ import threading
 import time
 from types import SimpleNamespace
 
-from django.db import connection
 import orjson
 import pytest
 
@@ -34,7 +33,13 @@ class CodexProjectRecoveryCompute(ProjectRecoveryCompute):
 @pytest.fixture
 def project_notifications(monkeypatch):
     from twicc import projects
+    from twicc.providers import statistics_publication
     events = []
+    async def statistics_notification(*args):
+        pass
+    # This fixture observes source lifecycle notifications only. Unified
+    # publication notifications have their own serialized-value integration test.
+    monkeypatch.setattr(statistics_publication, 'notify_statistics_published', statistics_notification)
     async def workspace(*args):
         events.append('workspace')
     async def link(*args):
@@ -168,18 +173,13 @@ def test_empty_selection_waits_for_age_poll_while_status_ticks_continue(recovery
             dispatched.append(job.session_id)
         return await ordinary_submit(job)
     monkeypatch.setattr(db_writer, 'submit_async_job', submit)
+    from twicc.providers import compute_selection
     reads = []
-    ordinary_reader = background.sync_to_async
-    def reader(function):
-        def wrapped():
-            def record(execute, sql, params, many, context):
-                if 'ORDER BY' in sql and 'mtime' in sql and 'LIMIT 1' in sql:
-                    reads.append(controlled[0])
-                return execute(sql, params, many, context)
-            with connection.execute_wrapper(record):
-                return function()
-        return ordinary_reader(wrapped)
-    monkeypatch.setattr(background, 'sync_to_async', reader)
+    ordinary_select = compute_selection.select_native_tree_source
+    def select(*args, **kwargs):
+        reads.append(controlled[0])
+        return ordinary_select(*args, **kwargs)
+    monkeypatch.setattr(compute_selection, 'select_native_tree_source', select)
     async def scenario():
         db_writer.start_db_writer()
         ctx = background.ComputeContext(Provider.CLAUDE_CODE, 123, 'tests.test_background_compute_recovery:RecoveryCompute')
@@ -196,10 +196,14 @@ def test_empty_selection_waits_for_age_poll_while_status_ticks_continue(recovery
             update_sources(path, healthy=now - 31)
             controlled[0] = 101.0
             async with asyncio.timeout(.5):
-                while 'healthy' not in dispatched:
+                while not reads:
                     await asyncio.sleep(.01)
             assert reads == [101.0]
+            # Outstanding publication pins the active native tree. A newly
+            # aged root waits for its acknowledgement before admission.
+            assert 'healthy' not in dispatched
             release.set()
+            controlled[0] = 102.0
             await asyncio.wait_for(task, 4)
             assert versions(path) == {'faulty': 123, 'healthy': 123}
         finally:
