@@ -1,8 +1,11 @@
 import asyncio
+import re
 
 import orjson
 import pytest
+from django.db import connection
 from django.test import AsyncClient
+from django.test.utils import CaptureQueriesContext
 
 from twicc.core.models import Project, Session, TimelineEvent
 from twicc.core.services.session_update import archive_sessions_bulk
@@ -73,3 +76,65 @@ def test_the_bulk_archive_endpoint_records_one_user_event_per_archived_session(p
     assert {sid: r.project_id for sid, r in got.items()} == {"a": project.id, "b": project.id, "c": other.id}
     assert all(r.actor == "user" and r.reason == "" for r in got.values())
     assert kinds("p") == []
+
+
+# --- Race analysis: ``ids`` is computed before the lock, the write decides what flipped ----------
+
+
+def test_events_match_the_rows_that_really_flipped_when_the_state_changes_after_the_read(project):
+    for sid in ("a", "b", "c", "d"):
+        Session.objects.create(id=sid, file_path=f"{sid}.jsonl", project=project, provider="codex")
+    ids = {"a", "b", "c", "d", "gone"}  # what the read phase selected
+    # Between the read and the write: b is archived elsewhere, d is deleted, "gone" never existed.
+    Session.objects.filter(id="b").update(archived=True)
+    Session.objects.filter(id="d").delete()
+    assert sorted(archive_sessions_bulk(ids)) == ["a", "c"]
+    assert Session.objects.filter(archived=True).count() == 3  # a, b, c
+    assert kinds("a") == kinds("c") == ["archived.started"]
+    assert kinds("b") == kinds("d") == kinds("gone") == []
+
+
+def test_a_session_unarchived_after_the_read_is_flipped_and_recorded(project):
+    Session.objects.create(id="a", file_path="a.jsonl", project=project, provider="codex", archived=True)
+    Session.objects.filter(id="a").update(archived=False)  # was archived at read time, not anymore
+    assert archive_sessions_bulk({"a"}) == ["a"]
+    assert Session.objects.get(id="a").archived is True
+    assert kinds("a") == ["archived.started"]
+
+
+def test_an_already_archived_session_keeps_its_state_gets_no_event_and_a_reset_search_version(project):
+    Session.objects.create(id="a", file_path="a.jsonl", project=project, provider="codex",
+                           archived=True, search_version=9)
+    assert archive_sessions_bulk({"a"}) == []
+    row = Session.objects.get(id="a")
+    assert row.archived is True and row.search_version == 0
+    assert kinds("a") == []
+
+
+def test_only_the_requested_ids_are_touched(project):
+    for sid in ("a", "pinned", "other"):
+        Session.objects.create(id=sid, file_path=f"{sid}.jsonl", project=project, provider="codex",
+                               pinned="project" if sid == "pinned" else None)
+    assert archive_sessions_bulk({"a"}) == ["a"]  # pinned sessions are excluded by the caller's read
+    assert Session.objects.get(id="pinned").archived is False
+    assert Session.objects.get(id="other").archived is False
+    assert kinds("pinned") == kinds("other") == []
+
+
+def _write_statements(captured):
+    # Django logs an ``executemany`` as "<n> times: <sql>".
+    sqls = [re.sub(r"^\d+ times: ", "", q["sql"]) for q in captured]
+    return [sql for sql in sqls if sql.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))]
+
+
+@pytest.mark.parametrize("count", [3, 300])
+def test_the_number_of_write_statements_does_not_grow_with_the_number_of_sessions(project, count):
+    Session.objects.bulk_create([
+        Session(id=f"s{i:04d}", file_path=f"s{i}.jsonl", project=project, provider="codex") for i in range(count)
+    ])
+    with CaptureQueriesContext(connection) as captured:
+        flipped = archive_sessions_bulk({f"s{i:04d}" for i in range(count)})
+    assert len(flipped) == count
+    assert TimelineEvent.objects.filter(kind="archived.started").count() == count
+    writes = _write_statements(captured.captured_queries)
+    assert len(writes) == 3, writes  # flip UPDATE, search_version UPDATE, one batched INSERT

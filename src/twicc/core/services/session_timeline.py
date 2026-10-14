@@ -12,7 +12,9 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from django.db import IntegrityError, transaction
+from typing import NamedTuple
+
+from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
 from twicc.core.models import (
@@ -76,6 +78,120 @@ def record_event_sync(
     except Exception:
         logger.exception("Timeline event %s could not be written for session %s", kind, session_id)
         return None
+
+
+class EventSpec(NamedTuple):
+    """One event of a batch given to :func:`record_events_bulk_sync` (same fields as ``record_event_sync``)."""
+
+    kind: str
+    session_id: str | None = None
+    project_id: str | None = None
+    occurred_at: object = None
+    precision: str = TimelinePrecision.EXACT
+    actor: str = TimelineActor.SYSTEM
+    reason: str = ""
+    caused_by_id: int | None = None
+    data: dict | None = None
+    dedupe_key: str | None = None
+
+
+def insert_event_rows(rows: list[TimelineEvent]) -> None:
+    """Insert unsaved ``rows`` with ONE ``executemany``. Errors propagate (no swallowing, no savepoint).
+
+    A raw statement built from the model metadata (the project convention, see
+    ``apply_item_updates``): each value goes through the field's ``get_db_prep_save``, the bytes
+    ``Model.save()`` would write. Primary keys are not assigned back to the objects.
+    """
+    if not rows:
+        return
+    fields = [f for f in TimelineEvent._meta.concrete_fields if not f.primary_key]
+    quote = connection.ops.quote_name
+    sql = (
+        f"INSERT INTO {quote(TimelineEvent._meta.db_table)} ({', '.join(quote(f.column) for f in fields)}) "
+        f"VALUES ({', '.join(['%s'] * len(fields))})"
+    )
+    params = [
+        [
+            f.get_db_prep_save(
+                getattr(row, f.attname) if f.is_relation else f.pre_save(row, True), connection=connection,
+            )
+            for f in fields
+        ]
+        for row in rows
+    ]
+    with connection.cursor() as cursor:
+        cursor.executemany(sql, params)
+
+
+def record_events_bulk_sync(specs: list[EventSpec]) -> int:
+    """Write many events with one batched insert. Returns the number of rows written. Never raises.
+
+    Same rules as :func:`record_event_sync` for each spec: payload validation (an invalid spec is
+    logged and skipped, the others are kept), ``STARTED_OF`` inheritance, ``dedupe_key`` duplicates
+    (against the table and inside the batch) skipped. The valid rows go in ONE ``executemany``
+    inside a savepoint. If that batch fails, each row is retried alone through
+    :func:`record_event_sync`, so one bad row costs only itself. Call it under the DB write lock.
+    """
+    if not specs:
+        return 0
+    try:
+        now = timezone.now()
+        built: list[tuple[EventSpec, TimelineEvent]] = []
+        for spec in specs:
+            try:
+                data = spec.data
+                if spec.kind in STARTED_OF:
+                    data = inherit_started_fields(spec.kind, data, _open_started_data(spec.session_id, spec.kind))
+                built.append((spec, TimelineEvent(
+                    session_id=spec.session_id, project_id=spec.project_id, kind=spec.kind,
+                    occurred_at=spec.occurred_at or now, precision=spec.precision, actor=spec.actor,
+                    reason=spec.reason, caused_by_id=spec.caused_by_id, data=validate_data(spec.kind, data),
+                    dedupe_key=spec.dedupe_key,
+                )))
+            except Exception:
+                logger.exception("Timeline event %s could not be built for session %s", spec.kind, spec.session_id)
+        built = _drop_duplicates(built)
+        if not built:
+            return 0
+        rows = [row for _, row in built]
+        try:
+            with transaction.atomic():
+                insert_event_rows(rows)
+            return len(rows)
+        except Exception:
+            logger.exception("Timeline batch insert failed (%s rows); retrying row by row", len(rows))
+            return sum(
+                1 for spec, _ in built
+                if record_event_sync(
+                    spec.kind, session_id=spec.session_id, project_id=spec.project_id,
+                    occurred_at=spec.occurred_at or now, precision=spec.precision, actor=spec.actor,
+                    reason=spec.reason, caused_by=spec.caused_by_id, data=spec.data, dedupe_key=spec.dedupe_key,
+                ) is not None
+            )
+    except Exception:
+        logger.exception("Timeline batch of %s events could not be written", len(specs))
+        return 0
+
+
+def _drop_duplicates(built: list[tuple[EventSpec, TimelineEvent]]) -> list[tuple[EventSpec, TimelineEvent]]:
+    """Drop the rows whose ``(session_id, dedupe_key)`` already exists in the table or earlier in the batch."""
+    keyed = [row for _, row in built if row.dedupe_key is not None]
+    if not keyed:
+        return built
+    existing = set(
+        TimelineEvent.objects.filter(
+            session_id__in={row.session_id for row in keyed}, dedupe_key__in={row.dedupe_key for row in keyed},
+        ).values_list("session_id", "dedupe_key")
+    )
+    kept = []
+    for spec, row in built:
+        if row.dedupe_key is not None:
+            key = (row.session_id, row.dedupe_key)
+            if key in existing:
+                continue
+            existing.add(key)
+        kept.append((spec, row))
+    return kept
 
 
 async def record_event(kind: str, **kwargs) -> TimelineEvent | None:

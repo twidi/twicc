@@ -17,12 +17,13 @@ from collections import Counter
 from enum import StrEnum
 from typing import NamedTuple
 
-from django.db import connection, transaction
+from django.db import transaction
 from django.db.models import Exists, OuterRef
 
 from twicc.core.models import (
     Session, SessionType, TimelineActor, TimelineEvent, TimelineKind, TimelinePrecision,
 )
+from twicc.core.services.session_timeline import insert_event_rows
 from twicc.core.services.timeline_boot import BACKFILL_PREFIX
 from twicc.core.timeline import validate_data
 from twicc.providers.db_writer import is_db_writer_started, run_under_db_write_lock
@@ -113,25 +114,8 @@ def _drop_present(session_id: str, rows: list[TimelineEvent]) -> list[TimelineEv
 
 def _insert_rows(rows: list[TimelineEvent]) -> None:
     """The backfill's own insert path: errors propagate (no swallowing) so the session's
-    transaction rolls back as a whole. A raw ``executemany`` built from the model metadata, each
-    value going through the field's ``get_db_prep_save`` (the bytes ``Model.save()`` would write)."""
-    fields = [f for f in TimelineEvent._meta.concrete_fields if not f.primary_key]
-    quote = connection.ops.quote_name
-    sql = (
-        f"INSERT INTO {quote(TimelineEvent._meta.db_table)} ({', '.join(quote(f.column) for f in fields)}) "
-        f"VALUES ({', '.join(['%s'] * len(fields))})"
-    )
-    params = [
-        [
-            f.get_db_prep_save(
-                getattr(row, f.attname) if f.is_relation else f.pre_save(row, True), connection=connection,
-            )
-            for f in fields
-        ]
-        for row in rows
-    ]
-    with connection.cursor() as cursor:
-        cursor.executemany(sql, params)
+    transaction rolls back as a whole. See :func:`insert_event_rows`."""
+    insert_event_rows(rows)
 
 
 def backfill_session_sync(session_id: str) -> SessionOutcome:

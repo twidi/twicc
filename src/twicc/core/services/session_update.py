@@ -58,12 +58,14 @@ from typing import Any, NamedTuple
 import orjson
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from twicc.core.enums import Provider
 from twicc.core.models import TimelineActor, TimelineKind
-from twicc.core.services.session_timeline import project_id_of, record_event_sync, record_title_change
+from twicc.core.services.session_timeline import (
+    EventSpec, project_id_of, record_event_sync, record_events_bulk_sync, record_title_change,
+)
 from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
 from twicc.providers.state import (
@@ -146,32 +148,47 @@ async def _lookup_session_for_update(
 
 
 def archive_sessions_bulk(ids: set[str]) -> list[str]:
-    """Archive ``ids`` in one transaction and record ``archived.started`` per flipped session.
+    """Archive ``ids`` and record ``archived.started`` per flipped session; return the flipped ids.
 
-    Sync; call under the DB write lock from a worker thread. The caller computed
-    ``ids`` before taking the lock, so another request may have archived some of
-    them meanwhile: events are written only for the sessions whose ``archived``
-    is still false here (design §6). The endpoint's candidate filter excluded
-    active, pinned and hidden sessions when it built ``ids``, but the write below
-    filters only by id: the timeline records exactly the sessions that flipped.
-    ``search_version`` is reset for every id, as before, so an interrupted
-    re-index is picked up at the next boot.
+    Sync; call under the DB write lock from a worker thread, and keep that hold short.
+    The caller did all its reads (candidate selection) BEFORE taking the lock; nothing is read
+    here. The write is two statements plus ONE batched timeline insert, whatever ``len(ids)``.
+
+    Race analysis. ``ids`` was computed outside the lock, so another writer may have archived,
+    unarchived or deleted any of them since. The flip is a conditional
+    ``UPDATE ... WHERE id IN (ids) AND archived = 0 ... RETURNING id, project_id``: the database
+    decides atomically which rows flip, and the events are built from the rows it returns.
+    A session archived meanwhile is not returned (no event: it did not flip here); one unarchived
+    meanwhile is returned (flipped here, so an event is recorded). A deleted row is neither.
+    The set is passed as one JSON parameter (``json_each``), so there is no variable limit.
+    ``search_version`` is reset for every id, as before, so an interrupted re-index is picked up
+    at the next boot: the flipped rows in the first statement, the already-archived ones in the second.
     """
     from twicc.core.models import Session
 
     if not ids:
         return []
+    table = connection.ops.quote_name(Session._meta.db_table)
+    ids_json = orjson.dumps(sorted(ids)).decode()
     with transaction.atomic():
-        to_flip = list(
-            Session.objects.filter(id__in=ids, archived=False).values_list("id", "project_id")
-        )
-        Session.objects.filter(id__in=ids).update(archived=True, search_version=0)
-        for session_id, project_id in to_flip:
-            record_event_sync(
-                TimelineKind.ARCHIVED_STARTED, session_id=session_id, project_id=project_id,
-                actor=TimelineActor.USER,
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"UPDATE {table} SET archived = 1, search_version = 0 "
+                f"WHERE id IN (SELECT value FROM json_each(%s)) AND archived = 0 RETURNING id, project_id",
+                [ids_json],
             )
-    return [session_id for session_id, _ in to_flip]
+            flipped = cursor.fetchall()
+            cursor.execute(
+                f"UPDATE {table} SET search_version = 0 "
+                f"WHERE id IN (SELECT value FROM json_each(%s)) AND archived = 1 AND search_version != 0",
+                [ids_json],
+            )
+        record_events_bulk_sync([
+            EventSpec(TimelineKind.ARCHIVED_STARTED, session_id=session_id, project_id=project_id,
+                      actor=TimelineActor.USER)
+            for session_id, project_id in flipped
+        ])
+    return [session_id for session_id, _ in flipped]
 
 
 def bundle_fields(updates: dict) -> list[str]:
