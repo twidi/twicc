@@ -120,10 +120,10 @@ def test_background_null_to_null_invalidation_rejects_prepared_marker(source):
 
 
 def test_live_source_guard_does_not_reject_background_observation(source):
-    from twicc.providers.contribution_revisions import SourceKey, record_contribution_commit, revisions_match
+    from twicc.providers.contribution_revisions import revisions_match
     session = source('root')
     result, _ = prepare('root')
-    record_contribution_commit(sources=[SourceKey(session.id, session.storage_incarnation)])
+    SessionItem.objects.filter(session=session).update(cost=Decimal(2))
     assert revisions_match(result.own_updates[0].invalidation_observation)
 
 
@@ -146,7 +146,7 @@ def test_actual_background_publication_rejects_prepared_marker(source, publicati
     assert revisions_match(observation)
     if publication == 'chunk':
         assert BaseSessionCompute.apply_session_items_chunk(
-            session.id, None, ['cost'], [{'id': item.id, 'cost': 2}], [], defer_aggregate_repair=True,
+            session.id, None, ['cost'], [{'id': item.id, 'cost': 2}], [],
         ) == 'ok'
     else:
         assert BaseSessionCompute.apply_session_complete({
@@ -196,3 +196,19 @@ def test_dirty_members_share_one_revision_lookup(source, monkeypatch):
     prepare('root')
     assert len(lookups) == 2
     assert lookups[0] is not None and lookups[0] is lookups[1]
+
+
+def test_own_cost_observation_rejects_reset_and_other_database(source, tmp_path, monkeypatch):
+    from django.db import connection
+    from twicc.providers import contribution_revisions as revisions
+    source('identity')
+    result, _ = prepare('identity')
+    observation = result.own_updates[0].invalidation_observation
+    other = tmp_path / 'other.sqlite'
+    other.touch()
+    with monkeypatch.context() as context:
+        context.setitem(connection.settings_dict, 'NAME', str(other))
+        assert not revisions.revisions_match(observation)
+    assert revisions.revisions_match(observation)
+    revisions.reset_contribution_revisions()
+    assert not revisions.revisions_match(observation)

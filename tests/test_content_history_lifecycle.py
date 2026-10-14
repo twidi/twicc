@@ -87,7 +87,7 @@ def test_replacement_begin_rollback_restores_history_and_memberships(monkeypatch
         raise RuntimeError('interrupted')
 
     with monkeypatch.context() as patch:
-        patch.setattr(live_aggregates, 'apply_contribution_changes', fail)
+        patch.setattr(live_aggregates, 'enqueue_sessions', fail)
         with pytest.raises(RuntimeError):
             begin_history_replacement(job(owner))
     assert SessionItem.objects.filter(pk=row.pk).exists()

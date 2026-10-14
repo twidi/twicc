@@ -29,7 +29,7 @@ def apply_batch(sessions, count=15, *, cost=Decimal('0.25'), kind=None):
             SessionItem.objects.bulk_create([SessionItem(session=s, line_num=n, content='{}', cost=cost, kind=kind)
                                             for n in range(1, count + 1)])
         after = item_contributions(SessionItem.objects.filter(session__in=sessions))
-        apply_contribution_changes([], after, before_sessions=before, after_sessions=before, repair=True)
+        apply_contribution_changes([], after, before_sessions=before, after_sessions=before)
     return after
 
 
@@ -57,7 +57,7 @@ def test_first_cost_free_message_updates_source_count_and_replay_is_empty():
     assert queue_ids() == ['root']
     with transaction.atomic():
         state = session_contribution(s)
-        apply_contribution_changes(rows, rows, before_sessions=[state], after_sessions=[state], repair=True)
+        apply_contribution_changes(rows, rows, before_sessions=[state], after_sessions=[state])
     s.refresh_from_db()
     assert s.user_message_count == 1
     assert queue_ids() == ['root']
@@ -82,7 +82,7 @@ def test_hierarchy_move_enqueues_old_and_new_native_roots():
         child.parent_session = new
         child.save(update_fields=['parent_session'])
         apply_contribution_changes([], [], before_sessions=[before],
-                                   after_sessions=[session_contribution(child)], repair=True)
+                                   after_sessions=[session_contribution(child)])
     assert set(queue_ids()) == {'old', 'new'}
 
 
@@ -109,10 +109,10 @@ def test_workflow_only_write_enqueues_native_root_and_preserves_published_cost()
     from twicc.providers.claude_code.sessions_watcher import ClaudeCodeSessionsWatcher
     root = make_session()
     child = make_session('child', type='subagent', parent_session=root)
-    workflow = Workflow.objects.create(session=child, run_id='wf_test', raw_json='{}', cost=Decimal('7'))
+    workflow = Workflow.objects.create(session=child, run_id='wf_test', raw_json='{}', cost=Decimal(7))
     ClaudeCodeSessionsWatcher._save_workflow_run(child.id, 'p', workflow.run_id, '{"phases": []}')
     workflow.refresh_from_db()
-    assert workflow.cost == Decimal('7')
+    assert workflow.cost == Decimal(7)
     assert queue_ids() == ['root']
 
 

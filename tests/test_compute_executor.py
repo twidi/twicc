@@ -61,7 +61,7 @@ def test_heavy_work_does_not_block_channels_cleanup(monkeypatch):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("path", ["completed", "abandoned"])
 def test_source_finalization_retains_aggregate_work_without_historical_repair(monkeypatch, path):
-    from twicc.core.models import ComputeAggregateRepair
+    from twicc.core.models import StatisticsQueueEntry
     project = Project.objects.create(id='aggregate-project')
     session = Session.objects.create(id='aggregate-session', project=project, provider=Provider.CODEX,
                                      created_at=datetime(2026, 9, 29, tzinfo=UTC))
@@ -83,9 +83,10 @@ def test_source_finalization_retains_aggregate_work_without_historical_repair(mo
                 'type': 'session_complete', 'provider': Provider.CODEX.value,
                 'run_id': run_id, 'session_id': session.id, 'history_facts': [],
                 'observed_last_offset': 0,
+                'session_fields': {'compute_version': 123},
             }), 3)
             assert db_writer._compute_states[run_id].failed_count == 0
-            assert await database_sync_to_async(ComputeAggregateRepair.objects.filter(session_id=session.id).exists)()
+            assert await database_sync_to_async(StatisticsQueueEntry.objects.filter(root_session_id=session.id).exists)()
             if path == 'completed':
                 await db_writer._finalize_compute_run(run_id, Provider.CODEX)
                 assert future.done() and future.result() == 0
@@ -95,7 +96,7 @@ def test_source_finalization_retains_aggregate_work_without_historical_repair(mo
             await db_writer.stop_db_writer()
     asyncio.run(scenario())
     assert calls == []
-    assert ComputeAggregateRepair.objects.filter(session_id=session.id).exists()
+    assert StatisticsQueueEntry.objects.filter(root_session_id=session.id).exists()
 
 
 @pytest.mark.django_db(transaction=True)

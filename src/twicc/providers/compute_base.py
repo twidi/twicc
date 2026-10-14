@@ -33,7 +33,7 @@ import logging
 import os
 import re
 from collections import Counter, OrderedDict
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, UTC
 from pathlib import Path
@@ -75,10 +75,9 @@ from twicc.inline_artifacts.publications import merge_publications
 from twicc.providers.enrichment_cache import BorrowedEnrichment, EnrichmentCache
 from twicc.providers.live_sync import LiveSyncLimits, LiveSyncResult, LiveSyncUpdates, RawLiveSlice, read_live_slice
 from twicc.providers.live_aggregates import (
-    ItemContribution, contribution_activity_keys, apply_contribution_changes, item_contributions, needs_repair,
-    persisted_cost, session_contribution, SessionContribution,
+    apply_contribution_changes, item_contributions,
+    persisted_cost, session_contribution,
 )
-from twicc.providers.compute_repair_journal import ActivityKey
 from twicc.sync_diagnostics import timed_sync_phase
 from twicc.providers.goals import GoalEvent, apply_goal_event, preserve_dismissed_flags
 from twicc.providers.task_snapshots import select_tasks_snapshot
@@ -3704,21 +3703,14 @@ class BaseSessionCompute:
         item_fields: list[str],
         item_updates: list[dict],
         content_overrides: list[dict],
-        repaired_activity_buckets: set[tuple] | None = None,
         observed_incarnation: str | None = None, observed_epoch: int | None = None,
         observed_upper_line: int | None = None,
-        activity_repair_keys: set[tuple] | None = None,
-        *,
-        defer_aggregate_repair: bool = False,
-        prospective_session: SessionContribution | None = None,
-        extra_activity_keys: Iterable[ActivityKey] = (),
     ) -> str:
         """Apply one slice of a compute result's item writes in its own transaction.
 
         The DB writer feeds a large result to the dedicated compute worker
         in slices. Each publication releases its transaction and writer
-        lease. Deferred runtime publications record durable obligations and
-        skip aggregate repair. Standalone callers retain exact aggregate repair.
+        lease. Root completion enqueues the derived statistics calculation.
         Each slice re-checks the revision guard;
         returns its outcome (``"ok"`` / ``"superseded"`` / ``"missing"``).
         A slice applied before a later ``superseded`` is harmless: the
@@ -3731,7 +3723,6 @@ class BaseSessionCompute:
         if outcome != "ok":
             return outcome
         session = Session.objects.get(id=session_id)
-        before_session = session_contribution(session)
         changed = SessionItem.objects.filter(session_id=session_id, id__in=[u['id'] for u in item_updates])
         before_items = item_contributions(changed)
         with timed_sync_phase('compute_metadata_source', rows=len(item_updates)):
@@ -3743,26 +3734,11 @@ class BaseSessionCompute:
             BaseSessionCompute.apply_item_updates(item_fields, item_updates)
             BaseSessionCompute.apply_content_overrides(content_overrides)
         after_items = item_contributions(changed)
-        if activity_repair_keys is not None:
-            keys = contribution_activity_keys((*before_items, *after_items), (before_session,))
-            transaction.on_commit(lambda: activity_repair_keys.update(keys))
-        with timed_sync_phase('compute_metadata_aggregates', rows=len(item_updates)):
-            from twicc.providers.compute_repair import record_compute_repair
-            from twicc.providers.compute_repair_journal import load_compute_repair
+        from twicc.providers.live_aggregates import apply_message_count_changes
 
-            if defer_aggregate_repair or load_compute_repair(session.id, session.storage_incarnation) is not None:
-                record_compute_repair(
-                    session, before_items, after_items, before_session=before_session,
-                    prospective_session=prospective_session, extra_activity_keys=extra_activity_keys,
-                    source_changed=True,
-                )
-            if defer_aggregate_repair:
-                return "ok"
-            from twicc.providers.live_aggregates import apply_message_count_changes
-
-            apply_message_count_changes(before_items, after_items)
-
+        apply_message_count_changes(before_items, after_items)
         return "ok"
+
 
     @staticmethod
     def apply_session_complete(msg: dict) -> ComputeApplyResult:
@@ -3843,18 +3819,6 @@ class BaseSessionCompute:
         from twicc.providers.contribution_revisions import record_own_cost_invalidation
 
         record_own_cost_invalidation(session.id, session.storage_incarnation)
-        before_session = session_contribution(session)
-
-        changed = SessionItem.objects.filter(session_id=session_id,
-            id__in=[u['id'] for u in msg.get('item_updates', [])])
-        before_items = item_contributions(changed)
-        # Worker-supplied days can describe history removed by pre-apply
-        # work. Keep them in the final repair even if no row remains there.
-        before_items.extend(ItemContribution(
-            session_id, before_session.project_id, before_session.provider,
-            datetime.fromisoformat(day).replace(tzinfo=UTC), None, None,
-        ) for day in (msg.get('affected_days') or []))
-
         # 1. Apply item updates (only items that changed). The DB writer
         # pre-applies large batches in slices (``apply_session_items_chunk``)
         # and hands over an emptied list; small ones land here directly.
@@ -4126,23 +4090,6 @@ class BaseSessionCompute:
 
             append_roots((tree.root_id,))
 
-        with timed_sync_phase('compute_final_aggregates'):
-            # Retain the own-baseline marker with source readiness. Live
-            # updates must not apply deltas until guarded own publication.
-            session = Session.objects.get(id=session_id)
-            from twicc.providers.compute_repair import record_compute_repair
-
-            after_items = item_contributions(changed)
-            record_compute_repair(
-                session, before_items, after_items, before_session=before_session,
-                prospective_session=session_contribution(session),
-                extra_activity_keys=msg.get('_activity_repair_keys', ()),
-                source_changed=bool(msg.get('item_updates') or msg.get('content_overrides')),
-            )
-            # Source readiness is independent of complete native-tree publication.
-            # The durable journal owns every aggregate obligation after commit.
-            session.refresh_from_db()
-
         with timed_sync_phase('compute_final_plan_docs'):
             # 7bis. Fold subagent-detected plan docs into the top-level ancestor
             folded_ancestor_id: str | None = None
@@ -4240,7 +4187,6 @@ class BaseSessionCompute:
 
         initialize_ingestion_session(session)
         before_session = session_contribution(session)
-        repair_aggregates = needs_repair(session)
         session.last_offset = raw.end_offset
         session.mtime = file_path.stat().st_mtime
         lines = []
@@ -4833,7 +4779,7 @@ class BaseSessionCompute:
         apply_contribution_changes(
             before_existing_live, [*inserted_contributions, *after_existing_live],
             before_sessions=[] if attribution_changed else [before_session],
-            after_sessions=[session_contribution(session)], repair=repair_aggregates,
+            after_sessions=[session_contribution(session)],
         )
         session.refresh_from_db()
 

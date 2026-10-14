@@ -808,7 +808,7 @@ def test_each_publication_captures_fresh_actual_active_child_ids(wal_runtime, mo
         db_writer.start_db_writer()
         try:
             await db_writer.run_compute_sync(lambda: Session.objects.create(
-                id='active-native-child', provider='codex', project_id=session.project_id,
+                id='active-native-child', provider='codex', project_id=session.project_id, compute_version=123,
                 type='subagent', parent_session_id=session.id, file_path=str(uuid4())))
             applied = asyncio.Queue()
             run_id, done = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0,
@@ -1080,13 +1080,13 @@ def test_postcommit_progress_rechecks_run_after_project_await(wal_runtime, monke
 def test_compute_diagnostics_separate_final_hold_and_preparation(wal_runtime, monkeypatch, caplog):
     import logging
     import time
-    from twicc.providers import compute_repair
     from twicc import sync_diagnostics
-    original = compute_repair.record_compute_repair
+    from twicc.providers.compute_base import BaseSessionCompute
+    original = BaseSessionCompute._apply_session_complete_final
     def delayed_aggregates(*args, **kwargs):
         time.sleep(.03)
         return original(*args, **kwargs)
-    monkeypatch.setattr(compute_repair, 'record_compute_repair', delayed_aggregates)
+    monkeypatch.setattr(BaseSessionCompute, '_apply_session_complete_final', staticmethod(delayed_aggregates))
     for logger in (sync_diagnostics.logger, extraction.logger):
         monkeypatch.setattr(logger, 'disabled', False)
         monkeypatch.setattr(logger, 'handlers', [caplog.handler])
@@ -1120,9 +1120,6 @@ def test_compute_diagnostics_separate_final_hold_and_preparation(wal_runtime, mo
     assert float(values['final_hold_ms']) >= 30
     assert float(values['max_publication_hold_ms']) >= float(values['final_hold_ms'])
     assert float(values['total_apply_ms']) >= float(values['final_hold_ms'])
-    aggregate = next(record.getMessage() for record in caplog.records
-                     if 'operation=compute_final_aggregates ' in record.getMessage())
-    assert float(aggregate.split('elapsed_ms=')[1].split()[0]) >= 30
     assert any('Compute storage preparation:' in record.getMessage() for record in caplog.records)
     assert not any('Compute activity enumeration:' in record.getMessage() for record in caplog.records)
 
@@ -1235,29 +1232,6 @@ def test_terminal_diagnostics_settle_denied_grant_once(wal_runtime, monkeypatch,
 
 
 
-def test_stale_recovery_discovery_is_read_only_and_old_incarnation_is_eligible(wal_runtime):
-    from twicc.core.models import ComputeAggregateRepair
-    from django.test.utils import CaptureQueriesContext
-    session, path = wal_runtime
-
-    async def scenario():
-        db_writer.start_db_writer()
-        try:
-            def source():
-                current = ComputeAggregateRepair.objects.create(session_id=session.id,
-                    incarnation=session.storage_incarnation, generation=1)
-                old = ComputeAggregateRepair.objects.create(session_id=session.id,
-                    incarnation='old-incarnation', generation=1)
-                with CaptureQueriesContext(connections['default']) as capture:
-                    rows, stale = db_writer._read_recovery_page(0, old.pk, 16)
-                return rows, stale, tuple(query['sql'] for query in capture), current.pk, old.pk
-            rows, stale, queries, current_id, old_id = await db_writer.run_compute_sync(source)
-            assert [observation.journal_id for observation in stale] == [current_id]
-            assert [snapshot.observation.journal_id for snapshot in rows] == [current_id, old_id]
-            assert all(sql.lstrip().upper().startswith('SELECT') for sql in queries)
-        finally:
-            await db_writer.stop_db_writer()
-    asyncio.run(scenario())
 
 
 
@@ -1270,51 +1244,6 @@ def test_stale_recovery_discovery_is_read_only_and_old_incarnation_is_eligible(w
 
 
 
-def test_discovery_shutdown_awaits_submitted_read_after_cancelled_stop(wal_runtime, monkeypatch):
-    from twicc.providers.compute_repair_recovery import RepairRecoveryScheduler
-    session, path = wal_runtime
-    started, release, finished = threading.Event(), threading.Event(), threading.Event()
-    close_started = None
-    original_read = db_writer._read_recovery_page
-    original_close = RepairRecoveryScheduler.close
-
-    def read(*args):
-        started.set()
-        assert release.wait(5)
-        result = original_read(*args)
-        finished.set()
-        return result
-    monkeypatch.setattr(db_writer, '_read_recovery_page', read)
-
-    def close(state):
-        original_close(state)
-        close_started.set()
-    monkeypatch.setattr(RepairRecoveryScheduler, 'close', close)
-
-    async def scenario():
-        nonlocal close_started
-        close_started = asyncio.Event()
-        db_writer.start_db_writer()
-        stop = None
-        try:
-            async with asyncio.timeout(5):
-                await asyncio.to_thread(started.wait)
-                stop = asyncio.create_task(db_writer.stop_db_writer())
-                await close_started.wait()
-                stop.cancel()
-                # The closed scheduler cannot submit more reads or admit repairs.
-                assert not finished.is_set()
-                assert not stop.done()
-                assert db_writer._repair_recovery._closed
-                release.set()
-                with pytest.raises(asyncio.CancelledError):
-                    await stop
-                assert finished.is_set()
-                assert db_writer._repair_discovery_task is None
-        finally:
-            release.set()
-            await db_writer.stop_db_writer()
-    asyncio.run(scenario())
 
 
 def test_startup_failure_after_discovery_allocation_closes_recovery_and_allows_restart(wal_runtime, monkeypatch):
@@ -1333,50 +1262,13 @@ def test_startup_failure_after_discovery_allocation_closes_recovery_and_allows_r
         with pytest.raises(RuntimeError, match='allocation failure'):
             db_writer.start_db_writer()
         await db_writer.stop_db_writer()
-        assert db_writer._repair_recovery is None
-        assert db_writer._repair_discovery_task is None
         assert compute_executor._executor is None
         assert compute_executor._application_executor is None
         db_writer.start_db_writer()
         await db_writer.stop_db_writer()
-        assert db_writer._repair_recovery is None
     asyncio.run(scenario())
 
 
-def test_blocked_discovery_does_not_delay_compute_ack_or_terminal_completion(wal_runtime, monkeypatch):
-    session, path = wal_runtime
-    entered, release = None, None
-    original_read = db_writer._recovery_discovery_read
-
-    async def blocked_read(function, /, *args):
-        entered.set()
-        await release.wait()
-        return await original_read(function, *args)
-    monkeypatch.setattr(db_writer, '_recovery_discovery_read', blocked_read)
-
-    async def scenario():
-        nonlocal entered, release
-        entered, release = asyncio.Event(), asyncio.Event()
-        db_writer.start_db_writer()
-        applied = asyncio.Queue()
-        try:
-            async with asyncio.timeout(5):
-                await entered.wait()
-                run_id, done = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(),
-                    total_display=0, applied_queue=applied)
-                db_writer.get_subprocess_queue().put(result_message(session, run_id))
-                db_writer.get_subprocess_queue().put({'type': 'done', 'provider': 'codex', 'run_id': run_id})
-                ack = await applied.get()
-                assert ack.outcome == 'applied'
-                assert await done == 0
-                assert db_writer._pending_compute is None
-                assert run_id not in db_writer._compute_states
-                assert not release.is_set()
-                assert not db_writer._repair_discovery_task.done()
-        finally:
-            release.set()
-            await db_writer.stop_db_writer()
-    asyncio.run(scenario())
 
 
 
@@ -1442,7 +1334,7 @@ def test_private_fact_preparation_preserves_current_history_and_drains_worker(wa
         try:
             assert await asyncio.to_thread(started.wait, 3)
             pending = captured['pending']
-            assert session.id in db_writer._pending_repair_exclusions()
+            assert db_writer._pending_compute is pending
             assert not db_writer.get_write_coordinator().demands
             with sqlite3.connect(path) as database:
                 assert database.execute('SELECT key,data FROM core_sessionhistoryfact').fetchall() == [
@@ -1478,7 +1370,7 @@ def test_private_fact_preparation_preserves_current_history_and_drains_worker(wa
                 assert signal.outcome == {'invalid': 'failed', 'publication_failure': 'failed', 'superseded': 'superseded'}.get(terminal, 'applied')
             await wait_until(lambda: pending.terminal)
             assert finished.is_set() and pending.operation.closed
-            await wait_until(lambda: session.id not in db_writer._pending_repair_exclusions())
+            await wait_until(lambda: db_writer._pending_compute is None)
             assert captured['tables_before_connection_close'] == []
             if terminal != 'invalid':
                 assert captured['stage'].closed

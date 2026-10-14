@@ -278,9 +278,6 @@ def test_replace_history_in_slices_matches_the_one_shot_form(session, monkeypatc
     contents += [orjson.dumps({"type": "event_msg", "payload": {"type": "token_count", "n": i}}).decode() for i in range(6)]
     job = ReplaceCodexHistoryJob(Provider.CODEX, session.id, list(enumerate(contents, 1)), 777, 7, 5.5, _future())
 
-    # The real submission path prepares historical scopes before writer admission.
-    from twicc.providers.aggregate_removal import prepare_removal
-    job = job._replace(aggregate_evidence=prepare_removal([session.id]))
     count = asyncio.run(apply_replace_codex_history_job_in_slices(job))
 
     session.refresh_from_db()

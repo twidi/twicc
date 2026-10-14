@@ -133,3 +133,17 @@ def test_cache_marker_schema_is_nullable_add_column():
         sql = cursor.fetchone()[0]
     assert 'integer NOT NULL PRIMARY KEY AUTOINCREMENT' in sql
     assert 'UNIQUE' not in sql
+
+
+def test_activation_schema_sql_drops_legacy_journal_without_rebuilding_sessions():
+    from io import StringIO
+    from django.core.management import call_command
+    output = StringIO()
+    call_command('sqlmigrate', 'core', '0158', stdout=output)
+    cache_sql = output.getvalue()
+    assert 'ALTER TABLE "core_session" ADD COLUMN "items_cost_computed_through_at" datetime NULL' in cache_sql
+    assert 'new__core_session' not in cache_sql
+    output = StringIO()
+    call_command('sqlmigrate', 'core', '0159', stdout=output)
+    assert 'DROP TABLE "core_computeaggregaterepair"' in output.getvalue()
+    assert 'core_session' not in output.getvalue()

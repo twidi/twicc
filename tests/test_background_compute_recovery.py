@@ -66,13 +66,13 @@ def recovery_runtime(tmp_path, monkeypatch):
         return function(*args, **kwargs)
 
     # Historical preparation owns a separate worker and must read this WAL copy.
-    from twicc.providers.tree_aggregate_prepare import AggregatePreparationExecutor
-    submit = AggregatePreparationExecutor.submit
+    from twicc.providers.statistics_runtime import StatisticsConsumer
+    original_read = StatisticsConsumer._read
 
-    def preparation(executor, function, /, *args, **kwargs):
-        return submit(executor, configured, function, args, kwargs)
+    async def preparation(consumer, function, /, *args):
+        return await original_read(consumer, configured, function, args, {})
 
-    monkeypatch.setattr(AggregatePreparationExecutor, 'submit', preparation)
+    monkeypatch.setattr(StatisticsConsumer, '_read', preparation)
     ordinary = db_writer.run_compute_sync
     application = compute_executor.run_compute_application_sync
 

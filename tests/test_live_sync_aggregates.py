@@ -28,11 +28,10 @@ def make_session(name='s', **kwargs):
                                   file_path=name, **kwargs)
 
 
-def apply(session, before_items=(), before=None, repair=False, repaired_activity_buckets=None):
+def apply(session, before_items=(), before=None):
     apply_contribution_changes(before_items, item_contributions(session.items.all()),
                                before_sessions=[before or session_contribution(session)],
-                               after_sessions=[session_contribution(session)], repair=repair,
-                               repaired_activity_buckets=repaired_activity_buckets)
+                               after_sessions=[session_contribution(session)])
     session.refresh_from_db()
 
 
@@ -77,7 +76,7 @@ def test_incomplete_child_publishes_nullability_without_readiness_barrier(cached
     SessionItem.objects.create(session=child, line_num=1, content='{}', cost=raw)
     with transaction.atomic():
         apply_contribution_changes([], item_contributions(child.items.all()), before_sessions=[],
-            after_sessions=[session_contribution(child)], repair=True)
+            after_sessions=[session_contribution(child)])
     parent.refresh_from_db()
     child.refresh_from_db()
     assert parent.subagents_cost is None
@@ -154,7 +153,7 @@ def test_visibility_repairs_creation_bucket_and_rolls_back_flag(monkeypatch):
     with transaction.atomic():
         SessionItem.objects.create(session=session, line_num=1, content='{}', kind=ItemKind.USER_MESSAGE,
             timestamp=datetime(2026, 9, 29, tzinfo=UTC), cost=Decimal('1.000001'))
-        apply(session, repair=True)
+        apply(session)
     _apply_visibility_flag(session.id, True)
     session.refresh_from_db()
     assert session.hidden
@@ -224,7 +223,7 @@ def test_history_replacement_enqueues_surviving_root_and_rebuilds_costs():
     with transaction.atomic():
         SessionItem.objects.create(session=session, line_num=1, content='{}', kind=ItemKind.USER_MESSAGE,
             timestamp=datetime(2026, 9, 29, tzinfo=UTC), cost=Decimal('3.000001'))
-        apply(session, repair=True)
+        apply(session)
     drain_aggregates()
     # The shared mutation adapter repairs stored contributions regardless of provider.
     loop = asyncio.new_event_loop()
@@ -296,22 +295,12 @@ def test_repair_does_not_recalculate_unrelated_sibling_costs(monkeypatch):
     SessionItem.objects.create(session=changed, line_num=1, content='{}', cost=Decimal('0.000001'))
     SessionItem.objects.create(session=sibling, line_num=1, content='{}', cost=Decimal('0.000002'))
 
-    original = Session.recalculate_costs
-    recalculated = []
-
-    def counted(self):
-        recalculated.append(self.id)
-        return original(self)
-
-    monkeypatch.setattr(Session, 'recalculate_costs', counted)
     with transaction.atomic():
-        apply(changed, repair=True)
+        apply(changed)
     parent.refresh_from_db()
     sibling.refresh_from_db()
-    assert sibling.id not in recalculated
     assert sibling.self_cost == Decimal(99)
     assert parent.subagents_cost is None
-    assert recalculated == []
 
 
 @pytest.mark.django_db(transaction=True)
@@ -329,13 +318,11 @@ def test_repaired_activity_then_live_delta_uses_no_history_helper(monkeypatch):
 
         monkeypatch.setattr(model, 'recalculate', staticmethod(counted))
 
-    repaired = set()
     SessionItem.objects.create(session=first, line_num=1, content='{}', timestamp=stamp,
                                kind=ItemKind.USER_MESSAGE, cost=Decimal('1.000001'))
     with transaction.atomic():
-        apply(first, repair=True, repaired_activity_buckets=repaired)
+        apply(first)
     assert counts == {'daily': 0, 'weekly': 0}
-    assert not repaired
     drain_aggregates()
 
     live = make_session('live', created_at=stamp)
@@ -347,7 +334,7 @@ def test_repaired_activity_then_live_delta_uses_no_history_helper(monkeypatch):
     SessionItem.objects.create(session=second, line_num=1, content='{}', timestamp=stamp,
                                kind=ItemKind.USER_MESSAGE, cost=Decimal('2.000002'))
     with transaction.atomic():
-        apply(second, repair=True, repaired_activity_buckets=repaired)
+        apply(second)
     assert counts == {'daily': 0, 'weekly': 0}
     drain_aggregates()
     for model in (DailyActivity, WeeklyActivity):
@@ -361,7 +348,6 @@ def test_rolled_back_source_obligations_do_not_publish(monkeypatch):
     session = make_session('rollback', created_at=stamp)
     SessionItem.objects.create(session=session, line_num=1, content='{}', timestamp=stamp,
                                kind=ItemKind.USER_MESSAGE, cost=Decimal('1.000001'))
-    repaired = set()
     calls = []
     original = DailyActivity.recalculate
 
@@ -371,13 +357,11 @@ def test_rolled_back_source_obligations_do_not_publish(monkeypatch):
 
     monkeypatch.setattr(DailyActivity, 'recalculate', staticmethod(counted))
     with pytest.raises(RuntimeError, match='rollback'), transaction.atomic():
-        apply(session, repair=True, repaired_activity_buckets=repaired)
+        apply(session)
         raise RuntimeError('rollback')
-    assert not repaired
     with transaction.atomic():
-        apply(session, repair=True, repaired_activity_buckets=repaired)
+        apply(session)
     assert calls == []
-    assert not repaired
     drain_aggregates()
     assert DailyActivity.objects.get(project_id=None).cost == Decimal('1.000001')
 
@@ -389,9 +373,8 @@ def test_metadata_change_recalculates_cached_historical_activity(change):
     session = make_session('metadata-change', created_at=stamp)
     SessionItem.objects.create(session=session, line_num=1, content='{}', timestamp=stamp,
                                kind=ItemKind.USER_MESSAGE, cost=Decimal('1.000001'))
-    repaired = set()
     with transaction.atomic():
-        apply(session, repair=True, repaired_activity_buckets=repaired)
+        apply(session)
 
     drain_aggregates()
     before = session_contribution(session)
@@ -403,8 +386,7 @@ def test_metadata_change_recalculates_cached_historical_activity(change):
         session.save(update_fields=['project'])
     with transaction.atomic():
         apply_contribution_changes([], [], before_sessions=[before],
-                                   after_sessions=[session_contribution(session)], repair=False,
-                                   repaired_activity_buckets=repaired)
+                                   after_sessions=[session_contribution(session)])
     drain_aggregates()
     assert_activities_match_reference()
 
@@ -429,7 +411,7 @@ def test_live_cost_delta_uses_persisted_six_decimal_precision(tmp_path, monkeypa
     assert session.self_cost == session.total_cost == Decimal('0.000002')
     with transaction.atomic():
         apply_contribution_changes([], [], before_sessions=[session_contribution(session)],
-            after_sessions=[session_contribution(session)], repair=True)
+            after_sessions=[session_contribution(session)])
     session.refresh_from_db()
     assert session.self_cost == Decimal('0.000002')
 
@@ -481,26 +463,22 @@ def test_current_child_zero_to_null_updates_parent_partial_index():
 @pytest.mark.parametrize('pending', [False, True])
 def test_live_message_count_advances_while_own_cost_baseline_waits(pending):
     """Pending costs must not suppress watcher message visibility or replay deltas."""
-    from twicc.providers.compute_repair_journal import merge_compute_repair
     from django.db import connection
     from django.test.utils import CaptureQueriesContext
     session = make_session('live-count', compute_version=get_provider_helpers(Provider.CLAUDE_CODE).current_compute_version if pending else 0,
                            self_cost=Decimal(99), total_cost=Decimal(99))
-    if pending:
-        with transaction.atomic():
-            merge_compute_repair(session.id, session.storage_incarnation, source_changed=True, baseline_pending=True)
     with CaptureQueriesContext(connection) as queries:
         before = session_contribution(session)
         with transaction.atomic():
             item = SessionItem.objects.create(session=session, line_num=1, kind=ItemKind.USER_MESSAGE, cost=Decimal(2))
             contribution = item_contributions(SessionItem.objects.filter(pk=item.pk))
-            apply_contribution_changes([], contribution, before_sessions=[before], after_sessions=[before], repair=not pending)
+            apply_contribution_changes([], contribution, before_sessions=[before], after_sessions=[before])
         session.refresh_from_db()
         assert session.user_message_count == 1
         assert session.total_cost == Decimal(99)
         with transaction.atomic():
             state = session_contribution(session)
-            apply_contribution_changes(contribution, contribution, before_sessions=[state], after_sessions=[state], repair=not pending)
+            apply_contribution_changes(contribution, contribution, before_sessions=[state], after_sessions=[state])
         session.refresh_from_db()
         assert session.user_message_count == 1
     assert not any('SUM(' in query['sql'].upper() for query in queries)
@@ -508,16 +486,14 @@ def test_live_message_count_advances_while_own_cost_baseline_waits(pending):
 
 def test_pending_zero_message_count_accepts_negative_replay_delta():
     """An invalid zero baseline cannot make a reclassified source row unwritable."""
-    from twicc.providers.compute_repair_journal import merge_compute_repair
     session = make_session('zero-count')
     item = SessionItem.objects.create(session=session, line_num=1, kind=ItemKind.USER_MESSAGE)
     before_items = item_contributions(SessionItem.objects.filter(pk=item.pk))
     with transaction.atomic():
-        merge_compute_repair(session.id, session.storage_incarnation, source_changed=True, baseline_pending=True)
         SessionItem.objects.filter(pk=item.pk).update(kind=ItemKind.ASSISTANT_MESSAGE)
         state = session_contribution(session)
         apply_contribution_changes(before_items, item_contributions(SessionItem.objects.filter(pk=item.pk)),
-            before_sessions=[state], after_sessions=[state], repair=False)
+            before_sessions=[state], after_sessions=[state])
     session.refresh_from_db()
     assert session.user_message_count == 0
     item.refresh_from_db()

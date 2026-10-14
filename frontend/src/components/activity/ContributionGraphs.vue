@@ -3,7 +3,8 @@
 // the user messages, sessions, and cost contribution graphs.
 // Supports toggling between heatmap view and sparkline view.
 
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { createStatisticsRefresh } from '../../composables/statisticsRefresh.js'
 import { apiFetch } from '../../utils/api'
 import { ALL_PROJECTS_ID } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
@@ -139,6 +140,8 @@ function onSeparateLabelClick() {
     }
 }
 
+const refreshDailyActivity = createStatisticsRefresh(fetchDailyActivity)
+
 async function fetchDailyActivity() {
     try {
         let url
@@ -176,13 +179,17 @@ async function fetchDailyActivity() {
     }
 }
 
-onMounted(fetchDailyActivity)
-watch(() => props.projectId, fetchDailyActivity)
-watch(() => props.projectIds, fetchDailyActivity)
-watch(selectedProvider, fetchDailyActivity)
+onMounted(() => {
+    window.addEventListener('twicc:activity-updated', refreshDailyActivity)
+    refreshDailyActivity()
+})
+onUnmounted(() => window.removeEventListener('twicc:activity-updated', refreshDailyActivity))
+watch(() => props.projectId, refreshDailyActivity)
+watch(() => props.projectIds, refreshDailyActivity)
+watch(selectedProvider, refreshDailyActivity)
 
 // Poll daily activity during startup so charts update as sessions are indexed
-useStartupPolling(fetchDailyActivity)
+useStartupPolling(refreshDailyActivity)
 </script>
 
 <template>

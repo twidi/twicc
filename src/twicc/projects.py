@@ -598,16 +598,7 @@ async def register_project(
 @transaction.atomic
 def _set_worktree_of(project_id: str, parent_id: str) -> None:
     """Point ``project_id.worktree_of`` at ``parent_id`` (sync DB write)."""
-    from twicc.providers.compute_repair_journal import merge_compute_repair
-    from twicc.providers.contribution_revisions import record_contribution_commit
-    previous = Project.objects.filter(id=project_id).values_list('worktree_of_id', flat=True).first()
     Project.objects.filter(id=project_id).update(worktree_of_id=parent_id)
-    if previous != parent_id:
-        scopes = {value for value in (project_id, previous, parent_id) if value}
-        providers = set(Session.objects.filter(project_id=project_id).values_list('provider', flat=True))
-        merge_compute_repair(f'project:{project_id}', 'project', project_ids=scopes, source_changed=True)
-        record_contribution_commit(projects=scopes,
-            day_scopes=[(scope, provider) for scope in (*scopes, None) for provider in providers])
 
 
 def _find_project_for_repo(main_repo: str) -> str | None:
@@ -810,12 +801,6 @@ def expand_project_ids_with_worktrees(project_ids: Iterable[str]) -> list[str]:
     return result
 
 
-@transaction.atomic
-def update_project_total_cost(project_id: str) -> None:
-    """Retain exact project replacement for the bounded aggregate continuation."""
-    from twicc.providers.compute_repair_journal import merge_compute_repair
-    if Project.objects.filter(pk=project_id).exists():
-        merge_compute_repair(f'project:{project_id}', 'project', project_ids=[project_id], source_changed=True)
 
 
 # ---------------------------------------------------------------------------

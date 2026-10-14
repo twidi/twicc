@@ -1,3 +1,4 @@
+import { refreshStatisticsHome } from '../composables/statisticsRefresh.js'
 import { buildProjectActivityIndex, createProjectActivityComparator } from '../utils/projectActivity.js'
 import { getStableSessionList } from '../utils/sessionLists.js'
 import { agentLinkState, setAgentLink as cacheAgentLink, clearAgentLinks as clearAgentLinkCache, markAgentStopped as cacheAgentStop, markAgentIdle, beginAgentFetch, applyAgentSnapshot, rootAgentToolLine, staleSyntheticAgentIds, buildAgentTree, hasTreeAgents, runStateFromPayload, interactionFromPayload, setAgentRunState as cacheAgentRunState, setAgentInteraction as cacheAgentInteraction, dropRootAgentState, effectiveAgentRun } from '../utils/agentLinkIndex'
@@ -2443,7 +2444,10 @@ export const useDataStore = defineStore('data', {
          * Calls /api/home/ which returns projects and weekly activity in one request.
          * Weekly activity is stored separately in weeklyActivity (not on project objects).
          */
-        async loadHomeData() {
+        loadHomeData() {
+            return refreshStatisticsHome(this)
+        },
+        async _fetchHomeData() {
             // Only show loading indicator on initial load, not on background
             // refreshes (e.g. startup polling) — otherwise the project list
             // flashes away and back on every poll tick.

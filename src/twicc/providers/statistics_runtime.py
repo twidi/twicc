@@ -22,6 +22,11 @@ def _close_connections():
     connections.close_all()
 
 
+def _workflow_owners(workflow_ids):
+    from twicc.core.models import Workflow
+    return tuple(Workflow.objects.filter(pk__in=workflow_ids).values_list('session_id', flat=True).distinct())
+
+
 def _acknowledge(max_id):
     with transaction.atomic():
         acknowledge_queue(max_id)
@@ -105,7 +110,8 @@ class StatisticsConsumer:
         for week in weeks:
             value = await self._read(prepare.prepare_weekly, week)
             await publication.publish_weekly(week, value)
-        # Task 9 inserts notification delivery before this durable acknowledgement.
+        owners = await self._read(_workflow_owners, tree.workflow_ids)
+        await publication.notify_statistics_published(roots, tree.project_ids, owners)
         from twicc.providers.db_writer import publish_statistics_sync
         await publish_statistics_sync(_acknowledge, batch.max_id)
 

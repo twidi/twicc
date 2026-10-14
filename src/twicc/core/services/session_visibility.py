@@ -133,7 +133,7 @@ def _apply_visibility_flag(session_id: str, new_hidden: bool):
 
         save_lifecycle(session, update_fields=['hidden'])
         apply_contribution_changes([], [], before_sessions=[before],
-            after_sessions=[session_contribution(session)], repair=True)
+            after_sessions=[session_contribution(session)])
         session.refresh_from_db()
     return session
 

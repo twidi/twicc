@@ -1,14 +1,14 @@
 """Bounded source counts and native-root statistics invalidations."""
 
 from collections import Counter, defaultdict
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 from typing import NamedTuple
 
 from django.db import connection
 
 from twicc.core.enums import ItemKind
-from twicc.core.models import DailyActivity, Session, WeeklyActivity
+from twicc.core.models import Session
 
 COST_QUANTUM = Decimal("0.000001")
 
@@ -52,26 +52,6 @@ def item_contributions(queryset) -> list[ItemContribution]:
     )]
 
 
-def needs_repair(session: Session) -> bool:
-    from twicc.providers.helpers import get_provider_helpers
-    return session.compute_version != get_provider_helpers(session.provider).current_compute_version
-
-
-def _activity_keys(project_id, provider, timestamp):
-    if timestamp is not None:
-        day = timestamp.astimezone(UTC).date()
-        for scope in (project_id, None):
-            yield DailyActivity, scope, provider, day
-            yield WeeklyActivity, scope, provider, day - timedelta(days=day.weekday())
-
-
-def contribution_activity_keys(items=(), sessions=()) -> set[tuple]:
-    """Enumerate exact UTC project/global day/week obligations without deltas."""
-    return {key for row in (*items, *sessions)
-            for key in _activity_keys(row.project_id, row.provider,
-                                      row.timestamp if isinstance(row, ItemContribution) else row.created_at)}
-
-
 def changed_roots(before_items, after_items, before_sessions, after_sessions) -> frozenset[str]:
     """Resolve relevant bounded source changes through native parent ownership."""
     from twicc.providers.contribution_revisions import _native_root
@@ -84,9 +64,7 @@ def changed_roots(before_items, after_items, before_sessions, after_sessions) ->
     changed = {i.session_id for i in (old_items - new_items) | (new_items - old_items)}
     for sid in before.keys() | after.keys():
         old, new = before.get(sid), after.get(sid)
-        if old is None or new is None:
-            changed.add(sid)
-        elif (old._replace(created_at=None) != new._replace(created_at=None)
+        if old is None or new is None or (old._replace(created_at=None) != new._replace(created_at=None)
               or (old.created_at != new.created_at and (old.user_message_count or new.user_message_count))):
             changed.add(sid)
     roots = set()
@@ -117,14 +95,9 @@ def apply_message_count_changes(before_items, after_items) -> None:
 
 
 def apply_contribution_changes(
-    before_items, after_items, *, before_sessions, after_sessions, repair=False,
-    repaired_activity_buckets=None, extra_activity_keys=(),
+    before_items, after_items, *, before_sessions, after_sessions,
 ) -> None:
-    """Commit source counts and one durable invalidation per affected native root.
-
-    Legacy repair arguments remain accepted while their callers migrate. They
-    never postpone a partial-tree calculation or publish derived statistics.
-    """
+    """Commit source counts and one durable invalidation per affected native root."""
     if not connection.in_atomic_block:
         raise RuntimeError('Contribution changes require a caller-owned transaction')
     from twicc.providers.statistics_queue import append_roots

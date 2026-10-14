@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from types import MappingProxyType
 from time import perf_counter
-from datetime import UTC, datetime
+from datetime import datetime
 
 from django.db import transaction
 from django.db.models import BinaryField, F, Max, Q
@@ -33,7 +33,6 @@ from twicc.core.content_storage.types import (
 )
 from twicc.core.content_storage.writes import write_item_content_assignments
 from twicc.core.models import Session, SessionItem, SessionItemContent
-from twicc.providers.compute_repair_journal import RepairSnapshot
 from twicc.sync_diagnostics import timed_sync_phase
 
 logger = logging.getLogger(__name__)
@@ -514,7 +513,7 @@ def _settle_placement_epoch(placement):
 class ComputeStorageOperation:
     """Worker-owned mutable state; only successful publications settle cursors."""
 
-    def __init__(self, msg, observation, placement, references, activity_repair_keys):
+    def __init__(self, msg, observation, placement, references):
         self.message = msg
         self.observation = observation
         self.placement = placement
@@ -525,10 +524,6 @@ class ComputeStorageOperation:
         self.item_row_budget = 2000
         self.pending_batch = None
         self.reconciled_contents = {}
-        # Current history is enumerated by final exact repair. Keep obligations
-        # that metadata commits can remove from that history independently.
-        self.activity_repair_keys = activity_repair_keys
-        self.repair_snapshot: RepairSnapshot | None = None
         self.history_facts_stage = None
         self.preparation_ms = 0.0
         self.max_publication_ms = 0.0
@@ -587,11 +582,10 @@ def _validate_observation(observation, expected_epoch):
     return True
 
 
-def begin_compute_application(msg, *, defer_aggregate_repair=True):
+def begin_compute_application(msg):
     """Capture exact target/root observations under a short write-first guard."""
     from twicc.core.content_storage.references import SessionReferenceOperation
     from twicc.providers.compute_base import BaseSessionCompute
-    from twicc.providers.live_aggregates import contribution_activity_keys, session_contribution, ItemContribution
 
     with transaction.atomic():
         guard_storage(msg['session_id'], msg.get('observed_incarnation'), msg.get('observed_epoch'),
@@ -601,18 +595,6 @@ def begin_compute_application(msg, *, defer_aggregate_repair=True):
         BaseSessionCompute.validate_item_fields(msg.get('item_fields', ()))
         initialize_compute_session(msg['session_id'])
         session = Session.objects.get(pk=msg['session_id'])
-        state = session_contribution(session)
-        fields = msg.get('session_fields', {})
-        changes = {name: fields[name] for name in state._fields if name != 'session_id' and name in fields}
-        if isinstance(changes.get('created_at'), str):
-            changes['created_at'] = datetime.fromisoformat(changes['created_at'])
-        prospective = state._replace(**changes)
-        days = [ItemContribution(state.session_id, state.project_id, state.provider,
-                                 datetime.fromisoformat(day).replace(tzinfo=UTC), None, None)
-                for day in msg.get('affected_days') or ()]
-        prospective_days = [day._replace(project_id=prospective.project_id, provider=prospective.provider)
-                            for day in days]
-        activity_repair_keys = contribution_activity_keys((*days, *prospective_days), (state, prospective))
         upper_line = msg.get('observed_upper_line')
         if upper_line is None:
             upper_line = max(session.last_line,
@@ -638,9 +620,7 @@ def begin_compute_application(msg, *, defer_aggregate_repair=True):
         references.uses_counts = False
         references.initialized = True
     references.validate_connection()
-    operation = ComputeStorageOperation(msg, observation, placement, references, activity_repair_keys)
-    operation.defer_aggregate_repair = defer_aggregate_repair
-    operation.prospective_session = prospective
+    operation = ComputeStorageOperation(msg, observation, placement, references)
     return operation
 
 
@@ -709,15 +689,8 @@ def publish_compute_batch(operation, batch, active_ids):
         if batch.phase == 'metadata' and batch.rows:
             outcome = BaseSessionCompute.apply_session_items_chunk(
                 msg['session_id'], msg.get('observed_last_offset'), msg.get('item_fields', []),
-                list(batch.rows), [], msg.get('_repaired_activity_buckets'),
-                msg['observed_incarnation'], msg['observed_epoch'], msg['observed_upper_line'],
-                activity_repair_keys=operation.activity_repair_keys,
-                defer_aggregate_repair=operation.defer_aggregate_repair, prospective_session=operation.prospective_session,
-                extra_activity_keys=operation.activity_repair_keys)
-            from twicc.providers.compute_repair_journal import load_compute_repair
-
-            snapshot = load_compute_repair(msg['session_id'], msg['observed_incarnation'])
-            transaction.on_commit(lambda: setattr(operation, 'repair_snapshot', snapshot))
+                list(batch.rows), [],
+                msg['observed_incarnation'], msg['observed_epoch'], msg['observed_upper_line'])
             if outcome != 'ok':
                 raise SupersededStorageResult(outcome)
         elif batch.phase == 'overrides':
@@ -751,7 +724,7 @@ def final_compute_message(operation, active_ids):
     with _compute_scope(operation, active_ids) as placement:
         return {**operation.message, 'item_updates': [], 'content_overrides': [], '_storage_prepared': True,
                 '_storage_operation': operation, '_storage_final_root': dict(placement),
-                '_active_session_ids': active_ids, '_activity_repair_keys': frozenset(operation.activity_repair_keys)}
+                '_active_session_ids': active_ids}
 
 
 def prepare_compute_history_stage(operation):
@@ -793,7 +766,7 @@ def prepare_compute_result(msg, item_row_budget=2000):
         raise ValueError('Metadata row budget must be positive')
     if msg.get('_storage_prepared'):
         return msg
-    operation = begin_compute_application(msg, defer_aggregate_repair=False)
+    operation = begin_compute_application(msg)
     operation.item_row_budget = item_row_budget
     try:
         while operation.phase != 'final':

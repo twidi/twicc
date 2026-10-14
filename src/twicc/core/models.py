@@ -213,16 +213,6 @@ class Project(models.Model):
     class Meta:
         ordering = ["-mtime"]
 
-    def recalculate_total_cost(self) -> None:
-        """Recalculate total_cost from non-stale SESSION-type sessions."""
-        from decimal import Decimal
-        from django.db.models import Sum
-
-        total = self.sessions.filter(
-            type=SessionType.SESSION,
-            total_cost__isnull=False,
-        ).aggregate(total=Sum("total_cost"))["total"] or Decimal(0)
-        self.total_cost = total if total > 0 else None
 
     def __str__(self):
         return self.id
@@ -416,20 +406,6 @@ class DailyActivity(PeriodicActivity):
         return date_start, date_start + timedelta(days=1)
 
 
-class ComputeAggregateRepair(models.Model):
-    """Durable aggregate obligations, retained independently of source deletion."""
-
-    id = models.BigAutoField(primary_key=True)
-    session_id = models.CharField(max_length=255)
-    incarnation = models.CharField(max_length=36)
-    generation = models.PositiveBigIntegerField(default=0)
-    activity_keys = models.JSONField(default=list)
-    parent_ids = models.JSONField(default=list)
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(fields=["session_id", "incarnation"], name="compute_repair_source_identity"),
-        ]
 
 
 class Session(models.Model):
@@ -783,28 +759,6 @@ class Session(models.Model):
             return self.last_stopped_at
         return max(self.last_started_at, self.last_stopped_at)
 
-    def recalculate_costs(self) -> None:
-        """Recalculate self_cost, subagents_cost, and total_cost from SessionItem costs.
-
-        - self_cost = Sum of this session's own SessionItem.cost
-        - subagents_cost = Sum of SessionItem.cost for all subagent sessions
-        - total_cost = self_cost + subagents_cost
-        """
-        from decimal import Decimal
-        from django.db.models import Sum
-
-        self.self_cost = SessionItem.objects.filter(
-            session=self,
-            cost__isnull=False,
-        ).aggregate(total=Sum("cost"))["total"]
-
-        self.subagents_cost = SessionItem.objects.filter(
-            session__parent_session=self,
-            cost__isnull=False,
-        ).aggregate(total=Sum("cost"))["total"]
-
-        total = (self.self_cost or Decimal(0)) + (self.subagents_cost or Decimal(0))
-        self.total_cost = total if total > 0 else None
 
     def __str__(self):
         return self.id

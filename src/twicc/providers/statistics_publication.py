@@ -104,3 +104,26 @@ def _workflow(workflow_id, cost, phases_cost):
 async def publish_workflow_cost(workflow_id: int, cost: Decimal, phases_cost: dict[str, float]) -> None:
     await _publish(_workflow, workflow_id, cost, phases_cost)
     await asyncio.sleep(0)
+
+
+async def notify_statistics_published(
+    root_ids: tuple[str, ...], project_ids: tuple[str, ...], workflow_owner_ids: tuple[str, ...],
+) -> None:
+    """Notify clients after derived publication, before queue acknowledgement."""
+    from channels.layers import get_channel_layer
+    from twicc.providers.db_writer import broadcast_session_updated, _broadcast_project_updated
+
+    for root_id in dict.fromkeys(root_ids):
+        await broadcast_session_updated(root_id)
+    for project_id in dict.fromkeys(project_ids):
+        await _broadcast_project_updated(project_id)
+    layer = get_channel_layer()
+    for owner_id in dict.fromkeys(workflow_owner_ids):
+        await layer.group_send('updates', {'type': 'broadcast', 'data': {
+            'type': 'workflow_changed', 'session_id': owner_id,
+        }})
+    await layer.group_send('updates', {'type': 'broadcast', 'data': {
+        'type': 'statistics_updated', 'root_ids': list(dict.fromkeys(root_ids)),
+        'project_ids': list(dict.fromkeys(project_ids)),
+    }})
+    await layer.group_send('updates', {'type': 'broadcast', 'data': {'type': 'activity_updated'}})

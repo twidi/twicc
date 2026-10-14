@@ -120,7 +120,6 @@ class ReplaceCodexHistoryJob(NamedTuple):
     last_line: int
     mtime: float
     future: asyncio.Future
-    aggregate_evidence: object = None
 
 
 class MarkSessionUnavailableJob(NamedTuple):
@@ -371,10 +370,6 @@ def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
     from twicc.core.content_storage.references import remove_history_memberships
 
     session = Session.objects.select_for_update().get(id=job.session_id)
-    from twicc.providers.aggregate_removal import require_removal
-    if job.aggregate_evidence is None:
-        raise RuntimeError('History replacement requires prepared aggregate scopes')
-    require_removal(job.aggregate_evidence)
     initialize_ingestion_session(session, invalidate=True)
     remove_history_memberships(session.id)
     from twicc.providers.contribution_revisions import record_own_cost_invalidation
@@ -433,9 +428,6 @@ def _finish_replace_codex_history(job: ReplaceCodexHistoryJob) -> int:
 
 def _apply_replace_codex_history_job(job: ReplaceCodexHistoryJob) -> int:
     """Whole replacement in one call (tests and small histories); see the async form."""
-    from twicc.providers.aggregate_removal import prepare_removal
-    if job.aggregate_evidence is None:
-        job = job._replace(aggregate_evidence=prepare_removal([job.session_id]))
     _begin_replace_codex_history(job)
     for start in range(0, len(job.items), REPLACE_HISTORY_CHUNK_SIZE):
         _insert_replace_codex_history_chunk(job.session_id, job.items[start:start + REPLACE_HISTORY_CHUNK_SIZE])

@@ -78,18 +78,3 @@ def test_skipped_claude_source_read_marks_inventory_incomplete(monkeypatch, tmp_
     monkeypatch.setattr(builtins, 'open', denied)
     stats = initial_sync.sync_project('p', queue.Queue())
     assert stats['inventory_complete'] == 0
-
-
-def test_default_gate_requires_every_enabled_inventory_success(monkeypatch):
-    from types import SimpleNamespace
-    from twicc import orchestrator as registry_module
-    from twicc.providers import state, tree_aggregate_runtime
-    done = threading.Event()
-    done.set()
-    providers = {name: SimpleNamespace(initial_sync_done=done, initial_sync_succeeded=True)
-                 for name in ('claude_code', 'codex')}
-    monkeypatch.setattr(state, 'get_enabled_providers', lambda: tuple(providers))
-    monkeypatch.setattr(registry_module, 'get_orchestrator_registry', lambda: providers)
-    assert tree_aggregate_runtime.inventory_ready()
-    providers['claude_code'].initial_sync_succeeded = False
-    assert not tree_aggregate_runtime.inventory_ready()

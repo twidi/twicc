@@ -21,7 +21,7 @@ function actionBody(name) {
     return source.slice(start, next < 0 ? undefined : start + 1 + next)
 }
 
-for (const name of ['loadProjects', 'loadHomeData']) {
+for (const name of ['loadProjects', '_fetchHomeData']) {
     test(`${name}: raises the list loading flag only on the initial load`, () => {
         const body = actionBody(name)
         assert.match(body, /const isInitialLoad = Object\.keys\(this\.projects\)\.length === 0/)

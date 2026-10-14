@@ -1,3 +1,4 @@
+import { refreshStatisticsSessions } from './statisticsRefresh.js'
 import { handleAgentEvent } from '../utils/agentLinkIndex'
 import { isLaunchedEphemeral } from '../utils/ephemeralSessions'
 // frontend/src/composables/useWebSocket.js
@@ -1632,6 +1633,16 @@ export function useWebSocket() {
                 if (msg.session_id && msg.tool_use_id && msg.run_id) {
                     store.setWorkflowLink(msg.session_id, msg.tool_use_id, msg.run_id)
                 }
+                break
+            }
+            case 'activity_updated': {
+                store.loadHomeData().catch(error => console.error('Failed to refresh activity:', error))
+                window.dispatchEvent(new CustomEvent('twicc:activity-updated'))
+                break
+            }
+            case 'statistics_updated': {
+                refreshStatisticsSessions(store, msg.root_ids || [])
+                    .catch(error => console.error('Failed to refresh statistics:', error))
                 break
             }
             case 'workflow_changed': {
