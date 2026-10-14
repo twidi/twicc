@@ -58,11 +58,11 @@ def _reconcile_lost_processes(now: datetime) -> None:
     """Spec §7 step 1. Must run before the bulk DEAD update."""
     for run in ProcessRun.objects.exclude(state=AgentState.DEAD.value).order_by("started_at"):
         session = Session.objects.filter(id=run.session_id).first()
-        common = dict(
-            session_id=run.session_id, project_id=session.project_id if session else None,
-            occurred_at=_last_evidence(run, session, now),
-            precision=TimelinePrecision.ESTIMATED, actor=TimelineActor.SYSTEM,
-        )
+        common = {
+            "session_id": run.session_id, "project_id": session.project_id if session else None,
+            "occurred_at": _last_evidence(run, session, now),
+            "precision": TimelinePrecision.ESTIMATED, "actor": TimelineActor.SYSTEM,
+        }
         for spec in process_transition_events(
             prev_state=run.state, prev_awaiting=run.awaiting_user_input,
             prev_work=run.background_work_in_progress,

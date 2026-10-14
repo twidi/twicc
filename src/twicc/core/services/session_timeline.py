@@ -263,7 +263,7 @@ def record_session_created(session: Session, *, origin: str) -> TimelineEvent | 
 
     try:
         now = timezone.now()
-        common = dict(session_id=session.id, project_id=session.project_id, occurred_at=now)
+        common = {"session_id": session.id, "project_id": session.project_id, "occurred_at": now}
         settings = None
         if origin == "twicc":
             settings = {

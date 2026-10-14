@@ -717,10 +717,10 @@ async def apply_session_pinned_change(session, pinned) -> None:
         # written first, so its inherited ``scope`` is the OLD one (the latest
         # ``pinned.started`` is still the old pin); the new ``started`` row is
         # ``caused_by`` it.
-        common = dict(
-            session_id=session.id, project_id=session.project_id, actor=TimelineActor.USER,
-            occurred_at=timezone.now(),
-        )
+        common = {
+            "session_id": session.id, "project_id": session.project_id, "actor": TimelineActor.USER,
+            "occurred_at": timezone.now(),
+        }
         ended = None
         if was_pinned is not None:
             ended = record_event_sync(TimelineKind.PINNED_ENDED, **common)

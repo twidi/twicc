@@ -67,7 +67,7 @@ def test_validate_data_allows_the_reserved_via_key_on_every_kind():
 @pytest.mark.django_db
 def test_dedupe_key_is_unique_per_session_only_when_set():
     now = timezone.now()
-    base = dict(kind=TimelineKind.SESSION_CREATED, occurred_at=now, actor=TimelineActor.SYSTEM)
+    base = {"kind": TimelineKind.SESSION_CREATED, "occurred_at": now, "actor": TimelineActor.SYSTEM}
     TimelineEvent.objects.create(session_id="s1", dedupe_key="k", **base)
     TimelineEvent.objects.create(session_id="s2", dedupe_key="k", **base)
     TimelineEvent.objects.create(session_id="s1", **base)

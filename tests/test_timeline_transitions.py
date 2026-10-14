@@ -6,8 +6,8 @@ OTHER_WORK = {"subagents": 0, "shells": 2, "monitors": 1, "scheduled_wakeup_at":
 
 
 def specs(**kw):
-    base = dict(prev_state="user_turn", prev_awaiting=False, prev_work=None,
-                new_state="user_turn", new_awaiting=False, new_work=None)
+    base = {"prev_state": "user_turn", "prev_awaiting": False, "prev_work": None,
+            "new_state": "user_turn", "new_awaiting": False, "new_work": None}
     base.update(kw)
     return process_transition_events(**base)
 

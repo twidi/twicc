@@ -36,7 +36,7 @@ def test_invalid_payload_returns_none_and_writes_nothing(project):
 
 
 def test_dedupe_key_makes_a_second_write_a_noop(project):
-    kwargs = dict(session_id="s1", actor=TimelineActor.SYSTEM, dedupe_key="k1", data={"origin": "sync"})
+    kwargs = {"session_id": "s1", "actor": TimelineActor.SYSTEM, "dedupe_key": "k1", "data": {"origin": "sync"}}
     assert record_event_sync(TimelineKind.SESSION_CREATED, **kwargs) is not None
     assert record_event_sync(TimelineKind.SESSION_CREATED, **kwargs) is None
     assert TimelineEvent.objects.count() == 1
@@ -70,7 +70,7 @@ def test_latest_event_id_and_project_id_of(project):
 
 
 def test_an_ended_row_inherits_the_data_of_the_open_started_row_of_its_session(project):
-    started = dict(session_id="s1", actor=TimelineActor.USER)
+    started = {"session_id": "s1", "actor": TimelineActor.USER}
     record_event_sync(TimelineKind.PROCESS_STARTED, data={"provider": "claude_code", "twicc_pid": 1}, **started)
     record_event_sync(TimelineKind.PROCESS_STARTED,
                       data={"provider": "codex", "cause": "resume", "twicc_pid": 7, "hybrid": True}, **started)
@@ -83,7 +83,7 @@ def test_an_ended_row_inherits_the_data_of_the_open_started_row_of_its_session(p
 
 
 def test_a_closed_interval_is_never_inherited(project):
-    started = dict(session_id="s1", actor=TimelineActor.USER)
+    started = {"session_id": "s1", "actor": TimelineActor.USER}
     record_event_sync(TimelineKind.PROCESS_STARTED, data={"provider": "codex", "twicc_pid": 7}, **started)
     first = record_event_sync(TimelineKind.PROCESS_ENDED, **started)
     assert first.data["provider"] == "codex"
@@ -94,7 +94,7 @@ def test_a_closed_interval_is_never_inherited(project):
 
 
 def test_a_lost_start_does_not_fall_back_to_an_older_closed_interval(project):
-    started = dict(session_id="s1", actor=TimelineActor.USER)
+    started = {"session_id": "s1", "actor": TimelineActor.USER}
     record_event_sync(TimelineKind.PROCESS_STARTED, data={"provider": "codex", "twicc_pid": 7}, **started)
     record_event_sync(TimelineKind.PROCESS_ENDED, **started)
     # The second ``process.started`` write was lost: only its ``ended`` row exists.
@@ -102,7 +102,7 @@ def test_a_lost_start_does_not_fall_back_to_an_older_closed_interval(project):
 
 
 def test_a_reopened_interval_inherits_its_own_data(project):
-    started = dict(session_id="s1", actor=TimelineActor.USER)
+    started = {"session_id": "s1", "actor": TimelineActor.USER}
     record_event_sync(TimelineKind.PROCESS_STARTED, data={"provider": "codex", "twicc_pid": 7}, **started)
     record_event_sync(TimelineKind.PROCESS_ENDED, **started)
     record_event_sync(TimelineKind.PROCESS_STARTED, data={"provider": "claude_code", "twicc_pid": 8}, **started)
@@ -111,7 +111,7 @@ def test_a_reopened_interval_inherits_its_own_data(project):
 
 
 def test_a_pin_scope_change_inherits_the_scope_of_each_interval(project):
-    pin = dict(session_id="s1", actor=TimelineActor.USER)
+    pin = {"session_id": "s1", "actor": TimelineActor.USER}
     record_event_sync(TimelineKind.PINNED_STARTED, data={"scope": "project"}, **pin)
     assert record_event_sync(TimelineKind.PINNED_ENDED, **pin).data == {"scope": "project"}
     record_event_sync(TimelineKind.PINNED_STARTED, data={"scope": "all"}, **pin)
