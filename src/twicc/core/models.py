@@ -2340,6 +2340,7 @@ class TimelineEvent(models.Model):
             models.Index(fields=["session_id", "occurred_at", "id"], name="idx_timeline_session"),
             models.Index(fields=["project", "occurred_at", "id"], name="idx_timeline_project"),
             models.Index(fields=["kind", "occurred_at"], name="idx_timeline_kind"),
+            models.Index(fields=["session_id", "kind"], name="idx_timeline_session_kind"),
         ]
         constraints = [
             models.UniqueConstraint(
