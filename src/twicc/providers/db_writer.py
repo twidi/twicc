@@ -1890,6 +1890,18 @@ async def run_under_storage_write_lock(
         lease.release()
 
 
+async def publish_statistics_sync(function, /, *args):
+    """Run one short statistics replacement on the ordinary writer worker.
+
+    Combined ownership encloses the executor call and transaction commit.
+    The publication drive drains admitted work before propagating cancellation.
+    """
+    async def apply():
+        return await run_compute_sync(function, *args)
+
+    return await run_under_storage_write_lock(apply, priority=WritePriority.BACKGROUND)
+
+
 def get_write_coordinator() -> WriterCoordinator:
     """Return the active coordinator, including during the internal shutdown drain."""
     if _write_coordinator is None:

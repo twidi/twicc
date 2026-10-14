@@ -94,6 +94,7 @@ def test_accepted_equal_timestamp_cache_hit(source, updated):
     result, queries = prepare('root')
     assert result.own_updates == ()
     assert result.session_costs[0].self_cost == Decimal(2)
+    assert result.session_costs[0].storage_incarnation == 'inc-root'
     assert not any('core_sessionitem' in sql for sql in queries)
 
 

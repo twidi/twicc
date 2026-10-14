@@ -29,6 +29,7 @@ class SessionCosts(NamedTuple):
     self_cost: Decimal | None
     subagents_cost: Decimal | None
     total_cost: Decimal | None
+    storage_incarnation: str | None = None
 
 
 class PreparedTreeCosts(NamedTuple):
@@ -83,7 +84,7 @@ def prepare_tree_costs(root_ids: tuple[str, ...]) -> PreparedTreeCosts:
                 subagents = descendants[sid]
                 total = (own[sid] or Decimal(0)) + (subagents or Decimal(0))
                 costs.append(SessionCosts(sid, own[sid], persisted_cost(subagents),
-                                          persisted_cost(total) if total > 0 else None))
+                                          persisted_cost(total) if total > 0 else None, rows[sid]['storage_incarnation']))
                 if sid != tree.root_id:
                     # Unlinked components attach once to the native root. Known
                     # launcher descendants accumulate into their direct parent.
