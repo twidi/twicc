@@ -168,6 +168,7 @@ MIDDLEWARE = [
     "django.contrib.sessions.middleware.SessionMiddleware",
     "twicc.auth.middleware.PasswordAuthMiddleware",
     "twicc.auth.middleware.RpcTokenAuthMiddleware",
+    "twicc.auth.middleware.RequestOriginMiddleware",
 ]
 
 # Artifact data-store PUTs (design 2026-08-05 §4) carry up to 10 MB bodies;

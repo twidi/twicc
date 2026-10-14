@@ -47,6 +47,7 @@ from twicc.agent.exceptions import SendDeliveryError
 from twicc.agent.send_lanes import send_lane, wait_for_send_barrier
 from twicc.share.consumer import ShareConsumer
 from twicc.paths import is_first_run
+from twicc.request_origin import UI_ORIGIN, origin_scope
 from twicc.providers.claude_code.ws import ClaudeCodeWSHandler
 from twicc.providers.codex.ws import CodexWSHandler
 from twicc.providers.db_writer import run_under_db_write_lock
@@ -868,6 +869,16 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         await self._cleanup_connection()
 
     async def receive_json(self, content, **kwargs):
+        """Handle one client frame with the web UI origin held (design 2026-10-14, sections 5-6).
+
+        The scope covers the whole dispatch. Detached tasks the handlers spawn (sends, stops, title
+        suggestions) are created inside it, so they inherit the origin; the carrier is restored when
+        the frame is done.
+        """
+        with origin_scope(UI_ORIGIN):
+            await self._receive_frame(content, **kwargs)
+
+    async def _receive_frame(self, content, **kwargs):
         """Handle incoming messages from clients.
 
         Provider-specific message types use a ``"<provider_key>:<action>"``

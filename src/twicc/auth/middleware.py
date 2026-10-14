@@ -18,6 +18,7 @@ from twicc.auth import tokens as api_tokens
 from twicc.auth.access import request_allowed
 from twicc.auth.local_access import remote_access_blocked
 from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY
+from twicc.request_origin import UI_ORIGIN, origin_scope
 from twicc.rpc.permissions import RPC_SCOPE_FULL, RPC_SCOPE_READ
 
 logger = logging.getLogger(__name__)
@@ -244,3 +245,26 @@ class RpcTokenAuthMiddleware:
         if header.startswith("Bearer "):
             return header[len("Bearer "):].strip()
         return None
+
+
+class RequestOriginMiddleware:
+    """Hold the web UI origin around every request the browser makes (design 2026-10-14, sections 5-6).
+
+    Django runs each request in its own task, so an unset carrier would already read as the default
+    ``user`` / ``ui``; setting it explicitly makes the entry point visible and testable, and a new
+    ``/api/`` view gets it with no extra work. ``/rpc/`` is skipped: the RPC view sets its own origin
+    (a token id, or nothing for the read-only cookie scope, which writes no event).
+    """
+
+    async_capable = True
+    sync_capable = False
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+        markcoroutinefunction(self)
+
+    async def __call__(self, request):
+        if request.path.startswith("/rpc/"):
+            return await self.get_response(request)
+        with origin_scope(UI_ORIGIN):
+            return await self.get_response(request)
