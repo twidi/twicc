@@ -1,0 +1,56 @@
+"""Pin the copies of the timeline enum values that cannot be derived from one source."""
+
+from twicc.core.models import TimelineActor, TimelineEvent, TimelineKind, TimelinePrecision
+from twicc.core.services import timeline_backfill
+from twicc.core.timeline import PAYLOAD_TYPES, STARTED_OF, validate_data
+
+
+def _choice_values(field_name):
+    return [value for value, _label in TimelineEvent._meta.get_field(field_name).choices]
+
+
+def test_model_choices_equal_the_enum_members():
+    assert _choice_values("kind") == list(TimelineKind.values)
+    assert _choice_values("precision") == list(TimelinePrecision.values)
+    assert _choice_values("actor") == list(TimelineActor.values)
+
+
+def test_precision_default_is_a_member():
+    assert TimelineEvent._meta.get_field("precision").default in TimelinePrecision.values
+
+
+def test_registry_and_enum_have_the_same_members():
+    assert set(PAYLOAD_TYPES) == set(TimelineKind)
+    assert len(PAYLOAD_TYPES) == len(TimelineKind)
+    for kind, payload_type in PAYLOAD_TYPES.items():
+        if payload_type is None:
+            assert validate_data(kind, None) == {}  # a known kind: no "unknown kind" ValueError
+
+
+def test_started_of_keys_and_values_are_kinds_of_the_expected_shape():
+    for ended, started in STARTED_OF.items():
+        assert ended in TimelineKind.values and started in TimelineKind.values
+        assert ended.endswith(".ended") and started.endswith(".started")
+
+
+def test_every_interval_end_has_a_matching_start_and_vice_versa():
+    values = set(TimelineKind.values)
+    for value in values:
+        subject, _, verb = value.partition(".")
+        if verb in ("started", "ended"):
+            other = f"{subject}.{'ended' if verb == 'started' else 'started'}"
+            assert other in values, value
+
+
+def test_backfill_flag_kinds_are_members_and_their_ends_exist():
+    values = set(TimelineKind.values)
+    for _attribute, started in timeline_backfill._FLAGS:
+        assert started in values
+    assert set(timeline_backfill._RELEVANT_KINDS) <= values
+    assert len(timeline_backfill._RELEVANT_KINDS) == 1 + 2 * len(timeline_backfill._FLAGS)
+
+
+def test_enum_values_fit_their_column_widths():
+    for field_name, enum in (("kind", TimelineKind), ("precision", TimelinePrecision), ("actor", TimelineActor)):
+        max_length = TimelineEvent._meta.get_field(field_name).max_length
+        assert all(len(value) <= max_length for value in enum.values), field_name

@@ -29,23 +29,25 @@ from twicc.providers.db_writer import is_db_writer_started, run_under_db_write_l
 
 logger = logging.getLogger(__name__)
 
-#: (flag attribute, started kind, subject prefix) — a flag is "set" when truthy / not null.
+#: (flag attribute, started kind) — a flag is "set" when truthy / not null.
 _FLAGS = (
-    ("archived", TimelineKind.ARCHIVED_STARTED, "archived."),
-    ("hidden", TimelineKind.HIDDEN_STARTED, "hidden."),
-    ("mute_on_user_turn", TimelineKind.MUTED_STARTED, "muted."),
-    ("pinned", TimelineKind.PINNED_STARTED, "pinned."),
+    ("archived", TimelineKind.ARCHIVED_STARTED),
+    ("hidden", TimelineKind.HIDDEN_STARTED),
+    ("mute_on_user_turn", TimelineKind.MUTED_STARTED),
+    ("pinned", TimelineKind.PINNED_STARTED),
 )
+
+
+def _subject_prefix(started_kind: str) -> str:
+    """``"archived.started"`` -> ``"archived."``: the prefix shared by both directions of a flag."""
+    return started_kind.removesuffix("started")
+
 
 #: The only kinds read to know what a session already has: its creation and, per flag subject,
 #: both directions. Bounded by a handful of rows whatever the session's activity.
-_RELEVANT_KINDS = (
-    TimelineKind.SESSION_CREATED,
-    TimelineKind.ARCHIVED_STARTED, TimelineKind.ARCHIVED_ENDED,
-    TimelineKind.HIDDEN_STARTED, TimelineKind.HIDDEN_ENDED,
-    TimelineKind.MUTED_STARTED, TimelineKind.MUTED_ENDED,
-    TimelineKind.PINNED_STARTED, TimelineKind.PINNED_ENDED,
-)
+_RELEVANT_KINDS = (TimelineKind.SESSION_CREATED, *(
+    kind for _, started in _FLAGS for kind in (started, f"{_subject_prefix(started)}ended")
+))
 
 
 class BackfillStatus(StrEnum):
@@ -89,9 +91,9 @@ def _build_rows(session: Session, existing: set[str]) -> list[TimelineEvent]:
         {"origin": "sync", "provider": session.provider, "settings": None, "spawned_by": session.spawned_by_id},
     )]
     flag_time = session.last_updated_at or session.created_at
-    for attribute, kind, prefix in _FLAGS:
+    for attribute, kind in _FLAGS:
         value = getattr(session, attribute)
-        if not value or any(known.startswith(prefix) for known in existing):
+        if not value or any(known.startswith(_subject_prefix(kind)) for known in existing):
             continue
         rows.append(_row(
             session, kind, flag_time, TimelinePrecision.ESTIMATED,
