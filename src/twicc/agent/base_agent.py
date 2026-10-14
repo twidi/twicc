@@ -28,6 +28,7 @@ from twicc.agent.work_dirs import resolve_and_create_work_dirs
 from twicc.context_injection import clear_context, reconcile, reset_baseline
 from twicc.core.enums import Provider
 from twicc.logging_context import provider_log_context
+from twicc.request_origin import system_marker
 
 from .states import AgentInfo, AgentState, PendingRequest, get_process_memory
 
@@ -217,7 +218,12 @@ class BaseAgent(StopOriginMixin):
             return
         with provider_log_context(self.provider):
             try:
-                await self._state_change_callback(self)
+                # Everything this callback chain starts or stops (cron restart, pending-settings
+                # restart) is automatic: it runs under the system marker, so it neither reads the
+                # origin of whoever triggered this transition (often a stale context) nor falls to the
+                # default. Deferred writers inside the chain use an origin captured earlier.
+                with system_marker():
+                    await self._state_change_callback(self)
             except Exception as e:
                 self._logger.error(
                     "Error in state change callback for session %s: %s",

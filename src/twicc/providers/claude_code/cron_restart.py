@@ -33,6 +33,7 @@ from typing import NamedTuple
 from django.db import transaction
 
 from twicc.core.enums import Provider
+from twicc.request_origin import system_marker
 
 logger = logging.getLogger(__name__)
 
@@ -363,7 +364,7 @@ def _prepare_restarts() -> list[str]:
     return session_ids
 
 
-async def restart_session_crons(
+async def _restart_session_crons(
     session_id: str,
     *,
     stop_event: asyncio.Event,
@@ -479,6 +480,21 @@ async def restart_session_crons(
                 session_id, attempt, e,
             )
             continue
+
+
+async def restart_session_crons(
+    session_id: str,
+    *,
+    stop_event: asyncio.Event,
+    initial_delay: int = 0,
+) -> None:
+    """Restart cron jobs for a single session with infinite retry (see :func:`_restart_session_crons`).
+
+    The restart is automatic, at boot or at runtime: every start it performs runs under the system
+    marker, so it is recorded as ``system`` and never falls to the default (design 2026-10-14, section 5).
+    """
+    with system_marker():
+        await _restart_session_crons(session_id, stop_event=stop_event, initial_delay=initial_delay)
 
 
 def _format_cron_description(cron: dict, *, cron_id_label: str | None = None) -> str:

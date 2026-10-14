@@ -21,6 +21,7 @@ from twicc.agent import (
 )
 from twicc.core.enums import Provider
 from twicc.providers.db_writer import run_under_db_write_lock
+from twicc.request_origin import system_marker
 
 from .agent import ClaudeCodeAgent
 
@@ -293,13 +294,17 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                             # If no crons and has content → start directly
                             if not has_crons and has_content:
                                 pending = self._pending_after_restart.pop(session_id, None)
-                                await self._start_agent(
-                                    session_id, project_id, cwd, pending["text"],
-                                    resume=True, settings=settings,
-                                    images=pending.get("images"),
-                                    documents=pending.get("documents"),
-                                    **_parked_start_kwargs(pending),
-                                )
+                                # The restart performed by the same operation as the apply-settings kill
+                                # is automatic, even inline in a user's send (design 2026-10-14, 5 and 7):
+                                # the marker covers this start only and is restored on return or raise.
+                                with system_marker():
+                                    await self._start_agent(
+                                        session_id, project_id, cwd, pending["text"],
+                                        resume=True, settings=settings,
+                                        images=pending.get("images"),
+                                        documents=pending.get("documents"),
+                                        **_parked_start_kwargs(pending),
+                                    )
                                 release_after_lock = self._parked_release_after_start(session_id, pending)
                             # If has_crons → cron restart task handles it.
                             # Delivery is deferred to after the restart, so this is
@@ -592,7 +597,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                         cwd=directory,
                         agent_settings=settings,
                     )
-                    await self._register_and_start(agent, "", resume=True, adopt=True)
+                    # Boot adoption has no request at all: an automatic start (design 2026-10-14, section 5).
+                    with system_marker():
+                        await self._register_and_start(agent, "", resume=True, adopt=True)
                 logger.info("Adopted surviving hybrid session %s", session_id)
             except Exception:
                 logger.exception("Failed to adopt hybrid tmux session %s", name)
@@ -1454,12 +1461,15 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             # If no crons but has pending text → start directly
             if not has_crons and has_pending:
                 pending = self._pending_after_restart.pop(agent.session_id)
-                await self._start_agent(
-                    agent.session_id, agent.project_id, agent.cwd,
-                    pending["text"], resume=True, settings=requested_settings,
-                    images=pending.get("images"), documents=pending.get("documents"),
-                    **_parked_start_kwargs(pending),
-                )
+                # Automatic even when it re-sends a parked user text; this path is also reached from
+                # tasks with a stale context (a shell ending), so the marker is explicit here too.
+                with system_marker():
+                    await self._start_agent(
+                        agent.session_id, agent.project_id, agent.cwd,
+                        pending["text"], resume=True, settings=requested_settings,
+                        images=pending.get("images"), documents=pending.get("documents"),
+                        **_parked_start_kwargs(pending),
+                    )
                 # The callback only schedules a detached task, which never
                 # takes ``_lock`` (held here by some callers).
                 release = self._parked_release_after_start(agent.session_id, pending)
