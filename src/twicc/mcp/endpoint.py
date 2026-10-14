@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import logging
 from time import monotonic
+from typing import NamedTuple
 
 import anyio
 
@@ -19,7 +20,7 @@ import orjson
 from twicc.auth.local_access import scope_remote_access_blocked
 from twicc.auth.tokens import verify_token
 from twicc.mcp import mcp_enabled
-from twicc.mcp.identity import TOKEN_PREFIX, resolve_session_token
+from twicc.mcp.identity import TOKEN_ID_SCOPE_KEY, TOKEN_PREFIX, resolve_session_token
 from twicc.mcp.server import get_session_manager
 
 logger = logging.getLogger(__name__)
@@ -34,13 +35,22 @@ def _bearer(scope) -> str:
     return ""
 
 
-def _authorized(scope) -> bool:
+class McpAuth(NamedTuple):
+    """Who a local MCP request is: a session (session token) or an API token (its record id)."""
+
+    session_id: str | None
+    token_id: str | None
+
+
+def _authenticate(scope) -> McpAuth | None:
     token = _bearer(scope)
     if token.startswith(TOKEN_PREFIX):
-        return resolve_session_token(token) is not None
+        session_id = resolve_session_token(token)
+        return McpAuth(session_id, None) if session_id is not None else None
     if token:
-        return verify_token(token) is not None
-    return False
+        record = verify_token(token)
+        return McpAuth(None, record.id) if record is not None else None
+    return None
 
 
 async def _plain_response(send, status: int, body: dict, *, headers=()) -> None:
@@ -122,10 +132,11 @@ async def handle_mcp(scope, receive, send) -> None:
     if scope_remote_access_blocked(scope):
         await _plain_response(send, 403, {"error": "Remote access is disabled."})
         return
-    # ``_authorized`` reads the token/secret files; keep that off the event loop,
+    # ``_authenticate`` reads the token/secret files; keep that off the event loop,
     # matching the /rpc/ auth middleware's sync_to_async convention.
     auth_started = monotonic()
-    if not await asyncio.to_thread(_authorized, scope):
+    auth = await asyncio.to_thread(_authenticate, scope)
+    if auth is None:
         await _plain_response(
             send,
             401,
@@ -134,6 +145,7 @@ async def handle_mcp(scope, receive, send) -> None:
         )
         return
     scope["twicc_mcp_auth_ms"] = (monotonic() - auth_started) * 1000
+    scope[TOKEN_ID_SCOPE_KEY] = auth.token_id
     # The session manager expects to own the path; it treats the mount point
     # as the endpoint regardless of the exact path value.
     await get_session_manager().handle_request(scope, receive, send)

@@ -35,13 +35,16 @@ from twicc.cli._drop_request import transport
 from twicc.cli._drop_request.whoami import forced_session_id
 from twicc.core.services.attachments.inline import INLINE_MAX_REQUEST_BYTES
 from twicc.log_redaction import redact_for_log
-from twicc.mcp.identity import resolve_session_token, external_caller, batch_correlation
+from twicc.mcp.identity import resolve_session_token, external_caller, batch_correlation, TOKEN_ID_SCOPE_KEY
 from twicc.mcp.batch import BatchRuntime
 from twicc.mcp.batch_contract import BATCH_NAMES, validate_batch, fit_result, rejected_batch
 from twicc.mcp.dispatch import PreparedTool, UnknownToolError, check_caller_arguments, prepare_tool
 from twicc.mcp.events.methods import register_event_methods
 from twicc.mcp.descriptions import EXTERNAL_DESCRIPTION_SUFFIX
 from twicc.mcp.tools import iter_mcp_tools, tools_by_name, MCP_READ_ONLY_PATHS
+from twicc.request_origin import (
+    RequestOrigin, mcp_external_origin, mcp_session_origin, mcp_token_origin, origin_scope,
+)
 from twicc.rpc.generator import render_argv
 from twicc.rpc.views import _run_invoke
 
@@ -204,12 +207,40 @@ async def _call_batch(ctx, params, session_id):
         )
 
 
+def _origin_of_call(ctx: ServerRequestContext, session_id: str | None) -> RequestOrigin | None:
+    """Origin of one MCP call (design 2026-10-14, sections 4-5).
+
+    An external connection first (``external_caller`` is set by the endpoint, it is never a CLI call),
+    then the calling session (per-session token), then the API token behind the call. ``None`` when
+    the call is not identified: the default applies.
+    """
+    caller = external_caller.get()
+    if caller is not None:
+        return mcp_external_origin(caller.connection_id, caller.name)
+    if session_id is not None:
+        return mcp_session_origin(session_id)
+    request = getattr(ctx, "request", None)
+    token_id = request.scope.get(TOKEN_ID_SCOPE_KEY) if request is not None else None
+    return mcp_token_origin(token_id) if token_id else None
+
+
 async def _call_tool(
     ctx: ServerRequestContext,
     params: mcp_types.CallToolRequestParams,
 ) -> mcp_types.CallToolResult:
-    name, arguments = params.name, params.arguments or {}
     session_id = _session_id_from_request(ctx)
+    # The whole call, a batch included, runs under the caller's origin; batch children copy it
+    # explicitly (``BatchRuntime``), they are created outside this task's context.
+    with origin_scope(_origin_of_call(ctx, session_id)):
+        return await _call_tool_in_origin(ctx, params, session_id)
+
+
+async def _call_tool_in_origin(
+    ctx: ServerRequestContext,
+    params: mcp_types.CallToolRequestParams,
+    session_id: str | None,
+) -> mcp_types.CallToolResult:
+    name, arguments = params.name, params.arguments or {}
     if name in BATCH_NAMES:
         return await _call_batch(ctx, params, session_id)
     try:

@@ -16,6 +16,7 @@ from twicc.mcp.dispatch import PreparedTool
 from twicc.mcp.identity import (
     BatchCorrelation, ExternalGrant, batch_correlation, external_caller, external_grant,
 )
+from twicc.request_origin import request_origin
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class _Run:
         self.session_id = session_id
         self.caller = external_caller.get()
         self.grant = external_grant.get()
+        self.origin = request_origin.get()
         self.stop = asyncio.Event()
         self.children: set[asyncio.Task] = set()
         self.records: dict[int, dict] = {}
@@ -138,6 +140,7 @@ class BatchRuntime:
         start_time = monotonic()
         tokens = [
             (forced_session_id, forced_session_id.set(state.session_id)),
+            (request_origin, request_origin.set(state.origin)),
             (external_caller, external_caller.set(state.caller)),
             (external_grant, external_grant.set(state.grant)),
             (batch_correlation, batch_correlation.set(BatchCorrelation(state.batch.batch_id, call.id, call.index))),

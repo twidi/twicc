@@ -11,6 +11,7 @@ from django.http import HttpRequest, HttpResponse
 
 from twicc.core.services.attachments.inline import INLINE_MAX_REQUEST_BYTES
 from twicc.log_redaction import redact_for_log
+from twicc.request_origin import origin_scope, rpc_origin
 from twicc.rpc.generator import build_registry, render_argv
 from twicc.rpc.invoker import invoke
 from twicc.rpc.permissions import RPC_SCOPE_FULL, RPC_SCOPE_READ, cookie_scope_allows
@@ -163,8 +164,13 @@ async def dispatch(request: HttpRequest, command_path: str) -> HttpResponse:
 
     loop = asyncio.get_running_loop()
     token = transport.backend_loop.set(loop)
+    # The caller is the API token behind the call (None without a token record). A read-only cookie
+    # call writes no event, so it sets no origin. ``to_thread`` copies the context, and backend-mode
+    # ``submit`` forwards the carrier into the drop payload.
+    origin = None if scope == RPC_SCOPE_READ else rpc_origin(getattr(request, "rpc_token_id", None))
     try:
-        result = await asyncio.to_thread(_run_invoke, argv)
+        with origin_scope(origin):
+            result = await asyncio.to_thread(_run_invoke, argv)
     except Exception:
         # An exception reaching here is unexpected: invoke() already converts
         # Click/Typer failures into an InvocationResult. Anything else (ORM

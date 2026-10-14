@@ -30,6 +30,10 @@ from django.utils.crypto import salted_hmac
 logger = logging.getLogger(__name__)
 
 TOKEN_PREFIX = "twicc_mcp_"
+
+#: ASGI-scope key under which the endpoint publishes the id of the API token that authenticated a
+#: call (``None`` for a session token). Read by ``server._origin_of_call`` for the timeline origin.
+TOKEN_ID_SCOPE_KEY = "twicc_mcp_token_id"
 _KEY_SALT = "twicc.mcp.identity"
 _SIG_LEN = 32  # hex chars = 128 bits, ample for a local HMAC capability
 

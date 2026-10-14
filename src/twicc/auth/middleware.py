@@ -182,6 +182,9 @@ class RpcTokenAuthMiddleware:
         if not request.path.startswith("/rpc/"):
             return await self.get_response(request)
 
+        # The id of the API token record behind this call, for the timeline origin (design 2026-10-14,
+        # section 5). None for the unprotected pass-through and for the read-only cookie scope.
+        request.rpc_token_id = None
         password_set = bool(settings.TWICC_PASSWORD_HASH)
         has_tokens = await sync_to_async(api_tokens.has_tokens)()
 
@@ -206,6 +209,7 @@ class RpcTokenAuthMiddleware:
             # api-tokens.json write per interval by
             # ``twicc.auth.tokens.start_last_used_flush_task``.
             api_tokens.note_used(record.id)
+            request.rpc_token_id = record.id
             request.rpc_scope = RPC_SCOPE_FULL
             return await self.get_response(request)
 
