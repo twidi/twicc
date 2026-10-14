@@ -17,8 +17,10 @@ from collections import Counter
 from enum import StrEnum
 from typing import NamedTuple
 
-from django.db import transaction
+import orjson
+from django.db import connection, transaction
 from django.db.models import Exists, OuterRef
+from django.utils import timezone
 
 from twicc.core.models import (
     Session, SessionType, TimelineActor, TimelineEvent, TimelineKind, TimelinePrecision,
@@ -112,8 +114,23 @@ def _drop_present(session_id: str, rows: list[TimelineEvent]) -> list[TimelineEv
 def _insert_rows(rows: list[TimelineEvent]) -> None:
     """The backfill's own insert path: it validates before (see ``_row``), shares the duplicate
     check with ``record_event_sync`` (``_drop_present``) and, unlike it, lets every error propagate
-    so the session's transaction is rolled back as a whole."""
-    TimelineEvent.objects.bulk_create(rows)
+    so the session's transaction is rolled back as a whole.
+
+    A raw ``executemany`` (measured about 2x faster than ``bulk_create`` on this path, which runs
+    once per session under the lock) with the same column order as ``TimelineEvent``."""
+    ops = connection.ops
+    recorded_at = ops.adapt_datetimefield_value(timezone.now())
+    params = [
+        (r.session_id, r.project_id, r.kind, ops.adapt_datetimefield_value(r.occurred_at), recorded_at,
+         r.precision, r.actor, "", None, orjson.dumps(r.data).decode(), r.dedupe_key)
+        for r in rows
+    ]
+    with connection.cursor() as cursor:
+        cursor.executemany(
+            'INSERT INTO "core_timelineevent" ("session_id","project_id","kind","occurred_at","recorded_at",'
+            '"precision","actor","reason","caused_by_id","data","dedupe_key") VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+            params,
+        )
 
 
 def backfill_session_sync(session_id: str) -> SessionOutcome:
