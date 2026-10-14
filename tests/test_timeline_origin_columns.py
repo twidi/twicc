@@ -90,6 +90,24 @@ def test_an_invalid_via_is_stored_as_null_and_the_event_is_still_written():
     assert columns(TimelineEvent.objects.get(pk=row.pk)) == ("user", None, "ref", "name")
 
 
+@pytest.mark.parametrize("bad_via", [["x"], {"a": 1}], ids=["list", "dict"])
+def test_an_unhashable_via_is_stored_as_null_and_the_event_is_still_written(bad_via):
+    row = record_event_sync(
+        TimelineKind.ARCHIVED_STARTED, session_id="s1", origin=RequestOrigin("user", bad_via, "ref", "name"),
+    )
+    assert row is not None
+    assert columns(TimelineEvent.objects.get(pk=row.pk)) == ("user", None, "ref", "name")
+
+
+@pytest.mark.parametrize("bad_via", [["x"], {"a": 1}], ids=["list", "dict"])
+def test_an_unhashable_via_is_stored_as_null_on_the_batch_path_too(bad_via):
+    count = record_events_bulk_sync([
+        EventSpec(TimelineKind.ARCHIVED_STARTED, session_id="s1", origin=RequestOrigin("user", bad_via, "ref", "name")),
+    ])
+    assert count == 1
+    assert columns(TimelineEvent.objects.get(session_id="s1")) == ("user", None, "ref", "name")
+
+
 def test_a_long_ref_and_name_are_truncated_not_rejected():
     row = record_event_sync(
         TimelineKind.ARCHIVED_STARTED, session_id="s1",

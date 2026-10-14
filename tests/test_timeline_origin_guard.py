@@ -11,9 +11,11 @@ SRC = Path(twicc.__file__).resolve().parent
 #: functions are allowed to write that way. A new system writer that forgets its explicit ``actor=``
 #: shows up here instead of silently becoming ``user`` / ``ui``.
 #: Calls spread with ``**kwargs`` are NOT covered by this guard: the pin-scope ``common`` dict in
-#: ``session_update``, ``record_session_created`` / ``record_title_change`` (``who``) and ``timeline_boot``
-#: (``common`` with an explicit system actor). They are covered by the T6/T7 origin tests and by the
-#: explicit system actors.
+#: ``session_update``, ``record_session_created`` / ``record_title_change`` (``who``), ``timeline_boot``
+#: (``common`` with an explicit system actor) and the ``record_event(kind, **kwargs)`` forwarder in
+#: ``session_timeline.py`` (a pure forwarder to ``record_event_sync``). They are covered by
+#: ``tests/test_timeline_origin_writers.py`` and ``tests/test_timeline_origin_titles_creation.py`` and by
+#: the explicit system actors.
 REQUEST_CAUSED_WRITERS = {
     ("agent/timeline_hooks.py", "record_process_started"),
     ("core/services/session_update.py", "_save_and_record"),  # archive / unarchive and mute flips

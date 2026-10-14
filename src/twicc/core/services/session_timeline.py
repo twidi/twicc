@@ -41,7 +41,7 @@ def origin_columns(resolved: RequestOrigin) -> dict:
     ``actor_name`` are cut to their column width, never rejected (O24).
     """
     via = resolved.via
-    if via is not None and via not in VIA_VALUES:
+    if via is not None and (not isinstance(via, str) or via not in VIA_VALUES):
         logger.warning("Timeline event: invalid via %r stored as NULL", via)
         via = None
     return {
