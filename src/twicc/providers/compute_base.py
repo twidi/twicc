@@ -3758,11 +3758,10 @@ class BaseSessionCompute:
                 )
             if defer_aggregate_repair:
                 return "ok"
-            apply_contribution_changes(
-                before_items, after_items, before_sessions=[before_session],
-                after_sessions=[session_contribution(session)], repair=needs_repair(session),
-                repaired_activity_buckets=repaired_activity_buckets,
-            )
+            from twicc.providers.live_aggregates import apply_message_count_changes
+
+            apply_message_count_changes(before_items, after_items)
+
         return "ok"
 
     @staticmethod
@@ -4254,12 +4253,6 @@ class BaseSessionCompute:
             if line.strip():
                 lines.append(line)
         if not lines:
-            from twicc.providers.compute_repair import preserve_pending_repair
-
-            preserve_pending_repair(
-                session.id, session.storage_incarnation, before_sessions=[before_session],
-                after_sessions=[session_contribution(session)],
-            )
             session.save(update_fields=['last_offset', 'mtime'])
             return LiveSyncUpdates.empty()
 
@@ -4776,8 +4769,8 @@ class BaseSessionCompute:
             session.compacted = True
 
         session_update_fields = [
-            "last_offset", "last_line", "mtime", "user_message_count", "context_usage",
-            "self_cost", "subagents_cost", "total_cost", "cwd", "cwd_git_branch",
+            "last_offset", "last_line", "mtime", "context_usage",
+            "cwd", "cwd_git_branch",
             "git_directory", "git_branch", "model", "slug", "created_at",
             "last_started_at", "last_updated_at", "last_new_content_at", "compacted",
         ]
@@ -4828,8 +4821,6 @@ class BaseSessionCompute:
             session_update_fields.append("goals")
         save_lifecycle(session, update_fields=session_update_fields)
 
-        from twicc.providers.compute_repair import preserve_pending_repair
-
         inserted_contributions = item_contributions(
             SessionItem.objects.filter(session=session, line_num__in=new_line_nums),
         )
@@ -4837,15 +4828,12 @@ class BaseSessionCompute:
         # have their persisted evidence in inserted_contributions.
         after_existing_live = item_contributions(existing_live_items.exclude(line_num__in=new_line_nums)) \
             if before_existing_live else []
-        preserve_pending_repair(
-            session.id, session.storage_incarnation, before_sessions=[before_session],
-            after_sessions=[session_contribution(session)], before_items=before_existing_live,
-            after_items=[*inserted_contributions, *after_existing_live],
-        )
+        # Attribution changes may have no cost or activity item in this slice.
+        attribution_changed = bool(agent_link_updates or workflow_link_updates)
         apply_contribution_changes(
             before_existing_live, [*inserted_contributions, *after_existing_live],
-            before_sessions=[before_session], after_sessions=[session_contribution(session)],
-            repair=repair_aggregates,
+            before_sessions=[] if attribution_changed else [before_session],
+            after_sessions=[session_contribution(session)], repair=repair_aggregates,
         )
         session.refresh_from_db()
 

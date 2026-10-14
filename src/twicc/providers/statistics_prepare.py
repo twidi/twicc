@@ -121,15 +121,17 @@ def _reader_snapshot(function):
 def prepare_affected_days(root_ids: tuple[str, ...]) -> tuple[DailyKey, ...]:
     members = {sid for root in dict.fromkeys(root_ids) for sid in load_native_tree(root).member_ids}
     keys = set()
+    # Discover surviving dates even after visibility or hierarchy changes.
+    # Eligibility belongs to prepare_daily, so formerly eligible days reach zero.
     rows = SessionItem.objects.filter(session_id__in=members, timestamp__isnull=False).filter(
-        Q(cost__isnull=False) | Q(kind='user_message', session__type=SessionType.SESSION, session__hidden=False),
+        Q(cost__isnull=False) | Q(kind='user_message'),
     ).order_by().annotate(day=TruncDate('timestamp', tzinfo=UTC)).values_list(
         'session__project_id', 'session__provider', 'day',
     ).distinct().iterator()
     for project, provider, day in rows:
         keys.update((DailyKey(project, provider, day), DailyKey(None, provider, day)))
     for project, provider, created in Session.objects.filter(
-        pk__in=members, type=SessionType.SESSION, hidden=False, user_message_count__gt=0, created_at__isnull=False,
+        pk__in=members, created_at__isnull=False,
     ).values_list('project_id', 'provider', 'created_at'):
         day = created.astimezone(UTC).date()
         keys.update((DailyKey(project, provider, day), DailyKey(None, provider, day)))

@@ -1,7 +1,6 @@
-"""Exact session, direct-parent, and activity contributions in writer transactions."""
+"""Bounded source counts and native-root statistics invalidations."""
 
-from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import NamedTuple
@@ -9,9 +8,8 @@ from typing import NamedTuple
 from django.db import connection
 
 from twicc.core.enums import ItemKind
-from twicc.core.models import DailyActivity, Session, SessionType, WeeklyActivity
+from twicc.core.models import DailyActivity, Session, WeeklyActivity
 
-ZERO = Decimal(0)
 COST_QUANTUM = Decimal("0.000001")
 
 
@@ -59,10 +57,6 @@ def needs_repair(session: Session) -> bool:
     return session.compute_version != get_provider_helpers(session.provider).current_compute_version
 
 
-def _eligible(session: SessionContribution) -> bool:
-    return session.type == SessionType.SESSION and not session.hidden
-
-
 def _activity_keys(project_id, provider, timestamp):
     if timestamp is not None:
         day = timestamp.astimezone(UTC).date()
@@ -78,147 +72,72 @@ def contribution_activity_keys(items=(), sessions=()) -> set[tuple]:
                                       row.timestamp if isinstance(row, ItemContribution) else row.created_at)}
 
 
-def _save_session_aggregates(session: Session) -> None:
-    total = (session.self_cost or ZERO) + (session.subagents_cost or ZERO)
-    session.total_cost = total if total > 0 else None
-    save_derived_costs(session, update_fields=['self_cost', 'subagents_cost', 'total_cost', 'user_message_count'])
+def changed_roots(before_items, after_items, before_sessions, after_sessions) -> frozenset[str]:
+    """Resolve relevant bounded source changes through native parent ownership."""
+    from twicc.providers.contribution_revisions import _native_root
+
+    before = {s.session_id: s for s in before_sessions}
+    after = {s.session_id: s for s in after_sessions}
+    def relevant(items):
+        return Counter(i for i in items if i.cost is not None or i.kind == ItemKind.USER_MESSAGE)
+    old_items, new_items = relevant(before_items), relevant(after_items)
+    changed = {i.session_id for i in (old_items - new_items) | (new_items - old_items)}
+    for sid in before.keys() | after.keys():
+        old, new = before.get(sid), after.get(sid)
+        if old is None or new is None:
+            changed.add(sid)
+        elif (old._replace(created_at=None) != new._replace(created_at=None)
+              or (old.created_at != new.created_at and (old.user_message_count or new.user_message_count))):
+            changed.add(sid)
+    roots = set()
+    for sid in sorted(changed):
+        for states in (before, after):
+            state = states.get(sid)
+            if state is None:
+                row = Session.objects.filter(pk=sid).first()
+                state = session_contribution(row) if row is not None else None
+            if state is not None and (root := _native_root(state, states)) is not None:
+                roots.add(root.session_id)
+    return frozenset(roots)
 
 
-def save_derived_costs(session: Session, *, update_fields) -> None:
-    from twicc.providers.contribution_revisions import record_cost_publication
-
-    previous = Session.objects.filter(pk=session.pk).values_list('self_cost', 'subagents_cost', 'total_cost').first()
-    session.save(update_fields=update_fields)
-    if previous != (session.self_cost, session.subagents_cost, session.total_cost):
-        record_cost_publication(session)
-
-
-def _apply_activity_delta(key: tuple, delta: list) -> None:
-    model, project_id, provider, day = key
-    messages, count, cost = delta
-    if messages == count == cost == 0:
-        return
-    row, _ = model.objects.get_or_create(project_id=project_id, provider=provider, date=day)
-    row.user_message_count += messages
-    row.session_count += count
-    row.cost += cost
-    if row.user_message_count == row.session_count == row.cost == 0:
-        row.delete()
-    else:
-        row.save(update_fields=['user_message_count', 'session_count', 'cost'])
+def apply_message_count_changes(before_items, after_items) -> None:
+    """Retain the bounded source count even while background metadata is partial."""
+    if not connection.in_atomic_block:
+        raise RuntimeError('Message count changes require a caller-owned transaction')
+    counts = defaultdict(int)
+    for sign, items in ((-1, before_items), (1, after_items)):
+        for item in items:
+            counts[item.session_id] += sign * (item.kind == ItemKind.USER_MESSAGE)
+    for sid, delta in counts.items():
+        if delta:
+            current = Session.objects.filter(pk=sid).values_list('user_message_count', flat=True).first()
+            if current is not None:
+                Session.objects.filter(pk=sid).update(user_message_count=max(0, current + delta))
 
 
 def apply_contribution_changes(
-    before_items: Sequence[ItemContribution], after_items: Sequence[ItemContribution], *,
-    before_sessions: Sequence[SessionContribution], after_sessions: Sequence[SessionContribution], repair: bool,
-    repaired_activity_buckets: set[tuple] | None = None,
-    extra_activity_keys: Iterable[tuple] = (),
+    before_items, after_items, *, before_sessions, after_sessions, repair=False,
+    repaired_activity_buckets=None, extra_activity_keys=(),
 ) -> None:
-    """Retain source obligations and update established live baselines by delta.
+    """Commit source counts and one durable invalidation per affected native root.
 
-    Invalid baselines and scope changes await guarded tree continuation. The
-    compatibility cache argument has no effect; no historical repair runs here.
+    Legacy repair arguments remain accepted while their callers migrate. They
+    never postpone a partial-tree calculation or publish derived statistics.
     """
     if not connection.in_atomic_block:
         raise RuntimeError('Contribution changes require a caller-owned transaction')
-    from twicc.providers.contribution_revisions import record_source_changes
+    from twicc.providers.statistics_queue import append_roots
 
-    extra_activity_keys = tuple(extra_activity_keys)
-    record_source_changes(before_items, after_items, before_sessions=before_sessions,
-                          after_sessions=after_sessions, extra_activity_keys=extra_activity_keys)
-    before = {s.session_id: s for s in before_sessions}
-    after = {s.session_id: s for s in after_sessions}
-    session_ids = set(before) | set(after) | {i.session_id for i in (*before_items, *after_items)}
-    parents = {s.parent_session_id for s in (*before_sessions, *after_sessions) if s.parent_session_id}
-    sessions = {s.id: s for s in Session.objects.filter(id__in=session_ids | parents)}
-    # Changes to eligibility/project/provider move the existing history too.
-    metadata_changed = any(
-        (b.project_id, b.provider, b.type, b.hidden) != (after[sid].project_id, after[sid].provider,
-                                                        after[sid].type, after[sid].hidden)
-        for sid, b in before.items() if sid in after
-    )
-    from twicc.providers.compute_repair_journal import merge_compute_repair, own_baseline_pending
+    apply_message_count_changes(before_items, after_items)
+    roots = changed_roots(before_items, after_items, before_sessions, after_sessions)
+    # Deleted roots cannot be calculated. Historical removal is a separate path.
+    append_roots(sorted(Session.objects.filter(pk__in=roots).values_list('id', flat=True)))
 
-    keys = contribution_activity_keys((*before_items, *after_items), (*before_sessions, *after_sessions))
-    keys.update(extra_activity_keys)
-    invalid = False
-    for sid in session_ids:
-        states = [state for state in (*before_sessions, *after_sessions) if state.session_id == sid]
-        if not states:
-            continue
-        incarnation = states[-1].storage_incarnation
-        if not incarnation:
-            continue
-        baseline_pending = sid in sessions and (needs_repair(sessions[sid])
-            or (repair and tuple(before_items) != tuple(after_items)))
-        invalid |= baseline_pending or own_baseline_pending(sid, incarnation)
-        merge_compute_repair(sid, incarnation, activity_keys=keys,
-            parent_ids=[state.parent_session_id for state in states if state.parent_session_id],
-            project_ids=[state.project_id for state in states], source_changed=True,
-            activity_scopes=((scope, state.provider) for state in states for scope in (state.project_id, None)),
-            baseline_pending=baseline_pending)
-    cost_delta = defaultdict(lambda: ZERO)
-    count_delta = defaultdict(int)
-    for sign, items in ((-1, before_items), (1, after_items)):
-        for item in items:
-            cost_delta[item.session_id] += sign * (item.cost or ZERO)
-            count_delta[item.session_id] += sign * (item.kind == ItemKind.USER_MESSAGE)
-    from twicc.providers.contribution_revisions import DailyKey, record_contribution_commit
 
-    # Timestamp-null messages still change creation-day session eligibility.
-    # Fence other trees' prepared activity before either count publication path.
-    for sid, delta in count_delta.items():
-        session = sessions.get(sid)
-        if (session and session.created_at and _eligible(session_contribution(session))
-                and bool(session.user_message_count) != bool(max(0, session.user_message_count + delta))):
-            record_contribution_commit(days=[
-                DailyKey(scope, session.provider, session.created_at.astimezone(UTC).date())
-                for scope in (session.project_id, None)
-            ])
-    if repair or metadata_changed or invalid:
-        # Live message visibility is independent of the pending cost baseline.
-        # Replayed rows contribute only their bounded before/after difference.
-        # A stale zero count may underflow; exact tree publication replaces it.
-        for sid, delta in count_delta.items():
-            if delta and (session := sessions.get(sid)):
-                Session.objects.filter(pk=sid).update(user_message_count=max(0, session.user_message_count + delta))
-        return
-    old_self = {sid: s.self_cost for sid, s in sessions.items()}
-    for sid in session_ids:
-        if session := sessions.get(sid):
-            session.self_cost = ((session.self_cost or ZERO) + cost_delta[sid]
-                                 if session.items.filter(cost__isnull=False).exists() else None)
-            session.user_message_count += count_delta[sid]
-            _save_session_aggregates(session)
-    parent_delta = defaultdict(lambda: ZERO)
-    for sid in session_ids:
-        b, a = before.get(sid), after.get(sid)
-        if b and b.parent_session_id:
-            # Deleted sessions do not have a row in ``sessions``.
-            previous = old_self.get(sid, sum((i.cost or ZERO for i in before_items if i.session_id == sid), ZERO))
-            parent_delta[b.parent_session_id] -= previous or ZERO
-        if a and a.parent_session_id and sid in sessions:
-            parent_delta[a.parent_session_id] += sessions[sid].self_cost or ZERO
-    for pid in parents:
-        if (parent := sessions.get(pid)) and not needs_repair(parent) and not own_baseline_pending(
-                parent.id, parent.storage_incarnation):
-            parent.subagents_cost = ((parent.subagents_cost or ZERO) + parent_delta[pid]
-                if Session.objects.filter(parent_session_id=pid, self_cost__isnull=False).exists() else None)
-            _save_session_aggregates(parent)
-    # Session counts use the cached count, exactly as PeriodicActivity does.
-    after = {sid: session_contribution(sessions[sid]) for sid in after if sid in sessions}
-    buckets = defaultdict(lambda: [0, 0, ZERO])
-    for sign, items, states in ((-1, before_items, before), (1, after_items, after)):
-        for item in items:
-            state = states.get(item.session_id)
-            for key in _activity_keys(item.project_id, item.provider, item.timestamp):
-                buckets[key][0] += sign * int(bool(state and _eligible(state) and item.kind == ItemKind.USER_MESSAGE))
-                buckets[key][2] += sign * (item.cost or ZERO)
-    for sign, states in ((-1, before), (1, after)):
-        for state in states.values():
-            for key in _activity_keys(state.project_id, state.provider, state.created_at):
-                buckets[key][1] += sign * int(_eligible(state) and state.user_message_count > 0)
-    for key in extra_activity_keys:
-        buckets[key]
-    for key, delta in buckets.items():
-        _apply_activity_delta(key, delta)
+def enqueue_sessions(session_ids) -> None:
+    """Invalidate native roots for attribution-only mutations in this transaction."""
+    from twicc.providers.statistics_queue import append_roots
+
+    states = [session_contribution(s) for s in Session.objects.filter(pk__in=set(session_ids))]
+    append_roots(sorted(changed_roots((), (), (), states)))

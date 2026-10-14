@@ -1098,5 +1098,3 @@ def update_project_metadata(project_id: str) -> None:
     )
     project.mtime = max_mtime or 0
     project.save(update_fields=["sessions_count", "mtime"])
-
-    update_project_total_cost(project_id)

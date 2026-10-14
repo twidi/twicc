@@ -15,6 +15,7 @@ import re
 from pathlib import Path
 
 import orjson
+from django.db import transaction
 from asgiref.sync import sync_to_async
 from watchfiles import Change
 
@@ -443,6 +444,7 @@ class ClaudeCodeSessionsWatcher(BaseSessionsWatcher):
             })
 
     @staticmethod
+    @transaction.atomic
     def _save_workflow_script(session_id: str, run_id: str, script_text: str) -> bool:
         """Upsert the STATE 0 row for a launched run. Returns ``True`` when
         ``raw_json`` was (re)written — created, or reset after a script change —
@@ -463,6 +465,9 @@ class ClaudeCodeSessionsWatcher(BaseSessionsWatcher):
                 raw_json=raw0,
                 script_hash=script_hash,
             )
+            from twicc.providers.live_aggregates import enqueue_sessions
+
+            enqueue_sessions([session_id])
             return True
         try:
             parsed = orjson.loads(wf.raw_json)
@@ -477,6 +482,9 @@ class ClaudeCodeSessionsWatcher(BaseSessionsWatcher):
         wf.script_hash = script_hash
         wf.synthesis = None
         wf.save(update_fields=["raw_json", "script_hash", "synthesis", "updated_at"])
+        from twicc.providers.live_aggregates import enqueue_sessions
+
+        enqueue_sessions([session_id])
         return True
 
     async def _latch_session_workflows(self, session, channel_layer) -> None:
@@ -516,6 +524,7 @@ class ClaudeCodeSessionsWatcher(BaseSessionsWatcher):
         return True
 
     @staticmethod
+    @transaction.atomic
     def _save_workflow_run(session_id: str, project_id: str, run_id: str, raw: str) -> None:
         # The real envelope (STATE 2) supersedes any synthesized STATE 0/1, but we
         # KEEP the synthesis bundle (templates): the same runId can resume, and the
@@ -531,16 +540,17 @@ class ClaudeCodeSessionsWatcher(BaseSessionsWatcher):
             envelope = {}
         enrich_previews(envelope, project_id, session_id, run_id)
         stamp_phase_states(envelope)
-        cost, phases_cost = Workflow.compute_costs(run_id, envelope)
         Workflow.objects.update_or_create(
             run_id=run_id,
             defaults={
                 "session_id": session_id,
                 "raw_json": orjson.dumps(envelope).decode(),
-                "cost": cost,
-                "phases_cost": phases_cost,
             },
         )
+
+        from twicc.providers.live_aggregates import enqueue_sessions
+
+        enqueue_sessions([session_id])
 
     async def _sync_project_and_broadcast(
         self,

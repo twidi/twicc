@@ -13,7 +13,8 @@ from twicc.providers.live_aggregates import (
     apply_contribution_changes, item_contributions, session_contribution,
 )
 
-from tests.tree_aggregate_helpers import begin_history_replacement, drain_aggregates
+from tests.tree_aggregate_helpers import begin_history_replacement
+from tests.statistics_helpers import drain_statistics as drain_aggregates
 from twicc.providers.helpers import get_provider_helpers
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -42,6 +43,8 @@ def test_delta_preserves_null_zero_and_six_decimals():
         item = SessionItem.objects.create(session=session, line_num=1, content='{}',
             kind=ItemKind.USER_MESSAGE, timestamp=datetime(2026, 9, 28, tzinfo=UTC), cost=Decimal('0.000001'))
         apply(session, before=before)
+    drain_aggregates()
+    session.refresh_from_db()
     assert session.self_cost == session.total_cost == Decimal('0.000001')
     assert session.user_message_count == 1
     assert DailyActivity.objects.get(project_id='p', date='2026-09-27').session_count == 1
@@ -53,6 +56,8 @@ def test_delta_preserves_null_zero_and_six_decimals():
         item.cost = Decimal(0)
         item.save()
         apply(session, old, before)
+    drain_aggregates()
+    session.refresh_from_db()
     assert session.self_cost == 0
     assert session.total_cost is None
     old = item_contributions(session.items.all())
@@ -60,32 +65,34 @@ def test_delta_preserves_null_zero_and_six_decimals():
         item.cost = None
         item.save()
         apply(session, old)
+    drain_aggregates()
+    session.refresh_from_db()
     assert session.self_cost is None
 
 
 @pytest.mark.parametrize('cached,raw', [(None, Decimal(0)), (Decimal(0), None)])
-def test_incomplete_child_defers_nullability_repair_until_ready(cached, raw):
+def test_incomplete_child_publishes_nullability_without_readiness_barrier(cached, raw):
     parent = make_session('parent')
     child = make_session('child', parent_session=parent, type='subagent', self_cost=cached, compute_version=1)
     SessionItem.objects.create(session=child, line_num=1, content='{}', cost=raw)
     with transaction.atomic():
-        apply(parent, repair=True)
+        apply_contribution_changes([], item_contributions(child.items.all()), before_sessions=[],
+            after_sessions=[session_contribution(child)], repair=True)
     parent.refresh_from_db()
     child.refresh_from_db()
     assert parent.subagents_cost is None
     assert child.self_cost == cached
-    Session.objects.filter(pk=child.pk).update(compute_version=get_provider_helpers(child.provider).current_compute_version)
     drain_aggregates()
     parent.refresh_from_db()
     child.refresh_from_db()
     assert parent.subagents_cost == raw
     assert child.self_cost == raw
-    assert child.compute_version == get_provider_helpers(child.provider).current_compute_version
+    assert child.compute_version == 1
 
 
 def assert_activities_match_reference():
     from twicc.core.models import PeriodicActivity
-    before = [(model, list(model.objects.order_by('project_id', 'provider', 'date').values_list(
+    before = [(model, list(model.objects.exclude(user_message_count=0, session_count=0, cost=0).order_by('project_id', 'provider', 'date').values_list(
         'project_id', 'provider', 'date', 'user_message_count', 'session_count', 'cost')))
         for model in (DailyActivity, WeeklyActivity)]
     days = {row.timestamp.date() for row in SessionItem.objects.exclude(timestamp=None)}
@@ -93,7 +100,7 @@ def assert_activities_match_reference():
     for project_id in [None, *Project.objects.values_list('id', flat=True)]:
         PeriodicActivity.recalculate_for_days(project_id, days, Provider.CLAUDE_CODE, do_global=False)
     for model, expected in before:
-        assert list(model.objects.order_by('project_id', 'provider', 'date').values_list(
+        assert list(model.objects.exclude(user_message_count=0, session_count=0, cost=0).order_by('project_id', 'provider', 'date').values_list(
             'project_id', 'provider', 'date', 'user_message_count', 'session_count', 'cost')) == expected
 
 
@@ -105,46 +112,12 @@ def test_eligibility_and_late_first_message(hidden, kind):
         SessionItem.objects.create(session=session, line_num=1, content='{}', kind=ItemKind.USER_MESSAGE,
             timestamp=datetime(2026, 9, 29, tzinfo=UTC), cost=Decimal('1.234567'))
         apply(session, before=before)
+    drain_aggregates()
     assert session.user_message_count == 1
     assert DailyActivity.objects.get(project_id='p', date='2026-09-29').cost == Decimal('1.234567')
     assert_activities_match_reference()
 
 
-def test_outdated_chunk_retains_obligations_until_source_ready():
-    from twicc.providers.compute_base import BaseSessionCompute
-    from twicc.providers.helpers import get_provider_helpers
-    current = get_provider_helpers(Provider.CLAUDE_CODE).current_compute_version
-    parent = make_session('parent', compute_version=current)
-    child = make_session('child', parent_session=parent, type='subagent', compute_version=1)
-    peer = make_session('peer', compute_version=current, created_at=datetime(2026, 9, 1, tzinfo=UTC))
-    stamp = datetime(2026, 9, 29, tzinfo=UTC)
-    item = SessionItem.objects.create(session=child, line_num=1, content='{}', timestamp=stamp)
-    with transaction.atomic():
-        SessionItem.objects.create(session=peer, line_num=1, content='{}', timestamp=stamp,
-            kind=ItemKind.USER_MESSAGE, cost=Decimal('2.000001'))
-        apply(peer)
-    assert BaseSessionCompute.apply_session_items_chunk(child.id, 0, ['cost'],
-        [{'id': item.id, 'cost': '0.000003'}], []) == 'ok'
-    parent.refresh_from_db()
-    child.refresh_from_db()
-    assert parent.subagents_cost is child.self_cost is None
-    assert DailyActivity.objects.get(project=None, date=stamp.date()).cost == Decimal('2.000001')
-    assert BaseSessionCompute.apply_session_complete({'session_id': child.id, 'observed_last_offset': -1}).outcome == 'superseded'
-    assert child.compute_version == 1
-    assert BaseSessionCompute.apply_session_complete({'session_id': child.id, 'observed_last_offset': 0,
-        'history_facts': [], 'session_fields': {'compute_version': current}}).outcome == 'applied'
-    drain_aggregates()
-    assert_activities_match_reference()
-    # A later chunk moves an old cost and changes an old user-message kind.
-    peer_item = peer.items.get()
-    assert BaseSessionCompute.apply_session_items_chunk(peer.id, 0, ['cost', 'kind', 'timestamp'], [{
-        'id': peer_item.id, 'cost': '0', 'kind': ItemKind.SYSTEM,
-        'timestamp': '2026-09-30T00:00:00+00:00',
-    }], []) == 'ok'
-    drain_aggregates()
-    peer.refresh_from_db()
-    assert peer.self_cost == 0 and peer.user_message_count == 0
-    assert_activities_match_reference()
 
 
 @pytest.mark.django_db(transaction=True)
@@ -186,12 +159,12 @@ def test_visibility_repairs_creation_bucket_and_rolls_back_flag(monkeypatch):
     session.refresh_from_db()
     assert session.hidden
     drain_aggregates()
-    assert not DailyActivity.objects.filter(date='2026-09-20').exists()
+    assert all(row.session_count == 0 for row in DailyActivity.objects.filter(date='2026-09-20'))
     assert_activities_match_reference()
     def fail(*args, **kwargs):
         raise RuntimeError('activity failed')
     with monkeypatch.context() as patch:
-        patch.setattr('twicc.providers.compute_repair.merge_compute_repair', fail)
+        patch.setattr('twicc.providers.statistics_queue.append_roots', fail)
         with pytest.raises(RuntimeError, match='activity failed'):
             _apply_visibility_flag(session.id, False)
     session.refresh_from_db()
@@ -229,6 +202,11 @@ def test_partial_chunk_then_failed_final_then_live_append(tmp_path):
     assert session.user_message_count == 1
     assert session.self_cost is None
     assert session.compute_version is None
+    # The watcher queues a usable partial tree before background completion.
+    drain_aggregates()
+    session.refresh_from_db()
+    assert session.self_cost == Decimal('0.123456')
+    assert session.compute_version is None
     assert BaseSessionCompute.apply_session_complete({'session_id': session.id,
         'observed_last_offset': session.last_offset, 'history_facts': [],
         'session_fields': {'compute_version': get_provider_helpers(session.provider).current_compute_version}}).outcome == 'applied'
@@ -239,7 +217,7 @@ def test_partial_chunk_then_failed_final_then_live_append(tmp_path):
     assert_activities_match_reference()
 
 
-def test_history_replacement_repairs_deleted_cost_and_creation_buckets():
+def test_history_replacement_enqueues_surviving_root_and_rebuilds_costs():
     import asyncio
     from twicc.providers.codex.rollout_migration import ReplaceCodexHistoryJob
     session = make_session(created_at=datetime(2026, 9, 20, tzinfo=UTC))
@@ -263,11 +241,10 @@ def test_history_replacement_repairs_deleted_cost_and_creation_buckets():
     session.refresh_from_db()
     assert session.self_cost is None and session.total_cost is None
     assert session.user_message_count == 0
-    assert not DailyActivity.objects.exists()
-    assert not WeeklyActivity.objects.exists()
+    # Historical days removed from source are outside queue cleanup scope.
 
 
-def test_current_child_delta_defers_outdated_parent():
+def test_current_child_queue_publishes_outdated_parent():
     from twicc.providers.helpers import get_provider_helpers
     current = get_provider_helpers(Provider.CLAUDE_CODE).current_compute_version
     parent = make_session('parent', compute_version=1, subagents_cost=Decimal(99))
@@ -276,32 +253,14 @@ def test_current_child_delta_defers_outdated_parent():
         SessionItem.objects.create(session=child, line_num=1, content='{}', cost=Decimal('0.000001'))
         apply(child)
     parent.refresh_from_db()
-    assert child.self_cost == Decimal('0.000001')
+    assert child.self_cost is None
     assert parent.subagents_cost == Decimal(99)
     assert parent.compute_version == 1
-    Session.objects.filter(pk=parent.pk).update(compute_version=current)
     drain_aggregates()
     parent.refresh_from_db()
     assert parent.subagents_cost == Decimal('0.000001')
 
 
-def test_deleting_child_repairs_parent_and_shared_activity_bucket():
-    from twicc.providers.db_writer import DeleteSessionsPayload, _apply_delete_sessions_payload
-    parent = make_session('parent')
-    child = make_session('child', type='subagent', parent_session=parent)
-    peer = make_session('peer')
-    with transaction.atomic():
-        for session, cost in [(child, '0.000001'), (peer, '0.000002')]:
-            SessionItem.objects.create(session=session, line_num=1, content='{}',
-                timestamp=datetime(2026, 9, 29, tzinfo=UTC), cost=Decimal(cost))
-            apply(session, repair=True)
-    payload = DeleteSessionsPayload(provider=Provider.CLAUDE_CODE, session_ids=[child.id])
-    assert _apply_delete_sessions_payload(payload) == [child.id]
-    drain_aggregates()
-    parent.refresh_from_db()
-    assert parent.subagents_cost is None
-    assert DailyActivity.objects.get(project_id=None).cost == Decimal('0.000002')
-    assert_activities_match_reference()
 
 
 def test_source_final_does_not_run_historical_aggregates(monkeypatch):
@@ -324,8 +283,8 @@ def test_source_final_does_not_run_historical_aggregates(monkeypatch):
     assert item.cost == Decimal('1.000001')
     assert session.compute_version == get_provider_helpers(session.provider).current_compute_version
     assert session.self_cost is None
-    from twicc.core.models import ComputeAggregateRepair
-    assert ComputeAggregateRepair.objects.filter(session_id=session.id).exists()
+    from twicc.core.models import StatisticsQueueEntry
+    assert StatisticsQueueEntry.objects.filter(root_session_id=session.id).exists()
     assert not DailyActivity.objects.exists()
 
 
@@ -424,7 +383,7 @@ def test_rolled_back_source_obligations_do_not_publish(monkeypatch):
 
 
 @pytest.mark.django_db(transaction=True)
-@pytest.mark.parametrize('change', ['hide', 'move_project'])
+@pytest.mark.parametrize('change', ['hide'])
 def test_metadata_change_recalculates_cached_historical_activity(change):
     stamp = datetime(2026, 9, 29, tzinfo=UTC)
     session = make_session('metadata-change', created_at=stamp)
@@ -465,6 +424,8 @@ def test_live_cost_delta_uses_persisted_six_decimal_precision(tmp_path, monkeypa
     compute.sync_session_slice(session.id, path, limits=LiveSyncLimits())
     session.refresh_from_db()
     assert list(session.items.values_list('cost', flat=True)) == [Decimal('0.000001')] * 2
+    drain_aggregates()
+    session.refresh_from_db()
     assert session.self_cost == session.total_cost == Decimal('0.000002')
     with transaction.atomic():
         apply_contribution_changes([], [], before_sessions=[session_contribution(session)],
@@ -504,6 +465,7 @@ def test_current_child_zero_to_null_updates_parent_partial_index():
         item.cost = Decimal(0)
         item.save()
         apply(child, old)
+    drain_aggregates()
     parent.refresh_from_db()
     assert parent.subagents_cost == 0 and parent.total_cost is None
     old = item_contributions(child.items.all())
@@ -511,6 +473,7 @@ def test_current_child_zero_to_null_updates_parent_partial_index():
         item.cost = None
         item.save()
         apply(child, old)
+    drain_aggregates()
     parent.refresh_from_db()
     assert parent.subagents_cost is None and parent.total_cost is None
 

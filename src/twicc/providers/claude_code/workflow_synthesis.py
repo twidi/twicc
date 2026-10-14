@@ -25,6 +25,7 @@ import logging
 import re
 
 import orjson
+from django.db import transaction
 
 from twicc.core.content_storage.readers import effective_current, iter_matching_items
 from twicc.core.enums import Provider
@@ -375,6 +376,7 @@ def _run_resumed(project_id: str, session_id: str, run_id: str) -> bool:
     return wf_mtime is None or journal_mtime > wf_mtime
 
 
+@transaction.atomic
 def rebuild_state1(run_id: str) -> dict | None:
     """Rebuild a run's STATE 1 ``raw_json`` from its stored synthesis + live
     journal, persist it, and return the new envelope dict.
@@ -412,9 +414,11 @@ def rebuild_state1(run_id: str) -> dict | None:
         prior.get("script"),
         prior.get("args"),
     )
-    workflow.cost, workflow.phases_cost = Workflow.compute_costs(run_id, envelope)
     workflow.raw_json = orjson.dumps(envelope).decode()
-    workflow.save(update_fields=["raw_json", "cost", "phases_cost", "updated_at"])
+    workflow.save(update_fields=["raw_json", "updated_at"])
+    from twicc.providers.live_aggregates import enqueue_sessions
+
+    enqueue_sessions([workflow.session_id])
     return envelope
 
 

@@ -3205,12 +3205,7 @@ def _apply_create_session_payload(payload: CreateSessionPayload) -> tuple[object
         payload.session.last_line = max(payload.session.last_line, payload.last_line)
         payload.session.mtime = max(payload.session.mtime, payload.mtime)
         payload.session.save(update_fields=["last_offset", "last_line", "mtime"])
-        from twicc.providers.compute_repair import preserve_pending_repair
 
-        preserve_pending_repair(
-            payload.session.id, payload.session.storage_incarnation, before_sessions=[before_session],
-            after_sessions=[session_contribution(payload.session)],
-        )
         apply_contribution_changes([], [], before_sessions=[] if is_new else [before_session],
             after_sessions=[session_contribution(payload.session)], repair=True)
     return project, created, adopted
@@ -3242,12 +3237,7 @@ def _apply_update_session_payload(payload: UpdateSessionPayload) -> None:
             payload.session.compute_version = None
             update_fields.append("compute_version")
         payload.session.save(update_fields=update_fields)
-        from twicc.providers.compute_repair import preserve_pending_repair
 
-        preserve_pending_repair(
-            payload.session.id, payload.session.storage_incarnation, before_sessions=[before_session],
-            after_sessions=[session_contribution(payload.session)],
-        )
         apply_contribution_changes([], [], before_sessions=[before_session],
             after_sessions=[session_contribution(payload.session)], repair=needs_repair(payload.session))
 
@@ -3358,7 +3348,7 @@ def _apply_delete_sessions_payload(payload: DeleteSessionsPayload) -> list[str]:
 def _apply_update_project_metadata_payload(payload: UpdateProjectMetadataPayload) -> None:
     """Apply end-of-sync metadata updates for one project, atomically."""
     from twicc.core.models import Project, Session, SessionType
-    from twicc.projects import ensure_project_git_root, update_project_total_cost
+    from twicc.projects import ensure_project_git_root
 
     with transaction.atomic():
         if (payload.recalc_sessions_count
@@ -3398,8 +3388,6 @@ def _apply_update_project_metadata_payload(payload: UpdateProjectMetadataPayload
                 if update_fields:
                     project.save(update_fields=update_fields)
 
-        if payload.recalc_total_cost:
-            update_project_total_cost(payload.project_id)
         if payload.resolve_git_root and payload.git_root_directory:
             ensure_project_git_root(payload.project_id, payload.git_root_directory)
 
@@ -3460,16 +3448,16 @@ def _apply_upsert_workflow_payload(payload: UpsertWorkflowPayload) -> None:
             envelope = {}
         enrich_previews(envelope, project_id, payload.session_id, payload.run_id)
         stamp_phase_states(envelope)
-        cost, phases_cost = Workflow.compute_costs(payload.run_id, envelope)
         Workflow.objects.update_or_create(
             run_id=payload.run_id,
             defaults={
                 "session_id": payload.session_id,
                 "raw_json": orjson.dumps(envelope).decode(),
-                "cost": cost,
-                "phases_cost": phases_cost,
             },
         )
+        from twicc.providers.live_aggregates import enqueue_sessions
+
+        enqueue_sessions([payload.session_id])
 
 
 # =============================================================================

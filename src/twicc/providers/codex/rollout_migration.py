@@ -365,7 +365,7 @@ def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
     from .agent.original_files_cache import clear_session
     from .compute import get_compute
 
-    from twicc.providers.live_aggregates import apply_contribution_changes, session_contribution
+    from twicc.providers.live_aggregates import enqueue_sessions
 
     from twicc.core.content_storage.ingestion import initialize_ingestion_session
     from twicc.core.content_storage.references import remove_history_memberships
@@ -377,14 +377,9 @@ def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
     require_removal(job.aggregate_evidence)
     initialize_ingestion_session(session, invalidate=True)
     remove_history_memberships(session.id)
-    before_session = session_contribution(session)
-    before_items = job.aggregate_evidence.items
-    from twicc.providers.compute_repair import preserve_pending_repair
+    from twicc.providers.contribution_revisions import record_own_cost_invalidation
 
-    pending_repair = preserve_pending_repair(
-        session.id, session.storage_incarnation, before_sessions=[before_session],
-        after_sessions=[before_session], before_items=before_items,
-    )
+    record_own_cost_invalidation(session.id, session.storage_incarnation)
     # Clear only after deletion commits. A rolled-back replacement keeps retry evidence.
     transaction.on_commit(lambda: clear_session(job.session_id))
     transaction.on_commit(lambda: get_compute().end_session_compute(job.session_id))
@@ -398,12 +393,11 @@ def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
     SessionItem.objects.filter(session_id=job.session_id).delete()
     Session.objects.filter(id=job.session_id).update(
         last_offset=0, last_line=0, tasks={}, search_version=None, compute_version=None,
+        items_cost_computed_through_at=None, user_message_count=0,
         history_epoch=F("history_epoch") + 1, content_storage_version=None, plaintext_verified_epoch=None,
     )
     session.refresh_from_db()
-    apply_contribution_changes(before_items, [], before_sessions=[before_session],
-        after_sessions=[session_contribution(session)], repair=True,
-        extra_activity_keys=pending_repair.activity_keys if pending_repair is not None else ())
+    enqueue_sessions([session.id])
 
 
 @transaction.atomic
@@ -421,12 +415,6 @@ def _insert_replace_codex_history_chunk(session_id: str, items: list[tuple[int, 
         (SessionItem(session=session, line_num=line_num, content=content), content)
         for line_num, content in items
     ])
-    from twicc.providers.compute_repair import preserve_pending_repair
-    from twicc.providers.live_aggregates import session_contribution
-
-    state = session_contribution(session)
-    preserve_pending_repair(session.id, session.storage_incarnation,
-                            before_sessions=[state], after_sessions=[state])
     return len(items)
 
 
@@ -439,12 +427,6 @@ def _finish_replace_codex_history(job: ReplaceCodexHistoryJob) -> int:
     session.mtime = job.mtime
     session.stale = False
     # Keep any diagnosis until the coordinator observes successful final application.
-    from twicc.providers.compute_repair import preserve_pending_repair
-    from twicc.providers.live_aggregates import session_contribution
-
-    state = session_contribution(session)
-    preserve_pending_repair(session.id, session.storage_incarnation,
-                            before_sessions=[state], after_sessions=[state])
     session.save(update_fields=["last_offset", "last_line", "mtime", "stale"])
     return len(job.items)
 
