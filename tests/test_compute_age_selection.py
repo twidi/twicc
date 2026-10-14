@@ -487,3 +487,21 @@ def test_codex_own_migration_mtime_does_not_defer_its_leased_compute(recovery_ru
             await asyncio.gather(task, return_exceptions=True)
             await db_writer.stop_db_writer()
     asyncio.run(scenario())
+
+
+@pytest.mark.django_db
+def test_root_age_does_not_hide_old_required_descendant():
+    """Tree discovery ranks roots; the source-age gate evaluates each required source."""
+    from twicc.core.models import Project, Session
+    from twicc.providers.compute_selection import compute_age_delay, select_required_source_ids
+    from twicc.providers.compute_tree import load_native_tree, select_outdated_roots
+
+    project = Project.objects.create(id='age-tree')
+    Session.objects.create(id='recent-root', project=project, provider='claude_code',
+                           file_path='/age/root', mtime=1000)
+    Session.objects.create(id='old-child', project=project, provider='claude_code',
+                           file_path='/age/child', mtime=900, type='subagent', parent_session_id='recent-root')
+    assert select_outdated_roots('claude_code', 123) == ('recent-root',)
+    assert select_required_source_ids(load_native_tree('recent-root'), 123) == ('old-child', 'recent-root')
+    assert compute_age_delay(900, 1000) == 0
+    assert compute_age_delay(1000, 1000) == 30

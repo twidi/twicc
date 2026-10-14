@@ -1,0 +1,83 @@
+"""Read native membership separately from launcher ancestry and source eligibility."""
+
+from typing import NamedTuple
+
+from django.db.models import Q
+
+from twicc.core.models import AgentLink, Session, SessionType
+
+
+class NativeTreeError(ValueError):
+    """Malformed tree evidence prevents this attempt; later discovery can repair it."""
+
+
+class NativeTree(NamedTuple):
+    root_id: str
+    member_ids: tuple[str, ...]
+    ordered_source_ids: tuple[str, ...]
+
+
+def resolve_native_root(session_id: str) -> str:
+    """Follow native membership only; separately spawned sessions remain roots."""
+    seen = set()
+    while True:
+        if session_id in seen:
+            raise NativeTreeError(f'Native membership cycle at {session_id}')
+        seen.add(session_id)
+        parent = Session.objects.values_list('parent_session_id', flat=True).get(pk=session_id)
+        if parent is None:
+            return session_id
+        session_id = parent
+
+
+def load_native_tree(root_id: str) -> NativeTree:
+    """Reload database membership and sort deepest known launcher children first."""
+    if resolve_native_root(root_id) != root_id:
+        raise NativeTreeError(f'{root_id} is not a native root')
+    members = {root_id}
+    frontier = {root_id}
+    while frontier:
+        children = set(Session.objects.filter(parent_session_id__in=frontier).values_list('id', flat=True))
+        if children & members:
+            raise NativeTreeError(f'Native membership cycle in {root_id}')
+        members.update(children)
+        frontier = children
+
+    parents = {}
+    for child, parent in AgentLink.objects.filter(agent_id__in=members).values_list('agent_id', 'session_id'):
+        if child == root_id and parent not in members:
+            # Independently spawned roots keep their own native boundary.
+            continue
+        if parent not in members or child == root_id:
+            raise NativeTreeError(f'Conflicting launcher membership for {child}')
+        if child in parents and parents[child] != parent:
+            raise NativeTreeError(f'Conflicting launcher parents for {child}')
+        parents[child] = parent
+
+    depths = {root_id: 0}
+    for member in sorted(members):
+        path = []
+        seen = set()
+        cursor = member
+        while cursor not in depths:
+            if cursor in seen:
+                raise NativeTreeError(f'Launcher cycle in {root_id} at {cursor}')
+            seen.add(cursor)
+            path.append(cursor)
+            cursor = parents.get(cursor, root_id)
+        depth = depths[cursor]
+        for child in reversed(path):
+            depth += 1
+            depths[child] = depth
+
+    mtimes = dict(Session.objects.filter(pk__in=members).values_list('id', 'mtime'))
+    ordered = tuple(sorted(members - {root_id}, key=lambda sid: (-depths[sid], -mtimes[sid], sid)))
+    return NativeTree(root_id, (root_id, *sorted(members - {root_id})), (*ordered, root_id))
+
+
+def select_outdated_roots(provider: str, compute_version: int) -> tuple[str, ...]:
+    """Rank outdated native roots by their own source time, without age gating."""
+    return tuple(Session.objects.filter(
+        Q(compute_version__isnull=True) | Q(compute_version__lt=compute_version),
+        provider=provider, type=SessionType.SESSION, parent_session__isnull=True,
+    ).order_by('-mtime', 'id').values_list('id', flat=True))
