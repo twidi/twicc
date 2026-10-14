@@ -2,14 +2,15 @@
 """Shared helpers of the timeline tests."""
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
 from twicc.core.models import TimelineEvent
 from twicc.providers import db_writer
 from twicc.request_origin import (
-    SYSTEM_ORIGIN, UI_ORIGIN, agent_cli_origin, human_cli_origin, mcp_external_origin, mcp_session_origin,
-    mcp_token_origin, rpc_origin,
+    SYSTEM_ORIGIN, UI_ORIGIN, agent_cli_origin, current_origin, human_cli_origin, mcp_external_origin,
+    mcp_session_origin, mcp_token_origin, rpc_origin,
 )
 
 
@@ -53,3 +54,13 @@ ORIGIN_MAPPING = [
 def columns(row):
     """The four origin columns of an event row, in the order of ``RequestOrigin``."""
     return (row.actor, row.via, row.actor_ref, row.actor_name)
+
+
+#: ``(payload, origin)`` pairs recorded by :func:`recording_service`.
+RECORDED: list = []
+
+
+async def recording_service(payload):
+    """A drop-kind handler that records the payload it receives and the origin it runs under."""
+    RECORDED.append((dict(payload), current_origin()))
+    return SimpleNamespace(success=True, errors=None)

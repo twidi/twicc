@@ -24,6 +24,7 @@ import orjson
 from watchfiles import Change, awatch
 
 from twicc.paths import get_drop_requests_dir
+from twicc.request_origin import ORIGIN_PAYLOAD_KEY, origin_from_payload, origin_scope
 
 
 def _iso_now() -> str:
@@ -255,8 +256,15 @@ async def execute_drop_payload(payload: dict, kind: str | None) -> dict:
 
     module_path, attr_name, success_status = handler
     service = getattr(importlib.import_module(module_path), attr_name)
+    # The origin written by the submitting side (design 2026-10-14, section 6.2) is re-established for
+    # the handler and never reaches it as a payload key. A file with no (or no credible) origin runs
+    # with an explicit unset, so the default applies and a stale carrier cannot leak in.
+    origin = origin_from_payload(payload.get(ORIGIN_PAYLOAD_KEY))
+    if ORIGIN_PAYLOAD_KEY in payload:
+        payload = {key: value for key, value in payload.items() if key != ORIGIN_PAYLOAD_KEY}
     try:
-        result = await service(payload)
+        with origin_scope(origin):
+            result = await service(payload)
     except Exception as e:  # noqa: BLE001 — mirror the watcher's catch-all
         logger.exception("[drop-request] service raised for kind %s", kind)
         return stamp_status_times({"status": "failed", "error": f"{type(e).__name__}: {e}"})

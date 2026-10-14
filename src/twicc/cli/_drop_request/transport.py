@@ -29,7 +29,9 @@ import orjson
 
 from twicc.cli._drop_request.discovery import check_heartbeat
 from twicc.cli._drop_request.drop_file import write_drop_file
+from twicc.cli._drop_request.origin import cli_origin
 from twicc.cli._drop_request.polling import FINAL_STATUSES, POLL_INTERVAL_SECONDS, PollOutcome
+from twicc.request_origin import ORIGIN_PAYLOAD_KEY, RequestOrigin, current_origin, origin_to_payload
 
 backend_loop: ContextVar[asyncio.AbstractEventLoop | None] = ContextVar(
     "twicc_backend_loop", default=None,
@@ -104,8 +106,23 @@ class Submission:
             self._status_path.unlink(missing_ok=True)
 
 
+def _origin_to_forward() -> RequestOrigin | None:
+    """The origin written into every payload (design 2026-10-14, section 6.2).
+
+    In a real CLI process: its own origin (one ancestry lookup per process). In backend mode (MCP, RPC,
+    the entry point already set the carrier): the carrier, unchanged and never re-resolved, so an
+    external-MCP call never becomes ``user`` / ``cli`` and the backend never walks its own ancestry.
+    """
+    if _in_backend():
+        return current_origin()
+    return cli_origin()
+
+
 def submit(payload: dict, *, kind: str) -> Submission:
-    """Submit one request in the active mode."""
+    """Submit one request in the active mode. The origin is added here, once, for every kind."""
+    origin = _origin_to_forward()
+    if origin is not None:
+        payload = {**payload, ORIGIN_PAYLOAD_KEY: origin_to_payload(origin)}
     loop = backend_loop.get()
     if loop is None:
         drop = write_drop_file(payload, kind=kind)
