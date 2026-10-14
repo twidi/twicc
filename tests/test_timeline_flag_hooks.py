@@ -54,6 +54,22 @@ def test_archive_with_also_unpin_writes_pinned_ended_caused_by_the_archive(proje
     assert rows[1].actor == "user" and rows[1].project_id == project.id
 
 
+def test_archive_with_also_unpin_on_an_already_archived_pinned_session_only_ends_the_pin(project):
+    session = make(project)
+    run_with_writer(lambda: apply_session_pinned_change(session, "project"))
+    Session.objects.filter(id="s1").update(archived=True)
+    session = Session.objects.get(id="s1")
+    run_with_writer(lambda: apply_session_archived_change(session, True, also_unpin=True))
+    rows = list(TimelineEvent.objects.filter(session_id="s1").order_by("id"))
+    assert [r.kind for r in rows] == ["pinned.started", "pinned.ended"]  # no archive row: no flip
+    assert rows[1].caused_by_id is None and rows[1].data == {"scope": "project"}
+    assert Session.objects.get(id="s1").pinned is None
+    # A second call finds nothing pinned any more: no duplicate row.
+    session = Session.objects.get(id="s1")
+    run_with_writer(lambda: apply_session_archived_change(session, True, also_unpin=True))
+    assert kinds("s1") == ["pinned.started", "pinned.ended"]
+
+
 def test_archive_with_also_unpin_on_an_unpinned_session_writes_no_pinned_event(project):
     session = make(project)
     run_with_writer(lambda: apply_session_archived_change(session, True, also_unpin=True))

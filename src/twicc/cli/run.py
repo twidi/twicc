@@ -301,6 +301,7 @@ async def run_server(port: int):
     # the startup writes made since the startup scan of ``main()``.
     from twicc.data_backups_watcher import run_data_backups_watcher
     data_backups_task = asyncio.create_task(run_data_backups_watcher())
+    # The writer is already started (see above); the backfill also does nothing without it.
     timeline_backfill_task = asyncio.create_task(_guarded_timeline_backfill(), name="timeline-backfill")
     inline_exports = None
     try:

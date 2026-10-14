@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from datetime import timedelta
 
 import pytest
@@ -159,6 +161,25 @@ def test_the_statements_per_session_do_not_depend_on_its_timeline_size(project):
 
 
 @pytest.fixture
+def log_records():
+    """Records of the backfill logger, captured by a handler on it (independent of propagation)."""
+    records = []
+
+    class Collector(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    handler = Collector(level=logging.DEBUG)
+    logger = timeline_backfill.logger
+    was_disabled = logger.disabled  # a logging config applied by another test may have disabled it
+    logger.disabled = False
+    logger.addHandler(handler)
+    yield records
+    logger.removeHandler(handler)
+    logger.disabled = was_disabled
+
+
+@pytest.fixture
 def no_pauses(monkeypatch):
     monkeypatch.setattr(timeline_backfill, "RETRY_PAUSES", (0.0, 0.0, 0.0))
 
@@ -217,6 +238,38 @@ def test_the_writer_stopping_ends_the_run_without_retries(project, monkeypatch, 
     monkeypatch.setattr(timeline_backfill, "backfill_session_sync", stopping)
     run_all()
     assert calls == ["a"]
+
+
+def test_nothing_runs_while_the_writer_is_not_started(project, monkeypatch, no_pauses, log_records):
+    make(project, created_at=timezone.now())
+    calls = []
+    monkeypatch.setattr(timeline_backfill, "candidate_ids", lambda: calls.append("ids") or ["s1"])
+    monkeypatch.setattr(timeline_backfill, "backfill_session_sync", lambda sid: calls.append(sid))
+    asyncio.run(run_timeline_backfill())
+    assert calls == [] and kinds("s1") == []
+    assert any("DB writer is not started" in r.getMessage() for r in log_records)
+
+
+def test_a_writer_not_started_error_ends_the_run_without_retries(project, monkeypatch, no_pauses):
+    make(project, "a", created_at=timezone.now())
+    calls = []
+
+    def not_started(session_id):
+        calls.append(session_id)
+        raise RuntimeError("DB writer not started")
+
+    monkeypatch.setattr(timeline_backfill, "backfill_session_sync", not_started)
+    run_all()
+    assert calls == ["a"]
+
+
+def test_only_the_traceback_of_the_first_failure_is_logged(project, monkeypatch, no_pauses, log_records):
+    make(project, created_at=timezone.now())
+    fail_inserts(monkeypatch, times=None)
+    run_all()
+    warnings = [r for r in log_records if r.levelname == "WARNING" and "session s1 failed" in r.getMessage()]
+    assert len(warnings) == 1 + len(timeline_backfill.RETRY_PAUSES)
+    assert [bool(r.exc_info) for r in warnings] == [True, False, False, False]
 
 
 def test_only_the_stopping_error_of_the_writer_is_recognised():

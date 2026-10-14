@@ -195,6 +195,18 @@ def test_a_failing_hook_never_blocks_the_process_run_update(project, monkeypatch
     assert not ProcessRun.objects.filter(session_id="s1").exists()
 
 
+def test_a_failing_process_started_hook_never_reaches_the_caller(project, monkeypatch):
+    from twicc.agent import timeline_hooks
+
+    agent = make_agent(project)
+    monkeypatch.setattr(timeline_hooks, "record_event_sync",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert timeline_hooks.record_process_started(agent, resume=False) is None
+    assert kinds("s1") == []
+    del agent.provider  # an error while reading the agent is swallowed too
+    assert timeline_hooks.record_process_started(agent, resume=False) is None
+
+
 def test_an_agent_without_project_id_still_records(project):
     agent = make_agent(project)
     del agent.project_id

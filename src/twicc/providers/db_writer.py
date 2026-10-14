@@ -1047,6 +1047,11 @@ def get_db_write_lock() -> ForegroundLock:
     return _db_write_lock
 
 
+def is_db_writer_started() -> bool:
+    """True while the DB writer is started (its write lock exists); stopping is not checked."""
+    return _db_write_lock is not None
+
+
 def get_thread_queue() -> queue.Queue:
     """Return the shared thread queue (for an orchestrator's producer).
 

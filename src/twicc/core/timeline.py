@@ -1,4 +1,3 @@
-# src/twicc/core/timeline.py
 """Payload registry and pure helpers of the session timeline.
 
 Design: ``docs/plans/2026-10-13-session-timeline-design.md`` (§3-§5).

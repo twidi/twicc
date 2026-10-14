@@ -1,4 +1,3 @@
-# tests/test_timeline_model.py
 import pytest
 from django.db import IntegrityError, transaction
 from django.utils import timezone

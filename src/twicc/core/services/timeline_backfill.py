@@ -25,7 +25,7 @@ from twicc.core.models import (
 )
 from twicc.core.services.timeline_boot import BACKFILL_PREFIX
 from twicc.core.timeline import validate_data
-from twicc.providers.db_writer import run_under_db_write_lock
+from twicc.providers.db_writer import is_db_writer_started, run_under_db_write_lock
 
 logger = logging.getLogger(__name__)
 
@@ -110,14 +110,9 @@ def _drop_present(session_id: str, rows: list[TimelineEvent]) -> list[TimelineEv
 
 
 def _insert_rows(rows: list[TimelineEvent]) -> None:
-    """The backfill's own insert path: it validates before (see ``_row``), shares the duplicate
-    check with ``record_event_sync`` (``_drop_present``) and, unlike it, lets every error propagate
-    so the session's transaction is rolled back as a whole.
-
-    A raw ``executemany`` (measured about 2x faster than ``bulk_create`` on this path, which runs
-    once per session under the lock). Like ``apply_item_updates``, the SQL is built from the
-    model's metadata (table, columns) and each value goes through the model field's
-    ``get_db_prep_save``, so the stored bytes are exactly what ``Model.save()`` would write."""
+    """The backfill's own insert path: errors propagate (no swallowing) so the session's
+    transaction rolls back as a whole. A raw ``executemany`` built from the model metadata, each
+    value going through the field's ``get_db_prep_save`` (the bytes ``Model.save()`` would write)."""
     fields = [f for f in TimelineEvent._meta.concrete_fields if not f.primary_key]
     quote = connection.ops.quote_name
     sql = (
@@ -167,6 +162,7 @@ def backfill_session_sync(session_id: str) -> SessionOutcome:
 RETRY_PAUSES = (1.0, 3.0, 5.0)
 
 _WRITER_STOPPING = "DB writer is stopping"
+_WRITER_NOT_STARTED = "DB writer not started"
 
 
 class _WriterStopping(Exception):
@@ -177,8 +173,14 @@ def _writer_is_stopping(exc: BaseException) -> bool:
     return isinstance(exc, RuntimeError) and _WRITER_STOPPING in str(exc)
 
 
-async def _run_pass(session_ids: list[str], stats: Counter) -> dict[str, str]:
-    """One pass over ``session_ids``, one lock acquisition each. Returns ``{failed id: cause}``."""
+def _writer_is_not_started(exc: BaseException) -> bool:
+    return isinstance(exc, RuntimeError) and _WRITER_NOT_STARTED in str(exc)
+
+
+async def _run_pass(session_ids: list[str], stats: Counter, *, retry: bool = False) -> dict[str, str]:
+    """One pass over ``session_ids``, one lock acquisition each. Returns ``{failed id: cause}``.
+
+    The traceback of a failure is logged on the first pass only; a retry logs one line."""
     failed: dict[str, str] = {}
     for session_id in session_ids:
         try:
@@ -186,9 +188,9 @@ async def _run_pass(session_ids: list[str], stats: Counter) -> dict[str, str]:
                 lambda current=session_id: asyncio.to_thread(backfill_session_sync, current)
             )
         except Exception as exc:  # noqa: BLE001 - a failed session must never stop the run
-            if _writer_is_stopping(exc):
+            if _writer_is_stopping(exc) or _writer_is_not_started(exc):
                 raise _WriterStopping from exc
-            logger.warning("Timeline backfill: session %s failed: %s", session_id, exc, exc_info=True)
+            logger.warning("Timeline backfill: session %s failed: %s", session_id, exc, exc_info=not retry)
             failed[session_id] = repr(exc)
             continue
         stats[outcome.status] += 1
@@ -202,8 +204,13 @@ async def run_timeline_backfill() -> None:
 
     Sessions that failed are retried after the list is exhausted, at most ``len(RETRY_PAUSES)``
     more times with a growing pause; the ones still failing are logged at error level and left
-    for the next boot. ``CancelledError`` propagates (shutdown).
+    for the next boot. Does nothing when the DB writer is not started. ``CancelledError`` propagates
+    (shutdown).
     """
+    if not is_db_writer_started():
+        # The backfill needs the writer's lock: without it, do nothing (no read, no retry round).
+        logger.warning("Timeline backfill not run: the DB writer is not started")
+        return
     started = time.monotonic()
     stats: Counter = Counter()
     session_ids = await asyncio.to_thread(candidate_ids)
@@ -214,9 +221,9 @@ async def run_timeline_backfill() -> None:
             if not failed:
                 break
             await asyncio.sleep(pause)
-            failed = await _run_pass(list(failed), stats)
+            failed = await _run_pass(list(failed), stats, retry=True)
     except _WriterStopping:
-        logger.info("Timeline backfill stopped: the DB writer is stopping")
+        logger.info("Timeline backfill stopped: the DB writer is stopping or gone")
         return
     for session_id, cause in failed.items():
         logger.error(

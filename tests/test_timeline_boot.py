@@ -62,6 +62,17 @@ def test_the_last_session_item_timestamp_counts_as_evidence(project):
     assert rows(session_id="s1", kind="process.ended")[0].occurred_at == last_item
 
 
+@pytest.mark.parametrize("source", ["last_updated_at", "item"])
+def test_evidence_later_than_the_boot_is_capped_at_the_boot(project, source):
+    boot = timezone.now()
+    later = boot + timedelta(hours=2)
+    stale_run(project, changed_ago=3600, **({"last_updated_at": later} if source == "last_updated_at" else {}))
+    if source == "item":
+        SessionItem.objects.create(session_id="s1", line_num=1, content="{}", timestamp=later)
+    reconcile_at_boot(now=boot, boot_id="b1")
+    assert rows(session_id="s1", kind="process.ended")[0].occurred_at == boot
+
+
 def test_open_inner_intervals_are_closed_first_with_the_same_time(project):
     stale_run(project, awaiting=True, work=WORK)
     reconcile_at_boot(now=timezone.now(), boot_id="b1")

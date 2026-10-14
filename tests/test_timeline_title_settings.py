@@ -65,7 +65,7 @@ def test_provider_title_overwrite_records_source_agent(project):
     assert TimelineEvent.objects.get(session_id="s1").data == {"source": "agent", "new": "From provider", "old": "Before"}
 
 
-def test_settings_change_records_only_changedbundle_fields(project):
+def test_settings_change_records_only_changed_bundle_fields(project):
     make(project, selected_model="sonnet", effort="medium")
     persist_session_settings("s1", {"selected_model": "opus", "effort": "medium"})
     row = TimelineEvent.objects.get(session_id="s1")
@@ -174,3 +174,21 @@ def test_settings_write_survives_a_failing_timeline_lookup(project, monkeypatch)
     persist_session_settings("s1", {"permission_mode": "acceptEdits"})
     assert Session.objects.get(id="s1").permission_mode == "acceptEdits"
     assert kinds("s1") == []
+
+
+def test_the_hybrid_agent_records_its_chrome_withholding_as_system(project):
+    from types import SimpleNamespace
+    from typing import NamedTuple
+
+    from twicc.providers.claude_code.agent.hybrid.agent import HybridClaudeAgent
+
+    class Settings(NamedTuple):
+        claude_in_chrome: bool
+
+    make(project, claude_in_chrome=True, hidden=True)  # hidden: no broadcast
+    agent = SimpleNamespace(session_id="s1", agent_settings=Settings(True))
+    run_with_writer(lambda: HybridClaudeAgent._withhold_chrome(agent))
+    row = TimelineEvent.objects.get(session_id="s1", kind="settings.changed")
+    assert row.data == {"changes": {"claude_in_chrome": [True, False]}}
+    assert row.actor == "system" and row.reason == "switch-hybrid" and row.project_id == project.id
+    assert agent.agent_settings.claude_in_chrome is False
