@@ -1815,7 +1815,8 @@ def test_direct_add_populated_fk_default_checks_child(connection, invalid):
 
 
 @isolate_apps()
-def test_rebuild_new_replace_constraint_cannot_hide_deleted_parent(connection):
+@pytest.mark.parametrize("conflict", ["IGNORE", "REPLACE"])
+def test_rebuild_new_discard_constraint_cannot_hide_deleted_parent(connection, conflict):
     class Owner(models.Model):
         label = models.TextField()
 
@@ -1828,16 +1829,17 @@ def test_rebuild_new_replace_constraint_cannot_hide_deleted_parent(connection):
         class Meta:
             app_label = "scope_app"
 
-    class ReplaceField(models.IntegerField):
+    class DiscardField(models.IntegerField):
         def db_type(self, connection):
-            return "integer UNIQUE ON CONFLICT REPLACE"
+            return f"integer UNIQUE ON CONFLICT {conflict}"
 
     with connection.schema_editor() as editor:
         editor.create_model(Owner)
         editor.create_model(Record)
     connection.connection.execute("INSERT INTO scope_app_owner(id,label) VALUES (1,'a'), (2,'b')")
-    connection.connection.execute("INSERT INTO scope_app_record(owner_id) VALUES (1)")
-    field = ReplaceField(default=0)
+    missing_parent = 2 if conflict == "IGNORE" else 1
+    connection.connection.execute("INSERT INTO scope_app_record(owner_id) VALUES (?)", (missing_parent,))
+    field = DiscardField(default=0)
     field.set_attributes_from_name("added")
     with checks(connection) as statements, pytest.raises(IntegrityError), connection.schema_editor() as editor:
         editor.add_field(Owner, field)
@@ -1863,4 +1865,38 @@ def test_null_fk_parent_collation_ignores_nested_check_expression(connection):
     with checks(connection) as statements, connection.schema_editor() as editor:
         editor.add_field(state().apps.get_model("scope_app", "Child"), field)
     assert fk_checks(statements) == []
+    assert_restored(connection)
+
+
+@isolate_apps()
+def test_rebuild_new_abort_constraint_preserves_parent_rows_without_checks(connection):
+    class Owner(models.Model):
+        label = models.TextField()
+
+        class Meta:
+            app_label = "scope_app"
+
+    class Record(models.Model):
+        owner = models.ForeignKey(Owner, on_delete=models.CASCADE)
+
+        class Meta:
+            app_label = "scope_app"
+
+    class AbortField(models.IntegerField):
+        def db_type(self, connection):
+            return "integer UNIQUE ON CONFLICT ABORT"
+
+    with connection.schema_editor() as editor:
+        editor.create_model(Owner)
+        editor.create_model(Record)
+    connection.connection.execute("INSERT INTO scope_app_owner(id,label) VALUES (1,'a'), (2,'b')")
+    connection.connection.execute("INSERT INTO scope_app_record(owner_id) VALUES (2)")
+    field = AbortField(null=True)
+    field.set_attributes_from_name("added")
+    # The custom type declares UNIQUE. NULL copy values do not conflict.
+    with checks(connection) as statements, connection.schema_editor() as editor:
+        editor._remake_table(Owner, create_field=field)
+    assert fk_checks(statements) == []
+    assert connection.connection.execute("SELECT id,added FROM scope_app_owner").fetchall() == [(1, None), (2, None)]
+    assert connection.connection.execute("SELECT owner_id FROM scope_app_record").fetchall() == [(2,)]
     assert_restored(connection)

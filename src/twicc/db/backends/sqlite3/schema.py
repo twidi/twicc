@@ -282,10 +282,10 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
         old_columns, new_columns = dict(old.declarations), dict(new.declarations)
         if not old_columns or not new_columns:
             return False
-        # A new REPLACE conflict policy could discard copied parent rows.
-        conflict = (("word", "on"), ("word", "conflict"), ("word", "replace"))
+        # Non-ABORT policies do not prove that every copied parent row survives.
+        conflict = (("word", "on"), ("word", "conflict"))
         if any(
-            declaration[i:i + 3] == conflict
+            declaration[i:i + 2] == conflict and declaration[i + 2] != ("word", "abort")
             for column, declaration in new_columns.items() if column not in old_columns
             for i in range(len(declaration) - 2)
         ):
