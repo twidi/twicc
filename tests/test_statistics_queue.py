@@ -147,3 +147,32 @@ def test_activation_schema_sql_drops_legacy_journal_without_rebuilding_sessions(
     call_command('sqlmigrate', 'core', '0159', stdout=output)
     assert 'DROP TABLE "core_computeaggregaterepair"' in output.getvalue()
     assert 'core_session' not in output.getvalue()
+
+
+def test_capture_unions_forced_ids_and_ack_preserves_later_forced_entry():
+    with transaction.atomic():
+        append_roots(['root'], force_cost_session_ids=['child', 'root', 'child'])
+        append_roots(['root'], force_cost_session_ids=['other'])
+        append_roots(['watcher-root'])
+    batch = capture_queue()
+    assert batch.root_ids == ('root', 'watcher-root')
+    assert batch.force_cost_session_ids == ('child', 'other', 'root')
+    assert StatisticsQueueEntry.objects.get(root_session_id='watcher-root').force_cost_session_ids == []
+    with transaction.atomic():
+        append_roots(['root'], force_cost_session_ids=['later'])
+        acknowledge_queue(batch.max_id)
+    remaining = capture_queue()
+    assert remaining.max_id > batch.max_id
+    assert remaining.root_ids == ('root',)
+    assert remaining.force_cost_session_ids == ('later',)
+
+
+def test_forced_queue_field_migration_changes_only_small_queue_table():
+    from io import StringIO
+    from django.core.management import call_command
+
+    output = StringIO()
+    call_command('sqlmigrate', 'core', '0160', stdout=output)
+    sql = output.getvalue()
+    assert 'force_cost_session_ids' in sql
+    assert 'core_session' not in sql.replace('core_statisticsqueueentry', '')

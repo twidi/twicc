@@ -398,6 +398,11 @@ def compute_worker_main(
                 worker_logger.info("Compute worker received stop signal (queue)")
                 break
 
+            completed_root_id = command.get('completed_root_id')
+            if completed_root_id is not None:
+                getattr(compute, '_computed_cost_sessions', {}).pop(completed_root_id, None)
+                continue
+
             session_id = command.get('session_id')
             if session_id:
                 try:
@@ -644,6 +649,8 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
                     signal = applied.get_nowait()
                     if signal.run_id != ctx.run_id or signal.session_id not in pending:
                         continue
+                    if signal.completed_root_id is not None:
+                        ctx.command_queue.put_nowait({'completed_root_id': signal.completed_root_id})
                     sid = signal.session_id
                     pending.discard(sid)
                     next_selection_poll = 0.0

@@ -764,6 +764,8 @@ class CodexComputeCoordinator:
             signal.run_id in self._retired_run_ids or signal.run_id != getattr(self.ctx, "run_id", None)
         ):
             return
+        if signal.completed_root_id is not None:
+            self.ctx.command_queue.put_nowait({'completed_root_id': signal.completed_root_id})
         session_id = signal.session_id
         arrived_before_computed = session_id in self.submitted
         if arrived_before_computed:

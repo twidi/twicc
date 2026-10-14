@@ -372,9 +372,6 @@ def _begin_replace_codex_history(job: ReplaceCodexHistoryJob) -> None:
     session = Session.objects.select_for_update().get(id=job.session_id)
     initialize_ingestion_session(session, invalidate=True)
     remove_history_memberships(session.id)
-    from twicc.providers.contribution_revisions import record_own_cost_invalidation
-
-    record_own_cost_invalidation(session.id, session.storage_incarnation)
     # Clear only after deletion commits. A rolled-back replacement keeps retry evidence.
     transaction.on_commit(lambda: clear_session(job.session_id))
     transaction.on_commit(lambda: get_compute().end_session_compute(job.session_id))

@@ -13,6 +13,7 @@ from twicc.core.models import StatisticsQueueEntry
 class QueueBatch(NamedTuple):
     max_id: int
     root_ids: tuple[str, ...]
+    force_cost_session_ids: tuple[str, ...] = ()
 
 
 _wakeup: tuple[asyncio.AbstractEventLoop, Callable[[], None]] | None = None
@@ -32,15 +33,16 @@ def _notify_consumer() -> None:
             loop.call_soon_threadsafe(callback)
 
 
-def append_roots(root_ids: Iterable[str]) -> None:
+def append_roots(root_ids: Iterable[str], *, force_cost_session_ids: Iterable[str] = ()) -> None:
     """Append once per root in this call, atomically with the source writes."""
     if not connection.in_atomic_block:
         raise RuntimeError('Statistics queue append requires the source writer transaction')
     roots = tuple(dict.fromkeys(root_ids))
     if not roots:
         return
+    forced = sorted(set(force_cost_session_ids))
     StatisticsQueueEntry.objects.bulk_create(
-        [StatisticsQueueEntry(root_session_id=root_id) for root_id in roots], batch_size=500,
+        [StatisticsQueueEntry(root_session_id=root_id, force_cost_session_ids=forced) for root_id in roots], batch_size=500,
     )
     transaction.on_commit(_notify_consumer)
 
@@ -51,10 +53,14 @@ def capture_queue() -> QueueBatch | None:
         max_id = StatisticsQueueEntry.objects.aggregate(max_id=Max('id'))['max_id']
         if max_id is None:
             return None
-        roots = StatisticsQueueEntry.objects.filter(id__lte=max_id).order_by().values_list(
-            'root_session_id', flat=True,
-        ).distinct()
-        return QueueBatch(max_id, tuple(roots))
+        rows = StatisticsQueueEntry.objects.filter(id__lte=max_id).order_by('id').values_list(
+            'root_session_id', 'force_cost_session_ids',
+        )
+        roots, forced = {}, set()
+        for root, session_ids in rows.iterator():
+            roots[root] = None
+            forced.update(session_ids or ())
+        return QueueBatch(max_id, tuple(roots), tuple(sorted(forced)))
 
 
 def acknowledge_queue(max_id: int) -> None:

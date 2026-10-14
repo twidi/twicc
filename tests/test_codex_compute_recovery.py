@@ -119,6 +119,9 @@ def test_retirement_fences_writer_before_releasing_migration(monkeypatch):
     asyncio.run(run())
 
 
+from twicc.providers.compute_base import BaseSessionCompute
+
+
 class CodexRecoveryCompute:
     provider = Provider.CODEX
 
@@ -140,6 +143,7 @@ class CodexRecoveryCompute:
             'session_id': session_id, 'observed_last_offset': session.last_offset,
             'observed_incarnation': session.storage_incarnation, 'observed_epoch': session.history_epoch,
             'observed_upper_line': session.last_line, 'history_facts': [],
+            'force_cost_session_ids': BaseSessionCompute._completed_cost_session_ids(self, session),
             'session_fields': {'compute_version': 123},
         }))
 

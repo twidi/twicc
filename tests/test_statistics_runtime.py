@@ -285,3 +285,75 @@ def test_retry_delay_doubles_and_stops_at_sixty_seconds(monkeypatch):
         assert delays == [1, 2, 4, 8, 16, 32, 60, 60]
 
     asyncio.run(scenario())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_overlapping_background_costs_finish_batch_then_forced_batch_refreshes(monkeypatch):
+    from datetime import UTC, datetime
+    from decimal import Decimal
+    from django.db import transaction
+    from twicc.core.models import Project, Session, SessionItem, StatisticsQueueEntry
+    from twicc.providers import db_writer, statistics_publication
+    from twicc.providers.compute_base import BaseSessionCompute
+    from twicc.providers.statistics_queue import append_roots, capture_queue
+
+    now = datetime(2026, 10, 14, tzinfo=UTC)
+    project = Project.objects.create(id='overlap')
+    root = Session.objects.create(id='root', file_path='root', project=project,
+        storage_incarnation='root', last_updated_at=now)
+    child = Session.objects.create(id='child', file_path='child', project=project,
+        parent_session=root, type='subagent', storage_incarnation='child', last_updated_at=now)
+    root_item = SessionItem.objects.create(session=root, line_num=1, cost=Decimal(1))
+    SessionItem.objects.create(session=child, line_num=1, cost=Decimal(2))
+    with transaction.atomic():
+        append_roots([root.id])
+    batch = capture_queue()
+    original = statistics_publication.publish_tree_costs
+    overlapped = False
+
+    async def publish(prepared):
+        nonlocal overlapped
+        if not overlapped:
+            overlapped = True
+            def background():
+                assert BaseSessionCompute.apply_session_items_chunk(
+                    root.id, None, ['cost'], [{'id': root_item.id, 'cost': '9'}], [],
+                ) == 'ok'
+                with transaction.atomic():
+                    append_roots([root.id], force_cost_session_ids=[root.id])
+            await asyncio.to_thread(background)
+        await original(prepared)
+
+    async def admitted(function, *args):
+        return await asyncio.to_thread(function, *args)
+
+    monkeypatch.setattr(statistics_publication, 'publish_tree_costs', publish)
+    monkeypatch.setattr(db_writer, 'publish_statistics_sync', admitted)
+
+    async def scenario():
+        consumer = runtime().StatisticsConsumer()
+        try:
+            await consumer.run_batch(batch)
+            def after_first():
+                root.refresh_from_db()
+                child.refresh_from_db()
+                assert root.self_cost == Decimal(1)
+                assert root.items_cost_computed_through_at == now
+                assert child.items_cost_computed_through_at == now
+                assert child.total_cost == Decimal(2)
+                later = capture_queue()
+                assert later.max_id > batch.max_id
+                assert later.force_cost_session_ids == ('root',)
+                return later
+            later = await asyncio.to_thread(after_first)
+            await consumer.run_batch(later)
+        finally:
+            await consumer.close()
+
+    asyncio.run(scenario())
+    root.refresh_from_db()
+    child.refresh_from_db()
+    assert root.self_cost == Decimal(9)
+    assert root.total_cost == Decimal(11)
+    assert child.self_cost == Decimal(2)
+    assert not StatisticsQueueEntry.objects.exists()

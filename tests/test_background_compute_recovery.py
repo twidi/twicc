@@ -16,6 +16,7 @@ from twicc.core.enums import Provider
 from twicc.core.models import Project, Session
 from twicc.providers import background_compute_task as background
 from twicc.providers import compute_executor, db_writer
+from twicc.providers.compute_base import BaseSessionCompute
 
 
 class RecoveryCompute:
@@ -46,6 +47,7 @@ class RecoveryCompute:
             'session_id': session_id, 'observed_last_offset': session.last_offset,
             'observed_incarnation': session.storage_incarnation, 'observed_epoch': session.history_epoch,
             'observed_upper_line': session.last_line, 'history_facts': [],
+            'force_cost_session_ids': BaseSessionCompute._completed_cost_session_ids(self, session),
             'session_fields': {'compute_version': 123},
         }))
 

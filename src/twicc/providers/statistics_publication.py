@@ -5,7 +5,7 @@ from decimal import Decimal
 from django.db import connection, transaction
 
 from twicc.core.models import DailyActivity, Project, Session, WeeklyActivity, Workflow
-from twicc.providers.contribution_revisions import DailyKey, observations_match
+from twicc.providers.contribution_revisions import DailyKey
 from twicc.providers.statistics_prepare import ActivityValues, PreparedTreeCosts
 
 SESSION_PUBLICATION_LIMIT = 256
@@ -22,11 +22,8 @@ async def _publish(function, /, *args):
 
 
 def _validate(prepared, costs, own):
-    if not observations_match(update.invalidation_observation for update in prepared.own_updates):
-        raise BackgroundInvalidated('Background own cost changed during preparation')
     identities = {row.session_id: row.storage_incarnation for row in costs}
-    identities.update((source.session_id, source.incarnation) for update in own
-                      for source, _ in update.invalidation_observation.own_costs)
+    identities.update((row.session_id, row.storage_incarnation) for row in own)
     current = dict(Session.objects.filter(pk__in=identities).values_list('id', 'storage_incarnation'))
     if current != identities:
         raise BackgroundInvalidated('Statistics source identity changed during preparation')

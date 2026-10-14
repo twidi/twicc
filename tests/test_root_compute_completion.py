@@ -182,6 +182,9 @@ def test_real_coordinator_waits_for_writer_ack(recovery_runtime, monkeypatch, pr
                     await asyncio.sleep(.01)
             with closing(sqlite3.connect(path)) as database:
                 assert database.execute('SELECT root_session_id FROM core_statisticsqueueentry').fetchall() == [('healthy',)]
+                import orjson
+                forced = database.execute('SELECT force_cost_session_ids FROM core_statisticsqueueentry').fetchone()[0]
+                assert orjson.loads(forced) == ['faulty', 'healthy']
             ctx.stop_event.set()
             await asyncio.wait_for(task, 3)
         finally:
@@ -399,6 +402,9 @@ def test_codex_discovery_during_forced_rebuild_keeps_tree_eligible(recovery_runt
             assert versions(path)['healthy'] == 123
             with closing(sqlite3.connect(path)) as database:
                 assert database.execute('SELECT root_session_id FROM core_statisticsqueueentry').fetchall() == [('healthy',)]
+                import orjson
+                forced = database.execute('SELECT force_cost_session_ids FROM core_statisticsqueueentry').fetchone()[0]
+                assert orjson.loads(forced) == (['late'] if restart else ['faulty', 'late'])
             owner.ctx.stop_event.set()
             await asyncio.wait_for(task, 3)
         finally:
@@ -409,3 +415,139 @@ def test_codex_discovery_during_forced_rebuild_keeps_tree_eligible(recovery_runt
                 await background.retire_compute_run(owner.ctx)
             await db_writer.stop_db_writer()
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('provider', [Provider.CLAUDE_CODE, Provider.CODEX])
+def test_worker_local_completed_ids_reach_final_root_queue(provider):
+    from types import SimpleNamespace
+
+    root, child = tree(provider)
+    cached = Session.objects.create(id='cached', file_path='cached', project=root.project,
+        parent_session=root, provider=provider, compute_version=99)
+    compute = SimpleNamespace(_tree_completion=None)
+    assert BaseSessionCompute._completed_cost_session_ids(compute, child) == []
+    assert publish(child).outcome == 'applied'
+    compute._tree_completion = compute_selection.tree_completion_context(root.id, 99)
+    forced = BaseSessionCompute._completed_cost_session_ids(compute, root)
+    assert forced == ['child', 'root']
+    assert compute._computed_cost_sessions == {root.id: set(forced)}
+    result = BaseSessionCompute.apply_session_complete({
+        'session_id': root.id, 'history_facts': [], 'session_fields': {'compute_version': 99},
+        'tree_completion': compute._tree_completion, 'force_cost_session_ids': forced,
+    })
+    assert result.outcome == 'applied'
+    entry = StatisticsQueueEntry.objects.get()
+    assert entry.force_cost_session_ids == ['child', 'root']
+    assert cached.id not in entry.force_cost_session_ids
+
+
+def test_forced_current_root_completion_transmits_only_recomputed_member():
+    from types import SimpleNamespace
+
+    root, child = tree(Provider.CODEX)
+    Session.objects.filter(pk__in=[root.id, child.id]).update(compute_version=99)
+    context = compute_selection.tree_completion_context(child.id, 99, forced_source_ids={child.id})
+    compute = SimpleNamespace(_tree_completion=context)
+    forced = BaseSessionCompute._completed_cost_session_ids(compute, child)
+    assert forced == ['child']
+    assert compute._computed_cost_sessions == {root.id: set(forced)}
+    result = BaseSessionCompute.apply_session_complete({
+        'session_id': child.id, 'history_facts': [], 'session_fields': {'compute_version': 99},
+        'tree_completion': context, 'force_cost_session_ids': forced,
+    })
+    assert result.outcome == 'applied'
+    assert StatisticsQueueEntry.objects.get().force_cost_session_ids == ['child']
+
+
+@pytest.mark.parametrize('provider', [Provider.CLAUDE_CODE, Provider.CODEX])
+def test_rejected_final_keeps_prior_recomputed_member_for_retry(provider):
+    from types import SimpleNamespace
+
+    root, child = tree(provider)
+    compute = SimpleNamespace(_tree_completion=None)
+    assert BaseSessionCompute._completed_cost_session_ids(compute, child) == []
+    assert publish(child).outcome == 'applied'
+    compute._tree_completion = compute_selection.tree_completion_context(root.id, 99)
+    forced = BaseSessionCompute._completed_cost_session_ids(compute, root)
+    # A new member supersedes the final result before its queue entry commits.
+    late = Session.objects.create(id='late', file_path='late', project=root.project,
+        parent_session=root, provider=provider)
+    result = BaseSessionCompute.apply_session_complete({
+        'session_id': root.id, 'history_facts': [], 'session_fields': {'compute_version': 99},
+        'tree_completion': compute._tree_completion, 'force_cost_session_ids': forced,
+    })
+    assert result.outcome == 'superseded'
+    assert not StatisticsQueueEntry.objects.exists()
+    compute._tree_completion = None
+    assert BaseSessionCompute._completed_cost_session_ids(compute, late) == []
+    assert publish(late).outcome == 'applied'
+    compute._tree_completion = compute_selection.tree_completion_context(root.id, 99)
+    retried = BaseSessionCompute._completed_cost_session_ids(compute, root)
+    assert retried == ['child', 'late', 'root']
+    result = BaseSessionCompute.apply_session_complete({
+        'session_id': root.id, 'history_facts': [], 'session_fields': {'compute_version': 99},
+        'tree_completion': compute._tree_completion, 'force_cost_session_ids': retried,
+    })
+    assert result.outcome == 'applied'
+    assert StatisticsQueueEntry.objects.get().force_cost_session_ids == retried
+
+
+def test_worker_acknowledgment_clears_only_completed_tree(monkeypatch):
+    import queue
+    from types import SimpleNamespace
+    import orjson
+    from twicc.providers import background_compute_task as background
+
+    root, child = tree()
+    other = Session.objects.create(id='other', file_path='other', project=root.project, provider=root.provider)
+    emitted = []
+    compute = SimpleNamespace(provider=root.provider, enable_batch_queue_cache=lambda: None)
+
+    def metadata(session_id, result_queue, run_id):
+        session = Session.objects.get(pk=session_id)
+        emitted.append((session_id, BaseSessionCompute._completed_cost_session_ids(compute, session)))
+
+    compute.compute_session_metadata = metadata
+    commands = queue.Queue()
+    for command in [
+        {'session_id': child.id},
+        {'session_id': other.id},
+        {'completed_root_id': other.id},
+        {'session_id': root.id},
+        {'completed_root_id': root.id},
+        {'session_id': root.id},
+        None,
+    ]:
+        commands.put(command)
+    result_queue = SimpleNamespace(put=lambda message: orjson.loads(message), close=lambda: None)
+    monkeypatch.setattr(background, '_set_pdeathsig_linux', lambda: None)
+    monkeypatch.setattr('signal.signal', lambda *args: None)
+    monkeypatch.setattr(background, '_resolve_factory', lambda path: lambda: compute)
+    monkeypatch.setattr(background, 'current_provider', SimpleNamespace(set=lambda value: None))
+    background.compute_worker_main(commands, result_queue, None, SimpleNamespace(is_set=lambda: False), 'test', 1)
+    assert emitted == [('child', []), ('other', ['other']), ('root', ['child', 'root']), ('root', ['root'])]
+    assert compute._computed_cost_sessions == {'root': {'root'}}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('provider', [Provider.CLAUDE_CODE, Provider.CODEX])
+def test_provider_metadata_payload_transmits_recomputed_tree_members(provider):
+    from queue import Queue
+    import orjson
+    from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
+    from twicc.providers.codex.compute import CodexSessionCompute
+
+    root, child = tree(provider)
+    compute = ClaudeCodeSessionCompute() if provider == Provider.CLAUDE_CODE else CodexSessionCompute()
+    messages = Queue()
+    compute._tree_completion = None
+    compute.compute_session_metadata(child.id, messages, 1)
+    child_message = orjson.loads(messages.get_nowait())
+    assert child_message['force_cost_session_ids'] == []
+    assert BaseSessionCompute.apply_session_complete(child_message).outcome == 'applied'
+    compute._tree_completion = compute_selection.tree_completion_context(root.id, child_message['session_fields']['compute_version'])
+    compute.compute_session_metadata(root.id, messages, 1)
+    root_message = orjson.loads(messages.get_nowait())
+    assert root_message['force_cost_session_ids'] == ['child', 'root']
+    assert BaseSessionCompute.apply_session_complete(root_message).outcome == 'applied'
+    assert StatisticsQueueEntry.objects.get().force_cost_session_ids == ['child', 'root']

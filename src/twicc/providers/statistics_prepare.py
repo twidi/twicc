@@ -11,9 +11,7 @@ from django.db.models.functions import TruncDate
 
 from twicc.core.models import AgentLink, DailyActivity, Session, SessionItem, SessionType, Workflow
 from twicc.providers.compute_tree import load_native_tree
-from twicc.providers.contribution_revisions import (
-    DailyKey, RevisionObservation, SourceKey, observe_own_cost_invalidations, restrict_own_cost_observation,
-)
+from twicc.providers.contribution_revisions import DailyKey
 from twicc.providers.live_aggregates import persisted_cost
 
 
@@ -21,7 +19,7 @@ class PreparedOwnCost(NamedTuple):
     session_id: str
     observed_at: datetime | None
     self_cost: Decimal | None
-    invalidation_observation: RevisionObservation
+    storage_incarnation: str
 
 
 class SessionCosts(NamedTuple):
@@ -50,20 +48,19 @@ def _surviving_native_trees(root_ids):
     return tuple(load_native_tree(root) for root in roots if root in surviving)
 
 
-def prepare_tree_costs(root_ids: tuple[str, ...]) -> PreparedTreeCosts:
+def prepare_tree_costs(root_ids: tuple[str, ...], force_cost_session_ids=()) -> PreparedTreeCosts:
     """Use one thread-owned read snapshot, without writer admission.
 
-    The statistics executor owns this thread and its Django connection. Capture
-    invalidation counters before the first snapshot read. Publication must check
-    each own update's observation under writer admission before writing markers.
-    Equal or regressing source timestamps intentionally retain cached own costs.
+    The statistics executor owns this thread and its Django connection.
+    Explicit background IDs force a fresh sum even if an earlier calculator
+    already restored the marker. Other equal or regressing timestamps retain
+    cached own costs.
     """
     if current_thread() is main_thread():
         raise RuntimeError('Statistics preparation requires a dedicated reader thread')
     if connection.in_atomic_block or not connection.get_autocommit():
         raise RuntimeError('Statistics preparation requires its own read transaction')
-    observation = observe_own_cost_invalidations()
-    own_revision_lookup = dict(observation.own_costs)
+    forced = set(force_cost_session_ids)
     with transaction.atomic():
         trees = _surviving_native_trees(root_ids)
         members = tuple(dict.fromkeys(sid for tree in trees for sid in tree.member_ids))
@@ -72,7 +69,8 @@ def prepare_tree_costs(root_ids: tuple[str, ...]) -> PreparedTreeCosts:
             'items_cost_computed_through_at', 'self_cost',
         )}
         changed = tuple(sid for sid in members if (
-            rows[sid]['items_cost_computed_through_at'] is None
+            sid in forced
+            or rows[sid]['items_cost_computed_through_at'] is None
             or rows[sid]['last_updated_at'] is None
             or rows[sid]['last_updated_at'] > rows[sid]['items_cost_computed_through_at']
         ))
@@ -83,9 +81,7 @@ def prepare_tree_costs(root_ids: tuple[str, ...]) -> PreparedTreeCosts:
         own = {sid: persisted_cost(sums.get(sid) if sid in changed_set else rows[sid]['self_cost'])
                for sid in members}
         updates = tuple(PreparedOwnCost(
-            sid, rows[sid]['last_updated_at'], own[sid], restrict_own_cost_observation(
-                observation, SourceKey(sid, rows[sid]['storage_incarnation']), own_revision_lookup,
-            ),
+            sid, rows[sid]['last_updated_at'], own[sid], rows[sid]['storage_incarnation'],
         ) for sid in changed)
         parents = dict(AgentLink.objects.filter(agent_id__in=members).values_list('agent_id', 'session_id'))
         costs = []

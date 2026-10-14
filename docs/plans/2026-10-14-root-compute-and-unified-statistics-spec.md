@@ -72,7 +72,9 @@ Do not use a 32-bit counter or a frontend JavaScript number for queue boundaries
 Queue IDs and boundaries remain backend-internal.
 Do not periodically reset the sequence.
 
-Root identity is the only required business payload. The queue does not store item batches or historical proofs.
+Each entry stores the root identity and `force_cost_session_ids`, a JSON list of native member IDs requiring a full own-cost sum.
+Live entries use an empty list. Capture unions these lists across rows inside the captured ID boundary.
+The queue does not store item batches or historical proofs.
 Do not add journal incarnation, per-entry generation, old-parent inventories, or per-item obligations.
 Resolve a subagent enqueue to its native root.
 
@@ -82,7 +84,10 @@ Emit the wake event only after commit.
 Background compute enqueues once when the entire selected root tree has finished application.
 Do not enqueue for each background item, metadata slice, or completed subagent.
 Final tree completion and its root enqueue commit atomically.
-Affected member publications invalidate their own-cost caches without adding separate background queue entries.
+Affected member publications set their own-cost markers to NULL without adding separate background queue entries.
+The compute worker collects recalculated member IDs in a process-local set for each native root.
+Final tree completion passes this set to the durable queue entry. The set is released after the writer confirms successful final tree completion.
+A refused final attempt retains the set for its retry.
 
 For watcher ingestion, enqueue at most once per affected root in each committed ingestion batch.
 Collect relevant changes across the batch, then append work with its source transaction.
@@ -147,7 +152,8 @@ It is not the database write time. Do not use file `mtime` for this cache.
 
 Add nullable `Session.items_cost_computed_through_at`.
 Its meaning is the observed source timestamp covered by the published own-cost sum.
-Recalculate a member's own cost when the marker is NULL or `last_updated_at` is newer than the marker.
+Recalculate a member's own cost when the marker is NULL, its ID is in the captured forced list,
+or `last_updated_at` is newer than the marker.
 If the source timestamp is unavailable, do not treat an unavailable marker as a valid cache hit.
 Otherwise reuse the persisted `self_cost` without reading that member's raw item costs.
 
@@ -156,17 +162,27 @@ Publish the captured timestamp with the corresponding own cost.
 Do not use publication wall time or a later source timestamp as the cache marker.
 New source timestamps must remain visible for the next queued pass.
 
-Background compute invalidates this cache when it recalculates item cost metadata, including final source publication.
-An older prepared calculation must not cancel a newer background invalidation or mark unrecomputed costs as current.
-Use existing compute boundaries or a narrow publication check. Do not add dirty flags or cost revision columns.
-A preparation rejected for background invalidation remains queued for recalculation.
+Background compute resets the marker when it recalculates item cost metadata, including final source publication.
+It also collects member IDs for the final forced queue entry.
+A concurrent prepared calculation may publish an older result and overwrite a NULL marker.
+The current batch still completes and acknowledges its captured boundary.
+A later forced queue entry remains above that boundary and recalculates the member regardless of its marker.
+Do not keep process-local modification counters, reject this batch for overlapping cost writes,
+or add conditional marker writes or conflict retry delays. Unexpected publication failures retain normal retry behavior.
+
+### Accepted interruption limitation
+
+The user accepts the narrow interruption race where an older calculation overwrites a NULL marker,
+then the application stops before final tree enqueue. The local forced-ID set is lost.
+An already completed member with a non-NULL marker and no newer timestamp may retain an older own cost after restart.
+Surviving NULL markers still force full sums. Do not add further recovery machinery for this accepted race.
 
 ### Accepted timestamp limitation
 
 The user explicitly accepts missed immediate recalculations for equal or regressing source timestamps.
 Database audit found equal timestamps in both providers and older timestamps in Claude records.
 This acceptance is not a guarantee of strictly increasing source timestamps.
-An enqueue alone does not override a timestamp cache hit.
+An ordinary enqueue does not override a timestamp cache hit. A forced member ID does override it.
 A later advancing timestamp or background cache invalidation recalculates the complete own-cost sum.
 
 Do not introduce a line-number cache marker, hidden revision scheme, periodic repair, or fallback full-history scan.
@@ -231,7 +247,7 @@ Foreground work has priority between publications. Never hold the writer across 
 
 Ordinary live source changes during preparation enqueue a later pass.
 Intermediate results are acceptable; a single consumer prevents competing aggregate writers.
-Protect background cache invalidation as specified in section 7.
+Use the forced queue list and NULL-marker behavior specified in section 7.
 Do not restore broad tree certificates or all-provider inventory guards.
 
 After successful publication, send session/project updates, workflow refresh notifications, and an activity refresh signal.
@@ -268,7 +284,8 @@ The implementation plan must validate:
 8. Startup resumes work, interrupted batches repeat safely, and transient failures retry without new signals.
 9. Idle work does not poll; event timing does not lose a committed enqueue.
 10. Partial source compute is accepted; final enqueue restores converged costs and activity.
-11. Cached own costs avoid unchanged item scans; background invalidation cannot be cleared by older preparation.
+11. Cached own costs avoid unchanged item scans; forced queue IDs recalculate members despite current markers.
+    Overlapping background writes do not abort the current batch. The accepted interruption race is documented.
 12. Equal/regressing timestamp cases retain the explicitly accepted cache behavior.
 13. Daily keys deduplicate across roots; weeks derive from daily rows with existing filters and UTC boundaries.
 14. Session, project, workflow, and activity views receive refreshed derived values after consumer publication.

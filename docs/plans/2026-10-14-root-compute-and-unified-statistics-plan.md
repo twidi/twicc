@@ -29,7 +29,7 @@
 1. Interrupted tree compute leaves current descendants and an outdated root: restart skips completed members and finishes the root. Tests: tasks 2–3.
 2. A descendant fails or changes during application: root completion must wait, while other roots progress. Tests: tasks 2–3.
 3. A source changes after queue capture: acknowledgement must preserve its new entry, including the same root. Tests: tasks 1 and 7.
-4. Background item recomputation overlaps an own-cost read: older preparation must not erase its invalidation. Tests: tasks 4 and 6.
+4. Background item recomputation overlaps an own-cost read: the current batch completes, and a later forced queue entry corrects the own cost. Tests: tasks 1, 3, 4, 6, and 7.
 5. Workflows include nested agents: their total and phase costs must count each contribution once. Tests: task 5.
 
 ## Working directory and verification commands
@@ -73,10 +73,10 @@ Task 10 validates the complete system. Intermediate commits are development chec
 - Create: `tests/test_statistics_queue.py`.
 
 **Interfaces:**
-- Model: `StatisticsQueueEntry(id: BigAutoField, root_session_id: CharField(max_length=255))`.
+- Model: `StatisticsQueueEntry(id: BigAutoField, root_session_id: CharField(max_length=255), force_cost_session_ids: JSONField(default=list, null=True))`.
 - Model field: `Session.items_cost_computed_through_at: DateTimeField(null=True, blank=True)`.
-- `append_roots(root_ids: Iterable[str]) -> None`: requires the source transaction; deduplicates this call only.
-- `capture_queue() -> QueueBatch | None`; `QueueBatch(max_id: int, root_ids: tuple[str, ...])` is a `NamedTuple`.
+- `append_roots(root_ids: Iterable[str], *, force_cost_session_ids=()) -> None`: requires the source transaction; deduplicates this call only.
+- `capture_queue() -> QueueBatch | None`; `QueueBatch(max_id: int, root_ids: tuple[str, ...], force_cost_session_ids: tuple[str, ...] = ())` is a `NamedTuple`.
 - `acknowledge_queue(max_id: int) -> None`: writer transaction only; deletes IDs at or below the boundary.
 - `install_queue_wakeup(callback: Callable[[], None] | None) -> None`: main-process lifecycle binding.
 
@@ -86,7 +86,7 @@ Task 10 validates the complete system. Intermediate commits are development chec
 - [x] Run `TWICC_DATA_DIR=$PWD uv run pytest tests/test_statistics_queue.py -q`; confirm failures identify the missing queue contract.
 - [x] Implement the schema and queue functions. Use the primary-key index for range capture/delete; add no root uniqueness constraint.
   Register wakeups with `transaction.on_commit`. The callback must use the owning loop's `call_soon_threadsafe`, because source writes run on threads.
-  Read `MAX(id)` and distinct root IDs within one read snapshot. Split large insertion parameter lists within the same source transaction.
+  Read `MAX(id)` and captured root/forced-ID rows within one read snapshot. Deduplicate roots and union forced IDs. Split large insertion parameter lists within the same source transaction.
   Inspect generated SQLite schema SQL. Add the nullable marker without a default, index, table copy, or historical backfill.
   Use the project's custom SQLite schema backend if migration state needs a separate database operation.
 - [x] Run queue tests and `uvx ruff check src/twicc/providers/statistics_queue.py tests/test_statistics_queue.py`.
@@ -149,7 +149,7 @@ Task 10 validates the complete system. Intermediate commits are development chec
   Preserve Codex rollout preparation, migration leases, forced rebuilds, unavailable diagnostics, and replay callbacks.
   Queue completion depends on successful source transactions, not notification delivery.
   Member item-cost metadata writes set their own marker to NULL in the same transaction; final member publication also resets it.
-  Ensure stale model saves do not overwrite the cache marker later.
+  Collect recalculated member IDs in a worker-local set per native root. Pass the set with final tree completion to the queue entry.
   Remove background per-slice/per-member queue production. Retain startup root progress and source reindex requests.
 - [x] Run the task tests plus `tests/test_compute_shutdown.py`, `tests/test_compute_ipc.py`, and `tests/test_search_compute_readiness.py`.
 - [x] Review and commit: `feat(compute): complete native trees before statistics enqueue`.
@@ -158,15 +158,15 @@ Task 10 validates the complete system. Intermediate commits are development chec
 
 **Files:**
 - Create: `src/twicc/providers/statistics_prepare.py`.
-- Modify: `src/twicc/providers/contribution_revisions.py` for a narrowly retained background invalidation guard.
+- Modify: `src/twicc/providers/contribution_revisions.py` to remove background own-cost counter machinery while retaining shared value types.
 - Create: `tests/test_statistics_costs.py`.
 
 **Interfaces:**
-- `PreparedOwnCost(session_id: str, observed_at: datetime | None, self_cost: Decimal | None, invalidation_observation: RevisionObservation)`.
+- `PreparedOwnCost(session_id: str, observed_at: datetime | None, self_cost: Decimal | None, storage_incarnation: str)`.
 - `SessionCosts(session_id: str, self_cost: Decimal | None, subagents_cost: Decimal | None, total_cost: Decimal | None)`.
-- `prepare_tree_costs(root_ids: tuple[str, ...]) -> PreparedTreeCosts`.
+- `prepare_tree_costs(root_ids: tuple[str, ...], force_cost_session_ids=()) -> PreparedTreeCosts`.
 - `PreparedTreeCosts(own_updates: tuple[PreparedOwnCost, ...], session_costs: tuple[SessionCosts, ...], project_ids: tuple[str, ...], workflow_ids: tuple[int, ...])`.
-- Reuse the existing `RevisionObservation` type for the narrow guard. Only background own-cost invalidation observations participate.
+- Own updates retain storage identity only. Background cost writes use the forced queue list, not modification counters.
 
 - [x] Write `test_only_changed_member_sums_items`, `test_subtree_costs_include_nested_agents_once`, `test_unlinked_member_counts_once`, and `test_accepted_equal_timestamp_cache_hit`.
   Fixture: root own cost 1, child own cost 2, grandchild own cost 3. Assert child total 5 and root total 6.
@@ -174,14 +174,14 @@ Task 10 validates the complete system. Intermediate commits are development chec
   Assert marker NULL forces a complete own sum. Assert NULL source timestamps cannot become valid cache hits.
 - [x] Run `TWICC_DATA_DIR=$PWD uv run pytest tests/test_statistics_costs.py -q`; confirm missing selective calculations fail.
 - [x] Implement read preparation with a dedicated thread-owned Django connection and a consistent read transaction.
-  Group sums only for members with NULL markers or advancing timestamps. Quantize through existing `persisted_cost` conventions.
+  Group sums only for members with NULL markers, captured forced IDs, or advancing timestamps. Quantize through existing `persisted_cost` conventions.
   Read cached own values for the other members. Compute launcher subtree sums bottom-up using `Decimal`.
   Root totals include every native member once. Resolve unlinked components without adding their costs twice.
-  Capture background invalidation observations before the snapshot and check them under writer admission during publication.
-  Reuse only the existing source observation mechanism needed to detect background item-cost publication; ordinary live changes queue a later pass.
-  This guard must detect NULL-to-NULL invalidations. Marker equality alone is insufficient.
-  Add no database revision field, line-number marker, daily/project certificate, or readiness gate.
-- [x] Run task tests and add an interleaving test: read old costs, commit background invalidation, then reject the prepared marker publication.
+  A forced member must be recalculated even when its timestamp marker already matches.
+  Background overlap does not reject a prepared batch. A later queue entry forces correction.
+  Keep the accepted interruption race from spec section 7; add no conditional marker update or modification counter.
+- [x] Add an interleaving test: read old costs, commit background costs with a NULL reset,
+  complete the current batch, then process a later forced queue entry and verify corrected costs.
 - [x] Review and commit: `feat(stats): prepare selective hierarchical costs`.
 
 ## Task 5: Prepare daily, weekly, project, and workflow outputs
@@ -227,17 +227,17 @@ Task 10 validates the complete system. Intermediate commits are development chec
 - `async publish_weekly(key: DailyKey, values: ActivityValues) -> None`.
 - `async publish_project_cost(project_id: str, value: Decimal | None) -> None`.
 - `async publish_workflow_cost(workflow_id: int, cost: Decimal, phases_cost: dict[str, float]) -> None`.
-- `BackgroundInvalidated` exception rejects an obsolete own-cost publication; consumer retains the batch.
+- Existing identity checks retain their failure behavior. Overlapping background cost writes do not reject publication.
 
-- [x] Write tests for exact replacement on replay, background invalidation before publication, invalidation between publication slices, and foreground admission between slices.
-  Assert stale preparation cannot set a valid cache marker or acknowledge its queue batch.
+- [x] Write tests for exact replacement on replay, background overlap before publication and between slices, and foreground admission between slices.
+  Assert overlap permits every slice to finish; later forced entries survive acknowledgement and correct the result.
   Assert every historical read occurs without writer ownership.
 - [x] Run `TWICC_DATA_DIR=$PWD uv run pytest tests/test_statistics_publication.py -q`; confirm missing publication contracts fail.
 - [x] Route each bounded publication through `run_under_storage_write_lock` with the existing background priority.
   Execute synchronous transactions on the established writer connection/thread path; never write from the read executor.
   Use parameterized `executemany` for homogeneous session metadata replacements, not Django `bulk_update` expression construction.
   Begin with at most 256 session rows per publication. Publish daily, weekly, project, and workflow keys in separate short transactions.
-  Validate own-cost invalidation observations inside each publication transaction before setting costs and covered timestamps.
+  Preserve existing source identity checks inside publication transactions; remove own-cost modification-counter validation.
   Yield to the event loop between publications. Release writer admission before the next read preparation.
   Use exact replacements throughout; failure after partial publication is safe to repeat.
 - [x] Run task tests plus `tests/test_statistics_publication.py` and `tests/test_statistics_runtime.py` for the replacement lifecycle contract.
@@ -315,7 +315,7 @@ Task 10 validates the complete system. Intermediate commits are development chec
 - Modify: `src/twicc/settings.py`.
 - Modify: `src/twicc/providers/claude_code/sessions_watcher.py` (the real workflow-file cost writer).
 - Delete or trim: `src/twicc/providers/compute_repair.py`, `compute_repair_journal.py`, `compute_repair_recovery.py`, `tree_aggregate_runtime.py`, `tree_aggregate_state.py`, `tree_aggregate_prepare.py`, `aggregate_removal.py`.
-- Trim: `src/twicc/providers/contribution_revisions.py` to the required narrow background guard, with matching imports/tests.
+- Trim: `src/twicc/providers/contribution_revisions.py` to shared value types still required by callers, removing background counters and their tests.
 - Modify: schema migration from task 1 or add the next migration to remove `ComputeAggregateRepair`.
 
 **Interfaces:**
@@ -444,3 +444,21 @@ Nested unassigned workflow agents can overlap in that displayed total. Published
 - Backend emits three RuntimeWarnings in unchanged Codex SDK/shell-notice mock tests. They remain recorded validation noise.
 - Every task receives an independent review. The final review has two Important findings; one correction wave resolves both, followed by an approved scoped review.
 - DevCTL stays stopped. The worktree database and search index remain intact. No production database migration or real startup run occurs.
+
+## Approved forced-cost queue correction
+
+The user replaces the background own-cost revision guard with a forced member-ID list on queue entries.
+Background compute keeps NULL resets and collects recalculated IDs per native root in worker memory.
+Final tree completion atomically enqueues that list. Captured forced IDs override timestamp cache hits.
+Concurrent cost updates no longer reject an entire prepared batch or incur conflict retry delays.
+Unexpected failures and existing storage identity checks retain their behavior.
+The narrow interruption race in spec section 7 is accepted explicitly.
+
+### Correction validation
+
+- 250 affected statistics, root-completion, source-coordination, recovery, and continuation tests pass in 108.68 seconds.
+- Changed Python files pass Ruff; `git diff --check` passes.
+- Isolated `makemigrations --check --dry-run` reports no changes. Migration 0160 rebuilds only the small queue table.
+- Independent scoped review approves the correction after retaining worker sets through refused final attempts.
+- One initial Codex admission test times out before final-root handling. Its isolated rerun and fresh expanded suite pass without timeout changes.
+- No DevCTL startup, actual database migration, search-index reset, or full application startup is performed for this correction.

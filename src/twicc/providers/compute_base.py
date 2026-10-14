@@ -2848,6 +2848,20 @@ class BaseSessionCompute:
         ancestor.save(update_fields=["plan_paths"])
         return ancestor.id
 
+    def _completed_cost_session_ids(self, session: Session) -> list[str]:
+        """Keep recalculated members until the writer confirms their final tree result."""
+        from twicc.providers.compute_tree import resolve_native_root
+
+        root_id = resolve_native_root(session.id)
+        computed = getattr(self, '_computed_cost_sessions', None)
+        if computed is None:
+            computed = self._computed_cost_sessions = {}
+        computed.setdefault(root_id, set()).add(session.id)
+        completion = getattr(self, '_tree_completion', None)
+        if completion is not None or session.parent_session_id is None:
+            return sorted(computed[root_id])
+        return []
+
     def compute_session_metadata(self, session_id: str, result_queue, run_id: int) -> None:
         """
         Compute metadata for every item in a session and push the result on ``result_queue``.
@@ -3516,6 +3530,7 @@ class BaseSessionCompute:
         result_queue.put(orjson.dumps({
             'type': 'session_complete',
             'tree_completion': getattr(self, '_tree_completion', None),
+            'force_cost_session_ids': self._completed_cost_session_ids(session),
             'provider': self.provider.value,
             'run_id': run_id,
             'session_id': session_id,
@@ -3728,9 +3743,6 @@ class BaseSessionCompute:
         with timed_sync_phase('compute_metadata_source', rows=len(item_updates)):
             Session.objects.filter(pk=session_id).update(items_cost_computed_through_at=None)
             session.items_cost_computed_through_at = None
-            from twicc.providers.contribution_revisions import record_own_cost_invalidation
-
-            record_own_cost_invalidation(session.id, session.storage_incarnation)
             BaseSessionCompute.apply_item_updates(item_fields, item_updates)
             BaseSessionCompute.apply_content_overrides(content_overrides)
         after_items = item_contributions(changed)
@@ -3816,9 +3828,6 @@ class BaseSessionCompute:
             session.refresh_from_db()
         Session.objects.filter(pk=session_id).update(items_cost_computed_through_at=None)
         session.items_cost_computed_through_at = None
-        from twicc.providers.contribution_revisions import record_own_cost_invalidation
-
-        record_own_cost_invalidation(session.id, session.storage_incarnation)
         # 1. Apply item updates (only items that changed). The DB writer
         # pre-applies large batches in slices (``apply_session_items_chunk``)
         # and hands over an emptied list; small ones land here directly.
@@ -4088,7 +4097,9 @@ class BaseSessionCompute:
         if root_completion:
             from twicc.providers.statistics_queue import append_roots
 
-            append_roots((tree.root_id,))
+            append_roots((tree.root_id,), force_cost_session_ids=msg.get(
+                'force_cost_session_ids', [session_id],
+            ))
 
         with timed_sync_phase('compute_final_plan_docs'):
             # 7bis. Fold subagent-detected plan docs into the top-level ancestor

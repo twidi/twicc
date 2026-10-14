@@ -252,6 +252,7 @@ class ComputeApplied(NamedTuple):
     outcome: Literal["applied", "superseded", "missing", "failed"]
     error: str | None = None
     run_id: int | None = None
+    completed_root_id: str | None = None
 
 
 # =============================================================================
@@ -2705,7 +2706,13 @@ async def _complete_compute_result(msg, result, state, received_at, apply_starte
         line_count, len(msg.get('history_facts', [])),
     )
     if state.applied_queue is not None:
-        state.applied_queue.put_nowait(ComputeApplied(msg["session_id"], result.outcome, run_id=state.run_id))
+        completed_root_id = None
+        if result.outcome == "applied" and msg.get('force_cost_session_ids'):
+            context = msg.get('tree_completion')
+            completed_root_id = context['root_id'] if context else msg['session_id']
+        state.applied_queue.put_nowait(ComputeApplied(
+            msg["session_id"], result.outcome, run_id=state.run_id, completed_root_id=completed_root_id,
+        ))
     if result.outcome != "applied":
         return
 

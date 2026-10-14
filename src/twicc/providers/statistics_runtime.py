@@ -94,7 +94,7 @@ class StatisticsConsumer:
 
     async def run_batch(self, batch: QueueBatch) -> None:
         roots = tuple(dict.fromkeys(batch.root_ids))
-        tree = await self._read(prepare.prepare_tree_costs, roots)
+        tree = await self._read(prepare.prepare_tree_costs, roots, batch.force_cost_session_ids)
         await publication.publish_tree_costs(tree)
         for project in dict.fromkeys(tree.project_ids):
             value = await self._read(prepare.prepare_project_cost, project)

@@ -7,10 +7,7 @@ import pytest
 
 from twicc.core.models import Project, Session, DailyActivity
 from twicc.providers import statistics_publication as publication
-from twicc.providers.contribution_revisions import (
-    DailyKey, SourceKey, observe_own_cost_invalidations, restrict_own_cost_observation,
-    record_own_cost_invalidation,
-)
+from twicc.providers.contribution_revisions import DailyKey
 from twicc.providers.statistics_prepare import PreparedOwnCost, PreparedTreeCosts, SessionCosts, ActivityValues
 
 pytest_plugins = ['tests.test_compute_continuation']
@@ -29,9 +26,7 @@ def writer(monkeypatch):
 
 
 def prepared(session):
-    observation = restrict_own_cost_observation(observe_own_cost_invalidations(),
-        SourceKey(session.id, session.storage_incarnation))
-    own = PreparedOwnCost(session.id, datetime(2026, 1, 1, tzinfo=UTC), Decimal('1.234567'), observation)
+    own = PreparedOwnCost(session.id, datetime(2026, 1, 1, tzinfo=UTC), Decimal('1.234567'), session.storage_incarnation)
     return PreparedTreeCosts((own,), (SessionCosts(session.id, own.self_cost, None, own.self_cost, session.storage_incarnation),), (), ())
 
 
@@ -51,18 +46,6 @@ def test_exact_replacement_replay(writer):
     assert session.items_cost_computed_through_at == values.own_updates[0].observed_at
     assert DailyActivity.objects.get().user_message_count == 2
 
-
-def test_invalidated_before_publication_never_sets_marker(writer):
-    from django.db import transaction
-    project = Project.objects.create(id='project')
-    session = Session.objects.create(id='session', project=project, storage_incarnation='original')
-    values = prepared(session)
-    with transaction.atomic():
-        record_own_cost_invalidation(session.id, session.storage_incarnation)
-    with pytest.raises(publication.BackgroundInvalidated):
-        asyncio.run(publication.publish_tree_costs(values))
-    session.refresh_from_db()
-    assert session.items_cost_computed_through_at is None
 
 
 def test_bounded_slices_yield_and_revalidate(writer, monkeypatch):
@@ -104,7 +87,7 @@ def test_cached_source_identity_change_rejects_replacement(writer):
     assert session.total_cost is None
 
 
-def test_invalidation_between_slices_rejects_remaining_rows(writer, monkeypatch):
+def test_background_marker_reset_between_slices_does_not_abort(writer, monkeypatch):
     from django.db import transaction
     project = Project.objects.create(id='project')
     sessions = [Session(id=str(index), file_path=str(index), project=project, storage_incarnation=str(index)) for index in range(257)]
@@ -122,16 +105,14 @@ def test_invalidation_between_slices_rejects_remaining_rows(writer, monkeypatch)
             def invalidate():
                 with transaction.atomic():
                     Session.objects.filter(pk=sessions[0].id).update(items_cost_computed_through_at=None)
-                    record_own_cost_invalidation(sessions[0].id, sessions[0].storage_incarnation)
             await asyncio.to_thread(invalidate)
         return result
     monkeypatch.setattr(publication, '_publish', admitted)
-    with pytest.raises(publication.BackgroundInvalidated):
-        asyncio.run(publication.publish_tree_costs(tree))
+    asyncio.run(publication.publish_tree_costs(tree))
     sessions[0].refresh_from_db()
     sessions[-1].refresh_from_db()
     assert sessions[0].items_cost_computed_through_at is None
-    assert sessions[-1].items_cost_computed_through_at is None
+    assert sessions[-1].items_cost_computed_through_at == tree.own_updates[-1].observed_at
 
 
 def test_real_writer_prefers_waiting_foreground_and_uses_worker(monkeypatch, wal_runtime):
@@ -192,23 +173,6 @@ def test_remaining_replacements_are_exact(writer):
     assert workflow.cost == Decimal('4.25')
     assert workflow.phases_cost == {'phase': 4.25}
 
-
-def test_slice_checks_observations_with_one_filesystem_identity_lookup(writer, monkeypatch):
-    from twicc.providers import contribution_revisions
-    project = Project.objects.create(id='project')
-    sessions = [Session.objects.create(id=str(i), file_path=str(i), project=project,
-        storage_incarnation=str(i)) for i in range(3)]
-    values = [prepared(session) for session in sessions]
-    tree = PreparedTreeCosts(tuple(value.own_updates[0] for value in values),
-        tuple(value.session_costs[0] for value in values), (), ())
-    calls = []
-    original = contribution_revisions._identity
-    def identity():
-        calls.append(True)
-        return original()
-    monkeypatch.setattr(contribution_revisions, '_identity', identity)
-    asyncio.run(publication.publish_tree_costs(tree))
-    assert len(calls) == 1
 
 
 def test_real_two_slice_publication_admits_foreground_between_slices(monkeypatch, wal_runtime):

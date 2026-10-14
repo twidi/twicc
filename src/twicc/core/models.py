@@ -2254,3 +2254,4 @@ class StatisticsQueueEntry(models.Model):
 
     id = models.BigAutoField(primary_key=True)
     root_session_id = models.CharField(max_length=255)
+    force_cost_session_ids = models.JSONField(default=list, null=True)
