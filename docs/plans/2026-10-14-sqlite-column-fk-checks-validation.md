@@ -36,6 +36,7 @@ The dedicated backend eliminates scans but retains metadata-proof overhead and r
 These small synthetic databases do not establish a universal total-time speedup or production timings.
 DevCTL background compute remains active elsewhere and can affect timings; no server action occurs for this validation.
 All final databases retain valid FK state and expected row counts; temporary databases are deleted.
+The benchmark script and raw outputs are temporary validation artifacts; they are removed after review.
 
 ## Checks
 
