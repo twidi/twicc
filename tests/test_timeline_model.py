@@ -21,7 +21,7 @@ def test_started_of_pairs_each_ended_kind_with_a_started_kind_that_it_repeats():
 
 
 def test_inherit_started_fields_fills_only_what_the_caller_left_out():
-    started = {"provider": "codex", "cause": "resume", "twicc_pid": 7, "hybrid": True, "via": "cli"}
+    started = {"provider": "codex", "cause": "resume", "twicc_pid": 7, "hybrid": True}
     merged = inherit_started_fields("process.ended", {"error": "boom", "provider": "claude_code"}, started)
     assert merged == {"error": "boom", "provider": "claude_code", "cause": "resume", "twicc_pid": 7, "hybrid": True}
     assert inherit_started_fields("process.ended", {"error": "boom"}, None) == {"error": "boom"}
@@ -58,10 +58,12 @@ def test_validate_data_rejects_payload_on_payloadless_kind():
         validate_data("turn.started", {"x": 1})
 
 
-def test_validate_data_allows_the_reserved_via_key_on_every_kind():
-    assert validate_data("turn.started", {"via": "cli"}) == {"via": "cli"}
+def test_validate_data_no_longer_accepts_a_data_via_key():
+    # The origin lives in the TimelineEvent columns now (design 2026-10-14, section 8, decision D1).
     with pytest.raises(ValueError):
-        validate_data("turn.started", {"via": "carrier-pigeon"})
+        validate_data("turn.started", {"via": "cli"})
+    with pytest.raises(ValueError):
+        validate_data("title.changed", {"source": "user", "new": "x", "via": "ui"})
 
 
 @pytest.mark.django_db

@@ -2330,6 +2330,13 @@ class TimelineEvent(models.Model):
     recorded_at = models.DateTimeField(auto_now_add=True)
     precision = models.CharField(max_length=10, choices=TimelinePrecision.choices, default=TimelinePrecision.EXACT)
     actor = models.CharField(max_length=10, choices=TimelineActor.choices)
+    # Origin of the request that caused the event (design 2026-10-14-timeline-actor-origin). All NULL for
+    # an automatic or not-request-caused event and for every row written before this change. Plain
+    # columns: ``actor_ref`` is not a foreign key (the referenced token or connection may be deleted),
+    # ``actor_name`` is a snapshot. The widths mirror ``twicc.request_origin``; a test pins them.
+    via = models.CharField(max_length=20, null=True, blank=True)
+    actor_ref = models.CharField(max_length=255, null=True, blank=True)
+    actor_name = models.CharField(max_length=80, null=True, blank=True)
     reason = models.CharField(max_length=30, blank=True, default="")
     caused_by = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="effects")
     data = models.JSONField(default=dict, blank=True)

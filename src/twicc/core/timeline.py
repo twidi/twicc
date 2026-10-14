@@ -13,9 +13,6 @@ from twicc.core.models import TimelineKind
 #: Version of the payload shapes below. Bump it when a kind's payload changes shape (design §3).
 SCHEMA_VERSION = 1
 
-#: Entry surfaces accepted in the reserved ``data["via"]`` key (design §3, ``actor``).
-VIA_VALUES = frozenset({"ui", "cli", "mcp"})
-
 
 class SessionCreatedData(NamedTuple):
     origin: str  # "twicc" | "external" | "sync"
@@ -94,7 +91,7 @@ class BackendEndedData(NamedTuple):
     machine_restarted: bool | None = None
 
 
-#: ``None`` means "no payload allowed" (only the reserved ``via`` key).
+#: ``None`` means "no payload allowed".
 PAYLOAD_TYPES: dict[str, type | None] = {
     TimelineKind.SESSION_CREATED: SessionCreatedData,
     TimelineKind.TITLE_CHANGED: TitleChangedData,
@@ -136,8 +133,7 @@ def inherit_started_fields(kind: str, data: dict | None, started_data: dict | No
     ``started_data`` (the data of the OPEN ``started`` row: the caller found no
     newer ``ended`` row), when that row has it. A caller-provided field wins, even
     when it is ``None``. Without an open ``started`` row (``started_data`` is
-    ``None``) nothing is copied. The reserved ``via`` key
-    is never copied. Pure: no validation, see :func:`validate_data`.
+    ``None``) nothing is copied. Pure: no validation, see :func:`validate_data`.
     """
     merged = dict(data or {})
     if not started_data:
@@ -151,32 +147,26 @@ def inherit_started_fields(kind: str, data: dict | None, started_data: dict | No
 def validate_data(kind: str, data: dict | None) -> dict:
     """Return the validated payload of ``kind``, defaults filled in.
 
-    Raises ``ValueError`` on an unknown kind, an unknown or missing key, or a
-    bad ``via``. The reserved ``via`` key is accepted on every kind.
+    Raises ``ValueError`` on an unknown kind or an unknown or missing key. The origin of an event is
+    not part of the payload (it lives in the ``via`` / ``actor_ref`` / ``actor_name`` columns), so a
+    ``via`` key is an unknown key like any other.
     """
     try:
         payload_type = PAYLOAD_TYPES[kind]
     except KeyError:
         raise ValueError(f"unknown timeline kind {kind!r}") from None
     data = dict(data or {})
-    via = data.pop("via", None)
-    if via is not None and via not in VIA_VALUES:
-        raise ValueError(f"invalid via {via!r}")
     if payload_type is None:
         if data:
             raise ValueError(f"{kind} takes no payload, got {sorted(data)}")
-        result = {}
-    else:
-        unknown = set(data) - set(payload_type._fields)
-        if unknown:
-            raise ValueError(f"{kind}: unknown payload keys {sorted(unknown)}")
-        try:
-            result = payload_type(**data)._asdict()
-        except TypeError as exc:
-            raise ValueError(f"{kind}: {exc}") from exc
-    if via is not None:
-        result["via"] = via
-    return result
+        return {}
+    unknown = set(data) - set(payload_type._fields)
+    if unknown:
+        raise ValueError(f"{kind}: unknown payload keys {sorted(unknown)}")
+    try:
+        return payload_type(**data)._asdict()
+    except TypeError as exc:
+        raise ValueError(f"{kind}: {exc}") from exc
 
 
 class EventSpec(NamedTuple):

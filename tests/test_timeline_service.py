@@ -45,8 +45,10 @@ def test_dedupe_key_makes_a_second_write_a_noop(project):
 def test_a_failing_insert_does_not_poison_the_callers_transaction(project):
     with transaction.atomic():
         Project.objects.create(id="-tl-a", directory="/tmp/a")
-        # actor=None violates NOT NULL: the INSERT fails at SQL level.
-        assert record_event_sync(TimelineKind.TURN_STARTED, session_id="s1", actor=None) is None
+        # precision=None violates NOT NULL: the INSERT fails at SQL level.
+        assert record_event_sync(
+            TimelineKind.TURN_STARTED, session_id="s1", actor="system", precision=None,
+        ) is None
         Project.objects.create(id="-tl-b", directory="/tmp/b")
     assert Project.objects.filter(id__in=["-tl-a", "-tl-b"]).count() == 2
 

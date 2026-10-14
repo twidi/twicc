@@ -22,8 +22,33 @@ from twicc.core.models import (
 )
 from twicc.core.timeline import STARTED_OF, inherit_started_fields, validate_data
 from twicc.providers.db_writer import run_under_db_write_lock
+from twicc.request_origin import (
+    ACTOR_NAME_MAX_LENGTH, ACTOR_REF_MAX_LENGTH, VIA_VALUES, RequestOrigin, resolve_event_origin,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _truncate(value, limit: int) -> str | None:
+    return None if value is None else str(value)[:limit]
+
+
+def origin_columns(resolved: RequestOrigin) -> dict:
+    """The four origin columns of a row (design section 3).
+
+    An invalid ``via`` becomes NULL and the other three values are kept (O35); ``actor_ref`` and
+    ``actor_name`` are cut to their column width, never rejected (O24).
+    """
+    via = resolved.via
+    if via is not None and via not in VIA_VALUES:
+        logger.warning("Timeline event: invalid via %r stored as NULL", via)
+        via = None
+    return {
+        "actor": resolved.actor,
+        "via": via,
+        "actor_ref": _truncate(resolved.actor_ref, ACTOR_REF_MAX_LENGTH),
+        "actor_name": _truncate(resolved.actor_name, ACTOR_NAME_MAX_LENGTH),
+    }
 
 
 def record_event_sync(
@@ -33,7 +58,8 @@ def record_event_sync(
     project_id: str | None = None,
     occurred_at=None,
     precision: str = TimelinePrecision.EXACT,
-    actor: str,
+    actor: str | None = None,
+    origin: RequestOrigin | None = None,
     reason: str = "",
     caused_by: TimelineEvent | int | None = None,
     data: dict | None = None,
@@ -41,12 +67,19 @@ def record_event_sync(
 ) -> TimelineEvent | None:
     """Write one event. Returns the row, or ``None`` on failure or dedupe hit.
 
+    Who caused the event (design section 5, *Precedence*): a captured full ``origin`` keeps its four
+    fields; else an explicit ``actor`` (system and non-request writers) gives NULL origin fields; else
+    the write is request-caused and takes the carrier, falling back to the default ``user`` / ``ui``.
+    A system writer MUST pass ``actor=`` explicitly.
+
     The insert runs in its own savepoint: when the caller already holds a
     transaction, a failed insert rolls back only this row. For an ``ended`` kind
     listed in ``STARTED_OF``, the payload fields the caller did not provide are
-    copied from the open ``started`` row of the same session (design §3).
+    copied from the open ``started`` row of the same session (design §3);
+    the origin fields are never copied.
     """
     try:
+        resolved = resolve_event_origin(actor, origin)
         if kind in STARTED_OF:
             data = inherit_started_fields(kind, data, _open_started_data(session_id, kind))
         payload = validate_data(kind, data)
@@ -63,11 +96,11 @@ def record_event_sync(
                 kind=kind,
                 occurred_at=occurred_at or timezone.now(),
                 precision=precision,
-                actor=actor,
                 reason=reason,
                 caused_by_id=caused_by_id,
                 data=payload,
                 dedupe_key=dedupe_key,
+                **origin_columns(resolved),
             )
     except IntegrityError:
         if dedupe_key is not None:
@@ -81,7 +114,11 @@ def record_event_sync(
 
 
 class EventSpec(NamedTuple):
-    """One event of a batch given to :func:`record_events_bulk_sync` (same fields as ``record_event_sync``)."""
+    """One event of a batch given to :func:`record_events_bulk_sync` (same fields as ``record_event_sync``).
+
+    ``actor`` defaults to ``system`` (NULL origin fields). A request-caused batch passes ``origin=``
+    (resolved once by the caller, so every row carries the same origin).
+    """
 
     kind: str
     session_id: str | None = None
@@ -93,6 +130,7 @@ class EventSpec(NamedTuple):
     caused_by_id: int | None = None
     data: dict | None = None
     dedupe_key: str | None = None
+    origin: RequestOrigin | None = None
 
 
 def _conflict_clause() -> str:
@@ -161,33 +199,34 @@ def record_events_bulk_sync(specs: list[EventSpec]) -> int:
         return 0
     try:
         now = timezone.now()
-        built: list[tuple[EventSpec, TimelineEvent]] = []
+        built: list[tuple[EventSpec, TimelineEvent, RequestOrigin]] = []
         for spec in specs:
             try:
+                resolved = resolve_event_origin(spec.actor, spec.origin)
                 data = spec.data
                 if spec.kind in STARTED_OF:
                     data = inherit_started_fields(spec.kind, data, _open_started_data(spec.session_id, spec.kind))
                 built.append((spec, TimelineEvent(
                     session_id=spec.session_id, project_id=spec.project_id, kind=spec.kind,
-                    occurred_at=spec.occurred_at or now, precision=spec.precision, actor=spec.actor,
+                    occurred_at=spec.occurred_at or now, precision=spec.precision,
                     reason=spec.reason, caused_by_id=spec.caused_by_id, data=validate_data(spec.kind, data),
-                    dedupe_key=spec.dedupe_key,
-                )))
+                    dedupe_key=spec.dedupe_key, **origin_columns(resolved),
+                ), resolved))
             except Exception:
                 logger.exception("Timeline event %s could not be built for session %s", spec.kind, spec.session_id)
         if not built:
             return 0
-        rows = [row for _, row in built]
+        rows = [row for _, row, _ in built]
         try:
             with transaction.atomic():
                 return insert_event_rows(rows)
         except Exception:
             logger.exception("Timeline batch insert failed (%s rows); retrying row by row", len(rows))
             return sum(
-                1 for spec, _ in built
+                1 for spec, _, resolved in built
                 if record_event_sync(
                     spec.kind, session_id=spec.session_id, project_id=spec.project_id,
-                    occurred_at=spec.occurred_at or now, precision=spec.precision, actor=spec.actor,
+                    occurred_at=spec.occurred_at or now, precision=spec.precision, origin=resolved,
                     reason=spec.reason, caused_by=spec.caused_by_id, data=spec.data, dedupe_key=spec.dedupe_key,
                 ) is not None
             )
