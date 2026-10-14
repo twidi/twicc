@@ -31,6 +31,37 @@ def resolve_native_root(session_id: str) -> str:
         session_id = parent
 
 
+def resolve_native_roots(session_ids) -> dict[str, str]:
+    """Resolve an inventory with bulk ancestor reads; omit missing/cyclic paths."""
+    candidates = set(session_ids)
+    parents = {}
+    frontier = candidates
+    while frontier:
+        rows = dict(Session.objects.filter(pk__in=frontier).values_list('id', 'parent_session_id'))
+        parents.update(rows)
+        frontier = {parent for parent in rows.values() if parent is not None and parent not in parents}
+
+    resolved = {}
+    for session_id in sorted(candidates):
+        path = set()
+        cursor = session_id
+        while cursor not in resolved:
+            if cursor in path or cursor not in parents:
+                root = None
+                break
+            path.add(cursor)
+            parent = parents[cursor]
+            if parent is None:
+                root = cursor
+                break
+            cursor = parent
+        else:
+            root = resolved[cursor]
+        for member in path:
+            resolved[member] = root
+    return {sid: resolved[sid] for sid in candidates if resolved.get(sid) is not None}
+
+
 def load_native_tree(root_id: str) -> NativeTree:
     """Reload database membership and sort deepest known launcher children first."""
     if resolve_native_root(root_id) != root_id:

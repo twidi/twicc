@@ -34,7 +34,7 @@ def select_native_tree_source(
     """
     from twicc.core.models import Session
     from twicc.providers.compute_tree import (
-        NativeTreeError, load_native_tree, resolve_native_root, select_outdated_roots,
+        NativeTreeError, load_native_tree, resolve_native_roots, select_outdated_roots,
     )
 
     outstanding = set(outstanding)
@@ -42,16 +42,16 @@ def select_native_tree_source(
     forced = set(forced_source_ids)
     eligible = None if eligible_source_ids is None else set(eligible_source_ids)
     roots = list(select_outdated_roots(provider, compute_version))
-    active_roots = set()
-    for sid in outstanding | forced:
-        try:
-            root = resolve_native_root(sid)
-        except (NativeTreeError, Session.DoesNotExist):
-            continue
-        if root not in roots:
-            roots.append(root)
-        if sid in outstanding:
-            active_roots.add(root)
+    # Persisted stale inventory keeps a current-root repair eligible after its
+    # forced source finishes or the coordinator restarts. Resolve in bulk: an
+    # inventory may contain thousands of native members sharing a few roots.
+    source_roots = resolve_native_roots(outstanding | forced | (eligible or set()))
+    additional_roots = set(source_roots.values()) - set(roots)
+    if additional_roots:
+        roots.extend(Session.objects.filter(pk__in=additional_roots).order_by('-mtime', 'id').values_list(
+            'id', flat=True,
+        ))
+    active_roots = {source_roots[sid] for sid in outstanding if sid in source_roots}
     if active_roots:
         roots = [root for root in roots if root in active_roots]
     for root in roots:

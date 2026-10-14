@@ -136,6 +136,7 @@ class CodexRecoveryCompute:
         session = Session.objects.get(pk=session_id)
         result_queue.put(orjson.dumps({
             'type': 'session_complete', 'provider': 'codex', 'run_id': run_id,
+            'tree_completion': getattr(self, '_tree_completion', None),
             'session_id': session_id, 'observed_last_offset': session.last_offset,
             'observed_incarnation': session.storage_incarnation, 'observed_epoch': session.history_epoch,
             'observed_upper_line': session.last_line, 'history_facts': [],

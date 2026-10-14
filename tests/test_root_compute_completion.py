@@ -307,3 +307,105 @@ def test_final_root_validates_launcher_links_written_by_same_publication():
     root.refresh_from_db()
     assert root.compute_version is None
     assert not StatisticsQueueEntry.objects.exists()
+
+
+def test_persisted_outdated_member_keeps_current_root_eligible():
+    root, child = tree(Provider.CODEX)
+    Session.objects.filter(pk=root.id).update(compute_version=99)
+    # No in-memory forced intent survives this simulated fresh selection.
+    assert compute_selection.select_native_tree_source(
+        root.provider, 99, cutoff=200, eligible_source_ids={child.id},
+    ) == child.id
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('restart', [False, True])
+def test_codex_discovery_during_forced_rebuild_keeps_tree_eligible(recovery_runtime, monkeypatch, restart):
+    import asyncio
+    import sqlite3
+    from contextlib import closing
+    from twicc.providers import background_compute_task as background, db_writer
+    from twicc.providers.codex import background_compute as codex
+    from tests.test_compute_age_selection import clone_session
+    from tests.test_background_compute_recovery import versions
+
+    path, _ = recovery_runtime
+    with closing(sqlite3.connect(path)) as database:
+        database.execute("UPDATE core_session SET provider='codex', compute_version=123")
+        database.execute("UPDATE core_session SET parent_session_id='healthy', type='subagent' WHERE id='faulty'")
+        database.commit()
+    monkeypatch.setattr(codex, 'sync_to_async', background.sync_to_async)
+    monkeypatch.setattr(codex, 'load_project_directories', lambda: None)
+    monkeypatch.setattr(codex, 'load_project_git_roots', lambda: None)
+    monkeypatch.setattr(codex, 'broadcast_startup_progress', background.broadcast_startup_progress)
+    contexts = []
+    context = compute_selection.tree_completion_context
+    def record_context(sid, *args, **kwargs):
+        result = context(sid, *args, **kwargs)
+        contexts.append((sid, result))
+        return result
+    monkeypatch.setattr(compute_selection, 'tree_completion_context', record_context)
+
+    async def scenario():
+        db_writer.start_db_writer()
+        owners, tasks = [], []
+        prepared = []
+        def start(forced):
+            ctx = background.ComputeContext(Provider.CODEX, 123,
+                'tests.test_codex_compute_recovery:CodexRecoveryCompute')
+            owner = codex.CodexComputeCoordinator(ctx, asyncio.Event())
+            if forced:
+                owner._forced_rebuild.add('faulty')
+            async def prepare(candidate):
+                sid = candidate.session_id
+                prepared.append(sid)
+                if sid == 'faulty':
+                    # Discovery occurs after selection but before context capture.
+                    clone_session(path, 'late', 1, session_type='subagent')
+                    with closing(sqlite3.connect(path)) as database:
+                        database.execute("UPDATE core_session SET parent_session_id='healthy', compute_version=NULL WHERE id='late'")
+                        database.commit()
+                return codex.PreparedCandidate(sid, None, sid == 'faulty')
+            owner.prepare_candidate = prepare
+            if forced and restart:
+                applied = owner._handle_applied
+                async def stop_after_forced(signal):
+                    await applied(signal)
+                    if signal.session_id == 'faulty' and signal.outcome == 'applied':
+                        assert not owner._forced_rebuild
+                        ctx.stop_event.set()
+                owner._handle_applied = stop_after_forced
+            owners.append(owner)
+            task = asyncio.create_task(owner.run())
+            tasks.append(task)
+            return owner, task
+        try:
+            owner, task = start(True)
+            if restart:
+                await asyncio.wait_for(task, 5)
+                assert versions(path)['late'] is None
+                with closing(sqlite3.connect(path)) as database:
+                    assert database.execute('SELECT count(*) FROM core_statisticsqueueentry').fetchone()[0] == 0
+                owner, task = start(False)
+            async with asyncio.timeout(5):
+                while versions(path).get('late') != 123:
+                    if task.done():
+                        await task
+                    await asyncio.sleep(.01)
+            assert prepared == ['faulty', 'late']
+            assert contexts[0] == ('faulty', None)
+            assert contexts[-1][0] == 'late'
+            assert contexts[-1][1]['root_id'] == 'healthy'
+            assert versions(path)['healthy'] == 123
+            with closing(sqlite3.connect(path)) as database:
+                assert database.execute('SELECT root_session_id FROM core_statisticsqueueentry').fetchall() == [('healthy',)]
+            owner.ctx.stop_event.set()
+            await asyncio.wait_for(task, 3)
+        finally:
+            for owner, task in zip(owners, tasks):
+                owner.ctx.stop_event.set()
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                await background.retire_compute_run(owner.ctx)
+            await db_writer.stop_db_writer()
+    asyncio.run(scenario())

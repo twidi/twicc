@@ -97,3 +97,24 @@ def test_independent_spawned_root_ignores_outer_launcher(source):
     link('outer', 'spawned')
     assert resolve_native_root('spawned') == 'spawned'
     assert load_native_tree('spawned').ordered_source_ids == ('spawned',)
+
+
+def test_bulk_native_roots_reads_membership_by_frontier(source, django_assert_num_queries):
+    from twicc.providers import compute_tree
+    source('root')
+    for index in range(100):
+        source(f'child-{index}', parent='root')
+    ids = {f'child-{index}' for index in range(100)}
+    with django_assert_num_queries(2):
+        roots = compute_tree.resolve_native_roots(ids)
+    assert roots == {sid: 'root' for sid in ids}
+
+
+def test_bulk_native_roots_skips_cycles_and_missing_sources(source):
+    from twicc.providers import compute_tree
+    source('root')
+    source('valid', parent='root')
+    source('cycle-a')
+    source('cycle-b', parent='cycle-a')
+    Session.objects.filter(pk='cycle-a').update(parent_session_id='cycle-b')
+    assert compute_tree.resolve_native_roots({'valid', 'cycle-a', 'absent'}) == {'valid': 'root'}
