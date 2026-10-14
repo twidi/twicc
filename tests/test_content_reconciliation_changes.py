@@ -6,9 +6,7 @@ from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
-from tests.content_storage_helpers import content_row_factory as _content_row_factory
-
-content_row_factory = _content_row_factory
+from tests.content_storage_helpers import content_row_factory  # noqa: F401 -- imports the shared pytest fixture
 from tests.test_content_extraction import make_session, message
 from twicc.core.content_storage import extraction
 from twicc.core.content_storage.policy import compression_policy_version
@@ -29,7 +27,7 @@ def reconcile(owner):
 
 
 @pytest.mark.parametrize('attempt', [True, False])
-def test_new_conforming_contents_skip_reconciliation(content_row_factory, attempt, monkeypatch):
+def test_new_conforming_contents_skip_reconciliation(content_row_factory, attempt, monkeypatch):  # noqa: F811 -- fixture name
     owner = make_session(archived=True, created_at=timezone.now() - timedelta(days=60))
     row = content_row_factory('schema ' * 100, True, session_ids=[owner.id])
     policy = compression_policy_version('codex', row.dictionary_id)
@@ -56,7 +54,7 @@ def test_new_conforming_contents_skip_reconciliation(content_row_factory, attemp
     assert decode_calls == []
 
 
-def test_current_no_gain_is_not_retried(content_row_factory):
+def test_current_no_gain_is_not_retried(content_row_factory):  # noqa: F811 -- fixture name
     from tests.content_storage_helpers import _public_dictionary
     owner = make_session(archived=True, created_at=timezone.now() - timedelta(days=60))
     row = content_row_factory('x', False, session_ids=[owner.id])
@@ -70,7 +68,7 @@ def test_current_no_gain_is_not_retried(content_row_factory):
     assert not any('core_sessionitemcontent' in q['sql'] and '"payload"' in q['sql'] and 'SELECT' in q['sql'] and 'LENGTH(' not in q['sql'] for q in queries)
 
 
-def test_publication_validates_content_metadata_in_one_batch(content_row_factory):
+def test_publication_validates_content_metadata_in_one_batch(content_row_factory):  # noqa: F811 -- fixture name
     """Distinct unchanged contents do not add one writer query per payload."""
     owner = make_session(archived=True, created_at=timezone.now() - timedelta(days=60))
     rows = [content_row_factory(f'unchanged {line}' * 100, True, session_ids=[owner.id]) for line in range(8)]
@@ -97,7 +95,7 @@ def test_publication_validates_content_metadata_in_one_batch(content_row_factory
 
 
 @pytest.mark.parametrize('mutation', ['owners', 'epoch', 'codec', 'dictionary', 'missing'])
-def test_batched_publication_rejects_changed_content_evidence(content_row_factory, mutation):
+def test_batched_publication_rejects_changed_content_evidence(content_row_factory, mutation):  # noqa: F811 -- fixture name
     from tests.content_storage_helpers import _public_dictionary
     from twicc.core.content_storage.codec import encode_plain
     from twicc.core.models import Session
@@ -132,7 +130,7 @@ def test_batched_publication_rejects_changed_content_evidence(content_row_factor
         extraction.close_compute_application(operation)
 
 
-def test_hot_owner_added_after_preparation_rejects_compression(content_row_factory):
+def test_hot_owner_added_after_preparation_rejects_compression(content_row_factory):  # noqa: F811 -- fixture name
     owner = make_session(archived=True, created_at=timezone.now() - timedelta(days=60))
     row = content_row_factory('schema ' * 100, False, session_ids=[owner.id])
     SessionItem.objects.create(session=owner, line_num=1, content='', current_content=row)
@@ -151,7 +149,7 @@ def test_hot_owner_added_after_preparation_rejects_compression(content_row_facto
         extraction.close_compute_application(operation)
 
 
-def test_no_gain_metadata_action_does_not_write_payload(content_row_factory):
+def test_no_gain_metadata_action_does_not_write_payload(content_row_factory):  # noqa: F811 -- fixture name
     from tests.content_storage_helpers import _public_dictionary
     _public_dictionary('codex')
     owner = make_session(archived=True, created_at=timezone.now() - timedelta(days=60))
@@ -164,7 +162,7 @@ def test_no_gain_metadata_action_does_not_write_payload(content_row_factory):
     assert row.compression_no_gain is True
 
 
-def test_repeated_shared_ids_are_not_transcoded_again(content_row_factory):
+def test_repeated_shared_ids_are_not_transcoded_again(content_row_factory):  # noqa: F811 -- fixture name
     from tests.content_storage_helpers import _public_dictionary
     _public_dictionary('codex')
     owner = make_session(archived=True, created_at=timezone.now() - timedelta(days=60))
@@ -187,7 +185,7 @@ def test_repeated_shared_ids_are_not_transcoded_again(content_row_factory):
         extraction.close_compute_application(operation)
 
 
-def test_promotion_between_pages_is_not_hidden_by_visited_ids(content_row_factory):
+def test_promotion_between_pages_is_not_hidden_by_visited_ids(content_row_factory):  # noqa: F811 -- fixture name
     from twicc.core.content_storage.codec import encode_plain
     owner = make_session(archived=True, created_at=timezone.now() - timedelta(days=60))
     text = 'schema ' * 100
@@ -213,7 +211,7 @@ def test_promotion_between_pages_is_not_hidden_by_visited_ids(content_row_factor
         extraction.close_compute_application(operation)
 
 
-def test_maintenance_conforming_content_skips_payload(content_row_factory):
+def test_maintenance_conforming_content_skips_payload(content_row_factory):  # noqa: F811 -- fixture name
     from twicc.content_maintenance_task import prepare_compression_batch
     from twicc.providers.helpers import get_provider_helpers
     owner = make_session(archived=True, created_at=timezone.now() - timedelta(days=60),
@@ -228,7 +226,7 @@ def test_maintenance_conforming_content_skips_payload(content_row_factory):
                    and 'SELECT' in q['sql'] and 'LENGTH(' not in q['sql'] for q in queries)
 
 
-def test_rolled_back_publication_does_not_skip_representation_retry(content_row_factory):
+def test_rolled_back_publication_does_not_skip_representation_retry(content_row_factory):  # noqa: F811 -- fixture name
     """A rollback must not mark an uncommitted compression as visited."""
     from django.db import transaction
     from tests.content_storage_helpers import _public_dictionary

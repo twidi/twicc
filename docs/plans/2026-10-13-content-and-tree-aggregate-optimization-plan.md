@@ -358,14 +358,14 @@ assert duplicate_contribution_count == 0
 ```
 
 - [x] Run contention tests and verify they pass on the implementation. Use barriers/events rather than timing-sensitive sleeps for correctness assertions.
-- [ ] Run the complete backend suite: `TWICC_DATA_DIR=$PWD uv run pytest`. Run frontend tests only if serializer/frontend code changed; they are not planned here. Run `uvx ruff check <changed-python-files>`.
+- [x] Run the complete backend suite: `TWICC_DATA_DIR=$PWD uv run pytest`. Run frontend tests only if serializer/frontend code changed; they are not planned here. Run `uvx ruff check <changed-python-files>`.
 - [x] Audit every spec section against implemented tests and every contribution writer against the mutation coverage matrix. Check external CLI/front payload content remains at the existing field with no N+1 policy imposed globally.
 - [x] Use the proven devctl SQLite backup method (`source.backup(target, pages=-1)`, read-only source) to create a throwaway DB copy. Do not start DevCTL or apply branch migrations manually. Check source/target and resolved Django DB paths before any benchmark.
 - [x] Compare baseline and implementation from identical backup snapshots and dictionaries. Include hot/cold sessions, 32/64/256-item content batches, medium/large individual payloads, shared contents, no-gain rows, and the large 145,950/186,496-item sessions when available. Record dictionary queries, compression/decode calls, owner/payload writes, and preparation/publication phase times.
 - [x] Exercise foreground watcher/lifecycle writes during each benchmark. Record writer hold P50/P90/P95/P99/max, foreground wait distribution, event-loop heartbeat delay, source throughput, and whole-tree aggregate completion time. Separate first-read/cache effects from repeat samples.
 - [x] Keep 256/8 MiB as the initial content publication budgets. Evaluate 64 rows only after removing redundant work; select the smallest change justified by measured foreground holds and overall throughput. No new universal latency guarantee is inferred from a memory-only test.
 - [x] Treat any routinely observed background hold of one second or more as a failed result. Attribute oversized content, guard, SQL, and commit components; do not accept averages that conceal the failure. If a remaining representation write cannot meet foreground needs, stop for a revised bounded-publication design rather than silently changing schema or weakening integrity.
-- [ ] Review the whole branch independently, correct findings, and rerun affected checks. Commit the contention coverage and final evidence with `test(compute): verify bounded tree aggregate publication`.
+- [x] Review the whole branch independently, correct findings, and rerun affected checks. Commit the contention coverage and final evidence with `test(compute): verify bounded tree aggregate publication`.
 
 ## Spec coverage and completion handoff
 
@@ -400,7 +400,22 @@ These reviews validate the plan, not product correctness or performance. Impleme
 
 Affected verification: **1,186 passed in 198.65 seconds** after all production changes and the WAL replay fixture correction.
 Scoped Ruff reports `All checks passed!`; `git diff --check` passes.
-The complete backend suite and independent branch review remain controller-owned and pending at this commit.
+The controller's complete backend suite on `fb3d05eb` passes: **10,730 passed, 28 skipped, 3 warnings in 474.39 seconds**.
+Exit status is 0. This run precedes the final test-only fixture alias correction; production code remains unchanged.
+The final correction passes **15 reconciliation tests in 4.57 seconds**, scoped Ruff, and `git diff --check`.
+The complete suite does not run again on the final correction commit.
+The whole-branch review approves code with no Critical or Important findings and one Minor, M1.
+M1 is corrected by importing `content_row_factory` directly with narrow fixture lint exemptions.
+Target integration still requires independent scoped re-review of this final correction.
+
+The complete-suite warnings match the baseline; no new warning appears:
+
+- `tests/test_codex_sdk_wrappers.py::test_turn_forwards_auto_review`: unawaited `AsyncMockMixin._execute_mock_call`.
+- `tests/test_codex_sdk_wrappers.py::test_turn_forwards_fast_service_tier`: unawaited `AsyncMockMixin._execute_mock_call`.
+- `tests/test_shell_notice_codex.py::test_turn_openings_restart_the_delay`: unawaited `BaseAgent._notify_state_change`.
+
+Controller log: `.superpowers/sdd/2026-10-13-content-and-tree-aggregate-optimization-plan/final-tests.log`
+in `/home/twidi/dev/twicc-poc/.worktrees/feature-content-storage-compression`.
 The controller's earlier integration run on `9dd4df48` has 54 failed, 10,610 passed, 28 skipped, 37 errors, and 3 baseline warnings.
 The clean baseline has 10,688 passed, 28 skipped, and those same 3 warnings.
 
@@ -721,8 +736,9 @@ The giant aggregate maximum is 161.23 ms. These are measured workload results, n
   The 15.36 MB byte-budget cases split 32 items into two extraction and two reconciliation units.
   No measured routine hold justifies another budget or architecture change.
 
-The controller's independent review judges the unresolved foreground outlier and the source maximum regression.
-The final comprehensive suite remains controller-owned. The baseline/source comparator limitations remain explicit above.
+The independent review accepts the recorded foreground outlier and source maximum regression as explicit performance limits.
+The controller's complete suite passes on `fb3d05eb`; the final correction receives covering checks only.
+The baseline/source comparator limitations remain explicit above.
 
 
 ## Reproduction commands
@@ -751,5 +767,16 @@ cd /tmp/twicc-content-optimization-implementation-20261013 && uvx ruff check $(g
 cd /tmp/twicc-content-optimization-implementation-20261013 && git diff --check
 ```
 
-The controller runs the complete backend suite after independent review and integration.
+The controller runs the complete backend suite on `fb3d05eb` in the target worktree before the final alias correction.
+Command: `TWICC_DATA_DIR=$PWD uv run pytest` from `/home/twidi/dev/twicc-poc/.worktrees/feature-content-storage-compression`.
+Final correction checks:
+
+```bash
+cd /tmp/twicc-content-optimization-implementation-20261013 && TWICC_DATA_DIR=$PWD uv run pytest tests/test_content_reconciliation_changes.py
+cd /tmp/twicc-content-optimization-implementation-20261013 && uvx ruff check tests/test_content_reconciliation_changes.py
+cd /tmp/twicc-content-optimization-implementation-20261013 && git diff --check
+```
+
+Results: `15 passed in 4.57s`, `All checks passed!`, and empty whitespace-check output; each exits 0.
+Independent scoped re-review remains the final target-integration gate.
 No frontend files or serializer contracts change, so no frontend build or test run is required by this task.
