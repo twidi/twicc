@@ -39,6 +39,9 @@ def test_exact_reference_cache_and_recovery(report):
     assert report['final_state_matches_independent_reference'], report['oracle_errors']
     assert report['queue_rows_remaining'] == 0
     assert report['workloads']['cache400']['one_changed_own_reads'] == 1
+    for label in report['workloads']:
+        assert report['query_counts'][f'{label}:warm:own_updates'] == 0
+    assert report['query_counts']['shared_roots:own_updates'] == 0
     for label, size in [('small', 499), ('medium', 9753), ('large', 59004), ('very_large', 458192)]:
         assert report['workloads'][label]['source_rows'] == size
         assert report['workloads'][label]['first_ms'] > 0

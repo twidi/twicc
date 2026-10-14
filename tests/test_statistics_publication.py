@@ -5,7 +5,6 @@ from decimal import Decimal
 
 import pytest
 
-from tests.test_compute_continuation import wal_runtime  # noqa: F401
 from twicc.core.models import Project, Session, DailyActivity
 from twicc.providers import statistics_publication as publication
 from twicc.providers.contribution_revisions import (
@@ -13,6 +12,8 @@ from twicc.providers.contribution_revisions import (
     record_own_cost_invalidation,
 )
 from twicc.providers.statistics_prepare import PreparedOwnCost, PreparedTreeCosts, SessionCosts, ActivityValues
+
+pytest_plugins = ['tests.test_compute_continuation']
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

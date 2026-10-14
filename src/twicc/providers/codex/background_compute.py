@@ -1109,7 +1109,7 @@ class CodexComputeCoordinator:
                     forced = self._forced_rebuild | {
                         item.session_id for item in candidates if item.unavailable_reason is not None
                     }
-                    def select_source():
+                    def select_source(stale_ids=stale_ids, excluded=excluded, forced=forced):
                         invalid_roots = set()
                         selected = select_native_tree_source(
                             Provider.CODEX, self.ctx.compute_version,
@@ -1169,7 +1169,7 @@ class CodexComputeCoordinator:
                             continue
                         from twicc.providers.compute_selection import tree_completion_context
 
-                        context = await sync_to_async(lambda: tree_completion_context(
+                        context = await sync_to_async(lambda prepared=prepared, forced=forced: tree_completion_context(
                             prepared.session_id, self.ctx.compute_version,
                             forced_source_ids=forced,
                             outstanding=(self.submitted | self.computed_not_applied) - {prepared.session_id},

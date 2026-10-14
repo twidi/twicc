@@ -65,7 +65,7 @@ def test_startup_fixed_window_retry_and_idle(monkeypatch):
         collection = await gates.get()
         collection.set()
         await turns()
-        assert batches == [QueueBatch(3, tuple(['claude', 'codex', 'claude']))] * 2
+        assert batches == [QueueBatch(3, ('claude', 'codex', 'claude'))] * 2
         count = len(reads)
         await turns()
         assert len(reads) == count
@@ -124,7 +124,6 @@ def test_close_drains_reader_before_connection_close(monkeypatch, reader_fails):
             events.append(('read', threading.get_ident()))
             if reader_fails:
                 raise RuntimeError('reader fails during shutdown')
-            return None
 
         def close():
             events.append(('close', threading.get_ident()))

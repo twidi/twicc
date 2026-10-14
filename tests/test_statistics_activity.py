@@ -38,8 +38,8 @@ def item(session, day, cost=None):
 def test_days_and_daily_include_unrelated_trees_and_filters():
     from twicc.providers.contribution_revisions import DailyKey
     a, b, hidden = root('a'), root('b'), root('hidden', hidden=True)
-    item(a, 11); item(a, 12, Decimal('1.25')); item(b, 12, Decimal('2'))
-    item(hidden, 12, Decimal('3')); item(root('other', 'q', 'codex'), 12, Decimal('9'))
+    item(a, 11); item(a, 12, Decimal('1.25')); item(b, 12, Decimal(2))
+    item(hidden, 12, Decimal(3)); item(root('other', 'q', 'codex'), 12, Decimal(9))
     keys, _ = read('prepare_affected_days', ('a', 'a', 'hidden'))
     assert set(keys) == {DailyKey(p, 'claude_code', date(2026, 10, d)) for p in ('p', None) for d in (11, 12)}
     assert len(keys) == 4
@@ -77,7 +77,7 @@ def test_preparation_rejects_main_thread(name, args):
 def test_global_day_spans_projects_and_zero_conventions():
     from twicc.providers.contribution_revisions import DailyKey
     a, b = root('a'), root('b', project='q')
-    item(a, 12, Decimal('1')); item(b, 12, Decimal('2'))
+    item(a, 12, Decimal(1)); item(b, 12, Decimal(2))
     assert read('prepare_daily', DailyKey(None, a.provider, date(2026, 10, 12)))[0] == (2, 0, Decimal(3))
     assert read('prepare_weekly', DailyKey(None, a.provider, date(2026, 10, 12)))[0] == (0, 0, Decimal(0))
     assert read('prepare_project_cost', 'q')[0] is None

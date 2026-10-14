@@ -694,7 +694,7 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
                 if len(outstanding) < 2 and time.monotonic() >= next_selection_poll:
                     from twicc.providers.compute_selection import select_native_tree_source
 
-                    def select_source():
+                    def select_source(cutoff=cutoff, outstanding=outstanding, cooling=cooling):
                         invalid_roots = set()
                         candidate = select_native_tree_source(
                             ctx.provider, ctx.compute_version, cutoff=cutoff,
@@ -734,7 +734,7 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
                     awaiting_status[sid] = None
                     from twicc.providers.compute_selection import tree_completion_context
 
-                    context = await query(lambda: tree_completion_context(sid, ctx.compute_version))
+                    context = await query(lambda sid=sid: tree_completion_context(sid, ctx.compute_version))
                     ctx.command_queue.put_nowait({"session_id": sid, "tree_completion": context})
                     next_selection_poll = 0.0
                     continue
