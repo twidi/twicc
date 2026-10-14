@@ -108,7 +108,8 @@ def test_enqueue_during_empty_inspection_is_not_lost(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_close_drains_reader_before_connection_close(monkeypatch):
+@pytest.mark.parametrize("reader_fails", [False, True])
+def test_close_drains_reader_before_connection_close(monkeypatch, reader_fails):
     module = runtime()
 
     async def scenario():
@@ -121,6 +122,8 @@ def test_close_drains_reader_before_connection_close(monkeypatch):
             entered.set()
             release.wait(3)
             events.append(('read', threading.get_ident()))
+            if reader_fails:
+                raise RuntimeError('reader fails during shutdown')
             return None
 
         def close():
@@ -139,8 +142,13 @@ def test_close_drains_reader_before_connection_close(monkeypatch):
         await turns()
         assert not closing.done()
         release.set()
+        completed, _ = await asyncio.wait({closing}, timeout=1)
+        if not completed:
+            # Clean up the broken retry loop so this regression cannot hang pytest.
+            consumer._task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await closing
+        assert completed, 'Shutdown retries a failed reader after cancellation'
         assert [event[0] for event in events] == ['read', 'close']
         assert events[0][1] == events[1][1] != threading.get_ident()
 

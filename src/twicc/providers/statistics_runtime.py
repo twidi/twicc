@@ -35,6 +35,10 @@ async def _drain(future):
             await asyncio.shield(future)
         except asyncio.CancelledError:
             cancelled = True
+        except Exception:
+            # Inspect the completed future below. Pending caller cancellation
+            # takes precedence over a worker failure during drainage.
+            break
     if cancelled:
         # Retrieve exceptions even when cancellation takes precedence.
         if not future.cancelled():
