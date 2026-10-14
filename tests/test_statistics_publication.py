@@ -190,3 +190,116 @@ def test_remaining_replacements_are_exact(writer):
     assert project.total_cost == Decimal('4.25')
     assert workflow.cost == Decimal('4.25')
     assert workflow.phases_cost == {'phase': 4.25}
+
+
+def test_slice_checks_observations_with_one_filesystem_identity_lookup(writer, monkeypatch):
+    from twicc.providers import contribution_revisions
+    project = Project.objects.create(id='project')
+    sessions = [Session.objects.create(id=str(i), file_path=str(i), project=project,
+        storage_incarnation=str(i)) for i in range(3)]
+    values = [prepared(session) for session in sessions]
+    tree = PreparedTreeCosts(tuple(value.own_updates[0] for value in values),
+        tuple(value.session_costs[0] for value in values), (), ())
+    calls = []
+    original = contribution_revisions._identity
+    def identity():
+        calls.append(True)
+        return original()
+    monkeypatch.setattr(contribution_revisions, '_identity', identity)
+    asyncio.run(publication.publish_tree_costs(tree))
+    assert len(calls) == 1
+
+
+def test_real_two_slice_publication_admits_foreground_between_slices(monkeypatch, wal_runtime):
+    import threading
+    from twicc.providers import db_writer
+    session, _ = wal_runtime
+    entered, release = threading.Event(), threading.Event()
+    events = []
+    original = publication._session_slice
+    monkeypatch.setattr(publication, 'SESSION_PUBLICATION_LIMIT', 1)
+
+    def apply(*args):
+        result = original(*args)
+        events.append('background')
+        if events == ['background']:
+            entered.set()
+            assert release.wait(5)
+        return result
+    monkeypatch.setattr(publication, '_session_slice', apply)
+
+    async def scenario():
+        db_writer.start_db_writer()
+        try:
+            def create():
+                Session.objects.create(id='second', file_path='second', project_id=session.project_id,
+                    storage_incarnation='second')
+            await db_writer.publish_statistics_sync(create)
+            tree = PreparedTreeCosts((), (
+                SessionCosts(session.id, Decimal(1), None, Decimal(1), session.storage_incarnation),
+                SessionCosts('second', Decimal(2), None, Decimal(2), 'second')), (), ())
+            background = asyncio.create_task(publication.publish_tree_costs(tree))
+            assert await asyncio.to_thread(entered.wait, 3)
+            async def foreground():
+                events.append('foreground')
+            front = asyncio.create_task(db_writer.run_under_storage_write_lock(
+                foreground, priority=db_writer.WritePriority.FOREGROUND))
+            await asyncio.sleep(0)
+            release.set()
+            await asyncio.gather(background, front)
+        finally:
+            release.set()
+            await db_writer.stop_db_writer()
+    asyncio.run(scenario())
+    assert events == ['background', 'foreground', 'background']
+
+
+def test_cancelled_publication_keeps_writer_through_commit(wal_runtime):
+    import threading
+    import sqlite3
+    from django.db import connection, transaction
+    from twicc.providers import db_writer
+    session, path = wal_runtime
+    entered, release = threading.Event(), threading.Event()
+    events = []
+
+    def apply():
+        commit = connection.commit
+        def blocked_commit():
+            entered.set()
+            assert release.wait(5)
+            commit()
+            events.append('commit')
+        connection.commit = blocked_commit
+        try:
+            with transaction.atomic():
+                Session.objects.filter(pk=session.id).update(title='committed statistics')
+        finally:
+            connection.commit = commit
+
+    async def scenario():
+        db_writer.start_db_writer()
+        try:
+            background = asyncio.create_task(db_writer.publish_statistics_sync(apply))
+            assert await asyncio.to_thread(entered.wait, 3)
+            background.cancel()
+            async def foreground():
+                events.append('foreground')
+            front = asyncio.create_task(db_writer.run_under_storage_write_lock(
+                foreground, priority=db_writer.WritePriority.FOREGROUND))
+            await asyncio.sleep(0)
+            background.cancel()
+            await asyncio.sleep(0)
+            assert not background.done() and not front.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await background
+            await front
+        finally:
+            release.set()
+            await db_writer.stop_db_writer()
+    asyncio.run(scenario())
+    assert events == ['commit', 'foreground']
+    with sqlite3.connect(path) as database:
+        assert database.execute('SELECT title FROM core_session WHERE id=?', (session.id,)).fetchone() == (
+            'committed statistics',)

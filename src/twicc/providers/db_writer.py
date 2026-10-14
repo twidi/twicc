@@ -677,6 +677,9 @@ async def wait_db_writer_ready() -> None:
     await asyncio.shield(_db_writer_ready)
 
 
+_statistics_consumer = None
+
+
 def start_db_writer() -> None:
     """Create the shared queues and launch the permanent DB writer task.
 
@@ -790,6 +793,8 @@ async def stop_db_writer() -> None:
 
     global _removal_preparation_lock
 
+    global _statistics_consumer
+
     cancelled = False
     transport_errors = []
     try:
@@ -807,6 +812,12 @@ async def stop_db_writer() -> None:
             external_cancel_log=lambda: logger.error('Compute stream cleanup cancelled externally'),
             unexpected_exception_log=lambda error: logger.error('Compute stream cleanup failed: %s', error),
         )
+        if _statistics_consumer is not None:
+            try:
+                await _statistics_consumer.close()
+            except asyncio.CancelledError:
+                cancelled = True
+            _statistics_consumer = None
         if _db_writer_stop_event is not None:
             _db_writer_stop_event.set()
         if _db_writer_task is not None:
@@ -870,6 +881,7 @@ async def stop_db_writer() -> None:
         _pending_ingestion = None
         _removal_preparation_lock = None
         _tree_aggregates = None
+        _statistics_consumer = None
     if cancelled:
         # Our caller wanted us cancelled; honour that AFTER the writer task
         # has actually drained and we've cleared module state.
@@ -2580,6 +2592,7 @@ async def _settle_async_job(job, apply_fn, label: str) -> None:
 async def _db_writer_loop() -> None:
     """Drain normal shutdown; external cancellation closes every owned result."""
     from twicc.core.content_storage.dictionaries import preload_dictionaries
+    global _statistics_consumer
 
     try:
         try:
@@ -2606,6 +2619,10 @@ async def _db_writer_loop() -> None:
                     future.set_exception(error)
             raise
         _db_writer_ready.set_result(None)
+        if not _db_writer_stop_event.is_set():
+            from twicc.providers.statistics_runtime import StatisticsConsumer
+            _statistics_consumer = StatisticsConsumer()
+            _statistics_consumer.start()
         await _db_writer_loop_body()
     except asyncio.CancelledError:
         _db_writer_stop_event.set()
@@ -2649,6 +2666,8 @@ async def _db_writer_loop() -> None:
             task.result()
         raise
     finally:
+        if _statistics_consumer is not None:
+            await _statistics_consumer.close()
         await _close_compute_repair_recovery()
 
 

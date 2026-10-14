@@ -64,15 +64,23 @@ def observe_revisions(*, sources: Iterable[SourceKey] = (), roots: Iterable[Sour
 
 
 def revisions_match(observation: RevisionObservation) -> bool:
+    return observations_match((observation,))
+
+
+def observations_match(observations: Iterable[RevisionObservation]) -> bool:
+    """Validate a publication slice with one database identity lookup."""
     identity = _identity()
     with _lock:
-        return (observation.identity == identity and observation.generation == _generation
-                and all(_revisions.get((identity, domain, key), 0) == revision
-                        for domain, pairs in enumerate(observation[:5]) for key, revision in pairs)
-                and all(_revisions.get((identity, 5, key), 0) == revision
-                        for key, revision in observation.day_scopes)
-                and all(_revisions.get((identity, 6, key), 0) == revision
-                        for key, revision in observation.own_costs))
+        return all(
+            observation.identity == identity and observation.generation == _generation
+            and all(_revisions.get((identity, domain, key), 0) == revision
+                    for domain, pairs in enumerate(observation[:5]) for key, revision in pairs)
+            and all(_revisions.get((identity, 5, key), 0) == revision
+                    for key, revision in observation.day_scopes)
+            and all(_revisions.get((identity, 6, key), 0) == revision
+                    for key, revision in observation.own_costs)
+            for observation in observations
+        )
 
 
 def record_contribution_commit(*, sources: Iterable[SourceKey] = (), roots: Iterable[SourceKey] = (),
