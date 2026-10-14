@@ -26,6 +26,10 @@ M147 = ("core", "0147_session_history_fact")
 M148 = ("core", "0148_live_contribution_indexes")
 M149 = ("core", "0149_remove_redundant_message_index")
 SQUASH = ("core", "0148_live_contribution_indexes_squashed_0149_remove_redundant_message_index")
+M157 = ("core", "0157_compute_aggregate_repair")
+M158 = ("core", "0158_statistics_queue")
+M159 = ("core", "0159_remove_compute_aggregate_repair")
+M160 = ("core", "0160_statistics_queue_force_cost_sessions")
 
 
 def disposable_config(path, standard):
@@ -73,6 +77,15 @@ def migrated_145(tmp_path_factory, django_db_blocker):
         MigrationExecutor(db).migrate([M145])
         records = MigrationRecorder(db).applied_migrations()
         assert M145 in records and M146 not in records
+    return path
+
+
+@pytest.fixture(scope="module")
+def migrated_157(tmp_path_factory, django_db_blocker, migrated_145):
+    path = tmp_path_factory.mktemp("migrated_157") / "template.sqlite3"
+    shutil.copyfile(migrated_145, path)
+    with default_alias_database(path, django_db_blocker) as db:
+        MigrationExecutor(db).migrate([M157])
     return path
 
 
@@ -454,3 +467,56 @@ def test_populated_145_upgrade_146_skips_unrelated_checks(disposable_db, migrate
         assert sum(sql.startswith('ALTER TABLE "new__') for sql in statements) == 3
         assert db.connection.execute("SELECT count(*) FROM core_sessionitem").fetchone() == (10,)
         assert M146 in MigrationRecorder(db).applied_migrations()
+
+
+@pytest.mark.parametrize("standard", [False, True], ids=["dedicated", "standard"])
+def test_actual_158_to_160_preserve_populated_data(disposable_db, migrated_157, standard):
+    with disposable_db(standard=standard, template=migrated_157) as db:
+        executor = MigrationExecutor(db)
+        state = executor.loader.project_state([M157])
+        populate_items(db, state)
+        before_items = db.connection.execute("SELECT * FROM core_sessionitem ORDER BY id").fetchall()
+        before_sessions = db.connection.execute("SELECT * FROM core_session ORDER BY id").fetchall()
+        before_columns = [row[1] for row in db.connection.execute('PRAGMA table_info("core_session")')]
+        for target in (M158, M159, M160):
+            migration = executor.loader.get_migration(*target)
+            with trace(db) as statements:
+                state = executor.apply_migration(state, migration)
+            assert check_sql(statements) == (["PRAGMA foreign_key_check"] if standard else [])
+            assert db.connection.execute("PRAGMA foreign_keys").fetchone() == (1,)
+            assert target in MigrationRecorder(db).applied_migrations()
+            if target == M158:
+                assert db.connection.execute(
+                    "SELECT items_cost_computed_through_at FROM core_session"
+                ).fetchall() == [(None,)]
+                Queue = state.apps.get_model("core", "StatisticsQueueEntry")
+                Queue.objects.using(db.alias).bulk_create([
+                    Queue(root_session_id="replay-session"), Queue(root_session_id="retained-queue-entry"),
+                ])
+                before_queue = db.connection.execute(
+                    "SELECT id, root_session_id FROM core_statisticsqueueentry ORDER BY id"
+                ).fetchall()
+            if target == M160:
+                # The JSON default forces Django's populated-table rebuild.
+                assert any(sql.startswith('INSERT INTO "new__core_statisticsqueueentry"') for sql in statements)
+        assert db.connection.execute("SELECT * FROM core_sessionitem ORDER BY id").fetchall() == before_items
+        retained_columns = ", ".join(f'"{column}"' for column in before_columns)
+        assert db.connection.execute(f"SELECT {retained_columns} FROM core_session ORDER BY id").fetchall() == before_sessions
+        assert db.connection.execute(
+            "SELECT id, root_session_id FROM core_statisticsqueueentry ORDER BY id"
+        ).fetchall() == before_queue
+        assert db.connection.execute(
+            "SELECT force_cost_session_ids FROM core_statisticsqueueentry ORDER BY id"
+        ).fetchall() == [("[]",), ("[]",)]
+        assert "core_computeaggregaterepair" not in db.introspection.table_names()
+        session_columns = {row[1]: row for row in db.connection.execute('PRAGMA table_info("core_session")')}
+        assert session_columns["items_cost_computed_through_at"][2:5] == ("datetime", 0, None)
+        columns = {row[1]: row for row in db.connection.execute('PRAGMA table_info("core_statisticsqueueentry")')}
+        assert columns.keys() == {"id", "root_session_id", "force_cost_session_ids"}
+        assert columns["force_cost_session_ids"][2:5] == ("TEXT", 0, None)
+        queue_sql = db.connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE name = 'core_statisticsqueueentry'"
+        ).fetchone()[0]
+        assert 'JSON_VALID("force_cost_session_ids")' in queue_sql
+        # Final verification is outside every migration's traced check window.
+        assert db.connection.execute("PRAGMA foreign_key_check").fetchall() == []
