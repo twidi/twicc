@@ -17,10 +17,8 @@ from collections import Counter
 from enum import StrEnum
 from typing import NamedTuple
 
-import orjson
 from django.db import connection, transaction
 from django.db.models import Exists, OuterRef
-from django.utils import timezone
 
 from twicc.core.models import (
     Session, SessionType, TimelineActor, TimelineEvent, TimelineKind, TimelinePrecision,
@@ -117,20 +115,26 @@ def _insert_rows(rows: list[TimelineEvent]) -> None:
     so the session's transaction is rolled back as a whole.
 
     A raw ``executemany`` (measured about 2x faster than ``bulk_create`` on this path, which runs
-    once per session under the lock) with the same column order as ``TimelineEvent``."""
-    ops = connection.ops
-    recorded_at = ops.adapt_datetimefield_value(timezone.now())
+    once per session under the lock). Like ``apply_item_updates``, the SQL is built from the
+    model's metadata (table, columns) and each value goes through the model field's
+    ``get_db_prep_save``, so the stored bytes are exactly what ``Model.save()`` would write."""
+    fields = [f for f in TimelineEvent._meta.concrete_fields if not f.primary_key]
+    quote = connection.ops.quote_name
+    sql = (
+        f"INSERT INTO {quote(TimelineEvent._meta.db_table)} ({', '.join(quote(f.column) for f in fields)}) "
+        f"VALUES ({', '.join(['%s'] * len(fields))})"
+    )
     params = [
-        (r.session_id, r.project_id, r.kind, ops.adapt_datetimefield_value(r.occurred_at), recorded_at,
-         r.precision, r.actor, "", None, orjson.dumps(r.data).decode(), r.dedupe_key)
-        for r in rows
+        [
+            f.get_db_prep_save(
+                getattr(row, f.attname) if f.is_relation else f.pre_save(row, True), connection=connection,
+            )
+            for f in fields
+        ]
+        for row in rows
     ]
     with connection.cursor() as cursor:
-        cursor.executemany(
-            'INSERT INTO "core_timelineevent" ("session_id","project_id","kind","occurred_at","recorded_at",'
-            '"precision","actor","reason","caused_by_id","data","dedupe_key") VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
-            params,
-        )
+        cursor.executemany(sql, params)
 
 
 def backfill_session_sync(session_id: str) -> SessionOutcome:

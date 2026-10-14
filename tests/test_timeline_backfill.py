@@ -1,7 +1,7 @@
 from datetime import timedelta
 
 import pytest
-from django.db import connection
+from django.db import IntegrityError, connection, transaction
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
@@ -233,3 +233,53 @@ def test_a_second_run_has_no_candidate_and_takes_no_lock(project, monkeypatch):
     monkeypatch.setattr(timeline_backfill, "backfill_session_sync", lambda sid: calls.append(sid) or real(sid))
     run_all()
     assert calls == []
+
+
+def _parity_rows(session_id, project, when=None):
+    """Rows covering every kind of value: datetime, nested dict, empty reason, null cause, project."""
+    when = when or timezone.now() - timedelta(days=3)
+    return [
+        TimelineEvent(
+            session_id=session_id, project_id=project.id, kind="session.created", occurred_at=when,
+            precision="derived", actor="system", dedupe_key="backfill:session.created",
+            data={"origin": "sync", "settings": None, "nested": {"list": [1, "é", None], "flag": True}},
+        ),
+        TimelineEvent(
+            session_id=session_id, project_id=project.id, kind="pinned.started", occurred_at=when,
+            precision="estimated", actor="system", dedupe_key="backfill:pinned.started", data={"scope": "all"},
+        ),
+    ]
+
+
+def test_raw_insert_stores_exactly_what_the_orm_stores(project):
+    before = timezone.now()
+    when = timezone.now() - timedelta(days=3)
+    timeline_backfill._insert_rows(_parity_rows("raw", project, when))
+    TimelineEvent.objects.bulk_create(_parity_rows("orm", project, when))
+    fields = ("occurred_at", "precision", "actor", "reason", "caused_by_id", "data", "dedupe_key", "project_id", "kind")
+    for kind in ("session.created", "pinned.started"):
+        raw = TimelineEvent.objects.get(session_id="raw", kind=kind)
+        orm = TimelineEvent.objects.get(session_id="orm", kind=kind)
+        for name in fields:
+            assert getattr(raw, name) == getattr(orm, name), name
+        assert raw.reason == "" and raw.caused_by_id is None
+        assert raw.recorded_at is not None
+        assert before - timedelta(seconds=1) <= raw.recorded_at <= timezone.now() + timedelta(seconds=5)
+
+
+def test_raw_insert_sql_is_built_from_the_model_metadata(project):
+    columns = [f.column for f in TimelineEvent._meta.concrete_fields if not f.primary_key]
+    with CaptureQueriesContext(connection) as captured:
+        timeline_backfill._insert_rows(_parity_rows("meta", project))
+    sql = next(q["sql"] for q in captured.captured_queries if "INSERT" in q["sql"])
+    assert TimelineEvent._meta.db_table in sql
+    for column in columns:
+        assert f'"{column}"' in sql
+    assert '"id"' not in sql
+
+
+def test_raw_insert_propagates_a_duplicate(project):
+    timeline_backfill._insert_rows(_parity_rows("dup", project))
+    with pytest.raises(IntegrityError), transaction.atomic():
+        timeline_backfill._insert_rows(_parity_rows("dup", project))
+    assert TimelineEvent.objects.filter(session_id="dup").count() == 2
