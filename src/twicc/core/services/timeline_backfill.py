@@ -1,29 +1,33 @@
-"""Conservative backfill of the timeline for existing sessions (design §8).
+"""Conservative, incremental backfill of the timeline (design 2026-10-14).
 
-Writes only ``session.created`` and the flag intervals. Never a process row:
+A session is "processed" when it has a ``session.created`` timeline row. The
+backfill lists the candidate sessions once (ids only, newest ``mtime`` first),
+then handles them one at a time, each inside its own lock acquisition. It
+writes only ``session.created`` and the flag intervals, never a process row:
 ``Session.last_started_at`` / ``last_stopped_at`` are recomputed from the JSONL
-file and cannot prove that TwiCC ran a process. Idempotent: every row carries
-a ``backfill:`` dedupe key, and a subject that already has a row (live or
-backfilled) is skipped.
+file and cannot prove that TwiCC ran a process.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from enum import StrEnum
+from typing import NamedTuple
 
 from django.db import transaction
+from django.db.models import Exists, OuterRef
 
-from twicc.core.models import Session, SessionType, TimelineActor, TimelineEvent, TimelineKind, TimelinePrecision
-from twicc.core.services.session_timeline import record_event_sync
+from twicc.core.models import (
+    Session, SessionType, TimelineActor, TimelineEvent, TimelineKind, TimelinePrecision,
+)
 from twicc.core.services.timeline_boot import BACKFILL_PREFIX
+from twicc.core.timeline import validate_data
 from twicc.providers.db_writer import run_under_db_write_lock
 
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 200
-
-#: (flag attribute, started kind, subject prefix) — "set" means truthy / not null.
+#: (flag attribute, started kind, subject prefix) — a flag is "set" when truthy / not null.
 _FLAGS = (
     ("archived", TimelineKind.ARCHIVED_STARTED, "archived."),
     ("hidden", TimelineKind.HIDDEN_STARTED, "hidden."),
@@ -31,79 +35,121 @@ _FLAGS = (
     ("pinned", TimelineKind.PINNED_STARTED, "pinned."),
 )
 
+#: The only kinds read to know what a session already has: its creation and, per flag subject,
+#: both directions. Bounded by a handful of rows whatever the session's activity.
+_RELEVANT_KINDS = (
+    TimelineKind.SESSION_CREATED,
+    TimelineKind.ARCHIVED_STARTED, TimelineKind.ARCHIVED_ENDED,
+    TimelineKind.HIDDEN_STARTED, TimelineKind.HIDDEN_ENDED,
+    TimelineKind.MUTED_STARTED, TimelineKind.MUTED_ENDED,
+    TimelineKind.PINNED_STARTED, TimelineKind.PINNED_ENDED,
+)
 
-def _existing_kinds(session_ids: list[str]) -> dict[str, set[str]]:
-    existing: dict[str, set[str]] = {sid: set() for sid in session_ids}
-    for session_id, kind in TimelineEvent.objects.filter(session_id__in=session_ids).values_list("session_id", "kind"):
-        existing[session_id].add(kind)
-    return existing
+
+class BackfillStatus(StrEnum):
+    WRITTEN = "written"
+    SKIPPED = "skipped"
 
 
-def _backfill_session(session: Session, existing: set[str]) -> int:
-    written = 0
-    common = dict(session_id=session.id, project_id=session.project_id, actor=TimelineActor.SYSTEM)
-    if session.created_at is not None and TimelineKind.SESSION_CREATED not in existing:
-        row = record_event_sync(
-            TimelineKind.SESSION_CREATED, occurred_at=session.created_at, precision=TimelinePrecision.DERIVED,
-            dedupe_key=f"{BACKFILL_PREFIX}{TimelineKind.SESSION_CREATED}",
-            data={
-                "origin": "sync",
-                "provider": session.provider,
-                "settings": None,
-                "spawned_by": session.spawned_by_id,
-            },
-            **common,
-        )
-        written += row is not None
+class SessionOutcome(NamedTuple):
+    status: BackfillStatus
+    rows: int = 0
+
+
+def candidate_ids() -> list[str]:
+    """Ids of the sessions to process, newest ``mtime`` first (ties: id descending).
+
+    Sync, outside the lock, called once per run. A candidate is a normal session with
+    ``created_at`` set and no ``session.created`` row: the anti-join is a direct seek on the
+    ``(session_id, kind)`` index, whatever the number of timeline events.
+    """
+    has_created = TimelineEvent.objects.filter(session_id=OuterRef("id"), kind=TimelineKind.SESSION_CREATED)
+    return list(
+        Session.objects.filter(type=SessionType.SESSION, created_at__isnull=False)
+        .filter(~Exists(has_created))
+        .order_by("-mtime", "-id")
+        .values_list("id", flat=True)
+    )
+
+
+def _row(session: Session, kind: str, occurred_at, precision: str, data: dict | None) -> TimelineEvent:
+    return TimelineEvent(
+        session_id=session.id, project_id=session.project_id, kind=kind, occurred_at=occurred_at,
+        precision=precision, actor=TimelineActor.SYSTEM, data=validate_data(kind, data),
+        dedupe_key=f"{BACKFILL_PREFIX}{kind}",
+    )
+
+
+def _build_rows(session: Session, existing: set[str]) -> list[TimelineEvent]:
+    """The rows of one session. ``created_at`` is never empty here (candidates require it)."""
+    rows = [_row(
+        session, TimelineKind.SESSION_CREATED, session.created_at, TimelinePrecision.DERIVED,
+        {"origin": "sync", "provider": session.provider, "settings": None, "spawned_by": session.spawned_by_id},
+    )]
     flag_time = session.last_updated_at or session.created_at
-    if flag_time is None:
-        return written
     for attribute, kind, prefix in _FLAGS:
         value = getattr(session, attribute)
         if not value or any(known.startswith(prefix) for known in existing):
             continue
-        row = record_event_sync(
-            kind, occurred_at=flag_time, precision=TimelinePrecision.ESTIMATED,
-            dedupe_key=f"{BACKFILL_PREFIX}{kind}",
-            data={"scope": value} if attribute == "pinned" else None, **common,
-        )
-        written += row is not None
-    return written
+        rows.append(_row(
+            session, kind, flag_time, TimelinePrecision.ESTIMATED,
+            {"scope": value} if attribute == "pinned" else None,
+        ))
+    return rows
 
 
-def backfill_batch_sync(after_id: str, batch_size: int = BATCH_SIZE) -> tuple[str | None, int]:
-    """Backfill the next ``batch_size`` sessions after ``after_id`` (keyset by id).
-
-    Returns ``(last session id seen, rows written)``; ``(None, 0)`` when no
-    session is left. Sync: call under the DB write lock from a worker thread.
-    The ``existing`` snapshot is read under the same lock every live write
-    takes, so no live row can appear between the read and the inserts.
-    """
-    sessions = list(
-        Session.objects.filter(type=SessionType.SESSION, id__gt=after_id).order_by("id")[:batch_size]
+def _drop_present(session_id: str, rows: list[TimelineEvent]) -> list[TimelineEvent]:
+    """Drop the rows whose ``dedupe_key`` already exists: that counts as written, not as a failure."""
+    present = set(
+        TimelineEvent.objects.filter(session_id=session_id, dedupe_key__in=[r.dedupe_key for r in rows])
+        .values_list("dedupe_key", flat=True)
     )
-    if not sessions:
-        return None, 0
-    existing = _existing_kinds([s.id for s in sessions])
-    written = 0
+    return [row for row in rows if row.dedupe_key not in present]
+
+
+def _insert_rows(rows: list[TimelineEvent]) -> None:
+    """The backfill's own insert path: it validates before (see ``_row``), shares the duplicate
+    check with ``record_event_sync`` (``_drop_present``) and, unlike it, lets every error propagate
+    so the session's transaction is rolled back as a whole."""
+    TimelineEvent.objects.bulk_create(rows)
+
+
+def backfill_session_sync(session_id: str) -> SessionOutcome:
+    """Process one session, all-or-nothing, in one transaction. Raises on any write failure.
+
+    Sync: call under the DB write lock from a worker thread, one acquisition per session.
+    Everything is read fresh here, so a hook that wrote ``session.created`` since the id list was
+    read is seen and the session is skipped.
+    """
     with transaction.atomic():
-        for session in sessions:
-            written += _backfill_session(session, existing[session.id])
-    return sessions[-1].id, written
+        session = Session.objects.filter(
+            id=session_id, type=SessionType.SESSION, created_at__isnull=False,
+        ).first()
+        if session is None:
+            return SessionOutcome(BackfillStatus.SKIPPED)
+        existing = set(
+            TimelineEvent.objects.filter(session_id=session_id, kind__in=_RELEVANT_KINDS)
+            .values_list("kind", flat=True).distinct()
+        )
+        if TimelineKind.SESSION_CREATED in existing:
+            return SessionOutcome(BackfillStatus.SKIPPED)
+        rows = _drop_present(session_id, _build_rows(session, existing))
+        if rows:
+            _insert_rows(rows)
+        return SessionOutcome(BackfillStatus.WRITTEN, len(rows))
 
 
 async def run_timeline_backfill() -> None:
-    """Backfill every session, one locked batch at a time, yielding in between."""
-    after_id = ""
-    total = 0
-    while True:
-        last_id, written = await run_under_db_write_lock(
-            lambda current=after_id: asyncio.to_thread(backfill_batch_sync, current)
+    """Process every candidate session, one lock acquisition each, newest first (single pass)."""
+    session_ids = await asyncio.to_thread(candidate_ids)
+    written = rows = 0
+    for session_id in session_ids:
+        outcome = await run_under_db_write_lock(
+            lambda current=session_id: asyncio.to_thread(backfill_session_sync, current)
         )
-        if last_id is None:
-            break
-        after_id = last_id
-        total += written
+        if outcome.status == BackfillStatus.WRITTEN:
+            written += 1
+            rows += outcome.rows
         await asyncio.sleep(0)
-    if total:
-        logger.info("Timeline backfill wrote %d row(s)", total)
+    if written:
+        logger.info("Timeline backfill wrote %d row(s) for %d session(s)", rows, written)
