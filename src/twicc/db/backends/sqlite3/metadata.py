@@ -1,5 +1,6 @@
 """Read main-schema dependencies without reading application rows."""
 
+import re
 from typing import NamedTuple
 
 
@@ -26,6 +27,7 @@ class IndexSchema(NamedTuple):
     partial: bool
     has_expressions: bool
     uses_generated_columns: bool
+    collations: tuple[str, ...] = ()
 
 
 class TableSchema(NamedTuple):
@@ -34,6 +36,8 @@ class TableSchema(NamedTuple):
     foreign_keys: tuple[ForeignKey, ...]
     generated_columns: frozenset[str]
     indexes: tuple[IndexSchema, ...]
+    declarations: tuple = ()
+    constraints: tuple = ()
 
 
 def _quote_identifier(value: str) -> str:
@@ -48,11 +52,11 @@ def read_schema(connection) -> dict[str, TableSchema]:
     represent its unique conflict input with an unnamed synthetic index.
     """
     tables = connection.execute(
-        "SELECT name FROM main.sqlite_schema WHERE type = 'table' AND name NOT GLOB 'sqlite_*'"
+        "SELECT name, sql FROM main.sqlite_schema WHERE type = 'table' AND name NOT GLOB 'sqlite_*'"
     ).fetchall()
     columns = {}
     primary_keys = {}
-    for (name,) in tables:
+    for name, sql in tables:
         key = canonical_identifier(name)
         columns[key] = connection.execute(f"PRAGMA main.table_xinfo({_quote_identifier(name)})").fetchall()
         primary_keys[key] = tuple(
@@ -60,7 +64,7 @@ def read_schema(connection) -> dict[str, TableSchema]:
         )
 
     result = {}
-    for (name,) in tables:
+    for name, sql in tables:
         key = canonical_identifier(name)
         generated = frozenset(canonical_identifier(row[1]) for row in columns[key] if row[6] in (2, 3))
         grouped_keys = {}
@@ -87,8 +91,82 @@ def read_schema(connection) -> dict[str, TableSchema]:
             indexes.append(IndexSchema(
                 row[1], bool(row[2]), row[3], named_columns, bool(row[4]),
                 any(column[1] < 0 for column in key_columns), bool(generated.intersection(named_columns)),
+                tuple(canonical_identifier(column[4]) for column in key_columns),
             ))
         if primary_keys[key] and not any(index.origin == "pk" for index in indexes):
-            indexes.append(IndexSchema("", True, "pk", primary_keys[key], False, False, False))
-        result[key] = TableSchema(name, primary_keys[key], tuple(foreign_keys), generated, tuple(indexes))
+            indexes.append(IndexSchema("", True, "pk", primary_keys[key], False, False, False, ("binary",)))
+        column_declarations, constraints = declarations(sql)
+        result[key] = TableSchema(
+            name, primary_keys[key], tuple(foreign_keys), generated, tuple(indexes), column_declarations, constraints,
+        )
     return result
+
+
+def sql_tokens(sql):
+    """Tokenize bounded SQLite declarations; preserve literals and quoted names.
+
+    Unsupported comments and malformed quoting leave the proof unavailable.
+    This is a lexical scanner, not an SQL expression parser.
+    """
+    pattern = r'''\s+|"(?:[^"]|"")*"|'(?:[^']|'')*'|`(?:[^`]|``)*`|\[[^\]]*\]|[A-Za-z_][A-Za-z_0-9$]*|\d+(?:\.\d+)?|[^\s]'''
+    tokens = []
+    for match in re.finditer(pattern, sql):
+        token = match.group()
+        if token.isspace():
+            continue
+        if token[0] in '"`[':
+            end = ']' if token[0] == '[' else token[0]
+            if len(token) < 2 or token[-1] != end:
+                return ()
+            token = token[1:-1].replace(end * 2, end)
+            tokens.append(('identifier', canonical_identifier(token)))
+        elif token[0] == "'":
+            if len(token) < 2 or token[-1] != "'":
+                return ()
+            tokens.append(('literal', token))
+        else:
+            tokens.append(('word', canonical_identifier(token)))
+    if any(tokens[i:i + 2] in ([('word', '-'), ('word', '-')], [('word', '/'), ('word', '*')])
+           for i in range(len(tokens) - 1)):
+        return ()
+    return tuple(tokens)
+
+
+def split_clauses(tokens):
+    """Split commas only at depth zero, rejecting unbalanced parentheses."""
+    clauses, current, depth = [], [], 0
+    for token in tokens:
+        if token == ('word', '('):
+            depth += 1
+        elif token == ('word', ')'):
+            depth -= 1
+            if depth < 0:
+                return ()
+        if token == ('word', ',') and depth == 0:
+            clauses.append(tuple(current))
+            current = []
+        else:
+            current.append(token)
+    if depth:
+        return ()
+    return tuple(clauses + [tuple(current)])
+
+
+def declarations(sql):
+    tokens = sql_tokens(sql)
+    try:
+        start = tokens.index(('word', '('))
+    except ValueError:
+        return (), ()
+    # Django emits an ordinary CREATE TABLE, without a trailing table option.
+    if not tokens or tokens[-1] != ('word', ')'):
+        return (), ()
+    columns, constraints = [], []
+    for clause in split_clauses(tokens[start + 1:-1]):
+        if not clause:
+            return (), ()
+        if clause[0][0] == 'word' and clause[0][1] in ('constraint', 'primary', 'unique', 'check', 'foreign'):
+            constraints.append(clause)
+        else:
+            columns.append((clause[0][1], clause[1:]))
+    return tuple(columns), tuple(constraints)

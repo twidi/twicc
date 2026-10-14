@@ -125,3 +125,17 @@ def test_metadata_reads_main_schema_only_and_never_reads_user_rows(connection):
 def test_sqlite_prefix_without_underscore_is_a_user_table(connection):
     connection.execute("CREATE TABLE sqliteChild (id INTEGER PRIMARY KEY)")
     assert read_schema(connection)["sqlitechild"].name == "sqliteChild"
+
+
+def test_declarations_keep_quoted_names_literals_and_nested_commas(connection):
+    connection.execute('''CREATE TABLE "quoted table" (
+        "comma,column" TEXT COLLATE nocase UNIQUE DEFAULT 'a,b''c',
+        other INTEGER CHECK (other IN (1, 2)),
+        CONSTRAINT "two columns" UNIQUE ("comma,column", other)
+    )''')
+    table = read_schema(connection)["quoted table"]
+    declarations = dict(table.declarations)
+    assert set(declarations) == {"comma,column", "other"}
+    assert ('literal', "'a,b''c'") in declarations["comma,column"]
+    assert len(table.constraints) == 1
+    assert any(index.columns == ("comma,column",) and index.collations == ("nocase",) for index in table.indexes)

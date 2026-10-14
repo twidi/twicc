@@ -11,13 +11,13 @@ from django.db.backends.base.schema import BaseDatabaseSchemaEditor
 from django.db.backends.ddl_references import Statement
 from django.db.backends.sqlite3.schema import DatabaseSchemaEditor as SQLiteSchemaEditor
 from django.db.backends.utils import strip_quotes
-from django.db.models import CharField, ForeignKey, Index, IntegerField, UniqueConstraint
+from django.db.models import Index, UniqueConstraint
 
 from twicc.db.migration_logging import log_fk_check
 
 from .driver import Connection
-from .effects import CheckDecision, EffectObserver
-from .metadata import canonical_identifier, read_schema
+from .effects import CheckDecision, EffectObserver, WriteEffect
+from .metadata import canonical_identifier, read_schema, split_clauses, sql_tokens
 
 
 class StatementProof(NamedTuple):
@@ -29,21 +29,15 @@ class StatementProof(NamedTuple):
     index: str | None
 
 
-class EmptyRebuild(NamedTuple):
+class PreservingRebuild(NamedTuple):
     table: str
     temporary: str
     writes: list
     renames: list
-
-
-class NullColumn(NamedTuple):
-    sql: str
-    params: tuple
-    table: str
-    column: str
+    copies: list
     schema: dict
-    columns: list
-    foreign_key: bool
+    retained: frozenset
+    empty: bool
 
 
 class DatabaseSchemaEditor(SQLiteSchemaEditor):
@@ -51,9 +45,9 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
 
     Proofs remove only matched schema authorizations from one execution.
     Independent data effects and unknown reasons always remain observable.
-    Standard nullable column additions also prove that old references stay NULL.
-    Only newly created, empty table rebuilds have an additional zero-row proof.
-    Other rebuilds and unproved schema statements keep the global fallback.
+    Column operations compare physical declarations and relation keys.
+    Mechanical rebuilds prove identity copying without reading application rows.
+    Unproved schema statements keep the global fallback.
     """
 
     def __enter__(self):
@@ -74,8 +68,8 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
         self._operations = []
         self._proofs = []
         self._created_tables = set()
-        self._empty_rebuild = None
-        self._null_column = None
+        self._rebuild = None
+        self._column_operation = None
         self._null_foreign_key_columns = set()
         self.observer = EffectObserver()
         self.decision = CheckDecision("none", frozenset(), ())
@@ -234,138 +228,218 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
         ).fetchone() is None
 
     def add_field(self, model, field):
-        # Prove only standard nullable columns. Defaults, checks, custom fields,
-        # nested callbacks, and table rebuilds keep the existing global fallback.
-        if (
-            self.collect_sql or self._null_column is not None
-            or type(field) not in (ForeignKey, IntegerField, CharField)
-            or (type(field) is CharField and field.db_index)
-            or not field.null or field.primary_key or field.unique
-            or (field.has_default() and field.default is not None) or field.has_db_default()
-            or field.db_parameters(self.connection)["check"]
-        ):
-            return super().add_field(model, field)
-        definition, params = self.column_sql(model, field, include_default=True)
-        suffix = field.db_type_suffix(connection=self.connection)
-        if suffix:
-            definition += " " + suffix
-        foreign_key = bool(field.remote_field and field.db_constraint)
-        if foreign_key:
-            if not field.target_field.primary_key:
-                return super().add_field(model, field)
-            definition += " " + self.sql_create_column_inline_fk % {
-                "to_table": self.quote_name(field.remote_field.model._meta.db_table),
-                "to_column": self.quote_name(field.target_field.column),
-                "on_delete_db": self._create_on_delete_sql(model, field),
-            }
-        table = model._meta.db_table
-        sql = self.sql_create_column % {
-            "table": self.quote_name(table), "column": self.quote_name(field.column), "definition": definition,
-        }
-        self._null_column = NullColumn(
-            sql, tuple(params), table, field.column, read_schema(self.connection.connection),
-            self._column_metadata(table), foreign_key,
-        )
+        previous = self._column_operation
+        self._column_operation = ("add_column", model._meta.db_table, field.column)
         try:
-            with self._operation("field_index", table):
+            with self._operation("add_column", model._meta.db_table):
                 return super().add_field(model, field)
         finally:
-            self._null_column = None
+            self._column_operation = previous
 
-    def _column_metadata(self, table):
-        return self.connection.connection.execute(
-            f"PRAGMA main.table_xinfo({self.quote_name(table)})"
-        ).fetchall()
+    def remove_field(self, model, field):
+        previous = self._column_operation
+        self._column_operation = ("remove_column", model._meta.db_table, field.column)
+        try:
+            with self._operation("remove_column", model._meta.db_table):
+                return super().remove_field(model, field)
+        finally:
+            self._column_operation = previous
 
-    def _matches_null_column(self, proof, effects):
-        table = canonical_identifier(proof.table)
-        column = canonical_identifier(proof.column)
-        columns = self._column_metadata(proof.table)
-        if len(columns) != len(proof.columns) + 1 or columns[:-1] != proof.columns:
+    def _parent_key_valid(self, fk, schema):
+        parent = schema.get(fk.parent_table)
+        if parent is None or not fk.parent_columns:
             return False
-        added = columns[-1]
-        # cid, name, type, notnull, default, pk, hidden. No row scan is needed:
-        # a new ordinary nullable column with no default reads NULL in old rows.
-        if canonical_identifier(added[1]) != column or added[3:] != (0, None, 0, 0):
-            return False
-        after = read_schema(self.connection.connection)
-        before = proof.schema
-        if table not in before or table not in after or {
-            k: v for k, v in before.items() if k != table
-        } != {k: v for k, v in after.items() if k != table}:
-            return False
-        old, new = before[table], after[table]
-        if old._replace(foreign_keys=new.foreign_keys) != new:
-            return False
-        old_keys, new_keys = set(old.foreign_keys), set(new.foreign_keys)
-        added_keys = new_keys - old_keys
-        if not old_keys <= new_keys or len(added_keys) != int(proof.foreign_key):
-            return False
-        for fk in added_keys:
-            parent = after.get(fk.parent_table)
-            if (
-                fk.child_columns != (column,) or parent is None
-                or len(parent.primary_key) != 1 or fk.parent_columns != parent.primary_key
-            ):
+        declarations = dict(parent.declarations)
+        collations = []
+        for column in fk.parent_columns:
+            declaration = declarations.get(column)
+            if declaration is None:
                 return False
+            collation = "binary"
+            depth = 0
+            for i, token in enumerate(declaration[:-1]):
+                if token == ("word", "("):
+                    depth += 1
+                elif token == ("word", ")"):
+                    depth -= 1
+                elif depth == 0 and token == ("word", "collate"):
+                    collation = declaration[i + 1][1]
+            collations.append(collation)
+        return any(
+            index.unique and not index.partial and not index.has_expressions
+            and index.columns == fk.parent_columns and index.collations == tuple(collations)
+            for index in parent.indexes
+        )
+
+    def _preserves_relations(self, before, after, table, retained):
+        old, new = before[table], after[table]
+        involved = old.foreign_keys or new.foreign_keys or any(
+            fk.parent_table == table for schema in (before, after)
+            for child in schema.values() for fk in child.foreign_keys
+        )
+        if not involved:
+            return True
+        old_columns, new_columns = dict(old.declarations), dict(new.declarations)
+        if not old_columns or not new_columns:
+            return False
+        # A new REPLACE conflict policy could discard copied parent rows.
+        conflict = (("word", "on"), ("word", "conflict"), ("word", "replace"))
+        if any(
+            declaration[i:i + 3] == conflict
+            for column, declaration in new_columns.items() if column not in old_columns
+            for i in range(len(declaration) - 2)
+        ):
+            return False
+        if any(old_columns[column] != new_columns.get(column) for column in retained):
+            return False
+        if old.constraints != new.constraints or old.primary_key != new.primary_key:
+            return False
+        def unique_keys(schema):
+            return {
+                (index.columns, index.collations, index.partial, index.has_expressions, index.uses_generated_columns)
+                for index in schema.indexes if index.unique and set(index.columns) <= retained
+            }
+        if unique_keys(old) != unique_keys(new):
+            return False
+        old_keys = {fk for fk in old.foreign_keys if set(fk.child_columns) <= retained}
+        if not old_keys <= set(new.foreign_keys):
+            return False
+        for fk in set(new.foreign_keys) - old_keys:
+            if not self._parent_key_valid(fk, after):
+                return False
+        for schema in (before, after):
+            for child in schema.values():
+                for fk in child.foreign_keys:
+                    if fk.parent_table == table and not set(fk.parent_columns) <= retained:
+                        return False
+        return True
+
+    def _matches_column(self, table, before, effects):
+        key = canonical_identifier(table)
+        after = read_schema(self.connection.connection)
+        if key not in before or key not in after:
+            return False
+        old_columns, new_columns = dict(before[key].declarations), dict(after[key].declarations)
+        retained = frozenset(old_columns.keys() & new_columns.keys())
+        if len(old_columns.keys() ^ new_columns.keys()) != 1:
+            return False
+        columns = self.connection.connection.execute(f"PRAGMA main.table_xinfo({self.quote_name(table)})").fetchall()
+        null_columns = {
+            canonical_identifier(row[1]) for row in columns
+            if row[6] == 0 and (row[4] is None or row[4].upper() == "NULL")
+        }
+        null_columns -= old_columns.keys()
+        if not self._preserves_relations(before, after, key, retained):
+            return False
         alters = 0
         for effect in effects:
             if effect.source is not None:
                 return False
             if effect.action == sqlite3.SQLITE_ALTER_TABLE:
-                if effect.arg1 != "main" or canonical_identifier(effect.arg2 or "") != table:
+                if effect.arg1 != "main" or canonical_identifier(effect.arg2 or "") != key:
                     return False
                 alters += 1
             elif not (
-                effect.action == sqlite3.SQLITE_UPDATE and effect.database == "main"
-                and effect.arg1 == "sqlite_master" and effect.arg2 == "sql"
+                effect.action == sqlite3.SQLITE_UPDATE and effect.arg2 == "sql" and (
+                    effect.database == "main" and effect.arg1 == "sqlite_master"
+                    or effect.database == "temp" and effect.arg1 == "sqlite_temp_master"
+                )
             ):
                 return False
-        return alters == 1
+        if alters == 1:
+            new_keys = set(after[key].foreign_keys) - set(before[key].foreign_keys)
+            if any(not set(fk.child_columns).intersection(null_columns) for fk in new_keys):
+                self.observer.effects.append(WriteEffect(sqlite3.SQLITE_INSERT, key, None, None))
+            for column in null_columns:
+                self._null_foreign_key_columns.add((key, column))
+            return True
+        return False
 
     def _remake_table(self, model, **kwargs):
         table = model._meta.db_table
         key = canonical_identifier(table)
-        temporary = "new__%s" % strip_quotes(table)
-        native = self.connection.connection
-        if (
-            self.collect_sql
-            or not self.atomic_migration
-            or self._empty_rebuild is not None
-            or key in self._before
-            or key not in self._created_tables
-            or canonical_identifier(temporary) in self._before
-            or canonical_identifier(temporary) in read_schema(native)
-            or not self._table_empty(table)
-        ):
+        temporary = f"new__{strip_quotes(table)}"
+        if self.collect_sql or not self.atomic_migration or self._rebuild is not None or kwargs.get("alter_fields"):
             return super()._remake_table(model, **kwargs)
-        proof = EmptyRebuild(table, temporary, [], [])
-        changes = native.total_changes
-        self._empty_rebuild = proof
+        before = read_schema(self.connection.connection)
+        if key not in before or canonical_identifier(temporary) in before:
+            return super()._remake_table(model, **kwargs)
+        removed = kwargs.get("delete_field")
+        retained = frozenset(
+            canonical_identifier(row[1]) for row in self.connection.connection.execute(
+                f"PRAGMA main.table_xinfo({self.quote_name(table)})"
+            )
+        ) - (
+            {canonical_identifier(removed.column)} if removed is not None else set()
+        )
+        empty = key not in self._before and key in self._created_tables and self._table_empty(table)
+        proof = PreservingRebuild(table, temporary, [], [], [], before, retained, empty)
+        self._rebuild = proof
         try:
             result = super()._remake_table(model, **kwargs)
-            after = read_schema(native)
-            if (
-                native.total_changes == changes
-                and canonical_identifier(temporary) not in after
-                and key in after
-                and self._table_empty(table)
-                and len(proof.renames) == 1
-            ):
-                # Remove only the exact zero-row INSERT and rename events.
-                # Callback writes, unknown reasons and other schema events stay.
-                write_ids = {id(effect) for effect in proof.writes}
-                rename_ids = {id(effect) for effect in proof.renames[0]}
-                self.observer.effects[:] = [e for e in self.observer.effects if id(e) not in write_ids]
-                self.observer.schema_effects[:] = [
-                    e for e in self.observer.schema_effects if id(e) not in rename_ids
-                ]
+            after = read_schema(self.connection.connection)
+            if key in after and canonical_identifier(temporary) not in after and len(proof.renames) == 1 and len(proof.copies) == 1:
+                mapping, zero_rows = proof.copies[0]
+                null_columns = {column for column, expression in mapping.items() if expression == (("word", "null"),)}
+                null_columns.update(
+                    canonical_identifier(row[1]) for row in self.connection.connection.execute(
+                        f"PRAGMA main.table_xinfo({self.quote_name(table)})"
+                    )
+                    if canonical_identifier(row[1]) not in mapping and row[6] == 0
+                    and (row[4] is None or row[4].upper() == "NULL")
+                )
+                added_keys = set(after[key].foreign_keys) - set(before[key].foreign_keys)
+                empty_preserved = proof.empty and zero_rows and all(
+                    self._parent_key_valid(fk, after) for fk in added_keys
+                )
+                if empty_preserved or self._preserves_relations(before, after, key, retained):
+                    populated_keys = not zero_rows and any(
+                        not set(fk.child_columns).intersection(null_columns) for fk in added_keys
+                    )
+                    write_ids = {
+                        id(effect) for effect in proof.writes
+                        if effect.action != sqlite3.SQLITE_INSERT or not populated_keys
+                    }
+                    rename_ids = {id(effect) for effect in proof.renames[0]}
+                    self.observer.effects[:] = [effect for effect in self.observer.effects if id(effect) not in write_ids]
+                    self.observer.schema_effects[:] = [
+                        effect for effect in self.observer.schema_effects if id(effect) not in rename_ids
+                    ]
+                    self._created_tables.discard(canonical_identifier(temporary))
+                    self._null_foreign_key_columns.update((key, column) for column in null_columns)
+            # Independent writes to a transient table still target the final logical table.
+            self.observer.effects[:] = [
+                effect._replace(table=key) if effect.table == canonical_identifier(temporary) else effect
+                for effect in self.observer.effects
+            ]
             return result
         finally:
-            self._empty_rebuild = None
+            self._rebuild = None
+
+    def _copy_mapping(self, rebuild, rendered):
+        tokens = sql_tokens(rendered)
+        prefix = (("word", "insert"), ("word", "into"), ("identifier", canonical_identifier(rebuild.temporary)), ("word", "("))
+        if tokens[:4] != prefix or tokens[-2:] != (("word", "from"), ("identifier", canonical_identifier(rebuild.table))):
+            return None
+        try:
+            end = tokens.index(("word", ")"), 4)
+        except ValueError:
+            return None
+        if tokens[end + 1:end + 2] != (("word", "select"),):
+            return None
+        columns = split_clauses(tokens[4:end])
+        expressions = split_clauses(tokens[end + 2:-2])
+        if len(columns) != len(expressions) or any(len(column) != 1 or column[0][0] != "identifier" for column in columns):
+            return None
+        mapping = {column[0][1]: expression for column, expression in zip(columns, expressions)}
+        if len(mapping) != len(columns) or not rebuild.retained <= mapping.keys():
+            return None
+        if any(mapping[column] != (("identifier", column),) for column in rebuild.retained):
+            return None
+        return mapping
 
     def alter_db_table(self, model, old_db_table, new_db_table):
-        rebuild = self._empty_rebuild
+        rebuild = self._rebuild
         if rebuild is None or (old_db_table, new_db_table) != (rebuild.temporary, rebuild.table):
             return super().alter_db_table(model, old_db_table, new_db_table)
         # Django mutates deferred Statement references after the rename.
@@ -375,7 +449,7 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
             if p.kind == "index" and p.table == old_db_table
             and type(p.statement) is Statement and p.rendered == str(p.statement)
         ]
-        with self._operation("empty_rename", old_db_table):
+        with self._operation("rebuild_rename", old_db_table):
             result = super().alter_db_table(model, old_db_table, new_db_table)
         for proof in proofs:
             self._proofs.append(proof._replace(rendered=str(proof.statement), table=new_db_table))
@@ -424,6 +498,7 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
             and self._operations[-1]
             in (
                 ("field_index", model._meta.db_table),
+                ("add_column", model._meta.db_table),
                 ("index", model._meta.db_table),
             )
             and kwargs.get("sql") in (None, self.sql_create_index)
@@ -476,51 +551,59 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
             kind, table = self._operations[-1]
             if kind == "delete" and rendered == self.sql_delete_table % {"table": self.quote_name(table)}:
                 proof = StatementProof(sql, rendered, tuple(params or ()), "delete", table, None)
-        rebuild = self._empty_rebuild
+        rebuild = self._rebuild
         rename = rebuild is not None and self._operations and self._operations[-1] == (
-            "empty_rename", rebuild.temporary
+            "rebuild_rename", rebuild.temporary
         ) and rendered == self.sql_rename_table % {
             "old_table": self.quote_name(rebuild.temporary), "new_table": self.quote_name(rebuild.table)
         } and not params
         before_rename = read_schema(self.connection.connection) if rename else None
+        column_table = None
+        if self._operations and rebuild is None:
+            kind, table = self._operations[-1]
+            action = "ADD" if kind == "add_column" else "DROP"
+            prefix = f"ALTER TABLE {self.quote_name(table)} {action} COLUMN "
+            context = self._column_operation
+            if context and context[:2] == (kind, table):
+                prefix += self.quote_name(context[2])
+            else:
+                prefix = "\0"
+            if kind in ("add_column", "remove_column") and (
+                rendered == prefix or rendered.startswith(prefix + " ")
+            ):
+                column_table = table
+        before_column = read_schema(self.connection.connection) if column_table else None
         start = len(self.observer.schema_effects)
         write_start = len(self.observer.effects)
         changes = self.connection.connection.total_changes
         result = super().execute(sql, params)
         effects = self.observer.schema_effects[start:]
-        null_column = self._null_column
-        if (
-            null_column is not None and rendered == null_column.sql
-            and tuple(params or ()) == null_column.params
-            and self._matches_null_column(null_column, effects)
-        ):
+        if column_table and self._matches_column(column_table, before_column, effects):
             del self.observer.schema_effects[start:]
-            if null_column.foreign_key:
-                self._null_foreign_key_columns.add((
-                    canonical_identifier(null_column.table), canonical_identifier(null_column.column),
-                ))
         elif proof and self._matches(proof, effects):
             del self.observer.schema_effects[start:]
             if proof.kind == "create":
                 self._created_tables.add(canonical_identifier(proof.table))
         if rebuild is not None:
             writes = self.observer.effects[write_start:]
+            mapping = self._copy_mapping(rebuild, rendered) if not params else None
             if (
-                len(writes) == 1
-                and writes[0].action == sqlite3.SQLITE_INSERT
+                mapping is not None and len(writes) == 1 and writes[0].action == sqlite3.SQLITE_INSERT
                 and writes[0].table == canonical_identifier(rebuild.temporary)
-                and writes[0].source is None
-                and self.connection.connection.total_changes == changes
-                and not effects
-                and self._table_empty(rebuild.table)
-                and self._table_empty(rebuild.temporary)
+                and writes[0].source is None and not effects
             ):
                 rebuild.writes.extend(writes)
-            if rename and self._matches_empty_rename(rebuild, effects, before_rename):
+                rebuild.copies.append((mapping, self.connection.connection.total_changes == changes))
+            if proof and proof.kind == "delete" and canonical_identifier(proof.table) == canonical_identifier(rebuild.table):
+                rebuild.writes.extend(
+                    effect for effect in writes if effect.action == sqlite3.SQLITE_DELETE
+                    and effect.table == canonical_identifier(rebuild.table) and effect.source is None
+                )
+            if rename and self._matches_rebuild_rename(rebuild, effects, before_rename):
                 rebuild.renames.append(effects)
         return result
 
-    def _matches_empty_rename(self, rebuild, effects, before):
+    def _matches_rebuild_rename(self, rebuild, effects, before):
         temporary = canonical_identifier(rebuild.temporary)
         target = canonical_identifier(rebuild.table)
         after = read_schema(self.connection.connection)

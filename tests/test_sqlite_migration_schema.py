@@ -494,12 +494,12 @@ def test_new_null_integer_column_with_index_skips_checks(connection):
     assert_restored(connection)
 
 
-def test_callable_default_keeps_nullable_column_global_fallback(connection):
+def test_callable_null_default_skips_checks(connection):
     field = models.IntegerField(null=True, default=lambda: None)
     field.set_attributes_from_name("storage_version")
     with checks(connection) as statements, connection.schema_editor() as editor:
         editor.add_field(state().apps.get_model("scope_app", "Child"), field)
-    assert fk_checks(statements) == ["PRAGMA foreign_key_check"]
+    assert fk_checks(statements) == []
     assert_restored(connection)
 
 
@@ -514,7 +514,7 @@ def test_new_null_foreign_key_retains_unknown_schema_fallback(connection):
     assert_restored(connection)
 
 
-def test_custom_nullable_foreign_key_callback_is_not_proved(connection):
+def test_custom_nullable_foreign_key_callback_retains_targeted_check(connection):
     apps = state().apps
 
     class CustomForeignKey(models.ForeignKey):
@@ -526,7 +526,7 @@ def test_custom_nullable_foreign_key_callback_is_not_proved(connection):
     field.set_attributes_from_name("content")
     with checks(connection) as statements, pytest.raises(IntegrityError), connection.schema_editor() as editor:
         editor.add_field(apps.get_model("scope_app", "Child"), field)
-    assert fk_checks(statements) == ["PRAGMA foreign_key_check"]
+    assert fk_checks(statements) == ['PRAGMA foreign_key_check("child")']
     assert connection.connection.execute("SELECT parent_id FROM child").fetchall() == [(1,)]
     assert_restored(connection)
 
@@ -1410,7 +1410,7 @@ def test_new_table_repeated_rebuilds(connection, populated):
             editor.execute("INSERT INTO scope_app_entry (label) VALUES ('keep')")
         for _ in range(3):
             editor._remake_table(Entry)
-    assert fk_checks(statements) == (["PRAGMA foreign_key_check"] if populated else [])
+    assert fk_checks(statements) == []
     assert connection.connection.execute("SELECT label FROM scope_app_entry").fetchall() == (
         [("keep",)] if populated else []
     )
@@ -1511,7 +1511,7 @@ def test_empty_rebuild_conditional_unique_constraint_provenance(connection, cust
 
 @isolate_apps()
 @pytest.mark.parametrize("raw_create", [False, True])
-def test_empty_rebuild_requires_new_standard_creation(connection, raw_create):
+def test_existing_standard_rebuild_skips_checks_but_raw_creation_remains_global(connection, raw_create):
     class Entry(models.Model):
         label = models.TextField()
 
@@ -1525,7 +1525,7 @@ def test_empty_rebuild_requires_new_standard_creation(connection, raw_create):
         if raw_create:
             editor.execute("CREATE TABLE scope_app_entry (id integer PRIMARY KEY, label text)")
         editor._remake_table(Entry)
-    assert fk_checks(statements) == ["PRAGMA foreign_key_check"]
+    assert fk_checks(statements) == (["PRAGMA foreign_key_check"] if raw_create else [])
     if not raw_create:
         assert not any(sql.startswith('SELECT 1 FROM "scope_app_entry"') for sql in statements)
 
@@ -1547,7 +1547,7 @@ def test_empty_rebuild_populated_invalid_child_rolls_back(connection):
         editor.create_model(Entry)
         editor.execute("INSERT INTO scope_app_entry (parent_id) VALUES (99)")
         editor._remake_table(Entry)
-    assert fk_checks(statements) == ["PRAGMA foreign_key_check"]
+    assert fk_checks(statements) == ['PRAGMA foreign_key_check("scope_app_entry")']
     assert "scope_app_entry" not in connection.introspection.table_names()
     assert_restored(connection)
 
@@ -1580,4 +1580,287 @@ def test_new_null_incarnation_string_skips_checks_and_preserves_legacy_rows(conn
     ]
     assert any('ALTER TABLE "child" ADD COLUMN "storage_incarnation" varchar(36) NULL' in sql for sql in statements)
     assert not any("CREATE INDEX" in sql or "new__child" in sql for sql in statements)
+    assert_restored(connection)
+
+
+@isolate_apps()
+@pytest.mark.parametrize("operation", ["datetime", "json", "default", "check", "one_to_one", "remove_label", "remove_fk", "rebuild"])
+def test_preserving_populated_column_operations_skip_checks(connection, operation):
+    class Owner(models.Model):
+        code = models.TextField(unique=True, db_collation="nocase")
+
+        class Meta:
+            app_label = "scope_app"
+
+    class Record(models.Model):
+        owner = models.ForeignKey(Owner, on_delete=models.CASCADE)
+        label = models.TextField()
+
+        class Meta:
+            app_label = "scope_app"
+
+    with connection.schema_editor() as editor:
+        editor.create_model(Owner)
+        editor.create_model(Record)
+    connection.connection.execute("INSERT INTO scope_app_owner (code) VALUES ('A')")
+    connection.connection.execute("INSERT INTO scope_app_record (owner_id,label) VALUES (1,'keep')")
+    fields = {
+        "datetime": models.DateTimeField(null=True),
+        "json": models.JSONField(default=list),
+        "default": models.IntegerField(default=7),
+        "check": models.PositiveIntegerField(default=0),
+        "one_to_one": models.OneToOneField(Owner, null=True, on_delete=models.PROTECT),
+    }
+    with checks(connection) as statements, connection.schema_editor() as editor:
+        if operation in fields:
+            field = fields[operation]
+            field.set_attributes_from_name("added")
+            editor.add_field(Record, field)
+        elif operation.startswith("remove_"):
+            editor.remove_field(Record, Record._meta.get_field("owner" if operation == "remove_fk" else "label"))
+        else:
+            editor._remake_table(Owner)
+            editor._remake_table(Record)
+    assert fk_checks(statements) == []
+    assert connection.connection.execute("SELECT id FROM scope_app_record").fetchall() == [(1,)]
+    assert_restored(connection)
+
+
+@isolate_apps()
+def test_populated_rebuild_callback_invalid_write_checks_only_child(connection):
+    active = False
+
+    class CallbackField(models.TextField):
+        def db_parameters(self, connection):
+            nonlocal active
+            if active:
+                active = False
+                connection.connection.execute("UPDATE child SET parent_id=99")
+            return super().db_parameters(connection)
+
+    class Record(models.Model):
+        label = CallbackField()
+
+        class Meta:
+            app_label = "scope_app"
+
+    with connection.schema_editor() as editor:
+        editor.create_model(Record)
+    connection.connection.execute("INSERT INTO scope_app_record(label) VALUES ('keep')")
+    active = True
+    with checks(connection) as statements, pytest.raises(IntegrityError), connection.schema_editor() as editor:
+        editor._remake_table(Record)
+    assert fk_checks(statements) == ['PRAGMA foreign_key_check("child")']
+    assert connection.connection.execute("SELECT parent_id FROM child").fetchall() == [(1,)]
+    assert_restored(connection)
+
+
+@isolate_apps()
+@pytest.mark.parametrize("drift", ["collation", "type", "unique", "not_null"])
+def test_related_rebuild_schema_drift_retains_global_check(connection, drift):
+    class Owner(models.Model):
+        code = models.TextField(unique=True, db_collation="nocase")
+
+        class Meta:
+            app_label = "scope_app"
+
+    class Record(models.Model):
+        owner = models.ForeignKey(Owner, to_field="code", on_delete=models.CASCADE)
+
+        class Meta:
+            app_label = "scope_app"
+
+    with connection.schema_editor() as editor:
+        editor.create_model(Owner)
+        editor.create_model(Record)
+    connection.connection.execute("INSERT INTO scope_app_owner(code) VALUES ('A')")
+    connection.connection.execute("INSERT INTO scope_app_record(owner_id) VALUES ('A')")
+    field = Owner._meta.get_field("code")
+    if drift == "collation":
+        field.db_collation = "binary"
+    elif drift == "type":
+        field.__class__ = models.CharField
+        field.max_length = 32
+    elif drift == "unique":
+        field._unique = False
+        field.__dict__.pop("unique", None)
+    else:
+        field.null = True
+    with checks(connection) as statements:
+        if drift == "unique":
+            with pytest.raises(OperationalError), connection.schema_editor() as editor:
+                editor._remake_table(Owner)
+        else:
+            with connection.schema_editor() as editor:
+                editor._remake_table(Owner)
+    assert fk_checks(statements) == ([] if drift == "unique" else ["PRAGMA foreign_key_check"])
+    if drift == "unique":
+        assert connection.connection.execute("SELECT code FROM scope_app_owner").fetchall() == [("A",)]
+    assert_restored(connection)
+
+
+@isolate_apps()
+def test_modified_rebuild_copy_mapping_checks_and_rolls_back(connection, monkeypatch):
+    class Owner(models.Model):
+        class Meta:
+            app_label = "scope_app"
+
+    class Record(models.Model):
+        owner = models.ForeignKey(Owner, on_delete=models.CASCADE)
+
+        class Meta:
+            app_label = "scope_app"
+
+    with connection.schema_editor() as editor:
+        editor.create_model(Owner)
+        editor.create_model(Record)
+    connection.connection.execute("INSERT INTO scope_app_owner(id) VALUES (1)")
+    connection.connection.execute("INSERT INTO scope_app_record(owner_id) VALUES (1)")
+    with checks(connection) as statements, pytest.raises(IntegrityError), connection.schema_editor() as editor:
+        execute = editor.execute
+
+        def modified(sql, params=()):
+            if str(sql).startswith('INSERT INTO "new__scope_app_record"'):
+                sql = str(sql).replace('SELECT "id", "owner_id"', 'SELECT "id", 99')
+            return execute(sql, params)
+
+        monkeypatch.setattr(editor, "execute", modified)
+        editor._remake_table(Record)
+    assert fk_checks(statements) == ["PRAGMA foreign_key_check"]
+    assert connection.connection.execute("SELECT owner_id FROM scope_app_record").fetchall() == [(1,)]
+    assert_restored(connection)
+
+
+@isolate_apps()
+@pytest.mark.parametrize("invalid", [False, True])
+def test_populated_new_fk_checks_only_affected_child(connection, invalid):
+    class Owner(models.Model):
+        class Meta:
+            app_label = "scope_app"
+
+    class Record(models.Model):
+        label = models.TextField()
+
+        class Meta:
+            app_label = "scope_app"
+
+    with connection.schema_editor() as editor:
+        editor.create_model(Owner)
+        editor.create_model(Record)
+    connection.connection.execute("INSERT INTO scope_app_owner(id) VALUES (1)")
+    connection.connection.execute("INSERT INTO scope_app_record(label) VALUES ('keep')")
+    field = models.ForeignKey(Owner, default=99 if invalid else 1, on_delete=models.PROTECT)
+    field.set_attributes_from_name("owner")
+    with checks(connection) as statements:
+        if invalid:
+            with pytest.raises(IntegrityError), connection.schema_editor() as editor:
+                editor.add_field(Record, field)
+        else:
+            with connection.schema_editor() as editor:
+                editor.add_field(Record, field)
+    assert fk_checks(statements) == ['PRAGMA foreign_key_check("scope_app_record")']
+    assert_restored(connection)
+
+
+@isolate_apps()
+@pytest.mark.parametrize("invalid", ["nonunique", "collation"])
+def test_null_fk_rejects_invalid_physical_unique_parent_key(connection, invalid):
+    class Owner(models.Model):
+        code = models.TextField(unique=True)
+
+        class Meta:
+            app_label = "scope_app"
+            db_table = "physical_owner"
+
+    class Record(models.Model):
+        label = models.TextField()
+
+        class Meta:
+            app_label = "scope_app"
+
+    connection.connection.execute("CREATE TABLE physical_owner (id integer PRIMARY KEY, code text)")
+    if invalid == "collation":
+        connection.connection.execute("CREATE UNIQUE INDEX wrong_collation ON physical_owner(code COLLATE nocase)")
+    with connection.schema_editor() as editor:
+        editor.create_model(Record)
+    connection.connection.execute("INSERT INTO scope_app_record(label) VALUES ('keep')")
+    field = models.ForeignKey(Owner, to_field="code", null=True, on_delete=models.PROTECT)
+    field.set_attributes_from_name("owner")
+    with checks(connection) as statements, pytest.raises(OperationalError), connection.schema_editor() as editor:
+        editor.add_field(Record, field)
+    assert fk_checks(statements) in ([], ["PRAGMA foreign_key_check"])
+    assert 'owner_id' not in [row[1] for row in connection.connection.execute('PRAGMA table_info(scope_app_record)')]
+    assert_restored(connection)
+
+
+@isolate_apps()
+@pytest.mark.parametrize("invalid", [False, True])
+def test_direct_add_populated_fk_default_checks_child(connection, invalid):
+    field = models.ForeignKey(
+        state().apps.get_model("scope_app", "Parent"), null=True, db_default=models.Value(99 if invalid else 1),
+        db_index=False, on_delete=models.PROTECT,
+    )
+    field.set_attributes_from_name("added")
+    field.model = state().apps.get_model("scope_app", "Child")
+    with checks(connection) as statements:
+        if invalid:
+            with pytest.raises(IntegrityError), connection.schema_editor() as editor:
+                editor.add_field(state().apps.get_model("scope_app", "Child"), field)
+        else:
+            with connection.schema_editor() as editor:
+                editor.add_field(state().apps.get_model("scope_app", "Child"), field)
+    assert fk_checks(statements) == ['PRAGMA foreign_key_check("child")']
+    assert not any('INSERT INTO "new__' in sql for sql in statements)
+    assert_restored(connection)
+
+
+@isolate_apps()
+def test_rebuild_new_replace_constraint_cannot_hide_deleted_parent(connection):
+    class Owner(models.Model):
+        label = models.TextField()
+
+        class Meta:
+            app_label = "scope_app"
+
+    class Record(models.Model):
+        owner = models.ForeignKey(Owner, on_delete=models.CASCADE)
+
+        class Meta:
+            app_label = "scope_app"
+
+    class ReplaceField(models.IntegerField):
+        def db_type(self, connection):
+            return "integer UNIQUE ON CONFLICT REPLACE"
+
+    with connection.schema_editor() as editor:
+        editor.create_model(Owner)
+        editor.create_model(Record)
+    connection.connection.execute("INSERT INTO scope_app_owner(id,label) VALUES (1,'a'), (2,'b')")
+    connection.connection.execute("INSERT INTO scope_app_record(owner_id) VALUES (1)")
+    field = ReplaceField(default=0)
+    field.set_attributes_from_name("added")
+    with checks(connection) as statements, pytest.raises(IntegrityError), connection.schema_editor() as editor:
+        editor.add_field(Owner, field)
+    assert fk_checks(statements) == ["PRAGMA foreign_key_check"]
+    assert connection.connection.execute("SELECT id FROM scope_app_owner").fetchall() == [(1,), (2,)]
+    assert_restored(connection)
+
+
+@isolate_apps()
+def test_null_fk_parent_collation_ignores_nested_check_expression(connection):
+    class Owner(models.Model):
+        code = models.TextField(unique=True)
+
+        class Meta:
+            app_label = "scope_app"
+            db_table = "physical_owner"
+
+    connection.connection.execute(
+        "CREATE TABLE physical_owner (id integer PRIMARY KEY, code text UNIQUE CHECK (code COLLATE nocase != 'bad'))"
+    )
+    field = models.ForeignKey(Owner, to_field="code", null=True, db_index=False, on_delete=models.PROTECT)
+    field.set_attributes_from_name("added")
+    with checks(connection) as statements, connection.schema_editor() as editor:
+        editor.add_field(state().apps.get_model("scope_app", "Child"), field)
+    assert fk_checks(statements) == []
     assert_restored(connection)
