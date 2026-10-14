@@ -1725,36 +1725,35 @@ async def session_workflows(request, project_id, session_id):
 
     Return every Claude Code workflow run persisted for this session, newest
     first. Each entry is ``{run_id, updated_at, raw}`` where ``raw`` is the
-    parsed ``wf_*.json`` envelope (the runtime's verbatim run state). Reads
+    parsed ``wf_*.json`` envelope with current published agent costs. Reads
     straight from the ``Workflow`` rows ingestion fills — no filesystem access —
     so a finished run stays available after Claude Code sublimates its files.
     """
     session = await _resolve_session_or_404(session_id, project_id, None)
 
-    from twicc.providers.claude_code.workflow_synthesis import apply_orphan_status
+    data = await sync_to_async(_prepare_session_workflows)(session_id, session.cutoff)
+    return JsonResponse(data, safe=False)
 
-    workflows = await sync_to_async(list)(
-        Workflow.objects.filter(session_id=session_id)
-    )
-    cutoff = session.cutoff
+
+def _prepare_session_workflows(session_id, cutoff):
+    """Load source envelopes and published agent totals outside the event loop."""
+    from twicc.providers.claude_code.workflow_response import prepare_workflow_envelope
+
     data = [
         {
             "run_id": w.run_id,
             "updated_at": w.updated_at.isoformat(),
             "cost": float(w.cost),
             "phases_cost": w.phases_cost,
-            # An orphaned synthetic run (its session restarted or stopped without a
-            # wf_*.json ever landing) is surfaced as interrupted at read time —
-            # derived, not stored (no file event fires for a crash that writes nothing).
-            "raw": apply_orphan_status(orjson.loads(w.raw_json), w.updated_at, cutoff),
+            "raw": prepare_workflow_envelope(w, cutoff),
         }
-        for w in workflows
+        for w in Workflow.objects.filter(session_id=session_id)
     ]
     data.sort(
         key=lambda d: (d["raw"].get("startTime") or 0) if isinstance(d["raw"], dict) else 0,
         reverse=True,
     )
-    return JsonResponse(data, safe=False)
+    return data
 
 
 def _derive_workflow_links(session_id):

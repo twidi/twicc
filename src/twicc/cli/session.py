@@ -526,19 +526,16 @@ WORKFLOW_DETAIL_FIELDS = ("workflowProgress", "script", "logs", "args")
 def _workflow_envelope(run, session_cutoff=None) -> dict:
     """The run's parsed ``raw_json`` with its ``runId`` key renamed ``id`` (first).
 
+    Agent costs use published Session totals. The source envelope stays unchanged.
     An orphaned synthetic run (its session restarted or stopped before any
     ``wf_*.json`` landed) is surfaced as ``interrupted`` at read time — derived,
     not stored. ``session_cutoff`` is ``Session.cutoff`` (its lifecycle boundary).
     """
-    from twicc.providers.claude_code.workflow_synthesis import apply_orphan_status
+    from twicc.providers.claude_code.workflow_response import prepare_workflow_envelope
 
-    try:
-        raw = orjson.loads(run.raw_json)
-    except orjson.JSONDecodeError:
-        raw = {}
+    raw = prepare_workflow_envelope(run, session_cutoff)
     if not isinstance(raw, dict):
         return {"id": run.run_id, "raw": raw}
-    apply_orphan_status(raw, run.updated_at, session_cutoff)
     return {"id": raw.pop("runId", run.run_id), **raw}
 
 
@@ -553,7 +550,7 @@ def workflows(session_id: str, *, limit: int | None = None, offset: int = 0,
 
     So the listing answers that question and no more: name, summary, status,
     timing, counts and phase progress. ``result`` adds what each run produced;
-    ``full`` adds everything and reproduces the envelope verbatim, which is also
+    ``full`` adds everything with current published agent costs, which is also
     what ``session workflow <id>`` gives for a single run.
     """
     import django

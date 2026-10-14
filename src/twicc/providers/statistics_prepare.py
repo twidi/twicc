@@ -39,6 +39,17 @@ class PreparedTreeCosts(NamedTuple):
     workflow_ids: tuple[int, ...]
 
 
+def _surviving_native_trees(root_ids):
+    """Ignore deleted queue inputs inside the caller's reader snapshot.
+
+    Validate every surviving tree normally. Malformed surviving membership must
+    still fail the batch, so unfinished work cannot be acknowledged.
+    """
+    roots = tuple(dict.fromkeys(root_ids))
+    surviving = set(Session.objects.filter(pk__in=roots).values_list('pk', flat=True))
+    return tuple(load_native_tree(root) for root in roots if root in surviving)
+
+
 def prepare_tree_costs(root_ids: tuple[str, ...]) -> PreparedTreeCosts:
     """Use one thread-owned read snapshot, without writer admission.
 
@@ -54,7 +65,7 @@ def prepare_tree_costs(root_ids: tuple[str, ...]) -> PreparedTreeCosts:
     observation = observe_own_cost_invalidations()
     own_revision_lookup = dict(observation.own_costs)
     with transaction.atomic():
-        trees = tuple(load_native_tree(root) for root in dict.fromkeys(root_ids))
+        trees = _surviving_native_trees(root_ids)
         members = tuple(dict.fromkeys(sid for tree in trees for sid in tree.member_ids))
         rows = {row['id']: row for row in Session.objects.filter(pk__in=members).values(
             'id', 'project_id', 'storage_incarnation', 'last_updated_at',
@@ -119,7 +130,7 @@ def _reader_snapshot(function):
 
 @_reader_snapshot
 def prepare_affected_days(root_ids: tuple[str, ...]) -> tuple[DailyKey, ...]:
-    members = {sid for root in dict.fromkeys(root_ids) for sid in load_native_tree(root).member_ids}
+    members = {sid for tree in _surviving_native_trees(root_ids) for sid in tree.member_ids}
     keys = set()
     # Discover surviving dates even after visibility or hierarchy changes.
     # Eligibility belongs to prepare_daily, so formerly eligible days reach zero.
