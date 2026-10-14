@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from twicc.core.models import Project, Session, SessionType, TimelineEvent
 from twicc.core.services import timeline_backfill
-from twicc.core.services.session_timeline import insert_event_rows, record_event_sync
+from twicc.core.services.session_timeline import _conflict_clause, insert_event_rows, record_event_sync
 from twicc.core.services.timeline_backfill import (
     BackfillStatus, backfill_session_sync, candidate_ids, run_timeline_backfill,
 )
@@ -338,11 +338,23 @@ def _raw(session_id, project, key, kind="turn.started"):
     )
 
 
-def test_raw_insert_sql_has_the_on_conflict_clause_built_from_the_metadata(project):
+def test_the_conflict_clause_matches_the_real_partial_unique_index(project):
+    index_sql = " ".join(connection.cursor().execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'uniq_timeline_dedupe'"
+    ).fetchone()[0].split())
+    columns_part, where_part = index_sql.rsplit(" WHERE ", 1)
+    index_columns = columns_part[columns_part.index("(") + 1:columns_part.rindex(")")]
+    clause = _conflict_clause()
+    assert f"ON CONFLICT ({index_columns}) " in clause, (
+        f"the clause columns differ from the index columns {index_columns!r}: {clause!r}"
+    )
+    assert f"WHERE {where_part} DO NOTHING" in clause, (
+        f"the clause condition differs from the index condition {where_part!r}: {clause!r}"
+    )
     with CaptureQueriesContext(connection) as captured:
         insert_event_rows(_parity_rows("meta2", project))
     sql = next(q["sql"] for q in captured.captured_queries if "INSERT" in q["sql"])
-    assert sql.endswith('ON CONFLICT ("session_id", "dedupe_key") WHERE "dedupe_key" IS NOT NULL DO NOTHING')
+    assert sql.endswith(clause)
 
 
 def test_raw_insert_skips_duplicate_keys_and_counts_only_inserted_rows(project):
@@ -356,9 +368,18 @@ def test_raw_insert_skips_duplicate_keys_and_counts_only_inserted_rows(project):
     assert insert_event_rows([]) == 0
 
 
-def test_raw_insert_never_deduplicates_null_keys(project):
+def test_raw_insert_keeps_every_row_with_a_null_key(project):
+    """Documents that NULL keys are never deduplicated (true with or without ``ON CONFLICT``)."""
     assert insert_event_rows([_raw("n", project, None) for _ in range(3)]) == 3
     assert TimelineEvent.objects.filter(session_id="n", dedupe_key__isnull=True).count() == 3
+
+
+def test_raw_insert_does_not_deduplicate_a_keyed_row_without_a_session(project):
+    # KNOWN LIMIT: SQLite treats NULLs as distinct in a unique index, so (NULL, key) rows are never
+    # skipped by the batch insert. No caller does this; change this test only deliberately.
+    rows = [_raw(None, project, "k"), _raw(None, project, "k")]
+    assert insert_event_rows(rows) == 2
+    assert TimelineEvent.objects.filter(session_id__isnull=True, dedupe_key="k").count() == 2
 
 
 def test_raw_insert_still_raises_on_another_constraint_violation(project):
@@ -369,7 +390,7 @@ def test_raw_insert_still_raises_on_another_constraint_violation(project):
     assert TimelineEvent.objects.filter(session_id="x").count() == 0
 
 
-def test_a_rerun_on_a_backfilled_session_writes_nothing_and_raises_nothing(project):
+def test_a_rerun_after_deleting_the_creation_row_rewrites_only_that_row(project):
     make(project, created_at=timezone.now(), archived=True)
     assert backfill_session_sync("s1").rows == 2
     TimelineEvent.objects.filter(session_id="s1", kind="session.created").delete()  # let the session be re-processed
@@ -377,6 +398,23 @@ def test_a_rerun_on_a_backfilled_session_writes_nothing_and_raises_nothing(proje
     assert outcome.status == BackfillStatus.WRITTEN and outcome.rows == 1
     assert TimelineEvent.objects.filter(session_id="s1").count() == 2
     assert backfill_session_sync("s1").status == BackfillStatus.SKIPPED
+
+
+def test_conflicting_rows_reach_the_backfill_insert_and_are_skipped_by_the_database(project, monkeypatch):
+    make(project, created_at=timezone.now(), archived=True)
+    assert backfill_session_sync("s1").rows == 2
+    session = Session.objects.get(id="s1")
+    # Every row already exists: nothing is inserted, nothing raises.
+    assert timeline_backfill._insert_rows(timeline_backfill._build_rows(session, set())) == 0
+    assert TimelineEvent.objects.filter(session_id="s1").count() == 2
+    # Through backfill_session_sync: the builder ignores the existing flag row, so the full set
+    # (one new row, one conflicting row) reaches the insert.
+    TimelineEvent.objects.filter(session_id="s1", kind="session.created").delete()
+    real = timeline_backfill._build_rows
+    monkeypatch.setattr(timeline_backfill, "_build_rows", lambda sess, existing: real(sess, set()))
+    outcome = backfill_session_sync("s1")
+    assert outcome.status == BackfillStatus.WRITTEN and outcome.rows == 1
+    assert TimelineEvent.objects.filter(session_id="s1").count() == 2
 
 
 def test_a_non_conflict_error_rolls_the_backfill_session_back_as_a_whole(project, monkeypatch):

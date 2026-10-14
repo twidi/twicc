@@ -98,8 +98,9 @@ class EventSpec(NamedTuple):
 def _conflict_clause() -> str:
     """``ON CONFLICT ... DO NOTHING`` matching the partial unique constraint on ``(session_id, dedupe_key)``.
 
-    The target is built from the model metadata and must match the partial unique index exactly
-    (same columns, same ``WHERE dedupe_key IS NOT NULL``), otherwise SQLite rejects the statement.
+    The target columns come from the model constraint; the ``WHERE dedupe_key IS NOT NULL`` part is
+    hard-coded. Both must match the partial unique index exactly, otherwise SQLite rejects the
+    statement (a test compares the clause with the real index).
     Only a conflict on that index is skipped: a NOT NULL / CHECK / FK violation still raises, and
     rows with a NULL ``dedupe_key`` never conflict.
     """
@@ -121,6 +122,9 @@ def insert_event_rows(rows: list[TimelineEvent]) -> int:
     is skipped by the database (``ON CONFLICT ... DO NOTHING``) and not counted: ``rowcount`` of an
     ``executemany`` is the sum of the modified rows. Any other error propagates (no swallowing,
     no savepoint).
+
+    Limit: a keyed event needs a non-NULL ``session_id``. SQLite treats NULLs as distinct in a
+    unique index, so rows ``(NULL, key)`` are never deduplicated here.
     """
     if not rows:
         return 0
@@ -149,8 +153,8 @@ def record_events_bulk_sync(specs: list[EventSpec]) -> int:
 
     Same rules as :func:`record_event_sync` for each spec: payload validation (an invalid spec is
     logged and skipped, the others are kept), ``STARTED_OF`` inheritance, ``dedupe_key`` duplicates
-    (against the table and inside the batch) skipped by the database itself. The valid rows go in ONE ``executemany``
-    inside a savepoint. If that batch fails, each row is retried alone through
+    (against the table and inside the batch) skipped by the database itself. The valid rows go in
+    ONE ``executemany`` inside a savepoint. If that batch fails, each row is retried alone through
     :func:`record_event_sync`, so one bad row costs only itself. Call it under the DB write lock.
     """
     if not specs:
