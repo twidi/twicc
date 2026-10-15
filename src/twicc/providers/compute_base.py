@@ -2516,31 +2516,38 @@ class BaseSessionCompute:
             return None
         if (owner.parent_session_id or owner.id) != child.parent_session_id:
             return None
+        link = self._find_meta_spawn_link(owner, child, tool_use_id, history=history)
+        return self._create_recovered_agent_link(link) if link is not None else None
+
+    def _find_meta_spawn_link(self, owner, child, tool_use_id, *, history=None):
+        """Select the first spawn only when current facts or a complete replay establish order."""
+        complete_replay = history is not None and not history.persisted
+        facts_current = history_facts_are_current(owner)
+        if not facts_current and not complete_replay:
+            return None
         registered = None
         if history is not None:
             for line, parsed in history.registered_tool_call_records(tool_use_id):
                 for tool_id, _prompt, background in self.extract_task_tool_use_prompts(parsed):
                     if tool_id == tool_use_id:
                         registered = AgentLink(
-                            session_id=owner.id, agent_id=agent_id, tool_use_id=tool_id,
+                            session_id=owner.id, agent_id=child.id, tool_use_id=tool_id,
                             tool_use_line_num=line, is_background=background,
                             started_at=self.extract_item_timestamp(parsed),
                         )
                         break
                 if registered is not None:
                     break
-        if history_facts_are_current(owner):
+        if facts_current and not complete_replay:
             before_line = registered.tool_use_line_num if registered else 2**63 - 1
             for item in iter_resolver_items(
                 owner.id, HistoryFactKind.TOOL_CALL, tool_use_id, before_line=before_line, oldest_first=True,
             ):
                 if link := self._spawn_link_from_selected_item(owner, child, tool_use_id, item):
-                    return self._create_recovered_agent_link(link)
-        if registered is not None:
-            return self._create_recovered_agent_link(registered)
-        return None
+                    return link
+        return registered
 
-    def _recover_metadata_agent_links(self, owner, *, history=None):
+    def _recover_metadata_agent_links(self, owner, *, history=None, unresolved=None):
         """Retry unresolved sidecar IDs when launcher evidence becomes available."""
         metas = self.get_spawn_metas_for_tree(owner)
         linked = set(AgentLink.objects.filter(agent_id__in=metas).values_list("agent_id", flat=True))
@@ -2550,6 +2557,9 @@ class BaseSessionCompute:
                 continue
             if update := self.create_agent_link_from_meta(owner.id, agent_id, info.tool_use_id, history=history):
                 updates.append(update)
+            elif unresolved is not None and not history_facts_are_current(owner):
+                from twicc.providers.launcher_lookup import LauncherLookupRequest
+                unresolved.append(LauncherLookupRequest(owner.id, agent_id, info.tool_use_id))
         return updates
 
     def _agent_link_from_selected_item(self, owner, child, tool_use_id, item):
@@ -2602,15 +2612,12 @@ class BaseSessionCompute:
             if agent_id in excluded or agent_id == owner.id or info.launcher_session_id != owner.id:
                 continue
             if info.tool_use_id in remaining:
-                if history is not None:
-                    for line, parsed in history.registered_tool_call_records(info.tool_use_id):
-                        match = next((candidate for candidate in self.extract_task_tool_use_prompts(parsed)
-                                      if candidate[0] == info.tool_use_id), None)
-                        if match is not None:
-                            _, prompt, background = match
-                            remaining[info.tool_use_id] = (line, background, self.extract_item_timestamp(parsed), prompt)
-                            break
-                add(agent_id, info.tool_use_id)
+                link = self._find_meta_spawn_link(owner, Session(id=agent_id), info.tool_use_id, history=history)
+                # Authoritative metadata cannot fall through to prompt matching.
+                remaining.pop(info.tool_use_id)
+                if link is not None:
+                    excluded.add(agent_id)
+                    links.append(link)
         if not remaining:
             return links
         # Keep the earliest real user message, independent of compute ordering.
@@ -4367,7 +4374,7 @@ class BaseSessionCompute:
         # therefore not yet committed to the DB). Each entry carries the
         # ``(line_num, timestamp, parsed_json)`` triple the walker needs.
         processed_items: list[tuple[int, datetime | None, dict]] = []
-        history = HistoryFactContext(self.provider, session_id=session.id)
+        history = HistoryFactContext(self.provider, session_id=session.id, persisted=session.last_line > 0)
 
         for line in lines:
             line = line.strip()
@@ -4593,7 +4600,9 @@ class BaseSessionCompute:
         )
         append_history_facts(session.id, history.facts)
         if self.rebuild_agent_prompt_links:
-            agent_link_updates.extend(self._recover_metadata_agent_links(session, history=history))
+            agent_link_updates.extend(self._recover_metadata_agent_links(
+                session, history=history, unresolved=unresolved_launcher_lookups,
+            ))
         if async_question_facts:
             from twicc.core.services.async_questions import merge_question_facts
 

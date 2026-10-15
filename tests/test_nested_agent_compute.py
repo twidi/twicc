@@ -100,7 +100,10 @@ def test_authoritative_sidecar_waits_for_exact_tool(tree):
     live(owner, home, spawn("old_tool"))
     live(child, home, entry("user", "nested work", agentId=child.id))
     assert not AgentLink.objects.filter(agent_id=child.id).exists()
-    live(owner, home, spawn())
+    updates = live(owner, home, spawn())
+    assert [request.tool_use_id for request in updates.unresolved_launcher_lookups] == ["tool_nested"]
+    assert not AgentLink.objects.filter(agent_id=child.id).exists()
+    compute(owner)
     assert AgentLink.objects.get(agent_id=child.id).tool_use_id == "tool_nested"
 
 

@@ -187,7 +187,7 @@ def test_parent_publication_retries_metadata_discovered_after_compute(tree):
 
 def test_same_source_history_retries_after_registered_evidence(tree):
     root, owner, child, home = tree
-    history = HistoryFactContext(owner.provider, session_id=owner.id)
+    history = HistoryFactContext(owner.provider, session_id=owner.id, persisted=False)
     assert get_compute().create_agent_link_from_meta(owner.id, child.id, 'wanted', history=history) is None
     parsed = spawn('wanted')
     facts = get_compute().extract_history_facts(parsed, line_num=1, history=history)
@@ -395,3 +395,49 @@ def test_fallback_publication_rechecks_selected_evidence(tree, change):
         AgentLink.objects.create(session=root, agent_id=child.id, tool_use_id='other', tool_use_line_num=4)
     assert _publish(request, page) == ()
     assert not AgentLink.objects.filter(session=owner, agent_id=child.id).exists()
+
+
+@pytest.mark.parametrize('finish', ['resolver', 'parent_compute'])
+@pytest.mark.django_db(transaction=True)
+def test_stale_parent_live_repeat_defers_until_earliest_spawn_is_established(tree, finish):
+    from twicc.providers.launcher_lookup import LauncherLookupResolver
+    from twicc.providers import db_writer
+    from twicc.providers.live_sync import LiveSyncLimits
+    root, owner, child, home = tree
+    # The first slice precedes sidecar discovery, so it cannot resolve the child.
+    live(owner, home, spawn('wanted'))
+    meta(tree, tool='wanted')
+    later = spawn('wanted', 'later repeated spawn')
+    later['message']['content'][0]['input']['run_in_background'] = True
+    path = home / owner.file_path
+    with path.open('ab') as source:
+        source.write(orjson.dumps(later) + b'\n')
+    with CaptureQueriesContext(connection) as queries:
+        result = get_compute().sync_session_slice(owner.id, path, limits=LiveSyncLimits())
+    assert not AgentLink.objects.filter(agent_id=child.id).exists()
+    assert result.updates.agent_link_updates == []
+    assert [request.tool_use_id for request in result.updates.unresolved_launcher_lookups] == ['wanted']
+    raw_reads = [q['sql'] for q in queries if 'FROM "core_sessionitem"' in q['sql'] and "'aa123'" in q['sql']]
+    assert not any("LIMIT 128" in sql for sql in raw_reads)
+    if finish == 'parent_compute':
+        compute(owner)
+    else:
+        async def run():
+            db_writer.start_db_writer()
+            done = asyncio.Event()
+            async def resolved(updates):
+                assert updates[0].tool_use_line_num == 1
+                done.set()
+            resolver = LauncherLookupResolver(on_resolved=resolved)
+            resolver.enqueue(result.updates.unresolved_launcher_lookups)
+            task = asyncio.create_task(resolver.run(asyncio.Event()))
+            try:
+                await asyncio.wait_for(done.wait(), 10)
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                await db_writer.stop_db_writer()
+        asyncio.run(run())
+    link = AgentLink.objects.get(agent_id=child.id)
+    assert link.tool_use_line_num == 1
+    assert not link.is_background

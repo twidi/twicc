@@ -246,3 +246,16 @@ def test_current_absence_is_final_for_all_context_families(session):
         assert not compute._lookup_prev_goal_context_state(session.id, 2).seen_context
         assert compute._lookup_prev_total_tokens(session.id, 2) == 0
     assert not any('FROM "core_sessionitem"' in q["sql"] for q in queries)
+
+
+def test_complete_replay_lookup_remains_in_memory_after_persisted_miss(session):
+    history = HistoryFactContext('codex', session_id=session.id, persisted=False)
+    compute = CodexSessionCompute()
+    with CaptureQueriesContext(connection) as queries:
+        assert history.lookup_tool_call('wanted', before_line=3) is None
+        for line, parsed in enumerate([{'text': 'noise'}, call('wanted')], 1):
+            facts = compute.extract_history_facts(parsed, line_num=line, history=history)
+            history.register(parsed, facts, line_num=line)
+        assert history.lookup_tool_call('wanted', before_line=3)[1] == 2
+        assert history.lookup_tool_call('wanted', before_line=2) is None
+    assert len(queries) == 0

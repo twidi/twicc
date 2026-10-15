@@ -270,6 +270,7 @@ class HistoryFactContext:
 
     Keep references to parsed call records, never copies of scripts or outputs.
     Persisted lookup uses the normal compute version to select facts or raw pages.
+    ``persisted=False`` declares a complete replay from the source start.
     """
 
     def __init__(self, provider, *, session_id: str | None = None, persisted: bool = True):
