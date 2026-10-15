@@ -129,6 +129,21 @@ test('5b. the provider filter is neutral glass, opaque --panel-solid without the
     }
 })
 
+// The Timeline band is the same neutral glass bar, outside the scroller: same no-blur fallbacks.
+test('5c. the timeline band is neutral glass, opaque --panel-solid without the blur', () => {
+    const src = strip(read('../components/timeline/TimelinePanel.vue'))
+    const style = src.slice(src.indexOf('<style'))
+    assert.ok(/<template>[\s\S]*class="timeline-band glass-sticky"/.test(src), 'glass-sticky layer')
+    assert.ok(/--glass-sticky-bg: color-mix\(in oklab, var\(--surface-solid\) 60%, transparent\);/.test(style), 'neutral 60%')
+    for (const selector of ['@media (prefers-reduced-transparency: reduce) {\n    .timeline-band', ':root.reduce-effects .timeline-band']) {
+        const at = style.indexOf(selector)
+        assert.ok(at >= 0, selector)
+        const body = style.slice(at, style.indexOf('}', at))
+        assert.ok(body.includes('--glass-sticky-bg: transparent;'), `${selector}: no glass layer`)
+        assert.ok(/background: var\(--panel-solid\);/.test(body), `${selector}: paints --panel-solid`)
+    }
+})
+
 // The session search bar floats at the top of the chat, on the card's own colour: a neutral hairline and
 // no shadow made it vanish. It reuses what the floating surfaces have: their shadow and the glass border.
 test('6. the session search bar is set off: the floating shadow and the glass border', () => {

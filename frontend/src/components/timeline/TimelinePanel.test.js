@@ -1,0 +1,397 @@
+import assert from 'node:assert/strict'
+import { readFileSync, readdirSync } from 'node:fs'
+import test from 'node:test'
+import * as Vue from 'vue'
+
+import { compileComponent, descendants, flush, makeRenderer, virtualScroller } from '../../../tests/helpers/scrollerComponentHarness.js'
+import { createFeedState, createTimelineFeed } from '../../utils/timeline/feed.js'
+import * as providerLabels from '../../utils/timeline/providerLabels.js'
+import * as rowsModule from '../../utils/timeline/rows.js'
+import * as scopeModule from '../../utils/timeline/scope.js'
+
+const RouterLink = { props: ['to'], setup: (props, { slots }) => () => Vue.h('a', { 'data-to': JSON.stringify(props.to) }, slots.default?.()) }
+const stub = (tag, textProp) => ({ props: ['projectId', 'label', 'row', 'dayKey'], setup: (props) => () => Vue.h(tag, { 'data-id': props.row?.key ?? props.projectId }, textProp ? props[textProp] : undefined) })
+
+const isoAt = (n) => new Date(Date.UTC(2026, 9, 14, 10, 0, n)).toISOString().replace('.000Z', '.000000Z')
+const at = (n) => `2026-10-14T10:00:${String(n).padStart(2, '0')}.000000Z`
+const event = (id, fields = {}) => ({ id, kind: 'turn.started', occurred_at: at(id), session_id: 's1', project_id: 'p1', provider: 'codex', actor: 'agent', precision: 'exact', data: {}, ...fields })
+
+/** A scroller double: renders every item and records what the panel asks of it. */
+function createFakeScroller() {
+    // `measured`: keys the scroller already measured (it answers their height). `mounts`: how many scrollers
+    // were created. `emit(range)`: the `update` event of the real scroller.
+    const log = { scrollTop: 0, anchorIndex: 1, calls: [], measured: new Set(), mounts: 0, range: { start: 0, end: 0 }, emit: null, emitVisible: null }
+    const component = {
+        props: ['items', 'itemKey'],
+        emits: ['update', 'became-visible'],
+        setup(props, { slots, expose, emit }) {
+            log.mounts += 1
+            let rendered = []
+            log.emit = (range) => {
+                log.range = { start: range.visibleStartIndex, end: range.visibleEndIndex }
+                emit('update', range)
+            }
+            log.emitVisible = () => emit('became-visible')
+            expose({
+                // The 4th element tells whether the row was already RENDERED when the panel seeded it (the panel seeds after the render).
+                seedItemHeight: (key, height) => log.calls.push(['seed', key, height, rendered.includes(key)]),
+                getItemHeight: (key) => (log.measured.has(key) ? 30 : undefined),
+                getVisibleRange: () => log.range,
+                getScrollState: () => ({ scrollTop: log.scrollTop }),
+                // The first visible row is the one at `anchorIndex` of what is RENDERED NOW: asked before the DOM
+                // moved it names the old row, asked after it names whatever sits there then.
+                getScrollAnchor: () => (rendered[log.anchorIndex] === undefined
+                    ? null : { key: rendered[log.anchorIndex], index: log.anchorIndex, offset: 7 }),
+                // A restore also records the rows rendered at that moment: before the render they are the old ones.
+                scrollToAnchor: (anchor) => log.calls.push(['anchor', anchor, [...rendered]]),
+                scrollToTop: () => log.calls.push(['top']),
+            })
+            return () => {
+                rendered = props.items.map((item) => item.key)
+                return Vue.h('div', { class: 'fake-scroller' }, props.items.map((item) => slots.default({ item })))
+            }
+        },
+    }
+    return { log, component }
+}
+
+function fixture({ events = [event(3), event(2), event(1)], hasMore = false, projectsLoaded = true, compact = false, projects = { p1: { id: 'p1' } }, workspaces = {}, fakeScroller = false } = {}) {
+    const calls = []
+    const state = Vue.reactive(createFeedState())
+    const server = {
+        fail: false,
+        respond: (params) => ({
+            events: params.before ? [] : events, has_more: params.before ? false : hasMore, truncated: false,
+            latest_id: events.length ? events[0].id : null, sessions: { s1: { title: 'My session', project_id: 'p1', provider: 'codex', hidden: false, archived: false } },
+        }),
+    }
+    const feed = createTimelineFeed({
+        state,
+        fetchPage: async (params) => {
+            calls.push({ ...params })
+            if (server.fail) throw new Error('boom')
+            return server.respond(params)
+        },
+    })
+    const dataStore = Vue.reactive({
+        projectsLoaded, projects,
+        getProject: (id) => dataStore.projects[id] ?? null,
+        getProjectScopeIds: (id) => [id],
+        getSession: () => undefined,
+    })
+    const workspacesStore = Vue.reactive({
+        workspaces,
+        getWorkspaceById: (id) => workspacesStore.workspaces[id] ?? null,
+        getAllProjectIds: (id) => workspacesStore.workspaces[id].projectIds,
+    })
+    const compactHeight = Vue.ref(compact)
+    const scroller = fakeScroller ? createFakeScroller() : null
+    const Panel = compileComponent(new URL('./TimelinePanel.vue', import.meta.url), {
+        'vue-router': { RouterLink },
+        '../../composables/useTimelineFeed': { useTimelineFeed: () => feed },
+        '../../stores/data': { ALL_PROJECTS_ID: '__all__', useDataStore: () => dataStore },
+        '../../stores/workspaces': { useWorkspacesStore: () => workspacesStore },
+        '../../providers': { getProviderHelpers: () => null },
+        '../../utils/compactHeight': { compactHeight },
+        '../../utils/timeline/rows': rowsModule,
+        '../../utils/timeline/providerLabels': providerLabels,
+        '../../utils/timeline/scope': scopeModule,
+        '../project/ProjectDetailNavList.vue': stub('nav'),
+        '../session/detail/items/DaySeparator.vue': { props: ['label', 'dayKey'], setup: (props) => () => Vue.h('div', { class: 'day', 'data-day': props.dayKey }, props.label) },
+        '../virtual-scroller/VirtualScroller.vue': scroller ? scroller.component : virtualScroller(),
+        './TimelineEventRow.vue': stub('article'),
+    })
+    return { Panel, feed, state, calls, server, dataStore, workspacesStore, compactHeight, scroller }
+}
+
+const settle = async () => {
+    await flush()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    await flush()
+}
+
+async function mount(t, f, projectId = '__all__') {
+    const { renderer, root } = makeRenderer(600)
+    const props = Vue.reactive({ projectId })
+    const app = renderer.createApp({ render: () => Vue.h(f.Panel, props) })
+    app.mount(root)
+    let mounted = true
+    t.after(() => { if (mounted) app.unmount() })
+    await settle()
+    root.unmount = () => { app.unmount(); mounted = false }
+    return root
+}
+
+/**
+ * `wa-callout` has a default slot and an `icon` slot only: a light-DOM child with any other `slot` is not
+ * rendered by the browser, whatever this slot-less test renderer shows. Every callout child must be assignable.
+ */
+function assertRenderableCallouts(root) {
+    const callouts = descendants(root, (n) => n.type === 'wa-callout')
+    assert.ok(callouts.length >= 1)
+    for (const callout of callouts) {
+        for (const child of callout.children.filter((n) => n.type !== '#comment')) {
+            assert.ok([undefined, 'icon'].includes(child.props.slot), `<${child.type} slot="${child.props.slot}"> has no slot to go to`)
+        }
+        const button = descendants(callout, (n) => n.type === 'wa-button')[0]
+        assert.equal(button.props.slot, undefined, 'the Retry button is default content of the callout')
+    }
+}
+
+const byClass = (root, name) => descendants(root, (node) => String(node.props.class ?? '').split(' ').includes(name))
+const textOf = (node) => (node.type === '#comment' ? '' : `${node.text ?? ''}${node.children.map(textOf).join('')}`)
+const rowIds = (root) => descendants(root, (n) => n.type === 'article').map((n) => n.props['data-id'])
+
+test('the band carries the label "Timeline" in the glass-sticky style and nothing else', async (t) => {
+    const root = await mount(t, fixture())
+    const [band] = byClass(root, 'timeline-band')
+    assert.match(String(band.props.class), /glass-sticky/)
+    assert.equal(textOf(band), 'Timeline')
+    assert.equal(descendants(band, (n) => ['input', 'wa-select', 'wa-button'].includes(n.type)).length, 0)
+})
+
+test('the global page loads the feed and renders a day separator then the events newest first', async (t) => {
+    const f = fixture()
+    const root = await mount(t, f)
+    assert.deepEqual(f.calls, [{ projectIds: [], before: null, afterId: null }])
+    assert.equal(byClass(root, 'day').length, 1)
+    assert.deepEqual(rowIds(root), ['event-3', 'event-2', 'event-1'])
+})
+
+test('while the projects are not loaded the page shows the loading state and sends nothing, then loads', async (t) => {
+    const f = fixture({ projectsLoaded: false })
+    const root = await mount(t, f, 'p1')
+    assert.equal(f.calls.length, 0)
+    assert.match(textOf(byClass(root, 'timeline-state')[0]), /Loading/)
+    f.dataStore.projectsLoaded = true
+    await flush()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    await flush()
+    assert.deepEqual(f.calls, [{ projectIds: ['p1'], before: null, afterId: null }])
+    assert.equal(rowIds(root).length, 3)
+})
+
+test('a workspace with no project shows the empty state and sends nothing; an unknown workspace is loading', async (t) => {
+    const empty = fixture({ workspaces: { w: { projectIds: [] } } })
+    const root = await mount(t, empty, 'ws:w')
+    assert.equal(empty.calls.length, 0)
+    assert.equal(textOf(byClass(root, 'timeline-state')[0]), 'No events yet')
+    const unknown = fixture()
+    const root2 = await mount(t, unknown, 'ws:ghost')
+    assert.equal(unknown.calls.length, 0)
+    assert.match(textOf(byClass(root2, 'timeline-state')[0]), /Loading/)
+})
+
+test('a workspace sends every project id, and a change of the set reloads the first page', async (t) => {
+    const f = fixture({ workspaces: { w: { projectIds: ['p1', 'p2'] } } })
+    const root = await mount(t, f, 'ws:w')
+    assert.deepEqual(f.calls.at(-1).projectIds, ['p1', 'p2'])
+    f.workspacesStore.workspaces.w = { projectIds: ['p1', 'p2', 'p3'] }
+    await flush()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    assert.deepEqual(f.calls.map((c) => c.projectIds), [['p1', 'p2'], ['p1', 'p2', 'p3']])
+    assert.ok(root)
+})
+
+test('an unknown project shows "Project not found" with a link to All Projects and sends nothing', async (t) => {
+    const f = fixture()
+    const root = await mount(t, f, 'ghost')
+    assert.equal(f.calls.length, 0)
+    const [stateBlock] = byClass(root, 'timeline-state')
+    assert.match(textOf(stateBlock), /Project not found/)
+    const [link] = descendants(stateBlock, (n) => n.type === 'a')
+    assert.deepEqual(JSON.parse(link.props['data-to']), { name: 'projects-all' })
+})
+
+test('an empty feed shows the empty state and no end-of-list marker', async (t) => {
+    const root = await mount(t, fixture({ events: [] }))
+    assert.equal(textOf(byClass(root, 'timeline-state')[0]), 'No events yet')
+    assert.equal(byClass(root, 'timeline-list').length, 0)
+})
+
+test('a failed first page shows an inline error whose Retry reloads', async (t) => {
+    const f = fixture()
+    f.server.fail = true
+    const root = await mount(t, f)
+    const callout = descendants(root, (n) => n.type === 'wa-callout')[0]
+    assert.match(textOf(callout), /Failed to load the timeline/)
+    assertRenderableCallouts(root)
+    f.server.fail = false
+    const retry = descendants(callout, (n) => n.type === 'wa-button')[0]
+    retry.props.onClick()
+    await flush()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    await flush()
+    assert.equal(rowIds(root).length, 3)
+})
+
+test('a list shorter than the window asks for the next page by itself, and not when there is no more', async (t) => {
+    const more = fixture({ hasMore: true })
+    await mount(t, more)
+    assert.equal(more.calls.filter((c) => c.before).length >= 1, true)
+    const none = fixture({ hasMore: false })
+    await mount(t, none)
+    assert.equal(none.calls.filter((c) => c.before).length, 0)
+})
+
+// Sixty events on one day: 61 rows with the separator.
+const sixty = () => Array.from({ length: 60 }, (_, i) => event(60 - i, { occurred_at: isoAt(60 - i) }))
+const beforeRequests = (f) => f.calls.filter((c) => c.before).length
+
+test('the next page is requested only when the end of the list is in view', async (t) => {
+    const f = fixture({ events: sixty(), hasMore: true, fakeScroller: true })
+    await mount(t, f)
+    assert.equal(beforeRequests(f), 0, 'the first rows are in view, far from the end')
+    f.scroller.log.emit({ startIndex: 0, endIndex: 20, visibleStartIndex: 0, visibleEndIndex: 5 })
+    await settle()
+    assert.equal(beforeRequests(f), 0)
+    f.scroller.log.emit({ startIndex: 30, endIndex: 60, visibleStartIndex: 40, visibleEndIndex: 58 })
+    await settle()
+    assert.equal(beforeRequests(f), 1, 'the end is in view: exactly one request')
+    f.scroller.log.emit({ startIndex: 30, endIndex: 60, visibleStartIndex: 40, visibleEndIndex: 58 })
+    await settle()
+    assert.equal(beforeRequests(f), 1, 'the server said there is no more')
+})
+
+test('a failed next page shows an inline error whose Retry sends one new request', async (t) => {
+    const f = fixture({ events: sixty(), hasMore: true, fakeScroller: true })
+    const root = await mount(t, f)
+    f.server.fail = true
+    f.scroller.log.emit({ startIndex: 30, endIndex: 60, visibleStartIndex: 40, visibleEndIndex: 58 })
+    await settle()
+    const footer = byClass(root, 'timeline-footer')[0]
+    assert.match(textOf(footer), /Failed to load more events/)
+    assertRenderableCallouts(footer)
+    assert.equal(beforeRequests(f), 1)
+    f.scroller.log.emit({ startIndex: 30, endIndex: 60, visibleStartIndex: 40, visibleEndIndex: 58 })
+    await settle()
+    assert.equal(beforeRequests(f), 1, 'no automatic retry while the error shows')
+    f.server.fail = false
+    descendants(footer, (n) => n.type === 'wa-button')[0].props.onClick()
+    await settle()
+    assert.equal(beforeRequests(f), 2, 'Retry sends one new request')
+    assert.equal(f.state.loadError, null)
+    assert.equal(byClass(root, 'timeline-footer').filter((n) => textOf(n).includes('Failed')).length, 0)
+})
+
+test('a page that lands with the end of the list still in view asks for the next one by itself', async (t) => {
+    // No `update` event: the panel itself asks the scroller what is in view when a page has landed.
+    const f = fixture({ events: sixty(), hasMore: true, fakeScroller: true })
+    f.scroller.log.range = { start: 40, end: 58 }
+    await mount(t, f)
+    assert.equal(beforeRequests(f), 1)
+})
+
+test('a scroller that becomes visible again asks the next page if the end is in view', async (t) => {
+    const f = fixture({ events: sixty(), hasMore: true, fakeScroller: true })
+    await mount(t, f)
+    assert.equal(beforeRequests(f), 0)
+    f.scroller.log.range = { start: 40, end: 58 }
+    f.scroller.log.emitVisible()
+    await settle()
+    assert.equal(beforeRequests(f), 1)
+})
+
+test('unmounting the page disposes its feed', async (t) => {
+    const f = fixture({ fakeScroller: true })
+    let disposed = 0
+    const original = f.feed.dispose
+    f.feed.dispose = () => { disposed += 1; original() }
+    const root = await mount(t, f)
+    assert.equal(disposed, 0)
+    root.unmount()
+    assert.equal(disposed, 1)
+})
+
+const seedsOf = (f) => f.scroller.log.calls.filter(([name]) => name === 'seed')
+
+test('every row gets a height estimate once the scroller exists, the navigation row included', async (t) => {
+    const f = fixture({ fakeScroller: true, compact: true })
+    await mount(t, f)
+    const seeds = Object.fromEntries(seedsOf(f).map(([, key, height]) => [key, height]))
+    assert.equal(seeds['timeline-nav'], 96)
+    assert.equal(seeds['event-3'], 34)
+    assert.equal(seeds[Object.keys(seeds).find((key) => key.startsWith('daysep-'))], 40)
+    assert.equal(seedsOf(f).length, 5, 'nav row, day separator and three events, once each')
+})
+
+test('a row the scroller already measured keeps its measure', async (t) => {
+    const f = fixture({ fakeScroller: true })
+    f.scroller.log.measured.add('event-2')
+    await mount(t, f)
+    assert.deepEqual(seedsOf(f).map(([, key]) => key).sort(), ['daysep-2026-10-14', 'event-1', 'event-3'])
+})
+
+test('a new scroller (the list came back) is seeded again, and a row that left the list is seeded again if it returns', async (t) => {
+    const f = fixture({ fakeScroller: true })
+    await mount(t, f, 'p1')
+    assert.equal(f.scroller.log.mounts, 1)
+    assert.equal(seedsOf(f).filter(([, key]) => key === 'event-3').length, 1)
+    f.dataStore.projectsLoaded = false
+    await settle()
+    f.dataStore.projectsLoaded = true
+    await settle()
+    assert.equal(f.scroller.log.mounts, 2, 'the scroller was destroyed and created again')
+    assert.equal(seedsOf(f).filter(([, key]) => key === 'event-3').length, 2)
+    const all = f.state.events
+    f.state.events = [all[0]]
+    await settle()
+    f.state.events = all
+    await settle()
+    assert.equal(seedsOf(f).filter(([, key]) => key === 'event-2').length, 3, 'trimmed with the list, seeded when it came back')
+    assert.ok(seedsOf(f).every(([, , , wasRendered]) => wasRendered), 'every seed comes after the row is rendered')
+})
+
+test('compact-height mode: the navigation copy is the first row of the list; normal mode has none', async (t) => {
+    const compact = fixture({ compact: true })
+    const root = await mount(t, compact)
+    assert.equal(byClass(root, 'timeline-nav-list').length >= 1, true)
+    const firstRendered = descendants(root, (n) => n.type === 'nav' || n.type === 'div' && n.props.class === 'day' || n.type === 'article')[0]
+    assert.equal(firstRendered.type, 'nav')
+    const normal = fixture({ compact: false })
+    const root2 = await mount(t, normal)
+    assert.equal(descendants(root2, (n) => n.type === 'nav').length, 0)
+    assert.equal(byClass(root2, 'timeline-band').length, 1, 'the band is outside the scroller in both modes')
+})
+
+test('compact-height mode: every state (loading, empty, not found, error) carries the navigation copy and its divider; normal mode none', async (t) => {
+    const navigation = (root) => [byClass(root, 'timeline-nav-list').length, byClass(root, 'timeline-nav-divider').length]
+    const loading = await mount(t, fixture({ compact: true, projectsLoaded: false }), 'p1')
+    assert.deepEqual(navigation(loading), [1, 1])
+    const empty = await mount(t, fixture({ compact: true, workspaces: { w: { projectIds: [] } } }), 'ws:w')
+    assert.deepEqual(navigation(empty), [1, 1])
+    const missing = await mount(t, fixture({ compact: true, projects: {} }), 'ghost')
+    assert.deepEqual(navigation(missing), [1, 1])
+    const broken = fixture({ compact: true })
+    broken.server.fail = true
+    assert.deepEqual(navigation(await mount(t, broken)), [1, 1])
+    const normal = await mount(t, fixture({ compact: false, projectsLoaded: false }), 'p1')
+    assert.deepEqual(navigation(normal), [0, 0])
+})
+
+test('no timeline module imports the router statically (circular imports break the hot reload)', () => {
+    const dirs = ['../../components/timeline', '../../utils/timeline', '../../composables']
+    const files = dirs.flatMap((dir) => readdirSync(new URL(`${dir}/`, import.meta.url))
+        .filter((name) => /^(?!.*\.test\.js$).*\.(js|vue)$/.test(name) && (dir !== '../../composables' || name === 'useTimelineFeed.js'))
+        .map((name) => new URL(`${dir}/${name}`, import.meta.url)))
+    assert.ok(files.length >= 12)
+    for (const file of files) {
+        assert.ok(!/from ['"](?:\.\.?\/)+router(?:\.js)?['"]/.test(readFileSync(file, 'utf8')), String(file))
+    }
+})
+
+test('source pins: the band is outside the scroller, the router is not imported, the bottom pin is off', () => {
+    const source = readFileSync(new URL('./TimelinePanel.vue', import.meta.url), 'utf8')
+    const template = source.slice(source.indexOf('<template>'), source.indexOf('</template>\n\n<style'))
+    assert.ok(template.indexOf('timeline-band') < template.indexOf('<VirtualScroller'))
+    assert.ok(!/from '\.\.\/\.\.\/router/.test(source) && !/from 'vue-router'.*useRouter/.test(source))
+    assert.match(source, /\.timeline-list \.timeline-scroller\.at-bottom \{\s*overflow-anchor: none;/)
+    assert.match(source, /\.timeline-list \.timeline-scroller \{\s*flex: 1;\s*min-height: 0;/)
+    assert.match(source, /<VirtualScroller\s+ref="scrollerRef"\s+class="timeline-scroller"/)
+    // Stats' archived-blind list: the "show archived projects" setting does not apply to the Timeline.
+    assert.match(source, /workspacesStore\.getAllProjectIds\(id\)/)
+    assert.ok(!source.includes('getVisibleProjectIds'))
+    assert.match(source, /prevent-auto-scroll-to-bottom/)
+    assert.match(source, /@media \(prefers-reduced-transparency: reduce\) \{\s*\.timeline-band \{\s*--glass-sticky-bg: transparent;\s*background: var\(--panel-solid\);/)
+    assert.match(source, /:root\.reduce-effects \.timeline-band \{\s*--glass-sticky-bg: transparent;\s*background: var\(--panel-solid\);/)
+})
