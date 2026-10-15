@@ -1,6 +1,6 @@
 # Timeline Display — Design
 
-**Status:** draft, review round 3 fixes applied, not committed. Decisions taken with the owner 2026-10-15.
+**Status:** reviewed, committed (85acf095); implemented. Decisions taken with the owner 2026-10-15.
 **Date:** 2026-10-15
 **Scope:** a "Timeline" page that shows the recorded `TimelineEvent`s, newest first, one line per event, updated in real time. This is a delta on the implemented timeline. It does not edit the earlier timeline documents.
 **Baseline:** the system as implemented on branch `feature/session-timeline` (migrations up to `0158`). Nothing reads `TimelineEvent` today: no view, serializer, WebSocket frame, CLI, MCP tool or frontend code.
