@@ -218,6 +218,23 @@ def test_process_state_forwarded_root_only(session):
     _run(scenario())
 
 
+def test_timeline_changed_is_never_forwarded_to_a_public_viewer(session):
+    # The Timeline feed is owner-only: the "updates" group carries ``timeline_changed`` to every socket, and
+    # the share consumer must drop it (it forwards only whitelisted message types).
+    share = _share(session, options={"mode": "live", "max_display_mode": "normal"})
+
+    async def scenario():
+        comm = _communicator(share.token)
+        connected, _ = await comm.connect()
+        assert connected
+        await get_channel_layer().group_send("updates", {"type": "broadcast", "data": {
+            "type": "timeline_changed", "latest_id": 1}})
+        await _assert_nothing_forwarded(comm, session.id)
+        await comm.disconnect()
+
+    _run(scenario())
+
+
 def test_agent_link_forwarded_for_live_spawned_subagent(session):
     # A subagent spawned after page load must become openable: the consumer both
     # tracks it as a descendant AND pushes a viewer link so "View Agent" resolves.

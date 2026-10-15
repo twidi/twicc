@@ -366,6 +366,22 @@ def test_stopping_the_signal_drops_a_pending_window(sent, short_throttle):
     assert sent == []
 
 
+def test_a_restart_on_a_live_loop_does_not_fire_the_window_of_the_previous_run(sent, short_throttle):
+    # Only ``timer.cancel()`` in ``stop_timeline_signal`` prevents the old window from firing: after the
+    # restart the loop is set again, so ``_fire`` would otherwise flush a signal nobody asked for.
+    make_event()
+
+    async def scenario():
+        timeline_signal.poke()
+        await asyncio.sleep(0.01)  # the window is armed
+        timeline_signal.stop_timeline_signal()
+        timeline_signal.start_timeline_signal(asyncio.get_running_loop())
+        await asyncio.sleep(0.3)
+
+    run_loop(scenario)
+    assert sent == []
+
+
 def test_a_message_reaches_a_websocket_client_through_the_updates_group(short_throttle):
     """The real channel layer: a consumer in the ``updates`` group receives the unfiltered frame."""
     from channels.layers import get_channel_layer
