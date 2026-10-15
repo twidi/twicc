@@ -61,6 +61,10 @@ test('the reason prefixes', () => {
     assert.equal(describeSettingsChange(changes, 'switch-hybrid', labels).text, 'Hybrid switch: Effort: High -> Max')
     assert.equal(describeSettingsChange(changes, 'something-new', labels).text, 'Effort: High -> Max')
     assert.equal(describeSettingsChange(changes, '', labels).text, 'Effort: High -> Max')
+    // An unknown reason has no prefix, even when it names an Object.prototype member.
+    for (const reason of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+        assert.equal(describeSettingsChange(changes, reason, labels).text, 'Effort: High -> Max', reason)
+    }
 })
 
 test('a new permission mode that runs without asking is a warning', () => {

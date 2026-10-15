@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { PROCESS_ENDED_REASONS, describeEvent } from './describeEvent.js'
+import { ARROW } from './eventTime.js'
 
 const TIME = { locale: 'en-GB', timeZone: 'UTC' }
 const sessions = {
@@ -127,7 +128,8 @@ test('awaiting_input: request_type wins over tool_name; tool_name is cut near 40
     assert.equal(w(started, { request_type: 'future_type' }), 'Waiting for input')
     assert.equal(w(ended, { request_type: 'future_type', tool_name: 'Bash' }), 'Input handled')
     const long = w(started, { request_type: 'tool_approval', tool_name: 'mcp__server__' + 'x'.repeat(100) })
-    assert.ok(long.length < 80 && long.includes('…'))
+    // TOOL_MAX (40) counts the ellipsis: 39 characters of the name, then the ellipsis.
+    assert.equal(long, `Waiting for approval (${'mcp__server__' + 'x'.repeat(26)}…)`)
 })
 
 test('session.created: origin wording', () => {
@@ -175,7 +177,8 @@ test('title.changed: long titles are cut near 80 characters and the full text go
     const old = 'O'.repeat(200)
     const next = 'N'.repeat(200)
     const vm = describe('title.changed', { data: { source: 'user', old, new: next } })
-    assert.ok(words(vm).length < 200 && words(vm).includes('…'))
+    // TITLE_MAX (80) counts the ellipsis: 79 characters of each title, then the ellipsis.
+    assert.equal(words(vm), `Renamed "${'O'.repeat(79)}…"${ARROW}"${'N'.repeat(79)}…"`)
     assert.ok(vm.tooltip.includes(`Old title: ${old}`) && vm.tooltip.includes(`New title: ${next}`))
     const short = describe('title.changed', { data: { source: 'user', old: 'a', new: 'b' } })
     assert.ok(!short.tooltip.includes('Old title'))

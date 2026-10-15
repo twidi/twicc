@@ -84,6 +84,7 @@ test('any other actor/via combination has no label and is flagged for the toolti
 
 test('an external client name is cut near 80 characters', () => {
     const author = label({ actor: 'external', via: 'mcp_external', actor_name: 'N'.repeat(200) })
-    assert.ok(plainText(author).length < 100)
-    assert.ok(plainText(author).includes('…'))
+    // The cut name counts 80 characters, ellipsis included.
+    assert.ok(plainText(author).includes(`${'N'.repeat(79)}…`))
+    assert.ok(!plainText(author).includes('N'.repeat(80)))
 })

@@ -55,6 +55,17 @@ test('truncateText cuts near the limit with an ellipsis and says so', () => {
     assert.deepEqual(truncateText(null, 5), { text: '', truncated: false })
 })
 
+test('truncateText never leaves a lone surrogate when the cut falls inside an emoji', () => {
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+    const text = 'a'.repeat(78) + '😀' + 'b'.repeat(20)
+    const cut = truncateText(text, 80)
+    assert.equal(cut.truncated, true)
+    assert.ok(!lone.test(cut.text), JSON.stringify(cut.text))
+    assert.equal(cut.text, `${'a'.repeat(78)}😀…`)
+    assert.equal(truncateText('😀'.repeat(50), 10).text, `${'😀'.repeat(9)}…`)
+    assert.deepEqual(truncateText('😀'.repeat(10), 10), { text: '😀'.repeat(10), truncated: false })
+})
+
 test('splitFirstLine separates the first line from the rest', () => {
     assert.deepEqual(splitFirstLine('one'), { first: 'one', rest: '' })
     assert.deepEqual(splitFirstLine('one\ntwo\nthree'), { first: 'one', rest: 'two\nthree' })

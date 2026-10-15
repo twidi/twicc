@@ -77,7 +77,10 @@ export function formatFullTime(ms, { locale, timeZone } = {}) {
 export function truncateText(text, max) {
     const value = typeof text === 'string' ? text : String(text ?? '')
     if (value.length <= max) return { text: value, truncated: false }
-    return { text: `${value.slice(0, max - 1).trimEnd()}…`, truncated: true }
+    // Cut on code points: a UTF-16 slice could split a surrogate pair and leave a lone surrogate.
+    const points = Array.from(value)
+    if (points.length <= max) return { text: value, truncated: false }
+    return { text: `${points.slice(0, max - 1).join('').trimEnd()}…`, truncated: true }
 }
 
 /**

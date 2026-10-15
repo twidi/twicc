@@ -57,7 +57,7 @@ export function describeSettingsChange(changes, reason, labels) {
         ? Object.entries(changes).filter(([, pair]) => Array.isArray(pair) && pair.length === 2)
         : []
     if (!entries.length) return { text: 'Settings changed', full: 'Settings changed', severity: 'neutral' }
-    const prefix = REASON_PREFIXES[reason] ?? ''
+    const prefix = Object.hasOwn(REASON_PREFIXES, reason) ? REASON_PREFIXES[reason] : ''
     const lines = entries.map(([field, pair]) => formatChange(field, pair, labels))
     const shown = lines.slice(0, MAX_SHOWN_CHANGES).join(', ')
     const hidden = lines.length - MAX_SHOWN_CHANGES
