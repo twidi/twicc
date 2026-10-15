@@ -1,0 +1,288 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+import { PROCESS_ENDED_REASONS, describeEvent } from './describeEvent.js'
+
+const TIME = { locale: 'en-GB', timeZone: 'UTC' }
+const sessions = {
+    boss: { title: 'The boss', project_id: 'p', provider: 'claude_code', hidden: false, archived: false },
+    parent: { title: 'Parent session', project_id: 'p', provider: 'codex', hidden: false, archived: false },
+}
+let nextId = 1
+const make = (kind, fields = {}) => ({
+    id: nextId++, kind, occurred_at: '2026-10-14T14:32:07.000000Z', precision: 'exact', actor: 'agent', via: null,
+    actor_ref: null, actor_name: null, reason: '', data: {}, session_id: 's1', project_id: 'p', provider: 'codex', ...fields,
+})
+const describe = (kind, fields, context = {}) => describeEvent(make(kind, fields), { sessions, time: TIME, ...context })
+const words = (vm) => vm.parts.map((part) => (part.type === 'text' ? part.text : `<${part.mention.title}>`)).join('')
+
+test('the 19 kinds: wording, icon and severity (section 6.1)', () => {
+    const cases = [
+        ['session.created', { data: { origin: 'twicc' } }, 'Session created', 'plus', 'neutral'],
+        ['title.changed', { data: { source: 'user', new: 'B', old: 'A' } }, 'Renamed "A" -> "B"', 'pencil', 'neutral'],
+        ['settings.changed', { data: { changes: { effort: ['low', 'high'] } } }, 'effort: low -> high', 'sliders', 'neutral'],
+        ['process.started', { data: { cause: 'new' } }, 'Process started', 'play', 'success'],
+        ['process.ended', { reason: 'manual' }, 'Process stopped', 'power-off', 'neutral'],
+        ['turn.started', {}, 'Turn started', 'robot', 'neutral'],
+        ['turn.ended', { data: { background_work: null } }, 'Turn ended', 'circle-check', 'success'],
+        ['awaiting_input.started', { data: { request_type: 'tool_approval' } }, 'Waiting for approval', 'hand', 'warning'],
+        ['awaiting_input.ended', { data: { request_type: 'tool_approval' } }, 'Approval handled', 'circle-check', 'neutral'],
+        ['archived.started', {}, 'Archived', 'box-archive', 'neutral'],
+        ['archived.ended', {}, 'Unarchived', 'box-open', 'neutral'],
+        ['hidden.started', {}, 'Hidden', 'eye-slash', 'neutral'],
+        ['hidden.ended', {}, 'Unhidden', 'eye', 'neutral'],
+        ['muted.started', {}, 'Muted', 'bell-slash', 'neutral'],
+        ['muted.ended', {}, 'Unmuted', 'bell', 'neutral'],
+        ['pinned.started', { data: { scope: 'project' } }, 'Pinned (project)', 'thumbtack', 'neutral'],
+        ['pinned.ended', { data: { scope: 'project' } }, 'Unpinned (was project)', 'thumbtack-slash', 'neutral'],
+        ['backend.started', { session_id: null, data: { version: '1.2.3' } }, 'TwiCC started v1.2.3', 'server', 'neutral'],
+        ['backend.ended', { session_id: null, data: { clean: true } }, 'TwiCC stopped', 'power-off', 'neutral'],
+    ]
+    assert.equal(cases.length, 19)
+    for (const [kind, fields, wording, icon, severity] of cases) {
+        const vm = describe(kind, fields)
+        assert.deepEqual([words(vm), vm.icon, vm.severity], [wording, icon, severity], kind)
+    }
+})
+
+test('an unknown kind shows its raw name with a generic icon and no detail', () => {
+    const vm = describe('plan.approved', { data: { anything: 1 } })
+    assert.deepEqual([words(vm), vm.icon, vm.severity, vm.tag, vm.badge, vm.detail], ['plan.approved', 'circle-info', 'neutral', null, null, null])
+})
+
+test('data missing or not an object is treated as empty and never throws', () => {
+    for (const data of [undefined, null, 'text', 7, ['a']]) {
+        for (const kind of ['session.created', 'title.changed', 'settings.changed', 'process.started', 'process.ended', 'turn.ended',
+            'awaiting_input.started', 'pinned.started', 'backend.started', 'backend.ended', 'archived.started']) {
+            assert.doesNotThrow(() => describe(kind, { data }), `${kind} / ${JSON.stringify(data)}`)
+        }
+    }
+})
+
+test('process.ended: every reason has its wording and severity; the table has 15 reasons', () => {
+    assert.equal(Object.keys(PROCESS_ENDED_REASONS).length, 15)
+    const expected = {
+        manual: ['Process stopped', 'neutral'], force: ['Process killed', 'neutral'],
+        archived: ['Process stopped (session archived)', 'neutral'], shutdown: ['Process stopped (TwiCC shutdown)', 'neutral'],
+        'apply-settings': ['Process restarted to apply settings', 'neutral'],
+        'switch-hybrid': ['Process stopped (switch to hybrid)', 'neutral'],
+        timeout_user_turn: ['Process stopped (idle timeout)', 'neutral'], 'cli-exit': ['Hybrid CLI exited', 'neutral'],
+        timeout_starting: ['Process stopped: start timed out', 'warning'],
+        timeout_assistant_turn: ['Process stopped: no activity', 'warning'],
+        cron_restart_timeout: ['Cron restart timed out', 'warning'], lost: ['Process lost (found dead at boot)', 'warning'],
+        auth_required: ['Process stopped: login required', 'danger'], 'startup-failed': ['Process failed to start', 'danger'],
+        error: ['Process crashed', 'danger'],
+    }
+    for (const [reason, [wording, severity]] of Object.entries(expected)) {
+        const vm = describe('process.ended', { reason })
+        assert.deepEqual([words(vm), vm.severity], [wording, severity], reason)
+        assert.equal(vm.icon, 'power-off')
+    }
+})
+
+test('process.ended: an unknown reason reads "Process stopped" with the raw reason in the tooltip', () => {
+    for (const reason of ['brand_new', 'constructor', '']) {
+        const vm = describe('process.ended', { reason })
+        assert.deepEqual([words(vm), vm.severity], ['Process stopped', 'neutral'], reason)
+    }
+    assert.match(describe('process.ended', { reason: 'brand_new' }).tooltip, /Reason: brand_new/)
+})
+
+test('process.ended error: the first line is the detail, the rest sits behind the expand control', () => {
+    const vm = describe('process.ended', { reason: 'error', data: { error: 'Boom: it broke\n  at file.js:1\n  at main' } })
+    assert.deepEqual(vm.detail, { first: 'Boom: it broke', rest: 'at file.js:1\n  at main' })
+    assert.equal(describe('process.ended', { reason: 'error', data: { error: null } }).detail, null)
+    assert.equal(describe('process.ended', { reason: 'manual', data: { error: 'ignored' } }).detail, null)
+})
+
+test('process.ended lost: the upper bound adds "Detected at boot HH:MM" to the tooltip', () => {
+    const vm = describe('process.ended', {
+        reason: 'lost', precision: 'estimated', data: { upper_bound: '2026-10-14T16:45:00+00:00' },
+    })
+    assert.match(vm.tooltip, /Detected at boot 16:45/)
+})
+
+test('process.started: resumed, hybrid, unknown cause', () => {
+    assert.equal(words(describe('process.started', { data: { cause: 'resume' } })), 'Process resumed')
+    assert.equal(words(describe('process.started', { data: { cause: 'resume', hybrid: true } })), 'Process resumed (hybrid CLI)')
+    assert.equal(words(describe('process.started', { data: { cause: 'new', hybrid: true } })), 'Process started (hybrid CLI)')
+    assert.equal(words(describe('process.started', { data: { cause: 'cron_restart' } })), 'Process started')
+    assert.match(describe('process.started', { data: { twicc_pid: 4242 } }).tooltip, /Process id: 4242/)
+})
+
+test('awaiting_input: request_type wins over tool_name; tool_name is cut near 40 characters', () => {
+    const w = (kind, data) => words(describe(kind, { data }))
+    const started = 'awaiting_input.started'
+    const ended = 'awaiting_input.ended'
+    assert.equal(w(started, { request_type: 'tool_approval', tool_name: 'Bash' }), 'Waiting for approval (Bash)')
+    assert.equal(w(started, { request_type: 'tool_approval', tool_name: null }), 'Waiting for approval')
+    assert.equal(w(ended, { request_type: 'tool_approval', tool_name: 'Bash' }), 'Approval handled (Bash)')
+    assert.equal(w(ended, { request_type: 'tool_approval' }), 'Approval handled')
+    assert.equal(w(started, { request_type: 'ask_user_question', tool_name: 'AskUserQuestion' }), 'Question for you')
+    assert.equal(w(ended, { request_type: 'ask_user_question', tool_name: 'AskUserQuestion' }), 'Question answered')
+    assert.equal(w(started, { request_type: 'hybrid_terminal', tool_name: 'Bash' }), 'Waiting in the terminal (Bash)')
+    assert.equal(w(started, { request_type: 'hybrid_terminal' }), 'Waiting in the terminal')
+    assert.equal(w(ended, { request_type: 'hybrid_terminal', tool_name: 'Bash' }), 'Terminal input handled')
+    assert.equal(w(started, { request_type: null, tool_name: 'Bash' }), 'Waiting for input (Bash)')
+    assert.equal(w(started, { request_type: 'future_type' }), 'Waiting for input')
+    assert.equal(w(ended, { request_type: 'future_type', tool_name: 'Bash' }), 'Input handled')
+    const long = w(started, { request_type: 'tool_approval', tool_name: 'mcp__server__' + 'x'.repeat(100) })
+    assert.ok(long.length < 80 && long.includes('…'))
+})
+
+test('session.created: origin wording', () => {
+    const w = (data) => words(describe('session.created', { actor: 'system', data }))
+    assert.equal(w({ origin: 'twicc' }), 'Session created')
+    assert.equal(w({ origin: 'external' }), 'Session created from a terminal')
+    assert.equal(w({ origin: 'sync' }), 'Session imported')
+    assert.equal(w({ origin: 'something-else' }), 'Session created')
+    assert.equal(w({}), 'Session created')
+})
+
+test('session.created: the parent appears once, and never next to an agent author label', () => {
+    const parentPart = (vm) => vm.parts.find((part) => part.type === 'session')
+    const plain = describe('session.created', { actor: 'user', via: 'ui', data: { origin: 'twicc', spawned_by: 'parent' } })
+    assert.equal(words(plain), 'Session created by <Parent session>')
+    assert.equal(parentPart(plain).mention.link, true)
+    const imported = describe('session.created', { actor: 'system', data: { origin: 'sync', spawned_by: 'parent' } })
+    assert.equal(words(imported), 'Session imported (spawned by <Parent session>)')
+    const byAgent = describe('session.created', {
+        actor: 'agent', via: 'mcp_internal', actor_ref: 'boss', data: { origin: 'twicc', spawned_by: 'parent' },
+    })
+    assert.equal(words(byAgent), 'Session created')
+    assert.equal(parentPart(byAgent), undefined)
+    assert.equal(byAgent.author.kind, 'session')
+    const missing = describe('session.created', { actor: 'user', via: 'ui', data: { origin: 'twicc', spawned_by: 'purged-id-123' } })
+    assert.equal(words(missing), 'Session created by <purged-i>')
+    assert.equal(parentPart(missing).mention.link, false)
+})
+
+test('title.changed: renamed, titled, cleared, source tags', () => {
+    const title = (data) => describe('title.changed', { data })
+    assert.equal(words(title({ source: 'user', old: 'A', new: 'B' })), 'Renamed "A" -> "B"')
+    assert.equal(words(title({ source: 'user', old: null, new: 'B' })), 'Titled "B"')
+    assert.equal(words(title({ source: 'user', old: '', new: 'B' })), 'Titled "B"')
+    assert.equal(words(title({ source: 'user', old: 'A', new: null })), 'Title cleared')
+    assert.equal(words(title({ source: 'user', old: 'A', new: '' })), 'Title cleared')
+    assert.equal(title({ source: 'user', new: 'B' }).tag, null)
+    assert.equal(title({ source: 'auto', new: 'B' }).tag, 'automatic')
+    assert.equal(title({ source: 'agent', new: 'B' }).tag, 'by the agent')
+    assert.equal(title({ source: 'future', new: 'B' }).tag, null)
+    assert.equal(title({ source: 'constructor', new: 'B' }).tag, null)
+})
+
+test('title.changed: long titles are cut near 80 characters and the full text goes to the tooltip', () => {
+    const old = 'O'.repeat(200)
+    const next = 'N'.repeat(200)
+    const vm = describe('title.changed', { data: { source: 'user', old, new: next } })
+    assert.ok(words(vm).length < 200 && words(vm).includes('…'))
+    assert.ok(vm.tooltip.includes(`Old title: ${old}`) && vm.tooltip.includes(`New title: ${next}`))
+    const short = describe('title.changed', { data: { source: 'user', old: 'a', new: 'b' } })
+    assert.ok(!short.tooltip.includes('Old title'))
+})
+
+test('strings from data stay plain strings: markup is not interpreted here', () => {
+    const vm = describe('title.changed', { data: { source: 'user', old: null, new: '<img src=x onerror=alert(1)>' } })
+    assert.equal(words(vm), 'Titled "<img src=x onerror=alert(1)>"')
+})
+
+test('settings.changed: labels come from the provider of the row, then of the session', () => {
+    const asked = []
+    const labelsFor = (provider) => {
+        asked.push(provider)
+        return null
+    }
+    describeEvent(make('settings.changed', { provider: 'codex', data: { changes: { effort: ['a', 'b'] } } }), { sessions, labelsFor, time: TIME })
+    describeEvent(make('settings.changed', { provider: null, session_id: 'boss', data: { changes: { effort: ['a', 'b'] } } }), { sessions, labelsFor, time: TIME })
+    assert.deepEqual(asked, ['codex', 'claude_code'])
+})
+
+test('settings.changed: a long diff keeps all changes in the tooltip; opening permissions is a warning', () => {
+    const changes = { selected_model: ['a', 'b'], effort: ['a', 'b'], fast_mode: [false, true], permission_mode: ['default', 'yolo'] }
+    const vm = describe('settings.changed', { data: { changes } })
+    assert.equal(vm.severity, 'warning')
+    assert.match(words(vm), /\+1 more$/)
+    assert.match(vm.tooltip, /permission_mode: default -> yolo/)
+})
+
+test('pinned: scope wording and fallbacks', () => {
+    const w = (kind, scope) => words(describe(kind, { data: { scope } }))
+    assert.equal(w('pinned.started', 'workspace'), 'Pinned (workspace)')
+    assert.equal(w('pinned.started', 'all'), 'Pinned (all projects)')
+    assert.equal(w('pinned.started', null), 'Pinned')
+    assert.equal(w('pinned.started', 'galaxy'), 'Pinned')
+    assert.equal(w('pinned.ended', 'all'), 'Unpinned (was all projects)')
+    assert.equal(w('pinned.ended', null), 'Unpinned')
+    assert.equal(w('pinned.ended', 'toString'), 'Unpinned')
+})
+
+test('backend rows: version, machine restart, clean or not, tooltip facts', () => {
+    const started = (data) => describe('backend.started', { session_id: null, actor: 'system', data })
+    assert.equal(words(started({ version: null })), 'TwiCC started')
+    assert.equal(words(started({ version: '1.2.3', machine_restarted: true })), 'TwiCC started v1.2.3 after a machine restart')
+    assert.equal(words(started({ version: '1.2.3', machine_restarted: false })), 'TwiCC started v1.2.3')
+    assert.equal(words(started({ version: '1.2.3', machine_restarted: null })), 'TwiCC started v1.2.3')
+    const tooltip = started({ pid: 77, version: '1.2.3', boot_id: 'abc-def' }).tooltip
+    assert.ok(tooltip.includes('Process id: 77') && tooltip.includes('Version: 1.2.3') && tooltip.includes('Boot id: abc-def'))
+    const ended = (clean) => describe('backend.ended', { session_id: null, actor: 'system', data: { clean } })
+    assert.deepEqual([words(ended(true)), ended(true).severity], ['TwiCC stopped', 'neutral'])
+    assert.deepEqual([words(ended(false)), ended(false).severity], ['TwiCC stopped unexpectedly', 'danger'])
+    assert.deepEqual([words(ended(null)), ended(null).severity], ['TwiCC stopped', 'neutral'])
+})
+
+test('turn.ended: the background-work badge, plain when there is none or the shape is unknown', () => {
+    const badge = describe('turn.ended', { data: { background_work: { subagents: 2, shells: 0, monitors: 0, scheduled_wakeup_at: null, goal: false } } }).badge
+    assert.equal(badge.text, '2 subagents')
+    assert.equal(describe('turn.ended', { data: { background_work: null } }).badge, null)
+    assert.equal(describe('turn.ended', { data: { background_work: 'weird' } }).badge, null)
+    assert.equal(words(describe('turn.ended', { data: { background_work: 'weird' } })), 'Turn ended')
+})
+
+test('time: clock in the locale, "~" and a flag for estimated and derived, different captions', () => {
+    const exact = describe('turn.started', {})
+    assert.deepEqual([exact.time.text, exact.time.estimated], ['14:32', false])
+    const estimated = describe('turn.started', { precision: 'estimated' })
+    assert.deepEqual([estimated.time.text, estimated.time.estimated], ['~14:32', true])
+    const derived = describe('session.created', { precision: 'derived', actor: 'system', data: { origin: 'sync' } })
+    assert.deepEqual([derived.time.text, derived.time.estimated], ['~14:32', true])
+    assert.match(estimated.tooltip, /Estimated: it happened at or before this time/)
+    assert.match(derived.tooltip, /Derived from the session's creation time/)
+    assert.ok(!derived.tooltip.includes('Estimated:') && !estimated.tooltip.includes('Derived from'))
+    const unknown = describe('turn.started', { precision: 'approximate' })
+    assert.deepEqual([unknown.time.text, unknown.time.estimated], ['14:32', false])
+})
+
+test('tooltip: full time, precision, reason, via, actor ref and name; unknown combinations show the actor', () => {
+    const vm = describe('settings.changed', {
+        actor: 'external', via: 'mcp_external', actor_ref: 'conn-1', actor_name: 'ChatGPT', reason: 'set_mode',
+        data: { changes: { effort: ['a', 'b'] } },
+    })
+    for (const line of ['14 Oct 2026', '14:32:07', 'Precision: exact', 'Reason: set_mode', 'Via: mcp_external', 'Actor ref: conn-1', 'Actor name: ChatGPT']) {
+        assert.ok(vm.tooltip.includes(line), line)
+    }
+    assert.ok(!vm.tooltip.includes('Actor: '))
+    const odd = describe('archived.started', { actor: 'user', via: 'mcp_external' })
+    assert.ok(odd.tooltip.includes('Actor: user'))
+})
+
+test('a known subagent is plain text in an agent author label and as the parent of session.created', () => {
+    const isSubagent = (id) => id === 'boss' || id === 'parent'
+    const label = describeEvent(make('archived.started', { actor: 'agent', via: 'cli', actor_ref: 'boss' }), { sessions, time: TIME, isSubagent })
+    assert.equal(label.author.parts[1].mention.link, false)
+    assert.equal(describeEvent(make('archived.started', { actor: 'agent', via: 'cli', actor_ref: 'boss' }), { sessions, time: TIME }).author.parts[1].mention.link, true)
+    const created = make('session.created', { actor: 'user', via: 'ui', data: { origin: 'twicc', spawned_by: 'parent' } })
+    const mention = (vm) => vm.parts.find((part) => part.type === 'session').mention
+    assert.equal(mention(describeEvent(created, { sessions, time: TIME, isSubagent })).link, false)
+    assert.equal(mention(describeEvent(created, { sessions, time: TIME })).link, true)
+})
+
+test('the tooltips of process and backend rows carry their technical facts', () => {
+    assert.match(describe('process.ended', { reason: 'manual', data: { twicc_pid: 99 } }).tooltip, /Process id: 99/)
+    const ended = describe('backend.ended', { session_id: null, actor: 'system', data: { clean: true, pid: 5, version: '1.0.0', boot_id: 'boot-1' } })
+    for (const line of ['Process id: 5', 'Version: 1.0.0', 'Boot id: boot-1']) assert.ok(ended.tooltip.includes(line), line)
+})
+
+test('the author label is part of the view-model', () => {
+    const vm = describe('archived.started', { actor: 'user', via: 'cli' })
+    assert.equal(vm.author.parts[0].text, 'by you (CLI)')
+})
