@@ -1204,10 +1204,12 @@ class CodexComputeCoordinator:
             finally:
                 if self.work_state is not None:
                     self.work_state.unregister_source_wakeup(Provider.CODEX, wakeup)
-                    if self._shutdown_drained:
+                    # Cleanup alone does not establish database idle.
+                    if self.ctx.stop_event.is_set() and self._shutdown_drained:
                         self.work_state.set_pending(Provider.CODEX, False)
 
-    async def _run(self) -> None:
+    async def _initialize(self) -> bool:
+        """Prepare startup metadata before worker resources become active."""
         self._absorb_rebuild_requests()
         async def load_initial(_ids):
             self._absorb_rebuild_requests()
@@ -1217,7 +1219,7 @@ class CodexComputeCoordinator:
         initial_candidates = await read_compute_state(load_initial, [], self.ctx.stop_event)
         if initial_candidates is None or self.ctx.stop_event.is_set():
             self.initial_done.set()
-            return
+            return False
         from twicc.providers.compute_tree import resolve_native_roots
 
         child_ids = {candidate.session_id for candidate in initial_candidates
@@ -1249,6 +1251,23 @@ class CodexComputeCoordinator:
                 )
         else:
             logger.info("Codex background compute: no sessions to process at startup")
+
+        return True
+
+    async def _run(self) -> None:
+        delay = 1.0
+        while not self.ctx.stop_event.is_set():
+            try:
+                if not await self._initialize():
+                    return
+                break
+            except Exception:
+                logger.exception("Codex compute initialization failed; retaining pending work for retry")
+                if not await _wait_for_retry_delay(self.ctx.stop_event, delay):
+                    return
+                delay = min(delay * 2, 60.0)
+        if self.ctx.stop_event.is_set():
+            return
 
         self._pumps = [
             asyncio.create_task(self._applied_pump()),

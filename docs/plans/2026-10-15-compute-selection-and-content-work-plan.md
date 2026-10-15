@@ -855,3 +855,47 @@ Those test files are unchanged since `f924fbdf`. No unrelated warning correction
 The five final lint findings are separately confirmed against baseline file contents, without checkout mutation.
 Final `git diff --check` passes. Known broad-run failures have passing focused coverage after their corrections.
 A complete full-suite run of the final revision is not claimed.
+
+
+### Final review correction — Codex initialization recovery — 2026-10-15
+
+Review base: `a5ac74e7`. The whole-plan review identifies one Important issue.
+Codex cleanup clears the compute gate after an unexpected startup exit, although database roots remain outdated.
+
+- Startup preparation now retries before worker resources start.
+- Retry delay starts at one second and doubles to a maximum of 60 seconds, using the existing stop-aware helper.
+- The provider remains pending throughout initialization and retry waits.
+- Authoritative selection still publishes lifetime idle.
+- Final cleanup clears pending only after explicit provider stop and proven teardown.
+- Unexpected exit and failed teardown retain pending state.
+- No compute version is lowered or cleared. Existing leases, rebuild recovery, application drain, and cancellation cleanup remain intact.
+
+TDD command, before production changes:
+
+```sh
+cd /home/twidi/dev/twicc-poc/.worktrees/feature-content-storage-compression && TWICC_DATA_DIR=$PWD uv run pytest -q tests/test_codex_compute_recovery.py -k 'unexpected_exit or startup_failure_recovers'
+```
+
+RED: **3 failed, 1 passed, 44 deselected in 5.35s**.
+Both injected startup errors escape. Successful cleanup incorrectly clears pending after unexpected exit.
+GREEN, same command after the production correction: **4 passed, 44 deselected in 7.91s**.
+The exit test then expands to cover explicit stop with successful or failed teardown.
+
+The real-root regression covers both one-time progress and project-cache read failures.
+It uses real worker pipes, writer application, and the periodic maintenance scheduler against isolated SQLite.
+Periodic preparation remains blocked during the paused retry interval with both roots still outdated.
+Both roots then reach version 123 before periodic work can prepare. The coordinator remains alive at idle.
+
+Final focused command:
+
+```sh
+cd /home/twidi/dev/twicc-poc/.worktrees/feature-content-storage-compression && TWICC_DATA_DIR=$PWD uv run pytest -q tests/test_codex_compute_recovery.py tests/test_compute_selection_wakeups.py tests/test_content_maintenance_compute_gate.py tests/test_compute_work.py tests/test_root_compute_completion.py tests/test_codex_migration_scheduler.py tests/test_background_compute_recovery.py
+```
+
+Result: **138 passed in 82.10s (0:01:22)**, with no test warnings.
+uv prints the expected inherited-environment mismatch warning and ignores that environment.
+Changed-file Ruff passes for the Codex coordinator and recovery tests. `git diff --check` passes.
+No new broad run occurs for this bounded correction. Earlier broad evidence retains its stated limits.
+No server operation, instance migration, package installation, data reset, or main database access occurs.
+The controller owns the scoped independent re-review.
+Internal report: `.superpowers/sdd/2026-10-15-compute-selection-and-content-work-plan/final-fix-report.md`.

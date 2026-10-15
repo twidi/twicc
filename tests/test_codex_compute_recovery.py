@@ -1055,7 +1055,10 @@ def test_current_root_recovery_uses_explicit_selection_without_downgrade(
 
 
 @pytest.mark.parametrize('failed_drain', [False, True])
-def test_work_gate_survives_publication_error_until_shutdown_drain(monkeypatch, failed_drain):
+@pytest.mark.parametrize('explicit_stop', [False, True])
+def test_exit_releases_work_gate_only_after_explicit_stop_and_shutdown_drain(
+    monkeypatch, failed_drain, explicit_stop,
+):
     async def run():
         owner = coordinator()
         owner.work_state = ComputeWorkState()
@@ -1074,10 +1077,12 @@ def test_work_gate_survives_publication_error_until_shutdown_drain(monkeypatch, 
         await entered.wait()
         assert owner.work_state.has_pending()
         assert Provider.CODEX in owner.work_state._source_wakeups
+        if explicit_stop:
+            owner.ctx.stop_event.set()
         release.set()
         with pytest.raises(RuntimeError):
             await task
-        assert owner.work_state.has_pending() == failed_drain
+        assert owner.work_state.has_pending() == (not explicit_stop or failed_drain)
         assert not owner.work_state._source_wakeups
     asyncio.run(run())
 
@@ -1236,4 +1241,110 @@ def test_actual_work_pending_during_migration_lock_and_application_drain(codex_r
             if lease.locked():
                 lease.release()
             await db_writer.stop_db_writer()
+    asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('failure', ['progress', 'project_cache'])
+def test_startup_failure_recovers_outdated_roots_before_periodic_admission(
+    codex_recovery_runtime, monkeypatch, settings, failure,
+):
+    from twicc import content_maintenance_task as maintenance
+
+    path, _ = codex_recovery_runtime
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    monkeypatch.setattr(background_compute, 'sync_to_async', background.sync_to_async)
+    monkeypatch.setattr(background_compute, 'load_project_directories', lambda: None)
+    monkeypatch.setattr(background_compute, 'load_project_git_roots', lambda: None)
+    monkeypatch.setattr(maintenance, 'pending_root_page', lambda *args: [])
+    clock, preparations = [0], []
+    monkeypatch.setattr(maintenance, '_maintenance_time', lambda: clock[0])
+
+    def compression(*args):
+        preparations.append(versions(path))
+        return 0, (), True
+
+    monkeypatch.setattr(maintenance, 'prepare_compression_batch', compression)
+
+    async def run():
+        state = ComputeWorkState()
+        retrying, retry_release = asyncio.Event(), asyncio.Event()
+        overdue, admitted = asyncio.Event(), asyncio.Event()
+        maintenance_stop = asyncio.Event()
+        ctx = background.ComputeContext(Provider.CODEX, 123, f'{__name__}:CodexRecoveryCompute')
+        owner = CodexComputeCoordinator(ctx, asyncio.Event(), work_state=state)
+        owner.prepare_candidate = lambda candidate: _prepared(candidate.session_id)
+        failed = False
+        initialize = owner._initialize_progress
+
+        async def progress(candidates):
+            nonlocal failed
+            await initialize(candidates)
+            if failure == 'progress' and not failed:
+                failed = True
+                raise RuntimeError('one startup progress failure')
+
+        def project_cache():
+            nonlocal failed
+            if failure == 'project_cache' and not failed:
+                failed = True
+                raise RuntimeError('one startup project cache failure')
+
+        async def retry(stop, delay):
+            assert 0 < delay <= 60
+            retrying.set()
+            await retry_release.wait()
+            return not stop.is_set()
+
+        wait = maintenance._wait
+
+        async def maintenance_wait(stop, wake, timeout):
+            if clock[0] == 0:
+                clock[0] = 1800
+                return
+            if preparations:
+                admitted.set()
+                stop.set()
+                return
+            assert timeout is None
+            overdue.set()
+            await wait(stop, wake, timeout)
+
+        monkeypatch.setattr(owner, '_initialize_progress', progress)
+        monkeypatch.setattr(background_compute, 'load_project_directories', project_cache)
+        monkeypatch.setattr(background_compute, '_wait_for_retry_delay', retry)
+        monkeypatch.setattr(maintenance, '_wait', maintenance_wait)
+        db_writer.start_db_writer()
+        task = asyncio.create_task(owner.run())
+        periodic = None
+        try:
+            async with asyncio.timeout(3):
+                while not retrying.is_set():
+                    if task.done():
+                        await task
+                    await asyncio.sleep(.01)
+            periodic = asyncio.create_task(maintenance.start_content_maintenance_task(
+                maintenance_stop, compute_work=state,
+            ))
+            await asyncio.wait_for(overdue.wait(), 3)
+            assert failed and state.has_pending()
+            assert versions(path) == {'faulty': None, 'healthy': None}
+            assert preparations == []
+            retry_release.set()
+            await asyncio.wait_for(admitted.wait(), 8)
+            await asyncio.wait_for(periodic, 3)
+            assert preparations == [{'faulty': 123, 'healthy': 123}]
+            assert versions(path) == {'faulty': 123, 'healthy': 123}
+            assert not state.has_pending()
+            assert not task.done()
+        finally:
+            retry_release.set()
+            maintenance_stop.set()
+            if periodic is not None:
+                await asyncio.gather(periodic, return_exceptions=True)
+            ctx.stop_event.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await db_writer.stop_db_writer()
+
     asyncio.run(run())
