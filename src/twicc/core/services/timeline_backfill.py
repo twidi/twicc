@@ -23,6 +23,7 @@ from django.db.models import Exists, OuterRef
 from twicc.core.models import (
     Session, SessionType, TimelineActor, TimelineEvent, TimelineKind, TimelinePrecision,
 )
+from twicc.core.services import timeline_signal
 from twicc.core.services.session_timeline import insert_event_rows
 from twicc.core.services.timeline_boot import BACKFILL_PREFIX
 from twicc.core.timeline import validate_data
@@ -204,6 +205,9 @@ async def run_timeline_backfill() -> None:
         logger.error(
             "Timeline backfill gave up on session %s after %d retries: %s", session_id, len(RETRY_PAUSES), cause,
         )
+    if stats["rows"]:
+        # The sessions were written silently: ONE signal for the whole run, every transaction committed.
+        timeline_signal.poke()
     if session_ids:
         logger.info(
             "Timeline backfill: %d session(s) written (%d row(s)), %d skipped, %d failed in %.1f s",

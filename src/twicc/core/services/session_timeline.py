@@ -21,6 +21,7 @@ from django.utils import timezone
 from twicc.core.models import (
     Session, SessionType, TimelineActor, TimelineEvent, TimelineKind, TimelinePrecision,
 )
+from twicc.core.services import timeline_signal
 from twicc.core.timeline import STARTED_OF, inherit_started_fields, validate_data
 from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.request_origin import (
@@ -146,7 +147,8 @@ def record_event_sync(
     the origin fields are never copied.
 
     ``provider`` is an optional hint (a free source the caller already holds); the ``provider`` column is
-    resolved by :func:`resolve_provider` whatever the caller passes.
+    resolved by :func:`resolve_provider` whatever the caller passes. After a successful insert (not on a
+    dedupe hit, not on a failure) the timeline signal is requested for when the transaction commits.
     """
     try:
         resolved = resolve_event_origin(actor, origin)
@@ -174,6 +176,7 @@ def record_event_sync(
                 dedupe_key=dedupe_key,
                 **origin_columns(resolved),
             )
+        timeline_signal.poke_on_commit()
         return event
     except IntegrityError:
         if dedupe_key is not None:
@@ -269,6 +272,7 @@ def record_events_bulk_sync(specs: list[EventSpec]) -> int:
     (against the table and inside the batch) skipped by the database itself. The valid rows go in
     ONE ``executemany`` inside a savepoint. If that batch fails, each row is retried alone through
     :func:`record_event_sync`, so one bad row costs only itself. Call it under the DB write lock.
+    A non-empty batch requests the timeline signal once, for when the transaction commits.
     """
     if not specs:
         return 0
@@ -296,7 +300,10 @@ def record_events_bulk_sync(specs: list[EventSpec]) -> int:
         rows = [row for _, row, _ in built]
         try:
             with transaction.atomic():
-                return insert_event_rows(rows)
+                written = insert_event_rows(rows)
+            if written:
+                timeline_signal.poke_on_commit()
+            return written
         except Exception:
             logger.exception("Timeline batch insert failed (%s rows); retrying row by row", len(rows))
             return sum(

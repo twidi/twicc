@@ -112,6 +112,7 @@ from twicc.version_check_task import start_version_check_task, stop_version_chec
 from twicc.tips_manifest import init_manifest, start_tips_watcher_task  # noqa: E402
 from twicc.help_manifest import init_manifest as init_help_manifest, start_help_watcher_task  # noqa: E402
 from twicc.title_auto_task import start_title_auto_task  # noqa: E402
+from twicc.core.services.timeline_signal import start_timeline_signal, stop_timeline_signal  # noqa: E402
 
 
 async def _cancel_task(task: asyncio.Task | None, name: str) -> None:
@@ -302,6 +303,8 @@ async def run_server(port: int):
     from twicc.data_backups_watcher import run_data_backups_watcher
     data_backups_task = asyncio.create_task(run_data_backups_watcher())
     # The writer is already started (see above); the backfill also does nothing without it.
+    # The signal needs the loop before the backfill can end a run with its one signal.
+    start_timeline_signal(asyncio.get_running_loop())
     timeline_backfill_task = asyncio.create_task(_guarded_timeline_backfill(), name="timeline-backfill")
     inline_exports = None
     try:
@@ -440,6 +443,7 @@ async def run_server(port: int):
             # database infrastructure is torn down.
             await _cancel_task(title_auto_task, "Automatic title task")
             await _cancel_task(timeline_backfill_task, "Timeline backfill")
+            stop_timeline_signal()
 
             # Stop cross-provider tasks first. The price sync loop watches
             # ``shutdown_event`` directly (set above by the signal handler),
@@ -557,6 +561,7 @@ async def run_server(port: int):
     finally:
         # Own partial coordinator startup and provider/configuration failures too.
         try:
+            stop_timeline_signal()
             if not data_backups_task.done():
                 await _cancel_task(data_backups_task, "Data backups watcher")
         finally:
