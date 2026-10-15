@@ -347,7 +347,7 @@ def test_hot_wakeup_promotes_without_timer_delay(content_row_factory, writer_sta
     waits = []
     def mutation(active):
         with transaction.atomic():
-            state.invalidate_roots([root.id])
+            state.invalidate_roots([root.id], promotion_targets=[root.id])
     async def wait(stop, wake, timeout):
         waits.append(timeout)
         if len(waits) == 1:
@@ -548,7 +548,7 @@ def test_hot_promotion_precedes_prepared_compression_publication(content_row_fac
     monkeypatch.setattr(maintenance, '_wait', wait)
     def mutation(active):
         with transaction.atomic():
-            state.invalidate_roots([hot_owner.id])
+            state.invalidate_roots([hot_owner.id], promotion_targets=[hot_owner.id])
     async def scenario():
         task = asyncio.create_task(maintenance.start_content_maintenance_task(asyncio.Event()))
         try:
@@ -788,7 +788,7 @@ def test_commit_callback_captures_priority_before_origin_resets(monkeypatch):
     with transaction.atomic():
         token = write_priority.set(WritePriority.BACKGROUND)
         try:
-            state.invalidate_roots([root.id])
+            state.invalidate_roots([root.id], promotion_targets=[root.id])
         finally:
             write_priority.reset(token)
         assert calls == []
@@ -1281,3 +1281,95 @@ def test_explicit_upgrade_retries_recovery_eligibility_rejected_during_await(
     else:
         assert rows[-1].codec == 'zstd'
         assert root.plaintext_verified_epoch is None
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('stale_certificate', [False, True])
+def test_hot_append_restart_does_not_recover_plaintext_scan(
+    writer_state, compute_executor_started, monkeypatch, settings, stale_certificate,
+):
+    import asyncio
+    from tests.test_content_ingestion import _create, _append
+    from twicc import content_maintenance_task as maintenance
+    from twicc.agent.registry import get_agent_manager_registry
+    from twicc.core.content_storage import state
+
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    monkeypatch.setattr(get_agent_manager_registry(), 'get_active_agents', list)
+    owner = _create([(1, '{}')])
+    with transaction.atomic():
+        assert state.verify_plaintext_root(state.snapshot_root_storage(owner.id))
+    _append(owner, [(2, '{"new":true}')])
+    if stale_certificate:
+        with transaction.atomic():
+            state.invalidate_roots([owner.id])
+    traversals = []
+    prepare = maintenance.prepare_promotion_batch
+    def track(*args):
+        traversals.append(args[0].root_id)
+        return prepare(*args)
+    monkeypatch.setattr(maintenance, 'prepare_promotion_batch', track)
+    async def wait(stop, wake, timeout):
+        stop.set()
+    monkeypatch.setattr(maintenance, '_wait', wait)
+    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event()))
+    assert traversals == []
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('active', [False, True])
+def test_interrupted_resume_still_recovers_after_restart(
+    content_row_factory, writer_state, compute_executor_started, monkeypatch, settings, active,
+):
+    import asyncio
+    from twicc import content_maintenance_task as maintenance
+    from twicc.agent.registry import get_agent_manager_registry
+    from twicc.core.content_storage import lifecycle
+    from twicc.core.models import Session, SessionItem
+
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    monkeypatch.setattr(get_agent_manager_registry(), 'get_active_agents', list)
+    # Aging does not change the epoch. A certificate from the former hot period remains equal.
+    owner = session('aged', created_at=timezone.now() - timedelta(days=40),
+                    content_storage_version=1, storage_incarnation='aged-inc',
+                    content_state_epoch=4, plaintext_verified_epoch=4)
+    child = session('child', type='subagent', parent_session=owner,
+                    content_storage_version=1, storage_incarnation='child-inc')
+    row = content_row_factory('root content' * 100, True, session_ids=[owner.id])
+    child_row = content_row_factory('child content' * 100, True, session_ids=[child.id])
+    SessionItem.objects.create(session=owner, line_num=1, content='', current_content=row)
+    SessionItem.objects.create(session=child, line_num=1, content='', current_content=child_row)
+    requests = []
+    monkeypatch.setattr(lifecycle, 'request_root_promotion', lambda target, **kwargs: requests.append(target))
+    token = lifecycle.active_session_ids.set(frozenset({owner.id}) if active else frozenset())
+    try:
+        lifecycle.update_lifecycle(Session.objects.filter(pk=owner.id), last_started_at=timezone.now())
+    finally:
+        lifecycle.active_session_ids.reset(token)
+    assert requests == [owner.id]
+    owner.refresh_from_db()
+    assert owner.plaintext_verified_epoch != owner.content_state_epoch
+    assert owner.id in maintenance.pending_root_page()
+    async def wait(stop, wake, timeout):
+        stop.set()
+    monkeypatch.setattr(maintenance, '_wait', wait)
+    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event()))
+    owner.refresh_from_db()
+    row.refresh_from_db()
+    child_row.refresh_from_db()
+    assert row.codec == 'plain'
+    assert child_row.codec == 'zstd'
+    assert owner.plaintext_verified_epoch == owner.content_state_epoch
+
+
+def test_stale_plaintext_root_recovery_uses_metadata_without_traversal():
+    from twicc import content_maintenance_task as maintenance
+    from twicc.core.models import SessionItem
+
+    owner = session('ready', content_storage_version=1, storage_incarnation='ready-inc',
+                    content_state_epoch=3, plaintext_verified_epoch=2)
+    assert maintenance.recovery_promotion_targets([owner.id]) == set()
+    owner.refresh_from_db()
+    assert owner.plaintext_verified_epoch == 2
+    SessionItem.objects.create(session=owner, line_num=1, content='legacy')
+    assert maintenance.recovery_promotion_targets([owner.id]) == {owner.id}

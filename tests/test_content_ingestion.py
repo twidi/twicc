@@ -287,7 +287,8 @@ def test_watcher_creation_initializes_identity_and_invalidates_native_root():
     assert root.storage_incarnation != child.storage_incarnation
     assert child.content_storage_version == 1
     root.refresh_from_db()
-    assert root.content_state_epoch > root.plaintext_verified_epoch
+    assert root.content_state_epoch > epoch
+    assert root.content_state_epoch == root.plaintext_verified_epoch
 
 
 @pytest.mark.parametrize('operation', ['insert_ingested_items', 'promote_ingested_items'])
@@ -298,3 +299,72 @@ def test_ingestion_item_helpers_require_caller_transaction(operation):
     session = Session(id='unsaved', provider=Provider.CLAUDE_CODE)
     with pytest.raises(transaction.TransactionManagementError, match='transaction'):
         getattr(ingestion, operation)(session, [])
+
+
+@pytest.mark.parametrize('stale_certificate', [False, True])
+def test_hot_append_carries_certificate_without_plaintext_request(monkeypatch, content_row_factory, stale_certificate):
+    from django.db import transaction
+    from twicc.core.content_storage import lifecycle, state
+
+    owner = _create([(1, '{}')])
+    with transaction.atomic():
+        assert state.verify_plaintext_root(state.snapshot_root_storage(owner.id))
+    if stale_certificate:
+        with transaction.atomic():
+            state.invalidate_roots([owner.id])
+    owner.refresh_from_db()
+    certificate = owner.plaintext_verified_epoch
+    epoch = owner.content_state_epoch
+    requests = []
+    monkeypatch.setattr(lifecycle, 'request_root_promotion', lambda target, **kwargs: requests.append(target))
+    source = '{"shared":"compressed"}'
+    row = content_row_factory(source, True, session_ids=[])
+    _append(owner, [(2, source)])
+    assert requests == []
+    assert owner.content_state_epoch > epoch
+    if stale_certificate:
+        assert owner.plaintext_verified_epoch == certificate
+        assert owner.plaintext_verified_epoch != owner.content_state_epoch
+    else:
+        assert owner.plaintext_verified_epoch == owner.content_state_epoch
+    row.refresh_from_db()
+    assert row.codec == 'plain'
+    with transaction.atomic():
+        assert state.require_plaintext_search(owner.id).epoch == owner.content_state_epoch
+
+
+def test_watcher_carries_certificate_after_deferred_promotion(tmp_path, monkeypatch, content_row_factory):
+    from django.db import transaction
+    from twicc.core.content_storage import lifecycle, state
+
+    owner = _create([])
+    with transaction.atomic():
+        assert state.verify_plaintext_root(state.snapshot_root_storage(owner.id))
+    source = orjson.dumps({'type': 'user', 'timestamp': '2026-10-15T10:00:00Z',
+                          'message': {'role': 'user', 'content': 'shared'}}).decode()
+    row = content_row_factory(source, True, session_ids=[])
+    requests = []
+    monkeypatch.setattr(lifecycle, 'request_root_promotion', lambda target, **kwargs: requests.append(target))
+    path = tmp_path / 'watcher.jsonl'
+    path.write_text(source + '\n')
+    drain_live_sync(ClaudeCodeSessionCompute(), owner, path)
+    owner.refresh_from_db()
+    row.refresh_from_db()
+    assert row.codec == 'plain'
+    assert owner.plaintext_verified_epoch == owner.content_state_epoch
+    assert requests == []
+
+
+def test_new_child_preserves_root_only_certificate_without_demand(monkeypatch):
+    from django.db import transaction
+    from twicc.core.content_storage import lifecycle, state
+
+    owner = _create([])
+    with transaction.atomic():
+        assert state.verify_plaintext_root(state.snapshot_root_storage(owner.id))
+    requests = []
+    monkeypatch.setattr(lifecycle, 'request_root_promotion', lambda target, **kwargs: requests.append(target))
+    _create([], session_id='new-child', parent=owner)
+    owner.refresh_from_db()
+    assert owner.plaintext_verified_epoch == owner.content_state_epoch
+    assert requests == []

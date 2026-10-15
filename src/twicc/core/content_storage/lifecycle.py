@@ -9,7 +9,10 @@ from django.db import transaction
 from django.utils import timezone
 
 from twicc.core.content_storage.policy import COLD_FIELDS
-from twicc.core.content_storage.state import TREE_PAGE_SIZE, invalidate_roots, resolve_root_decisions
+from twicc.core.content_storage.state import (
+    TREE_PAGE_SIZE, capture_plaintext_certificate, carry_plaintext_certificate,
+    invalidate_roots, resolve_root_decisions, session_plaintext_metadata,
+)
 from twicc.core.models import Session
 from twicc.providers.write_coordinator import WritePriority, write_priority
 
@@ -57,6 +60,9 @@ def lifecycle_change(session_ids: Iterable[str]):
         ids = tuple(set(session_ids))
         before = _metadata(ids)
         old_roots = _root_map(ids)
+        # Compare persisted policy. Runtime activity may precede the timestamp write.
+        old_decisions = resolve_root_decisions(ids, timezone.now(), frozenset())
+        certificates = {root: capture_plaintext_certificate(root) for root in set(old_roots.values())}
         yield
         after = _metadata(ids)
         changed = {sid for sid in ids if sid not in before or sid not in after
@@ -72,7 +78,19 @@ def lifecycle_change(session_ids: Iterable[str]):
                        or any(before[identity][field] != after[identity][field]
                               for field in ('type', 'parent_session_id')) for identity in changed)
         schedule_cold_invalidation(changed | roots, mappings=mappings)
-        invalidate_roots(roots, promotion_targets=changed)
+        decisions = resolve_root_decisions(changed, timezone.now(), active_session_ids.get())
+        from twicc.core.content_storage.ingestion import ingestion_preserves_plaintext
+
+        targets = {sid for sid, decision in decisions.items()
+                   if decision.resolved and not decision.is_cold
+                   and (old_decisions[sid].is_cold
+                        or (certificates.get(sid) is None and not ingestion_preserves_plaintext(sid)
+                            and not session_plaintext_metadata(sid)))}
+        invalidate_roots(roots, promotion_targets=targets)
+        for root in roots:
+            certificate = certificates.get(root)
+            if certificate is not None:
+                carry_plaintext_certificate(certificate)
 
 
 def update_lifecycle(queryset, **updates) -> int:

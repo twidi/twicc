@@ -22,7 +22,7 @@ from twicc.core.content_storage.lifecycle import active_session_ids, set_root_pr
 from twicc.core.content_storage.policy import COLD_FIELDS, CONTENT_STORAGE_VERSION, compression_policy_version
 from twicc.core.content_storage.state import (
     TREE_PAGE_SIZE, _require_writer_transaction, _snapshot_matches,
-    resolve_root_decision, resolve_root_decisions, snapshot_session_promotion,
+    resolve_root_decision, resolve_root_decisions, session_plaintext_metadata, snapshot_session_promotion,
 )
 from twicc.core.content_storage.types import PreparedRepresentation, RootPromotionCursor, RootStorageSnapshot, SessionPromotionSnapshot
 from twicc.core.models import Session, SessionItem, SessionItemContent
@@ -447,9 +447,11 @@ def pending_root_page(after_id=None):
 
 def recovery_promotion_targets(root_ids):
     """Recover persisted-hot roots only; an active child does not create demand for its cold root."""
-    decisions = resolve_root_decisions(root_ids, timezone.now(), frozenset())
-    return {root_id for root_id, decision in decisions.items()
-            if decision.resolved and decision.root_id == root_id and not decision.is_cold}
+    with transaction.atomic():
+        decisions = resolve_root_decisions(root_ids, timezone.now(), frozenset())
+        return {root_id for root_id, decision in decisions.items()
+                if decision.resolved and decision.root_id == root_id and not decision.is_cold
+                and not session_plaintext_metadata(root_id)}
 
 
 def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_BUDGET):

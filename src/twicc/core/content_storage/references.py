@@ -19,7 +19,9 @@ from django.db.models import Q
 from django.utils import timezone
 
 from twicc.core.content_storage.codec import ContentIntegrityError, encode_plain, encode_cold
-from twicc.core.content_storage.state import invalidate_roots, resolve_root_decision
+from twicc.core.content_storage.state import (
+    capture_plaintext_certificate, carry_plaintext_certificate, invalidate_roots, resolve_root_decision,
+)
 from twicc.core.content_storage.types import ContentBinding, PreparedInternContent
 from twicc.core.content_storage.writes import write_content_owners
 from twicc.core.models import SessionItem, SessionItemContent
@@ -193,9 +195,16 @@ def bind_persisted_items(bindings: Sequence[ContentBinding]) -> None:
         decision = resolve_root_decision(session_id, timezone.now(), frozenset())
         if decision.resolved:
             roots.add(decision.root_id)
-    # Any new persisted binding changes verification's graph, including hot
-    # reuse of shared compressed rows. The caller promotes before hot reads.
-    invalidate_roots(roots, promotion_targets={binding.session_id for binding in bindings})
+    # Ingestion owns exact-reference promotion. A binding alone only fences the graph.
+    owners = {binding.session_id for binding in bindings}
+    certificates = [certificate for root in roots - owners
+                    if (certificate := capture_plaintext_certificate(root)) is not None]
+    invalidate_roots(roots)
+    for certificate in certificates:
+        carry_plaintext_certificate(certificate)
+    from twicc.core.content_storage.ingestion import record_ingestion_bindings
+
+    record_ingestion_bindings(bindings)
 
 
 def _referenced_ids(session_id: str, content_ids: Sequence[int]) -> set[int]:

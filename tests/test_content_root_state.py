@@ -274,3 +274,54 @@ def test_public_metadata_and_root_verification_require_transaction():
         snapshot = state.snapshot_root_storage(root.id)
     with pytest.raises(transaction.TransactionManagementError):
         state.verify_plaintext_root(snapshot)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_epoch_invalidation_requires_explicit_demand(monkeypatch):
+    from twicc.core.content_storage import lifecycle
+
+    root = session('root')
+    requests = []
+    monkeypatch.setattr(lifecycle, 'request_root_promotion', lambda target, **kwargs: requests.append(target))
+    with transaction.atomic():
+        state.invalidate_roots([root.id])
+    assert requests == []
+    with transaction.atomic():
+        state.invalidate_roots([root.id], promotion_targets=[root.id])
+    assert requests == [root.id]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_hot_activity_carries_valid_certificate_without_demand(monkeypatch):
+    from twicc.core.content_storage import lifecycle
+
+    root = session('root', content_storage_version=1)
+    with transaction.atomic():
+        assert state.verify_plaintext_root(state.snapshot_root_storage(root.id))
+    requests = []
+    monkeypatch.setattr(lifecycle, 'request_root_promotion', lambda target, **kwargs: requests.append(target))
+    lifecycle.update_lifecycle(Session.objects.filter(pk=root.id), last_updated_at=timezone.now())
+    root.refresh_from_db()
+    assert requests == []
+    assert root.plaintext_verified_epoch == root.content_state_epoch
+
+
+@pytest.mark.django_db(transaction=True)
+def test_descendant_binding_preserves_root_certificate(monkeypatch):
+    from twicc.core.content_storage import lifecycle
+    from twicc.core.content_storage.references import bind_persisted_items
+    from twicc.core.content_storage.types import ContentBinding
+
+    root = session('root', content_storage_version=1)
+    child = session('child', type='subagent', parent_session=root)
+    with transaction.atomic():
+        assert state.verify_plaintext_root(state.snapshot_root_storage(root.id))
+    row = SessionItemContent.objects.create(sha256=hashlib.sha256(b'x').digest(), payload=b'x', raw_size=1)
+    item = SessionItem.objects.create(session=child, line_num=1, content='', current_content=row)
+    requests = []
+    monkeypatch.setattr(lifecycle, 'request_root_promotion', lambda target, **kwargs: requests.append(target))
+    with transaction.atomic():
+        bind_persisted_items([ContentBinding(item.id, child.id, row.id, None)])
+    root.refresh_from_db()
+    assert root.plaintext_verified_epoch == root.content_state_epoch
+    assert requests == []

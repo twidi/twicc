@@ -89,7 +89,7 @@ def test_root_shared_content_warms_only_shared_child_references(content_row_fact
 
 
 @pytest.mark.django_db(transaction=True)
-def test_child_lifecycle_change_queues_child_and_fences_root(monkeypatch):
+def test_plain_child_lifecycle_change_fences_without_demand(monkeypatch):
     root, child = native_pair()
     before = snapshot(root)
     requests = []
@@ -97,7 +97,7 @@ def test_child_lifecycle_change_queues_child_and_fences_root(monkeypatch):
     lifecycle.update_lifecycle(Session.objects.filter(pk=child.id), last_started_at=timezone.now())
     root.refresh_from_db()
     assert root.content_state_epoch > before.epoch
-    assert requests == [child.id]
+    assert requests == []
 
 
 def test_explicit_child_promotion_has_no_subtree_or_root_certificate(content_row_factory):
@@ -182,7 +182,7 @@ def test_child_contains_checks_both_slots_without_payload_or_wakeup(content_row_
 
 
 @pytest.mark.django_db(transaction=True)
-def test_child_reference_binding_queues_only_its_owner(content_row_factory, monkeypatch):
+def test_child_reference_binding_fences_without_plaintext_demand(content_row_factory, monkeypatch):
     from twicc.core.content_storage.references import bind_persisted_items
     from twicc.core.content_storage.types import ContentBinding
 
@@ -196,7 +196,7 @@ def test_child_reference_binding_queues_only_its_owner(content_row_factory, monk
         bind_persisted_items([ContentBinding(stored.id, child.id, row.id, None)])
     root.refresh_from_db()
     assert root.content_state_epoch > before.epoch
-    assert requests == [child.id]
+    assert requests == []
 
 
 @pytest.mark.django_db(transaction=True)
@@ -259,12 +259,12 @@ def test_plain_root_contains_survives_child_only_epoch_invalidation(content_row_
         assert state.verify_plaintext_root(state.snapshot_root_storage(root.id))
     lifecycle.update_lifecycle(Session.objects.filter(pk=child.id), last_started_at=timezone.now())
     root.refresh_from_db()
-    assert root.plaintext_verified_epoch != root.content_state_epoch
+    assert root.plaintext_verified_epoch == root.content_state_epoch
     with transaction.atomic():
         assert state.require_plaintext_search(root.id).root_id == root.id
     root.refresh_from_db()
-    # Read validation does not publish readiness or otherwise write storage state.
-    assert root.plaintext_verified_epoch != root.content_state_epoch
+    # Lifecycle preservation retains readiness; read validation does not write it.
+    assert root.plaintext_verified_epoch == root.content_state_epoch
 
 
 def test_compressed_root_cannot_use_stale_certificate_fallback(content_row_factory):

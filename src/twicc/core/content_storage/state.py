@@ -96,7 +96,7 @@ def ensure_storage_incarnation(session_id: str) -> str:
     return Session.objects.values_list('storage_incarnation', flat=True).get(pk=session_id)
 
 
-def invalidate_roots(root_ids: Iterable[str], *, promotion_targets: Iterable[str] | None = None) -> None:
+def invalidate_roots(root_ids: Iterable[str], *, promotion_targets: Iterable[str] = ()) -> None:
     """Fence native-root mutations separately from the sessions that require plaintext promotion."""
     _require_writer_transaction()
     roots = tuple(set(root_ids))
@@ -104,17 +104,57 @@ def invalidate_roots(root_ids: Iterable[str], *, promotion_targets: Iterable[str
         Session.objects.filter(pk__in=roots[offset:offset + TREE_PAGE_SIZE]).update(
             content_state_epoch=Coalesce(F('content_state_epoch'), 0) + 1,
         )
+    targets = tuple(set(promotion_targets))
+    if not targets:
+        return
     from twicc.core.content_storage.lifecycle import active_session_ids, request_root_promotion
-
     from twicc.providers.write_coordinator import write_priority
 
     priority = write_priority.get()
-    targets = roots if promotion_targets is None else tuple(set(promotion_targets))
     decisions = resolve_root_decisions(targets, timezone.now(), active_session_ids.get())
     for session_id, decision in decisions.items():
         if decision.resolved and not decision.is_cold:
             transaction.on_commit(lambda session_id=session_id, priority=priority:
                                   request_root_promotion(session_id, priority=priority))
+
+
+def capture_plaintext_certificate(root_id: str) -> RootStorageSnapshot | None:
+    """Capture a current certificate only while persisted policy still requires plaintext.
+
+    Wall-clock aging can permit compression without changing the epoch. Runtime
+    activity cannot turn that old certificate into proof of current plaintext.
+    """
+    _require_writer_transaction()
+    decision = resolve_root_decision(root_id, timezone.now(), frozenset())
+    if not decision.resolved or decision.root_id != root_id or decision.is_cold:
+        return None
+    fields = Session.objects.filter(pk=root_id).values(
+        'storage_incarnation', 'content_storage_version', 'content_state_epoch', 'plaintext_verified_epoch',
+    ).first()
+    if (fields is None or not fields['storage_incarnation']
+            or fields['content_storage_version'] != CONTENT_STORAGE_VERSION
+            or fields['content_state_epoch'] is None
+            or fields['plaintext_verified_epoch'] != fields['content_state_epoch']):
+        return None
+    return RootStorageSnapshot(root_id, fields['storage_incarnation'], fields['content_state_epoch'])
+
+
+def carry_plaintext_certificate(snapshot: RootStorageSnapshot) -> bool:
+    """Carry caller-owned plaintext preservation evidence to this transaction's final epoch.
+
+    The caller proves every changed root reference is plaintext, or that only
+    descendants/lifecycle metadata changed. Never use this to finish restoration.
+    """
+    _require_writer_transaction()
+    decision = resolve_root_decision(snapshot.root_id, timezone.now(), frozenset())
+    if not decision.resolved or decision.root_id != snapshot.root_id or decision.is_cold:
+        return False
+    epoch = Session.objects.values_list('content_state_epoch', flat=True).get(pk=snapshot.root_id)
+    return bool(Session.objects.filter(
+        pk=snapshot.root_id, storage_incarnation=snapshot.incarnation,
+        content_storage_version=CONTENT_STORAGE_VERSION, content_state_epoch=epoch,
+        plaintext_verified_epoch=snapshot.epoch,
+    ).update(plaintext_verified_epoch=epoch))
 
 
 def iter_native_tree_session_pages(

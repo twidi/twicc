@@ -4263,7 +4263,10 @@ class BaseSessionCompute:
                 updates = LiveSyncUpdates.empty()
             else:
                 raw = read_live_slice(file_path, offset=session.last_offset, limits=limits)
-                updates = self._sync_session_slice(session, file_path, raw)
+                from twicc.core.content_storage.ingestion import ingestion_plaintext_change
+
+                with ingestion_plaintext_change(session):
+                    updates = self._sync_session_slice(session, file_path, raw)
         return LiveSyncResult(updates, raw.has_more, len(updates.new_line_nums),
                               raw.bytes_consumed, (perf_counter() - started) * 1000)
 
