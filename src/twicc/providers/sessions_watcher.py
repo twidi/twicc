@@ -350,6 +350,59 @@ async def broadcast_agent_run_outcome(
         })
 
 
+async def broadcast_agent_link_updates(agent_link_updates, session, project_id, channel_layer, sent_interactions=None):
+    """Broadcast committed links and newly visible interactions through one shared path."""
+    if sent_interactions is None:
+        sent_interactions = set()
+    if not agent_link_updates:
+        return
+    root_session_id = session.parent_session_id or session.id
+    slugs_by_id = await sync_to_async(
+        lambda ids: dict(
+            Session.objects.filter(id__in=ids).values_list("id", "slug")
+        )
+    )([update.agent_id for update in agent_link_updates])
+    # ``display_name`` is the launcher's own name for the agent
+    # (see utils/agentLabel.js). Resolved here too, so a live
+    # agent's tab and tree node read the same as after a reload
+    # instead of falling back to its id until the next fetch.
+    display_names = await sync_to_async(spawn_display_names)(
+        [
+            SpawnRef(update.parent_session_id, update.tool_use_line_num, update.tool_use_id)
+            for update in agent_link_updates
+        ],
+        get_provider_helpers(session.provider),
+    )
+    for update in agent_link_updates:
+        await broadcast_message(channel_layer, {
+            "type": "agent_link_created",
+            "parent_session_id": update.parent_session_id,
+            "root_session_id": root_session_id,
+            "agent_session_id": update.agent_id,
+            "agent_slug": slugs_by_id.get(update.agent_id),
+            "display_name": display_names.get(
+                (update.parent_session_id, update.tool_use_id)
+            ),
+            "tool_use_id": update.tool_use_id,
+            "tool_use_line_num": update.tool_use_line_num,
+            "is_background": update.is_background,
+            "started_at": update.started_at.isoformat() if update.started_at else None,
+            "project_id": project_id,
+        })
+        late_payloads = await sync_to_async(late_tree_rule_payloads)(
+            root_session_id, update.agent_id,
+        )
+        for payload in late_payloads:
+            key = (payload["owner_session_id"], payload["tool_use_id"])
+            if key in sent_interactions:
+                continue
+            sent_interactions.add(key)
+            await broadcast_message(channel_layer, {
+                **payload, "type": "agent_interaction", "project_id": project_id,
+            })
+
+
+
 class BaseSessionsWatcher:
     """Provider-agnostic file watcher for JSONL session files.
 
@@ -380,6 +433,10 @@ class BaseSessionsWatcher:
         self._queue = SessionChangeQueue()
         self._consumer_task: asyncio.Task | None = None
         self._wake_tasks: set[asyncio.Task] = set()
+        from twicc.providers.launcher_lookup import LauncherLookupResolver
+        self._launcher_resolver = LauncherLookupResolver(on_resolved=self._broadcast_resolved_launcher_links)
+        self._launcher_resolver_task: asyncio.Task | None = None
+        self._pending_launcher_lookups = []
         self._source_lock = asyncio.Lock()
         self._sources: dict[Path, _SourceSnapshot] = {}
         self._replaced_paths: set[Path] = set()
@@ -851,6 +908,7 @@ class BaseSessionsWatcher:
         from twicc.inline_artifacts.share_exports import get_inline_export_coordinator
         get_inline_export_coordinator().publication_changed(session.id)
         updates = result.updates
+        self._pending_launcher_lookups.extend(updates.unresolved_launcher_lookups)
         if bounded and result.has_more:
             if result.elapsed_ms > 100:
                 self._line_limits[path] = max(1, limit // 2)
@@ -996,50 +1054,9 @@ class BaseSessionsWatcher:
                 # subagent Session are created by independent watcher
                 # passes — race expected); the next ``subagents_state``
                 # fetch re-resolves it.
-                if agent_link_updates:
-                    slugs_by_id = await sync_to_async(
-                        lambda ids: dict(
-                            Session.objects.filter(id__in=ids).values_list("id", "slug")
-                        )
-                    )([update.agent_id for update in agent_link_updates])
-                    # ``display_name`` is the launcher's own name for the agent
-                    # (see utils/agentLabel.js). Resolved here too, so a live
-                    # agent's tab and tree node read the same as after a reload
-                    # instead of falling back to its id until the next fetch.
-                    display_names = await sync_to_async(spawn_display_names)(
-                        [
-                            SpawnRef(update.parent_session_id, update.tool_use_line_num, update.tool_use_id)
-                            for update in agent_link_updates
-                        ],
-                        get_provider_helpers(session.provider),
-                    )
-                    for update in agent_link_updates:
-                        await broadcast_message(channel_layer, {
-                            "type": "agent_link_created",
-                            "parent_session_id": update.parent_session_id,
-                            "root_session_id": root_session_id,
-                            "agent_session_id": update.agent_id,
-                            "agent_slug": slugs_by_id.get(update.agent_id),
-                            "display_name": display_names.get(
-                                (update.parent_session_id, update.tool_use_id)
-                            ),
-                            "tool_use_id": update.tool_use_id,
-                            "tool_use_line_num": update.tool_use_line_num,
-                            "is_background": update.is_background,
-                            "started_at": update.started_at.isoformat() if update.started_at else None,
-                            "project_id": parsed.project_id,
-                        })
-                        late_payloads = await sync_to_async(late_tree_rule_payloads)(
-                            root_session_id, update.agent_id,
-                        )
-                        for payload in late_payloads:
-                            key = (payload["owner_session_id"], payload["tool_use_id"])
-                            if key in sent_interactions:
-                                continue
-                            sent_interactions.add(key)
-                            await broadcast_message(channel_layer, {
-                                **payload, "type": "agent_interaction", "project_id": parsed.project_id,
-                            })
+                await broadcast_agent_link_updates(
+                    agent_link_updates, session, parsed.project_id, channel_layer, sent_interactions,
+                )
 
                 # Interactions this batch created or whose ``opens_run`` changed.
                 for payload in agent_interaction_updates:
@@ -1166,6 +1183,29 @@ class BaseSessionsWatcher:
             'ready' if result.has_more else 'drained',
             self._queue.source_generation(path), session.last_offset, indexing_request,
         )
+
+    def _enqueue_launcher_lookups(self) -> None:
+        """Launch detached fallback after the consumer releases its change lock."""
+        if self._queue.closed:
+            self._pending_launcher_lookups.clear()
+            return
+        if not self._pending_launcher_lookups:
+            return
+        self._launcher_resolver.enqueue(self._pending_launcher_lookups)
+        self._pending_launcher_lookups.clear()
+        if self._launcher_resolver_task is None or self._launcher_resolver_task.done():
+            self._launcher_resolver_task = asyncio.create_task(
+                self._launcher_resolver.run(self.get_stop_event()), name='launcher-history-resolver',
+            )
+
+    async def _broadcast_resolved_launcher_links(self, updates) -> None:
+        for owner_id in dict.fromkeys(update.parent_session_id for update in updates):
+            session = await get_session_by_id(owner_id)
+            if session is not None and not session.hidden:
+                await broadcast_agent_link_updates(
+                    [update for update in updates if update.parent_session_id == owner_id],
+                    session, session.project_id, self._channel_layer or get_channel_layer(), set(),
+                )
 
     async def _process_parsed_session_change(
         self,
@@ -1308,6 +1348,7 @@ class BaseSessionsWatcher:
             return
         if (not self._queue.idle or self._channel_layer is not None
                 or (self._consumer_task is not None and not self._consumer_task.done())
+                or (self._launcher_resolver_task is not None and not self._launcher_resolver_task.done())
                 or any(not task.done() for task in self._wake_tasks)):
             raise RuntimeError('Cannot prepare watcher before shutdown drains')
         self._queue = SessionChangeQueue()
@@ -1390,6 +1431,9 @@ class BaseSessionsWatcher:
         for task in self._wake_tasks:
             task.cancel()
         tasks = list(self._wake_tasks)
+        if self._launcher_resolver_task is not None:
+            self._launcher_resolver_task.cancel()
+            tasks.append(self._launcher_resolver_task)
         if self._consumer_task is not None:
             tasks.append(self._consumer_task)
         if not tasks:
@@ -1404,6 +1448,8 @@ class BaseSessionsWatcher:
                 cancelled = True
         drain.result()
         self._pending_source_releases.clear()
+        self._pending_launcher_lookups.clear()
+        self._launcher_resolver_task = None
         if cancelled:
             raise asyncio.CancelledError
 
@@ -1448,6 +1494,7 @@ class BaseSessionsWatcher:
                 result = await self._process_change(
                     turn.change, str(turn.path), self._channel_layer or get_channel_layer(),
                 )
+            self._enqueue_launcher_lookups()
             if result.source_generation is not None:
                 self._queue.committed(turn.path, PathDrainTarget(result.source_generation, result.end_offset))
             self._queue.finish(turn, has_more=result.disposition == 'ready',
@@ -1584,6 +1631,7 @@ class BaseSessionsWatcher:
             )
             if change_type == Change.deleted and result.disposition != 'deferred':
                 self._deleted_parsed_paths.pop(path, None)
+            self._enqueue_launcher_lookups()
             if result.source_generation is not None:
                 result = result._replace(source_generation=generation)
             return result

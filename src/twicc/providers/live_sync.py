@@ -35,6 +35,7 @@ class LiveSyncUpdates(NamedTuple):
     agent_run_state_updates: list[dict]
     agents_resumed: list[tuple[str, str]]
     title_updated_session_ids: tuple[str, ...] = ()
+    unresolved_launcher_lookups: tuple = ()
 
     @classmethod
     def empty(cls) -> LiveSyncUpdates:
@@ -95,4 +96,5 @@ def merge_live_updates(left: LiveSyncUpdates, right: LiveSyncUpdates) -> LiveSyn
         left.agent_run_state_updates + right.agent_run_state_updates,
         left.agents_resumed + right.agents_resumed,
         tuple(dict.fromkeys((*left.title_updated_session_ids, *right.title_updated_session_ids))),
+        tuple(dict.fromkeys((*left.unresolved_launcher_lookups, *right.unresolved_launcher_lookups))),
     )

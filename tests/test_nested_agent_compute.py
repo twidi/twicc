@@ -484,7 +484,11 @@ def test_child_live_authoritative_tool_wins_same_prompt_sibling(tree):
     meta(tree, tool="root_tool", launcher=root.id)
     seed(root, spawn("root_tool"), spawn("other_tool"))
     seed(sibling, entry("user", "nested work"))
-    live(child, home, entry("user", "nested work", agentId=child.id))
+    updates = live(child, home, entry("user", "nested work", agentId=child.id))
+    assert [request.tool_use_id for request in updates.unresolved_launcher_lookups] == ["root_tool"]
+    assert not AgentLink.objects.filter(agent_id=child.id).exists()
+    # Stale parent history resolves outside the child slice, or on parent publication.
+    compute(root)
     assert AgentLink.objects.get().agent_id == child.id
     assert AgentLink.objects.get().tool_use_id == "root_tool"
     compute(root)

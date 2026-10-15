@@ -2721,6 +2721,15 @@ async def _complete_compute_result(msg, result, state, received_at, apply_starte
 
     try:
         await broadcast_session_updated(msg["session_id"])
+        if result.agent_link_updates:
+            from twicc.providers.sessions_watcher import broadcast_agent_link_updates, get_session_by_id
+            for owner_id in dict.fromkeys(update.parent_session_id for update in result.agent_link_updates):
+                owner = await get_session_by_id(owner_id)
+                if owner is not None and not owner.hidden:
+                    await broadcast_agent_link_updates(
+                        [update for update in result.agent_link_updates if update.parent_session_id == owner_id],
+                        owner, owner.project_id, get_channel_layer(),
+                    )
         # A subagent's compute may have folded plan-doc entries into its
         # top-level ancestor — broadcast_session_updated above skipped it (the
         # completed session is the subagent), so push the ancestor too.

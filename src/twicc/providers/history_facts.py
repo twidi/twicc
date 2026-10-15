@@ -203,7 +203,7 @@ def history_facts_are_current(session: Session) -> bool:
 
 
 def iter_resolver_items(
-    session_id: str, kind: str | None, key: str | None = None, *, before_line: int = 2**63 - 1,
+    session_id: str, kind: str | None, key: str | None = None, *, before_line: int = 2**63 - 1, oldest_first: bool = False,
 ) -> Iterator[SessionItem]:
     """Read source candidates, with authoritative indexed absence for current sessions.
 
@@ -217,7 +217,21 @@ def iter_resolver_items(
         return
     if kind is not None and history_facts_are_current(session):
         if key is not None:
-            lines = (fact.line_num for fact in iter_history_facts(session_id, kind, key, before_line=before_line))
+            if oldest_first:
+                def exact_lines():
+                    cursor = 0
+                    while True:
+                        page = list(SessionHistoryFact.objects.filter(
+                            session_id=session_id, kind=kind, key=key,
+                            line_num__gt=cursor, line_num__lt=before_line,
+                        ).order_by("line_num").values_list("line_num", flat=True)[:_FACT_PAGE_SIZE])
+                        yield from page
+                        if len(page) < _FACT_PAGE_SIZE:
+                            return
+                        cursor = page[-1]
+                lines = exact_lines()
+            else:
+                lines = (fact.line_num for fact in iter_history_facts(session_id, kind, key, before_line=before_line))
         else:
             # Spawn recovery needs all calls. Deduplicate several blocks on one
             # source line, while paging by line rather than by fact occurrence.
@@ -238,11 +252,12 @@ def iter_resolver_items(
                 load_current([item])
                 yield item
         return
-    cursor = before_line
+    cursor = 0 if oldest_first else before_line
     while True:
-        rows = list(SessionItem.objects.filter(
-            session_id=session_id, line_num__lt=cursor,
-        ).order_by("-line_num")[:_FACT_PAGE_SIZE])
+        query = SessionItem.objects.filter(session_id=session_id, line_num__lt=before_line)
+        query = (query.filter(line_num__gt=cursor).order_by("line_num") if oldest_first else
+                 query.filter(line_num__lt=cursor).order_by("-line_num"))
+        rows = list(query[:_FACT_PAGE_SIZE])
         load_current(rows)
         yield from rows
         if len(rows) < _FACT_PAGE_SIZE:
@@ -257,13 +272,15 @@ class HistoryFactContext:
     Persisted lookup uses the normal compute version to select facts or raw pages.
     """
 
-    def __init__(self, provider, *, session_id: str | None = None):
+    def __init__(self, provider, *, session_id: str | None = None, persisted: bool = True):
         self.provider = provider
         self.session_id = session_id
+        self.persisted = persisted
         self.facts: list[HistoryFact] = []
         self._record_evidence: tuple[int, dict] | None = None
         self._calls: dict[str, list[tuple[dict, int]]] = {}
         self._cells: dict[str, list[tuple[str, int]]] = {}
+        self._call_records: dict[str, list[tuple[int, dict]]] = {}
 
     def set_record_evidence(self, line_num: int, evidence: dict | None) -> None:
         """Supply existing analysis for exactly one record, without replaying it."""
@@ -278,7 +295,11 @@ class HistoryFactContext:
         """Publish a complete record only after its extractor returns."""
         self._record_evidence = None
         self.facts.extend(facts)
-        calls = dict(self._tool_calls(parsed))
+        calls = {}
+        for call_id, payload in self._tool_calls(parsed):
+            calls[call_id] = payload
+            if not self._call_records.get(call_id) or self._call_records[call_id][-1][0] != line_num:
+                self._call_records.setdefault(call_id, []).append((line_num, parsed))
         for fact in facts:
             if fact.kind == HistoryFactKind.TOOL_CALL and fact.key in calls:
                 self._calls.setdefault(fact.key, []).append((calls[fact.key], line_num))
@@ -297,7 +318,7 @@ class HistoryFactContext:
     def _source_items(self, kind: str, key: str, *, before_line: int):
         import orjson
 
-        if self.session_id is None:
+        if self.session_id is None or not self.persisted:
             return
         for item in iter_resolver_items(self.session_id, kind, key, before_line=before_line):
             try:
@@ -306,6 +327,10 @@ class HistoryFactContext:
                 continue
             if isinstance(parsed, dict):
                 yield item.line_num, parsed
+
+    def registered_tool_call_records(self, call_id: str, *, before_line: int = 2**63 - 1):
+        """Yield matching registered records in source order, without database reads."""
+        yield from ((line, parsed) for line, parsed in self._call_records.get(call_id, ()) if line < before_line)
 
     def lookup_tool_call(self, call_id: str, *, before_line: int) -> tuple[dict, int] | None:
         """Return the newest matching call strictly before the requested line."""

@@ -182,6 +182,7 @@ class ComputeApplyResult(NamedTuple):
     outcome: Literal["applied", "superseded", "missing"]
     folded_ancestor_id: str | None = None
     title_updated_session_ids: tuple[str, ...] = ()
+    agent_link_updates: tuple[AgentLinkUpdate, ...] = ()
 
 
 class ToolResultInfo(NamedTuple):
@@ -2505,23 +2506,75 @@ class BaseSessionCompute:
                                    link.tool_use_line_num, link.is_background, link.started_at)
         return None
 
-    def create_agent_link_from_meta(self, launcher_session_id, agent_id, tool_use_id):
+    def create_agent_link_from_meta(self, launcher_session_id, agent_id, tool_use_id, *, history=None):
+        """Resolve known IDs from exact current facts or the launcher's registered records."""
+        if history is not None and history.session_id != launcher_session_id:
+            raise ValueError("Launcher history must belong to the launcher session")
         child = Session.objects.filter(id=agent_id).first()
         owner = Session.objects.filter(id=launcher_session_id).first()
         if child is None or owner is None:
             return None
         if (owner.parent_session_id or owner.id) != child.parent_session_id:
             return None
-        for item, tool_id, _prompt, background in self._spawn_items(owner.id):
+        registered = None
+        if history is not None:
+            for line, parsed in history.registered_tool_call_records(tool_use_id):
+                for tool_id, _prompt, background in self.extract_task_tool_use_prompts(parsed):
+                    if tool_id == tool_use_id:
+                        registered = AgentLink(
+                            session_id=owner.id, agent_id=agent_id, tool_use_id=tool_id,
+                            tool_use_line_num=line, is_background=background,
+                            started_at=self.extract_item_timestamp(parsed),
+                        )
+                        break
+                if registered is not None:
+                    break
+        if history_facts_are_current(owner):
+            before_line = registered.tool_use_line_num if registered else 2**63 - 1
+            for item in iter_resolver_items(
+                owner.id, HistoryFactKind.TOOL_CALL, tool_use_id, before_line=before_line, oldest_first=True,
+            ):
+                if link := self._spawn_link_from_selected_item(owner, child, tool_use_id, item):
+                    return self._create_recovered_agent_link(link)
+        if registered is not None:
+            return self._create_recovered_agent_link(registered)
+        return None
+
+    def _recover_metadata_agent_links(self, owner, *, history=None):
+        """Retry unresolved sidecar IDs when launcher evidence becomes available."""
+        metas = self.get_spawn_metas_for_tree(owner)
+        linked = set(AgentLink.objects.filter(agent_id__in=metas).values_list("agent_id", flat=True))
+        updates = []
+        for agent_id, info in metas.items():
+            if agent_id in linked or info.launcher_session_id != owner.id or not info.tool_use_id:
+                continue
+            if update := self.create_agent_link_from_meta(owner.id, agent_id, info.tool_use_id, history=history):
+                updates.append(update)
+        return updates
+
+    def _agent_link_from_selected_item(self, owner, child, tool_use_id, item):
+        """Validate and publish one selected call, without reading other source records."""
+        link = self._spawn_link_from_selected_item(owner, child, tool_use_id, item)
+        return self._create_recovered_agent_link(link) if link is not None else None
+
+    def _spawn_link_from_selected_item(self, owner, child, tool_use_id, item):
+        """Validate one selected source record and preserve its first matching block."""
+        try:
+            parsed = orjson.loads(effective_current(item))
+        except orjson.JSONDecodeError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        for tool_id, _prompt, background in self.extract_task_tool_use_prompts(parsed):
             if tool_id == tool_use_id:
-                return self._create_recovered_agent_link(AgentLink(
-                    session_id=owner.id, agent_id=agent_id, tool_use_id=tool_id,
+                return AgentLink(
+                    session_id=owner.id, agent_id=child.id, tool_use_id=tool_id,
                     tool_use_line_num=item.line_num, is_background=background, started_at=item.timestamp,
-                ))
+                )
         return None
 
     def _recover_owned_agent_links(self, owner, tasks, claimed=(), pending_prompts=None,
-                                   known_owner_prompts=None):
+                                   known_owner_prompts=None, history=None):
         """Resolve remaining tool ids by metadata, then unique prompt evidence.
 
         ``tasks`` maps tool id to (line, background, timestamp, prompt).
@@ -2549,6 +2602,14 @@ class BaseSessionCompute:
             if agent_id in excluded or agent_id == owner.id or info.launcher_session_id != owner.id:
                 continue
             if info.tool_use_id in remaining:
+                if history is not None:
+                    for line, parsed in history.registered_tool_call_records(info.tool_use_id):
+                        match = next((candidate for candidate in self.extract_task_tool_use_prompts(parsed)
+                                      if candidate[0] == info.tool_use_id), None)
+                        if match is not None:
+                            _, prompt, background = match
+                            remaining[info.tool_use_id] = (line, background, self.extract_item_timestamp(parsed), prompt)
+                            break
                 add(agent_id, info.tool_use_id)
         if not remaining:
             return links
@@ -2751,6 +2812,7 @@ class BaseSessionCompute:
         session_id: str,
         item: SessionItem,
         parsed_json: dict,
+        *, history=None,
     ) -> list[AgentLinkUpdate]:
         """
         Create AgentLinks for newly-synced tool_uses against existing subagents.
@@ -2771,9 +2833,10 @@ class BaseSessionCompute:
         owner = Session.objects.filter(id=session_id).first()
         if owner is None:
             return []
-        tasks = {tu: (item.line_num, background, item.timestamp, prompt)
-                 for tu, prompt, background in task_prompts}
-        links = self._recover_owned_agent_links(owner, tasks)
+        tasks = {}
+        for tu, prompt, background in task_prompts:
+            tasks.setdefault(tu, (item.line_num, background, item.timestamp, prompt))
+        links = self._recover_owned_agent_links(owner, tasks, history=history)
         return [update for link in links if (update := self._create_recovered_agent_link(link)) is not None]
 
     # ------------------------------------------------------------------
@@ -3080,7 +3143,7 @@ class BaseSessionCompute:
         # Provider hook: per-session setup (e.g. Codex initialises its
         # exec_command map used by remap_tool_result_id below).
         self.begin_session_compute(session_id)
-        history = HistoryFactContext(self.provider)
+        history = HistoryFactContext(self.provider, session_id=session.id, persisted=False)
         batch_spawn_candidates: dict[str, list[SessionItem]] = {}
         queue_completions = []
 
@@ -3427,7 +3490,7 @@ class BaseSessionCompute:
             for tool_id, (line, background, timestamp) in task_tool_use_map.items():
                 tasks[tool_id] = (line, background, timestamp, owner_prompts.get(tool_id, ""))
             for recovered in self._recover_owned_agent_links(
-                session, tasks, {key[0] for key in all_agent_links}, known_owner_prompts=owner_prompts,
+                session, tasks, {key[0] for key in all_agent_links}, known_owner_prompts=owner_prompts, history=history,
             ):
                 all_agent_links[(recovered.agent_id, recovered.tool_use_id)] = serialize_agent_link(recovered)
 
@@ -4144,6 +4207,13 @@ class BaseSessionCompute:
                 # cache fallback is reliable, so passing None is also correct.
                 ensure_project_git_root(project_id, project_directory)
 
+        from twicc.providers.launcher_lookup import _compute
+        published_owner = Session.objects.get(id=session_id)
+        published_compute = _compute(published_owner.provider)
+        recovered_agent_links = ()
+        if published_compute.rebuild_agent_prompt_links:
+            recovered_agent_links = tuple(published_compute._recover_metadata_agent_links(published_owner))
+
         with timed_sync_phase('compute_final_stopped_agents'):
             # 11. Update last_stopped_at for subagents that finished naturally.
             # Same monotonic guard as the live stop step (``run_stop_step``): a batch
@@ -4168,7 +4238,7 @@ class BaseSessionCompute:
 
         with timed_sync_phase('compute_final_readiness'):
             finish_storage_result(msg)
-        return ComputeApplyResult("applied", folded_ancestor_id, title_updated_session_ids)
+        return ComputeApplyResult("applied", folded_ancestor_id, title_updated_session_ids, recovered_agent_links)
 
     # ------------------------------------------------------------------
     # Watcher orchestration — concrete in later steps
@@ -4279,6 +4349,8 @@ class BaseSessionCompute:
         # and the parent session tool use
         spawn_meta = self.get_subagent_spawn_meta(session)
         launcher_id = spawn_meta.launcher_session_id if spawn_meta else session.parent_session_id
+        unresolved_launcher_lookups = []
+        metadata_lookup_attempted = False
         subagent_needs_link = (
             session.type == SessionType.SUBAGENT and launcher_id
             and not AgentLink.objects.filter(agent_id=session.id).exists()
@@ -4457,13 +4529,21 @@ class BaseSessionCompute:
 
             # For subagents: create the link from the first line that
             # carries a subagent marker.
-            if subagent_needs_link:
+            if subagent_needs_link and not metadata_lookup_attempted:
                 agent_id = self.extract_subagent_marker(parsed)
                 if agent_id and spawn_meta and spawn_meta.tool_use_id:
+                    metadata_lookup_attempted = True
                     agent_update = self.create_agent_link_from_meta(launcher_id, agent_id, spawn_meta.tool_use_id)
                     if agent_update:
                         agent_link_updates.append(agent_update)
                         subagent_needs_link = False
+                    else:
+                        from twicc.providers.launcher_lookup import LauncherLookupRequest
+                        owner = Session.objects.filter(id=launcher_id).first()
+                        if owner is not None and not history_facts_are_current(owner):
+                            unresolved_launcher_lookups.append(
+                                LauncherLookupRequest(launcher_id, agent_id, spawn_meta.tool_use_id),
+                            )
                 elif agent_id:
                     prompt = get_cached_agent_prompt(launcher_id, agent_id)
                     if not prompt:
@@ -4512,6 +4592,8 @@ class BaseSessionCompute:
             session, [(item, source_texts[item.line_num]) for item in items_only], promote=False,
         )
         append_history_facts(session.id, history.facts)
+        if self.rebuild_agent_prompt_links:
+            agent_link_updates.extend(self._recover_metadata_agent_links(session, history=history))
         if async_question_facts:
             from twicc.core.services.async_questions import merge_question_facts
 
@@ -4594,7 +4676,7 @@ class BaseSessionCompute:
 
             if item.kind in (ItemKind.ASSISTANT_MESSAGE, ItemKind.CONTENT_ITEMS):
                 agent_link_updates.extend(
-                    self.create_agent_link_from_tool_use(session.id, item, parsed)
+                    self.create_agent_link_from_tool_use(session.id, item, parsed, history=history)
                 )
 
         # Resolve project git_root if any item resolved git info but the project doesn't have one yet
@@ -4830,6 +4912,7 @@ class BaseSessionCompute:
             stop_step.run_state_payloads,
             agent_run_signals.agents_resumed,
             title_updated_session_ids,
+            tuple(unresolved_launcher_lookups),
         )
 
     @staticmethod
