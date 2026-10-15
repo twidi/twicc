@@ -40,9 +40,10 @@ const { rows } = useRailActiveSessions(store, () => currentSessionId.value)
 const hasCentralContent = computed(() => rows.value.length || recentProjects.value.length || recentWorkspaces.value.length)
 const navigateScope = createRailScopeNavigation(router)
 function scopeSelected(kind, id) {
+    // The bare route is the Timeline; Stats is the same scope page on another tab, so the scope stays selected.
     return kind === 'project'
-        ? route.name === 'project' && route.params.projectId === id && !route.query.workspace
-        : route.name === 'projects-all' && route.query.workspace === id
+        ? (route.name === 'project' || route.name === 'project-stats') && route.params.projectId === id && !route.query.workspace
+        : (route.name === 'projects-all' || route.name === 'projects-stats') && route.query.workspace === id
 }
 function scopeClick(kind, id, event) {
     if (longPress.consumeClick(`${kind}:${id}`, event)) return

@@ -47,7 +47,7 @@ import {
 } from './composables/useStopSessionProcess'
 import { canStealFocus, hasBlockingOverlay } from './utils/focusGuard'
 import { focusChatPrimary, gotoChatFooterPanel } from './utils/focusChat'
-import { TERMINAL_ROUTES, WORKFLOW_ROUTES } from './utils/tabRoutes'
+import { PROJECT_DETAIL_ROUTES, TERMINAL_ROUTES, WORKFLOW_ROUTES } from './utils/tabRoutes'
 import { toggleSearchInActiveCodeMirror } from './composables/useCodeMirror'
 import { useSessionSwitcher } from './composables/useSessionSwitcher'
 import BrandLogo from './components/ui/BrandLogo.vue'
@@ -204,11 +204,8 @@ const SESSION_ROUTES = new Set([
     'projects-session', 'projects-session-subagent', 'projects-session-files', 'projects-session-artifacts', 'projects-session-git', 'projects-session-terminal', 'projects-session-orchestration', 'projects-session-plan', 'projects-session-tasks', 'projects-session-workflows', 'projects-session-browser',
 ])
 
-// Project detail route names (for tab keyboard shortcuts: Alt+Shift+{1-4, ←, →, ↑})
-const PROJECT_DETAIL_ROUTES = new Set([
-    'project', 'project-files', 'project-git', 'project-terminal',
-    'projects-all', 'projects-files', 'projects-git', 'projects-terminal',
-])
+// Project detail route names (for tab keyboard shortcuts: Alt+Shift+{1-5, ←, →, ↑}) come from
+// ./utils/tabRoutes, shared with the command registry.
 
 // TERMINAL_ROUTES / WORKFLOW_ROUTES come from ./utils/tabRoutes — shared with the
 // command registry's route-gated "Go to … tab" commands (imported above).

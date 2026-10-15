@@ -33,7 +33,9 @@ const routes = [
         path: '/project/:projectId',
         component: ProjectView,
         children: [
+            // The bare route is the Timeline tab; Stats has its own route.
             { path: '', name: 'project', component: { render: () => null } },
+            { path: 'stats', name: 'project-stats', component: { render: () => null } },
             { path: 'files/:rootKey?/:filePath?', name: 'project-files', component: { render: () => null } },
             { path: 'artifacts/:bookmarkId?', name: 'project-artifacts', component: { render: () => null } },
             { path: 'git/:rootKey?/:commitRef?/:filePath?', name: 'project-git', component: { render: () => null } },
@@ -69,6 +71,7 @@ const routes = [
         component: ProjectView,
         children: [
             { path: '', name: 'projects-all', component: { render: () => null } },
+            { path: 'stats', name: 'projects-stats', component: { render: () => null } },
             { path: 'files/:rootKey?/:filePath?', name: 'projects-files', component: { render: () => null } },
             { path: 'artifacts/:bookmarkId?', name: 'projects-artifacts', component: { render: () => null } },
             { path: 'git/:rootKey?/:commitRef?/:filePath?', name: 'projects-git', component: { render: () => null } },

@@ -28,10 +28,10 @@ const SESSION_NAMES = new Set([
     'projects-session-orchestration', 'projects-session-plan', 'projects-session-tasks', 'projects-session-workflows', 'projects-session-browser', 'projects-session-subagent',
 ])
 const PROJECT_NAMES = new Set([
-    'project', 'project-files', 'project-git', 'project-terminal', 'project-artifacts',
+    'project', 'project-stats', 'project-files', 'project-git', 'project-terminal', 'project-artifacts',
 ])
 const ALL_PROJECTS_NAMES = new Set([
-    'projects-all', 'projects-files', 'projects-git', 'projects-terminal', 'projects-artifacts',
+    'projects-all', 'projects-stats', 'projects-files', 'projects-git', 'projects-terminal', 'projects-artifacts',
 ])
 // Bare entry routes (homes) per scope family.
 const HOME_NAMES = new Set(['session', 'projects-session', 'project', 'projects-all'])
@@ -61,13 +61,13 @@ export function scopeKey(route) {
     return null
 }
 
-// True only for a scope's bare entry route (Chat / project stats / All Projects list).
+// True only for a scope's bare entry route (Chat / project Timeline / All Projects Timeline).
 export function isScopeHome(route) {
     return HOME_NAMES.has(route?.name)
 }
 
 // The sub-screen id within a scope: '' for the base, else the tool tab / 'subagent'.
-// Assumes tab ids are single-segment (no hyphen): files/git/terminal/artifacts/
+// Assumes tab ids are single-segment (no hyphen): stats/files/git/terminal/artifacts/
 // orchestration/subagent. A future hyphenated tab name would need a different split.
 export function tabOf(name) {
     if (HOME_NAMES.has(name)) return ''

@@ -35,7 +35,7 @@ import { usePeersStore } from '../stores/peers'
 import { useHelpStore } from '../stores/help'
 import { usePeerSystemConfigured } from '../composables/usePeerSystemConfigured'
 import { showHelp } from '../components/help/showHelp'
-import { TERMINAL_ROUTES, WORKFLOW_ROUTES } from '../utils/tabRoutes'
+import { PROJECT_DETAIL_ROUTES, TERMINAL_ROUTES, WORKFLOW_ROUTES } from '../utils/tabRoutes'
 import {
     DISPLAY_MODE,
     COLOR_SCHEME,
@@ -423,11 +423,6 @@ export function initStaticCommands(router) {
     function workflowRunList() {
         return workflowRunsStore.getRuns(routeSessionId())
     }
-
-    const PROJECT_DETAIL_ROUTES = new Set([
-        'project', 'project-files', 'project-git', 'project-terminal',
-        'projects-all', 'projects-files', 'projects-git', 'projects-terminal',
-    ])
 
     /** Whether the current route is on a project detail panel (not a session) */
     function isOnProjectDetail() {
@@ -949,13 +944,29 @@ export function initStaticCommands(router) {
 
         // Project detail panel tabs
         {
+            id: 'nav.project-tab.timeline',
+            label: 'Switch to Timeline Tab',
+            icon: 'clock-rotate-left',
+            category: 'navigation',
+            when: () => isOnProjectDetail(),
+            action: () => {
+                // The bare route of the scope is the Timeline.
+                const name = isAllProjectsMode() ? 'projects-all' : 'project'
+                router.push({
+                    name,
+                    params: clearTabRouteParams('files', isAllProjectsMode() ? {} : { projectId: route.params.projectId }),
+                    query: route.query,
+                })
+            },
+        },
+        {
             id: 'nav.project-tab.stats',
             label: 'Switch to Stats Tab',
             icon: 'chart-line',
             category: 'navigation',
             when: () => isOnProjectDetail(),
             action: () => {
-                const name = isAllProjectsMode() ? 'projects-all' : 'project'
+                const name = isAllProjectsMode() ? 'projects-stats' : 'project-stats'
                 router.push({
                     name,
                     params: clearTabRouteParams('files', isAllProjectsMode() ? {} : { projectId: route.params.projectId }),

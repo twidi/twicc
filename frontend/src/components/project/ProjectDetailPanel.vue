@@ -14,6 +14,7 @@ import ContributionGraphs from '../activity/ContributionGraphs.vue'
 import FilesPanel from '../files/FilesPanel.vue'
 import GitPanel from '../git/GitPanel.vue'
 import TerminalPanel from '../terminal/TerminalPanel.vue'
+import TimelinePanel from '../timeline/TimelinePanel.vue'
 import TabBar from '../ui/TabBar.vue'
 import UploadTabStatus from '../files/UploadTabStatus.vue'
 import { useUploadsStore } from '../../stores/uploads'
@@ -31,6 +32,7 @@ import {
     parseRouteString,
     parseRouteTermIndex,
 } from '../../utils/granularRoutes'
+import { directTab, routeNameForTab, tabForRouteName, visibleProjectTabs } from '../../utils/projectTabs'
 
 const props = defineProps({
     /** Project ID or ALL_PROJECTS_ID for aggregate view */
@@ -232,26 +234,11 @@ const hasGitRepo = computed(() => {
     return !!dataStore.getProject(props.projectId)?.git_root
 })
 
-const TABS = computed(() => {
-    const tabs = [
-        { id: 'stats', label: 'Stats', icon: 'chart-simple' },
-        { id: 'files', label: 'Files', icon: 'folder' },
-    ]
-    if (hasGitRepo.value) {
-        tabs.push({ id: 'git', label: 'Git', icon: 'code-branch' })
-    }
-    tabs.push({ id: 'terminal', label: 'Terminal', icon: 'terminal' })
-    return tabs
-})
+// Timeline, Stats, Files, Git (only with a git root), Terminal — see utils/projectTabs.js.
+const TABS = computed(() => visibleProjectTabs({ hasGitRepo: hasGitRepo.value }))
 
-// Active tab derived from the route name
-const activeTab = computed(() => {
-    const name = route.name
-    if (name === 'project-files' || name === 'projects-files') return 'files'
-    if (name === 'project-git' || name === 'projects-git') return 'git'
-    if (name === 'project-terminal' || name === 'projects-terminal') return 'terminal'
-    return 'stats'
-})
+// Active tab derived from the route name; the bare routes are the Timeline.
+const activeTab = computed(() => tabForRouteName(route.name))
 const filesRouteRootKey = computed(() => parseRouteString(route.params.rootKey))
 const filesRouteFilePath = computed(() => {
     const decoded = decodePath(parseRouteString(route.params.filePath))
@@ -269,6 +256,7 @@ watch([activeTab, hasGitRepo], ([tabId, hasGit]) => {
     if (tabId === 'git' && !hasGit) {
         if (!isActive.value) return
         if (!dataStore.getProject(props.projectId)) return
+        // No git root, no Git tab: leave for the scope's home, which is now the Timeline (it used to be Stats).
         router.replace({
             name: buildProjectBaseRouteName(isAllProjectsMode.value),
             params: isAllProjectsMode.value ? {} : { projectId: props.projectId },
@@ -373,9 +361,9 @@ function switchToTab(tabId) {
     if (TOOL_TAB_IDS.includes(tabId)) {
         navigateInTab(tabId, rememberedToolTabRoutes[tabId] ?? {})
     } else {
-        // Stats = default route (no suffix)
+        // Timeline = the bare route of the scope, Stats = its /stats route.
         router.push({
-            name: buildProjectBaseRouteName(isAllProjectsMode.value),
+            name: routeNameForTab(tabId, { isAllProjectsMode: isAllProjectsMode.value }),
             params: isAllProjectsMode.value ? {} : { projectId: props.projectId },
             query: route.query,
         })
@@ -389,7 +377,7 @@ function onTabShow(event) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Keyboard shortcuts: tab navigation (Alt+Shift+1-4, ←/→, ↑)
+// Keyboard shortcuts: tab navigation (Alt+Shift+1-5, ←/→, ↑)
 // Events dispatched by App.vue, handled here by the active instance only.
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -411,9 +399,6 @@ watch(activeTab, (newTabId, oldTabId) => {
     if (oldTabId) pushTabHistory(oldTabId)
 })
 
-// Direct tab mapping: Alt+Shift+{1,2,3,4} → fixed tabs (matches session pattern)
-const DIRECT_TAB_MAP = { 1: 'stats', 2: 'files', 3: 'git', 4: 'terminal' }
-
 function handleTabShortcut(event) {
     if (!isActive.value) return
 
@@ -421,9 +406,9 @@ function handleTabShortcut(event) {
     let targetTab = null
 
     if (type === 'direct') {
-        targetTab = DIRECT_TAB_MAP[index]
+        // Alt+Shift+{1..5} → fixed tabs; 4 (Git) does nothing without a git root, 5 stays the Terminal.
+        targetTab = directTab(index, { hasGitRepo: hasGitRepo.value })
         if (!targetTab) return
-        if (targetTab === 'git' && !hasGitRepo.value) return
     } else if (type === 'prev' || type === 'next') {
         const tabs = orderedTabs.value
         const currentIndex = tabs.indexOf(activeTab.value)
@@ -471,6 +456,10 @@ onBeforeUnmount(() => {
                 {{ tab.label }}
                 <UploadTabStatus v-if="tab.id === 'files'" :status="filesUploadStatus" />
             </wa-tab>
+
+            <wa-tab-panel name="timeline">
+                <TimelinePanel :project-id="projectId" />
+            </wa-tab-panel>
 
             <wa-tab-panel name="stats">
                 <ProjectDetailNavList :project-id="projectId" class="stats-nav-list" />
@@ -588,6 +577,7 @@ wa-divider {
     overflow-y: auto;
 }
 
+.detail-tabs :deep(wa-tab-panel[name="timeline"])::part(base),
 .detail-tabs :deep(wa-tab-panel[name="files"])::part(base),
 .detail-tabs :deep(wa-tab-panel[name="git"])::part(base),
 .detail-tabs :deep(wa-tab-panel[name="terminal"])::part(base) {
