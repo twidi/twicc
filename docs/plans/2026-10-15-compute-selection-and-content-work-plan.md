@@ -86,7 +86,7 @@ Commit subjects below name the intended change; they are not substitutes for the
 - Append `unresolved_launcher_lookups: tuple = ()` to `LiveSyncUpdates`; preserve it in `merge_live_updates`.
 - Keep unsuccessful metadata lookup state local to one `sync_session_slice` operation.
 
-- [ ] **Step 1: Add failing lookup and recovery tests.**
+- [x] **Step 1: Add failing lookup and recovery tests.**
 
 Use real `SessionHistoryFact` fixtures and record SQL with `CaptureQueriesContext`.
 Assertions must establish:
@@ -105,12 +105,12 @@ For stale facts, put the matching call beyond the first 128-record page.
 An interrupted or deliberately budget-limited search must remain unresolved rather than create a negative fact.
 Register new same-batch evidence after an earlier miss and verify that it resolves.
 
-- [ ] **Step 2: Run the new tests and confirm behavioral failures.**
+- [x] **Step 2: Run the new tests and confirm behavioral failures.**
 
 Run: `TWICC_DATA_DIR=$PWD uv run pytest tests/test_launcher_history_lookup.py tests/test_history_fact_resolution.py -q`.
 Expected: new scan-count/coalescing/retry assertions fail against the current implementation.
 
-- [ ] **Step 3: Implement exact lookup and slice-local failed-lookup coalescing.**
+- [x] **Step 3: Implement exact lookup and slice-local failed-lookup coalescing.**
 
 Replace `_spawn_items(owner.id)` in the known-ID path with the exact fact/context reader.
 Parse and validate the selected source block with existing provider predicates.
@@ -143,7 +143,7 @@ Read existing child sidecar metadata to discover unresolved children; recovery d
 At full parent-compute publication, reconcile unresolved child metadata against the newly published parent facts.
 Recover link writes through the existing writer and existing link-update broadcast path.
 
-- [ ] **Step 4: Verify lookup behavior and provider link regressions.**
+- [x] **Step 4: Verify lookup behavior and provider link regressions.**
 
 Run: `TWICC_DATA_DIR=$PWD uv run pytest tests/test_launcher_history_lookup.py tests/test_history_fact_resolution.py tests/test_history_fact_compute_apply.py tests/test_agent_link_background_upgrade.py tests/test_claude_agent_runs.py tests/test_codex_subagent_links.py -q`.
 Expected: PASS. SQL contains exact fact-key predicates and no content substring scan for known IDs.
@@ -153,7 +153,7 @@ Add `test_other_source_ingests_before_launcher_fallback_exhausts` using the actu
 Assert the second source commits while the first lookup still has unread pages.
 Add shutdown coverage proving resolver cancellation drains its submitted read and leaves no owned task running.
 
-- [ ] **Step 5: Commit this task.**
+- [x] **Step 5: Commit this task.**
 
 Subject: `perf(history): resolve launcher ids through exact history facts`.
 
@@ -172,7 +172,7 @@ Subject: `perf(history): resolve launcher ids through exact history facts`.
 - Introduce a batch-local owner-readiness mapping inside compression preparation, keyed by owner ID.
 - Its values include the existing extraction/compute readiness and root publication metadata; payloads are excluded.
 
-- [ ] **Step 1: Add failing query and payload-read tests.**
+- [x] **Step 1: Add failing query and payload-read tests.**
 
 Build 100 contents sharing two owners and repeat preparation after warming the lifecycle cache.
 Instrument selected SQL columns and content-reader calls, not only Python attribute access.
@@ -191,12 +191,12 @@ Test a committed resume, active-session protection, and crossing the cold age th
 Test a row where current and original references are identical.
 Retain tests for malformed representation metadata, missing references, and one oversized payload.
 
-- [ ] **Step 2: Run the tests and confirm redundant-read failures.**
+- [x] **Step 2: Run the tests and confirm redundant-read failures.**
 
 Run: `TWICC_DATA_DIR=$PWD uv run pytest tests/test_content_maintenance_reads.py -q`.
 Expected: FAIL on the current per-content owner reads or eager payload reads.
 
-- [ ] **Step 3: Implement metadata-first preparation.**
+- [x] **Step 3: Implement metadata-first preparation.**
 
 Load the bounded content metadata page, then batch-load distinct owner readiness metadata.
 Resolve lifecycle policy through the shared committed cold cache.
@@ -210,12 +210,12 @@ For compression, omit conforming compressed IDs and unchanged no-gain attempts.
 Preserve detection of invalid plain/dictionary combinations and incomplete bindings.
 Do not let deferred model-field access create one hidden payload query per skipped row.
 
-- [ ] **Step 4: Verify content preparation and publication races.**
+- [x] **Step 4: Verify content preparation and publication races.**
 
 Run: `TWICC_DATA_DIR=$PWD uv run pytest tests/test_content_maintenance_reads.py tests/test_content_maintenance.py tests/test_content_cold_cache.py tests/test_content_storage_admission.py -q`.
 Expected: PASS. A lifecycle commit between prepare and publish prevents obsolete compression publication.
 
-- [ ] **Step 5: Commit this task.**
+- [x] **Step 5: Commit this task.**
 
 Subject: `perf(content): reuse owner metadata and defer unused payloads`.
 
@@ -233,7 +233,7 @@ Subject: `perf(content): reuse owner metadata and defer unused payloads`.
 - Existing `request_root_promotion(session_id, *, priority=None)` remains the demand notification interface.
 - Existing lifecycle cache invalidation still runs after commit.
 
-- [ ] **Step 1: Add failing hot-append and real-demand tests.**
+- [x] **Step 1: Add failing hot-append and real-demand tests.**
 
 Add `test_hot_append_restart_does_not_recover_plaintext_scan` and `test_interrupted_resume_still_recovers_after_restart`.
 Assert an ordinary hot append increments the required epoch but sends no whole-session promotion request.
@@ -244,12 +244,12 @@ Assert a real cold-to-hot transition restores the resumed session, without eager
 Assert an interrupted real request remains discoverable through existing recovery metadata.
 Assert the scoped substring gate accepts a fully plaintext hot session after an epoch change.
 
-- [ ] **Step 2: Confirm the new demand-count tests fail.**
+- [x] **Step 2: Confirm the new demand-count tests fail.**
 
 Run: `TWICC_DATA_DIR=$PWD uv run pytest tests/test_content_root_state.py tests/test_content_ingestion.py tests/test_content_history_lifecycle.py -q`.
 Expected: new zero-redundant-demand assertions fail before the change.
 
-- [ ] **Step 3: Make demand explicit at each mutation boundary.**
+- [x] **Step 3: Make demand explicit at each mutation boundary.**
 
 Remove implicit `promotion_targets=None -> roots` behavior.
 Audit every `invalidate_roots` caller and classify its actual plaintext obligation.
@@ -270,12 +270,12 @@ For an already stale but fully plaintext root, `recovery_promotion_targets` firs
 It excludes that root from payload traversal when the scoped metadata query proves plaintext; it does not silently certify missing or legacy references.
 Do not replace publication guards with a cached policy result.
 
-- [ ] **Step 4: Verify demand, search availability, and recovery.**
+- [x] **Step 4: Verify demand, search availability, and recovery.**
 
 Run: `TWICC_DATA_DIR=$PWD uv run pytest tests/test_content_root_state.py tests/test_content_ingestion.py tests/test_content_contains_gate.py tests/test_content_history_lifecycle.py tests/test_content_maintenance.py -q`.
 Expected: PASS. Repeated hot appends do not invoke the full-session promotion scanner.
 
-- [ ] **Step 5: Commit this task.**
+- [x] **Step 5: Commit this task.**
 
 Subject: `perf(content): request plaintext scans only for actual demand`.
 
@@ -300,7 +300,7 @@ Subject: `perf(content): request plaintext scans only for actual demand`.
 - Preserve `tree_completion_context(...)` and its successful application/completion contract.
 - Coordinators own the current root ID and separate root deferrals from member exclusions.
 
-- [ ] **Step 1: Add failing candidate-query and tree-admission tests.**
+- [x] **Step 1: Add failing candidate-query and tree-admission tests.**
 
 Construct roots, subagents, NULL/current/old versions, equal mtimes, recent members, and small exclusions.
 Assert native roots only, NULL-or-lower version filtering, `ORDER BY mtime DESC`, and `LIMIT 1`.
@@ -311,12 +311,12 @@ Assert deepest-first, descending member mtime, root-last, and descendant applica
 Assert a blocked tree yields only after outstanding applications drain.
 Refresh membership before subsequent admission and cover a newly discovered descendant.
 
-- [ ] **Step 2: Confirm the new bounded-query tests fail.**
+- [x] **Step 2: Confirm the new bounded-query tests fail.**
 
 Run: `TWICC_DATA_DIR=$PWD uv run pytest tests/test_compute_root_selection.py tests/test_compute_age_selection.py -q`.
 Expected: FAIL on the missing single-root interface or old whole-inventory query shape.
 
-- [ ] **Step 3: Add the index and bounded selector interfaces.**
+- [x] **Step 3: Add the index and bounded selector interfaces.**
 
 Use index name `idx_session_compute_root` with fields `['provider', '-mtime', 'compute_version']`.
 Use condition `Q(type='session', parent_session__isnull=True)`.
@@ -329,7 +329,7 @@ Keep tree loading and per-level application fences inside `select_tree_source`.
 Do not resolve thousands of unrelated source IDs to roots on every admission.
 For an admitted tree, inspect its members only.
 
-- [ ] **Step 4: Verify the actual ORM SQL and migration behavior.**
+- [x] **Step 4: Verify the actual ORM SQL and migration behavior.**
 
 Run: `TWICC_DATA_DIR=$PWD uv run pytest tests/test_compute_root_selection.py tests/test_compute_tree.py tests/test_compute_age_selection.py -q`.
 Expected: PASS.
@@ -338,7 +338,7 @@ Assert use of `idx_session_compute_root` and absence of a temporary ORDER BY B-t
 Exercise most-old, few-old, and no-old root distributions, with small ID exclusions.
 Use an isolated test DB for applying the migration; inspect SQL for Session-only index creation and no global FK check.
 
-- [ ] **Step 5: Commit this task.**
+- [x] **Step 5: Commit this task.**
 
 Subject: `perf(compute): select native roots through a partial index`.
 
@@ -366,7 +366,7 @@ Subject: `perf(compute): select native roots through a partial index`.
 - Boot initial sync precedes the initial compute read; a concurrent later initial-sync producer must notify its committed source additions.
 - Consume Task 4's separate root and tree selectors.
 
-- [ ] **Step 1: Add failing event-driven coordinator tests.**
+- [x] **Step 1: Add failing event-driven coordinator tests.**
 
 Assert no repeated `id IN(initial_subagent_inventory)` queries while waiting.
 Assert recent root waits until its 30-second deadline, while an older eligible root proceeds.
@@ -378,12 +378,12 @@ Add `test_initial_done_waits_for_completed_or_explicitly_blocked_roots`, with on
 Assert the metadata snapshot alone does not release the search barrier.
 Add notification tests for registration before initial read, idle transition, and callback removal after teardown.
 
-- [ ] **Step 2: Confirm failures against current polling behavior.**
+- [x] **Step 2: Confirm failures against current polling behavior.**
 
 Run: `TWICC_DATA_DIR=$PWD uv run pytest tests/test_compute_work.py tests/test_compute_selection_wakeups.py -q`.
 Expected: FAIL on missing state/notification interfaces or inventory-wide polling.
 
-- [ ] **Step 3: Replace polling with on-demand admission and bounded waits.**
+- [x] **Step 3: Replace polling with on-demand admission and bounded waits.**
 
 Keep one active native tree; fill the existing two-source pipeline within its deepest unfinished level.
 When no active tree remains, query one root with Task 4's selector.
@@ -417,12 +417,12 @@ Keep it pending through age waits, backoff, worker replacement, and application 
 Set it idle only after the final authoritative no-work check.
 Provider start marks its work pending before maintenance can run; disabling a provider removes its gate only after teardown drains.
 
-- [ ] **Step 4: Verify retry, startup progress, cancellation, and event ordering.**
+- [x] **Step 4: Verify retry, startup progress, cancellation, and event ordering.**
 
 Run: `TWICC_DATA_DIR=$PWD uv run pytest tests/test_compute_work.py tests/test_compute_selection_wakeups.py tests/test_background_compute_recovery.py tests/test_background_compute_retries.py tests/test_compute_age_selection.py -q`.
 Expected: PASS. Recovery and source-age waiting make no inventory-wide periodic queries.
 
-- [ ] **Step 5: Commit this task.**
+- [x] **Step 5: Commit this task.**
 
 Subject: `perf(compute): drive root admission from outcomes and deadlines`.
 
@@ -440,7 +440,7 @@ Subject: `perf(compute): drive root admission from outcomes and deadlines`.
 - Register Codex's source-wakeup callback through Task 5's shared state; retain its existing migration-specific event pump.
 - Forced rebuild and unavailable-source recovery continue to identify their affected roots through their existing requests.
 
-- [ ] **Step 1: Add failing Codex bounded-selection and recovery tests.**
+- [x] **Step 1: Add failing Codex bounded-selection and recovery tests.**
 
 Assert each normal selection fetches one root, then only that tree's required candidates.
 Assert migration/rebuild/deferred-source decisions still hold their existing source locks and retry automatically.
@@ -451,10 +451,13 @@ Assert root progress and root-last enqueue happen only after required member app
 
 - [ ] **Step 2: Confirm the repeated-candidate-load test fails.**
 
+Validation limitation: the initial RED reaches the missing interface, not the inventory-load assertion.
+Final scheduling assertions pass. No behavioral baseline RED is claimed for this step.
+
 Run: `TWICC_DATA_DIR=$PWD uv run pytest tests/test_compute_selection_wakeups.py tests/test_codex_compute_recovery.py -q`.
 Expected: new bounded-selection assertions fail against the recurring full candidate load.
 
-- [ ] **Step 3: Integrate the shared selection contract without bypassing Codex preparation.**
+- [x] **Step 3: Integrate the shared selection contract without bypassing Codex preparation.**
 
 Retain one-time startup migration classification if required for existing progress details.
 Page its metadata/filesystem work outside the asyncio thread; do not repeat it for every admission.
@@ -474,14 +477,14 @@ Drive `work_state` from pending DB/recovery work, not from worker presence or th
 An enabled provider in retry remains pending.
 The lifetime Codex coordinator can remain alive with `work_state` idle after all work drains.
 
-- [ ] **Step 4: Verify Codex scheduling and rollout integration boundaries.**
+- [x] **Step 4: Verify Codex scheduling and rollout integration boundaries.**
 
 Run: `TWICC_DATA_DIR=$PWD uv run pytest tests/test_codex_compute_recovery.py tests/test_codex_recompute_persistence.py tests/test_compute_selection_wakeups.py tests/test_compute_age_selection.py -q`.
 Expected: PASS. No repeated provider-wide candidate list in steady selection.
 If rollout migration code changes, also run the existing real-binary integration suite when its runtime is available.
 Use only its throwaway `CODEX_HOME`, with `TWICC_CODEX_INTEGRATION=1`.
 
-- [ ] **Step 5: Commit this task.**
+- [x] **Step 5: Commit this task.**
 
 Subject: `perf(codex): select compute trees without stale inventory polling`.
 
@@ -499,7 +502,7 @@ Subject: `perf(codex): select compute trees without stale inventory polling`.
 - Consume `has_pending()` and `changed` on the asyncio thread.
 - Retain the existing foreground promotion wakeup and writer coordinator priorities.
 
-- [ ] **Step 1: Add failing scheduling tests using a controlled clock.**
+- [x] **Step 1: Add failing scheduling tests using a controlled clock.**
 
 Assert these exact schedules:
 
@@ -516,12 +519,12 @@ Assert these exact schedules:
 Also assert stop wakes every wait, provider enable/disable updates eligibility, and an overdue blocked deadline does not create a busy loop.
 Place an event between state inspection and waiting to prove no lost wakeup.
 
-- [ ] **Step 2: Confirm the current ungated scheduler fails.**
+- [x] **Step 2: Confirm the current ungated scheduler fails.**
 
 Run: `TWICC_DATA_DIR=$PWD uv run pytest tests/test_content_maintenance_compute_gate.py -q`.
 Expected: FAIL because periodic preparation can start while provider compute remains pending.
 
-- [ ] **Step 3: Add the gate to the whole periodic pass.**
+- [x] **Step 3: Add the gate to the whole periodic pass.**
 
 Check compute work before periodic recovery/compression and before every subsequent bounded batch/publication grant.
 If compute restarts after preparation, retain or discard the prepared batch safely under existing guards, then pause publication/admission.
@@ -538,12 +541,12 @@ For each idle wait: clear the relevant change event, recheck authoritative state
 When the periodic deadline is overdue but compute remains pending, wait for a state change rather than an already expired timer.
 Do not use `compute_done`, `initial_done`, or `initial_sync_succeeded` as the periodic gate.
 
-- [ ] **Step 4: Verify both providers and foreground priority.**
+- [x] **Step 4: Verify both providers and foreground priority.**
 
 Run: `TWICC_DATA_DIR=$PWD uv run pytest tests/test_content_maintenance_compute_gate.py tests/test_content_maintenance.py tests/test_compute_work.py tests/test_content_storage_admission.py -q`.
 Expected: PASS. No periodic compression preparation runs during a pending compute interval; foreground restoration still runs.
 
-- [ ] **Step 5: Commit this task.**
+- [x] **Step 5: Commit this task.**
 
 Subject: `perf(maintenance): defer periodic content work until compute drains`.
 
@@ -587,7 +590,7 @@ Inspect outliers; do not classify a session's complete application time as one w
 Include the stale-history fallback path in hold measurements, not only the indexed fast path.
 If it still produces multi-second holds, report the blocker and resolve the fallback placement before accepting the task.
 
-- [ ] **Step 4: Run the whole-branch adversarial code review and resolve findings.**
+- [x] **Step 4: Run the whole-branch adversarial code review and resolve findings.**
 
 Reviewers compare implementation with this plan and its spec.
 Require evidence for both coordinators, exact lookup, zero skipped-row payload reads, genuine restoration, and no periodic overlap.
@@ -612,13 +615,14 @@ Report tested behavior, measured costs, unresolved risks, and any live validatio
 
 ## Validation Notes
 
-Status: approved after adversarial review by two independent reviewers.
+Status: implemented; task reviews and final adversarial review approved.
 
 The selection/lifecycle reviewer approved the second version.
 The history/content reviewer approved the third version after watcher-starvation coverage was added.
 
-Tasks 1–7 are implemented and reviewed. Integrated Task 8 evidence follows.
-The final whole-plan review remains pending with the controller.
+All eight implementation tasks are complete and independently reviewed.
+The final whole-plan review is approved after correction of the Codex startup gate.
+Integrated validation evidence and its limits follow.
 
 ### Task 8 integrated validation — 2026-10-15
 
@@ -626,7 +630,7 @@ Execution base: `f924fbdf`. Integrated Tasks 1–7 base: `9738e1a1`.
 Validation uses this worktree: `/home/twidi/dev/twicc-poc/.worktrees/feature-content-storage-compression`.
 No server starts, resets, package installations, main database copies, or instance migrations occur.
 The existing statistics changes remain intact.
-The controller owns the final independent whole-plan review and its correction wave.
+The final independent whole-plan review and its correction are complete.
 
 #### Regression corrections
 
@@ -702,7 +706,7 @@ pytest tests/test_agent_link_background_upgrade.py tests/test_background_compute
 
 #### Isolated read measurements
 
-Temporary probe: `.superpowers/task8_probe.py`; ignored and not committed.
+The temporary probe used `.superpowers/task8_probe.py`. It is removed after validation and is not committed.
 Temporary logs/measurements: `/tmp/twicc-task8-*.log` and `/tmp/twicc-task8-metrics.json`.
 Persistent evidence resides here. No benchmark code enters the repository.
 
@@ -897,8 +901,7 @@ uv prints the expected inherited-environment mismatch warning and ignores that e
 Changed-file Ruff passes for the Codex coordinator and recovery tests. `git diff --check` passes.
 No new broad run occurs for this bounded correction. Earlier broad evidence retains its stated limits.
 No server operation, instance migration, package installation, data reset, or main database access occurs.
-The controller owns the scoped independent re-review.
-Internal report: `.superpowers/sdd/2026-10-15-compute-selection-and-content-work-plan/final-fix-report.md`.
+Scoped independent re-review approves the final correction.
 
 
 ### Residual final-review correction — capture stop evidence before cleanup
@@ -948,3 +951,22 @@ These runs cover all 72 final tests from the requested three modules. No test wa
 Changed-file Ruff and `git diff --check` pass.
 No broad/full-suite rerun, server action, migration, data reset, package installation, or main database access occurs.
 The internal final-fix report records the failed attempt, corrected fixture, real cleanup coverage, and final evidence.
+
+### Final execution status
+
+All eight tasks are delivered on `feature/content-storage-compression`.
+Final production correction: `127341d9`.
+The whole-plan review finds no remaining Critical, Important, or Minor issue.
+The final scoped review approves capture of explicit stop before real cleanup.
+
+The final correction requires one additional focused fix and review cycle.
+Real cleanup sets `stop_event`; checking it afterwards incorrectly reports an explicit provider stop.
+The correction captures the prior state and tests real cleanup, cancellation, explicit stop, and failed teardown.
+Its final three-module run passes 71 tests. A later cancellation regression passes separately.
+These runs cover all 72 final tests in those modules.
+Earlier broad and integrated results retain the revision limits documented above.
+
+The Task 6 baseline RED limitation remains explicit in its checklist.
+It does not represent an unimplemented scheduling requirement.
+Implementation validation does not restart servers or reset instance data.
+The existing worktree remains available for the separately authorized live validation run.
