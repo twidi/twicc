@@ -132,7 +132,7 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         state.loadError = null
         let body
         try {
-            body = await fetchPage({ projectIds: scope, before: null, afterId: null })
+            body = await fetchPage({ projectIds: [...scope], before: null, afterId: null })
         } catch (error) {
             if (stale(gen)) return
             state.status = 'error'
@@ -143,23 +143,34 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         if (stale(gen)) return
         state.events = [...body.events].sort(compareNewestFirst)
         state.sessions = { ...state.sessions, ...body.sessions }
-        state.hasMore = body.has_more === true
+        state.hasMore = body.has_more === true && state.events.length > 0
         state.pageCursor = state.events.length ? cursorOf(state.events[state.events.length - 1]) : null
         state.liveCursor = body.latest_id ?? null
         state.status = 'ready'
         loadPending = false
+        // A signal that arrived while the page loaded was not consumed (see runLive): replay it, unless a
+        // queued live task already will.
+        const deferred = liveInfo.force || (liveInfo.latest !== null && liveInfo.latest > (state.liveCursor ?? 0))
+        if (deferred && !liveQueued) {
+            liveQueued = true
+            enqueue(runLive)
+        }
     }
 
     async function runBefore(gen) {
         // A live fetch that came back truncated reset the list while this page was queued behind it: there is no
         // cursor left, and the first page that the reset queued comes next. Sending `before: null` would only
         // fetch the first page twice.
-        if (state.pageCursor === null) return
+        if (state.pageCursor === null) {
+            loadPending = false
+            state.loadingMore = false
+            return
+        }
         state.loadingMore = true
         state.loadError = null
         let body
         try {
-            body = await fetchPage({ projectIds: scope, before: state.pageCursor, afterId: null })
+            body = await fetchPage({ projectIds: [...scope], before: state.pageCursor, afterId: null })
         } catch (error) {
             if (stale(gen)) return
             state.loadingMore = false
@@ -179,6 +190,12 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
     }
 
     async function runLive(gen) {
+        // No list to patch: the first page is loading or failed (or a truncated reset is pending). Keep the
+        // signal for runFirst to replay; consuming it here would fetch `after_id` against an empty list.
+        if (state.status !== 'ready') {
+            liveQueued = false
+            return
+        }
         const info = liveInfo
         liveInfo = { latest: null, force: false }
         liveQueued = false
@@ -186,7 +203,7 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         if (!info.force && !(info.latest !== null && info.latest > cursor)) return
         let body
         try {
-            body = await fetchPage({ projectIds: scope, before: null, afterId: cursor })
+            body = await fetchPage({ projectIds: [...scope], before: null, afterId: cursor })
         } catch (error) {
             if (!stale(gen)) onLiveError(error)
             return

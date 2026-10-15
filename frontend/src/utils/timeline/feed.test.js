@@ -23,7 +23,8 @@ function createServer(initial = [], { pageSize = PAGE } = {}) {
     const calls = []
     const held = []
     let holding = false
-    const inScope = (e, projectIds) => !projectIds.length || projectIds.includes(e.project_id)
+    // Instance events (no session, no project) are in every scope, like the endpoint.
+    const inScope = (e, projectIds) => !projectIds.length || e.project_id === null || projectIds.includes(e.project_id)
     function compute({ projectIds, before, afterId }) {
         const latest_id = table.length ? Math.max(...table.map((e) => e.id)) : null
         const sessions = { s1: { title: `T${++counter}`, project_id: 'p1', provider: 'codex', hidden: false, archived: false } }
@@ -647,4 +648,212 @@ test('buildTimelineUrl encodes the cursor and keeps after_id 0', () => {
     assert.equal(url, '/api/timeline/?project_ids=-p&limit=50&before=2026-10-14T10%3A00%3A00.123456Z%2C42')
     assert.equal(new URL(`http://x${url}`).searchParams.get('before'), '2026-10-14T10:00:00.123456Z,42')
     assert.equal(buildTimelineUrl({ before: 'a+b,1' }), '/api/timeline/?before=a%2Bb%2C1')
+})
+
+test('a signal during the first page that then fails sends nothing and leaves no list', async () => {
+    const { server, feed, state } = setup(five())
+    let fail
+    server.fetchPage = async (params) => {
+        server.calls.push({ ...params })
+        await new Promise((resolve) => { fail = resolve })
+        throw new Error('boom')
+    }
+    feed.setScope([])
+    await started()
+    feed.notifyLatest(9) // queued behind the first page
+    fail()
+    await feed.idle()
+    assert.deepEqual(kinds(server), ['first'])
+    assert.deepEqual([state.status, state.events.length, state.liveCursor, state.loadError.phase], ['error', 0, null, 'first'])
+})
+
+test('a signal right after a truncated reset, before the first page runs, sends no after_id against the empty list', async () => {
+    const server = createServer(five())
+    // The state fires a signal the moment the truncated reset puts the feed back to `loading`.
+    let armed = false
+    let status = 'idle'
+    let feed
+    const state = createFeedState()
+    Object.defineProperty(state, 'status', {
+        get: () => status,
+        set: (value) => {
+            status = value
+            if (armed && value === 'loading') {
+                armed = false
+                feed.notifyLatest(7)
+            }
+        },
+        enumerable: true,
+    })
+    feed = createTimelineFeed({ fetchPage: (params) => server.fetchPage(params), state })
+    feed.setScope([])
+    await feed.idle()
+    const original = server.fetchPage
+    server.fetchPage = async (params) => {
+        server.fetchPage = original
+        server.calls.push({ ...params })
+        return { events: [], has_more: false, truncated: true, latest_id: 700, sessions: {} }
+    }
+    server.commit(event(6, at(6)))
+    armed = true
+    feed.notifyLatest(6)
+    await feed.idle()
+    // No `after:0`: the signal waits for the first page, then is replayed from the cursor it brought (6).
+    assert.deepEqual(kinds(server), ['first', 'after:5', 'first', 'after:6'])
+    assert.deepEqual(ids(state), [6, 5])
+})
+
+test('a signal deferred during a successful first page is replayed with one after_id', async () => {
+    const { server, feed, state } = setup(five())
+    server.hold()
+    feed.setScope([])
+    await started()
+    server.commit(event(6, at(6)))
+    feed.notifyLatest(6)
+    feed.notifyLatest(6)
+    server.release()
+    await feed.idle()
+    assert.deepEqual(kinds(server), ['first', 'after:5'])
+    assert.deepEqual(ids(state), [6, 5, 4])
+})
+
+test('a scope change while a before request is in flight keeps the new scope data intact', async () => {
+    const { server, feed, state } = setup([event(1, at(1), { project_id: 'a' }), event(2, at(2), { project_id: 'a' }), event(3, at(3), { project_id: 'a' }), event(4, at(4), { project_id: 'b' })])
+    feed.setScope(['a'])
+    await feed.idle()
+    server.hold()
+    feed.loadMore()
+    await started()
+    feed.setScope(['b'])
+    server.release()
+    await feed.idle()
+    assert.deepEqual(ids(state), [4])
+    assert.deepEqual([state.loadingMore, state.status, state.hasMore, state.pageCursor], [false, 'ready', false, `${at(4)},4`])
+})
+
+test('a before request that fails after a scope change leaves the new scope without error', async () => {
+    const { server, feed, state } = setup(five())
+    feed.setScope([])
+    await feed.idle()
+    const original = server.fetchPage
+    let fail
+    server.fetchPage = async (params) => {
+        server.fetchPage = original
+        server.calls.push({ ...params })
+        await new Promise((resolve) => { fail = resolve })
+        throw new Error('late')
+    }
+    feed.loadMore()
+    await started()
+    feed.setScope(['p1'])
+    fail()
+    await feed.idle()
+    assert.deepEqual([state.loadError, state.loadingMore, state.status], [null, false, 'ready'])
+})
+
+test('a scope change while a live request is in flight keeps the new scope data intact', async () => {
+    const { server, feed, state, liveErrors } = setup([event(1, at(1), { project_id: 'a' }), event(2, at(2), { project_id: 'b' })])
+    feed.setScope(['a'])
+    await feed.idle()
+    server.hold()
+    server.commit(event(3, at(3), { project_id: 'a' }))
+    feed.notifyLatest(3)
+    await started()
+    feed.setScope(['b'])
+    server.release()
+    await feed.idle()
+    assert.deepEqual(ids(state), [2])
+    assert.equal(state.liveCursor, 3)
+    assert.deepEqual(liveErrors, [])
+})
+
+test('a live request that fails after a scope change stays silent', async () => {
+    const { server, feed, liveErrors } = setup(five())
+    feed.setScope([])
+    await feed.idle()
+    const original = server.fetchPage
+    let fail
+    server.fetchPage = async (params) => {
+        server.fetchPage = original
+        server.calls.push({ ...params })
+        await new Promise((resolve) => { fail = resolve })
+        throw new Error('late')
+    }
+    server.commit(event(6, at(6)))
+    feed.notifyLatest(6)
+    await started()
+    feed.setScope(['p1'])
+    fail()
+    await feed.idle()
+    assert.deepEqual(liveErrors, [])
+})
+
+test('the first page is sorted newest first even when the rows arrive unsorted', async () => {
+    const { server, feed, state } = setup(five())
+    server.fetchPage = async () => ({ events: [event(1, at(1)), event(3, at(3)), event(2, at(2))], has_more: false, truncated: false, latest_id: 3, sessions: {} })
+    feed.setScope([])
+    await feed.idle()
+    assert.deepEqual(ids(state), [3, 2, 1])
+    assert.equal(state.pageCursor, `${at(1)},1`)
+})
+
+test('a live response with a smaller latest_id never moves the live cursor back', async () => {
+    const { server, feed, state } = setup(five())
+    feed.setScope([])
+    await feed.idle()
+    server.fetchPage = async () => ({ events: [event(6, at(6))], has_more: false, truncated: false, latest_id: 2, sessions: {} })
+    feed.notifyLatest(6)
+    await feed.idle()
+    assert.equal(state.liveCursor, 5)
+})
+
+test('an empty first page with has_more true ends the list: loadMore leaves no flag set', async () => {
+    const { server, feed, state } = setup(five())
+    server.fetchPage = async () => ({ events: [], has_more: true, truncated: false, latest_id: 5, sessions: {} })
+    feed.setScope([])
+    await feed.idle()
+    assert.equal(state.hasMore, false)
+    feed.loadMore()
+    await feed.idle()
+    assert.deepEqual([state.loadingMore, server.calls.length], [false, 0])
+})
+
+test('a before request with no page cursor clears its flags', async () => {
+    const { server, feed, state } = setup(five())
+    feed.setScope([])
+    await feed.idle()
+    state.pageCursor = null // defensive path: forced, the first-page rule above keeps it unreachable
+    feed.loadMore()
+    await feed.idle()
+    assert.deepEqual([state.loadingMore, server.calls.length], [false, 1])
+    state.pageCursor = `${at(4)},4`
+    feed.loadMore()
+    await feed.idle()
+    assert.deepEqual(ids(state), [5, 4, 3, 2])
+})
+
+test('the scope array passed to fetchPage is a copy: a caller mutating it changes nothing', async () => {
+    const { server } = setup(five())
+    const seen = []
+    const original = server.fetchPage.bind(server)
+    const feed2 = createTimelineFeed({ fetchPage: (params) => { seen.push(params.projectIds); return original(params) }, state: createFeedState() })
+    const scope = ['p1']
+    feed2.setScope(scope)
+    await feed2.idle()
+    seen[0].push('hacked')
+    scope.push('other')
+    feed2.refresh()
+    await feed2.idle()
+    assert.deepEqual(seen[1], ['p1'])
+})
+
+test('an instance event (no session, no project) is listed and inserted in a scoped feed', async () => {
+    const { server, feed, state } = setup([event(1, at(1), { project_id: 'a' }), event(2, at(2), { project_id: null, session_id: null, kind: 'instance.started' })])
+    feed.setScope(['a'])
+    await feed.idle()
+    assert.deepEqual(ids(state), [2, 1])
+    server.commit(event(3, at(3), { project_id: null, session_id: null, kind: 'instance.started' }))
+    feed.notifyLatest(3)
+    await feed.idle()
+    assert.deepEqual(ids(state), [3, 2, 1])
 })
