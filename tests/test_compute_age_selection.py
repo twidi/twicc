@@ -59,7 +59,8 @@ def test_recent_only_classifies_waits_rechecks_and_stops(recovery_runtime, monke
                    else 'tests.test_background_compute_recovery:RecoveryCompute')
         ctx = background.ComputeContext(provider, 123, factory)
         if provider == Provider.CODEX:
-            owner = codex.CodexComputeCoordinator(ctx, barrier)
+            work_state = ComputeWorkState()
+            owner = codex.CodexComputeCoordinator(ctx, barrier, work_state=work_state)
             async def prepare(candidate):
                 return codex.PreparedCandidate(candidate.session_id, None, False)
             owner.prepare_candidate = prepare
@@ -74,8 +75,7 @@ def test_recent_only_classifies_waits_rechecks_and_stops(recovery_runtime, monke
             assert not any(done for _, done in progress)
             # Committed source changes wake the generic selector.
             update_sources(path, faulty=now - 31)
-            if provider == Provider.CLAUDE_CODE:
-                work_state.notify_source_changed(provider, "faulty")
+            work_state.notify_source_changed(provider, "faulty")
             async with asyncio.timeout(6):
                 while versions(path)['faulty'] != 123:
                     await asyncio.sleep(.01)
@@ -95,12 +95,12 @@ def test_recent_only_classifies_waits_rechecks_and_stops(recovery_runtime, monke
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize('backoff', [-1.0, .05])
-def test_codex_recent_failure_polls_at_selection_interval(recovery_runtime, monkeypatch, backoff):
-    """Expired or earlier backoff cannot poll before source age permits work."""
+def test_codex_recent_failure_waits_for_source_age_deadline(recovery_runtime, monkeypatch, backoff):
+    """Expired or earlier backoff cannot bypass the independent source-age deadline."""
     from django.db import connection
     path, _ = recovery_runtime
     wall = [1000.0]
-    update_sources(path, faulty=wall[0])
+    update_sources(path, faulty=wall[0] - 29.5)
     with closing(sqlite3.connect(path)) as database:
         database.execute("UPDATE core_session SET provider='codex'")
         database.execute("UPDATE core_session SET compute_version=123 WHERE id='healthy'")
@@ -301,7 +301,8 @@ def test_bounds_unapplied_results_and_reselects_modified_sources(recovery_runtim
         ctx = background.ComputeContext(provider, 123, factory)
         barrier = asyncio.Event()
         if provider == Provider.CODEX:
-            owner = codex.CodexComputeCoordinator(ctx, barrier)
+            work_state = ComputeWorkState()
+            owner = codex.CodexComputeCoordinator(ctx, barrier, work_state=work_state)
             async def prepare(candidate):
                 return codex.PreparedCandidate(candidate.session_id, None, False)
             owner.prepare_candidate = prepare
@@ -319,8 +320,7 @@ def test_bounds_unapplied_results_and_reselects_modified_sources(recovery_runtim
             assert versions(path)['third'] is None
             assert not barrier.is_set()
             update_sources(path, third=now + 2000)
-            if provider == Provider.CLAUDE_CODE:
-                work_state.notify_source_changed(provider, "third")
+            work_state.notify_source_changed(provider, "third")
             release.set()
             async with asyncio.timeout(4):
                 while versions(path)['root'] != 123 or not barrier.is_set():
@@ -330,9 +330,8 @@ def test_bounds_unapplied_results_and_reselects_modified_sources(recovery_runtim
             assert len(streams) == 1
             # Equal root mtimes do not impose a secondary order.
             update_sources(path, third=now - 31, recent=now - 31)
-            if provider == Provider.CLAUDE_CODE:
-                work_state.notify_source_changed(provider, "third")
-                work_state.notify_source_changed(provider, "recent")
+            work_state.notify_source_changed(provider, "third")
+            work_state.notify_source_changed(provider, "recent")
             if provider == Provider.CODEX:
                 async with asyncio.timeout(6):
                     while (not all(version == 123 for version in versions(path).values())
@@ -404,7 +403,8 @@ def test_superseded_result_returns_to_source_age_selection(recovery_runtime, mon
         ctx = background.ComputeContext(provider, 123, factory)
         barrier = asyncio.Event()
         if provider == Provider.CODEX:
-            owner = codex.CodexComputeCoordinator(ctx, barrier)
+            work_state = ComputeWorkState()
+            owner = codex.CodexComputeCoordinator(ctx, barrier, work_state=work_state)
             async def prepare(candidate):
                 return codex.PreparedCandidate(candidate.session_id, None, False)
             owner.prepare_candidate = prepare
@@ -429,8 +429,7 @@ def test_superseded_result_returns_to_source_age_selection(recovery_runtime, mon
             assert not task.done()
             assert not any(done for _, done in progress)
             update_sources(path, faulty=now - 31)
-            if provider == Provider.CLAUDE_CODE:
-                work_state.notify_source_changed(provider, "faulty")
+            work_state.notify_source_changed(provider, "faulty")
             async with asyncio.timeout(5):
                 while versions(path)['faulty'] != 123:
                     await asyncio.sleep(.01)

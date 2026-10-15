@@ -432,6 +432,8 @@ def test_codex_restart_prepares_releases_before_watcher_start(
         watching.clear()
         session_id = 'previous' if same_session else 'replacement'
         orchestrator = orchestrator_module.CodexOrchestrator()
+        from twicc.providers.compute_work import ComputeWorkState
+        orchestrator.compute_work = ComputeWorkState()
         orchestrator.initial_sync_done.set()
         orchestrator.search_index_ready = asyncio.Event()
         orchestrator._sync_titles_at_boot = AsyncMock()
@@ -445,7 +447,7 @@ def test_codex_restart_prepares_releases_before_watcher_start(
         released = asyncio.Event()
         release_count = 0
 
-        async def compute(ctx, done, *, on_session_released, on_migration_released):
+        async def compute(ctx, done, *, on_session_released, on_migration_released, work_state):
             nonlocal release_count
             release_count += 1
             source = abandoned_path if stop_before_ready and release_count == 1 else path
@@ -927,7 +929,8 @@ def test_paginated_replacement_reaches_real_gated_reconstruction_and_release(tmp
         def notify(release):
             releases.append(release)
             watcher.notify_migration_released(release)
-        ctx = SimpleNamespace(provider='codex', compute_version=watcher.get_compute().compute_version, run_id=0)
+        ctx = SimpleNamespace(provider='codex', compute_version=watcher.get_compute().compute_version,
+                              run_id=0, command_queue=queue.Queue())
         coordinator = CodexComputeCoordinator(ctx, asyncio.Event(), on_migration_released=notify)
         # The external agent manager is irrelevant; all database jobs and source reads stay real.
         coordinator._is_agent_active = lambda sid: False

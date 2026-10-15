@@ -542,7 +542,7 @@ class CodexOrchestrator(BaseOrchestrator):
         self._compute_task = self._create_task(
             start_codex_background_compute_task(
                 self._compute_ctx, self.compute_done, on_session_released=_replay_after_migration,
-                on_migration_released=watcher.notify_migration_released,
+                on_migration_released=watcher.notify_migration_released, work_state=self.compute_work,
             )
         )
         self._compute_task.add_done_callback(lambda _t: self.compute_done.set())

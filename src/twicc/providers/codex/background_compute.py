@@ -73,7 +73,7 @@ from twicc.providers.background_compute_task import (
     stop_compute_worker,
 )
 from twicc.providers.compute_selection import (
-    COMPUTE_SELECTION_POLL_SECONDS, COMPUTE_STATUS_POLL_SECONDS, compute_age_delay,
+    COMPUTE_MIN_SOURCE_AGE_SECONDS, COMPUTE_STATUS_POLL_SECONDS,
 )
 from twicc.providers.db_writer import (
     ComputeApplied,
@@ -119,6 +119,7 @@ logger = logging.getLogger(__name__)
 CODEX_MAX_OUTSTANDING = 2
 
 _EXTERNAL_WRITER_RETRY_SECONDS = 30.0
+_UNAVAILABLE_RECOVERY_PAGE_SIZE = 200
 # A progress summary line is logged every N outcomes or every N seconds,
 # whichever comes first, while sessions are being processed.
 # Final outcomes that count as "done" in the user-facing progress line.
@@ -177,22 +178,26 @@ class _RolloutMissing(RolloutMigrationError):
 
 
 async def _load_stale_candidates(
-    compute_version: int, *, forced_ids: frozenset[str] = frozenset(),
+    compute_version: int, *, forced_ids: frozenset[str] = frozenset(), source_ids=None,
 ) -> list[CodexComputeCandidate]:
-    """Include forced histories even when an older compute restored their version."""
-    rows = await sync_to_async(
-        lambda: list(
-            Session.objects.filter(provider=Provider.CODEX)
-            .filter(~Q(compute_version=compute_version) | Q(id__in=forced_ids) | Q(unavailable_reason__isnull=False))
-            .order_by("-mtime", "-id")
-            .values_list("id", "file_path", "type", "last_offset", "unavailable_reason", "mtime")
-        )
-    )()
-    sessions_dir = codex_sessions_dir()
-    return [
-        CodexComputeCandidate(session_id, sessions_dir / file_path, session_type, last_offset, unavailable_reason, mtime)
-        for session_id, file_path, session_type, last_offset, unavailable_reason, mtime in rows
-    ]
+    """Read startup metadata once, or refresh only an admitted source."""
+    def load():
+        sources = Session.objects.filter(provider=Provider.CODEX)
+        if source_ids is None:
+            sources = sources.filter(
+                Q(compute_version__isnull=True) | Q(compute_version__lt=compute_version)
+                | Q(id__in=forced_ids) | Q(unavailable_reason__isnull=False),
+            )
+        else:
+            sources = sources.filter(pk__in=source_ids)
+        sessions_dir = codex_sessions_dir()
+        return [
+            CodexComputeCandidate(sid, sessions_dir / path, kind, offset, unavailable, mtime)
+            for sid, path, kind, offset, unavailable, mtime in sources.order_by('-mtime').values_list(
+                'id', 'file_path', 'type', 'last_offset', 'unavailable_reason', 'mtime',
+            ).iterator(chunk_size=200)
+        ]
+    return await sync_to_async(load)()
 
 
 async def _has_snapshot_anchor(session_id: str) -> bool:
@@ -221,8 +226,16 @@ class CodexComputeCoordinator:
         initial_done: asyncio.Event,
         on_session_released: SessionReleasedCallback | None = None,
         on_migration_released: MigrationReleasedCallback | None = None,
+        *, work_state=None,
     ) -> None:
         self.ctx = ctx
+        self.work_state = work_state
+        self._source_generation = 0
+        self._shutdown_drained = False
+        self._active_root: str | None = None
+        self._active_diagnoses: set[str] = set()
+        self._blocked_roots: dict[str, float] = {}
+        self._blocked_diagnoses: dict[str, set[str]] = {}
         self.initial_done = initial_done
         self.on_session_released = on_session_released
         self.on_migration_released = on_migration_released
@@ -810,6 +823,7 @@ class CodexComputeCoordinator:
         if signal.outcome == "applied" and session_id in self._unavailable_diagnoses:
             await self._submit_job(MarkSessionUnavailableJob, session_id, None)
             self._unavailable_diagnoses.pop(session_id, None)
+        self._active_diagnoses.discard(session_id)
         self.deferred.discard(session_id)
         self.failed_this_run.discard(session_id)
         self.failures.pop(session_id, None)
@@ -841,6 +855,7 @@ class CodexComputeCoordinator:
         """Drop repair intent only after database deletion is confirmed."""
         self._release_lease(session_id, replay=False, outcome='cancelled')
         self.migrated_history.discard(session_id)
+        self._active_diagnoses.discard(session_id)
         self._unavailable_diagnoses.pop(session_id, None)
         self.failures.pop(session_id, None)
         self.failed_this_run.discard(session_id)
@@ -1041,7 +1056,153 @@ class CodexComputeCoordinator:
     # Main loop
     # ------------------------------------------------------------------
 
+    async def _select_candidate(self):
+        """Admit one root, then refresh only its deepest required source."""
+        from twicc.providers.compute_tree import (
+            NativeTreeError, load_native_tree, next_root_eligibility, resolve_native_roots, select_outdated_root,
+        )
+        from twicc.providers.compute_selection import select_tree_source
+
+        now = time.monotonic()
+        wall_now = time.time()
+        cutoff = wall_now - COMPUTE_MIN_SOURCE_AGE_SECONDS
+        self._blocked_roots = {root: deadline for root, deadline in self._blocked_roots.items() if deadline > now}
+        self._blocked_diagnoses = {
+            root: sources for root, sources in self._blocked_diagnoses.items() if root in self._blocked_roots
+        }
+        outstanding = self.submitted | self.computed_not_applied
+        await self._prune_deleted_recovery(set())
+        recovery_ids = (
+            self._forced_rebuild | self.failures.keys() | self.deferred
+            | self._unavailable_diagnoses.keys() | self._active_diagnoses
+        )
+        # Unavailable histories may have a current root. Probe one bounded page
+        # outside normal version selection; retries retain their original version.
+        def recovery_roots():
+            blocked_sources = set().union(*self._blocked_diagnoses.values())
+            diagnosed = set(Session.objects.filter(
+                provider=Provider.CODEX, unavailable_reason__isnull=False,
+            ).exclude(pk__in=recovery_ids | blocked_sources).order_by('-mtime').values_list(
+                'id', flat=True,
+            )[:_UNAVAILABLE_RECOVERY_PAGE_SIZE])
+            roots = resolve_native_roots(recovery_ids | diagnosed | outstanding)
+            eligible = set(roots.values()) - self._blocked_roots.keys()
+            ranked = list(Session.objects.filter(
+                pk__in=eligible, provider=Provider.CODEX, type=SessionType.SESSION, parent_session__isnull=True,
+            ).order_by('-mtime').values_list('id', flat=True))
+            return ranked, diagnosed, roots
+
+        # Read at most one exceptional page per selection. Blocked diagnoses
+        # stay attached to their retry roots, so later pages can make progress.
+        recovery_loaded = False
+        recovery_roots_left = []
+        diagnosed_roots = {}
+        diagnosed = set()
+        while True:
+            if self._active_root is None:
+                if not recovery_loaded:
+                    recovery_roots_left, diagnosed, diagnosed_roots = await sync_to_async(recovery_roots)()
+                    recovery_ids = recovery_ids | diagnosed
+                    recovery_loaded = True
+                self._active_root = recovery_roots_left.pop(0) if recovery_roots_left else None
+                self._active_diagnoses = {
+                    sid for sid in diagnosed if diagnosed_roots.get(sid) == self._active_root
+                }
+                if self._active_root is None:
+                    self._active_root = await sync_to_async(lambda: select_outdated_root(
+                        Provider.CODEX, self.ctx.compute_version, cutoff=cutoff,
+                        excluded_root_ids=self._blocked_roots,
+                    ))()
+            if self._active_root is None:
+                deadline = await sync_to_async(lambda: next_root_eligibility(
+                    Provider.CODEX, self.ctx.compute_version, cutoff=cutoff,
+                    excluded_root_ids=self._blocked_roots,
+                ))()
+                deadlines = list(self._blocked_roots.values())
+                if deadline is not None:
+                    deadlines.append(now + max(0, deadline - wall_now))
+                pending = bool(deadlines or outstanding or recovery_ids)
+                return None, recovery_ids, pending, min(deadlines, default=None)
+            root = self._active_root
+            excluded = self.deferred | {sid for sid, deadline in self._retry_at.items() if deadline > now}
+            if outstanding:
+                excluded |= self.failures.keys()
+            def select_member():
+                # A current diagnosed member remains required even when the
+                # bounded recovery page discovered a different native root.
+                tree = load_native_tree(root)
+                diagnosed_members = set(Session.objects.filter(
+                    pk__in=tree.member_ids, unavailable_reason__isnull=False,
+                ).values_list('id', flat=True))
+                selection = select_tree_source(
+                    root, self.ctx.compute_version, cutoff=cutoff, outstanding=outstanding,
+                    excluded_source_ids=excluded, forced_source_ids=recovery_ids | diagnosed_members,
+                )
+                return selection, diagnosed_members
+            try:
+                selection, diagnosed_members = await sync_to_async(select_member)()
+                self._active_diagnoses.update(diagnosed_members)
+                recovery_ids |= diagnosed_members
+            except (NativeTreeError, Session.DoesNotExist):
+                await self._classify_blocked_tree(root)
+                self._blocked_roots[root] = now + 60
+                self._blocked_diagnoses[root] = self._active_diagnoses | {
+                    sid for sid in diagnosed if diagnosed_roots.get(sid) == root
+                }
+                self._active_root = None
+                self._active_diagnoses.clear()
+                continue
+            if selection.source_id is not None:
+                candidates = await _load_stale_candidates(
+                    self.ctx.compute_version, source_ids={selection.source_id},
+                    forced_ids=frozenset(recovery_ids),
+                )
+                candidate = next((item for item in candidates if item.session_id == selection.source_id), None)
+                if candidate is not None:
+                    return candidate, recovery_ids, True, None
+                self._active_root = None
+                continue
+            if outstanding:
+                return None, recovery_ids, True, None
+            self._active_root = None
+            if not selection.required_pending:
+                self._active_diagnoses.clear()
+                await self._classify_initial(root)
+                continue
+            await self._classify_blocked_tree(root)
+            # Source age and recovery backoff are independent deadlines.
+            deadlines = [deadline for sid, deadline in self._retry_at.items() if deadline > now]
+            if selection.next_eligible_at is not None:
+                deadlines.append(now + max(0, selection.next_eligible_at - wall_now))
+            self._blocked_roots[root] = min(deadlines, default=now + _EXTERNAL_WRITER_RETRY_SECONDS)
+            self._blocked_diagnoses[root] = self._active_diagnoses | {
+                sid for sid in diagnosed if diagnosed_roots.get(sid) == root
+            }
+            self._active_diagnoses.clear()
+
     async def run(self) -> None:
+        """Keep actual work pending until selection and owned writer drain finish."""
+        def wakeup(session_id):
+            self._source_generation += 1
+            if self.work_state is not None:
+                self.work_state.set_pending(Provider.CODEX, True)
+            self.events.put_nowait(('source', session_id))
+
+        if self.work_state is not None:
+            self.work_state.set_pending(Provider.CODEX, True)
+            self.work_state.register_source_wakeup(Provider.CODEX, wakeup)
+        try:
+            await self._run()
+        finally:
+            try:
+                await self._drain_owned_cleanup(self._shutdown())
+            finally:
+                if self.work_state is not None:
+                    self.work_state.unregister_source_wakeup(Provider.CODEX, wakeup)
+                    if self._shutdown_drained:
+                        self.work_state.set_pending(Provider.CODEX, False)
+
+    async def _run(self) -> None:
         self._absorb_rebuild_requests()
         async def load_initial(_ids):
             self._absorb_rebuild_requests()
@@ -1053,6 +1214,10 @@ class CodexComputeCoordinator:
             self.initial_done.set()
             return
         await self._initialize_progress(initial_candidates)
+        cutoff = time.time() - COMPUTE_MIN_SOURCE_AGE_SECONDS
+        for candidate in initial_candidates:
+            if candidate.mtime > cutoff:
+                await self._classify_blocked_tree(candidate.session_id)
         if initial_candidates:
             sources, self._legacy_ids = await asyncio.to_thread(self._classify_sources, initial_candidates)
             logger.info(
@@ -1078,162 +1243,119 @@ class CodexComputeCoordinator:
             asyncio.create_task(self._wake_pump()),
         ]
 
-        try:
-            while not self.ctx.stop_event.is_set():
-                try:
-                    self._absorb_rebuild_requests()
-                    candidates = await _load_stale_candidates(
-                        self.ctx.compute_version, forced_ids=frozenset(self._forced_rebuild),
+        while not self.ctx.stop_event.is_set():
+            try:
+                generation = self._source_generation
+                self._absorb_rebuild_requests()
+                candidate, forced, work_pending, next_deadline = await self._select_candidate()
+                if self.work_state is not None:
+                    self.work_state.set_pending(
+                        Provider.CODEX, work_pending or self.run_active or generation != self._source_generation,
                     )
-                    stale_ids = {candidate.session_id for candidate in candidates}
-                    await self._prune_deleted_recovery(stale_ids)
-                    externally_ready = self.initial_ids - stale_ids - self.initial_ready
-                    await self._confirm_initial_ready(externally_ready)
-                    for session_id in externally_ready:
-                        await self._classify_initial(session_id, confirm_ready=False)
 
-                    source_now = time.time()
-                    age_deferred = {
-                        item.session_id for item in candidates if compute_age_delay(item.mtime, source_now) > 0
-                    }
-                    for session_id in age_deferred:
-                        await self._classify_blocked_tree(session_id)
-                    healthy_pending = (self.submitted | self.computed_not_applied) - self.failures.keys()
-                    from twicc.providers.compute_selection import select_native_tree_source
-
-                    excluded = age_deferred | self.deferred | {
-                        sid for sid, deadline in self._retry_at.items() if deadline > time.monotonic()
-                    }
-                    if healthy_pending:
-                        excluded.update(self.failures)
-                    # Unavailable diagnostics retain the provider's existing
-                    # eligibility, including histories whose version is current.
-                    forced = self._forced_rebuild | {
-                        item.session_id for item in candidates if item.unavailable_reason is not None
-                    }
-                    def select_source(stale_ids=stale_ids, excluded=excluded, forced=forced):
-                        invalid_roots = set()
-                        selected = select_native_tree_source(
-                            Provider.CODEX, self.ctx.compute_version,
-                            cutoff=float("inf"), eligible_source_ids=stale_ids,
-                            outstanding=self.submitted | self.computed_not_applied,
-                            excluded=excluded, forced_source_ids=forced, invalid_roots=invalid_roots,
-                        )
-                        return selected, invalid_roots
-
-                    selected, invalid_roots = await sync_to_async(select_source)()
-                    for root_id in invalid_roots:
-                        await self._classify_blocked_tree(root_id)
-                    candidate = next((item for item in candidates if item.session_id == selected), None)
-
-                    if (
-                        self.in_flight is None
-                        and len(self.submitted | self.computed_not_applied) < CODEX_MAX_OUTSTANDING
-                        and candidate is not None
-                    ):
-                        if not self.run_active:
-                            self._start_run()
-                        prepared = await self.prepare_candidate(candidate)
-                        if isinstance(prepared, DeferredCandidate):
-                            self.deferred.add(prepared.session_id)
-                            if prepared.session_id not in self._logged_deferred:
-                                self._logged_deferred.add(prepared.session_id)
-                                self._record_outcome(
-                                    prepared.session_id, None,
-                                    log="deferred: " + (
-                                        "a TwiCC agent is running it" if prepared.reason == "active"
-                                        else "another Codex process holds its writer lock"
-                                    ),
-                                )
-                            await self._classify_initial(prepared.session_id)
-                            await self._classify_blocked_tree(prepared.session_id)
-                            continue
-                        if isinstance(prepared, FailedCandidate):
-                            await self._record_failure(prepared)
-                            continue
-
-                        if prepared.migration_lease is not None:
-                            self.migration_leases[prepared.session_id] = prepared.migration_lease
-                        if prepared.migrated_history:
-                            self.migrated_history.add(prepared.session_id)
-                        self._prepared[prepared.session_id] = prepared
-                        self._prepared_rebuild_generation[prepared.session_id] = self._rebuild_generation.get(
-                            prepared.session_id, 0,
-                        )
-                        self.submitted.add(prepared.session_id)
-                        self.in_flight = prepared.session_id
-                        try:
-                            await self._submit_job(InitializeComputeStorageJob, prepared.session_id)
-                        except Exception as error:
-                            self.submitted.discard(prepared.session_id)
-                            self.in_flight = None
-                            await self._record_failure(FailedCandidate(prepared.session_id, "initialize", str(error)))
-                            continue
-                        from twicc.providers.compute_selection import tree_completion_context
-
-                        context = await sync_to_async(lambda prepared=prepared, forced=forced: tree_completion_context(
-                            prepared.session_id, self.ctx.compute_version,
-                            forced_source_ids=forced,
-                            outstanding=(self.submitted | self.computed_not_applied) - {prepared.session_id},
-                        ))()
-                        self.ctx.command_queue.put_nowait({
-                            "session_id": prepared.session_id, "tree_completion": context,
-                        })
+                if (
+                    self.in_flight is None
+                    and len(self.submitted | self.computed_not_applied) < CODEX_MAX_OUTSTANDING
+                    and candidate is not None
+                ):
+                    if not self.run_active:
+                        self._start_run()
+                    prepared = await self.prepare_candidate(candidate)
+                    if isinstance(prepared, DeferredCandidate):
+                        self.deferred.add(prepared.session_id)
+                        self._retry_at[prepared.session_id] = time.monotonic() + _EXTERNAL_WRITER_RETRY_SECONDS
+                        if prepared.session_id not in self._logged_deferred:
+                            self._logged_deferred.add(prepared.session_id)
+                            self._record_outcome(
+                                prepared.session_id, None,
+                                log="deferred: " + (
+                                    "a TwiCC agent is running it" if prepared.reason == "active"
+                                    else "another Codex process holds its writer lock"
+                                ),
+                            )
+                        await self._classify_initial(prepared.session_id)
+                        await self._classify_blocked_tree(prepared.session_id)
+                        continue
+                    if isinstance(prepared, FailedCandidate):
+                        await self._record_failure(prepared)
                         continue
 
-                    pending = bool(self.submitted or self.computed_not_applied)
-                    if (
-                        self.run_active
-                        and candidate is None
-                        and not pending
-                        and self.in_flight is None
-                        and not self.deferred
-                    ):
-                        # Nothing left to feed the worker and no busy session to
-                        # retry shortly: stop it, stay alive. Deferred sessions
-                        # keep the idle worker around rather than respawning it
-                        # at every 30-second retry.
-                        await self._finish_run()
-                        if not self.initial_done.is_set():
-                            # Every initial session was classified through the
-                            # normal paths; this is a belt-and-braces guard.
-                            self.initial_done.set()
-
-                    retry_now = time.monotonic()
-                    # Only a future backoff can wake selection early. A source
-                    # must also reach its independent wall-clock age threshold.
-                    delays = [
-                        max(compute_age_delay(item.mtime, source_now), self._retry_at[item.session_id] - retry_now)
-                        for item in candidates
-                        if self._retry_at.get(item.session_id, 0) > retry_now
-                        and item.session_id not in self.submitted
-                        and item.session_id not in self.computed_not_applied
-                        and item.session_id not in self.deferred and not healthy_pending
-                    ]
+                    if prepared.migration_lease is not None:
+                        self.migration_leases[prepared.session_id] = prepared.migration_lease
+                    if prepared.migrated_history:
+                        self.migrated_history.add(prepared.session_id)
+                    self._prepared[prepared.session_id] = prepared
+                    self._prepared_rebuild_generation[prepared.session_id] = self._rebuild_generation.get(
+                        prepared.session_id, 0,
+                    )
+                    self.submitted.add(prepared.session_id)
+                    self.in_flight = prepared.session_id
                     try:
-                        event_type, payload = await asyncio.wait_for(
-                            self.events.get(), timeout=min([COMPUTE_SELECTION_POLL_SECONDS, *delays]),
-                        )
-                    except TimeoutError:
+                        await self._submit_job(InitializeComputeStorageJob, prepared.session_id)
+                    except Exception as error:
+                        self.submitted.discard(prepared.session_id)
+                        self.in_flight = None
+                        await self._record_failure(FailedCandidate(prepared.session_id, "initialize", str(error)))
                         continue
-                    if event_type == "worker":
-                        await self._handle_worker_status(payload)
-                    elif event_type == "applied" and isinstance(payload, ComputeApplied):
-                        await self._handle_applied(payload)
-                    elif event_type == "wake":
-                        self.deferred.clear()
-                except Exception:
-                    logger.exception("Codex compute run failed; retiring before recovery")
-                    faulty = self.in_flight
-                    await self._retire_run()
-                    if faulty is not None:
-                        await self._record_failure(FailedCandidate(faulty, "transport", "compute run interrupted"))
-                        continue
-                    if not await _wait_for_retry_delay(self.ctx.stop_event, self._process_delay):
-                        break
-                    self._process_delay = min(self._process_delay * 2, 60.0)
-        finally:
-            await self._drain_owned_cleanup(self._shutdown())
+                    from twicc.providers.compute_selection import tree_completion_context
+
+                    context = await sync_to_async(lambda prepared=prepared, forced=forced: tree_completion_context(
+                        prepared.session_id, self.ctx.compute_version,
+                        forced_source_ids=forced,
+                        outstanding=(self.submitted | self.computed_not_applied) - {prepared.session_id},
+                    ))()
+                    self.ctx.command_queue.put_nowait({
+                        "session_id": prepared.session_id, "tree_completion": context,
+                    })
+                    continue
+
+                pending = bool(self.submitted or self.computed_not_applied)
+                if (
+                    self.run_active
+                    and candidate is None
+                    and not pending
+                    and self.in_flight is None
+                    and not self.deferred
+                ):
+                    # Nothing left to feed the worker and no busy session to
+                    # retry shortly: stop it, stay alive. Deferred sessions
+                    # keep the idle worker around rather than respawning it
+                    # at every 30-second retry.
+                    await self._finish_run()
+                    if not self.initial_done.is_set():
+                        # Every initial session was classified through the
+                        # normal paths; this is a belt-and-braces guard.
+                        self.initial_done.set()
+
+                if self.work_state is not None:
+                    self.work_state.set_pending(
+                        Provider.CODEX, work_pending or self.run_active or generation != self._source_generation,
+                    )
+                timeout = None if next_deadline is None else max(0, next_deadline - time.monotonic())
+                try:
+                    event_type, payload = await asyncio.wait_for(self.events.get(), timeout=timeout)
+                except TimeoutError:
+                    self.deferred = {sid for sid in self.deferred if self._retry_at.get(sid, 0) > time.monotonic()}
+                    continue
+                if event_type == "worker":
+                    await self._handle_worker_status(payload)
+                elif event_type == "applied" and isinstance(payload, ComputeApplied):
+                    await self._handle_applied(payload)
+                elif event_type in {"wake", "source"}:
+                    self.deferred.clear()
+                    self._blocked_roots.clear()
+                    if event_type == 'source':
+                        self._retry_at.pop(payload, None)
+            except Exception:
+                logger.exception("Codex compute run failed; retiring before recovery")
+                faulty = self.in_flight
+                await self._retire_run()
+                if faulty is not None:
+                    await self._record_failure(FailedCandidate(faulty, "transport", "compute run interrupted"))
+                    continue
+                if not await _wait_for_retry_delay(self.ctx.stop_event, self._process_delay):
+                    break
+                self._process_delay = min(self._process_delay * 2, 60.0)
 
     async def _shutdown(self) -> None:
         """Drain provider cleanup before cancellation leaves the coordinator."""
@@ -1256,6 +1378,7 @@ class CodexComputeCoordinator:
         if self._replays:
             await asyncio.gather(*self._replays, return_exceptions=True)
         await stop_background_task(self.ctx)
+        self._shutdown_drained = True
         if not self.initial_done.is_set():
             self.initial_done.set()
         if self.failures:
@@ -1273,7 +1396,10 @@ async def start_codex_background_compute_task(
     initial_done: asyncio.Event,
     on_session_released: SessionReleasedCallback | None = None,
     on_migration_released: MigrationReleasedCallback | None = None,
+    *, work_state,
 ) -> None:
     """Run the migration-aware Codex coordinator for the provider's lifetime."""
 
-    await CodexComputeCoordinator(ctx, initial_done, on_session_released, on_migration_released).run()
+    await CodexComputeCoordinator(
+        ctx, initial_done, on_session_released, on_migration_released, work_state=work_state,
+    ).run()

@@ -156,10 +156,12 @@ def test_real_codex_pipeline_recovers_without_restart(codex_recovery_runtime, mo
     from twicc.core.content_storage import extraction
     from twicc.providers.compute_base import BaseSessionCompute
     failed = False
+    state = ComputeWorkState()
     original_initialize = extraction.initialize_compute_session
     attempts = []
 
     def initialize(sid):
+        assert state.has_pending()
         nonlocal failed
         attempts.append((sid, Session.objects.get(pk=sid).compute_version))
         if failure == 'initialize' and sid == 'faulty' and not failed:
@@ -170,6 +172,7 @@ def test_real_codex_pipeline_recovers_without_restart(codex_recovery_runtime, mo
     original_apply = BaseSessionCompute._apply_session_complete_final
 
     def apply(message):
+        assert state.has_pending()
         nonlocal failed
         if failure == 'apply' and message['session_id'] == 'faulty' and not failed:
             failed = True
@@ -190,7 +193,7 @@ def test_real_codex_pipeline_recovers_without_restart(codex_recovery_runtime, mo
 
     async def run():
         ctx = background.ComputeContext(Provider.CODEX, 123, f'{__name__}:CodexRecoveryCompute')
-        owner = CodexComputeCoordinator(ctx, asyncio.Event())
+        owner = CodexComputeCoordinator(ctx, asyncio.Event(), work_state=state)
         classification_entered, classification_release = asyncio.Event(), asyncio.Event()
         if failure == 'process':
             classify = owner._classify_initial
@@ -202,7 +205,7 @@ def test_real_codex_pipeline_recovers_without_restart(codex_recovery_runtime, mo
             owner._classify_initial = controlled_classification
         releases = []
         owner.on_migration_released = releases.append
-        async def load(_version, *, forced_ids=frozenset()):
+        async def load(_version, *, forced_ids=frozenset(), source_ids=None):
             current = versions(path)
             return [CodexComputeCandidate(sid, Path('/test') / sid, SessionType.SESSION, 10)
                     for sid in ['faulty', 'healthy'] if current[sid] != 123 or sid in forced_ids]
@@ -211,6 +214,7 @@ def test_real_codex_pipeline_recovers_without_restart(codex_recovery_runtime, mo
             sid = candidate.session_id
             if sid != 'faulty':
                 return PreparedCandidate(sid, None, False)
+            assert state.has_pending()
             lease = gate_for(sid)
             await lease.acquire()
             owner.migration_paths[sid] = candidate.file_path
@@ -230,6 +234,7 @@ def test_real_codex_pipeline_recovers_without_restart(codex_recovery_runtime, mo
                 await asyncio.wait_for(classification_entered.wait(), 2)
                 # SQLite readiness precedes coordinator classification.
                 assert not owner.initial_done.is_set()
+                assert state.has_pending()
                 assert not any(done for _, done in progress)
                 monkeypatch.delenv('RECOVERY_TEST_CRASH')
                 classification_release.set()
@@ -539,6 +544,9 @@ def test_missing_rollout_restored_without_rebuild_or_restart(codex_recovery_runt
     from twicc.providers.codex import rollout_migration
     path, progress = codex_recovery_runtime
     rollout = path.parent / 'restored.jsonl'
+    with closing(sqlite3.connect(path)) as database:
+        database.execute("UPDATE core_session SET compute_version=123 WHERE id='healthy'")
+        database.commit()
     diagnosed_initializations = []
     original = extraction.initialize_compute_session
     def initialize(sid):
@@ -597,6 +605,8 @@ def test_missing_rollout_restored_without_rebuild_or_restart(codex_recovery_runt
             rollout.write_bytes(orjson.dumps({'type': 'session_meta', 'payload': {
                 'id': 'faulty', 'cwd': '/test', 'history_mode': 'paginated',
             }}) + b'\n')
+            # Restored history is stable before its first replacement attempt.
+            os.utime(rollout, (1, 1))
             try:
                 async with asyncio.timeout(8):
                     while versions(path)['faulty'] != 123 or owner.failures or not progress[-1][1]:
@@ -955,5 +965,275 @@ def test_real_early_apply_keeps_slot_while_worker_status_waits(codex_recovery_ru
             release_status.set()
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+            await db_writer.stop_db_writer()
+    asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_codex_selection_drains_once_then_wakes_without_inventory_polling(codex_recovery_runtime, monkeypatch):
+    import sqlite3
+    from contextlib import closing
+    path, _ = codex_recovery_runtime
+    monkeypatch.setattr(background_compute, 'sync_to_async', background.sync_to_async)
+    state = ComputeWorkState()
+    loads = []
+    refreshes = []
+    load = background_compute._load_stale_candidates
+    async def startup_load(*args, **kwargs):
+        if kwargs.get("source_ids") is None:
+            loads.append(kwargs)
+        else:
+            refreshes.append(set(kwargs["source_ids"]))
+            assert len(refreshes[-1]) == 1
+        return await load(*args, **kwargs)
+    monkeypatch.setattr(background_compute, '_load_stale_candidates', startup_load)
+    monkeypatch.setattr(background_compute, 'load_project_directories', lambda: None)
+    monkeypatch.setattr(background_compute, 'load_project_git_roots', lambda: None)
+
+    async def run():
+        db_writer.start_db_writer()
+        ctx = background.ComputeContext(Provider.CODEX, 123, f'{__name__}:CodexRecoveryCompute')
+        owner = CodexComputeCoordinator(ctx, asyncio.Event())
+        owner.work_state = state
+        owner.prepare_candidate = lambda candidate: _prepared(candidate.session_id)
+        task = asyncio.create_task(owner.run())
+        try:
+            async with asyncio.timeout(8):
+                while versions(path) != {'faulty': 123, 'healthy': 123} or state.has_pending():
+                    if task.done():
+                        await task
+                    await asyncio.sleep(.01)
+            assert len(loads) == 1
+            assert {next(iter(ids)) for ids in refreshes} == {"faulty", "healthy"}
+            assert not task.done()
+            assert Provider.CODEX in state._source_wakeups
+            await asyncio.sleep(.15)
+            assert len(loads) == 1
+            with closing(sqlite3.connect(path)) as database:
+                database.execute("UPDATE core_session SET compute_version=NULL WHERE id='healthy'")
+                database.commit()
+            state.notify_source_changed(Provider.CODEX, 'healthy')
+            async with asyncio.timeout(8):
+                while versions(path)['healthy'] != 123:
+                    await asyncio.sleep(.01)
+            assert len(loads) == 1
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await db_writer.stop_db_writer()
+        assert not state.has_pending()
+        assert not state._source_wakeups
+    asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('recovery', ['rebuild', 'unavailable'])
+def test_current_root_recovery_uses_explicit_selection_without_downgrade(
+    codex_recovery_runtime, monkeypatch, recovery,
+):
+    import sqlite3
+    from contextlib import closing
+    path, _ = codex_recovery_runtime
+    with closing(sqlite3.connect(path)) as database:
+        database.execute('UPDATE core_session SET compute_version=123')
+        if recovery == 'unavailable':
+            database.execute("UPDATE core_session SET unavailable_reason='rollout_missing' WHERE id='faulty'")
+        database.commit()
+    monkeypatch.setattr(background_compute, 'sync_to_async', background.sync_to_async)
+    async def run():
+        owner = CodexComputeCoordinator(
+            background.ComputeContext(Provider.CODEX, 123, 'unused:factory'), asyncio.Event(),
+        )
+        if recovery == 'rebuild':
+            owner._forced_rebuild.add('faulty')
+        candidate, forced, pending, deadline = await owner._select_candidate()
+        assert candidate.session_id == 'faulty'
+        assert forced == {'faulty'} and pending and deadline is None
+        assert versions(path) == {'faulty': 123, 'healthy': 123}
+        assert not owner.run_active
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('failed_drain', [False, True])
+def test_work_gate_survives_publication_error_until_shutdown_drain(monkeypatch, failed_drain):
+    async def run():
+        owner = coordinator()
+        owner.work_state = ComputeWorkState()
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def publish():
+            raise RuntimeError('progress publication failed')
+        async def shutdown():
+            entered.set()
+            await release.wait()
+            if failed_drain:
+                raise RuntimeError('writer retirement failed')
+            owner._shutdown_drained = True
+        monkeypatch.setattr(owner, '_run', publish)
+        monkeypatch.setattr(owner, '_shutdown', shutdown)
+        task = asyncio.create_task(owner.run())
+        await entered.wait()
+        assert owner.work_state.has_pending()
+        assert Provider.CODEX in owner.work_state._source_wakeups
+        release.set()
+        with pytest.raises(RuntimeError):
+            await task
+        assert owner.work_state.has_pending() == failed_drain
+        assert not owner.work_state._source_wakeups
+    asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_unavailable_recovery_reads_one_page_and_advances_past_blocked_roots(
+    codex_recovery_runtime, monkeypatch,
+):
+    import sqlite3
+    import time
+    from contextlib import closing
+    from tests.test_compute_age_selection import clone_session
+    path, _ = codex_recovery_runtime
+    clone_session(path, 'later-page', 1)
+    with closing(sqlite3.connect(path)) as database:
+        database.execute("UPDATE core_session SET compute_version=123, unavailable_reason='rollout_missing'")
+        database.execute("UPDATE core_session SET mtime=? WHERE id != 'later-page'", (time.time() + 1000,))
+        database.commit()
+    monkeypatch.setattr(background_compute, 'sync_to_async', background.sync_to_async)
+    monkeypatch.setattr(background_compute, '_UNAVAILABLE_RECOVERY_PAGE_SIZE', 2)
+    async def run():
+        owner = CodexComputeCoordinator(
+            background.ComputeContext(Provider.CODEX, 123, 'unused:factory'), asyncio.Event(),
+        )
+        candidate, _, pending, deadline = await owner._select_candidate()
+        assert candidate is None and pending and deadline is not None
+        assert set(owner._blocked_roots) == {'faulty', 'healthy'}
+        candidate, _, pending, _ = await owner._select_candidate()
+        assert candidate.session_id == 'later-page' and pending
+    asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_codex_source_age_deadline_wakes_without_notification(codex_recovery_runtime, monkeypatch):
+    import sqlite3
+    import time
+    from contextlib import closing
+    path, _ = codex_recovery_runtime
+    with closing(sqlite3.connect(path)) as database:
+        database.execute("UPDATE core_session SET mtime=? WHERE id='faulty'", (time.time() - 29,))
+        database.execute("UPDATE core_session SET compute_version=123 WHERE id='healthy'")
+        database.commit()
+    monkeypatch.setattr(background_compute, 'sync_to_async', background.sync_to_async)
+    monkeypatch.setattr(background_compute, 'load_project_directories', lambda: None)
+    monkeypatch.setattr(background_compute, 'load_project_git_roots', lambda: None)
+    async def run():
+        state = ComputeWorkState()
+        db_writer.start_db_writer()
+        ctx = background.ComputeContext(Provider.CODEX, 123, f'{__name__}:CodexRecoveryCompute')
+        owner = CodexComputeCoordinator(ctx, asyncio.Event(), work_state=state)
+        owner.prepare_candidate = lambda candidate: _prepared(candidate.session_id)
+        task = asyncio.create_task(owner.run())
+        try:
+            await asyncio.wait_for(owner.initial_done.wait(), 2)
+            assert versions(path)['faulty'] is None
+            assert state.has_pending()
+            async with asyncio.timeout(6):
+                while versions(path)['faulty'] != 123 or state.has_pending():
+                    if task.done():
+                        await task
+                    await asyncio.sleep(.01)
+            assert not task.done()
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await db_writer.stop_db_writer()
+    asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_admitted_tree_keeps_current_diagnosed_member_required_until_application(
+    codex_recovery_runtime, monkeypatch,
+):
+    import sqlite3
+    from contextlib import closing
+    from tests.test_compute_age_selection import clone_session
+    path, _ = codex_recovery_runtime
+    clone_session(path, 'first-child', 30)
+    clone_session(path, 'unrelated-recent', background_compute.time.time() + 1000)
+    with closing(sqlite3.connect(path)) as database:
+        database.execute("UPDATE core_session SET type='subagent', parent_session_id='healthy' WHERE id IN ('faulty', 'first-child')")
+        database.execute("UPDATE core_session SET compute_version=123, unavailable_reason='rollout_missing' WHERE id='faulty'")
+        database.execute("UPDATE core_session SET compute_version=123, unavailable_reason='rollout_missing' WHERE id='unrelated-recent'")
+        database.commit()
+    monkeypatch.setattr(background_compute, 'sync_to_async', background.sync_to_async)
+    monkeypatch.setattr(background_compute, '_UNAVAILABLE_RECOVERY_PAGE_SIZE', 1)
+    async def run():
+        owner = CodexComputeCoordinator(
+            background.ComputeContext(Provider.CODEX, 123, 'unused:factory'), asyncio.Event(),
+        )
+        candidate, _, _, _ = await owner._select_candidate()
+        assert candidate.session_id == 'first-child'
+        with closing(sqlite3.connect(path)) as database:
+            database.execute("UPDATE core_session SET compute_version=123 WHERE id='first-child'")
+            database.commit()
+        candidate, _, _, _ = await owner._select_candidate()
+        assert candidate.session_id == 'faulty'
+        assert versions(path)['healthy'] is None
+    asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_actual_work_pending_during_migration_lock_and_application_drain(codex_recovery_runtime, monkeypatch):
+    import threading
+    from twicc.providers.compute_base import BaseSessionCompute
+    path, _ = codex_recovery_runtime
+    entered, release = threading.Event(), threading.Event()
+    apply = BaseSessionCompute._apply_session_complete_final
+    def paused_apply(message):
+        if message['session_id'] == 'faulty':
+            entered.set()
+            assert release.wait(6)
+        return apply(message)
+    monkeypatch.setattr(BaseSessionCompute, '_apply_session_complete_final', staticmethod(paused_apply))
+    monkeypatch.setattr(background_compute, 'sync_to_async', background.sync_to_async)
+    monkeypatch.setattr(background_compute, 'load_project_directories', lambda: None)
+    monkeypatch.setattr(background_compute, 'load_project_git_roots', lambda: None)
+    async def run():
+        state = ComputeWorkState()
+        db_writer.start_db_writer()
+        ctx = background.ComputeContext(Provider.CODEX, 123, f'{__name__}:CodexRecoveryCompute')
+        owner = CodexComputeCoordinator(ctx, asyncio.Event(), work_state=state)
+        lease = gate_for('faulty')
+        await lease.acquire()
+        waiting = asyncio.Event()
+        async def prepare(candidate):
+            if candidate.session_id != 'faulty':
+                return PreparedCandidate(candidate.session_id, None, False)
+            waiting.set()
+            await lease.acquire()
+            owner._forced_rebuild.add('faulty')
+            owner.migration_paths['faulty'] = candidate.file_path
+            return PreparedCandidate('faulty', lease, True, kind='replaced')
+        owner.prepare_candidate = prepare
+        task = asyncio.create_task(owner.run())
+        try:
+            await asyncio.wait_for(waiting.wait(), 3)
+            assert state.has_pending() and lease.locked()
+            assert versions(path)['faulty'] is None
+            lease.release()
+            async with asyncio.timeout(5):
+                while not entered.is_set():
+                    await asyncio.sleep(.01)
+            assert state.has_pending() and lease.locked()
+            assert owner.submitted or owner.computed_not_applied
+            release.set()
+            async with asyncio.timeout(7):
+                while state.has_pending():
+                    await asyncio.sleep(.01)
+            assert versions(path) == {'faulty': 123, 'healthy': 123}
+            assert not lease.locked()
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            if lease.locked():
+                lease.release()
             await db_writer.stop_db_writer()
     asyncio.run(run())
