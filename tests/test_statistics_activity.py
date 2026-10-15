@@ -81,3 +81,17 @@ def test_global_day_spans_projects_and_zero_conventions():
     assert read('prepare_daily', DailyKey(None, a.provider, date(2026, 10, 12)))[0] == (2, 0, Decimal(3))
     assert read('prepare_weekly', DailyKey(None, a.provider, date(2026, 10, 12)))[0] == (0, 0, Decimal(0))
     assert read('prepare_project_cost', 'q')[0] is None
+
+
+@pytest.mark.parametrize('project', ['p', None])
+def test_daily_cost_sum_uses_partial_cost_index(project):
+    from twicc.providers.contribution_revisions import DailyKey
+    a, b = root('a'), root('b')
+    item(a, 12, Decimal('1.25')); item(b, 12)
+    values, queries = read('prepare_daily', DailyKey(project, a.provider, date(2026, 10, 12)))
+    assert values == (2, 0, Decimal('1.25'))
+    cost_sql, = [sql for sql in queries if 'SUM(' in sql]
+    with connection.cursor() as cursor:
+        cursor.execute('EXPLAIN QUERY PLAN ' + cost_sql)
+        plan = ' '.join(row[3] for row in cursor.fetchall())
+    assert 'idx_item_cost_' in plan

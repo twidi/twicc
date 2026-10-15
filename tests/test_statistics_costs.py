@@ -49,6 +49,18 @@ def link(parent, child):
     AgentLink.objects.create(session_id=parent, agent_id=child, tool_use_line_num=1, tool_use_id=child)
 
 
+def test_own_cost_sum_uses_partial_cost_index(source):
+    source('root', '1.25')
+    SessionItem.objects.create(session_id='root', line_num=2, content='{}', cost=None)
+    result, queries = prepare('root')
+    assert result.own_updates[0].self_cost == Decimal('1.25')
+    cost_sql, = [sql for sql in queries if 'SUM(' in sql and 'core_sessionitem' in sql]
+    with connection.cursor() as cursor:
+        cursor.execute('EXPLAIN QUERY PLAN ' + cost_sql)
+        plan = ' '.join(row[3] for row in cursor.fetchall())
+    assert 'idx_item_cost_session' in plan
+
+
 def test_only_changed_member_sums_items(source):
     source('root', marker=NOW, cached='1')
     for index in range(398):

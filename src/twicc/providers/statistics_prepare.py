@@ -74,7 +74,7 @@ def prepare_tree_costs(root_ids: tuple[str, ...], force_cost_session_ids=()) -> 
             or rows[sid]['last_updated_at'] is None
             or rows[sid]['last_updated_at'] > rows[sid]['items_cost_computed_through_at']
         ))
-        sums = dict(SessionItem.objects.filter(session_id__in=changed).order_by().values('session_id').annotate(
+        sums = dict(SessionItem.objects.filter(session_id__in=changed, cost__isnull=False).order_by().values('session_id').annotate(
             own_cost=Sum('cost'),
         ).values_list('session_id', 'own_cost')) if changed else {}
         changed_set = set(changed)
@@ -155,7 +155,9 @@ def prepare_daily(key: DailyKey) -> ActivityValues:
         items = items.filter(session__project_id=key.project_id)
         sessions = sessions.filter(project_id=key.project_id)
     messages = items.filter(kind='user_message', session__type=SessionType.SESSION, session__hidden=False).count()
-    return ActivityValues(messages, sessions.count(), items.aggregate(cost=Sum('cost'))['cost'] or Decimal(0))
+    # Match the partial cost indexes. SUM already ignores NULL costs.
+    costs = items.filter(cost__isnull=False)
+    return ActivityValues(messages, sessions.count(), costs.aggregate(cost=Sum('cost'))['cost'] or Decimal(0))
 
 
 @_reader_snapshot
