@@ -43,6 +43,7 @@ from twicc.core.session_queries import (
 from twicc.core.text_filter import match_text_query
 from twicc.core.services.project_mutation import clean_project_agent_defaults
 from twicc.core.services.session_timeline import record_title_change
+from twicc.core.services import timeline_feed
 from twicc.paths import path_to_project_id
 from twicc.projects import register_project
 from twicc.providers.db_writer import run_under_db_write_lock
@@ -3410,6 +3411,29 @@ async def daily_activity(request, project_id=None):
             "cost": str(totals["total_cost"] or 0),
         },
     })
+
+
+async def timeline(request):
+    """GET /api/timeline/ - The timeline feed: events newest first, a side table of the sessions they cite.
+
+    Query params (all optional):
+        project_ids: Comma-separated project ids. Empty or missing means the global scope.
+        provider: Provider key; unknown value: 400. Instance events (``backend.*``) are always included.
+        limit: Page size, 1..100 (default 50, larger values are capped to 100); anything else: 400.
+        before: Keyset cursor ``<occurred_at>,<id>``, the exact string the server returned.
+        after_id: Live fetch: events with a greater id, id ascending, at most 500 (``truncated``).
+                  Mutually exclusive with ``before``.
+
+    Returns ``{"events", "has_more", "truncated", "latest_id", "sessions"}``. Read-only.
+    Design: ``docs/plans/2026-10-15-timeline-display-design.md`` section 7.
+    """
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+    try:
+        feed_request = timeline_feed.parse_request(request.GET)
+    except timeline_feed.FeedError as error:
+        return JsonResponse({"error": str(error)}, status=400)
+    return JsonResponse(await sync_to_async(timeline_feed.fetch_feed)(feed_request))
 
 
 async def search_sessions(request):
