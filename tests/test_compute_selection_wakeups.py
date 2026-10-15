@@ -254,3 +254,58 @@ def test_writer_outcome_does_not_release_slot_before_worker_status(recovery_runt
             await asyncio.gather(task, return_exceptions=True)
             await db_writer.stop_db_writer()
     asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_initial_progress_failure_recovers_without_releasing_actual_work(recovery_runtime, monkeypatch):
+    from twicc.providers import db_writer
+    from twicc.providers.compute_work import ComputeWorkState
+    from tests.test_background_compute_recovery import versions
+
+    path, _ = recovery_runtime
+    state = ComputeWorkState()
+    broadcast = background.broadcast_startup_progress
+    first = True
+    recovering, release = asyncio.Event(), asyncio.Event()
+
+    async def progress(*args, **kwargs):
+        nonlocal first
+        if first:
+            first = False
+            raise RuntimeError('one initial progress failure')
+        await broadcast(*args, **kwargs)
+
+    async def retry(stop, delay):
+        assert state.has_pending()
+        recovering.set()
+        await release.wait()
+        return not stop.is_set()
+
+    monkeypatch.setattr(background, 'broadcast_startup_progress', progress)
+    monkeypatch.setattr(background, '_wait_for_retry_delay', retry)
+
+    async def run():
+        db_writer.start_db_writer()
+        ctx = background.ComputeContext(Provider.CLAUDE_CODE, 123, 'tests.test_background_compute_recovery:RecoveryCompute')
+        task = asyncio.create_task(background.start_background_compute_task(ctx, work_state=state))
+        recovery_wait = asyncio.create_task(recovering.wait())
+        try:
+            await asyncio.wait(
+                (task, recovery_wait), timeout=3,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            assert state.has_pending()
+            assert not task.done()
+            assert recovering.is_set()
+            assert versions(path) == {'faulty': None, 'healthy': None}
+            release.set()
+            await asyncio.wait_for(task, 10)
+            assert versions(path) == {'faulty': 123, 'healthy': 123}
+            assert not state.has_pending()
+        finally:
+            release.set()
+            task.cancel()
+            recovery_wait.cancel()
+            await asyncio.gather(task, recovery_wait, return_exceptions=True)
+            await db_writer.stop_db_writer()
+    asyncio.run(run())

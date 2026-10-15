@@ -526,14 +526,28 @@ async def start_background_compute_task(
 
     work_state.set_pending(ctx.provider, True)
     work_state.register_source_wakeup(ctx.provider, wakeup)
+    idle_confirmed = False
     try:
-        await _run_background_compute(ctx, initial_done, selection_changed, notified)
+        idle_confirmed = await _run_background_compute(ctx, initial_done, selection_changed, notified)
+    except asyncio.CancelledError:
+        # Cancellation can arrive before the coordinator installs its own
+        # retirement guard. Prove teardown before releasing actual-work gating.
+        cleanup = asyncio.create_task(retire_compute_run(ctx))
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                pass
+        cleanup.result()
+        idle_confirmed = True
+        raise
     finally:
         work_state.unregister_source_wakeup(ctx.provider, wakeup)
-        work_state.set_pending(ctx.provider, False)
+        if idle_confirmed:
+            work_state.set_pending(ctx.provider, False)
 
 
-async def _run_background_compute(ctx, initial_done, selection_changed, notified) -> None:
+async def _run_background_compute(ctx, initial_done, selection_changed, notified) -> bool:
     """Compute one native tree at a time with bounded admission within each depth.
 
     Startup classification includes deferred sources. Ready progress uses a fixed
@@ -563,7 +577,7 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
 
     initial = await query(lambda: list(outdated().values_list("id", "mtime")))
     if ctx.stop_event.is_set():
-        return
+        return True
     display_ids = {sid for sid, _ in initial}
     baseline = 0
     if not initial:
@@ -571,7 +585,7 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
             provider=ctx.provider, type=SessionType.SESSION, parent_session__isnull=True,
         ).count)
     if ctx.stop_event.is_set():
-        return
+        return True
     total = baseline + len(display_ids)
     ready: set[str] = set()
     unclassified = display_ids.copy()
@@ -648,15 +662,18 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
         if cancelled:
             raise asyncio.CancelledError
 
-    await progress()
-    await query(load_project_directories)
-    await query(load_project_git_roots)
+    startup_pending = True
     process_delay = 1.0
     selection_due = True
     next_deadline = None
     try:
         while not ctx.stop_event.is_set():
             try:
+                if startup_pending:
+                    await progress()
+                    await query(load_project_directories)
+                    await query(load_project_git_roots)
+                    startup_pending = False
                 if ctx.status_queue is not None:
                     while True:
                         try:
@@ -895,3 +912,6 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
     finally:
         if not completed_normally:
             await retire()
+    # Normal completion follows the authoritative idle check. An explicit
+    # stop reaches this return only after the retirement guard drains.
+    return True

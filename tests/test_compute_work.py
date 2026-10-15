@@ -119,3 +119,58 @@ def test_failed_start_gate_clears_only_after_successful_cleanup(monkeypatch):
             await asyncio.gather(task, return_exceptions=True)
     for cleanup_fails in (False, True):
         asyncio.run(scenario(cleanup_fails))
+
+
+def test_unexpected_coordinator_exit_retains_actual_work_gate(monkeypatch):
+    import pytest
+    from twicc.core.enums import Provider
+    from twicc.providers import background_compute_task as background
+    from twicc.providers.compute_work import ComputeWorkState
+
+    async def fail(*args):
+        raise RuntimeError('unexpected startup failure')
+    monkeypatch.setattr(background, '_run_background_compute', fail)
+
+    async def run():
+        state = ComputeWorkState()
+        ctx = background.ComputeContext(Provider.CLAUDE_CODE, 123, 'unused:factory')
+        with pytest.raises(RuntimeError, match='unexpected startup failure'):
+            await background.start_background_compute_task(ctx, work_state=state)
+        assert state.has_pending()
+        assert not state._source_wakeups
+    asyncio.run(run())
+
+
+def test_cancellation_releases_gate_only_after_owned_drain(monkeypatch):
+    import pytest
+    from twicc.core.enums import Provider
+    from twicc.providers import background_compute_task as background
+    from twicc.providers.compute_work import ComputeWorkState
+
+    async def run():
+        started, draining, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        async def coordinator(*args):
+            started.set()
+            await asyncio.Event().wait()
+        async def retire(ctx):
+            draining.set()
+            await release.wait()
+        monkeypatch.setattr(background, '_run_background_compute', coordinator)
+        monkeypatch.setattr(background, 'retire_compute_run', retire)
+        state = ComputeWorkState()
+        ctx = background.ComputeContext(Provider.CLAUDE_CODE, 123, 'unused:factory')
+        task = asyncio.create_task(background.start_background_compute_task(ctx, work_state=state))
+        await started.wait()
+        task.cancel()
+        await draining.wait()
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        assert state.has_pending()
+        assert state._source_wakeups
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not state.has_pending()
+        assert not state._source_wakeups
+    asyncio.run(run())
