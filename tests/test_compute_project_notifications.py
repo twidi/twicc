@@ -1,6 +1,7 @@
 """Real writer notifications must finish before graceful producer completion."""
 
 import asyncio
+from twicc.providers.compute_work import ComputeWorkState
 import threading
 import time
 from types import SimpleNamespace
@@ -70,7 +71,8 @@ def test_success_waits_for_last_notification_and_project_finalization(recovery_r
     async def scenario():
         db_writer.start_db_writer()
         ctx = background.ComputeContext(Provider.CLAUDE_CODE, 123, f'{__name__}:ProjectRecoveryCompute')
-        task = asyncio.create_task(background.start_background_compute_task(ctx))
+        work_state = ComputeWorkState()
+        task = asyncio.create_task(background.start_background_compute_task(ctx, work_state=work_state))
         try:
             await asyncio.wait_for(reached.wait(), 4)
             assert versions(path) == {'faulty': 123, 'healthy': 123}
@@ -127,7 +129,8 @@ def test_persistent_run_flushes_projects_without_duplicate_progress(recovery_run
             owner.prepare_candidate = prepare
             task = asyncio.create_task(owner.run())
         else:
-            task = asyncio.create_task(background.start_background_compute_task(ctx))
+            work_state = ComputeWorkState()
+            task = asyncio.create_task(background.start_background_compute_task(ctx, work_state=work_state))
         try:
             async with asyncio.timeout(5):
                 while sum(value == 123 for value in versions(path).values()) < 5:
@@ -149,7 +152,7 @@ def test_persistent_run_flushes_projects_without_duplicate_progress(recovery_run
 
 
 @pytest.mark.django_db(transaction=True)
-def test_empty_selection_waits_for_age_poll_while_status_ticks_continue(recovery_runtime, monkeypatch):
+def test_empty_selection_waits_for_source_notification_while_status_ticks_continue(recovery_runtime, monkeypatch):
     from twicc.core.content_storage import extraction
     path, _ = recovery_runtime
     now = time.time()
@@ -175,15 +178,16 @@ def test_empty_selection_waits_for_age_poll_while_status_ticks_continue(recovery
     monkeypatch.setattr(db_writer, 'submit_async_job', submit)
     from twicc.providers import compute_selection
     reads = []
-    ordinary_select = compute_selection.select_native_tree_source
+    ordinary_select = compute_selection.select_tree_source
     def select(*args, **kwargs):
         reads.append(controlled[0])
         return ordinary_select(*args, **kwargs)
-    monkeypatch.setattr(compute_selection, 'select_native_tree_source', select)
+    monkeypatch.setattr(compute_selection, 'select_tree_source', select)
     async def scenario():
         db_writer.start_db_writer()
         ctx = background.ComputeContext(Provider.CLAUDE_CODE, 123, 'tests.test_background_compute_recovery:RecoveryCompute')
-        task = asyncio.create_task(background.start_background_compute_task(ctx))
+        work_state = ComputeWorkState()
+        task = asyncio.create_task(background.start_background_compute_task(ctx, work_state=work_state))
         try:
             async with asyncio.timeout(4):
                 while not reached.is_set():
@@ -195,6 +199,7 @@ def test_empty_selection_waits_for_age_poll_while_status_ticks_continue(recovery
             assert len(reads) <= 1
             update_sources(path, healthy=now - 31)
             controlled[0] = 101.0
+            work_state.notify_source_changed(Provider.CLAUDE_CODE, "healthy")
             async with asyncio.timeout(.5):
                 while not reads:
                     await asyncio.sleep(.01)
@@ -262,7 +267,8 @@ def test_interruption_fences_and_drains_normal_completion(recovery_runtime, proj
     async def scenario():
         db_writer.start_db_writer()
         ctx = background.ComputeContext(Provider.CLAUDE_CODE, 123, f'{__name__}:ProjectRecoveryCompute')
-        task = asyncio.create_task(background.start_background_compute_task(ctx))
+        work_state = ComputeWorkState()
+        task = asyncio.create_task(background.start_background_compute_task(ctx, work_state=work_state))
         try:
             await asyncio.wait_for(reached.wait(), 4)
             await asyncio.sleep(.15)
@@ -313,7 +319,8 @@ def test_source_outdated_during_graceful_drain_returns_to_selection(recovery_run
     async def scenario():
         db_writer.start_db_writer()
         ctx = background.ComputeContext(Provider.CLAUDE_CODE, 123, f'{__name__}:ProjectRecoveryCompute')
-        task = asyncio.create_task(background.start_background_compute_task(ctx))
+        work_state = ComputeWorkState()
+        task = asyncio.create_task(background.start_background_compute_task(ctx, work_state=work_state))
         try:
             await asyncio.wait_for(reached.wait(), 4)
             await asyncio.sleep(.15)
@@ -329,6 +336,7 @@ def test_source_outdated_during_graceful_drain_returns_to_selection(recovery_run
             assert versions(path)['healthy'] is None
             assert not any(done for _, done in progress)
             update_sources(path, healthy=now - 31)
+            work_state.notify_source_changed(Provider.CLAUDE_CODE, "healthy")
             await asyncio.wait_for(task, 5)
             assert ctx.run_id != old_run
             assert versions(path) == {'faulty': 123, 'healthy': 123}
@@ -374,7 +382,8 @@ def test_progress_failure_does_not_mark_a_replacement_run_complete(recovery_runt
     async def scenario():
         db_writer.start_db_writer()
         ctx = background.ComputeContext(Provider.CLAUDE_CODE, 123, f'{__name__}:ProjectRecoveryCompute')
-        task = asyncio.create_task(background.start_background_compute_task(ctx))
+        work_state = ComputeWorkState()
+        task = asyncio.create_task(background.start_background_compute_task(ctx, work_state=work_state))
         try:
             await asyncio.wait_for(reached.wait(), 7)
             assert failed

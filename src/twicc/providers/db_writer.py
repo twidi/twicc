@@ -3053,6 +3053,8 @@ def _apply_create_session_payload(payload: CreateSessionPayload) -> tuple[object
 
         apply_contribution_changes([], [], before_sessions=[] if is_new else [before_session],
             after_sessions=[session_contribution(payload.session)])
+        from twicc.providers.compute_work import notify_committed_source_changed
+        transaction.on_commit(lambda: notify_committed_source_changed(payload.provider, payload.session.id))
     return project, created, adopted
 
 
@@ -3085,6 +3087,8 @@ def _apply_update_session_payload(payload: UpdateSessionPayload) -> None:
 
         apply_contribution_changes([], [], before_sessions=[before_session],
             after_sessions=[session_contribution(payload.session)])
+        from twicc.providers.compute_work import notify_committed_source_changed
+        transaction.on_commit(lambda: notify_committed_source_changed(payload.provider, payload.session.id))
 
 
 def _compute_project_mtime(project_id: str) -> float:

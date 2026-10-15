@@ -181,9 +181,15 @@ class OrchestratorRegistry:
             Provider.CLAUDE_CODE: ClaudeCodeOrchestrator,
             Provider.CODEX: CodexOrchestrator,
         }
+        from twicc.providers.compute_work import ComputeWorkState
+
+        self.compute_work = ComputeWorkState()
         self._orchestrators: dict[Provider, BaseOrchestrator] = {
             key: cls() for key, cls in self.PROVIDER_ORCHESTRATORS.items()
         }
+
+        for orch in self._orchestrators.values():
+            orch.compute_work = self.compute_work
 
         # Stashed by start_all() so start_one() / shutdown_one() can reuse them
         # on hot-toggle without the caller having to thread them through.
@@ -351,6 +357,7 @@ class OrchestratorRegistry:
             raise RuntimeError("OrchestratorRegistry.begin_start called before start_all")
         if provider not in self._orchestrators:
             return
+        self.compute_work.set_pending(provider, True)
         await asyncio.create_task(
             set_provider_state(provider, ProviderState.STARTING),
             context=self._provider_context(provider),
@@ -382,6 +389,12 @@ class OrchestratorRegistry:
             await orch.start(self._shutdown_event, self._search_index_ready)
         except BaseException:
             logger.exception("Failed to start orchestrator for %s — forcing disable", provider.value)
+            try:
+                await orch.shutdown()
+            except BaseException:
+                logger.exception("Failed-start teardown for %s did not drain; retaining compute gate", provider.value)
+            else:
+                self.compute_work.set_pending(provider, False)
             await set_provider_state(provider, ProviderState.STOPPED)
             await force_disable_after_failed_start(provider)
             raise
@@ -485,6 +498,7 @@ class OrchestratorRegistry:
             return
         try:
             await orch.shutdown()
+            self.compute_work.set_pending(provider, False)
         finally:
             await set_provider_state(provider, ProviderState.STOPPED)
 

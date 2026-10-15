@@ -518,7 +518,9 @@ class ClaudeCodeOrchestrator(BaseOrchestrator):
             compute_factory="twicc.providers.claude_code.compute:get_compute",
         )
         self._compute_task = self._create_task(
-            start_background_compute_task(self._compute_ctx, initial_done=self.compute_done)
+            start_background_compute_task(
+                self._compute_ctx, initial_done=self.compute_done, work_state=self.compute_work,
+            )
         )
         self._compute_task.add_done_callback(lambda _t: self.compute_done.set())
         logger.info("Background compute started (after initial sync)")

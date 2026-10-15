@@ -1,6 +1,7 @@
 """Source age selection uses current database revisions in real pipelines."""
 
 import asyncio
+from twicc.providers.compute_work import ComputeWorkState
 from contextlib import closing
 import sqlite3
 import time
@@ -64,14 +65,17 @@ def test_recent_only_classifies_waits_rechecks_and_stops(recovery_runtime, monke
             owner.prepare_candidate = prepare
             task = asyncio.create_task(owner.run())
         else:
-            task = asyncio.create_task(background.start_background_compute_task(ctx, barrier))
+            work_state = ComputeWorkState()
+            task = asyncio.create_task(background.start_background_compute_task(ctx, barrier, work_state=work_state))
         try:
             await asyncio.wait_for(barrier.wait(), 2)
             assert attempts == []
             assert not task.done()
             assert not any(done for _, done in progress)
-            # Change the actual source observation without an event or restart.
+            # Committed source changes wake the generic selector.
             update_sources(path, faulty=now - 31)
+            if provider == Provider.CLAUDE_CODE:
+                work_state.notify_source_changed(provider, "faulty")
             async with asyncio.timeout(6):
                 while versions(path)['faulty'] != 123:
                     await asyncio.sleep(.01)
@@ -163,7 +167,7 @@ def test_claude_indexes_after_recent_startup_sweep(recovery_runtime, monkeypatch
     from twicc import search_indexing_task as indexing
     path, _ = recovery_runtime
     wall = [1000.0]
-    update_sources(path, faulty=1000.0, healthy=1000.0)
+    update_sources(path, faulty=970.2, healthy=970.2)
     with closing(sqlite3.connect(path)) as database:
         database.execute("UPDATE core_session SET last_line=1 WHERE id='faulty'")
         database.commit()
@@ -193,7 +197,8 @@ def test_claude_indexes_after_recent_startup_sweep(recovery_runtime, monkeypatch
         ))()
         ctx = background.ComputeContext(Provider.CLAUDE_CODE, 123, 'tests.test_background_compute_recovery:RecoveryCompute')
         barrier = asyncio.Event()
-        task = asyncio.create_task(background.start_background_compute_task(ctx, barrier))
+        work_state = ComputeWorkState()
+        task = asyncio.create_task(background.start_background_compute_task(ctx, barrier, work_state=work_state))
         try:
             await asyncio.wait_for(barrier.wait(), 2)
             await indexing.start_search_index_task()
@@ -302,7 +307,8 @@ def test_bounds_unapplied_results_and_reselects_modified_sources(recovery_runtim
             owner.prepare_candidate = prepare
             task = asyncio.create_task(owner.run())
         else:
-            task = asyncio.create_task(background.start_background_compute_task(ctx, barrier))
+            work_state = ComputeWorkState()
+            task = asyncio.create_task(background.start_background_compute_task(ctx, barrier, work_state=work_state))
         try:
             async with asyncio.timeout(4):
                 while not entered.is_set() or len(statuses) < 2:
@@ -313,6 +319,8 @@ def test_bounds_unapplied_results_and_reselects_modified_sources(recovery_runtim
             assert versions(path)['third'] is None
             assert not barrier.is_set()
             update_sources(path, third=now + 2000)
+            if provider == Provider.CLAUDE_CODE:
+                work_state.notify_source_changed(provider, "third")
             release.set()
             async with asyncio.timeout(4):
                 while versions(path)['root'] != 123 or not barrier.is_set():
@@ -320,8 +328,11 @@ def test_bounds_unapplied_results_and_reselects_modified_sources(recovery_runtim
             assert dispatched == ['faulty', 'healthy', 'child', 'root']
             assert versions(path)['third'] is None
             assert len(streams) == 1
-            # Give third and recent the same age. The ID breaks the tie.
+            # Equal root mtimes do not impose a secondary order.
             update_sources(path, third=now - 31, recent=now - 31)
+            if provider == Provider.CLAUDE_CODE:
+                work_state.notify_source_changed(provider, "third")
+                work_state.notify_source_changed(provider, "recent")
             if provider == Provider.CODEX:
                 async with asyncio.timeout(6):
                     while (not all(version == 123 for version in versions(path).values())
@@ -329,7 +340,8 @@ def test_bounds_unapplied_results_and_reselects_modified_sources(recovery_runtim
                         await asyncio.sleep(.01)
                 ctx.stop_event.set()
             await asyncio.wait_for(task, 6)
-            assert dispatched == ['faulty', 'healthy', 'child', 'root', 'recent', 'third']
+            assert dispatched[:4] == ['faulty', 'healthy', 'child', 'root']
+            assert set(dispatched[4:]) == {'recent', 'third'}
             assert all(total == 3 for (_, total), _ in progress)
             assert progress[-1] == ((3, 3), True)
             if provider == Provider.CLAUDE_CODE:
@@ -398,7 +410,8 @@ def test_superseded_result_returns_to_source_age_selection(recovery_runtime, mon
             owner.prepare_candidate = prepare
             task = asyncio.create_task(owner.run())
         else:
-            task = asyncio.create_task(background.start_background_compute_task(ctx, barrier))
+            work_state = ComputeWorkState()
+            task = asyncio.create_task(background.start_background_compute_task(ctx, barrier, work_state=work_state))
         try:
             async with asyncio.timeout(4):
                 while not entered.is_set():
@@ -416,6 +429,8 @@ def test_superseded_result_returns_to_source_age_selection(recovery_runtime, mon
             assert not task.done()
             assert not any(done for _, done in progress)
             update_sources(path, faulty=now - 31)
+            if provider == Provider.CLAUDE_CODE:
+                work_state.notify_source_changed(provider, "faulty")
             async with asyncio.timeout(5):
                 while versions(path)['faulty'] != 123:
                     await asyncio.sleep(.01)

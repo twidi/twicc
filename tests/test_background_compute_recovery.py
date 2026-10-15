@@ -17,6 +17,7 @@ from twicc.core.models import Project, Session
 from twicc.providers import background_compute_task as background
 from twicc.providers import compute_executor, db_writer
 from twicc.providers.compute_base import BaseSessionCompute
+from twicc.providers.compute_work import ComputeWorkState
 
 
 class RecoveryCompute:
@@ -168,7 +169,7 @@ def test_real_pipeline_recovers_and_preserves_healthy_progress(recovery_runtime,
     async def scenario():
         db_writer.start_db_writer()
         ctx = background.ComputeContext(Provider.CLAUDE_CODE, 123, f'{__name__}:RecoveryCompute')
-        task = asyncio.create_task(background.start_background_compute_task(ctx))
+        task = asyncio.create_task(background.start_background_compute_task(ctx, work_state=ComputeWorkState()))
         try:
             if failure == 'process':
                 async with asyncio.timeout(15):
@@ -273,7 +274,7 @@ def test_claude_startup_barrier_allows_indexing_during_permanent_recovery(recove
         db_writer.start_db_writer()
         barrier = asyncio.Event()
         ctx = background.ComputeContext(Provider.CLAUDE_CODE, 123, f'{__name__}:RecoveryCompute')
-        task = asyncio.create_task(background.start_background_compute_task(ctx, initial_done=barrier))
+        task = asyncio.create_task(background.start_background_compute_task(ctx, initial_done=barrier, work_state=ComputeWorkState()))
         registry = SimpleNamespace(wait_initial_sync_done=lambda: asyncio.sleep(0), wait_compute_done=barrier.wait)
         search = asyncio.create_task(cli_run._orchestrate_global_search(
             registry, asyncio.Event(), asyncio.Event(), lambda: None,

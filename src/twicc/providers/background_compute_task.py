@@ -42,7 +42,7 @@ from asgiref.sync import sync_to_async
 
 from twicc.providers.compute_ipc import ComputeResultStream, ComputeStatusSender, ComputeStopFlag
 from twicc.providers.compute_selection import (
-    COMPUTE_MIN_SOURCE_AGE_SECONDS, COMPUTE_SELECTION_POLL_SECONDS, COMPUTE_STATUS_POLL_SECONDS,
+    COMPUTE_MIN_SOURCE_AGE_SECONDS, COMPUTE_STATUS_POLL_SECONDS,
 )
 from twicc.core.enums import Provider
 from twicc.logging_context import current_provider
@@ -513,7 +513,27 @@ def start_compute_process(ctx: ComputeContext) -> None:
         logger.info(f"Started compute worker process (PID: {ctx.process.pid})")
 
 
-async def start_background_compute_task(ctx: ComputeContext, initial_done: asyncio.Event | None = None) -> None:
+async def start_background_compute_task(
+    ctx: ComputeContext, initial_done: asyncio.Event | None = None, *, work_state,
+) -> None:
+    """Own callback registration and the actual-work gate through retirement."""
+    selection_changed = asyncio.Event()
+    notified = set()
+
+    def wakeup(session_id):
+        notified.add(session_id)
+        selection_changed.set()
+
+    work_state.set_pending(ctx.provider, True)
+    work_state.register_source_wakeup(ctx.provider, wakeup)
+    try:
+        await _run_background_compute(ctx, initial_done, selection_changed, notified)
+    finally:
+        work_state.unregister_source_wakeup(ctx.provider, wakeup)
+        work_state.set_pending(ctx.provider, False)
+
+
+async def _run_background_compute(ctx, initial_done, selection_changed, notified) -> None:
     """Compute one native tree at a time with bounded admission within each depth.
 
     Startup classification includes deferred sources. Ready progress uses a fixed
@@ -529,56 +549,61 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
             return await sync_to_async(read)()
         return await read_compute_state(load, [], ctx.stop_event, stopped=[])
 
-    def outdated():
-        return Session.objects.filter(provider=ctx.provider).exclude(compute_version=ctx.compute_version)
+    from django.db.models import Q
+    from twicc.providers.compute_tree import (
+        NativeTreeError, next_root_eligibility, resolve_native_roots, select_outdated_root,
+    )
+    from twicc.providers.compute_selection import select_tree_source, tree_completion_context
 
-    initial = await query(lambda: list(outdated().values_list("id", "type", "mtime")))
+    def outdated():
+        return Session.objects.filter(
+            Q(compute_version__isnull=True) | Q(compute_version__lt=ctx.compute_version),
+            provider=ctx.provider, type=SessionType.SESSION, parent_session__isnull=True,
+        )
+
+    initial = await query(lambda: list(outdated().values_list("id", "mtime")))
     if ctx.stop_event.is_set():
         return
-    initial_ids = {sid for sid, _, _ in initial}
-    def initial_groups():
-        from twicc.providers.compute_tree import NativeTreeError, resolve_native_root
-
-        groups = {}
-        for sid in initial_ids:
-            try:
-                root = resolve_native_root(sid)
-            except (NativeTreeError, Session.DoesNotExist):
-                root = sid
-            groups.setdefault(root, set()).add(sid)
-        return {sid: group for group in groups.values() for sid in group}
-
-    classification_groups = await query(initial_groups)
-    display_ids = {sid for sid, kind, _ in initial if kind == SessionType.SESSION}
-    total = len(display_ids)
+    display_ids = {sid for sid, _ in initial}
+    baseline = 0
+    if not initial:
+        baseline = await query(Session.objects.filter(
+            provider=ctx.provider, type=SessionType.SESSION, parent_session__isnull=True,
+        ).count)
+    if ctx.stop_event.is_set():
+        return
+    total = baseline + len(display_ids)
     ready: set[str] = set()
-    unclassified = initial_ids.copy()
+    unclassified = display_ids.copy()
     pending: set[str] = set()
-    # Keep commands excluded until both their writer outcome and worker status
-    # arrive. A fast writer must not admit a duplicate before the status frame.
     awaiting_status: dict[str, None] = {}
     retry_at: dict[str, float] = {}
     retry_delays: dict[str, float] = {}
+    # Only blocked roots persist outside the currently admitted tree.
+    deferred: dict[str, float] = {}
+    active_root = None
     applied: asyncio.Queue = asyncio.Queue()
     completion: asyncio.Future | None = None
-    next_classification_poll = 0.0
-    next_selection_poll = 0.0
     completed_normally = False
 
-    async def progress(candidate_ids=None, *, completed=False):
-        check_ids = display_ids if candidate_ids is None else display_ids & candidate_ids
-        confirmed = await query(lambda: set(Session.objects.filter(
-            id__in=check_ids, provider=ctx.provider, compute_version=ctx.compute_version,
-            unavailable_reason__isnull=True,
-        ).values_list("id", flat=True)))
+    async def progress(candidate_ids=(), *, completed=False):
+        check_ids = display_ids if completed else display_ids & set(candidate_ids)
+        confirmed = set()
+        ids = list(check_ids)
+        for offset in range(0, len(ids), 200):
+            batch = ids[offset:offset + 200]
+            confirmed.update(await query(lambda batch=batch: set(Session.objects.filter(
+                id__in=batch, provider=ctx.provider, compute_version=ctx.compute_version,
+                unavailable_reason__isnull=True,
+            ).values_list("id", flat=True))))
         ready.update(confirmed)
         await broadcast_startup_progress(
-            "background_compute", len(ready), total, provider=ctx.provider.value,
-            completed=completed and len(confirmed) == total,
+            "background_compute", baseline + len(ready), total, provider=ctx.provider.value,
+            completed=completed and baseline + len(ready) == total,
         )
 
-    def classify(sid, *, blocked=False):
-        unclassified.difference_update(classification_groups.get(sid, {sid}) if blocked else {sid})
+    def classify(root_id):
+        unclassified.discard(root_id)
         if initial_done is not None and not unclassified:
             initial_done.set()
 
@@ -586,7 +611,13 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
         delay = min(retry_delays.get(sid, .5) * 2, 60.0)
         retry_delays[sid] = delay
         retry_at[sid] = time.monotonic() + delay
-        classify(sid, blocked=True)
+        classify(active_root)
+
+    for sid, mtime in initial:
+        if mtime > time.time() - COMPUTE_MIN_SOURCE_AGE_SECONDS:
+            classify(sid)
+    if not unclassified and initial_done is not None:
+        initial_done.set()
 
     async def retire():
         nonlocal completion
@@ -617,17 +648,12 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
         if cancelled:
             raise asyncio.CancelledError
 
-    if not initial:
-        if initial_done is not None:
-            initial_done.set()
-        total = await query(Session.objects.filter(provider=ctx.provider, type=SessionType.SESSION).count)
-        await broadcast_startup_progress("background_compute", total, total,
-                                         provider=ctx.provider.value, completed=True)
-        return
     await progress()
     await query(load_project_directories)
     await query(load_project_git_roots)
     process_delay = 1.0
+    selection_due = True
+    next_deadline = None
     try:
         while not ctx.stop_event.is_set():
             try:
@@ -644,19 +670,21 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
                             sid = status.get("session_id")
                             if sid in awaiting_status:
                                 awaiting_status.pop(sid)
-                                next_selection_poll = 0.0
+                                selection_due = True
                 while not applied.empty():
                     signal = applied.get_nowait()
                     if signal.run_id != ctx.run_id or signal.session_id not in pending:
                         continue
                     if signal.completed_root_id is not None:
                         ctx.command_queue.put_nowait({'completed_root_id': signal.completed_root_id})
+                    selection_due = True
                     sid = signal.session_id
                     pending.discard(sid)
-                    next_selection_poll = 0.0
-                    classify(sid)
                     rejected_outdated = signal.outcome != "applied" and await query(
-                        lambda sid=sid: outdated().filter(pk=sid).exists()
+                        lambda sid=sid: Session.objects.filter(
+                            Q(compute_version__isnull=True) | Q(compute_version__lt=ctx.compute_version),
+                            pk=sid, provider=ctx.provider,
+                        ).exists()
                     )
                     if signal.outcome == "failed" or rejected_outdated:
                         failed(sid)
@@ -668,53 +696,112 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
                             from twicc.search_indexing_task import request_session_reindex
 
                             request_session_reindex(sid)
-                    await progress({sid})
+                    await progress({active_root})
                 if completion is not None and completion.done():
                     # An unexpected terminal frame or broken transport retires
                     # the whole run before any replacement can be armed.
                     await asyncio.shield(completion)
                     raise RuntimeError("Compute worker ended before selection completed")
 
+                if selection_changed.is_set() or (next_deadline is not None and time.monotonic() >= next_deadline):
+                    selection_due = True
+                # Status transport checks do not read candidates without new evidence.
+                if not selection_due:
+                    await asyncio.sleep(COMPUTE_STATUS_POLL_SECONDS)
+                    continue
+                selection_due = False
+                # Clear before DB reads. A commit racing a read sets this again.
+                selection_changed.clear()
+                if notified:
+                    changed_ids = list(notified)
+                    notified.clear()
+                    roots = set()
+                    for offset in range(0, len(changed_ids), 200):
+                        batch = changed_ids[offset:offset + 200]
+                        resolved = await query(lambda batch=batch: resolve_native_roots(batch))
+                        roots.update(resolved.values())
+                    for root in roots:
+                        deferred.pop(root, None)
+                    current = {}
+                    root_ids = list(roots)
+                    for offset in range(0, len(root_ids), 200):
+                        batch = root_ids[offset:offset + 200]
+                        current.update(await query(lambda batch=batch: list(
+                            outdated().filter(pk__in=batch).values_list('id', 'mtime'),
+                        )))
+                    for root, mtime in current.items():
+                        if mtime > time.time() - COMPUTE_MIN_SOURCE_AGE_SECONDS:
+                            classify(root)
+                    for root in roots - current.keys():
+                        classify(root)
+                    await progress(roots)
+
+                now = time.monotonic()
+                deferred = {root: deadline for root, deadline in deferred.items() if deadline > now}
                 cutoff = time.time() - COMPUTE_MIN_SOURCE_AGE_SECONDS
-                if unclassified and time.monotonic() >= next_classification_poll:
-                    remaining_initial = unclassified.copy()
-                    recent = await query(lambda cutoff=cutoff, ids=remaining_initial: list(
-                        outdated().filter(mtime__gt=cutoff, id__in=ids).values_list("id", flat=True)
-                    ))
-                    for sid in recent:
-                        classify(sid, blocked=True)
-                    still_outdated = await query(lambda ids=remaining_initial: set(
-                        outdated().filter(id__in=ids).values_list("id", flat=True)
-                    ))
-                    externally_ready = remaining_initial - still_outdated
-                    for sid in externally_ready:
-                        classify(sid)
-                    if externally_ready:
-                        await progress(externally_ready)
-                    next_classification_poll = time.monotonic() + COMPUTE_SELECTION_POLL_SECONDS
-
                 outstanding = pending | awaiting_status.keys()
-                cooling = {sid for sid, deadline in retry_at.items() if deadline > time.monotonic()}
-                if outstanding - retry_delays.keys():
-                    cooling.update(retry_delays)
                 candidates = []
-                if len(outstanding) < 2 and time.monotonic() >= next_selection_poll:
-                    from twicc.providers.compute_selection import select_native_tree_source
+                next_deadline = min(deferred.values(), default=None)
+                if len(outstanding) < 2:
+                    while True:
+                        if active_root is None:
+                            active_root = await query(lambda: select_outdated_root(
+                                ctx.provider, ctx.compute_version, cutoff=cutoff, excluded_root_ids=deferred,
+                            ))
+                            if active_root is None:
+                                break
+                        cooling = {sid for sid, deadline in retry_at.items() if deadline > now}
+                        if outstanding - retry_delays.keys():
+                            cooling.update(retry_delays)
+                        def select_source():
+                            try:
+                                return select_tree_source(
+                                    active_root, ctx.compute_version, cutoff=cutoff,
+                                    outstanding=outstanding, excluded_source_ids=cooling,
+                                )
+                            except (NativeTreeError, Session.DoesNotExist) as error:
+                                # Malformed membership is a blocked tree, not a
+                                # transient DB read failure that retries forever.
+                                return error
 
-                    def select_source(cutoff=cutoff, outstanding=outstanding, cooling=cooling):
-                        invalid_roots = set()
-                        candidate = select_native_tree_source(
-                            ctx.provider, ctx.compute_version, cutoff=cutoff,
-                            outstanding=outstanding, excluded=cooling, invalid_roots=invalid_roots,
-                        )
-                        return candidate, invalid_roots
-
-                    candidate, invalid_roots = await query(select_source) or (None, ())
-                    for root_id in invalid_roots:
-                        classify(root_id, blocked=True)
-                    candidates = [candidate] if candidate else []
-                    if not candidates:
-                        next_selection_poll = time.monotonic() + COMPUTE_SELECTION_POLL_SECONDS
+                        try:
+                            selection = await query(select_source)
+                            if isinstance(selection, (NativeTreeError, Session.DoesNotExist)):
+                                raise selection
+                        except (NativeTreeError, Session.DoesNotExist):
+                            if outstanding:
+                                raise
+                            classify(active_root)
+                            deferred[active_root] = now + 60
+                            active_root = None
+                            continue
+                        if selection is None:
+                            break
+                        if selection.source_id is not None:
+                            candidates = [selection.source_id]
+                            break
+                        if not selection.required_pending:
+                            classify(active_root)
+                            await progress({active_root})
+                            active_root = None
+                            continue
+                        if outstanding:
+                            break
+                        deadlines = [deadline for sid, deadline in retry_at.items() if sid in cooling]
+                        if selection.next_eligible_at is not None:
+                            deadlines.append(now + max(0, selection.next_eligible_at - time.time()))
+                        # An explicit blocked outcome releases only this root's search barrier.
+                        classify(active_root)
+                        deferred[active_root] = min(deadlines, default=now + 60)
+                        active_root = None
+                    next_deadline = min(deferred.values(), default=None)
+                    if not candidates and active_root is None:
+                        root_deadline = await query(lambda: next_root_eligibility(
+                            ctx.provider, ctx.compute_version, cutoff=cutoff, excluded_root_ids=deferred,
+                        ))
+                        if root_deadline is not None:
+                            deadline = time.monotonic() + max(0, root_deadline - time.time())
+                            next_deadline = min(next_deadline, deadline) if next_deadline is not None else deadline
                 if candidates:
                     if completion is None:
                         # Never replace retained transport resources after failed retirement.
@@ -736,14 +823,13 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
                     except Exception:
                         logger.exception("Compute storage initialization failed for %s", sid)
                         failed(sid)
+                        selection_due = True
                         continue
+                    selection_due = True
                     pending.add(sid)
                     awaiting_status[sid] = None
-                    from twicc.providers.compute_selection import tree_completion_context
-
                     context = await query(lambda sid=sid: tree_completion_context(sid, ctx.compute_version))
                     ctx.command_queue.put_nowait({"session_id": sid, "tree_completion": context})
-                    next_selection_poll = 0.0
                     continue
                 if not outstanding and not await query(outdated().exists):
                     if completion is not None:
@@ -766,27 +852,40 @@ async def start_background_compute_task(ctx: ComputeContext, initial_done: async
                         completion = None
                     # Source observations can change while notifications drain.
                     # A closed successful run can safely give way to a fresh run.
-                    if await query(outdated().exists):
-                        next_selection_poll = 0.0
+                    if await query(outdated().exists) or selection_changed.is_set():
+                        selection_due = True
                         continue
+                    for root in tuple(unclassified):
+                        classify(root)
                     await progress(completed=True)
+                    if selection_changed.is_set():
+                        selection_due = True
+                        continue
                     completed_normally = True
                     break
-                # Polling also detects mtime changes without requiring a watcher event.
+                # Worker status uses a bounded bridge. Its short check never
+                # repeats a candidate read while the pipeline is full.
+                timeout = max(0, next_deadline - time.monotonic()) if next_deadline is not None else None
                 if outstanding:
-                    try:
-                        signal = await asyncio.wait_for(applied.get(), timeout=COMPUTE_STATUS_POLL_SECONDS)
-                    except TimeoutError:
-                        pass
-                    else:
-                        applied.put_nowait(signal)
-                elif not await _wait_for_retry_delay(ctx.stop_event, COMPUTE_SELECTION_POLL_SECONDS):
-                    break
+                    timeout = min(timeout, COMPUTE_STATUS_POLL_SECONDS) if timeout is not None else COMPUTE_STATUS_POLL_SECONDS
+                changed = asyncio.create_task(selection_changed.wait())
+                stopped = asyncio.create_task(ctx.stop_event.wait())
+                outcome = asyncio.create_task(applied.get())
+                try:
+                    done, _ = await asyncio.wait(
+                        (changed, stopped, outcome), timeout=timeout, return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if outcome in done:
+                        applied.put_nowait(outcome.result())
+                finally:
+                    for waiter in (changed, stopped, outcome):
+                        waiter.cancel()
+                    await asyncio.gather(changed, stopped, outcome, return_exceptions=True)
             except Exception:
                 logger.exception("Background compute run failed; retiring before recovery")
+                selection_due = True
                 faulty = next(iter(awaiting_status), next(iter(pending), None))
                 await retire()
-                next_selection_poll = 0.0
                 if faulty is not None:
                     failed(faulty)
                     continue

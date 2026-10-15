@@ -420,6 +420,8 @@ def _finish_replace_codex_history(job: ReplaceCodexHistoryJob) -> int:
     session.stale = False
     # Keep any diagnosis until the coordinator observes successful final application.
     session.save(update_fields=["last_offset", "last_line", "mtime", "stale"])
+    from twicc.providers.compute_work import notify_committed_source_changed
+    transaction.on_commit(lambda: notify_committed_source_changed(Provider.CODEX, job.session_id))
     return len(job.items)
 
 
@@ -448,8 +450,13 @@ def _apply_mark_session_unavailable_job(job: MarkSessionUnavailableJob) -> int:
     return Session.objects.filter(id=job.session_id).update(unavailable_reason=job.reason)
 
 
+@transaction.atomic
 def _apply_mark_session_rebuild_job(job: MarkSessionRebuildJob) -> int:
-    return Session.objects.filter(id=job.session_id).update(compute_version=None)
+    count = Session.objects.filter(id=job.session_id).update(compute_version=None)
+    if count:
+        from twicc.providers.compute_work import notify_committed_source_changed
+        transaction.on_commit(lambda: notify_committed_source_changed(Provider.CODEX, job.session_id))
+    return count
 
 
 _KNOWN_APPLY_STATUSES = frozenset({

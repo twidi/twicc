@@ -6,6 +6,7 @@ from django.utils import timezone
 from twicc.core.enums import Provider
 from twicc.core.models import Project, Session, StatisticsQueueEntry
 from twicc.providers.compute_base import BaseSessionCompute
+from twicc.providers.compute_work import ComputeWorkState
 from twicc.providers import compute_selection
 
 pytestmark = pytest.mark.django_db
@@ -167,7 +168,8 @@ def test_real_coordinator_waits_for_writer_ack(recovery_runtime, monkeypatch, pr
             owner.prepare_candidate = prepare
             task = asyncio.create_task(owner.run())
         else:
-            task = asyncio.create_task(background.start_background_compute_task(ctx))
+            work_state = ComputeWorkState()
+            task = asyncio.create_task(background.start_background_compute_task(ctx, work_state=work_state))
         try:
             await asyncio.wait_for(entered.wait(), 5)
             await asyncio.sleep(.15)
@@ -278,7 +280,8 @@ def test_failed_descendant_releases_initial_barrier_without_ready_root(recovery_
             owner.prepare_candidate = prepare
             task = asyncio.create_task(owner.run())
         else:
-            task = asyncio.create_task(background.start_background_compute_task(ctx, barrier))
+            work_state = ComputeWorkState()
+            task = asyncio.create_task(background.start_background_compute_task(ctx, barrier, work_state=work_state))
         try:
             await asyncio.wait_for(barrier.wait(), 3)
             assert versions(path)['healthy'] is None

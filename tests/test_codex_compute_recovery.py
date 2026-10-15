@@ -1,4 +1,5 @@
 import asyncio
+from twicc.providers.compute_work import ComputeWorkState
 from types import SimpleNamespace
 
 from twicc.providers.codex import background_compute
@@ -418,7 +419,8 @@ def test_other_provider_and_foreground_write_finish_while_codex_cools(recovery_r
                 while 'faulty' not in owner._retry_at:
                     await asyncio.sleep(.01)
             assert not gate_for('faulty').locked()
-            claude_task = asyncio.create_task(background.start_background_compute_task(claude_ctx))
+            work_state = ComputeWorkState()
+            claude_task = asyncio.create_task(background.start_background_compute_task(claude_ctx, work_state=work_state))
             future = asyncio.get_running_loop().create_future()
             job = db_writer._RetireSessionsJob(None, {'healthy': {'title': 'foreground'}}, future)
             assert await asyncio.wait_for(db_writer.submit_async_job(job), 2) == 1
