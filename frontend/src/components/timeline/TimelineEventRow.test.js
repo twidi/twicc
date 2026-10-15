@@ -163,8 +163,12 @@ test('an error shows its first line, with the rest behind an expand control', as
     assert.equal(byClass(root, 'timeline-error-rest').length, 0)
     const [toggle] = descendants(root, (n) => n.type === 'wa-button')
     assert.equal(textOf(toggle), 'Show more')
+    assert.equal(toggle.props['aria-expanded'], 'false')
     toggle.props.onClick()
     await flush()
+    const expandedToggle = descendants(root, (n) => n.type === 'wa-button')[0]
+    assert.equal(expandedToggle.props['aria-expanded'], 'true')
+    assert.equal(expandedToggle.props['aria-controls'], byClass(root, 'timeline-error-rest')[0].props.id)
     assert.equal(textOf(byClass(root, 'timeline-error-rest')[0]), 'at file.js:1')
     assert.equal(textOf(descendants(root, (n) => n.type === 'wa-button')[0]), 'Show less')
 })

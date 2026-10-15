@@ -29,6 +29,8 @@ const identity = computed(() => props.row.identity)
 const knownProject = computed(() => (identity.value?.projectId ? !!dataStore.getProject(identity.value.projectId) : false))
 
 const expanded = ref(false)
+// Unique per row, so the toggle can point at the text it shows.
+const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
 </script>
 
 <template>
@@ -42,6 +44,7 @@ const expanded = ref(false)
             <span v-if="identity" class="timeline-identity">
                 <TimelineSessionMention :mention="identity.mention" markers />
                 <template v-if="identity.showProject && identity.projectId">
+                    <!-- A jump to that project on purpose: no workspace query. -->
                     <RouterLink
                         v-if="knownProject"
                         :to="{ name: 'project', params: { projectId: identity.projectId } }"
@@ -71,9 +74,11 @@ const expanded = ref(false)
                     size="small"
                     appearance="plain"
                     class="timeline-error-toggle"
+                    :aria-expanded="expanded ? 'true' : 'false'"
+                    :aria-controls="errorRestId"
                     @click="expanded = !expanded"
                 >{{ expanded ? 'Show less' : 'Show more' }}</wa-button>
-                <pre v-if="expanded && vm.detail.rest" class="timeline-error-rest">{{ vm.detail.rest }}</pre>
+                <pre v-if="expanded && vm.detail.rest" :id="errorRestId" class="timeline-error-rest">{{ vm.detail.rest }}</pre>
             </span>
         </div>
         <span class="timeline-time" :class="{ 'timeline-time--estimated': vm.time.estimated }" :title="vm.tooltip">{{ vm.time.text }}</span>
