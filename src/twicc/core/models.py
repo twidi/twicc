@@ -2337,6 +2337,10 @@ class TimelineEvent(models.Model):
     via = models.CharField(max_length=20, null=True, blank=True)
     actor_ref = models.CharField(max_length=255, null=True, blank=True)
     actor_name = models.CharField(max_length=80, null=True, blank=True)
+    # Provider of the session (``Provider`` value), filled by the recording service
+    # (``resolve_provider``). NULL for an instance event and for a row whose session no source could name.
+    # Design: ``docs/plans/2026-10-15-timeline-display-design.md`` section 8.
+    provider = models.CharField(max_length=50, null=True, blank=True)
     reason = models.CharField(max_length=30, blank=True, default="")
     caused_by = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="effects")
     data = models.JSONField(default=dict, blank=True)
@@ -2348,6 +2352,9 @@ class TimelineEvent(models.Model):
             models.Index(fields=["project", "occurred_at", "id"], name="idx_timeline_project"),
             models.Index(fields=["kind", "occurred_at"], name="idx_timeline_kind"),
             models.Index(fields=["session_id", "kind"], name="idx_timeline_session_kind"),
+            # The display feed (design 2026-10-15, section 8): the global feed and the provider filter.
+            models.Index(fields=["occurred_at", "id"], name="idx_timeline_occurred"),
+            models.Index(fields=["provider", "occurred_at", "id"], name="idx_timeline_provider"),
         ]
         constraints = [
             models.UniqueConstraint(

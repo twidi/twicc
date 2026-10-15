@@ -139,7 +139,7 @@ def _apply_visibility_flag(session_id: str, new_hidden: bool):
         if was_hidden != new_hidden:
             record_event_sync(
                 TimelineKind.HIDDEN_STARTED if new_hidden else TimelineKind.HIDDEN_ENDED,
-                session_id=session.id, project_id=session.project_id,
+                session_id=session.id, project_id=session.project_id, provider=session.provider,
             )
         session.refresh_from_db()
     return session

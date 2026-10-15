@@ -61,7 +61,7 @@ def _reconcile_lost_processes(now: datetime) -> None:
         common = {
             "session_id": run.session_id, "project_id": session.project_id if session else None,
             "occurred_at": _last_evidence(run, session, now),
-            "precision": TimelinePrecision.ESTIMATED, "actor": TimelineActor.SYSTEM,
+            "precision": TimelinePrecision.ESTIMATED, "actor": TimelineActor.SYSTEM, "provider": run.provider,
         }
         for spec in process_transition_events(
             prev_state=run.state, prev_awaiting=run.awaiting_user_input,

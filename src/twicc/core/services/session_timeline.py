@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-
+import threading
+from collections import OrderedDict
 from typing import NamedTuple
 
 from django.db import IntegrityError, connection, transaction
@@ -28,6 +29,9 @@ from twicc.request_origin import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: Width of ``TimelineEvent.provider``; a test pins it to the model.
+PROVIDER_MAX_LENGTH = 50
 
 
 def _truncate(value, limit: int) -> str | None:
@@ -52,6 +56,67 @@ def origin_columns(resolved: RequestOrigin) -> dict:
     }
 
 
+#: Provider of a session id, filled on demand. A session's provider never changes and ids are never
+#: reused, so an entry never goes stale. Bounded (least recently used out) so a long-lived backend
+#: that sees many sessions keeps a flat memory.
+_PROVIDER_CACHE_MAX = 4096
+_provider_cache: OrderedDict[str, str] = OrderedDict()
+_provider_cache_lock = threading.Lock()
+
+
+def clear_provider_cache() -> None:
+    """Forget every cached provider (tests)."""
+    with _provider_cache_lock:
+        _provider_cache.clear()
+
+
+def _provider_value(raw) -> str | None:
+    """A ``Provider`` member or a string as a non-empty string cut to the column width, else ``None``."""
+    value = getattr(raw, "value", raw)
+    if not isinstance(value, str) or not value:
+        return None
+    return value[:PROVIDER_MAX_LENGTH]
+
+
+def _remember_provider(session_id: str, provider: str) -> None:
+    with _provider_cache_lock:
+        _provider_cache[session_id] = provider
+        _provider_cache.move_to_end(session_id)
+        while len(_provider_cache) > _PROVIDER_CACHE_MAX:
+            _provider_cache.popitem(last=False)
+
+
+def resolve_provider(session_id: str | None, *, explicit=None, data: dict | None = None) -> str | None:
+    """The ``provider`` column of an event (display design, section 8). Never raises.
+
+    Order: an explicit value from the caller (free sources are preferred: the agent's provider, the
+    loaded session, ``ProcessRun.provider``); then ``data["provider"]`` when the payload carries one
+    (``session.created``, ``process.started``, and ``process.ended`` through ``STARTED_OF``); then the
+    bounded cache; then ONE primary-key query on ``Session``. An instance event (no ``session_id``) and
+    a session with no row and no hint give ``None``.
+    """
+    if session_id is None:
+        return None
+    try:
+        for hint in (explicit, (data or {}).get("provider")):
+            value = _provider_value(hint)
+            if value is not None:
+                _remember_provider(session_id, value)
+                return value
+        with _provider_cache_lock:
+            cached = _provider_cache.get(session_id)
+            if cached is not None:
+                _provider_cache.move_to_end(session_id)
+                return cached
+        value = _provider_value(Session.objects.filter(id=session_id).values_list("provider", flat=True).first())
+        if value is not None:
+            _remember_provider(session_id, value)
+        return value
+    except Exception:
+        logger.exception("Timeline provider could not be resolved for session %s", session_id)
+        return None
+
+
 def record_event_sync(
     kind: str,
     *,
@@ -61,6 +126,7 @@ def record_event_sync(
     precision: str = TimelinePrecision.EXACT,
     actor: str | None = None,
     origin: RequestOrigin | None = None,
+    provider=None,
     reason: str = "",
     caused_by: TimelineEvent | int | None = None,
     data: dict | None = None,
@@ -78,6 +144,9 @@ def record_event_sync(
     listed in ``STARTED_OF``, the payload fields the caller did not provide are
     copied from the open ``started`` row of the same session (design §3);
     the origin fields are never copied.
+
+    ``provider`` is an optional hint (a free source the caller already holds); the ``provider`` column is
+    resolved by :func:`resolve_provider` whatever the caller passes.
     """
     try:
         resolved = resolve_event_origin(actor, origin)
@@ -85,24 +154,27 @@ def record_event_sync(
             data = inherit_started_fields(kind, data, _open_started_data(session_id, kind))
         payload = validate_data(kind, data)
         caused_by_id = caused_by.pk if isinstance(caused_by, TimelineEvent) else caused_by
+        resolved_provider = resolve_provider(session_id, explicit=provider, data=payload)
         with transaction.atomic():
             if (
                 dedupe_key is not None
                 and TimelineEvent.objects.filter(session_id=session_id, dedupe_key=dedupe_key).exists()
             ):
                 return None
-            return TimelineEvent.objects.create(
+            event = TimelineEvent.objects.create(
                 session_id=session_id,
                 project_id=project_id,
                 kind=kind,
                 occurred_at=occurred_at or timezone.now(),
                 precision=precision,
+                provider=resolved_provider,
                 reason=reason,
                 caused_by_id=caused_by_id,
                 data=payload,
                 dedupe_key=dedupe_key,
                 **origin_columns(resolved),
             )
+        return event
     except IntegrityError:
         if dedupe_key is not None:
             logger.debug("Timeline event %s deduplicated by the database for %s", kind, session_id)
@@ -118,7 +190,8 @@ class EventSpec(NamedTuple):
     """One event of a batch given to :func:`record_events_bulk_sync` (same fields as ``record_event_sync``).
 
     ``actor`` defaults to ``system`` (NULL origin fields). A request-caused batch passes ``origin=``
-    (resolved once by the caller, so every row carries the same origin).
+    (resolved once by the caller, so every row carries the same origin). ``provider`` is the optional
+    hint of :func:`resolve_provider` (the bulk archive passes the provider it already read).
     """
 
     kind: str
@@ -132,6 +205,7 @@ class EventSpec(NamedTuple):
     data: dict | None = None
     dedupe_key: str | None = None
     origin: RequestOrigin | None = None
+    provider: str | None = None
 
 
 def _conflict_clause() -> str:
@@ -207,10 +281,12 @@ def record_events_bulk_sync(specs: list[EventSpec]) -> int:
                 data = spec.data
                 if spec.kind in STARTED_OF:
                     data = inherit_started_fields(spec.kind, data, _open_started_data(spec.session_id, spec.kind))
+                payload = validate_data(spec.kind, data)
                 built.append((spec, TimelineEvent(
                     session_id=spec.session_id, project_id=spec.project_id, kind=spec.kind,
                     occurred_at=spec.occurred_at or now, precision=spec.precision,
-                    reason=spec.reason, caused_by_id=spec.caused_by_id, data=validate_data(spec.kind, data),
+                    provider=resolve_provider(spec.session_id, explicit=spec.provider, data=payload),
+                    reason=spec.reason, caused_by_id=spec.caused_by_id, data=payload,
                     dedupe_key=spec.dedupe_key, **origin_columns(resolved),
                 ), resolved))
             except Exception:
@@ -224,11 +300,12 @@ def record_events_bulk_sync(specs: list[EventSpec]) -> int:
         except Exception:
             logger.exception("Timeline batch insert failed (%s rows); retrying row by row", len(rows))
             return sum(
-                1 for spec, _, resolved in built
+                1 for spec, row, resolved in built
                 if record_event_sync(
                     spec.kind, session_id=spec.session_id, project_id=spec.project_id,
                     occurred_at=spec.occurred_at or now, precision=spec.precision, origin=resolved,
-                    reason=spec.reason, caused_by=spec.caused_by_id, data=spec.data, dedupe_key=spec.dedupe_key,
+                    provider=row.provider, reason=spec.reason, caused_by=spec.caused_by_id, data=spec.data,
+                    dedupe_key=spec.dedupe_key,
                 ) is not None
             )
     except Exception:
@@ -310,7 +387,10 @@ def record_session_created(
 
     try:
         now = timezone.now()
-        common = {"session_id": session.id, "project_id": session.project_id, "occurred_at": now}
+        common = {
+            "session_id": session.id, "project_id": session.project_id, "occurred_at": now,
+            "provider": session.provider,
+        }
         who = {"origin": creator or DEFAULT_ORIGIN} if origin == "twicc" else {"actor": TimelineActor.SYSTEM}
         settings = None
         if origin == "twicc":
@@ -350,12 +430,12 @@ def record_title_change(
     every session it processes, subagents included.
     """
     try:
-        row = Session.objects.filter(id=session_id).values_list("project_id", "type").first()
+        row = Session.objects.filter(id=session_id).values_list("project_id", "type", "provider").first()
         if row is None or row[1] == SessionType.SUBAGENT:
             return
         who = {"origin": origin} if source == "user" else {"actor": TimelineActor.AGENT}
         record_event_sync(
-            TimelineKind.TITLE_CHANGED, session_id=session_id, project_id=row[0],
+            TimelineKind.TITLE_CHANGED, session_id=session_id, project_id=row[0], provider=row[2],
             data={"source": source, "new": title, "old": old}, **who,
         )
     except Exception:

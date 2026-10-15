@@ -64,6 +64,20 @@ def pytest_configure():
 
 
 @pytest.fixture(autouse=True)
+def clear_timeline_provider_cache():
+    """The timeline's session-to-provider cache is process-wide: a test must not see another test's sessions.
+
+    Session ids are reused by the tests ("s1") with different providers, which the cache (ids are never reused
+    in production) would otherwise answer from a previous test.
+    """
+    from twicc.core.services.session_timeline import clear_provider_cache
+
+    clear_provider_cache()
+    yield
+    clear_provider_cache()
+
+
+@pytest.fixture(autouse=True)
 def cheap_password_hashes(monkeypatch):
     """Hash new passwords with 1 000 PBKDF2 rounds instead of 600 000.
 

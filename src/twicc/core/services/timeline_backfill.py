@@ -80,7 +80,7 @@ def candidate_ids() -> list[str]:
 def _row(session: Session, kind: str, occurred_at, precision: str, data: dict | None) -> TimelineEvent:
     return TimelineEvent(
         session_id=session.id, project_id=session.project_id, kind=kind, occurred_at=occurred_at,
-        precision=precision, actor=TimelineActor.SYSTEM, data=validate_data(kind, data),
+        precision=precision, actor=TimelineActor.SYSTEM, provider=session.provider, data=validate_data(kind, data),
         dedupe_key=f"{BACKFILL_PREFIX}{kind}",
     )
 

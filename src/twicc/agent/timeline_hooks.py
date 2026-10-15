@@ -63,6 +63,12 @@ def _enabled(agent) -> bool:
     return not getattr(agent, "ephemeral", False)
 
 
+def _provider_of(agent) -> str | None:
+    """The agent's provider as the ``provider`` hint of the recording service (a free source)."""
+    provider = getattr(agent, "provider", None)
+    return getattr(provider, "value", provider)
+
+
 def _first_pending(agent):
     pending = tuple(getattr(agent, "pending_requests", None) or ())
     return pending[0] if pending else None
@@ -72,7 +78,7 @@ def _write(agent, specs, *, occurred_at, actor=TimelineActor.AGENT, origin=None)
     for spec in specs:
         record_event_sync(
             spec.kind, session_id=agent.session_id, project_id=getattr(agent, "project_id", None),
-            occurred_at=occurred_at, actor=actor, origin=origin, data=spec.data,
+            occurred_at=occurred_at, actor=actor, origin=origin, provider=_provider_of(agent), data=spec.data,
         )
 
 
@@ -88,6 +94,7 @@ def record_process_started(agent, *, resume: bool) -> None:
     run = agent.process_run
     record_event_sync(
         TimelineKind.PROCESS_STARTED, session_id=agent.session_id, project_id=getattr(agent, "project_id", None),
+        provider=_provider_of(agent),
         data={"provider": agent.provider.value, "cause": "resume" if resume else "new",
               "twicc_pid": run.twicc_pid if run is not None else None,
               # ``HybridClaudeAgent.is_hybrid`` is a class attribute; other agents lack it.
@@ -144,6 +151,6 @@ def record_process_ended(agent, prev: ProcessSnapshot | None) -> None:
     caused_by = latest_event_id(agent.session_id, TimelineKind.ARCHIVED_STARTED) if reason == "archived" else None
     record_event_sync(
         TimelineKind.PROCESS_ENDED, session_id=agent.session_id, project_id=getattr(agent, "project_id", None),
-        occurred_at=now, reason=reason, caused_by=caused_by, origin=ended_origin,
+        occurred_at=now, reason=reason, caused_by=caused_by, origin=ended_origin, provider=_provider_of(agent),
         data={"error": str(error)[:_ERROR_TEXT_LIMIT]} if error else None,
     )

@@ -157,7 +157,7 @@ def archive_sessions_bulk(ids: set[str]) -> list[str]:
 
     Race analysis. ``ids`` was computed outside the lock, so another writer may have archived,
     unarchived or deleted any of them since. The flip is a conditional
-    ``UPDATE ... WHERE id IN (ids) AND archived = 0 ... RETURNING id, project_id``: the database
+    ``UPDATE ... WHERE id IN (ids) AND archived = 0 ... RETURNING id, project_id, provider``: the database
     decides atomically which rows flip, and the events are built from the rows it returns.
     A session archived meanwhile is not returned (no event: it did not flip here); one unarchived
     meanwhile is returned (flipped here, so an event is recorded). A deleted row is neither.
@@ -179,7 +179,7 @@ def archive_sessions_bulk(ids: set[str]) -> list[str]:
         with connection.cursor() as cursor:
             cursor.execute(
                 f"UPDATE {table} SET archived = 1, search_version = 0 "
-                f"WHERE id IN (SELECT value FROM json_each(%s)) AND archived = 0 RETURNING id, project_id",
+                f"WHERE id IN (SELECT value FROM json_each(%s)) AND archived = 0 RETURNING id, project_id, provider",
                 [ids_json],
             )
             flipped = cursor.fetchall()
@@ -189,10 +189,13 @@ def archive_sessions_bulk(ids: set[str]) -> list[str]:
                 [ids_json],
             )
         record_events_bulk_sync([
-            EventSpec(TimelineKind.ARCHIVED_STARTED, session_id=session_id, project_id=project_id, origin=origin)
-            for session_id, project_id in flipped
+            EventSpec(
+                TimelineKind.ARCHIVED_STARTED, session_id=session_id, project_id=project_id, origin=origin,
+                provider=provider,
+            )
+            for session_id, project_id, provider in flipped
         ])
-    return [session_id for session_id, _ in flipped]
+    return [session_id for session_id, _, _ in flipped]
 
 
 def bundle_fields(updates: dict) -> list[str]:
@@ -545,14 +548,14 @@ async def apply_session_archived_change(
             archive_event = await asyncio.to_thread(
                 record_event_sync,
                 TimelineKind.ARCHIVED_STARTED if archived else TimelineKind.ARCHIVED_ENDED,
-                session_id=session.id, project_id=session.project_id,
+                session_id=session.id, project_id=session.project_id, provider=session.provider,
             )
         if also_unpin and was_pinned is not None:
             # ``also_unpin`` clears ``pinned`` itself: the pin service is not called.
             # The ``scope`` of the row is inherited from ``pinned.started`` by the service.
             await asyncio.to_thread(
                 record_event_sync, TimelineKind.PINNED_ENDED,
-                session_id=session.id, project_id=session.project_id,
+                session_id=session.id, project_id=session.project_id, provider=session.provider,
                 caused_by=archive_event,
             )
 
@@ -724,7 +727,7 @@ async def apply_session_pinned_change(session, pinned) -> None:
         # ``pinned.started`` is still the old pin); the new ``started`` row is
         # ``caused_by`` it.
         common = {
-            "session_id": session.id, "project_id": session.project_id,
+            "session_id": session.id, "project_id": session.project_id, "provider": session.provider,
             "occurred_at": timezone.now(),
         }
         ended = None
@@ -754,7 +757,7 @@ async def apply_session_mute_on_user_turn_change(session, mute_on_user_turn: boo
             await asyncio.to_thread(
                 record_event_sync,
                 TimelineKind.MUTED_STARTED if mute_on_user_turn else TimelineKind.MUTED_ENDED,
-                session_id=session.id, project_id=session.project_id,
+                session_id=session.id, project_id=session.project_id, provider=session.provider,
             )
 
     await run_under_db_write_lock(_save_and_record)
