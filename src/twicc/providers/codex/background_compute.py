@@ -1199,13 +1199,15 @@ class CodexComputeCoordinator:
         try:
             await self._run()
         finally:
+            # Cleanup also sets stop_event; capture external stop evidence first.
+            explicit_stop = self.ctx.stop_event.is_set()
             try:
                 await self._drain_owned_cleanup(self._shutdown())
             finally:
                 if self.work_state is not None:
                     self.work_state.unregister_source_wakeup(Provider.CODEX, wakeup)
                     # Cleanup alone does not establish database idle.
-                    if self.ctx.stop_event.is_set() and self._shutdown_drained:
+                    if explicit_stop and self._shutdown_drained:
                         self.work_state.set_pending(Provider.CODEX, False)
 
     async def _initialize(self) -> bool:

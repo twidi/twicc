@@ -1014,7 +1014,7 @@ def test_codex_selection_drains_once_then_wakes_without_inventory_polling(codex_
                 database.commit()
             state.notify_source_changed(Provider.CODEX, 'healthy')
             async with asyncio.timeout(8):
-                while versions(path)['healthy'] != 123:
+                while versions(path)['healthy'] != 123 or state.has_pending():
                     await asyncio.sleep(.01)
             assert len(loads) == 1
         finally:
@@ -1064,6 +1064,8 @@ def test_exit_releases_work_gate_only_after_explicit_stop_and_shutdown_drain(
         owner.work_state = ComputeWorkState()
         entered, release = asyncio.Event(), asyncio.Event()
         async def publish():
+            if explicit_stop:
+                owner.ctx.stop_event.set()
             raise RuntimeError('progress publication failed')
         async def shutdown():
             entered.set()
@@ -1077,8 +1079,6 @@ def test_exit_releases_work_gate_only_after_explicit_stop_and_shutdown_drain(
         await entered.wait()
         assert owner.work_state.has_pending()
         assert Provider.CODEX in owner.work_state._source_wakeups
-        if explicit_stop:
-            owner.ctx.stop_event.set()
         release.set()
         with pytest.raises(RuntimeError):
             await task
@@ -1346,5 +1346,56 @@ def test_startup_failure_recovers_outdated_roots_before_periodic_admission(
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
             await db_writer.stop_db_writer()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('explicit_stop', [False, True])
+def test_real_shutdown_preserves_unexpected_exit_pending_state(monkeypatch, explicit_stop):
+    async def run():
+        state = ComputeWorkState()
+        ctx = background.ComputeContext(Provider.CODEX, 123, 'unused:factory')
+        owner = CodexComputeCoordinator(ctx, asyncio.Event(), work_state=state)
+
+        async def fail():
+            if explicit_stop:
+                ctx.stop_event.set()
+            raise RuntimeError('unexpected coordinator exit')
+
+        monkeypatch.setattr(owner, '_run', fail)
+        with pytest.raises(RuntimeError, match='unexpected coordinator exit'):
+            await owner.run()
+        # Real cleanup sets stop_event even when no external stop occurs.
+        assert ctx.stop_event.is_set()
+        assert owner._shutdown_drained
+        assert state.has_pending() == (not explicit_stop)
+        assert not state._source_wakeups
+
+    asyncio.run(run())
+
+
+def test_real_shutdown_keeps_pending_after_cancellation_without_explicit_stop(monkeypatch):
+    async def run():
+        state = ComputeWorkState()
+        ctx = background.ComputeContext(Provider.CODEX, 123, 'unused:factory')
+        owner = CodexComputeCoordinator(ctx, asyncio.Event(), work_state=state)
+        entered = asyncio.Event()
+
+        async def wait():
+            entered.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(owner, '_run', wait)
+        task = asyncio.create_task(owner.run())
+        await entered.wait()
+        assert state.has_pending()
+        assert not ctx.stop_event.is_set()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert ctx.stop_event.is_set()
+        assert owner._shutdown_drained
+        assert state.has_pending()
+        assert not state._source_wakeups
 
     asyncio.run(run())

@@ -899,3 +899,52 @@ No new broad run occurs for this bounded correction. Earlier broad evidence reta
 No server operation, instance migration, package installation, data reset, or main database access occurs.
 The controller owns the scoped independent re-review.
 Internal report: `.superpowers/sdd/2026-10-15-compute-selection-and-content-work-plan/final-fix-report.md`.
+
+
+### Residual final-review correction — capture stop evidence before cleanup
+
+The scoped review of `31065d3b` finds that I1 remains open after its first correction.
+Real `_shutdown()` calls `stop_background_task()`, which sets `ctx.stop_event` during cleanup.
+The previous mocked shutdown hides this side effect. Its passing result does not prove the real exit contract.
+
+- Capture explicit-stop evidence before cleanup starts.
+- Release pending during cleanup only with that capture and completed teardown.
+- Keep authoritative idle publication unchanged. Add no state field or generation counter.
+- Exercise actual `_shutdown()` and `stop_background_task()` after an injected unexpected exit.
+- Verify real cleanup sets the stop event while unexpected exit retains pending.
+- Verify explicit stop before cleanup still clears pending after teardown.
+- Add separate actual task-cancellation coverage with real cleanup. Cancellation without explicit stop retains pending.
+
+RED command:
+
+```sh
+cd /home/twidi/dev/twicc-poc/.worktrees/feature-content-storage-compression && TWICC_DATA_DIR=$PWD uv run pytest -q tests/test_codex_compute_recovery.py -k real_shutdown_preserves_unexpected_exit_pending_state
+```
+
+Result before the fix: **1 failed, 1 passed, 50 deselected in 1.93s**.
+The unexpected-exit branch loses pending after real cleanup sets the stop event.
+GREEN real-cleanup and four-way exit matrix: **6 passed, 46 deselected in 1.65s**.
+
+The first combined run reports **1 failed, 70 passed in 44.58s**.
+`test_codex_selection_drains_once_then_wakes_without_inventory_polling` cancels after the database version changes, before authoritative idle.
+Its final assertion depends on cleanup clearing the gate.
+The fixture now waits for the current version and authoritative idle before cancellation. It does not set the stop event.
+
+Final focused command:
+
+```sh
+cd /home/twidi/dev/twicc-poc/.worktrees/feature-content-storage-compression && TWICC_DATA_DIR=$PWD uv run pytest -q tests/test_codex_compute_recovery.py tests/test_content_maintenance_compute_gate.py tests/test_compute_work.py
+```
+
+Result: **71 passed in 45.54s**.
+A separate cancellation regression is added after collection of that run:
+
+```sh
+cd /home/twidi/dev/twicc-poc/.worktrees/feature-content-storage-compression && TWICC_DATA_DIR=$PWD uv run pytest -q tests/test_codex_compute_recovery.py -k real_shutdown_keeps_pending_after_cancellation_without_explicit_stop
+```
+
+Result: **1 passed, 52 deselected in 1.77s**.
+These runs cover all 72 final tests from the requested three modules. No test warnings appear.
+Changed-file Ruff and `git diff --check` pass.
+No broad/full-suite rerun, server action, migration, data reset, package installation, or main database access occurs.
+The internal final-fix report records the failed attempt, corrected fixture, real cleanup coverage, and final evidence.
