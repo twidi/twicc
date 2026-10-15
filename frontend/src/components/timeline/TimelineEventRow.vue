@@ -44,7 +44,7 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
             <span v-if="identity" class="timeline-identity">
                 <TimelineSessionMention :mention="identity.mention" markers />
                 <template v-if="identity.showProject && identity.projectId">
-                    <!-- A jump to that project on purpose: no workspace query. -->
+                    <!-- A plain jump to that project: the router guard keeps the current workspace when the project belongs to it. -->
                     <RouterLink
                         v-if="knownProject"
                         :to="{ name: 'project', params: { projectId: identity.projectId } }"
@@ -69,15 +69,14 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
             </span>
             <span v-if="vm.detail" class="timeline-error">
                 <code class="timeline-error-line">{{ vm.detail.first }}</code>
-                <wa-button
+                <button
                     v-if="vm.detail.rest"
-                    size="small"
-                    appearance="plain"
-                    class="timeline-error-toggle"
+                    type="button"
+                    class="timeline-row__expand"
                     :aria-expanded="expanded ? 'true' : 'false'"
                     :aria-controls="errorRestId"
                     @click="expanded = !expanded"
-                >{{ expanded ? 'Show less' : 'Show more' }}</wa-button>
+                >{{ expanded ? 'Show less' : 'Show more' }}</button>
                 <pre v-if="expanded && vm.detail.rest" :id="errorRestId" class="timeline-error-rest">{{ vm.detail.rest }}</pre>
             </span>
         </div>
@@ -153,6 +152,28 @@ a.timeline-project {
     align-items: baseline;
     gap: var(--wa-space-xs);
     flex-basis: 100%;
+}
+
+.timeline-row__expand {
+    appearance: none;
+    border: none;
+    background: none;
+    padding: 0;
+    height: auto;
+    line-height: inherit;
+    font: inherit;
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-brand-60);
+    cursor: pointer;
+}
+
+.timeline-row__expand:hover {
+    text-decoration: underline;
+}
+
+.timeline-row__expand:focus-visible {
+    outline: var(--wa-focus-ring);
+    outline-offset: var(--wa-focus-ring-offset);
 }
 
 .timeline-error-line,
