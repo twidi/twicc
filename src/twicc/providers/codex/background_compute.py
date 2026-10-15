@@ -257,6 +257,9 @@ class CodexComputeCoordinator:
         self.migration_leases: dict[str, asyncio.Lock] = {}
         self.migration_paths: dict[str, Path] = {}
         self._forced_rebuild: set[str] = set()
+        # Startup can find stale children beneath a current repaired root.
+        # Retain their roots, not a provider-wide source inventory.
+        self._startup_child_roots: set[str] = set()
         self._rebuild_generation: dict[str, int] = {}
         self._prepared_rebuild_generation: dict[str, int] = {}
         self.migrated_history: set[str] = set()
@@ -1086,11 +1089,12 @@ class CodexComputeCoordinator:
                 'id', flat=True,
             )[:_UNAVAILABLE_RECOVERY_PAGE_SIZE])
             roots = resolve_native_roots(recovery_ids | diagnosed | outstanding)
-            eligible = set(roots.values()) - self._blocked_roots.keys()
             ranked = list(Session.objects.filter(
-                pk__in=eligible, provider=Provider.CODEX, type=SessionType.SESSION, parent_session__isnull=True,
+                pk__in=set(roots.values()) | self._startup_child_roots,
+                provider=Provider.CODEX, type=SessionType.SESSION, parent_session__isnull=True,
             ).order_by('-mtime').values_list('id', flat=True))
-            return ranked, diagnosed, roots
+            self._startup_child_roots.intersection_update(ranked)
+            return [root for root in ranked if root not in self._blocked_roots], diagnosed, roots
 
         # Read at most one exceptional page per selection. Blocked diagnoses
         # stay attached to their retry roots, so later pages can make progress.
@@ -1127,7 +1131,7 @@ class CodexComputeCoordinator:
             excluded = self.deferred | {sid for sid, deadline in self._retry_at.items() if deadline > now}
             if outstanding:
                 excluded |= self.failures.keys()
-            def select_member():
+            def select_member(root=root, excluded=excluded, recovery_ids=recovery_ids):
                 # A current diagnosed member remains required even when the
                 # bounded recovery page discovered a different native root.
                 tree = load_native_tree(root)
@@ -1166,6 +1170,7 @@ class CodexComputeCoordinator:
                 return None, recovery_ids, True, None
             self._active_root = None
             if not selection.required_pending:
+                self._startup_child_roots.discard(root)
                 self._active_diagnoses.clear()
                 await self._classify_initial(root)
                 continue
@@ -1213,6 +1218,13 @@ class CodexComputeCoordinator:
         if initial_candidates is None or self.ctx.stop_event.is_set():
             self.initial_done.set()
             return
+        from twicc.providers.compute_tree import resolve_native_roots
+
+        child_ids = {candidate.session_id for candidate in initial_candidates
+                     if candidate.session_type == SessionType.SUBAGENT}
+        if child_ids:
+            roots = await sync_to_async(lambda: resolve_native_roots(child_ids))()
+            self._startup_child_roots.update(roots.values())
         await self._initialize_progress(initial_candidates)
         cutoff = time.time() - COMPUTE_MIN_SOURCE_AGE_SECONDS
         for candidate in initial_candidates:

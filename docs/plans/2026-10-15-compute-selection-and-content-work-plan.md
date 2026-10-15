@@ -557,7 +557,7 @@ Subject: `perf(maintenance): defer periodic content work until compute drains`.
 - Consume the completed lookup, content preparation, selectors, provider coordinators, and periodic gate.
 - Existing DB writer telemetry distinguishes lease hold duration from elapsed multi-slice processing time.
 
-- [ ] **Step 1: Run the combined regression suite.**
+- [x] **Step 1: Run the combined regression suite.**
 
 Run all focused commands from Tasks 1–7 as one pytest invocation, deduplicating paths.
 Also run `tests/test_statistics_activity.py`, `tests/test_statistics_costs.py`, and `tests/test_nested_agent_compute.py`.
@@ -565,7 +565,7 @@ Expected: PASS. The existing statistics query fixes remain intact.
 Run `uvx ruff check` against the changed Python files. Inspect `git diff --check`.
 Fix only issues caused by this work; report unrelated baseline failures separately.
 
-- [ ] **Step 2: Compare read-only probes on isolated representative data.**
+- [x] **Step 2: Compare read-only probes on isolated representative data.**
 
 Use worktree data only after confirming its resolved path.
 If a fresh DB copy is needed, use the established devctl SQLite backup method without starting servers.
@@ -576,7 +576,7 @@ Run final ORM root queries for most-old, few-old, and no-old distributions with 
 Record SQL counts, payload bytes read, elapsed time, and query plans.
 Compare against the spec's observed baseline; do not convert local timings into portable guarantees.
 
-- [ ] **Step 3: Exercise event-loop and writer behavior under mixed work.**
+- [x] **Step 3: Exercise event-loop and writer behavior under mixed work.**
 
 Use a disposable test database with one small tree and one large multi-level tree.
 Run foreground synthetic writer jobs and an asyncio heartbeat while compute outcomes and content batches flow.
@@ -594,7 +594,7 @@ Require evidence for both coordinators, exact lookup, zero skipped-row payload r
 Re-run the affected tests after each correction, then obtain reapproval.
 A fresh live devctl reset/start requires the user's instruction; it is not part of this task's automatic checks.
 
-- [ ] **Step 5: Commit integrated regression corrections and report results.**
+- [x] **Step 5: Commit integrated regression corrections and report results.**
 
 Subject when changes exist: `test(compute): validate bounded selection and maintenance isolation`.
 Report tested behavior, measured costs, unresolved risks, and any live validation still awaiting the user's requested run.
@@ -617,5 +617,206 @@ Status: approved after adversarial review by two independent reviewers.
 The selection/lifecycle reviewer approved the second version.
 The history/content reviewer approved the third version after watcher-starvation coverage was added.
 
-Implementation has not started under this plan.
-Fill this section during execution with commands, results, measurements, and any unresolved blocker.
+Tasks 1–7 are implemented and reviewed. Integrated Task 8 evidence follows.
+The final whole-plan review remains pending with the controller.
+
+### Task 8 integrated validation — 2026-10-15
+
+Execution base: `f924fbdf`. Integrated Tasks 1–7 base: `9738e1a1`.
+Validation uses this worktree: `/home/twidi/dev/twicc-poc/.worktrees/feature-content-storage-compression`.
+No server starts, resets, package installations, main database copies, or instance migrations occur.
+The existing statistics changes remain intact.
+The controller owns the final independent whole-plan review and its correction wave.
+
+#### Regression corrections
+
+- A user/queue-only live slice scans 2,001 sidecars without launcher evidence: 31.50 ms and 35 SQL calls.
+- Live metadata retry now requires a new launcher tool call in the same slice.
+- The comparable no-launcher slice uses 31 SQL calls and 14.10 ms after the correction.
+- Child-local sidecar lookup remains available. Full parent-publication retry remains unconditional.
+- Existing late-sidecar, same-batch launcher, and stale-first-spawn regressions remain covered.
+- The first combined run exposes Codex restart recovery: an outdated child has a current repaired root.
+- Startup classification finds the child. Normal root selection then discards that evidence and selects nothing.
+- Codex now retains only resolved root IDs from its existing startup child classification.
+- The admitted-tree selector refreshes members. It removes the root hint after all required applications drain.
+- The correction neither retains a provider-wide source inventory nor lowers a root's compute version.
+- The existing forced-rebuild/discovery test covers both retained-coordinator and restarted-coordinator paths.
+- It also checks final root statistics publication and exactly recomputed member IDs.
+- The broad suite exposes an old scheduler test loader mock that rejects the new `source_ids` argument.
+- Update its test-only signature/filter. All 23 scheduler tests pass in 6.28s with their writer-ack assertions intact.
+- The broad suite exposes metadata retry before the agent-run hooks on the spawn line.
+- Retry now runs after the existing second pass. Per-line hooks retain their established link ordering.
+- Ruff reports 12 captured-loop-variable findings in the new coordinators and 8 fixture-import findings.
+- Bind captured selector arguments and expose the imported fixture through its module. Changed-file Ruff is clean.
+
+TDD evidence:
+
+```text
+pytest tests/test_launcher_history_lookup.py::test_live_slice_without_launcher_evidence_does_not_scan_tree_sidecars -q
+RED: assert 1 == 0 (tree sidecar scan count).
+GREEN: covered by the 78-test lookup/nested/history run and the later 237-test hook run.
+
+pytest 'tests/test_root_compute_completion.py::test_codex_discovery_during_forced_rebuild_keeps_tree_eligible[True]' -q
+RED: TimeoutError waiting for the late child's compute_version after restart; reproduced alone.
+GREEN: both restart variants pass, 2 passed in 9.55s.
+
+pytest tests/test_agent_run_plumbing.py::test_live_hook_runs_after_result_link_and_before_tool_use_link -q
+RED: assert True is False for AgentLink visibility in the spawn-line hook; reproduced alone.
+GREEN: 237 affected lookup/hook/nested/history tests pass in 43.34s.
+```
+
+The first root-hint attempt passes an argument through a zero-argument fixture reader and fails with TypeError.
+Use the established closure-based reader contract. This fixture error supplies no additional defect evidence.
+The intermediate 145-test command records 140 passes and 5 failures before this reader correction.
+Four failures report the argument TypeError. The fifth times out after the same startup failure.
+The final combined command covers these tests after the correction.
+Task 6's original missing-API RED remains fixture evidence. These integrated regressions provide behavioral RED evidence.
+
+#### Commands and suite results
+
+All pytest commands below start with `cd <worktree> && TWICC_DATA_DIR=$PWD uv run`.
+The inherited `VIRTUAL_ENV` warning is expected. The commands use the worktree environment.
+
+Combined focused command, deduplicated from Task 1–7 reports and including statistics/nested regressions:
+
+```sh
+pytest tests/test_agent_link_background_upgrade.py tests/test_background_compute_recovery.py tests/test_background_compute_retries.py tests/test_claude_agent_runs.py tests/test_codex_compute_recovery.py tests/test_codex_recompute_persistence.py tests/test_codex_rollout_migration.py tests/test_codex_subagent_links.py tests/test_compute_age_selection.py tests/test_compute_continuation.py tests/test_compute_project_notifications.py tests/test_compute_root_selection.py tests/test_compute_selection_wakeups.py tests/test_compute_tree.py tests/test_compute_work.py tests/test_content_cold_cache.py tests/test_content_contains_gate.py tests/test_content_history_lifecycle.py tests/test_content_ingestion.py tests/test_content_maintenance.py tests/test_content_maintenance_compute_gate.py tests/test_content_maintenance_reads.py tests/test_content_root_state.py tests/test_content_session_promotion.py tests/test_content_storage_admission.py tests/test_history_fact_compute_apply.py tests/test_history_fact_resolution.py tests/test_launcher_history_lookup.py tests/test_nested_agent_compute.py tests/test_root_compute_completion.py tests/test_session_dirs_cleanup.py tests/test_statistics_activity.py tests/test_statistics_costs.py tests/test_watcher_slice_fairness.py -q
+```
+
+- First run: 856 passed, 1 failed in 197.38s. The failure is the Codex restart regression above.
+- Final combined run: 858 passed in 214.00s. This run includes the Codex restart and sidecar corrections.
+- Whole suite: `pytest -q`; in progress at the code checkpoint, 25% complete.
+- Two failures are observed so far: the pre-correction hook-order regression and the outdated scheduler test fixture.
+- Both failures reproduce independently. Their corrected affected suites pass (237 tests and 23 tests).
+- The broad run imports pre-correction modules; do not report it as a final-revision full-suite pass.
+- Broad validation is justified by coordinator, orchestrator, CLI, watcher, and writer API changes.
+- The broad run imports modules before the final hook correction. Affected tests rerun afterward.
+- Scheduler fixture correction: `pytest tests/test_codex_migration_scheduler.py -q`; 23 passed in 6.28s.
+- Final affected command: `pytest tests/test_agent_run_plumbing.py tests/test_launcher_history_lookup.py tests/test_nested_agent_compute.py tests/test_claude_agent_runs.py tests/test_history_fact_resolution.py -q`.
+- Affected result: 237 passed in 43.34s.
+- Changed-file lint: `uvx ruff check` over all 46 changed Python paths from `git diff --name-only f924fbdf`; all checks pass.
+- `git diff --check` passes.
+
+#### Isolated read measurements
+
+Temporary probe: `.superpowers/task8_probe.py`; ignored and not committed.
+Temporary logs/measurements: `/tmp/twicc-task8-*.log` and `/tmp/twicc-task8-metrics.json`.
+Persistent evidence resides here. No benchmark code enters the repository.
+
+The probe bootstraps `twicc.settings_test`, then invokes pytest with `-p tests.conftest`.
+The initial direct plugin invocations fail before tests: missing Python module path, then Django app initialization order.
+Bootstrap Django before loading the test plugin. These harness failures do not indicate product failures.
+
+Probe command prefix:
+
+```sh
+cd <worktree> && TWICC_DATA_DIR=$PWD uv run python -c 'import os; os.environ["DJANGO_SETTINGS_MODULE"]="twicc.settings_test"; import django; django.setup(); import pytest; raise SystemExit(pytest.main(["-p","tests.conftest",".superpowers/task8_probe.py::<probe>","-q","-s"]))'
+```
+
+- `test_read_probes`: passes after the code correction; 1 passed in 10.26s.
+- `test_read_only_exact_lookup_probe`: 1 passed in 6.95s.
+- The resolved test DB is `file:memorydb_default?mode=memory&cache=shared`; the probe asserts this before data access.
+- Fixture setup creates synthetic rows. Read probes then measure real ORM queries and real content preparation.
+- Lookup-and-publication and live-slice probes write only to this disposable test DB.
+- `HistoryFactContext.lookup_tool_call` is also measured separately; all its recorded statements are SELECTs.
+
+| Operation | SQL calls | Source/content payload bytes returned | Elapsed ms |
+|---|---:|---:|---:|
+| Read-only exact ID, 6,000 unrelated calls | 3 | 185 | 2.955 |
+| Registered in-memory exact ID | 0 | 0 | 0.006 |
+| Exact ID plus real link publication | 10 | 185 | 6.086 |
+| Eleven failed current-history child records | 111 | 0 | 53.422 |
+| 300 rows, two shared owners, cold first access | 8 | 800,890 | 22.039 |
+| Same shared-owner preparation, warm lifecycle cache | 5 | 800,890 | 21.367 |
+| 100 conforming compressed rows | 4 | 0 | 3.650 |
+| 100 conforming no-gain plain rows | 4 | 0 | 3.548 |
+| 100 conforming plain promotion rows, both references | 17 | 0 | 6.179 |
+
+The exact read-only lookup returns one 185-byte launcher source. It returns no unrelated sources.
+The eleven-record slice reads zero launcher payloads. Its SQL count includes real ingestion and content writes.
+Shared-owner preparation fetches only the 100 pending plain payloads, in one content-payload SELECT.
+The other 200 rows require metadata only. The skipped-only probes verify zero payload SELECTs.
+The shared-owner batch also sees one unrelated hot row from the live-slice fixture. It returns none of that row's payload.
+Payload byte totals count source/content bytes returned to Python, excluding reusable dictionary assets and SQLite page reads.
+The plain promotion probe selects metadata for 100 rows with identical current/original references, without returning payloads.
+
+Spec §8 reports a 3.24-second launcher scan with 5,981 SQL calls, versus 11.7 ms/5 calls for exact lookup.
+This synthetic exact read records 2.955 ms/3 calls. Data sizes and publication boundaries differ from those observations.
+Spec §8 also records 82.7 ms/200 calls for 100 per-content eligibility checks.
+This integrated preparation verifies 300 rows with batched owner readiness and returns payloads only when required.
+It includes codecs, unlike the spec's isolated lifecycle-cache measurements. These timings are not directly comparable guarantees.
+
+#### Final ORM root query plans
+
+The probe creates 14,824 native roots and excludes two IDs in each final Django query.
+It marks all unrelated fixture roots current before selecting. The few-old case retains one eligible root after exclusions.
+The first exploratory fixture leaves an unrelated stale root eligible; discard those few-old/no-old measurements.
+The corrected final fixture asserts and records the intended selected root or no root.
+
+| Distribution | Outdated roots | SQL calls | Elapsed ms | Selected root |
+|---|---:|---:|---:|---|
+| most-old | 14,000 | 1 | 1.160 | `probe-13999` |
+| few-old | 3 | 1 | 1.933 | `probe-0` |
+| no-old | 0 | 1 | 1.863 | `None` |
+
+All three parameterized query plans report:
+
+```text
+SEARCH core_session USING INDEX idx_session_compute_root (provider=? AND mtime<?)
+```
+
+No plan uses a temporary B-tree. All queries return zero source/content payload bytes.
+The final SQL ends with `ORDER BY "core_session"."mtime" DESC LIMIT 1`.
+It filters native roots, version NULL-or-less-than-current, stability cutoff, and small ID exclusions.
+
+#### Mixed WAL writer and heartbeat measurements
+
+- `test_mixed_probe` uses a SQLite backup of the synthetic test DB. It never copies the 24 GB worktree DB.
+- The probe confirms `/tmp/pytest-of-twidi/pytest-6488/task8_probe/test_mixed_probe-0/mixed.sqlite3` before DB access.
+- WAL mode is enabled on that disposable file. Every ORM worker uses its test-only database configuration.
+- One small tree has 10 rows. One large tree has 9 sources, with nested AgentLink launcher levels.
+- Compute applies 10 successful outcomes across 5,410 rows, using 86 preparation operations.
+- Concurrent compression prepares 100 rows through real codecs and publishes four 25-row batches.
+- Concurrent stale-history recovery reads 6,001 records over 47 pages, then publishes one exact selected launcher.
+- The probe asserts every fallback page runs without a writer lease.
+- The probe asserts every codec and compute preparation runs outside the asyncio thread.
+- Forty foreground writer jobs complete during this mixed scenario.
+- Every background grant asserts there is no foreground holder, queued foreground request, or foreground demand token.
+- This admission assertion checks priority at every grant. Foreground work completes before another background grant under pressure.
+- The 1 ms heartbeat continues while preparation and codecs run. It records 2,042 samples.
+- Mixed elapsed time is 3,874.83 ms. It is not one continuous writer hold.
+
+Instrumentation records each WRITER ResourceLease from actual grant until release.
+A diagnostic correction labels awaited leases when `acquire()` returns.
+Grant scheduling can occur in another task's release context; the original grant-context class labels are discarded.
+Unawaited compute grants remain labeled by the writer task. The correction changes probe labels only.
+
+| Measurement, ms | Samples | p50 | p90 | p95 | p99 | Max |
+| All actual writer holds | 154 | 10.319 | 50.710 | 63.533 | 119.104 | 126.390 |
+| compute writer holds | 109 | 11.145 | 50.710 | 53.801 | 64.882 | 103.181 |
+| content writer holds | 4 | 119.104 | 122.877 | 122.877 | 122.877 | 126.390 |
+| foreground writer holds | 40 | 5.167 | 7.881 | 9.660 | 12.693 | 113.268 |
+| stale-history-fallback writer holds | 1 | 9.352 | 9.352 | 9.352 | 9.352 | 9.352 |
+| Foreground completion latency | 40 | 12.738 | 112.965 | 120.607 | 125.044 | 130.619 |
+| Heartbeat delay above requested 1 ms | 2042 | 0.435 | 2.164 | 3.588 | 5.266 | 104.625 |
+| Stale-history page read elapsed, outside writer | 47 | 21.308 | 62.371 | 71.735 | 112.564 | 122.696 |
+
+Outlier inspection identifies content publication as the slowest writer class: 25-row proof/readiness checks plus guarded updates.
+These transaction-owned checks remain inside the writer. Codecs already complete outside the asyncio thread.
+One foreground hold reaches 113.268 ms; its p99 is 12.693 ms. Compute holds reach 103.181 ms.
+The fallback publishes in 9.352 ms; its historical pages never hold the writer.
+No measured writer hold reaches one second. No multi-second writer hold remains in this scenario.
+Heartbeat max is 104.625 ms, versus p99 5.266 ms.
+Heartbeat samples lack event timestamps, so this sample cannot attribute that maximum to one execution phase.
+Class-level outlier inspection does not prove a specific cause for the heartbeat maximum.
+These measurements include local scheduling effects and concurrent validation processes. They give no future payload-size or hardware guarantee.
+
+#### Scope and remaining validation
+
+- Full-plan adversarial review and any resulting fixes remain controller-owned.
+- No new Claude stale-child inventory is added. This correction targets reproduced Codex forced-rebuild restart recovery.
+- No generic current-root/outdated-child reconciliation is introduced.
+- No new committed-source recovery mechanism is added without a separate reproduced producer case.
+- A live reset/start is not performed. It requires the user's explicit request.
+- Backend changes require the user to restart their instance through `devctl.py` when they choose to validate live behavior.
+- Existing migration 0161 belongs to Task 4. No new Task 8 migration is created or manually applied to an instance.

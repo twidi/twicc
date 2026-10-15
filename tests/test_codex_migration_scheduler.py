@@ -254,8 +254,9 @@ def test_worker_dispatches_next_root_only_after_writer_ack(monkeypatch):
         ]
         stale = {candidate.session_id for candidate in candidates}
 
-        async def load(_version, *, forced_ids=frozenset()):
-            return [candidate for candidate in candidates if candidate.session_id in stale]
+        async def load(_version, *, forced_ids=frozenset(), source_ids=None):
+            return [candidate for candidate in candidates if candidate.session_id in stale
+                    and (source_ids is None or candidate.session_id in source_ids)]
 
         async def prepare(candidate):
             return PreparedCandidate(candidate.session_id, None, False)

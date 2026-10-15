@@ -6,7 +6,9 @@ import pytest
 
 from twicc import content_maintenance_task as maintenance
 from twicc.providers.compute_work import ComputeWorkState
-from tests.test_content_storage_admission import writer_state
+from tests import test_content_storage_admission
+
+writer_state = test_content_storage_admission.writer_state
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

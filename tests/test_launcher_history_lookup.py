@@ -441,3 +441,11 @@ def test_stale_parent_live_repeat_defers_until_earliest_spawn_is_established(tre
     link = AgentLink.objects.get(agent_id=child.id)
     assert link.tool_use_line_num == 1
     assert not link.is_background
+
+
+def test_live_slice_without_launcher_evidence_does_not_scan_tree_sidecars(tree):
+    root, owner, child, home = tree
+    meta(tree)
+    with patch.object(get_compute(), 'get_spawn_metas_for_tree', wraps=get_compute().get_spawn_metas_for_tree) as scans:
+        live(owner, home, entry('user', 'work'), {'type': 'queue-operation'})
+    assert scans.call_count == 0

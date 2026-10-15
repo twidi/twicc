@@ -762,7 +762,7 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                 if len(outstanding) < 2:
                     while True:
                         if active_root is None:
-                            active_root = await query(lambda: select_outdated_root(
+                            active_root = await query(lambda cutoff=cutoff, deferred=deferred: select_outdated_root(
                                 ctx.provider, ctx.compute_version, cutoff=cutoff, excluded_root_ids=deferred,
                             ))
                             if active_root is None:
@@ -770,7 +770,8 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                         cooling = {sid for sid, deadline in retry_at.items() if deadline > now}
                         if outstanding - retry_delays.keys():
                             cooling.update(retry_delays)
-                        def select_source():
+                        def select_source(active_root=active_root, cutoff=cutoff,
+                                          outstanding=outstanding, cooling=cooling):
                             try:
                                 return select_tree_source(
                                     active_root, ctx.compute_version, cutoff=cutoff,
@@ -813,7 +814,7 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                         active_root = None
                     next_deadline = min(deferred.values(), default=None)
                     if not candidates and active_root is None:
-                        root_deadline = await query(lambda: next_root_eligibility(
+                        root_deadline = await query(lambda cutoff=cutoff, deferred=deferred: next_root_eligibility(
                             ctx.provider, ctx.compute_version, cutoff=cutoff, excluded_root_ids=deferred,
                         ))
                         if root_deadline is not None:

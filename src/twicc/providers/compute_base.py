@@ -4602,10 +4602,6 @@ class BaseSessionCompute:
             session, [(item, source_texts[item.line_num]) for item in items_only], promote=False,
         )
         append_history_facts(session.id, history.facts)
-        if self.rebuild_agent_prompt_links:
-            agent_link_updates.extend(self._recover_metadata_agent_links(
-                session, history=history, unresolved=unresolved_launcher_lookups,
-            ))
         if async_question_facts:
             from twicc.core.services.async_questions import merge_question_facts
 
@@ -4690,6 +4686,14 @@ class BaseSessionCompute:
                 agent_link_updates.extend(
                     self.create_agent_link_from_tool_use(session.id, item, parsed, history=history)
                 )
+
+        # Keep launcher recovery after the per-line agent-run hooks.
+        if self.rebuild_agent_prompt_links and any(
+            self.extract_task_tool_uses(parsed) for _item, parsed in items_to_create
+        ):
+            agent_link_updates.extend(self._recover_metadata_agent_links(
+                session, history=history, unresolved=unresolved_launcher_lookups,
+            ))
 
         # Resolve project git_root if any item resolved git info but the project doesn't have one yet
         if any(item.git_directory for item, _ in items_to_create) and get_project_git_root(session.project_id) is None:
