@@ -9,6 +9,7 @@ import pytest
 
 from tests.test_title_automation import OLD, env, session  # noqa: F401
 from twicc.core.models import Session
+from twicc.providers.compute_work import ComputeWorkState
 
 
 @pytest.fixture
@@ -478,7 +479,7 @@ def test_server_owns_title_runner_before_provider_start_and_until_teardown(
         monkeypatch.setattr("uvicorn.Server", Server)
         monkeypatch.setattr("signal.signal", lambda *args: None)
         registry = SimpleNamespace(start_all=providers_start, shutdown_all=providers_stop,
-                                   request_thread_stop_all=lambda: None)
+                                   request_thread_stop_all=lambda: None, compute_work=ComputeWorkState())
         monkeypatch.setattr(run, "get_orchestrator_registry", lambda: registry)
         monkeypatch.setattr("twicc.providers.db_writer.start_db_writer", lambda: effects.append("db-start"))
         monkeypatch.setattr("twicc.providers.db_writer.stop_db_writer", db_stop)

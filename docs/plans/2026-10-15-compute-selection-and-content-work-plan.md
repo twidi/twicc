@@ -685,16 +685,19 @@ pytest tests/test_agent_link_background_upgrade.py tests/test_background_compute
 
 - First run: 856 passed, 1 failed in 197.38s. The failure is the Codex restart regression above.
 - Final combined run: 858 passed in 214.00s. This run includes the Codex restart and sidecar corrections.
-- Whole suite: `pytest -q`; in progress at the code checkpoint, 25% complete.
-- Two failures are observed so far: the pre-correction hook-order regression and the outdated scheduler test fixture.
-- Both failures reproduce independently. Their corrected affected suites pass (237 tests and 23 tests).
-- The broad run imports pre-correction modules; do not report it as a final-revision full-suite pass.
+- Whole suite: `pytest -q`; 10,719 passed, 28 skipped, 4 failed, 3 warnings in 581.48s.
+- The broad run starts before the hook-order and scheduler-fixture corrections. It imports their pre-correction code.
+- The four failures and their final covering runs are listed below. Do not report a final-revision full-suite pass.
+- No second full suite runs. The controller owns final review and any required further verification.
 - Broad validation is justified by coordinator, orchestrator, CLI, watcher, and writer API changes.
 - The broad run imports modules before the final hook correction. Affected tests rerun afterward.
 - Scheduler fixture correction: `pytest tests/test_codex_migration_scheduler.py -q`; 23 passed in 6.28s.
 - Final affected command: `pytest tests/test_agent_run_plumbing.py tests/test_launcher_history_lookup.py tests/test_nested_agent_compute.py tests/test_claude_agent_runs.py tests/test_history_fact_resolution.py -q`.
 - Affected result: 237 passed in 43.34s.
-- Changed-file lint: `uvx ruff check` over all 46 changed Python paths from `git diff --name-only f924fbdf`; all checks pass.
+- Changed-file lint before the final title fixture correction: all 46 changed Python paths pass.
+- Final lint includes 47 Python paths. It reports five baseline findings in the newly touched title test module.
+- `git show f924fbdf:tests/test_title_auto_task.py` piped to `uvx ruff check --stdin-filename tests/test_title_auto_task.py -` reproduces all five.
+- Baseline findings: four F811 fixture bindings (`env`, `session`) and PIE807 for `lambda: []`. Preserve these unrelated lines.
 - `git diff --check` passes.
 
 #### Isolated read measurements
@@ -820,3 +823,35 @@ These measurements include local scheduling effects and concurrent validation pr
 - A live reset/start is not performed. It requires the user's explicit request.
 - Backend changes require the user to restart their instance through `devctl.py` when they choose to validate live behavior.
 - Existing migration 0161 belongs to Task 4. No new Task 8 migration is created or manually applied to an instance.
+
+#### Completed broad-run follow-up
+
+The broad run finishes after the code checkpoint `77cd1354`.
+It records these failures from the code/test modules imported before their corrections:
+
+| Broad-run failure | Cause | Final covering result |
+|---|---|---|
+| `test_agent_run_plumbing.py::test_live_hook_runs_after_result_link_and_before_tool_use_link` | Metadata retry precedes the per-line hook | 237 affected tests pass, 43.34s |
+| `test_codex_migration_scheduler.py::test_worker_dispatches_next_root_only_after_writer_ack` | Test loader mock rejects `source_ids` | All 23 scheduler tests pass, 6.28s |
+| `test_title_auto_task.py::test_server_owns_title_runner_before_provider_start_and_until_teardown[normal]` | Fake registry omits `compute_work` | All 15 title-auto tests pass, 4.59s |
+| `test_title_auto_task.py::test_server_owns_title_runner_before_provider_start_and_until_teardown[adoption-cancel]` | Same missing field prevents the adoption phase | Same 15-test module run |
+
+The final fixture correction adds a real `ComputeWorkState` to the fake registry.
+It changes no production code. Startup, cancellation, and teardown assertions remain intact.
+
+Final title command:
+
+```sh
+cd /home/twidi/dev/twicc-poc/.worktrees/feature-content-storage-compression && TWICC_DATA_DIR=$PWD uv run pytest tests/test_title_auto_task.py -q
+```
+
+The three broad-run RuntimeWarnings concern unawaited coroutines:
+
+- `tests/test_codex_sdk_wrappers.py::test_turn_forwards_auto_review`: `AsyncMockMixin._execute_mock_call`.
+- `tests/test_codex_sdk_wrappers.py::test_turn_forwards_fast_service_tier`: `AsyncMockMixin._execute_mock_call`.
+- `tests/test_shell_notice_codex.py::test_turn_openings_restart_the_delay`: `BaseAgent._notify_state_change` from `tests/shell_notice_helpers.py:31`.
+
+Those test files are unchanged since `f924fbdf`. No unrelated warning correction is included.
+The five final lint findings are separately confirmed against baseline file contents, without checkout mutation.
+Final `git diff --check` passes. Known broad-run failures have passing focused coverage after their corrections.
+A complete full-suite run of the final revision is not claimed.
