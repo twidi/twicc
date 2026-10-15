@@ -288,3 +288,15 @@ def test_root_deletion_discards_cached_descendant_mapping():
     result = decisions(['root', 'child'])
     assert not result['root'].resolved
     assert not result['child'].resolved
+
+
+def test_lifecycle_metadata_accessor_cannot_mutate_shared_cache():
+    from twicc.core.content_storage.cold_cache import cached_lifecycle_metadata
+
+    make_session('root', created_at=timezone.now() - timedelta(days=31))
+    assert decisions(['root'])['root'].is_cold
+    metadata = cached_lifecycle_metadata(['root'])
+    metadata['root']['created_at'] = timezone.now()
+    with CaptureQueriesContext(connection) as queries:
+        assert decisions(['root'])['root'].is_cold
+    assert len(queries) == 0

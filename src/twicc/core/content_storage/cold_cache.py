@@ -128,6 +128,12 @@ def _load_metadata(ids):
     return loaded
 
 
+def cached_lifecycle_metadata(session_ids: Iterable[str]) -> dict[str, dict | None]:
+    """Copy shared committed metadata for operation-local publication proofs."""
+    return {identity: None if fields is None else fields.copy()
+            for identity, fields in _load_metadata(session_ids).items()}
+
+
 def cached_root_decisions(
     session_ids: Iterable[str], now: datetime, active_ids: frozenset[str],
 ) -> dict[str, RootDecision]:

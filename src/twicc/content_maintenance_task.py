@@ -16,6 +16,7 @@ from django.db.models import BinaryField, F, Q
 from django.db.models.functions import Cast, Length
 from django.utils import timezone
 
+from twicc.core.content_storage.cold_cache import cached_lifecycle_metadata, cached_root_decisions
 from twicc.core.content_storage.codec import ContentIntegrityError, transcode_content
 from twicc.core.content_storage.lifecycle import active_session_ids, set_root_promotion_wakeup
 from twicc.core.content_storage.policy import COLD_FIELDS, CONTENT_STORAGE_VERSION, compression_policy_version
@@ -101,14 +102,62 @@ def request_root_promotion(session_id: str, *, priority: WritePriority | None = 
         _wakeup(session_id, write_priority.get() if priority is None else priority)
 
 
-def _metadata_proof(owners):
-    """Hash deterministic owner/root pages; retain no whole shared-owner metadata map."""
+OWNER_PROOF_FIELDS = ('id', 'type', 'parent_session_id', 'storage_incarnation', 'content_storage_version')
+ROOT_PROOF_FIELDS = ('id', 'storage_incarnation', 'content_state_epoch', 'provider', 'compute_version', *COLD_FIELDS)
+
+
+class OwnerReadiness(NamedTuple):
+    cold: bool
+    proof_record: tuple
+
+
+def _preparation_readiness(owner_ids, active):
+    """Share readiness only within this batch; publication reads authoritative metadata."""
+    from twicc.providers.helpers import get_provider_helpers
+
+    decisions = cached_root_decisions(owner_ids | active, timezone.now(), active)
+    active_resolved = all(decisions[identity].resolved for identity in active)
+    roots = {decisions[identity].root_id for identity in owner_ids if decisions[identity].resolved}
+    lifecycle = cached_lifecycle_metadata(roots)
+    fields = tuple(dict.fromkeys((*OWNER_PROOF_FIELDS, *ROOT_PROOF_FIELDS[:-len(COLD_FIELDS)])))
+    metadata = {}
+    ids = sorted(owner_ids | roots)
+    for offset in range(0, len(ids), TREE_PAGE_SIZE):
+        metadata.update({row['id']: row for row in Session.objects.filter(
+            pk__in=ids[offset:offset + TREE_PAGE_SIZE],
+        ).values(*fields)})
+    readiness = {}
+    for identity in owner_ids:
+        decision = decisions[identity]
+        owner = metadata.get(identity)
+        root = metadata.get(decision.root_id)
+        cold = bool(active_resolved and owner and root and decision.is_cold
+                    and owner['content_storage_version'] == CONTENT_STORAGE_VERSION
+                    and root['storage_incarnation'] and root['content_state_epoch'] is not None
+                    and root['compute_version'] == get_provider_helpers(root['provider']).current_compute_version)
+        root_fields = None
+        if root is not None and lifecycle.get(decision.root_id) is not None:
+            root_fields = {**root, **lifecycle[decision.root_id]}
+        record = (identity, None if owner is None else tuple(owner[field] for field in OWNER_PROOF_FIELDS),
+                  decision.root_id, decision.resolved,
+                  None if root_fields is None else tuple(root_fields[field] for field in ROOT_PROOF_FIELDS))
+        readiness[identity] = OwnerReadiness(cold, record)
+    return readiness
+
+
+def _metadata_proof(owners, readiness=None):
+    """Hash deterministic owner/root pages, with optional batch-local preparation metadata."""
     digest = hashlib.sha256()
-    owner_fields = ('id', 'type', 'parent_session_id', 'storage_incarnation', 'content_storage_version')
-    root_fields = ('id', 'storage_incarnation', 'content_state_epoch', 'provider', 'compute_version', *COLD_FIELDS)
+    owner_fields = OWNER_PROOF_FIELDS
+    root_fields = ROOT_PROOF_FIELDS
     now = timezone.now()
     for offset in range(0, len(owners), TREE_PAGE_SIZE):
         page = owners[offset:offset + TREE_PAGE_SIZE]
+        if readiness is not None:
+            for owner_id in page:
+                digest.update(orjson.dumps(readiness[owner_id].proof_record))
+                digest.update(b'\n')
+            continue
         metadata = {row[0]: row for row in Session.objects.filter(pk__in=page).values_list(*owner_fields)}
         decisions = resolve_root_decisions(page, now, frozenset())
         root_ids = sorted({decision.root_id for decision in decisions.values() if decision.resolved})
@@ -124,8 +173,8 @@ def _metadata_proof(owners):
     return digest.digest()
 
 
-def _proof(row):
-    return RepresentationProof(tuple(row.session_ids), _metadata_proof(row.session_ids), bytes(row.payload),
+def _proof(row, readiness=None):
+    return RepresentationProof(tuple(row.session_ids), _metadata_proof(row.session_ids, readiness), bytes(row.payload),
                                bytes(row.sha256), row.raw_size)
 
 
@@ -137,9 +186,12 @@ def _proof_matches(entry, row):
             and row.raw_size == proof.raw_size)
 
 
-def _owners_cold(row, active):
+def _owners_cold(row, active, readiness=None):
     if not row.session_ids:
         return False
+    if readiness is not None:
+        return (len(row.session_ids) == len(set(row.session_ids))
+                and all(readiness[identity].cold for identity in row.session_ids))
     from twicc.providers.helpers import get_provider_helpers
 
     now = timezone.now()
@@ -299,7 +351,7 @@ def prepare_promotion_batch(snapshot, cursor, row_budget=ROW_BUDGET, byte_budget
     ids = {key[3] for key in keys if key[3] is not None}
     metadata = {row['id']: row for row in SessionItemContent.objects.filter(pk__in=ids).annotate(
         stored_size=Length('payload'), owner_size=Length(Cast('session_ids', BinaryField())),
-    ).values('id', 'raw_size', 'stored_size', 'owner_size')}
+    ).values('id', 'raw_size', 'stored_size', 'owner_size', 'codec', 'dictionary_id')}
     selected = []
     size = 0
     for key in keys:
@@ -309,7 +361,8 @@ def prepare_promotion_batch(snapshot, cursor, row_budget=ROW_BUDGET, byte_budget
             break
         selected.append(key)
         size += length
-    rows = SessionItemContent.objects.in_bulk({key[3] for key in selected if key[3] is not None})
+    payload_ids = {key[3] for key in selected if key[3] in metadata and metadata[key[3]]['codec'] != 'plain'}
+    rows = SessionItemContent.objects.in_bulk(payload_ids)
     entries = []
     prepared_ids = set()
     dictionary_cache = {}
@@ -317,8 +370,9 @@ def prepare_promotion_batch(snapshot, cursor, row_budget=ROW_BUDGET, byte_budget
     verified = True
     for session_id, line, slot, content_id, item_valid in selected:
         row = rows.get(content_id)
-        verified &= item_valid and (content_id is None or row is not None)
-        if row is not None and row.codec == 'plain' and row.dictionary_id is not None:
+        content = metadata.get(content_id)
+        verified &= item_valid and (content_id is None or content is not None)
+        if content is not None and content['codec'] == 'plain' and content['dictionary_id'] is not None:
             verified = False
         if row is not None and row.codec != 'plain' and row.id not in prepared_ids:
             prepared_ids.add(row.id)
@@ -410,14 +464,20 @@ def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_
     rows = list(query.annotate(
         stored_size=Length('payload'), owner_size=Length(Cast('session_ids', BinaryField())),
     ).values('id', 'raw_size', 'stored_size', 'owner_size')[:row_budget])
+    selected_ids = []
     for metadata in rows:
         cost = metadata['raw_size'] + metadata['stored_size'] + metadata['owner_size']
         if last != after_id and size + cost > byte_budget:
             break
         last = metadata['id']
         size += cost
-        row = SessionItemContent.objects.defer('payload').get(pk=last)
-        if not _owners_cold(row, frozenset()):
+        selected_ids.append(last)
+    selected = list(SessionItemContent.objects.filter(pk__in=selected_ids).defer('payload').order_by('id'))
+    active = active_session_ids.get()
+    readiness = _preparation_readiness({identity for row in selected for identity in row.session_ids}, active)
+    pending = []
+    for row in selected:
+        if not _owners_cold(row, active, readiness):
             continue
         if row.dictionary_provider not in dictionaries:
             dictionary = _dictionary(row)
@@ -431,7 +491,15 @@ def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_
         if (row.compression_attempt_version == policy and row.compression_no_gain
                 or row.codec == 'zstd' and row.dictionary_id == dictionary.id):
             continue
-        proof = _proof(row)
+        pending.append((row, dictionary, policy))
+    payloads = {}
+    payload_ids = [row.id for row, _, _ in pending]
+    for offset in range(0, len(payload_ids), TREE_PAGE_SIZE):
+        payloads.update(SessionItemContent.objects.filter(pk__in=payload_ids[offset:offset + TREE_PAGE_SIZE])
+                        .values_list('id', 'payload'))
+    for row, dictionary, policy in pending:
+        row.payload = payloads[row.id]
+        proof = _proof(row, readiness)
         try:
             candidate = prepare_representation(row.id, policy, row, dictionary, dictionary_cache)
         except ContentIntegrityError:
