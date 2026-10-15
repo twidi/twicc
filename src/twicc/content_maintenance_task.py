@@ -27,6 +27,7 @@ from twicc.core.content_storage.state import (
 from twicc.core.content_storage.types import PreparedRepresentation, RootPromotionCursor, RootStorageSnapshot, SessionPromotionSnapshot
 from twicc.core.models import Session, SessionItem, SessionItemContent
 from twicc.core.content_storage.dictionaries import get_provider_dictionary
+from twicc.providers.compute_work import ComputeWorkState
 from twicc.providers.write_coordinator import WritePriority, write_priority
 
 logger = logging.getLogger(__name__)
@@ -569,7 +570,8 @@ async def _wait(stop_event, wake, timeout):
 class _PromotionTarget:
     """One resumable target; scheduling priority never determines recovery eligibility."""
 
-    def __init__(self, *, recovery, priority):
+    def __init__(self, *, recovery, priority, periodic=False):
+        self.periodic = periodic
         self.recovery = recovery
         self.priority = priority
         self.demand = None
@@ -583,6 +585,7 @@ class _PromotionTarget:
         self.deferred = False
 
     def explicit(self):
+        self.periodic = False
         self.recovery = False
         if self.snapshot is not None and getattr(self.snapshot, 'recovery', False):
             self.snapshot = self.snapshot._replace(recovery=False)
@@ -590,7 +593,7 @@ class _PromotionTarget:
                 self.batch = self.batch._replace(snapshot=self.snapshot)
 
 
-async def start_content_maintenance_task(stop_event: asyncio.Event) -> None:
+async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_work: ComputeWorkState) -> None:
     """Dispatch bounded target steps; foreground demand wins each new resource grant."""
     global _wakeup, _deferral_wakeup
     from django.conf import settings
@@ -628,16 +631,48 @@ async def start_content_maintenance_task(stop_event: asyncio.Event) -> None:
     async def prepare(function, *args):
         return await database_sync_to_async(partial(function, *args), thread_sensitive=False, executor=executor)()
 
-    async def recover():
+    async def wait(timeout):
+        # Callers clear events before inspecting authoritative state. A change
+        # between that inspection and task creation remains visible here.
+        tasks = [asyncio.create_task(_wait(stop_event, wake, timeout)),
+                 asyncio.create_task(compute_work.changed.wait())]
+        try:
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in tasks:
+                if task.done():
+                    task.result()
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def periodic_ready():
+        while not stop_event.is_set():
+            wake.clear()
+            compute_work.changed.clear()
+            await promote()
+            if not compute_work.has_pending():
+                return not stop_event.is_set()
+            # An overdue deadline must not become a zero-timeout polling loop.
+            await wait(None)
+        return False
+
+    async def recover(*, periodic=False):
         after = None
         while not stop_event.is_set():
+            if periodic and not await periodic_ready():
+                return
             page = await prepare(pending_root_page, after)
             if not page:
                 break
+            if periodic and not await periodic_ready():
+                return
             eligible = await prepare(recovery_promotion_targets, page)
             for session_id in page:
                 if session_id in eligible:
-                    targets.setdefault(session_id, _PromotionTarget(recovery=True, priority=WritePriority.BACKGROUND))
+                    targets.setdefault(session_id, _PromotionTarget(
+                        recovery=True, priority=WritePriority.BACKGROUND, periodic=periodic,
+                    ))
             await promote()
             after = page[-1]
 
@@ -647,6 +682,8 @@ async def start_content_maintenance_task(stop_event: asyncio.Event) -> None:
             target.demand.release()
 
     def eligible(target):
+        if target.periodic and compute_work.has_pending():
+            return False
         snapshot = target.snapshot
         if (target.priority is WritePriority.BACKGROUND and snapshot is not None and any(
             token.root_id == snapshot.root_id and token.root_incarnation == snapshot.incarnation
@@ -662,6 +699,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event) -> None:
     async def promote():
         while targets and not stop_event.is_set():
             wake.clear()
+            compute_work.changed.clear()
             ready = [key for key, target in targets.items() if eligible(target)]
             if not ready:
                 return
@@ -683,7 +721,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event) -> None:
                     lease = coordinator.try_background_lease()
                     if lease is None:
                         # Never await a background grant in the foreground dispatcher.
-                        await _wait(stop_event, wake, 0.05)
+                        await wait(0.05)
                         continue
                 if target.snapshot is None:
                     recovery = target.recovery
@@ -721,25 +759,27 @@ async def start_content_maintenance_task(stop_event: asyncio.Event) -> None:
             logger.exception('Content promotion startup recovery failed')
         while not stop_event.is_set():
             wake.clear()
+            compute_work.changed.clear()
             await promote()
             if stop_event.is_set():
                 break
-            if _maintenance_time() >= deadline:
+            if _maintenance_time() >= deadline and not compute_work.has_pending():
                 try:
-                    await recover()
+                    await recover(periodic=True)
                     await promote()
                     cursor, done = 0, False
                     while not done and not stop_event.is_set():
-                        await promote()
+                        if not await periodic_ready():
+                            break
                         cursor, entries, done = await prepare(prepare_compression_batch, cursor, ROW_BUDGET, BYTE_BUDGET)
                         while entries and not stop_event.is_set():
-                            wake.clear()
-                            await promote()
+                            if not await periodic_ready():
+                                break
                             if stop_event.is_set():
                                 break
                             lease = coordinator.try_background_lease()
                             if lease is None:
-                                await _wait(stop_event, wake, 0.05)
+                                await wait(0.05)
                                 continue
                             await _apply(_publish, entries, lease=lease)
                             break
@@ -748,11 +788,15 @@ async def start_content_maintenance_task(stop_event: asyncio.Event) -> None:
                     logger.exception('Periodic content maintenance failed')
                 if settings.SESSION_DIRS_CLEANUP_ENABLED and not stop_event.is_set():
                     try:
-                        await _run_cleanup_pass()
+                        while await periodic_ready():
+                            # Cleanup rechecks after its awaited manager locks.
+                            if await _run_cleanup_pass(compute_work=compute_work) is not False:
+                                break
                     except Exception:
                         logger.exception('Session directory maintenance failed')
                 deadline = _maintenance_time() + INTERVAL
-            await _wait(stop_event, wake, max(0, deadline - _maintenance_time()))
+            remaining = max(0, deadline - _maintenance_time())
+            await wait(None if remaining == 0 and compute_work.has_pending() else remaining)
     except asyncio.CancelledError:
         raise
     except Exception:

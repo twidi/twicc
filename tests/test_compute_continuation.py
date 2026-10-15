@@ -14,6 +14,7 @@ from twicc.core.enums import Provider
 from twicc.core.models import Project, Session, SessionItem
 from twicc.core.content_storage import extraction
 from twicc.providers import db_writer, compute_executor
+from twicc.providers.compute_work import ComputeWorkState
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -546,7 +547,9 @@ def test_child_compute_defers_existing_root_recovery_and_binding_targets(
         applied = asyncio.Queue()
         try:
             child = await db_writer.run_compute_sync(fixture)
-            maintenance_task = asyncio.create_task(maintenance.start_content_maintenance_task(stop))
+            maintenance_task = asyncio.create_task(maintenance.start_content_maintenance_task(
+                stop, compute_work=ComputeWorkState(),
+            ))
             assert await asyncio.to_thread(recovery_prepared.wait, 2)
             run_id, done = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0,
                                                            applied_queue=applied)

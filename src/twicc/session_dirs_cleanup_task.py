@@ -26,6 +26,8 @@ from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from typing import NamedTuple
 
+from twicc.providers.compute_work import ComputeWorkState
+
 logger = logging.getLogger(__name__)
 
 SESSION_DIRS_CLEANUP_INITIAL_DELAY = 30 * 60
@@ -198,13 +200,15 @@ def _prune_stale_session_dirs() -> tuple[int, int]:
     return removed["artifacts"], removed["scratch"]
 
 
-async def _run_cleanup_pass() -> None:
+async def _run_cleanup_pass(*, compute_work: ComputeWorkState | None = None) -> bool:
     from twicc.agent.registry import get_agent_manager_registry
 
     # Starts/resumes hold a provider manager lock while granting work dirs.
     # Holding all manager locks makes the runtime snapshot stable and prevents
     # an orphan-folder deletion racing a new session before its first DB row.
     async with get_agent_manager_registry().work_dirs_cleanup_guard():
+        if compute_work is not None and compute_work.has_pending():
+            return False
         task = asyncio.create_task(asyncio.to_thread(_prune_stale_session_dirs))
         try:
             await asyncio.shield(task)
@@ -213,6 +217,7 @@ async def _run_cleanup_pass() -> None:
             # until deletion finishes, including during server shutdown.
             await task
             raise
+    return True
 
 
 async def start_session_dirs_cleanup_task(stop_event: asyncio.Event) -> None:

@@ -336,7 +336,9 @@ async def run_server(port: int):
         # Cross-provider periodic tasks
         price_sync_task = asyncio.create_task(start_price_sync_task(shutdown_event))
         quota_wakeup_task = asyncio.create_task(start_quota_wakeup_task(shutdown_event))
-        content_maintenance_task = asyncio.create_task(start_content_maintenance_task(shutdown_event))
+        content_maintenance_task = asyncio.create_task(
+            start_content_maintenance_task(shutdown_event, compute_work=orchestrators.compute_work)
+        )
         peer_purge_task = asyncio.create_task(start_peer_purge_task(shutdown_event))
         tmux_cleanup_task = asyncio.create_task(start_tmux_cleanup_task(shutdown_event))
         upload_cleanup_task = asyncio.create_task(start_upload_cleanup_task(shutdown_event))

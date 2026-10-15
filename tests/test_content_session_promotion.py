@@ -10,6 +10,7 @@ from tests.test_content_root_state import session
 from twicc import content_maintenance_task as maintenance
 from twicc.core.content_storage import lifecycle, state
 from twicc.core.models import Session, SessionItem
+from twicc.providers.compute_work import ComputeWorkState
 
 content_row_factory = content_storage_helpers.content_row_factory
 writer_state = test_content_storage_admission.writer_state
@@ -243,7 +244,7 @@ def test_coordinator_recovers_only_root_then_handles_explicit_child_resume(
             stop.set()
 
     monkeypatch.setattr(maintenance, '_wait', wait)
-    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event()))
+    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()))
     assert set(targets) == {root.id, child.id}
     for row in rows:
         row.refresh_from_db()
@@ -306,7 +307,7 @@ def test_recovery_skips_cold_root_with_active_child_and_advances_to_hot_root(
         stop.set()
 
     monkeypatch.setattr(maintenance, '_wait', wait)
-    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event()))
+    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()))
     for row in rows:
         row.refresh_from_db()
     assert [row.codec for row in rows] == ['zstd', 'zstd', 'plain']
@@ -396,7 +397,7 @@ def test_recovery_rechecks_persisted_hot_policy_across_admission_barriers(
         stop.set()
 
     monkeypatch.setattr(maintenance, '_wait', wait)
-    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event()))
+    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()))
     assert crossed == [True]
     row.refresh_from_db()
     root.refresh_from_db()

@@ -10,6 +10,7 @@ from tests.test_content_root_state import session
 from twicc.core.content_storage.codec import decode_content
 from twicc.core.content_storage.policy import compression_policy_version
 from twicc.content_maintenance_task import prepare_representation, publish_representation
+from twicc.providers.compute_work import ComputeWorkState
 
 content_row_factory = content_storage_helpers.content_row_factory
 writer_state = test_content_storage_admission.writer_state
@@ -230,7 +231,7 @@ def test_combined_timer_uses_controlled_clock_and_filesystem_flag(writer_state, 
             clock[0] += timeout
         return False
     monkeypatch.setattr(maintenance, '_wait', wait)
-    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event()))
+    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()))
     assert waits == [1800, 86400, 86400]
     assert passes == [1800, 88200]
 
@@ -264,7 +265,7 @@ def test_startup_recovers_metadata_and_publishes_bounded_readiness(content_row_f
     async def wait(stop, wake, timeout):
         stop.set()
     monkeypatch.setattr(maintenance, '_wait', wait)
-    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event()))
+    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()))
     root.refresh_from_db()
     assert root.plaintext_verified_epoch == 4
     assert final_queries
@@ -314,7 +315,9 @@ def test_interactive_write_runs_between_maintenance_slices(content_row_factory, 
             type(root).objects.filter(pk=root.id).update(title='interactive')
         trace.append('interactive')
     async def scenario():
-        task = asyncio.create_task(maintenance.start_content_maintenance_task(asyncio.Event()))
+        task = asyncio.create_task(maintenance.start_content_maintenance_task(
+            asyncio.Event(), compute_work=ComputeWorkState(),
+        ))
         try:
             assert await asyncio.to_thread(second_preparation.wait, 5)
             assert not db_writer._db_write_lock.locked()
@@ -356,7 +359,7 @@ def test_hot_wakeup_promotes_without_timer_delay(content_row_factory, writer_sta
         else:
             stop.set()
     monkeypatch.setattr(maintenance, '_wait', wait)
-    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event()))
+    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()))
     row.refresh_from_db()
     root.refresh_from_db()
     assert row.codec == 'plain' and root.plaintext_verified_epoch == 5
@@ -386,7 +389,9 @@ def test_cancelled_coordinator_drains_admitted_publication(content_row_factory, 
         return original(entries, active)
     monkeypatch.setattr(maintenance, '_publish', publish)
     async def scenario():
-        task = asyncio.create_task(maintenance.start_content_maintenance_task(asyncio.Event()))
+        task = asyncio.create_task(maintenance.start_content_maintenance_task(
+            asyncio.Event(), compute_work=ComputeWorkState(),
+        ))
         try:
             assert await asyncio.to_thread(entered.wait, 5)
             task.cancel()
@@ -438,7 +443,9 @@ def test_cancelled_promotion_restarts_proof_from_zero(content_row_factory, write
         return original(snapshot, cursor, *args)
     monkeypatch.setattr(maintenance, 'prepare_promotion_batch', prepare)
     async def cancel():
-        task = asyncio.create_task(maintenance.start_content_maintenance_task(asyncio.Event()))
+        task = asyncio.create_task(maintenance.start_content_maintenance_task(
+            asyncio.Event(), compute_work=ComputeWorkState(),
+        ))
         try:
             assert await asyncio.to_thread(entered.wait, 5)
             task.cancel()
@@ -460,7 +467,7 @@ def test_cancelled_promotion_restarts_proof_from_zero(content_row_factory, write
     async def wait(stop, wake, timeout):
         stop.set()
     monkeypatch.setattr(maintenance, '_wait', wait)
-    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event()))
+    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()))
     assert cursors[0] == maintenance.START_CURSOR
     root.refresh_from_db()
     assert root.plaintext_verified_epoch == 4
@@ -497,7 +504,7 @@ def test_promotion_failure_does_not_disable_periodic_recovery(content_row_factor
         else:
             stop.set()
     monkeypatch.setattr(maintenance, '_wait', wait)
-    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event()))
+    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()))
     row.refresh_from_db()
     root.refresh_from_db()
     assert row.codec == 'plain' and root.plaintext_verified_epoch == 4
@@ -550,7 +557,9 @@ def test_hot_promotion_precedes_prepared_compression_publication(content_row_fac
         with transaction.atomic():
             state.invalidate_roots([hot_owner.id], promotion_targets=[hot_owner.id])
     async def scenario():
-        task = asyncio.create_task(maintenance.start_content_maintenance_task(asyncio.Event()))
+        task = asyncio.create_task(maintenance.start_content_maintenance_task(
+            asyncio.Event(), compute_work=ComputeWorkState(),
+        ))
         try:
             assert await asyncio.to_thread(prepared.wait, 5)
             await maintenance._apply(mutation)
@@ -582,7 +591,7 @@ def test_root_readiness_does_not_wait_for_unextracted_empty_descendant(content_r
     async def wait(stop, wake, timeout):
         stop.set()
     monkeypatch.setattr(maintenance, '_wait', wait)
-    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event()))
+    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()))
     root.refresh_from_db()
     row.refresh_from_db()
     assert root.plaintext_verified_epoch == root.content_state_epoch and row.codec == 'plain'
@@ -701,7 +710,9 @@ def test_foreground_targets_interrupt_recovery_at_next_grant(
     monkeypatch.setattr(maintenance, '_wait', wait)
 
     async def scenario():
-        task = asyncio.create_task(maintenance.start_content_maintenance_task(asyncio.Event()))
+        task = asyncio.create_task(maintenance.start_content_maintenance_task(
+            asyncio.Event(), compute_work=ComputeWorkState(),
+        ))
         try:
             assert await asyncio.to_thread(entered.wait, 5)
             maintenance.request_root_promotion('b')
@@ -759,7 +770,9 @@ def test_foreground_demand_interrupts_background_wait_without_self_blocking(
     async def scenario():
         coordinator = db_writer.get_write_coordinator()
         holder = await coordinator.acquire(WriteResources.WRITER, WritePriority.FOREGROUND)
-        task = asyncio.create_task(maintenance.start_content_maintenance_task(asyncio.Event()))
+        task = asyncio.create_task(maintenance.start_content_maintenance_task(
+            asyncio.Event(), compute_work=ComputeWorkState(),
+        ))
         try:
             await asyncio.wait_for(waiting.wait(), 2)
             maintenance.request_root_promotion('b')
@@ -839,7 +852,9 @@ def test_recovery_upgrade_preserves_prepared_work_and_foreground_fifo(
     monkeypatch.setattr(maintenance, '_wait', wait)
 
     async def scenario():
-        task = asyncio.create_task(maintenance.start_content_maintenance_task(asyncio.Event()))
+        task = asyncio.create_task(maintenance.start_content_maintenance_task(
+            asyncio.Event(), compute_work=ComputeWorkState(),
+        ))
         try:
             assert await asyncio.to_thread(entered.wait, 5)
             maintenance.request_root_promotion('b')
@@ -903,7 +918,7 @@ def test_foreground_pressure_settles_after_worker_drain(
 
     async def scenario():
         stop = asyncio.Event()
-        task = asyncio.create_task(maintenance.start_content_maintenance_task(stop))
+        task = asyncio.create_task(maintenance.start_content_maintenance_task(stop, compute_work=ComputeWorkState()))
         coordinator = db_writer.get_write_coordinator()
         try:
             assert await asyncio.to_thread(prepared.wait, 5)
@@ -1010,7 +1025,9 @@ def test_background_deferral_coalesces_changed_epochs_and_preserves_exact_target
         nonlocal token
         token = maintenance.defer_background_promotions('root', 'root-inc')
         try:
-            await asyncio.wait_for(maintenance.start_content_maintenance_task(asyncio.Event()), 5)
+            await asyncio.wait_for(
+                maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()), 5,
+            )
         finally:
             token.release()
         assert not db_writer.get_write_coordinator().demands
@@ -1072,7 +1089,9 @@ def test_deferral_pauses_existing_recovery_and_foreground_bypasses_it(
 
     async def scenario():
         nonlocal token
-        task = asyncio.create_task(maintenance.start_content_maintenance_task(asyncio.Event()))
+        task = asyncio.create_task(maintenance.start_content_maintenance_task(
+            asyncio.Event(), compute_work=ComputeWorkState(),
+        ))
         try:
             assert await asyncio.to_thread(prepared.wait, 5)
             token = maintenance.defer_background_promotions('root', 'root-inc')
@@ -1141,12 +1160,16 @@ def test_deferral_successor_survives_old_release_and_late_callback_across_restar
         nonlocal successor, phase, waits
         old = maintenance.defer_background_promotions('root', 'root-inc')
         try:
-            await asyncio.wait_for(maintenance.start_content_maintenance_task(asyncio.Event()), 5)
+            await asyncio.wait_for(
+                maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()), 5,
+            )
             old.release()
             successor = maintenance.defer_background_promotions('root', 'root-inc')
             old.release()  # Must not remove the successor's root scope.
             phase, waits = 1, 0
-            await asyncio.wait_for(maintenance.start_content_maintenance_task(asyncio.Event()), 5)
+            await asyncio.wait_for(
+                maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()), 5,
+            )
         finally:
             old.release()
             if successor is not None:
@@ -1181,7 +1204,9 @@ def test_old_incarnation_deferral_cannot_pause_recreated_root(
     async def scenario():
         token = maintenance.defer_background_promotions('root', 'old-inc')
         try:
-            await asyncio.wait_for(maintenance.start_content_maintenance_task(asyncio.Event()), 5)
+            await asyncio.wait_for(
+                maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()), 5,
+            )
         finally:
             token.release()
 
@@ -1249,7 +1274,7 @@ def test_explicit_upgrade_retries_recovery_eligibility_rejected_during_await(
 
     async def scenario():
         stop = asyncio.Event()
-        task = asyncio.create_task(maintenance.start_content_maintenance_task(stop))
+        task = asyncio.create_task(maintenance.start_content_maintenance_task(stop, compute_work=ComputeWorkState()))
         coordinator = db_writer.get_write_coordinator()
         try:
             assert await asyncio.to_thread(rejected.wait, 5)
@@ -1312,7 +1337,7 @@ def test_hot_append_restart_does_not_recover_plaintext_scan(
     async def wait(stop, wake, timeout):
         stop.set()
     monkeypatch.setattr(maintenance, '_wait', wait)
-    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event()))
+    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()))
     assert traversals == []
 
 
@@ -1353,7 +1378,7 @@ def test_interrupted_resume_still_recovers_after_restart(
     async def wait(stop, wake, timeout):
         stop.set()
     monkeypatch.setattr(maintenance, '_wait', wait)
-    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event()))
+    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()))
     owner.refresh_from_db()
     row.refresh_from_db()
     child_row.refresh_from_db()
