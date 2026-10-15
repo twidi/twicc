@@ -68,7 +68,7 @@ test('the settings panel text follows the fixed map', () => {
 test('the scope page mounts the Timeline first, takes its tabs, numbering and routes from projectTabs.js', () => {
     const source = read('../components/project/ProjectDetailPanel.vue')
     assert.ok(source.indexOf('<wa-tab-panel name="timeline">') < source.indexOf('<wa-tab-panel name="stats">'))
-    assert.match(source, /<TimelinePanel :project-id="projectId" \/>/)
+    assert.match(source, /<TimelinePanel :project-id="projectId" :active="isActive && activeTab === 'timeline'" \/>/)
     assert.match(source, /visibleProjectTabs\(\{ hasGitRepo: hasGitRepo\.value \}\)/)
     assert.match(source, /directTab\(index, \{ hasGitRepo: hasGitRepo\.value \}\)/)
     assert.match(source, /tabForRouteName\(route\.name\)/)

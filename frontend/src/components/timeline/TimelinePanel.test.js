@@ -5,9 +5,24 @@ import * as Vue from 'vue'
 
 import { compileComponent, descendants, flush, makeRenderer, virtualScroller } from '../../../tests/helpers/scrollerComponentHarness.js'
 import { createFeedState, createTimelineFeed } from '../../utils/timeline/feed.js'
+import * as liveEventsModule from '../../utils/timeline/liveEvents.js'
 import * as providerLabels from '../../utils/timeline/providerLabels.js'
 import * as rowsModule from '../../utils/timeline/rows.js'
 import * as scopeModule from '../../utils/timeline/scope.js'
+import * as scrollKeeperModule from '../../utils/timeline/scrollKeeper.js'
+
+// The panel binds window events when it mounts: count the listeners to see them removed.
+const windowListeners = new Map()
+globalThis.window = new EventTarget()
+for (const [method, step] of [['addEventListener', 1], ['removeEventListener', -1]]) {
+    const original = window[method].bind(window)
+    window[method] = (type, listener, options) => {
+        windowListeners.set(type, (windowListeners.get(type) ?? 0) + step)
+        original(type, listener, options)
+    }
+}
+const TIMELINE_EVENT_TYPES = ['twicc:timeline-changed', 'twicc:ws-reconnected', 'twicc:ws-first-open']
+const listenerCounts = () => Object.fromEntries(TIMELINE_EVENT_TYPES.map((type) => [type, windowListeners.get(type) ?? 0]))
 
 const RouterLink = { props: ['to'], setup: (props, { slots }) => () => Vue.h('a', { 'data-to': JSON.stringify(props.to) }, slots.default?.()) }
 const stub = (tag, textProp) => ({ props: ['projectId', 'label', 'row', 'dayKey'], setup: (props) => () => Vue.h(tag, { 'data-id': props.row?.key ?? props.projectId }, textProp ? props[textProp] : undefined) })
@@ -94,6 +109,8 @@ function fixture({ events = [event(3), event(2), event(1)], hasMore = false, pro
         '../../providers': { getProviderHelpers: () => null },
         '../../utils/compactHeight': { compactHeight },
         '../../utils/timeline/rows': rowsModule,
+        '../../utils/timeline/liveEvents': liveEventsModule,
+        '../../utils/timeline/scrollKeeper': scrollKeeperModule,
         '../../utils/timeline/providerLabels': providerLabels,
         '../../utils/timeline/scope': scopeModule,
         '../project/ProjectDetailNavList.vue': stub('nav'),
@@ -110,14 +127,15 @@ const settle = async () => {
     await flush()
 }
 
-async function mount(t, f, projectId = '__all__') {
+async function mount(t, f, projectId = '__all__', { active = true } = {}) {
     const { renderer, root } = makeRenderer(600)
-    const props = Vue.reactive({ projectId })
+    const props = Vue.reactive({ projectId, active })
     const app = renderer.createApp({ render: () => Vue.h(f.Panel, props) })
     app.mount(root)
     let mounted = true
     t.after(() => { if (mounted) app.unmount() })
     await settle()
+    root.setActive = async (value) => { props.active = value; await settle() }
     root.unmount = () => { app.unmount(); mounted = false }
     return root
 }
@@ -394,4 +412,110 @@ test('source pins: the band is outside the scroller, the router is not imported,
     assert.match(source, /prevent-auto-scroll-to-bottom/)
     assert.match(source, /@media \(prefers-reduced-transparency: reduce\) \{\s*\.timeline-band \{\s*--glass-sticky-bg: transparent;\s*background: var\(--panel-solid\);/)
     assert.match(source, /:root\.reduce-effects \.timeline-band \{\s*--glass-sticky-bg: transparent;\s*background: var\(--panel-solid\);/)
+})
+
+// ── Staying current ─────────────────────────────────────────────────────────────────────────────────────────
+
+const signal = (latestId) => window.dispatchEvent(new CustomEvent('twicc:timeline-changed', { detail: { latestId } }))
+
+test('a signal with a new id fetches what is new once and shows it at the top', async (t) => {
+    const f = fixture({ fakeScroller: true })
+    const root = await mount(t, f)
+    f.server.respond = ((respond) => (params) => (params.afterId !== null
+        ? { events: [event(4)], has_more: false, truncated: false, latest_id: 4, sessions: {} }
+        : respond(params)))(f.server.respond)
+    signal(4)
+    signal(4)
+    await settle()
+    assert.deepEqual(f.calls.map((c) => c.afterId), [null, 3])
+    assert.deepEqual(rowIds(root), ['event-4', 'event-3', 'event-2', 'event-1'])
+})
+
+test('a signal with a known id does nothing', async (t) => {
+    const f = fixture({ fakeScroller: true })
+    await mount(t, f)
+    signal(3)
+    await settle()
+    assert.equal(f.calls.length, 1)
+})
+
+test('a reconnection and the first OPEN of the socket catch up, as one fetch', async (t) => {
+    const f = fixture({ fakeScroller: true })
+    await mount(t, f)
+    window.dispatchEvent(new Event('twicc:ws-reconnected'))
+    window.dispatchEvent(new Event('twicc:ws-first-open'))
+    await settle()
+    assert.deepEqual(f.calls.map((c) => c.afterId), [null, 3])
+})
+
+test('a resync request triggers nothing timeline-specific', async (t) => {
+    const f = fixture({ fakeScroller: true })
+    await mount(t, f)
+    window.dispatchEvent(new Event('twicc:resync-required'))
+    await settle()
+    assert.equal(f.calls.length, 1)
+})
+
+test('coming back to the Timeline tab catches up once', async (t) => {
+    const f = fixture({ fakeScroller: true })
+    const root = await mount(t, f, '__all__', { active: false })
+    assert.equal(f.calls.length, 1, 'a hidden page loads like a visible one')
+    await root.setActive(true)
+    assert.deepEqual(f.calls.map((c) => c.afterId), [null, 3])
+    await root.setActive(false)
+    assert.equal(f.calls.length, 2, 'leaving the tab fetches nothing')
+})
+
+test('an unmounted page stops listening: its window listeners are removed and nothing is fetched', async (t) => {
+    const before = listenerCounts()
+    const f = fixture({ fakeScroller: true })
+    const root = await mount(t, f)
+    assert.deepEqual(listenerCounts(), Object.fromEntries(TIMELINE_EVENT_TYPES.map((type) => [type, before[type] + 1])))
+    root.unmount()
+    assert.deepEqual(listenerCounts(), before)
+    signal(9)
+    window.dispatchEvent(new Event('twicc:ws-reconnected'))
+    await settle()
+    assert.equal(f.calls.length, 1)
+})
+
+test('scrolled down, rows inserted above put the first visible row back; at the top nothing moves', async (t) => {
+    const f = fixture({ fakeScroller: true })
+    await mount(t, f)
+    f.server.respond = ((respond) => (params) => (params.afterId !== null
+        ? { events: [event(4)], has_more: false, truncated: false, latest_id: 4, sessions: {} }
+        : respond(params)))(f.server.respond)
+    // The day separator is row 0, event-3 row 1: that is the first visible row (`anchorIndex`).
+    f.scroller.log.scrollTop = 400
+    signal(4)
+    await settle()
+    const restores = f.scroller.log.calls.filter(([name]) => name !== 'seed')
+    assert.equal(restores.length, 1)
+    // The row captured BEFORE the render (event-3, not the event-4 that took its place at index 1) ...
+    assert.deepEqual(restores[0][1], { key: 'event-3', index: 1, offset: 7 })
+    // ... and put back AFTER the render (the new row is among the rendered ones).
+    assert.ok(restores[0][2].includes('event-4'), 'the restore waits for the render')
+    f.scroller.log.calls.length = 0
+    f.scroller.log.scrollTop = 0
+    f.server.respond = (params) => (params.afterId !== null
+        ? { events: [event(5)], has_more: false, truncated: false, latest_id: 5, sessions: {} }
+        : { events: [], has_more: false, truncated: false, latest_id: 5, sessions: {} })
+    signal(5)
+    await settle()
+    assert.deepEqual(f.scroller.log.calls.filter(([name]) => name !== 'seed'), [])
+})
+
+test('source pins: the live events and the active prop are wired, useWebSocket dispatches them', () => {
+    const panel = readFileSync(new URL('./TimelinePanel.vue', import.meta.url), 'utf8')
+    assert.match(panel, /bindTimelineEvents\(window, feed\)/)
+    // The order that keeps the view still: capture BEFORE the DOM moves (pre-flush watcher), restore after it.
+    assert.match(panel, /watch\(items, async \(next\) => \{\s*const snapshot = scrollKeeper\.capture\(\)\s*if \(!snapshot\) return\s*await nextTick\(\)\s*scrollKeeper\.restore\(snapshot, [^\n]*\)\s*\}, \{ flush: 'pre' \}\)/)
+    assert.match(panel, /watch\(\(\) => props\.active, \(active\) => \{\s*if \(active\) feed\.refresh\(\)/)
+    const socket = readFileSync(new URL('../../composables/useWebSocket.js', import.meta.url), 'utf8')
+    const changed = socket.slice(socket.indexOf("case 'timeline_changed':"))
+    assert.ok(changed.slice(0, 600).includes("window.dispatchEvent(new CustomEvent('twicc:timeline-changed', { detail: { latestId: msg.latest_id } }))"))
+    const reconnect = socket.slice(socket.indexOf("window.dispatchEvent(new CustomEvent('twicc:ws-reconnected'))"))
+    assert.match(reconnect.slice(0, 500), /\} else \{[^}]*window\.dispatchEvent\(new CustomEvent\('twicc:ws-first-open'\)\)[^}]*\}\s*wasConnected = true/)
+    const detail = readFileSync(new URL('../project/ProjectDetailPanel.vue', import.meta.url), 'utf8')
+    assert.match(detail, /<TimelinePanel :project-id="projectId" :active="isActive && activeTab === 'timeline'" \/>/)
 })

@@ -1331,6 +1331,11 @@ export function useWebSocket() {
             case 'mcp_updated':
                 window.dispatchEvent(new CustomEvent('twicc:mcp-updated'))
                 break
+            case 'timeline_changed':
+                // A new timeline event exists (no session, no project, no content): the Timeline pages fetch
+                // what is new themselves (utils/timeline/liveEvents.js).
+                window.dispatchEvent(new CustomEvent('twicc:timeline-changed', { detail: { latestId: msg.latest_id } }))
+                break
             case 'upload_state': {
                 // One upload's server record (spec §6.3). Lazy import: the
                 // uploads store never imports useWebSocket.
@@ -2024,6 +2029,10 @@ export function useWebSocket() {
             // first connect — panes load on mount, and there was no outage.
             if (isReconnection) {
                 window.dispatchEvent(new CustomEvent('twicc:ws-reconnected'))
+            } else {
+                // `twicc:ws-reconnected` never fires on the first connect: a Timeline page that loaded before
+                // the socket opened asks for what it missed.
+                window.dispatchEvent(new CustomEvent('twicc:ws-first-open'))
             }
             wasConnected = true
         } else if (newStatus === 'CLOSED') {

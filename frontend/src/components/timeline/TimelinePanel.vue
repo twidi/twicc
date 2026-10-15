@@ -10,16 +10,18 @@
 // The data side lives in utils/timeline/ (pure, tested): which events the scope asks for, the fetch queue,
 // the grouping into rows and the wording of each row. This component wires them to the stores and the DOM.
 
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useTimelineFeed } from '../../composables/useTimelineFeed'
 import { ALL_PROJECTS_ID, useDataStore } from '../../stores/data'
 import { useWorkspacesStore } from '../../stores/workspaces'
 import { getProviderHelpers } from '../../providers'
 import { compactHeight } from '../../utils/compactHeight'
+import { bindTimelineEvents } from '../../utils/timeline/liveEvents'
 import { buildTimelineRows, estimateRowHeight, isNearEnd } from '../../utils/timeline/rows'
 import { createLabelsFor } from '../../utils/timeline/providerLabels'
 import { resolveTimelineScope } from '../../utils/timeline/scope'
+import { createScrollKeeper } from '../../utils/timeline/scrollKeeper'
 import ProjectDetailNavList from '../project/ProjectDetailNavList.vue'
 import DaySeparator from '../session/detail/items/DaySeparator.vue'
 import VirtualScroller from '../virtual-scroller/VirtualScroller.vue'
@@ -30,6 +32,11 @@ const props = defineProps({
     projectId: {
         type: String,
         required: true,
+    },
+    /** The Timeline tab is the one on screen (the page is not behind a session, nor on another tab). */
+    active: {
+        type: Boolean,
+        default: true,
     },
 })
 
@@ -52,7 +59,21 @@ const scope = computed(() => resolveTimelineScope({
 
 // The feed compares the SET of ids: a project added, removed or archived reloads the first page.
 watch(() => scope.value.projectIds, (ids) => feed.setScope(ids), { immediate: true })
-onBeforeUnmount(() => feed.dispose())
+
+// ── Staying current (design section 9.2) ───────────────────────────────────────────────────────────────────
+// The page is kept alive per scope: it keeps fetching while hidden and renders nothing. The signal and the
+// socket events reach it through window events dispatched by useWebSocket.js.
+let unbindEvents = null
+onMounted(() => { unbindEvents = bindTimelineEvents(window, feed) })
+onBeforeUnmount(() => {
+    unbindEvents?.()
+    feed.dispose()
+})
+
+// Back on the tab (or the kept-alive page shown again): catch up once; the fetches coalesce in the queue.
+watch(() => props.active, (active) => {
+    if (active) feed.refresh()
+})
 
 // ── What the page shows ───────────────────────────────────────────────────────────────────────────────────
 
@@ -84,9 +105,18 @@ const view = computed(() => {
 
 const itemKey = (item) => item.key
 
-// ── Scroller: estimates, next page ────────────────────────────────────────────────────────────────────────
-
+// ── Scroll: rows inserted above the view must not move it ─────────────────────────────────────────────────
 const scrollerRef = ref(null)
+const scrollKeeper = createScrollKeeper(() => scrollerRef.value)
+
+watch(items, async (next) => {
+    const snapshot = scrollKeeper.capture()
+    if (!snapshot) return
+    await nextTick()
+    scrollKeeper.restore(snapshot, new Map(next.map((row, index) => [row.key, index])))
+}, { flush: 'pre' })
+
+// ── Scroller: estimates, next page ────────────────────────────────────────────────────────────────────────
 
 // A first height estimate per row type (day separator, event line, navigation copy) for the rows the scroller
 // has not measured yet. It runs AFTER the render: the scroller only exists once the first page flipped the view

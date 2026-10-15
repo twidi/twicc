@@ -458,7 +458,7 @@ onBeforeUnmount(() => {
             </wa-tab>
 
             <wa-tab-panel name="timeline">
-                <TimelinePanel :project-id="projectId" />
+                <TimelinePanel :project-id="projectId" :active="isActive && activeTab === 'timeline'" />
             </wa-tab-panel>
 
             <wa-tab-panel name="stats">
