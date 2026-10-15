@@ -117,3 +117,32 @@ def select_outdated_roots(provider: str, compute_version: int) -> tuple[str, ...
         Q(compute_version__isnull=True) | Q(compute_version__lt=compute_version),
         provider=provider, type=SessionType.SESSION, parent_session__isnull=True,
     ).order_by('-mtime', 'id').values_list('id', flat=True))
+
+
+def _outdated_native_roots(provider: str, compute_version: int, excluded_root_ids):
+    """Keep the positive native-root predicate aligned with its partial index."""
+    return Session.objects.filter(
+        Q(compute_version__isnull=True) | Q(compute_version__lt=compute_version),
+        provider=provider, type=SessionType.SESSION, parent_session__isnull=True,
+    ).exclude(pk__in=excluded_root_ids)
+
+
+def select_outdated_root(
+    provider: str, compute_version: int, *, cutoff: float, excluded_root_ids=(),
+) -> str | None:
+    """Admit one stable native root through the ordered partial index."""
+    return _outdated_native_roots(provider, compute_version, excluded_root_ids).filter(
+        mtime__lte=cutoff,
+    ).order_by('-mtime').values_list('id', flat=True).first()
+
+
+def next_root_eligibility(
+    provider: str, compute_version: int, *, cutoff: float, excluded_root_ids=(),
+) -> float | None:
+    """Probe the earliest recent-root deadline after eligible roots run out."""
+    from twicc.providers.compute_selection import COMPUTE_MIN_SOURCE_AGE_SECONDS
+
+    mtime = _outdated_native_roots(provider, compute_version, excluded_root_ids).filter(
+        mtime__gt=cutoff,
+    ).order_by('mtime').values_list('mtime', flat=True).first()
+    return None if mtime is None else mtime + COMPUTE_MIN_SOURCE_AGE_SECONDS

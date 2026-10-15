@@ -713,6 +713,10 @@ class Session(models.Model):
     class Meta:
         ordering = ["-mtime"]
         indexes = [
+            models.Index(
+                fields=["provider", "-mtime", "compute_version"], name="idx_session_compute_root",
+                condition=models.Q(type="session", parent_session__isnull=True),
+            ),
             models.Index(fields=["parent_session"], name="idx_session_parent_cost",
                          condition=models.Q(self_cost__isnull=False)),
             # Covers all "list sessions by project+type" queries (listing + count + sync)

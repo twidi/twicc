@@ -1,5 +1,8 @@
 """Shared source-age selection rules, independent of Django worker setup."""
 
+from typing import NamedTuple
+
+
 COMPUTE_MIN_SOURCE_AGE_SECONDS = 30.0
 COMPUTE_SELECTION_POLL_SECONDS = 1.0
 COMPUTE_STATUS_POLL_SECONDS = 0.05
@@ -20,6 +23,52 @@ def select_required_source_ids(tree, compute_version: int, forced_source_ids=())
         sid for sid in tree.ordered_source_ids
         if sid in versions and (sid in forced or versions[sid] is None or versions[sid] < compute_version)
     )
+
+
+class TreeSelection(NamedTuple):
+    source_id: str | None
+    required_pending: bool
+    next_eligible_at: float | None
+
+
+def select_tree_source(
+    root_id: str, compute_version: int, *, cutoff: float,
+    outstanding=(), excluded_source_ids=(), forced_source_ids=(),
+) -> TreeSelection:
+    """Refresh one admitted tree and keep its deepest unfinished level fenced.
+
+    Writer acknowledgements remain pending even after their version commits.
+    Source-age deadlines use Unix wall time; retry deadlines belong to callers.
+    """
+    from twicc.core.models import Session
+    from twicc.providers.compute_tree import load_native_tree
+
+    tree = load_native_tree(root_id)
+    members = set(tree.member_ids)
+    outstanding = set(outstanding) & members
+    excluded = set(excluded_source_ids)
+    required = set(select_required_source_ids(tree, compute_version, forced_source_ids)) | outstanding
+    if not required:
+        return TreeSelection(None, False, None)
+    mtimes = dict(Session.objects.filter(pk__in=required).values_list('id', 'mtime'))
+    # A forced current-root repair must enqueue its final source only after
+    # earlier applications acknowledge, so its command can complete the tree.
+    if root_id not in required and outstanding and len(required - outstanding) == 1:
+        return TreeSelection(None, True, None)
+    for level in tree.source_levels:
+        unfinished = required.intersection(level)
+        if not unfinished:
+            continue
+        deadlines = []
+        for sid in level:
+            if sid not in unfinished or sid in outstanding or sid in excluded:
+                continue
+            mtime = mtimes[sid]
+            if mtime <= cutoff:
+                return TreeSelection(sid, True, None)
+            deadlines.append(mtime + COMPUTE_MIN_SOURCE_AGE_SECONDS)
+        return TreeSelection(None, True, min(deadlines) if deadlines else None)
+    return TreeSelection(None, True, None)
 
 
 def select_native_tree_source(
