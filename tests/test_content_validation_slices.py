@@ -596,3 +596,70 @@ def test_close_discards_operation_validation_and_final_authorization():
     assert operation.validation is None
     assert operation.final_message is None
     assert operation.final_transaction is None
+
+
+@pytest.mark.parametrize('item_count', [100_000, 200_000])
+def test_authoritative_validation_uses_bounded_primary_key_lookups_at_scale(content_row_factory, item_count):
+    """Actual selected-ID publications must not scan the source ordering index per page."""
+    from time import perf_counter
+
+    from twicc.core.content_storage.types import PreparedComputeBatch
+    from twicc.core.content_storage.validation import publish_validation_page
+
+    owner = make_session(archived=True, created_at=timezone.now() - timedelta(days=60))
+    Session.objects.filter(pk=owner.pk).update(last_line=item_count)
+    owner.refresh_from_db()
+    content = content_row_factory('plain metadata', False, session_ids=[owner.id])
+    quote = connection.ops.quote_name
+    table = quote(SessionItem._meta.db_table)
+    with transaction.atomic(), connection.cursor() as cursor:
+        # Reverse PK order deliberately. The authoritative query must preserve source-line order.
+        for start in range(1, item_count + 1, 10_000):
+            cursor.executemany(
+                f'INSERT INTO {table} (id, session_id, line_num, content, current_content_id, original_content_id) '
+                'VALUES (%s, %s, %s, %s, %s, %s)',
+                [(item_count - line + 1, owner.id, line, '', content.id, content.id)
+                 for line in range(start, min(start + 10_000, item_count + 1))],
+            )
+    operation = begin(owner)
+    profiles = []
+    try:
+        for plaintext in (False, True):
+            operation.plaintext_required = plaintext
+            for label, start in [('first', 1), ('middle', item_count // 2), ('last', item_count - 255)]:
+                expected = tuple((item_count - line + 1, line) for line in range(start, start + 256))
+                batch = PreparedComputeBatch('validation', expected[-1][1], expected, (), None, 256 * 106, False)
+                plans, steps = [], [0]
+
+                def inspect(execute, sql, params, many, context, plans=plans):
+                    if sql.startswith('SELECT item.id, item.line_num,'):
+                        with connection.cursor() as cursor:
+                            cursor.execute('EXPLAIN QUERY PLAN ' + sql, params)
+                            plans.extend(row[-1] for row in cursor.fetchall())
+                    return execute(sql, params, many, context)
+
+                def count_steps(steps=steps):
+                    steps[0] += 100
+                    return 0
+
+                started = perf_counter()
+                connection.connection.set_progress_handler(count_steps, 100)
+                try:
+                    with (extraction._compute_scope(operation, frozenset()), transaction.atomic(),
+                          connection.execute_wrapper(inspect)):
+                        proposed = publish_validation_page(operation, batch)
+                finally:
+                    connection.connection.set_progress_handler(None, 0)
+                elapsed_ms = (perf_counter() - started) * 1000
+                item_plans = [plan for plan in plans if plan.startswith(('SEARCH item ', 'SCAN item '))]
+                profiles.append((label, plaintext, item_plans, steps[0], elapsed_ms))
+                assert proposed.cursor == expected[-1][1]
+                assert proposed.requires_plaintext == plaintext
+                assert not proposed.complete
+        print(f'authoritative validation profiles: items={item_count} {profiles}')
+        assert all(plans and all('SEARCH item USING INTEGER PRIMARY KEY (rowid=?)' in plan for plan in plans)
+                   for _, _, plans, _, _ in profiles), profiles
+        # VM work is deterministic. A whole-source scan exceeds this fixed page-work bound.
+        assert all(steps < 100_000 for _, _, _, steps, _ in profiles), profiles
+    finally:
+        extraction.close_compute_application(operation)

@@ -22,16 +22,19 @@ def invalid_storage_predicate(*, requires_plaintext):
             'OR (item.original_content_id IS NOT NULL AND (' + invalid_slot('original') + '))')
 
 
-def _metadata_rows(session_id, where, params, *, limit=None, requires_plaintext=False):
+def _metadata_rows(session_id, where, params, *, limit=None, requires_plaintext=False, by_item_id=False):
     quote = connection.ops.quote_name
     items, contents, dictionaries = (quote(model._meta.db_table)
                                      for model in (SessionItem, SessionItemContent, ContentDictionary))
     invalid = invalid_storage_predicate(requires_plaintext=requires_plaintext)
+    # SQLite otherwise prefers a complete source-order index scan for ORDER BY,
+    # even with selected IDs. NOT INDEXED retains INTEGER PRIMARY KEY lookups.
+    item_access = 'item NOT INDEXED' if by_item_id else 'item'
     # The byte estimate covers selected metadata, never legacy text or payload bytes.
     sql = (f'SELECT item.id, item.line_num, '
            f'96 + COALESCE(LENGTH(current.codec), 0) + COALESCE(LENGTH(original.codec), 0), '
            f'CASE WHEN ({invalid}) THEN 1 ELSE 0 END '
-           f'FROM {items} item LEFT JOIN {contents} current ON current.id = item.current_content_id '
+           f'FROM {items} {item_access} LEFT JOIN {contents} current ON current.id = item.current_content_id '
            f'LEFT JOIN {contents} original ON original.id = item.original_content_id '
            f'LEFT JOIN {dictionaries} current_dict ON current_dict.id = current.dictionary_id '
            f'LEFT JOIN {dictionaries} original_dict ON original_dict.id = original.dictionary_id '
@@ -87,7 +90,7 @@ def publish_validation_page(operation, batch):
     if batch.rows:
         ids = [row[0] for row in batch.rows]
         rows = _metadata_rows(msg['session_id'], 'item.id IN (' + ','.join(['%s'] * len(ids)) + ')', ids,
-                              requires_plaintext=strong)
+                              requires_plaintext=strong, by_item_id=True)
         if [(row[0], row[1]) for row in rows] != list(batch.rows):
             raise SupersededStorageResult('superseded')
         if any(row[3] for row in rows):
