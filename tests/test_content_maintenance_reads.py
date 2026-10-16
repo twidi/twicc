@@ -163,9 +163,8 @@ def test_publication_shared_owners_reuses_metadata_and_content_rows(content_row_
         with CaptureQueriesContext(connection) as one_queries:
             assert maintenance.publish_prepared_batch(entries[:1], frozenset()) == 1
         transaction.set_rollback(True)
-    with transaction.atomic():
-        with CaptureQueriesContext(connection) as queries:
-            published = maintenance.publish_prepared_batch(entries, frozenset())
+    with transaction.atomic(), CaptureQueriesContext(connection) as queries:
+        published = maintenance.publish_prepared_batch(entries, frozenset())
     assert published == 100
     full_content_fetches = payload_selects(queries)
     assert len(full_content_fetches) == 1

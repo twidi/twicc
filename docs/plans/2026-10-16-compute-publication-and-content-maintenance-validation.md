@@ -21,7 +21,7 @@ Before-correction validation, facts, and candidate mixed cases remain diagnostic
 | Facts, all inputs | 718.56 | 48.65 | SQLite span after first-write completion |
 | Validation, all inputs/caches | 203.84 | 27.14 | SQLite span after first-write completion |
 | Maintenance, normal inputs | 427.13 | 46.77 | SQLite span after first-write completion |
-| Mixed, all measured repetitions | 243.25 | 54.74 | Actual coordinator lease hold |
+| Mixed, all measured repetitions | 243.32 | 54.74 | Actual coordinator lease hold |
 
 The oversized maintenance candidate reaches 275.76 ms. Its COMMIT investigation appears below.
 The specification targets normal slices below 100 ms and requires investigation above 250 ms.
@@ -359,7 +359,7 @@ No extra alternative or repeated full matrix runs follow the structural correcti
 
 ## Mixed publication and maintenance limits
 
-The baseline final coordinator lease reaches 243.25 ms in the matched mixed workload.
+The baseline final coordinator lease reaches 243.32 ms in the matched mixed workload.
 The retained corrected candidate's largest coordinator lease is 54.74 ms, in stopped-agent publication.
 No changed mixed phase has a one-second hold. The retained corrected facts unit cases also remain below 100 ms.
 The mixed baseline's foreground maximum is 103.98 ms; the candidate maximum is 108.78 ms.
