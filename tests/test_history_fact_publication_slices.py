@@ -342,3 +342,118 @@ def test_cancelled_operation_drains_worker_before_temp_cleanup():
     session.refresh_from_db()
     assert not facts.history_facts_are_current(session)
     assert SessionHistoryFact.objects.filter(session=session).count() == 128
+
+
+@pytest.mark.parametrize('count', [10000, 75000])
+def test_delete_pages_bound_actual_prepare_and_publication_vm_work(count):
+    """Neither SQL statement may scan the owner's remaining facts per page."""
+    session = make_session()
+    others = [make_session(id='aaa-unrelated-delete'), make_session(id='zzz-unrelated-delete')]
+    rows = [SessionHistoryFact(
+        id=400000 - 2 * line, session=session, line_num=line,
+        kind=HistoryFactKind.TOOL_CALL if line % 2 else HistoryFactKind.CODE_CELL,
+        key=f'key-{line % 19:02}', data={'value': line},
+    ) for line in range(1, count + 1)]
+    # Reverse PK order differs from the business-index order. Unrelated rows
+    # surround the owner in the same existing index and use interleaved PKs.
+    rows += [SessionHistoryFact(id=400001 - 2 * line, session=others[line % 2], line_num=line,
+                               kind=HistoryFactKind.TOOL_CALL, key='unrelated', data={})
+             for line in range(1, 1025)]
+    SessionHistoryFact.objects.bulk_create(rows, batch_size=1000)
+    expected_ids = [row.id for row in sorted(rows[:count], key=lambda row: (row.kind, row.key, row.line_num))]
+    stage = facts.prepare_compute_history_facts(session.id, [])
+    observations = []
+    deleted = 0
+    try:
+        for remaining in (count, count // 2, 3):
+            # Fixture setup jumps to the first, middle, and final source pages.
+            remove = expected_ids[deleted:count - remaining]
+            for offset in range(0, len(remove), 1000):
+                SessionHistoryFact.objects.filter(pk__in=remove[offset:offset + 1000]).delete()
+            deleted = count - remaining
+            select_steps = 0
+            def select_progress():
+                nonlocal select_steps
+                select_steps += 100
+                return 0
+            # Capture plans separately, so the SELECT step counter includes fetch.
+            def capture(execute, sql, params, many, context):
+                if sql.startswith('SELECT id, LENGTH'):
+                    with connection.cursor() as cursor:
+                        cursor.execute('EXPLAIN QUERY PLAN ' + sql, params)
+                        plan = [row[3] for row in cursor.fetchall()]
+                    observations.append(('prepare', plan))
+                return execute(sql, params, many, context)
+            with connection.execute_wrapper(capture):
+                connection.connection.set_progress_handler(select_progress, 100)
+                try:
+                    page = facts.prepare_fact_delete_page(stage, deleted)
+                finally:
+                    connection.connection.set_progress_handler(None, 0)
+            assert select_steps < 10000, (count, remaining, select_steps)
+            assert page.positions == tuple(expected_ids[deleted:deleted + min(128, remaining)])
+            assert page.cursor == deleted + min(128, remaining)
+            assert observations[-1][1] and all(
+                'SEARCH' in plan and '(session_id=?)' in plan for plan in observations[-1][1])
+            assert not any('TEMP B-TREE' in plan or 'SCAN' in plan for plan in observations[-1][1])
+            delete_steps = 0
+            def delete_progress():
+                nonlocal delete_steps
+                delete_steps += 100
+                return 0
+            def capture_delete(execute, sql, params, many, context):
+                if sql.startswith('DELETE FROM'):
+                    with connection.cursor() as cursor:
+                        cursor.execute('EXPLAIN QUERY PLAN ' + sql, params)
+                        observations.append(('publish', [row[3] for row in cursor.fetchall()]))
+                return execute(sql, params, many, context)
+            with connection.execute_wrapper(capture_delete), transaction.atomic():
+                connection.connection.set_progress_handler(delete_progress, 100)
+                try:
+                    facts.publish_fact_delete_page(stage, page)
+                finally:
+                    connection.connection.set_progress_handler(None, 0)
+            assert delete_steps < 20000, (count, remaining, delete_steps)
+            assert observations[-1][0] == 'publish'
+            assert all('INTEGER PRIMARY KEY' in plan for plan in observations[-1][1]), observations
+            print({'facts': count, 'remaining': remaining, 'prepare_vm_steps': select_steps,
+                   'delete_vm_steps': delete_steps, 'prepare_plan': observations[-2][1],
+                   'delete_plan': observations[-1][1]})
+            deleted += len(page.positions)
+        assert SessionHistoryFact.objects.filter(session__in=others).count() == 1024
+        assert not SessionHistoryFact.objects.filter(session=session).exists()
+    finally:
+        stage.close()
+
+
+def test_delete_count_cursor_byte_cut_and_rollback_retry():
+    session = make_session()
+    SessionHistoryFact.objects.bulk_create([
+        SessionHistoryFact(id=pk, session=session, line_num=line, kind=HistoryFactKind.TOOL_CALL, key=key, data={})
+        for pk, line, key in [(9500, 1, 'a'), (3, 2, 'b'), (8000, 3, 'c')]
+    ])
+    stage = facts.prepare_compute_history_facts(session.id, [])
+    try:
+        page = facts.prepare_fact_delete_page(stage, 0, byte_budget=1)
+        assert page.positions == (9500,)
+        assert page.cursor == 1
+        assert page.bytes == 2 and not page.done
+        with pytest.raises(RuntimeError, match='rollback'), transaction.atomic():
+            facts.publish_fact_delete_page(stage, page)
+            raise RuntimeError('rollback')
+        assert facts.prepare_fact_delete_page(stage, 0, byte_budget=1) == page
+        with transaction.atomic():
+            facts.publish_fact_delete_page(stage, page)
+        second = facts.prepare_fact_delete_page(stage, page.cursor, byte_budget=1)
+        assert second.positions == (3,)
+        assert second.cursor == 2
+        with transaction.atomic():
+            facts.publish_fact_delete_page(stage, second)
+        final = facts.prepare_fact_delete_page(stage, second.cursor, byte_budget=1)
+        assert final.positions == (8000,) and final.cursor == 3 and final.done
+        with transaction.atomic():
+            facts.publish_fact_delete_page(stage, final)
+        empty = facts.prepare_fact_delete_page(stage, final.cursor)
+        assert empty.positions == () and empty.cursor == 3 and empty.done
+    finally:
+        stage.close()

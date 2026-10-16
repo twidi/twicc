@@ -184,13 +184,16 @@ def _prepare_fact_page(stage, after, *, insert, row_budget, byte_budget):
     if row_budget < 1 or byte_budget < 1:
         raise ValueError('Fact page budgets must be positive')
     table = f'temp.{stage.table}' if insert else connection.ops.quote_name(SessionHistoryFact._meta.db_table)
-    position = 'source_order' if insert else 'id'
-    scope = '' if insert else 'session_id = %s AND '
-    parameters = [] if insert else [stage.session_id]
     with connection.cursor() as cursor:
-        cursor.execute(f'SELECT {position}, LENGTH(CAST(data AS BLOB)) FROM {table} '
-                       f'WHERE {scope}{position} > %s ORDER BY {position} LIMIT %s',
-                       [*parameters, after, row_budget + 1])
+        if insert:
+            cursor.execute(f'SELECT source_order, LENGTH(CAST(data AS BLOB)) FROM {table} '
+                           'WHERE source_order > %s ORDER BY source_order LIMIT %s', [after, row_budget + 1])
+        else:
+            # Successful exact-PK deletes remove each admitted page. The existing
+            # business index supplies the next remaining page without sorting.
+            cursor.execute(f'SELECT id, LENGTH(CAST(data AS BLOB)) FROM {table} '
+                           'WHERE session_id = %s ORDER BY kind, key, line_num LIMIT %s',
+                           [stage.session_id, row_budget + 1])
         rows = cursor.fetchall()
     positions, size = [], 0
     for value, length in rows[:row_budget]:
@@ -198,12 +201,13 @@ def _prepare_fact_page(stage, after, *, insert, row_budget, byte_budget):
             break
         positions.append(value)
         size += length
-    return FactPage(positions[-1] if positions else after, tuple(positions), size, len(positions) == len(rows))
+    next_cursor = (positions[-1] if positions else after) if insert else after + len(positions)
+    return FactPage(next_cursor, tuple(positions), size, len(positions) == len(rows))
 
 
-def prepare_fact_delete_page(stage, after_id: int, *, row_budget=128, byte_budget=262144) -> FactPage:
-    """Select source-scoped primary keys and serialized sizes outside the writer."""
-    return _prepare_fact_page(stage, after_id, insert=False, row_budget=row_budget, byte_budget=byte_budget)
+def prepare_fact_delete_page(stage, deleted_count: int, *, row_budget=128, byte_budget=262144) -> FactPage:
+    """Select remaining facts; propose the committed deletion count after this page."""
+    return _prepare_fact_page(stage, deleted_count, insert=False, row_budget=row_budget, byte_budget=byte_budget)
 
 
 def prepare_fact_insert_page(stage, after_order: int, *, row_budget=128, byte_budget=262144) -> FactPage:
@@ -217,8 +221,10 @@ def publish_fact_delete_page(stage, page: FactPage) -> None:
     if page.positions:
         table = connection.ops.quote_name(SessionHistoryFact._meta.db_table)
         placeholders = ', '.join(['%s'] * len(page.positions))
+        # NOT INDEXED keeps INTEGER PRIMARY KEY access for the admitted IDs;
+        # the session predicate must not select the whole business index.
         with connection.cursor() as cursor:
-            cursor.execute(f'DELETE FROM {table} WHERE session_id = %s AND id IN ({placeholders})',
+            cursor.execute(f'DELETE FROM {table} NOT INDEXED WHERE session_id = %s AND id IN ({placeholders})',
                            [stage.session_id, *page.positions])
 
 
