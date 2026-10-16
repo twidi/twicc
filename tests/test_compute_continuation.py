@@ -670,10 +670,10 @@ def test_compute_fifo_waits_for_cleanup_and_terminal_notifications(wal_runtime, 
     begun, closed = [], []
     original_begin, original_close = extraction.begin_compute_application, extraction.close_compute_application
 
-    def begin(msg):
+    def begin(msg, **kwargs):
         assert len(begun) == len(closed)
         begun.append(msg['session_fields']['compute_version'])
-        return original_begin(msg)
+        return original_begin(msg, **kwargs)
 
     def close(operation):
         original_close(operation)
@@ -1277,14 +1277,13 @@ def test_startup_failure_after_discovery_allocation_closes_recovery_and_allows_r
 
 
 @pytest.mark.parametrize('terminal', ['success', 'superseded', 'invalid', 'publication_failure', 'cancel', 'abandon', 'stop'])
-def test_private_fact_preparation_preserves_current_history_and_drains_worker(wal_runtime, monkeypatch, terminal):
+def test_private_fact_preparation_preserves_outdated_history_and_drains_worker(wal_runtime, monkeypatch, terminal):
     from twicc.providers import history_facts
     from twicc.providers.helpers import get_provider_helpers
     from django.test.utils import CaptureQueriesContext
     session, path = wal_runtime
     current = get_provider_helpers(session.provider).current_compute_version
     with sqlite3.connect(path) as database:
-        database.execute('UPDATE core_session SET compute_version=? WHERE id=?', (current, session.id))
         database.execute('INSERT INTO core_sessionhistoryfact(session_id,line_num,kind,key,data) VALUES (?,?,?,?,?)',
                          (session.id, 1, 'tool_call', 'old', '{"old":true}'))
     started, release, finished = threading.Event(), threading.Event(), threading.Event()
@@ -1292,14 +1291,13 @@ def test_private_fact_preparation_preserves_current_history_and_drains_worker(wa
     original = history_facts.prepare_compute_history_facts
     close_connection = db_writer.close_compute_application_connection
     if terminal == 'publication_failure':
-        from twicc.providers import compute_base
-        publish = compute_base.publish_compute_history_facts
+        publish = history_facts.publish_fact_insert_page
 
-        def fail_publication(stage):
-            publish(stage)
+        def fail_publication(stage, page):
+            publish(stage, page)
             raise OSError('injected final fact publication failure')
 
-        monkeypatch.setattr(compute_base, 'publish_compute_history_facts', fail_publication)
+        monkeypatch.setattr(history_facts, 'publish_fact_insert_page', fail_publication)
 
     def prepare(*args):
         captured['pending'] = db_writer._pending_compute
@@ -1344,7 +1342,7 @@ def test_private_fact_preparation_preserves_current_history_and_drains_worker(wa
                     ('old', '{"old":true}'),
                 ]
                 assert database.execute('SELECT compute_version FROM core_session WHERE id=?',
-                                         (session.id,)).fetchone()[0] == current
+                                         (session.id,)).fetchone()[0] is None
                 if terminal == 'superseded':
                     database.execute('UPDATE core_session SET last_offset=1 WHERE id=?', (session.id,))
                 # TEMP preparation releases the main writer for independent foreground writes.
@@ -1381,9 +1379,13 @@ def test_private_fact_preparation_preserves_current_history_and_drains_worker(wa
                 assert not any(sql.upper().startswith(('DELETE', 'INSERT')) and
                                'core_sessionhistoryfact' in sql for sql in captured['queries'])
             with sqlite3.connect(path) as database:
-                assert database.execute('SELECT key FROM core_sessionhistoryfact').fetchall() == [
-                    ('old' if terminal in {'invalid', 'publication_failure', 'superseded', 'cancel', 'abandon'} else 'new',),
+                expected = [] if terminal == 'publication_failure' else [
+                    ('old' if terminal in {'invalid', 'superseded', 'cancel', 'abandon'} else 'new',),
                 ]
+                assert database.execute('SELECT key FROM core_sessionhistoryfact').fetchall() == expected
+                version = database.execute('SELECT compute_version FROM core_session WHERE id=?',
+                                           (session.id,)).fetchone()[0]
+                assert version == (current if terminal in {'success', 'stop'} else None)
         finally:
             release.set()
             await db_writer.stop_db_writer()

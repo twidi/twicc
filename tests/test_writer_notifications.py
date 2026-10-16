@@ -177,7 +177,7 @@ def test_stop_with_blocked_worker_waits_without_spinning(monkeypatch):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize('phase', ['metadata', 'final'])
+@pytest.mark.parametrize('phase', ['metadata', 'history_stage'])
 @pytest.mark.parametrize('failure', [None, 'preparation', 'notification'])
 @pytest.mark.parametrize('stop_during_preparation', [False, True])
 def test_preparation_and_terminal_completion_wake_dispatch(monkeypatch, phase, failure, stop_during_preparation):
@@ -188,20 +188,21 @@ def test_preparation_and_terminal_completion_wake_dispatch(monkeypatch, phase, f
         prepared, release = threading.Event(), threading.Event()
         notification, finish_notification = asyncio.Event(), asyncio.Event()
         foreground = asyncio.Event()
-        operation = SimpleNamespace(phase=phase, history_facts_stage=None if phase == 'final' else object(),
+        operation = SimpleNamespace(phase=phase, history_facts_stage=None if phase == 'history_stage' else object(),
                                     observation=SimpleNamespace(root_id=None, root_incarnation=None), preparation_ms=0)
-        monkeypatch.setattr(extraction, 'begin_compute_application', lambda message: operation)
+        def begin(message, *, progressive_facts=False):
+            assert progressive_facts
+            return operation
+        monkeypatch.setattr(extraction, 'begin_compute_application', begin)
         def prepare(op):
             prepared.set()
             assert release.wait(2)
             if failure == 'preparation':
                 raise ValueError('preparation failed')
-            if phase == 'final':
+            if phase == 'history_stage':
                 op.history_facts_stage = object()
-                return None
-            return SimpleNamespace(phase='metadata')
+            return SimpleNamespace(phase=phase)
         monkeypatch.setattr(extraction, 'prepare_compute_batch', prepare)
-        monkeypatch.setattr(extraction, 'prepare_compute_history_stage', prepare)
         monkeypatch.setattr(extraction, 'publish_compute_batch', lambda op, batch, active: setattr(op, 'phase', 'final'))
         monkeypatch.setattr(extraction, 'final_compute_message', lambda op, active: {})
         monkeypatch.setattr(extraction, 'close_compute_application', lambda op: None)
