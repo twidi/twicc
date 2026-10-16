@@ -11,7 +11,7 @@ from typing import NamedTuple
 import orjson
 
 from channels.db import database_sync_to_async
-from django.db import connections, transaction
+from django.db import connection, connections, transaction
 from django.db.models import BinaryField, F, Q
 from django.db.models.functions import Cast, Length
 from django.utils import timezone
@@ -110,10 +110,17 @@ ROOT_PROOF_FIELDS = ('id', 'storage_incarnation', 'content_state_epoch', 'provid
 class OwnerReadiness(NamedTuple):
     cold: bool
     proof_record: tuple
+    hot: bool = False
 
 
-def _preparation_readiness(owner_ids, active):
-    """Share readiness only within this batch; publication reads authoritative metadata."""
+class PublicationContext(NamedTuple):
+    """Authoritative rows and readiness owned by one publication transaction."""
+    rows: dict[int, SessionItemContent]
+    readiness: dict[str, OwnerReadiness]
+
+
+def _owner_readiness(owner_ids, active):
+    """Resolve operation-local readiness from current metadata and activity."""
     from twicc.providers.helpers import get_provider_helpers
 
     decisions = cached_root_decisions(owner_ids | active, timezone.now(), active)
@@ -142,12 +149,12 @@ def _preparation_readiness(owner_ids, active):
         record = (identity, None if owner is None else tuple(owner[field] for field in OWNER_PROOF_FIELDS),
                   decision.root_id, decision.resolved,
                   None if root_fields is None else tuple(root_fields[field] for field in ROOT_PROOF_FIELDS))
-        readiness[identity] = OwnerReadiness(cold, record)
+        readiness[identity] = OwnerReadiness(cold, record, decision.resolved and not decision.is_cold)
     return readiness
 
 
 def _metadata_proof(owners, readiness=None):
-    """Hash deterministic owner/root pages, with optional batch-local preparation metadata."""
+    """Hash deterministic owner/root pages, with optional operation-local metadata."""
     digest = hashlib.sha256()
     owner_fields = OWNER_PROOF_FIELDS
     root_fields = ROOT_PROOF_FIELDS
@@ -179,10 +186,10 @@ def _proof(row, readiness=None):
                                bytes(row.sha256), row.raw_size)
 
 
-def _proof_matches(entry, row):
+def _proof_matches(entry, row, *, readiness=None):
     proof = entry.proof
     # Compare incarnation-bearing metadata before accepting any old generation.
-    return (tuple(row.session_ids) == proof.owners and _metadata_proof(row.session_ids) == proof.metadata_digest
+    return (tuple(row.session_ids) == proof.owners and _metadata_proof(row.session_ids, readiness) == proof.metadata_digest
             and bytes(row.payload) == proof.payload and bytes(row.sha256) == proof.sha256
             and row.raw_size == proof.raw_size)
 
@@ -251,10 +258,12 @@ def prepare_representation(content_id: int, policy_version: str, observed=None, 
     return PreparedRepresentation(row.id, row.codec, row.dictionary_id, encoded, policy_version, no_gain)
 
 
-def publish_representation(candidate: PreparedRepresentation, active_root_ids: frozenset[str]) -> bool:
+def publish_representation(candidate: PreparedRepresentation, active_root_ids: frozenset[str], *,
+                           context: PublicationContext | None = None) -> bool:
     """Publish under admission and writer ownership after the caller validates its companion proof."""
     _require_writer_transaction()
-    row = SessionItemContent.objects.filter(pk=candidate.content_id).first()
+    row = (SessionItemContent.objects.filter(pk=candidate.content_id).first() if context is None
+           else context.rows.get(candidate.content_id))
     if (row is None or row.codec != candidate.observed_codec
             or row.dictionary_id != candidate.observed_dictionary_id):
         return False
@@ -263,17 +272,19 @@ def publish_representation(candidate: PreparedRepresentation, active_root_ids: f
         return False
     if candidate.policy_version != 'plain':
         dictionary = _dictionary(row)
+        readiness = None if context is None else context.readiness
         if (dictionary is None or compression_policy_version(row.dictionary_provider, dictionary.id)
-                != candidate.policy_version or not _owners_cold(row, active_root_ids)):
+                != candidate.policy_version or not _owners_cold(row, active_root_ids, readiness)):
             return False
         if encoded.codec == 'zstd' and encoded.dictionary_id != dictionary.id:
             return False
-    elif not row.session_ids or not any(
-        decision.resolved and not decision.is_cold for decision in resolve_root_decisions(
-            row.session_ids, timezone.now(), active_root_ids,
-        ).values()
-    ):
-        return False
+    else:
+        hot_owner = (any(context.readiness[identity].hot for identity in row.session_ids) if context is not None
+                     else any(decision.resolved and not decision.is_cold for decision in resolve_root_decisions(
+                         row.session_ids, timezone.now(), active_root_ids,
+                     ).values()))
+        if not row.session_ids or not hot_owner:
+            return False
     # CPU preparation already verifies the exact logical bytes. Publication
     # compares their identity with the persisted observation, without decoding.
     if encoded.codec == 'plain':
@@ -288,6 +299,26 @@ def publish_representation(candidate: PreparedRepresentation, active_root_ids: f
     return True
 
 
+def _acquire_publication_write_guard(entries: tuple[PreparedEntry, ...]) -> None:
+    """Acquire SQLite write ownership before reading authoritative publication state."""
+    if not entries:
+        return
+    quote = connection.ops.quote_name
+    table = quote(SessionItemContent._meta.db_table)
+    column = quote(SessionItemContent._meta.pk.column)
+    with connection.cursor() as cursor:
+        cursor.execute(f'UPDATE {table} SET {column} = {column} WHERE {column} = %s',
+                       [entries[0].candidate.content_id])
+
+
+def _publication_context(entries: tuple[PreparedEntry, ...], active: frozenset[str]) -> PublicationContext:
+    rows = {row.id: row for row in SessionItemContent.objects.filter(
+        pk__in=[entry.candidate.content_id for entry in entries],
+    )}
+    owners = {identity for row in rows.values() for identity in row.session_ids}
+    return PublicationContext(rows, _owner_readiness(owners, active))
+
+
 def publish_prepared_batch(entries: tuple[PreparedEntry, ...], active: frozenset[str]) -> int:
     """Recheck every preparation observation in the publication transaction.
 
@@ -296,11 +327,15 @@ def publish_prepared_batch(entries: tuple[PreparedEntry, ...], active: frozenset
     root generations. No proof survives cancellation, restart, or tree changes.
     """
     _require_writer_transaction()
+    if not entries:
+        return 0
+    _acquire_publication_write_guard(entries)
+    context = _publication_context(entries, active)
     published = 0
     for entry in entries:
-        row = SessionItemContent.objects.filter(pk=entry.candidate.content_id).first()
-        if row is not None and _proof_matches(entry, row):
-            published += publish_representation(entry.candidate, active)
+        row = context.rows.get(entry.candidate.content_id)
+        if row is not None and _proof_matches(entry, row, readiness=context.readiness):
+            published += publish_representation(entry.candidate, active, context=context)
     return published
 
 
@@ -477,7 +512,7 @@ def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_
         selected_ids.append(last)
     selected = list(SessionItemContent.objects.filter(pk__in=selected_ids).defer('payload').order_by('id'))
     active = active_session_ids.get()
-    readiness = _preparation_readiness({identity for row in selected for identity in row.session_ids}, active)
+    readiness = _owner_readiness({identity for row in selected for identity in row.session_ids}, active)
     pending = []
     for row in selected:
         if not _owners_cold(row, active, readiness):

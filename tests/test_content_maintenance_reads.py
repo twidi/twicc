@@ -143,3 +143,103 @@ def test_invalid_ownership_cannot_prepare_compression(content_row_factory, owner
     row.session_ids = [root.id, root.id if ownership == 'duplicate' else 'missing']
     row.save(update_fields=['session_ids'])
     assert maintenance.prepare_compression_batch(0)[1] == ()
+
+
+def owner_selects(queries):
+    return [query['sql'] for query in queries if 'FROM "core_session"' in query['sql']]
+
+
+@pytest.mark.parametrize('ownership', ['shared', 'overlapping', 'distinct'])
+def test_publication_shared_owners_reuses_metadata_and_content_rows(content_row_factory, ownership):
+    owners = [cold(f'owner-{index:03}') for index in range(100 if ownership == 'distinct' else 3)]
+    ids = []
+    for index in range(100):
+        group = ([owners[index].id] if ownership == 'distinct' else
+                 [owners[0].id, owners[1 + (index % 2 if ownership == 'overlapping' else 0)].id])
+        ids.append(content_row_factory(f'{index} content ' * 100, False, session_ids=group).id)
+    _, entries, _ = maintenance.prepare_compression_batch(0)
+    # Roll back the reference publication so both captures observe identical inputs and cache state.
+    with transaction.atomic():
+        with CaptureQueriesContext(connection) as one_queries:
+            assert maintenance.publish_prepared_batch(entries[:1], frozenset()) == 1
+        transaction.set_rollback(True)
+    with transaction.atomic():
+        with CaptureQueriesContext(connection) as queries:
+            published = maintenance.publish_prepared_batch(entries, frozenset())
+    assert published == 100
+    full_content_fetches = payload_selects(queries)
+    assert len(full_content_fetches) == 1
+    assert f'IN ({", ".join(str(identity) for identity in ids)})' in full_content_fetches[0]
+    if ownership == 'shared':
+        assert owner_selects(queries) == owner_selects(one_queries)
+    else:
+        # All selected owners fit in one metadata page, regardless of content count.
+        assert len(owner_selects(queries)) == len(owner_selects(one_queries))
+    selects = [index for index, query in enumerate(queries) if query['sql'].startswith('SELECT')]
+    guard = queries[0]['sql']
+    assert guard.startswith('UPDATE "core_sessionitemcontent" SET "id" = "id" WHERE "id" = ')
+    assert selects[0] > 0
+
+
+def test_empty_publication_performs_no_queries():
+    with transaction.atomic(), CaptureQueriesContext(connection) as queries:
+        assert maintenance.publish_prepared_batch((), frozenset()) == 0
+    assert list(queries) == []
+
+
+@pytest.mark.parametrize('change', ['active', 'resume', 'hot_owner', 'payload', 'codec', 'dictionary',
+                                   'identity', 'missing_ancestry', 'deleted'])
+def test_publication_rechecks_authoritative_observations(content_row_factory, change):
+    owner = cold('owner')
+    child = session('child', type='subagent', parent_session=owner,
+                    content_storage_version=1, storage_incarnation='child')
+    row = content_row_factory('content ' * 100, False, session_ids=[child.id])
+    _, entries, _ = maintenance.prepare_compression_batch(0)
+    active = frozenset()
+    if change == 'active':
+        active = frozenset({owner.id})
+    elif change == 'resume':
+        update_lifecycle(Session.objects.filter(pk=owner.id), last_started_at=timezone.now())
+    elif change == 'hot_owner':
+        row.session_ids = [child.id, session('hot').id]
+        row.save(update_fields=['session_ids'])
+    elif change == 'missing_ancestry':
+        child.parent_session = None
+        child.save(update_fields=['parent_session'])
+    elif change == 'deleted':
+        row.delete()
+    else:
+        field, value = {'payload': ('payload', b'changed'), 'codec': ('codec', 'zstd'),
+                        'dictionary': ('dictionary_id', content_storage_helpers._public_dictionary('codex').id),
+                        'identity': ('sha256', b'x' * 32)}[change]
+        type(row).objects.filter(pk=row.pk).update(**{field: value})
+    with transaction.atomic():
+        assert maintenance.publish_prepared_batch(entries, active) == 0
+
+
+def test_invalid_candidate_does_not_discard_valid_peers(content_row_factory):
+    owner = cold('owner')
+    rows = [content_row_factory(f'{index} content ' * 100, False, session_ids=[owner.id]) for index in range(3)]
+    _, entries, _ = maintenance.prepare_compression_batch(0)
+    type(rows[1]).objects.filter(pk=rows[1].id).update(payload=b'changed')
+    with transaction.atomic():
+        assert maintenance.publish_prepared_batch(entries, frozenset()) == 2
+    for row in rows:
+        row.refresh_from_db()
+    assert [row.codec for row in rows] == ['zstd', 'plain', 'zstd']
+
+
+def test_publication_rollback_discards_context_readiness(content_row_factory):
+    owner = cold('owner')
+    row = content_row_factory('content ' * 100, False, session_ids=[owner.id])
+    _, entries, _ = maintenance.prepare_compression_batch(0)
+    with transaction.atomic():
+        assert maintenance.publish_prepared_batch(entries, frozenset()) == 1
+        transaction.set_rollback(True)
+    row.refresh_from_db()
+    assert row.codec == 'plain'
+    update_lifecycle(Session.objects.filter(pk=owner.id), last_started_at=timezone.now())
+    with transaction.atomic():
+        assert maintenance.publish_prepared_batch(entries, frozenset()) == 0
+    row.refresh_from_db()
+    assert row.codec == 'plain'

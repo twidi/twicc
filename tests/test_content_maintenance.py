@@ -1398,3 +1398,36 @@ def test_stale_plaintext_root_recovery_uses_metadata_without_traversal():
     assert owner.plaintext_verified_epoch == 2
     SessionItem.objects.create(session=owner, line_num=1, content='legacy')
     assert maintenance.recovery_promotion_targets([owner.id]) == {owner.id}
+
+
+@pytest.mark.parametrize('owner_state,expected', [('hot', 3), ('active', 3), ('outdated', 0), ('orphan', 0)])
+def test_prepared_plain_publication_uses_resolved_hot_owners(content_row_factory, owner_state, expected):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from twicc import content_maintenance_task as maintenance
+    from tests.test_content_maintenance_reads import payload_selects, owner_selects
+
+    owner = cold('owner')
+    if owner_state == 'hot':
+        owner.archived = False
+        owner.created_at = timezone.now()
+        owner.save(update_fields=['archived', 'created_at'])
+    elif owner_state == 'outdated':
+        owner.compute_version = 0
+        owner.save(update_fields=['compute_version'])
+    elif owner_state == 'orphan':
+        owner.type = 'subagent'
+        owner.save(update_fields=['type'])
+    rows = [content_row_factory(f'{index} content ' * 100, True, session_ids=[owner.id]) for index in range(3)]
+    entries = tuple(maintenance.PreparedEntry(prepare_representation(row.id, 'plain'), maintenance._proof(row))
+                    for row in rows)
+    active = frozenset({owner.id}) if owner_state == 'active' else frozenset()
+    with transaction.atomic(), CaptureQueriesContext(connection) as queries:
+        assert maintenance.publish_prepared_batch(entries, active) == expected
+    assert len(payload_selects(queries)) == 1
+    # Metadata comes from bounded owner groups, even for persistent plaintext publication.
+    assert len(owner_selects(queries)) <= 3
+    for row in rows:
+        row.refresh_from_db()
+        assert row.codec == ('plain' if expected else 'zstd')
+        assert decode_content(row).endswith('content ')
