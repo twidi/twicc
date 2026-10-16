@@ -4226,15 +4226,11 @@ class BaseSessionCompute:
             # Same monotonic guard as the live stop step (``run_stop_step``): a batch
             # recompute of the parent must not re-freeze as "stopped" a resumable
             # subagent whose live sync already recorded newer activity.
-            agent_stopped = msg.get('agent_stopped')
-            if agent_stopped:
-                for entry in agent_stopped:
-                    stopped_at = datetime.fromisoformat(entry['stopped_at'])
-                    apply_compute_lifecycle(msg, lambda entry=entry, stopped_at=stopped_at: update_lifecycle(
-                        Session.objects.filter(id=entry['agent_session_id']).exclude(
-                            last_updated_at__gt=stopped_at,
-                        ), last_stopped_at=stopped_at, last_updated_at=stopped_at,
-                    ))
+            operation = msg.get('_storage_operation')
+            if operation is None or not operation.stopped_agents_complete:
+                from twicc.providers.compute_lifecycle import normalize_agent_stops, publish_agent_stops
+
+                publish_agent_stops(msg, normalize_agent_stops(msg.get('agent_stopped') or ()))
 
         with timed_sync_phase('compute_final_project_metadata'):
             # 12. Update project metadata (sessions_count, mtime, total_cost)

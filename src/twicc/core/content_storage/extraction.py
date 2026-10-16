@@ -11,6 +11,8 @@ from types import MappingProxyType
 from time import perf_counter
 from datetime import datetime
 
+import orjson
+
 from django.db import transaction
 from django.db.models import BinaryField, F, Max, Q
 from django.db.models.functions import Cast, Length
@@ -525,6 +527,8 @@ class ComputeStorageOperation:
         self.pending_batch = None
         self.reconciled_contents = {}
         self.history_facts_stage = None
+        self.stopped_agents = None
+        self.stopped_agents_complete = False
         self.preparation_ms = 0.0
         self.max_publication_ms = 0.0
 
@@ -661,6 +665,22 @@ def prepare_compute_batch(operation):
             elif operation.phase == 'extraction':
                 batch = _prepare_extraction(msg['session_id'], msg['observed_upper_line'], operation.cursor,
                                             ROW_BUDGET, BYTE_BUDGET)
+            elif operation.phase == 'stopped_agents':
+                from twicc.providers.compute_lifecycle import (
+                    STOP_AGENT_BUDGET, STOP_BYTE_BUDGET, normalize_agent_stops,
+                )
+                if operation.stopped_agents is None:
+                    operation.stopped_agents = normalize_agent_stops(msg.get('agent_stopped') or ())
+                chunk, size = [], 0
+                for update in operation.stopped_agents[operation.cursor:operation.cursor + STOP_AGENT_BUDGET]:
+                    length = len(orjson.dumps((update.session_id, update.stopped_at)))
+                    if chunk and size + length > STOP_BYTE_BUDGET:
+                        break
+                    chunk.append(update)
+                    size += length
+                end = operation.cursor + len(chunk)
+                batch = PreparedComputeBatch('stopped_agents', end, tuple(chunk), (), None, size,
+                                             end == len(operation.stopped_agents))
             elif operation.phase == 'reconciliation':
                 local = {**msg, '_storage_reconcile_position': operation.cursor}
                 batch = _prepare_reconciliation(local, operation.cursor[0], ROW_BUDGET, BYTE_BUDGET)
@@ -698,6 +718,10 @@ def publish_compute_batch(operation, batch, active_ids):
         elif batch.phase == 'extraction':
             _publish_extraction(msg['session_id'], msg['observed_incarnation'], msg['observed_epoch'],
                                 msg['observed_upper_line'], batch)
+        elif batch.phase == 'stopped_agents':
+            from twicc.providers.compute_lifecycle import publish_agent_stops
+
+            publish_agent_stops({**msg, '_storage_final_root': placement}, batch.rows)
         elif batch.phase == 'reconciliation':
             _publish_reconciliation(msg, batch)
         _settle_placement_epoch(placement)
@@ -707,8 +731,11 @@ def publish_compute_batch(operation, batch, active_ids):
     operation.pending_batch = None
     operation.cursor = batch.cursor
     if batch.done:
+        if batch.phase == 'stopped_agents':
+            operation.stopped_agents_complete = True
         next_phase = {'counts': 'metadata', 'metadata': 'overrides', 'overrides': 'extraction',
-                      'extraction': 'reconciliation', 'reconciliation': 'final'}[batch.phase]
+                      'extraction': 'stopped_agents', 'stopped_agents': 'reconciliation',
+                      'reconciliation': 'final'}[batch.phase]
         operation.phase = next_phase
         operation.cursor = -1 if next_phase == 'extraction' else (-1, 1) if next_phase == 'reconciliation' else 0
     logger.debug('Compute storage publication: session=%s phase=%s rows=%d bytes=%d elapsed_ms=%.1f cursor=%s',
@@ -775,6 +802,7 @@ def prepare_compute_result(msg, item_row_budget=2000):
         final = final_compute_message(operation, msg.get('_active_session_ids', frozenset()))
         # Compatibility callers publish after this handle's TEMP scope ends.
         final.pop('_storage_operation')
+        final['agent_stopped'] = []
         final['_storage_observation'] = operation.observation
         final['_storage_final_root'].pop('operation')
         return final

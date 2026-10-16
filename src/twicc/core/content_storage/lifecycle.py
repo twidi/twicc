@@ -54,7 +54,7 @@ def _root_map(ids):
 
 
 @contextmanager
-def lifecycle_change(session_ids: Iterable[str]):
+def lifecycle_change(session_ids: Iterable[str], *, defer_plaintext_inspection: bool = False):
     """Invalidate changed lifecycle metadata and both native roots in the actual write transaction."""
     with transaction.atomic():
         ids = tuple(set(session_ids))
@@ -81,11 +81,12 @@ def lifecycle_change(session_ids: Iterable[str]):
         decisions = resolve_root_decisions(changed, timezone.now(), active_session_ids.get())
         from twicc.core.content_storage.ingestion import ingestion_preserves_plaintext
 
+        # Deferred inspection retains a targeted obligation; a root proof covers only its own references.
         targets = {sid for sid, decision in decisions.items()
                    if decision.resolved and not decision.is_cold
                    and (old_decisions[sid].is_cold
                         or (certificates.get(sid) is None and not ingestion_preserves_plaintext(sid)
-                            and not session_plaintext_metadata(sid)))}
+                            and (defer_plaintext_inspection or not session_plaintext_metadata(sid))))}
         invalidate_roots(roots, promotion_targets=targets)
         for root in roots:
             certificate = certificates.get(root)
@@ -93,11 +94,11 @@ def lifecycle_change(session_ids: Iterable[str]):
                 carry_plaintext_certificate(certificate)
 
 
-def update_lifecycle(queryset, **updates) -> int:
+def update_lifecycle(queryset, *, defer_plaintext_inspection: bool = False, **updates) -> int:
     """Apply a scoped QuerySet update, preserving its predicates and transaction boundary."""
     with transaction.atomic():
         ids = tuple(queryset.values_list('id', flat=True))
-        with lifecycle_change(ids):
+        with lifecycle_change(ids, defer_plaintext_inspection=defer_plaintext_inspection):
             return queryset.update(**updates)
 
 

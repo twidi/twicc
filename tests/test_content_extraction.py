@@ -857,3 +857,20 @@ def test_final_child_validation_does_not_certify_its_root():
     assert child.plaintext_verified_epoch is None
     assert root.content_storage_version is None
     assert root.plaintext_verified_epoch is None
+
+
+def test_compute_phase_order_includes_stopped_agents_and_compatibility_clears_stops():
+    from twicc.core.content_storage import extraction
+
+    root = make_session()
+    operation = extraction.begin_compute_application(message(root))
+    phases = []
+    try:
+        while operation.phase != 'final':
+            phases.append(operation.phase)
+            extraction.publish_compute_batch(operation, extraction.prepare_compute_batch(operation), frozenset())
+        assert phases == ['counts', 'metadata', 'overrides', 'extraction', 'stopped_agents', 'reconciliation']
+        assert operation.stopped_agents_complete
+    finally:
+        extraction.close_compute_application(operation)
+    assert extraction.prepare_compute_result(message(root))['agent_stopped'] == []

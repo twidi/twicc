@@ -301,3 +301,17 @@ def test_unresolved_full_compute_extracts_plaintext_without_readiness():
     item.refresh_from_db()
     assert item.current_content.codec == 'plain'
     assert child.plaintext_verified_epoch is None
+
+
+def test_deferred_update_keyword_never_reaches_query_update(monkeypatch):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    root = make_session('deferred')
+    monkeypatch.setattr(lifecycle, 'session_plaintext_metadata', lambda sid: pytest.fail('Unbounded inspection'))
+    with CaptureQueriesContext(connection) as queries:
+        assert lifecycle.update_lifecycle(Session.objects.filter(pk=root.id),
+                                          defer_plaintext_inspection=True, last_updated_at=timezone.now()) == 1
+    assert all('defer_plaintext_inspection' not in query['sql'] for query in queries)
+    root.refresh_from_db()
+    assert root.content_state_epoch == 5
