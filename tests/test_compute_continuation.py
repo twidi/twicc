@@ -1390,3 +1390,61 @@ def test_private_fact_preparation_preserves_current_history_and_drains_worker(wa
             db_writer._compute_states.pop(run_id, None)
             db_writer._compute_done_events.pop(run_id, None)
     asyncio.run(scenario())
+
+
+def test_final_activity_tightening_retains_application_until_bounded_revalidation(wal_runtime, monkeypatch):
+    """A stricter final policy resumes phases without a terminal notification or source release."""
+    session, path = wal_runtime
+    with closing(sqlite3.connect(path)) as database, database:
+        database.execute("UPDATE core_session SET archived = 1, created_at = '2020-01-01 00:00:00' WHERE id = ?",
+                         [session.id])
+    active, restarts, validation_states = set(), [], []
+    publish = extraction.publish_compute_batch
+    final = extraction.final_compute_message
+
+    def publish_page(operation, batch, active_ids):
+        progress = publish(operation, batch, active_ids)
+        if progress.phase == 'final':
+            validation_states.append(operation.validation)
+            active.add(session.id)
+        return progress
+
+    def final_message(operation, active_ids):
+        result = final(operation, active_ids)
+        if result is None:
+            pending = db_writer._pending_compute
+            assert pending.operation is operation
+            assert not pending.terminal and pending.result is None
+            assert operation.phase == 'reconciliation'
+            assert operation.validation is None
+            stored = Session.objects.get(pk=session.id)
+            assert stored.compute_version != 123
+            assert stored.content_storage_version is None
+            assert stored.plaintext_verified_epoch != stored.content_state_epoch
+            restarts.append(operation)
+        return result
+
+    monkeypatch.setattr(extraction, 'publish_compute_batch', publish_page)
+    monkeypatch.setattr(extraction, 'final_compute_message', final_message)
+    monkeypatch.setattr(db_writer, '_active_compute_ids', lambda: frozenset(active))
+
+    async def scenario():
+        db_writer.start_db_writer()
+        applied = asyncio.Queue()
+        run_id, _ = db_writer.arm_compute_completion(Provider.CODEX, display_session_ids=set(), total_display=0,
+                                                    applied_queue=applied)
+        db_writer.get_subprocess_queue().put(result_message(session, run_id))
+        db_writer.get_subprocess_queue().put({'type': 'done', 'provider': 'codex', 'run_id': run_id})
+        try:
+            assert (await asyncio.wait_for(applied.get(), 5)).outcome == 'applied'
+            assert applied.empty()
+        finally:
+            await db_writer.stop_db_writer()
+    asyncio.run(scenario())
+    assert len(restarts) == 1
+    assert len(validation_states) == 2
+    assert not validation_states[0].requires_plaintext
+    assert validation_states[1].requires_plaintext and validation_states[1].complete
+    with closing(sqlite3.connect(path)) as database:
+        assert database.execute('SELECT compute_version, content_storage_version FROM core_session WHERE id = ?',
+                                [session.id]).fetchone() == (123, 1)

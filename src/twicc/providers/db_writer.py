@@ -2103,12 +2103,15 @@ async def _advance_pending_compute_body() -> bool:
                 active = _active_compute_ids()
                 def apply():
                     msg = final_compute_message(pending.operation, active)
+                    if msg is None:
+                        return None
                     return BaseSessionCompute._apply_session_complete_final(msg)
                 pending.result = await run_compute_application_sync(apply)
             if not await _background_turn(finalize, diagnostics=pending, phase='final'):
                 return False
-            await _finish_pending_compute(pending)
-            return True
+            if pending.result is not None:
+                await _finish_pending_compute(pending)
+                return True
         elif pending.batch is not None:
             async def publish():
                 _require_live_compute_run(pending)

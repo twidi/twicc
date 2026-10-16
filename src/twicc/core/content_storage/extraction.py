@@ -13,7 +13,7 @@ from datetime import datetime
 
 import orjson
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import BinaryField, F, Max, Q
 from django.db.models.functions import Cast, Length
 from django.utils import timezone
@@ -107,7 +107,8 @@ def cold_placement(session_id):
 def _cold_placement(session_id):
     """Recheck real native ancestry and guarded final lifecycle values."""
     placement = _placement.get()
-    if placement is None or placement['unresolved_active']:
+    if (placement is None or placement['unresolved_active']
+            or placement.get('operation') is not None and placement['operation'].plaintext_required):
         return False
     root_id, effective = pending_root_fields(session_id, {}, placement['active_roots'])
     if (root_id is None or root_id in placement['active_roots']
@@ -529,6 +530,12 @@ class ComputeStorageOperation:
         self.history_facts_stage = None
         self.progressive_facts = progressive_facts
         self.history_facts_published = False
+        self.validation = None
+        self.plaintext_required = False
+        self.reconciled_requires_plaintext = False
+        self.return_to_validation = False
+        self.final_message = None
+        self.final_transaction = None
         self.stopped_agents = None
         self.stopped_agents_complete = False
         self.preparation_ms = 0.0
@@ -693,6 +700,10 @@ def prepare_compute_batch(operation):
             elif operation.phase == 'reconciliation':
                 local = {**msg, '_storage_reconcile_position': operation.cursor}
                 batch = _prepare_reconciliation(local, operation.cursor[0], ROW_BUDGET, BYTE_BUDGET)
+            elif operation.phase == 'validation':
+                from twicc.core.content_storage.validation import prepare_validation_page
+
+                batch = prepare_validation_page(operation)
             elif operation.phase == 'history_stage':
                 prepare_compute_history_stage(operation)
                 batch = PreparedComputeBatch('history_stage', 0, (), (), None, 0, True)
@@ -724,7 +735,16 @@ def publish_compute_batch(operation, batch, active_ids):
     with _compute_scope(operation, active_ids) as placement, transaction.atomic():
         guard_storage(msg['session_id'], msg['observed_incarnation'], msg['observed_epoch'],
                       msg['observed_upper_line'], msg.get('observed_last_offset'))
-        if batch.phase == 'metadata' and batch.rows:
+        from twicc.core.content_storage.validation import restart_stronger_validation
+
+        if restart_stronger_validation(operation, placement):
+            return ComputeStorageProgress('reconciliation', (-1, 1), placement['root_epoch'], 0, 0, False)
+        validation = None
+        if batch.phase == 'validation':
+            from twicc.core.content_storage.validation import publish_validation_page
+
+            validation = publish_validation_page(operation, batch)
+        elif batch.phase == 'metadata' and batch.rows:
             outcome = BaseSessionCompute.apply_session_items_chunk(
                 msg['session_id'], msg.get('observed_last_offset'), msg.get('item_fields', []),
                 list(batch.rows), [],
@@ -747,25 +767,44 @@ def publish_compute_batch(operation, batch, active_ids):
 
             publish = publish_fact_delete_page if batch.phase == 'history_delete' else publish_fact_insert_page
             publish(operation.history_facts_stage, FactPage(batch.cursor, batch.rows, batch.bytes, batch.done))
+        from twicc.core.content_storage.validation import requires_plaintext
+
+        reconciliation_requires_plaintext = requires_plaintext(operation, placement)
         _settle_placement_epoch(placement)
         epoch = placement['root_epoch']
     operation.max_publication_ms = max(operation.max_publication_ms, (perf_counter() - started) * 1000)
-    operation.placement['root_epoch'] = epoch
-    operation.pending_batch = None
-    operation.cursor = batch.cursor
-    if batch.done:
-        if batch.phase == 'stopped_agents':
-            operation.stopped_agents_complete = True
-        if batch.phase == 'history_insert':
-            operation.history_facts_published = True
-        next_phase = {'counts': 'metadata', 'metadata': 'overrides', 'overrides': 'extraction',
-                      'extraction': 'stopped_agents', 'stopped_agents': 'reconciliation',
-                      'reconciliation': 'history_stage' if operation.progressive_facts else 'final',
-                      'history_stage': 'history_delete', 'history_delete': 'history_insert',
-                      'history_insert': 'final'}[batch.phase]
-        operation.phase = next_phase
-        operation.cursor = (-1 if next_phase in {'extraction', 'history_insert'}
-                            else (-1, 1) if next_phase == 'reconciliation' else 0)
+
+    def adopt():
+        operation.placement['root_epoch'] = epoch
+        if batch.phase == 'reconciliation' and batch.done:
+            operation.reconciled_requires_plaintext = reconciliation_requires_plaintext
+        if validation is not None:
+            operation.validation = validation
+        operation.pending_batch = None
+        operation.cursor = batch.cursor
+        if batch.done:
+            if batch.phase == 'stopped_agents':
+                operation.stopped_agents_complete = True
+            if batch.phase == 'history_insert':
+                operation.history_facts_published = True
+            next_phase = {'counts': 'metadata', 'metadata': 'overrides', 'overrides': 'extraction',
+                          'extraction': 'stopped_agents', 'stopped_agents': 'reconciliation',
+                          'reconciliation': ('validation' if operation.return_to_validation else
+                                             'history_stage' if operation.progressive_facts else 'final'),
+                          'history_stage': 'history_delete', 'history_delete': 'history_insert',
+                          'history_insert': 'validation', 'validation': 'final'}[batch.phase]
+            if batch.phase == 'reconciliation':
+                operation.return_to_validation = False
+            operation.phase = next_phase
+            operation.cursor = (-1 if next_phase in {'extraction', 'history_insert'}
+                                else (-1, 1) if next_phase == 'reconciliation' else 0)
+
+    if operation.progressive_facts:
+        transaction.on_commit(adopt)
+    else:
+        # Detached compatibility runs inside its caller's transaction and closes
+        # this private handle before returning. Its final checks remain exhaustive.
+        adopt()
     logger.debug('Compute storage publication: session=%s phase=%s rows=%d bytes=%d elapsed_ms=%.1f cursor=%s',
                  msg['session_id'], batch.phase, len(batch.rows), batch.bytes,
                  (perf_counter() - started) * 1000, batch.cursor)
@@ -773,13 +812,24 @@ def publish_compute_batch(operation, batch, active_ids):
                                   operation.phase == 'final')
 
 
-def final_compute_message(operation, active_ids):
+def final_compute_message(operation, active_ids) -> dict | None:
+    # None retains the application and requests bounded repair before final apply.
     if operation.phase != 'final' or operation.pending_batch is not None:
         raise ValueError('Compute storage publication is incomplete')
-    with _compute_scope(operation, active_ids) as placement:
-        return {**operation.message, 'item_updates': [], 'content_overrides': [], '_storage_prepared': True,
-                '_storage_operation': operation, '_storage_final_root': dict(placement),
-                '_active_session_ids': active_ids}
+    with _compute_scope(operation, active_ids) as placement, transaction.atomic():
+        msg = operation.message
+        guard_storage(msg['session_id'], msg['observed_incarnation'], msg['observed_epoch'],
+                      msg['observed_upper_line'], msg.get('observed_last_offset'))
+        if operation.progressive_facts:
+            from twicc.core.content_storage.validation import restart_stronger_validation
+
+            if restart_stronger_validation(operation, placement):
+                return None
+        final = {**operation.message, 'item_updates': [], 'content_overrides': [], '_storage_prepared': True,
+                 '_storage_operation': operation, '_storage_final_root': dict(placement),
+                 '_active_session_ids': active_ids}
+    operation.final_message = final
+    return final
 
 
 def prepare_compute_history_stage(operation):
@@ -814,6 +864,9 @@ def close_compute_application(operation):
             operation.reconciled_contents.clear()
             operation.closed = True
             operation.pending_batch = None
+            operation.validation = None
+            operation.final_message = None
+            operation.final_transaction = None
 
 
 def prepare_compute_result(msg, item_row_budget=2000):
@@ -829,6 +882,8 @@ def prepare_compute_result(msg, item_row_budget=2000):
             batch = prepare_compute_batch(operation)
             publish_compute_batch(operation, batch, msg.get('_active_session_ids', frozenset()))
         final = final_compute_message(operation, msg.get('_active_session_ids', frozenset()))
+        if final is None:
+            raise ValueError('Detached compatibility completion cannot restart progressive validation')
         # Compatibility callers publish after this handle's TEMP scope ends.
         final.pop('_storage_operation')
         final['agent_stopped'] = []
@@ -852,10 +907,21 @@ def validate_final_compute_operation(msg):
         decision = resolve_root_decision(msg['session_id'], timezone.now(), pending['active_roots'])
         root_id, effective = pending_root_fields(msg['session_id'], msg.get('session_fields', {}),
                                                  pending['active_roots'])
-        requires_plaintext = (pending['unresolved_active'] or not decision.resolved
+        plaintext_needed = (pending['unresolved_active'] or not decision.resolved
                               or root_id in pending['active_roots']
                               or not cold_from_fields(effective or {}, timezone.now()))
-        if requires_plaintext and SessionItem.objects.filter(session_id=msg['session_id']).filter(
+        if operation is not None and operation.progressive_facts:
+            from twicc.core.content_storage.validation import requires_plaintext
+
+            if (msg is not operation.final_message or operation.phase != 'final'
+                    or operation.pending_batch is not None or operation.validation is None
+                    or not operation.validation.complete
+                    or requires_plaintext(operation, pending)
+                    and not operation.validation.requires_plaintext):
+                raise SupersededStorageResult('superseded')
+            operation.final_transaction = connection.atomic_blocks[-1]
+            return
+        if plaintext_needed and SessionItem.objects.filter(session_id=msg['session_id']).filter(
             Q(current_content__codec='zstd') | Q(original_content__codec='zstd'),
         ).exists():
             raise SupersededStorageResult('superseded')
@@ -878,19 +944,15 @@ def finish_storage_result(msg):
             or any(actual[name] != value for name, value in pending['final_fields'].items())
         )):
             raise SupersededStorageResult('superseded')
-    if SessionItem.objects.filter(session_id=session_id).filter(
-        Q(current_content__codec__isnull=True) | ~Q(content='')
-        | Q(original_content_id__isnull=False, original_content__codec__isnull=True),
-    ).exists():
-        raise ContentIntegrityError('Compute storage placement is incomplete')
     decision = resolve_root_decision(session_id, timezone.now(), pending['active_roots'] if pending else frozenset())
     if decision.resolved and decision.root_id == session_id and not decision.is_cold:
         _finish_plaintext_root_storage(session_id, active_root_ids=pending['active_roots'] if pending else frozenset())
     else:
-        if (not decision.is_cold or pending and pending['unresolved_active']) and _session_has_invalid_storage_metadata(
-            session_id,
-        ):
-            raise ContentIntegrityError('Hot compute storage requires plaintext through both references')
+        plaintext_needed = not decision.is_cold or bool(pending and pending['unresolved_active'])
+        if _session_has_invalid_storage_metadata(session_id, requires_plaintext=plaintext_needed):
+            if plaintext_needed:
+                raise ContentIntegrityError('Hot compute storage requires plaintext through both references')
+            raise ContentIntegrityError('Compute storage placement is incomplete')
         Session.objects.filter(pk=session_id).update(content_storage_version=CONTENT_STORAGE_VERSION)
     operation = msg.get('_storage_operation')
     if operation is not None:

@@ -152,3 +152,10 @@ class ComputeStorageObservation(NamedTuple):
     root_id: str | None
     root_incarnation: str | None
     initial_fields: tuple
+
+
+class StorageValidationState(NamedTuple):
+    upper_line: int
+    cursor: int
+    requires_plaintext: bool
+    complete: bool

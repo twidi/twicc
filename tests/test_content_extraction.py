@@ -872,7 +872,7 @@ def test_compute_phase_order_includes_stopped_agents_and_compatibility_clears_st
             extraction.publish_compute_batch(operation, extraction.prepare_compute_batch(operation), frozenset())
         expected = ['counts', 'metadata', 'overrides', 'extraction', 'stopped_agents', 'reconciliation']
         if progressive:
-            expected += ['history_stage', 'history_delete', 'history_insert']
+            expected += ['history_stage', 'history_delete', 'history_insert', 'validation']
         assert phases == expected
         assert operation.stopped_agents_complete
     finally:

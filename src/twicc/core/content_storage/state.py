@@ -11,7 +11,7 @@ from django.utils import timezone
 
 from twicc.core.content_storage.policy import COLD_FIELDS, CONTENT_STORAGE_VERSION, cold_from_fields, scratch_cold_from_fields
 from twicc.core.content_storage.types import RootDecision, RootStorageSnapshot, SessionPromotionSnapshot
-from twicc.core.models import Session, SessionItem, SessionItemContent
+from twicc.core.models import ContentDictionary, Session, SessionItem, SessionItemContent
 
 TREE_PAGE_SIZE = 128
 ITEM_PAGE_SIZE = 256
@@ -238,7 +238,7 @@ def session_plaintext_metadata(session_id: str) -> bool:
     return not _session_has_invalid_storage_metadata(session_id)
 
 
-def _session_has_invalid_storage_metadata(session_id: str) -> bool:
+def _session_has_invalid_storage_metadata(session_id: str, *, requires_plaintext: bool = True) -> bool:
     """Probe invalid rows in the caller's transaction without loading per-item metadata."""
     if not connection.in_atomic_block:
         raise transaction.TransactionManagementError('Storage metadata requires a caller-owned transaction')
@@ -246,18 +246,19 @@ def _session_has_invalid_storage_metadata(session_id: str) -> bool:
     contents = connection.ops.quote_name(SessionItemContent._meta.db_table)
     # SQL comparisons against NULL are UNKNOWN. Test joined IDs explicitly so
     # dangling references cannot pass, including an optional original reference.
-    invalid = (
-        'item.content IS NULL OR LENGTH(item.content) <> 0 OR current.id IS NULL '
-        "OR current.codec IS NULL OR current.codec <> 'plain' OR current.dictionary_id IS NOT NULL "
-        "OR (item.original_content_id IS NOT NULL AND (original.id IS NULL OR original.codec IS NULL "
-        "OR original.codec <> 'plain' OR original.dictionary_id IS NOT NULL))"
-    )
+    from twicc.core.content_storage.validation import invalid_storage_predicate
+
+    invalid = invalid_storage_predicate(requires_plaintext=requires_plaintext)
+    dictionaries = connection.ops.quote_name(ContentDictionary._meta.db_table)
+    dictionary_joins = ('' if requires_plaintext else
+                        f'LEFT JOIN {dictionaries} current_dict ON current_dict.id = current.dictionary_id '
+                        f'LEFT JOIN {dictionaries} original_dict ON original_dict.id = original.dictionary_id ')
     with connection.cursor() as cursor:
         cursor.execute(
             f'SELECT 1 FROM {items} item '
             f'LEFT JOIN {contents} current ON current.id = item.current_content_id '
             f'LEFT JOIN {contents} original ON original.id = item.original_content_id '
-            f'WHERE item.session_id = %s AND ({invalid}) LIMIT 1',
+            f'{dictionary_joins}WHERE item.session_id = %s AND ({invalid}) LIMIT 1',
             [session_id],
         )
         return cursor.fetchone() is not None

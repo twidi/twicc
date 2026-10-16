@@ -4122,7 +4122,10 @@ class BaseSessionCompute:
                     session_fields['search_version'] = None
                     session_fields['items_cost_computed_through_at'] = None
                 rows = apply_compute_lifecycle(msg, lambda: update_lifecycle(
-                    Session.objects.filter(id=session_id), **session_fields,
+                    Session.objects.filter(id=session_id),
+                    defer_plaintext_inspection=bool(msg.get('_storage_operation') is not None
+                                                   and msg['_storage_operation'].progressive_facts),
+                    **session_fields,
                 ))
                 if rows == 0:
                     logger.debug(f"apply_session_complete: session {session_id} not found for update")
@@ -4242,7 +4245,13 @@ class BaseSessionCompute:
         from twicc.core.content_storage.extraction import finish_storage_result
 
         with timed_sync_phase('compute_final_readiness'):
-            finish_storage_result(msg)
+            operation = msg.get('_storage_operation')
+            if operation is not None and operation.progressive_facts:
+                from twicc.core.content_storage.validation import complete_validated_storage
+
+                complete_validated_storage(operation, msg)
+            else:
+                finish_storage_result(msg)
         return ComputeApplyResult("applied", folded_ancestor_id, title_updated_session_ids, recovered_agent_links)
 
     # ------------------------------------------------------------------
