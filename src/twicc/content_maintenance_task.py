@@ -633,11 +633,18 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
     global _wakeup, _deferral_wakeup
     from django.conf import settings
 
-    from twicc.providers.db_writer import get_write_coordinator
+    from twicc.providers.db_writer import (
+        get_write_coordinator, has_pending_source_applications, source_application_changes,
+    )
     from twicc.session_dirs_cleanup_task import _run_cleanup_pass
 
     loop = asyncio.get_running_loop()
     coordinator = get_write_coordinator()
+    sources_changed = source_application_changes()
+
+    def compute_pending():
+        return compute_work.has_pending() or has_pending_source_applications()
+
     wake = asyncio.Event()
     targets = {}
     closing = False
@@ -670,7 +677,8 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
         # Callers clear events before inspecting authoritative state. A change
         # between that inspection and task creation remains visible here.
         tasks = [asyncio.create_task(_wait(stop_event, wake, timeout)),
-                 asyncio.create_task(compute_work.changed.wait())]
+                 asyncio.create_task(compute_work.changed.wait()),
+                 asyncio.create_task(sources_changed.wait())]
         try:
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in tasks:
@@ -685,8 +693,9 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
         while not stop_event.is_set():
             wake.clear()
             compute_work.changed.clear()
+            sources_changed.clear()
             await promote()
-            if not compute_work.has_pending():
+            if not compute_pending():
                 return not stop_event.is_set()
             # An overdue deadline must not become a zero-timeout polling loop.
             await wait(None)
@@ -717,7 +726,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
             target.demand.release()
 
     def eligible(target):
-        if target.periodic and compute_work.has_pending():
+        if target.periodic and compute_pending():
             return False
         snapshot = target.snapshot
         if (target.priority is WritePriority.BACKGROUND and snapshot is not None and any(
@@ -735,6 +744,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
         while targets and not stop_event.is_set():
             wake.clear()
             compute_work.changed.clear()
+            sources_changed.clear()
             ready = [key for key, target in targets.items() if eligible(target)]
             if not ready:
                 return
@@ -758,6 +768,10 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                         # Never await a background grant in the foreground dispatcher.
                         await wait(0.05)
                         continue
+                if target.periodic and compute_pending():
+                    if lease is not None:
+                        lease.release()
+                    continue
                 if target.snapshot is None:
                     recovery = target.recovery
                     target.snapshot = await _apply(partial(_snapshot, recovery=recovery), session_id,
@@ -795,10 +809,11 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
         while not stop_event.is_set():
             wake.clear()
             compute_work.changed.clear()
+            sources_changed.clear()
             await promote()
             if stop_event.is_set():
                 break
-            if _maintenance_time() >= deadline and not compute_work.has_pending():
+            if _maintenance_time() >= deadline and not compute_pending():
                 try:
                     await recover(periodic=True)
                     await promote()
@@ -816,6 +831,9 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                             if lease is None:
                                 await wait(0.05)
                                 continue
+                            if compute_pending():
+                                lease.release()
+                                continue
                             await _apply(_publish, entries, lease=lease)
                             break
                         await asyncio.sleep(0)
@@ -831,7 +849,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                         logger.exception('Session directory maintenance failed')
                 deadline = _maintenance_time() + INTERVAL
             remaining = max(0, deadline - _maintenance_time())
-            await wait(None if remaining == 0 and compute_work.has_pending() else remaining)
+            await wait(None if remaining == 0 and compute_pending() else remaining)
     except asyncio.CancelledError:
         raise
     except Exception:

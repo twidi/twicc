@@ -16,7 +16,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 @pytest.fixture(autouse=True)
 def no_scheduler_errors(caplog):
     yield
-    assert not [record for record in caplog.records if record.levelname in {'ERROR', 'CRITICAL'}]
+    assert not [record for record in caplog.get_records('call') if record.levelname in {'ERROR', 'CRITICAL'}]
 
 
 @pytest.mark.parametrize('finished, first', [(600, 1800), (2400, 2400)])
@@ -154,9 +154,11 @@ def test_compute_restart_pauses_prepared_publication_and_resumes_cursor(
     assert published == ['prepared']
 
 
+@pytest.mark.parametrize('provider_pending', [False, True])
 def test_foreground_plaintext_demand_runs_while_periodic_is_overdue(
-    writer_state, compute_executor_started, content_row_factory, monkeypatch, settings,
+    writer_state, compute_executor_started, content_row_factory, monkeypatch, settings, provider_pending,
 ):
+    from twicc.providers import db_writer
     from tests.test_content_root_state import session
     from twicc.core.models import SessionItem
     from twicc.core.content_storage.codec import decode_content
@@ -170,7 +172,11 @@ def test_foreground_plaintext_demand_runs_while_periodic_is_overdue(
     # The demand arrives after the startup inventory completes.
     monkeypatch.setattr(maintenance, 'pending_root_page', lambda *args: [])
     work = ComputeWorkState()
-    work.set_pending('codex', True)
+    work.set_pending('codex', provider_pending)
+    if not provider_pending:
+        ingress = db_writer.ComputeIngressQueue()
+        ingress.put_nowait({'type': 'session_complete', 'run_id': 52, 'session_id': 'demand'})
+        monkeypatch.setattr(db_writer, '_subprocess_queue', ingress)
     clock, waits, preparations = [0], [], []
     monkeypatch.setattr(maintenance, '_maintenance_time', lambda: clock[0])
 
@@ -193,7 +199,7 @@ def test_foreground_plaintext_demand_runs_while_periodic_is_overdue(
             await wake.wait()
         else:
             await asyncio.to_thread(restored)
-            assert work.has_pending()
+            assert work.has_pending() or db_writer.has_pending_source_applications()
             stop.set()
 
     monkeypatch.setattr(maintenance, 'prepare_compression_batch', compression)
@@ -203,14 +209,23 @@ def test_foreground_plaintext_demand_runs_while_periodic_is_overdue(
     assert len(waits) == 3
 
 
+@pytest.mark.parametrize('accepted_source', [False, True])
 def test_change_between_inspection_and_wait_is_not_lost(
-    writer_state, compute_executor_started, monkeypatch, settings,
+    writer_state, compute_executor_started, monkeypatch, settings, accepted_source,
 ):
+    from twicc.providers import db_writer
+
     settings.SESSION_DIRS_CLEANUP_ENABLED = False
     clock, preparations, waits = [0], [], []
     work = ComputeWorkState()
-    work.set_pending('codex', True)
-    original_pending, original_wait = work.has_pending, maintenance._wait
+    work.set_pending('codex', not accepted_source)
+    message = {'type': 'session_complete', 'run_id': 53, 'session_id': 'race'}
+    if accepted_source:
+        ingress = db_writer.ComputeIngressQueue(on_put=db_writer._writer_signals.sources.set)
+        monkeypatch.setattr(db_writer, '_subprocess_queue', ingress)
+        ingress.put_nowait(message)
+    original_pending = db_writer.has_pending_source_applications if accepted_source else work.has_pending
+    original_wait = maintenance._wait
     inspections = 0
     monkeypatch.setattr(maintenance, '_maintenance_time', lambda: clock[0])
 
@@ -221,7 +236,11 @@ def test_change_between_inspection_and_wait_is_not_lost(
             inspections += 1
             if inspections == 2:
                 # Simulate a transition after the last authoritative inspection.
-                work.set_pending('codex', False)
+                if accepted_source:
+                    ingress.get_nowait()
+                    db_writer._release_source_application(message)
+                else:
+                    work.set_pending('codex', False)
         return result
 
     def compression(*args):
@@ -238,7 +257,8 @@ def test_change_between_inspection_and_wait_is_not_lost(
             assert timeout is None
             await original_wait(stop, wake, timeout)
 
-    monkeypatch.setattr(work, 'has_pending', pending)
+    monkeypatch.setattr(db_writer if accepted_source else work,
+                        'has_pending_source_applications' if accepted_source else 'has_pending', pending)
     monkeypatch.setattr(maintenance, 'prepare_compression_batch', compression)
     monkeypatch.setattr(maintenance, '_wait', wait)
 
@@ -364,3 +384,162 @@ def test_periodic_recovery_pauses_prepared_promotion_when_compute_restarts(
     row.refresh_from_db()
     assert row.codec == 'plain'
     assert prepared == published == [owner.id]
+
+
+@pytest.mark.parametrize('outcome', ['applied', 'superseded', 'failed', 'abandoned'])
+def test_last_application_release_wakes_overdue_maintenance_without_provider_change(
+    writer_state, compute_executor_started, monkeypatch, settings, outcome,
+):
+    from types import SimpleNamespace
+    from twicc.providers import db_writer
+    from twicc.providers.compute_base import ComputeApplyResult
+    from twicc.providers.writer_signals import WriterSignals
+    from twicc.providers.compute_executor import (
+        start_compute_application_executor, stop_compute_application_executor,
+    )
+
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    clock, preparations = [0], []
+    work = ComputeWorkState()
+    monkeypatch.setattr(maintenance, '_maintenance_time', lambda: clock[0])
+    original_wait = maintenance._wait
+
+    async def scenario():
+        start_compute_application_executor()
+        signals = WriterSignals(asyncio.get_running_loop())
+        monkeypatch.setattr(db_writer, '_writer_signals', signals)
+        ingress = db_writer.ComputeIngressQueue(on_put=signals.notify_sources)
+        monkeypatch.setattr(db_writer, '_subprocess_queue', ingress)
+        message = {'type': 'session_complete', 'run_id': 41, 'session_id': 'accepted'}
+        ingress.put_nowait(message)
+        state = SimpleNamespace(abandoned=outcome == 'abandoned', failed_count=0, applied_queue=None)
+        monkeypatch.setitem(db_writer._compute_states, 41, state)
+        pending = db_writer.PendingComputeApplication(message, 41, state,
+            result=ComputeApplyResult('failed' if outcome == 'abandoned' else outcome))
+        notifications = asyncio.Event()
+
+        async def notify(*args):
+            await notifications.wait()
+
+        def compression(*args):
+            assert not ingress.pending_sources
+            preparations.append(clock[0])
+            return 0, (), True
+
+        async def wait(stop, wake, timeout):
+            if clock[0] == 0:
+                clock[0] = 1800
+            elif not preparations:
+                assert timeout is None, 'Accepted queued work must close the overdue gate'
+                assert not work.has_pending() and not work.changed.is_set()
+                assert ingress.get_nowait() == message
+                monkeypatch.setattr(db_writer, '_pending_compute', pending)
+                await db_writer._finish_pending_compute(pending, notify=outcome != 'abandoned')
+                assert pending.terminal and signals.sources.is_set()
+                assert not work.changed.is_set()
+                # The real source event must wake an already overdue scheduler.
+                await original_wait(stop, wake, timeout)
+            else:
+                assert preparations == [1800]
+                stop.set()
+
+        monkeypatch.setattr(db_writer, '_complete_compute_result', notify)
+        monkeypatch.setattr(maintenance, 'prepare_compression_batch', compression)
+        monkeypatch.setattr(maintenance, '_wait', wait)
+        try:
+            await asyncio.wait_for(maintenance.start_content_maintenance_task(
+                asyncio.Event(), compute_work=work), 2)
+        finally:
+            notifications.set()
+            if pending.notifications is not None:
+                await pending.notifications
+                assert db_writer._collect_pending_notifications(pending)
+            signals.close()
+            await stop_compute_application_executor()
+        assert not ingress.pending_sources and db_writer._pending_compute is None
+        assert preparations == [1800]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('no_gain', [False, True])
+@pytest.mark.parametrize('change_epoch', [False, True])
+def test_prepared_periodic_candidate_rechecks_gate_after_lease(
+    writer_state, compute_executor_started, content_row_factory, monkeypatch, settings, no_gain, change_epoch,
+):
+    from tests.test_content_maintenance import cold
+    from twicc.core.models import SessionItemContent
+    from twicc.providers import db_writer
+    from twicc.providers.writer_signals import WriterSignals
+
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    owner = cold('lease-race')
+    row = content_row_factory('x' if no_gain else 'compress this text ' * 1000,
+                              False, session_ids=[owner.id])
+    clock, published, observations = [0], [], []
+    work = ComputeWorkState()
+    monkeypatch.setattr(maintenance, '_maintenance_time', lambda: clock[0])
+    original_publish = maintenance._publish
+    coordinator = db_writer.get_write_coordinator()
+    original_lease = coordinator.try_background_lease
+    original_prepare = maintenance.prepare_compression_batch
+    message = {'type': 'session_complete', 'run_id': 42, 'session_id': 'arrived'}
+    raced = False
+
+    async def scenario():
+        signals = WriterSignals(asyncio.get_running_loop())
+        monkeypatch.setattr(db_writer, '_writer_signals', signals)
+        ingress = db_writer.ComputeIngressQueue(on_put=signals.notify_sources)
+        monkeypatch.setattr(db_writer, '_subprocess_queue', ingress)
+
+        def prepare(*args):
+            result = original_prepare(*args)
+            observations.extend(result[1])
+            return result
+
+        def lease():
+            nonlocal raced
+            result = original_lease()
+            if result is not None and observations and not raced:
+                raced = True
+                ingress.put_nowait(message)
+            return result
+
+        def publish(entries, active):
+            assert not ingress.pending_sources, 'Gate closes after preparation and lease acquisition'
+            published.extend(entries)
+            return original_publish(entries, active)
+
+        async def wait(stop, wake, timeout):
+            if clock[0] == 0:
+                clock[0] = 1800
+            elif ingress.pending_sources:
+                assert timeout is None
+                assert published == [] and not coordinator.holders
+                def untouched():
+                    stored = SessionItemContent.objects.get(pk=row.pk)
+                    assert stored.codec == 'plain' and stored.compression_attempt_version is None
+                await asyncio.to_thread(untouched)
+                if change_epoch:
+                    from twicc.core.models import Session
+                    await asyncio.to_thread(lambda: Session.objects.filter(pk=owner.pk).update(content_state_epoch=1))
+                ingress.get_nowait()
+                db_writer._release_source_application(message)
+            else:
+                stop.set()
+
+        monkeypatch.setattr(maintenance, 'prepare_compression_batch', prepare)
+        monkeypatch.setattr(maintenance, '_publish', publish)
+        monkeypatch.setattr(coordinator, 'try_background_lease', lease)
+        monkeypatch.setattr(maintenance, '_wait', wait)
+        await maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=work)
+        signals.close()
+
+    asyncio.run(scenario())
+    row.refresh_from_db()
+    assert raced and published == observations and len(published) == 1
+    if change_epoch:
+        assert row.codec == 'plain' and row.compression_attempt_version is None
+    else:
+        assert row.compression_no_gain is no_gain
+        assert row.codec == ('plain' if no_gain else 'zstd')

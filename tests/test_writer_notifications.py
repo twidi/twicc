@@ -227,6 +227,7 @@ def test_preparation_and_terminal_completion_wake_dispatch(monkeypatch, phase, f
             db_writer._async_queue.put_nowait(object())
             await asyncio.wait_for(foreground.wait(), 1)
             assert db_writer._pending_compute.preparation is not None
+            assert db_writer.has_pending_source_applications()
             if stop_during_preparation:
                 stopping = asyncio.create_task(db_writer.stop_db_writer())
                 for _ in range(30):
@@ -239,6 +240,8 @@ def test_preparation_and_terminal_completion_wake_dispatch(monkeypatch, phase, f
                     await asyncio.sleep(0)
             assert signals.sources.is_set()
             assert not ingress.pending_sources
+            assert not db_writer.has_pending_source_applications()
+            assert db_writer.source_application_changes() is signals.sources
             if failure == 'preparation':
                 async with asyncio.timeout(1):
                     while db_writer._pending_compute is not None:
@@ -341,4 +344,105 @@ def test_foreground_arrival_wakes_dispatch_while_background_admission_is_refused
         finally:
             admission.release()
             await db_writer.stop_db_writer()
+    asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_cancelled_cleanup_retains_source_gate_until_worker_and_temp_cleanup_finish(
+    monkeypatch, compute_executor_started,
+):
+    from twicc.core.content_storage import extraction
+    from twicc.providers.compute_base import ComputeApplyResult
+    from twicc.providers.compute_executor import (
+        start_compute_application_executor, stop_compute_application_executor,
+    )
+
+    async def run():
+        start_compute_application_executor()
+        signals = signals_api().WriterSignals(asyncio.get_running_loop())
+        monkeypatch.setattr(db_writer, '_writer_signals', signals)
+        ingress = db_writer.ComputeIngressQueue(on_put=signals.notify_sources)
+        monkeypatch.setattr(db_writer, '_subprocess_queue', ingress)
+        message = {'type': 'session_complete', 'run_id': 50, 'session_id': 'cancelled'}
+        ingress.put_nowait(message)
+        ingress.get_nowait()
+        worker_started, worker_release = threading.Event(), threading.Event()
+        cleanup_started, cleanup_release = threading.Event(), threading.Event()
+
+        def prepare():
+            worker_started.set()
+            assert worker_release.wait(2)
+
+        def close(operation):
+            cleanup_started.set()
+            assert cleanup_release.wait(2)
+
+        monkeypatch.setattr(extraction, 'close_compute_application', close)
+        pending = db_writer.PendingComputeApplication(message, 50,
+            operation=SimpleNamespace(preparation_ms=0), result=ComputeApplyResult('failed'))
+        monkeypatch.setattr(db_writer, '_pending_compute', pending)
+        pending.preparation = asyncio.create_task(db_writer.run_compute_application_sync(prepare))
+        finishing = None
+        try:
+            assert await asyncio.to_thread(worker_started.wait, 1)
+            finishing = asyncio.create_task(db_writer._finish_pending_compute(pending, notify=False))
+            await asyncio.sleep(0)
+            finishing.cancel()
+            await asyncio.sleep(0)
+            signals.sources.clear()
+            assert not finishing.done() and db_writer.has_pending_source_applications()
+            assert not pending.terminal and not signals.sources.is_set()
+            worker_release.set()
+            assert await asyncio.to_thread(cleanup_started.wait, 1)
+            assert db_writer.has_pending_source_applications() and not pending.terminal
+            assert not signals.sources.is_set()
+            cleanup_release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await finishing
+            assert pending.terminal and not db_writer.has_pending_source_applications()
+            assert not ingress.pending_sources and signals.sources.is_set()
+            # A second terminal call must not release accounting or notify twice.
+            signals.sources.clear()
+            await db_writer._finish_pending_compute(pending, notify=False)
+            assert not signals.sources.is_set()
+            await pending.notifications
+            signals.dispatch.clear()
+            assert db_writer._collect_pending_notifications(pending)
+            assert db_writer._pending_compute is None and signals.dispatch.is_set()
+        finally:
+            worker_release.set()
+            cleanup_release.set()
+            if finishing is not None:
+                await asyncio.gather(finishing, return_exceptions=True)
+            await pending.preparation
+            if pending.notifications is not None:
+                await pending.notifications
+            signals.close()
+            await stop_compute_application_executor()
+
+    asyncio.run(run())
+
+
+def test_accepted_sources_count_duplicate_keys_until_each_release(monkeypatch):
+    async def run():
+        signals = signals_api().WriterSignals(asyncio.get_running_loop())
+        monkeypatch.setattr(db_writer, '_writer_signals', signals)
+        monkeypatch.setattr(db_writer, '_pending_compute', None)
+        ingress = db_writer.ComputeIngressQueue(on_put=signals.notify_sources)
+        monkeypatch.setattr(db_writer, '_subprocess_queue', ingress)
+        message = {'type': 'session_complete', 'run_id': 51, 'session_id': 'same-source'}
+        ingress.put_nowait(message)
+        ingress.put_nowait(message)
+        ingress.get_nowait()
+        ingress.get_nowait()
+        signals.sources.clear()
+        db_writer._release_source_application(message)
+        assert db_writer.has_pending_source_applications() and signals.sources.is_set()
+        signals.sources.clear()
+        db_writer._release_source_application(message)
+        assert not db_writer.has_pending_source_applications() and signals.sources.is_set()
+        signals.sources.clear()
+        db_writer._release_source_application(message)
+        assert not db_writer.has_pending_source_applications() and not signals.sources.is_set()
+        signals.close()
     asyncio.run(run())

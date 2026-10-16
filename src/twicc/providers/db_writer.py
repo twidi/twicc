@@ -1095,6 +1095,25 @@ class ComputeIngressQueue(NotifyingQueue):
         super()._put(item)
 
 
+def has_pending_source_applications() -> bool:
+    """Inspect accepted ingress and retained cleanup on the writer event loop."""
+    ingress = _subprocess_queue
+    if isinstance(ingress, ComputeIngressQueue):
+        with ingress.mutex:
+            if ingress.pending_sources:
+                return True
+    # Terminal means worker drain and TEMP cleanup have completed. Notification
+    # delivery retains this object but no longer excludes periodic publication.
+    return _pending_compute is not None and not _pending_compute.terminal
+
+
+def source_application_changes() -> asyncio.Event:
+    """Return the source signal for the current writer lifetime."""
+    if _writer_signals is None:
+        raise RuntimeError("DB writer not started")
+    return _writer_signals.sources
+
+
 def _release_source_application(message):
     ingress = _subprocess_queue
     if not isinstance(ingress, ComputeIngressQueue) or message.get('type') != 'session_complete':
@@ -1102,6 +1121,8 @@ def _release_source_application(message):
     key = message.get('run_id'), message['session_id']
     with ingress.mutex:
         count = ingress.pending_sources.get(key, 0)
+        if not count:
+            return
         if count > 1:
             ingress.pending_sources[key] = count - 1
         else:
@@ -2209,6 +2230,8 @@ def _collect_pending_notifications(pending):
     finally:
         if _pending_compute is pending:
             _pending_compute = None
+            if _writer_signals is not None:
+                _writer_signals.notify_dispatch()
     return True
 
 

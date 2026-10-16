@@ -3,6 +3,7 @@
 import asyncio
 import queue
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,6 +15,8 @@ def writer_state(monkeypatch):
     """Use the existing isolated writer-lock fixture pattern, without a polling task."""
     from twicc.providers.write_coordinator import WriterCoordinator, WriteResources
     coordinator = WriterCoordinator()
+    monkeypatch.setattr(db_writer, "_writer_signals", SimpleNamespace(sources=asyncio.Event()))
+    monkeypatch.setattr(db_writer, "_pending_compute", None)
     monkeypatch.setattr(db_writer, "_write_coordinator", coordinator)
     monkeypatch.setattr(db_writer, "_db_write_lock", coordinator.foreground_lock(WriteResources.WRITER))
     monkeypatch.setattr(db_writer, "_db_writer_stop_event", asyncio.Event())
