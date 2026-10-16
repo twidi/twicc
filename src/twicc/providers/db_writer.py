@@ -64,6 +64,7 @@ from twicc.providers.compute_executor import (
     start_compute_application_executor, start_compute_executor,
     stop_compute_application_executor, stop_compute_executor,
 )
+from twicc.providers.writer_signals import NotifyingAsyncQueue, NotifyingQueue, WriterSignals
 from twicc.providers.write_coordinator import (
     ForegroundLock, WritePriority, WriteResources, WriterCoordinator, write_priority,
 )
@@ -268,6 +269,7 @@ _compute_transport_failures: set[asyncio.Task] = set()
 # The permanent DB writer task and its stop signal.
 _db_writer_task: asyncio.Task | None = None
 _db_writer_stop_event: asyncio.Event | None = None
+_writer_signals: WriterSignals | None = None
 
 # Intra-process queue of finalization jobs the DB writer must run itself, so
 # their writes are serialized with every other DB writer write — the
@@ -283,7 +285,7 @@ _pending_compute: PendingComputeApplication | None = None
 _pending_ingestion = None
 
 
-class _ForegroundJobQueue(asyncio.Queue):
+class _ForegroundJobQueue(NotifyingAsyncQueue):
     """Register foreground demand before exposing a queued job to dispatch."""
 
     def put_nowait(self, job):
@@ -680,7 +682,7 @@ def start_db_writer() -> None:
     global _thread_queue, _subprocess_queue
     global _db_writer_stop_event, _db_writer_task, _async_queue, _background_async_queue
     global _write_coordinator, _db_write_lock, _storage_admission_lock
-    global _db_writer_ready, _pending_ingestion
+    global _db_writer_ready, _pending_ingestion, _writer_signals
 
     if _db_writer_task is not None:
         raise RuntimeError("DB writer already started")
@@ -689,20 +691,22 @@ def start_db_writer() -> None:
 
     reset_dictionary_cache()
     # Validate the synchronous entry point before allocating owned workers.
-    asyncio.get_running_loop()
+    loop = asyncio.get_running_loop()
+    signals = WriterSignals(loop)
+    _writer_signals = signals
     ordinary_started = application_started = False
     try:
         start_compute_executor()
         ordinary_started = True
         start_compute_application_executor()
         application_started = True
-        _thread_queue = queue.Queue(maxsize=INITIAL_SYNC_QUEUE_MAXSIZE)
-        _subprocess_queue = ComputeIngressQueue(maxsize=COMPUTE_QUEUE_MAXSIZE)
-        _background_async_queue = asyncio.Queue()
-        _async_queue = _ForegroundJobQueue()
+        _thread_queue = NotifyingQueue(INITIAL_SYNC_QUEUE_MAXSIZE, on_put=signals.notify_dispatch)
+        _subprocess_queue = ComputeIngressQueue(maxsize=COMPUTE_QUEUE_MAXSIZE, on_put=signals.notify_sources)
+        _background_async_queue = NotifyingAsyncQueue(on_put=signals.notify_dispatch)
+        _async_queue = _ForegroundJobQueue(on_put=signals.notify_dispatch)
         _db_writer_ready = asyncio.get_running_loop().create_future()
         _db_writer_stop_event = asyncio.Event()
-        _write_coordinator = WriterCoordinator()
+        _write_coordinator = WriterCoordinator(on_progress=signals.notify_dispatch)
         _db_write_lock = _write_coordinator.foreground_lock(WriteResources.WRITER)
         _storage_admission_lock = _write_coordinator.foreground_lock(WriteResources.ADMISSION)
         _pending_ingestion = None
@@ -711,7 +715,7 @@ def start_db_writer() -> None:
         async def failed_start():
             global _db_writer_task, _db_writer_stop_event, _thread_queue, _subprocess_queue
             global _async_queue, _background_async_queue, _write_coordinator, _db_write_lock, _storage_admission_lock
-            global _db_writer_ready, _pending_ingestion
+            global _db_writer_ready, _pending_ingestion, _writer_signals
             try:
                 try:
                     if application_started:
@@ -720,6 +724,8 @@ def start_db_writer() -> None:
                     if ordinary_started:
                         await stop_compute_executor()
             finally:
+                signals.close()
+                _writer_signals = None
                 _db_writer_task = _db_writer_stop_event = None
                 _thread_queue = _subprocess_queue = _async_queue = _background_async_queue = None
                 _write_coordinator = _db_write_lock = _storage_admission_lock = None
@@ -769,7 +775,7 @@ async def stop_db_writer() -> None:
     """
     global _write_coordinator, _db_write_lock, _storage_admission_lock, _db_writer_task, _db_writer_stop_event
     global _thread_queue, _subprocess_queue, _async_queue, _background_async_queue, _pending_compute
-    global _db_writer_ready, _pending_ingestion
+    global _db_writer_ready, _pending_ingestion, _writer_signals
 
 
     global _statistics_consumer
@@ -799,6 +805,8 @@ async def stop_db_writer() -> None:
             _statistics_consumer = None
         if _db_writer_stop_event is not None:
             _db_writer_stop_event.set()
+            if _writer_signals is not None:
+                _writer_signals.notify_dispatch()
         if _db_writer_task is not None:
             # Wait for the writer task to finish its final drain.
             cancelled |= await _shielded_shutdown_wait(
@@ -845,6 +853,9 @@ async def stop_db_writer() -> None:
         from twicc.core.content_storage.dictionaries import reset_dictionary_cache
 
         reset_dictionary_cache()
+        if _writer_signals is not None:
+            _writer_signals.close()
+        _writer_signals = None
         _write_coordinator = None
         _db_write_lock = None
         _storage_admission_lock = None
@@ -1071,10 +1082,10 @@ async def put_thread_message(
     return False
 
 
-class ComputeIngressQueue(queue.Queue):
+class ComputeIngressQueue(NotifyingQueue):
     """Track accepted source applications through their final commit or release."""
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, *args, on_put=lambda: None, **kwargs):
+        super().__init__(*args, on_put=on_put, **kwargs)
         self.pending_sources = defaultdict(int)
 
     def _put(self, item):
@@ -1095,6 +1106,7 @@ def _release_source_application(message):
             ingress.pending_sources[key] = count - 1
         else:
             ingress.pending_sources.pop(key, None)
+    ingress._on_put()
 
 
 def get_subprocess_queue():
@@ -1112,7 +1124,7 @@ def create_compute_result_stream(provider: Provider, run_id: int, status_queue=N
     future = _compute_done_events.get(run_id)
 
     def failed(error):
-        if future is None or future.done():
+        if _subprocess_queue is not ingress or future is None or future.done():
             return
         async def settle():
             try:
@@ -2071,6 +2083,7 @@ async def _advance_pending_compute_body() -> bool:
                 pending.preparation = asyncio.create_task(
                     run_compute_application_sync(prepare_compute_history_stage, pending.operation), context=context,
                 )
+                pending.preparation.add_done_callback(lambda task, signals=_writer_signals: signals.notify_dispatch())
                 return True
             async def finalize():
                 _require_live_compute_run(pending)
@@ -2099,6 +2112,7 @@ async def _advance_pending_compute_body() -> bool:
             pending.preparation = asyncio.create_task(
                 run_compute_application_sync(prepare_compute_batch, pending.operation), context=context,
             )
+            pending.preparation.add_done_callback(lambda task, signals=_writer_signals: signals.notify_dispatch())
         return True
     except _AbandonedComputeApplication:
         await _finish_pending_compute(pending, notify=False)
@@ -2179,6 +2193,7 @@ async def _finish_pending_compute(pending, *, notify=True):
             for job in pending.abandon_jobs:
                 await _dispatch_queued_job(job)
     pending.notifications = asyncio.create_task(notify_result())
+    pending.notifications.add_done_callback(lambda task, signals=_writer_signals: signals.notify_dispatch())
     if cancelled:
         raise asyncio.CancelledError()
 
@@ -2525,41 +2540,27 @@ async def _db_writer_loop_body() -> None:
     assert _async_queue is not None
     assert _db_write_lock is not None
 
+    signals = _writer_signals
+    assert signals is not None
     logger.info("DB writer loop running")
-    while not _db_writer_stop_event.is_set():
+    while True:
+        # Clear before authoritative inspection. Notifications during inspection
+        # remain visible to wait, including during the shutdown drain.
+        signals.dispatch.clear()
         try:
-            any_processed = await _drain_one()
-            # Yield: tightly when busy, back off when idle.
-            await asyncio.sleep(0 if any_processed else 0.05)
+            processed = await _drain_one()
+            if _db_writer_stop_event.is_set() and not processed:
+                if (_pending_compute is None and _pending_ingestion is None and _async_queue.empty()
+                        and _background_async_queue.empty() and _thread_queue.empty() and _subprocess_queue.empty()):
+                    break
+            if processed:
+                await asyncio.sleep(0)
+            else:
+                await signals.dispatch.wait()
         except Exception as exc:
             logger.error(f"DB writer tick crashed: {exc}", exc_info=True)
+            # Error recovery is separate from normal idle and drain waiting.
             await asyncio.sleep(0.05)
-
-
-    # Final drain: producers are all stopped by the time stop is signalled, so
-    # the queues only shrink — apply everything still queued before exiting.
-    # On a crashed tick, log and continue (mirroring the steady-state loop):
-    # a bad message is removed from its queue before processing, so the next
-    # pass still makes progress. A break here would strand every message
-    # queued behind the bad one. _drain_one() is written not to raise, so the
-    # except is a last-resort guard.
-    drained_passes = 0
-    while True:
-        try:
-            if not await _drain_one():
-                if (_pending_compute is None and _pending_ingestion is None and _async_queue.empty() and _background_async_queue.empty()
-                        and _thread_queue.empty() and _subprocess_queue.empty()):
-                    break
-                await asyncio.sleep(0.05)
-        except Exception as exc:
-            logger.error(f"DB writer shutdown-drain tick crashed: {exc}", exc_info=True)
-            continue
-        drained_passes += 1
-    if drained_passes:
-        logger.info(
-            "DB writer drained %d queued message pass(es) at shutdown",
-            drained_passes,
-        )
     logger.info("DB writer loop exited")
 
 

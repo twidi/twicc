@@ -9,6 +9,7 @@ used. All methods run on the writer's event loop, including token release.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from contextvars import ContextVar
 from enum import Enum, IntFlag, auto
 from typing import NamedTuple
@@ -70,7 +71,8 @@ class _Request(NamedTuple):
 class WriterCoordinator:
     """Own resource state for one writer lifetime. Public state is read-only to callers."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, on_progress: Callable[[], None] | None = None) -> None:
+        self._on_progress = on_progress
         self.requests: list[_Request] = []
         self.holders: set[ResourceLease] = set()
         self.demands: set[ForegroundDemand] = set()
@@ -111,6 +113,8 @@ class WriterCoordinator:
                     request.future.set_result(self._grant(request.resources, priority))
         if not self.requests and not self.holders:
             self._idle.set()
+        if self._on_progress is not None:
+            self._on_progress()
 
     async def acquire(self, resources: WriteResources, priority: WritePriority) -> ResourceLease:
         if not resources or int(resources) & ~int(_ALL_RESOURCES):

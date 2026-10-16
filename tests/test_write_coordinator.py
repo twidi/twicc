@@ -198,3 +198,39 @@ def test_invalid_priority_type_rejects_before_registering_resources():
         assert not coordinator.demands
         await coordinator.drain()
     asyncio.run(scenario())
+
+
+def test_progress_callback_observes_updated_resource_and_demand_state():
+    async def run():
+        mod = api()
+        states = []
+        coordinator = mod.WriterCoordinator(on_progress=lambda: states.append(
+            (len(coordinator.holders), len(coordinator.demands), len(coordinator.requests))))
+        held = await coordinator.acquire(mod.WriteResources.WRITER, mod.WritePriority.FOREGROUND)
+        demand = coordinator.foreground_demand()
+        states.clear()
+        held.release()
+        assert states[-1] == (0, 1, 0)
+        demand.release()
+        assert states[-1] == (0, 0, 0)
+        count = len(states)
+        demand.release()
+        held.release()
+        assert len(states) == count
+    asyncio.run(run())
+
+
+def test_cancelled_waiter_notifies_progress_after_request_removal():
+    async def run():
+        mod = api()
+        states = []
+        coordinator = mod.WriterCoordinator(on_progress=lambda: states.append(len(coordinator.requests)))
+        held = await coordinator.acquire(mod.WriteResources.WRITER, mod.WritePriority.FOREGROUND)
+        waiter = await queued(coordinator, mod.WriteResources.WRITER, mod.WritePriority.FOREGROUND)
+        states.clear()
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert states[-1] == 0
+        held.release()
+    asyncio.run(run())

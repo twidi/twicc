@@ -364,3 +364,30 @@ def test_killed_worker_releases_parent_command_feeder_with_large_backlog():
             await stop_compute_worker(ctx)
             await db_writer.stop_db_writer()
     asyncio.run(scenario())
+
+
+def test_receiver_thread_enqueue_wakes_writer_after_visible_accounting():
+    from twicc.providers.compute_ipc import ComputeResultStream
+    from twicc.providers.writer_signals import WriterSignals
+
+    async def scenario():
+        signals = WriterSignals(asyncio.get_running_loop())
+        ingress = db_writer.ComputeIngressQueue(2, on_put=signals.notify_sources)
+        failures = []
+        stream = ComputeResultStream(ingress, None, 'codex', 17, failures.append)
+        try:
+            # A small complete frame fits the pipe before its reader starts.
+            stream.sender.put(orjson.dumps({'type': 'session_complete', 'provider': 'codex',
+                                            'run_id': 17, 'session_id': 'received'}))
+            stream.sender.put(orjson.dumps({'type': 'done', 'provider': 'codex', 'run_id': 17}))
+            stream.start()
+            await asyncio.wait_for(signals.sources.wait(), 1)
+            assert signals.dispatch.is_set()
+            assert ingress.get_nowait()['session_id'] == 'received'
+            with ingress.mutex:
+                assert ingress.pending_sources == {(17, 'received'): 1}
+            assert not failures
+        finally:
+            await stream.close()
+            signals.close()
+    asyncio.run(scenario())
