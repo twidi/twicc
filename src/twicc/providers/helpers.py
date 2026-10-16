@@ -1426,9 +1426,11 @@ class ProviderHelpersRegistry:
         on this instance's homes.
         """
         from twicc.provider_homes import provider_env_overlay
+        from twicc.server_env import strip_django_settings_env
 
         for helpers in self._helpers.values():
             helpers.purge_env_vars(env)
+        strip_django_settings_env(env)
         env.update(provider_env_overlay())
 
 

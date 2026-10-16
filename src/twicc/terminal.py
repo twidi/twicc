@@ -48,6 +48,7 @@ from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY
 from twicc.paths import tmux_socket_suffix
 from twicc.provider_homes import provider_env_overlay
 from twicc.providers.helpers import get_provider_helpers_registry
+from twicc.server_env import DJANGO_SETTINGS_ENV
 
 logger = logging.getLogger(__name__)
 
@@ -285,6 +286,7 @@ _TERMINAL_ENV_STRIP_NAMES: frozenset[str] = frozenset({
     "GIT_CONFIG_COUNT",     # drives the GIT_CONFIG_KEY_n/VALUE_n inline-config family
     # agent / CI markers
     "AI_AGENT",
+    DJANGO_SETTINGS_ENV,    # twicc's own settings module: would hijack the user's Django projects
     "CLAUDE_AGENT_SDK_VERSION",
     "CLAUDE_EFFORT",
     "CI",

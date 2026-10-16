@@ -5,6 +5,7 @@ Claude Code agent: wraps a single SDK client instance for one TwiCC session.
 import asyncio
 import base64
 import logging
+import os
 import re
 import shlex
 import time
@@ -55,6 +56,7 @@ from twicc.core.services.attachments.manifest import build_manifest
 from twicc.core.services.attachments.types import AttachmentContent
 from twicc.pending_session_attributes import get_pending_session_attributes
 from twicc.providers.helpers import AgentSettings
+from twicc.server_env import strip_django_settings_env
 
 from .elicitation import attach_elicitation_handler, make_elicitation_pending_request
 from .permissions import (
@@ -1319,6 +1321,10 @@ class ClaudeCodeAgent(BaseAgent):
             self._client = ClaudeSDKClient(options=options)
             if not getattr(self, "ephemeral", False):
                 patch_client_for_logging(self._client, self.session_id)
+
+            # The SDK copies ``os.environ`` for the CLI process (and so for its Bash
+            # tools) and cannot unset a key: drop twicc's own settings module here.
+            strip_django_settings_env(os.environ)
 
             # Connect without prompt to enter streaming mode, then send the message
             # via query(). The SDK's connect(prompt) with a string puts the transport

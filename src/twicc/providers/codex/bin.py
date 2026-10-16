@@ -19,6 +19,8 @@ from typing import NamedTuple
 import orjson
 from openai_codex import CodexConfig
 
+from twicc.server_env import strip_django_settings_env
+
 from .runtime import (
     codex_binary_path,
     codex_path_dir,
@@ -103,6 +105,9 @@ async def make_codex_config(*, cwd: str | None = None, disable_async_questions: 
 
     await ensure_codex_runtime()
     ensure_codex_home()
+    # The SDK copies ``os.environ`` when it spawns the app-server (and so its shell
+    # tools) and cannot unset a key: drop twicc's own settings module first.
+    strip_django_settings_env(os.environ)
     if disable_async_questions:
         from .interactive_catalog import ensure_catalog
 
@@ -122,6 +127,7 @@ async def make_codex_config(*, cwd: str | None = None, disable_async_questions: 
 async def resolve_codex_command() -> CodexCommand:
     """Ensure the runtime exists and return a directly executable command."""
     await ensure_codex_runtime()
+    strip_django_settings_env(os.environ)
     return CodexCommand(
         binary=codex_binary_path(),
         env={**os.environ, **_codex_env()},

@@ -50,6 +50,7 @@ django.setup()
 # models on import. None of the variables we strip influence anything
 # Django reads at startup, so the move is benign.
 from twicc.providers.helpers import get_provider_helpers_registry  # noqa: E402
+from twicc.server_env import strip_django_settings_env  # noqa: E402
 
 get_provider_helpers_registry().purge_env_vars(os.environ)
 
@@ -66,7 +67,11 @@ get_provider_helpers_registry().purge_env_vars(os.environ)
 # (multiprocessing "spawn") — sets it itself before its own ``django.setup()``
 # (see ``twicc.providers.background_compute_task.compute_worker_main``), so it
 # no longer relies on inheriting it from here.
-os.environ.pop("DJANGO_SETTINGS_MODULE", None)
+#
+# This only cleans the boot environment: in-process CLI commands (the MCP
+# server runs them in this process) set the variable again, so every launch
+# point strips it too (see ``twicc.server_env``).
+strip_django_settings_env(os.environ)
 
 # Logger must be created AFTER django.setup() so LOGGING config is applied
 logger = logging.getLogger("twicc.run")

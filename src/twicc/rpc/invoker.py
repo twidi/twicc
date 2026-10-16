@@ -10,6 +10,7 @@ safe to call concurrently from worker threads.
 
 from __future__ import annotations
 
+import os
 from typing import NamedTuple
 
 import typer
@@ -17,6 +18,7 @@ from typer.core import TyperCommand, TyperGroup
 
 from twicc.cli import app
 from twicc.cli._output import _Sink, _capture
+from twicc.server_env import DJANGO_SETTINGS_ENV
 
 
 class InvocationResult(NamedTuple):
@@ -38,6 +40,11 @@ def invoke(argv: list[str]) -> InvocationResult:
     """Execute ``twicc <argv>`` in-process; capture result, error, exit code."""
     sink = _Sink()
     tok = _capture.set(sink)
+    # Commands bootstrap Django with ``os.environ.setdefault(DJANGO_SETTINGS_MODULE)``.
+    # Run in the server process, that would put the variable back into the
+    # environment every agent and terminal launched later inherits (the server
+    # removed it at boot): restore the previous state afterwards.
+    settings_env = os.environ.get(DJANGO_SETTINGS_ENV)
     try:
         # With ``standalone_mode=False`` Click never re-raises a ``typer.Exit``
         # out of ``.main()``: it converts it to the
@@ -59,6 +66,10 @@ def invoke(argv: list[str]) -> InvocationResult:
             sink.error = exc.format_message()
     finally:
         _capture.reset(tok)
+        if settings_env is None:
+            os.environ.pop(DJANGO_SETTINGS_ENV, None)
+        else:
+            os.environ[DJANGO_SETTINGS_ENV] = settings_env
     # Read through the local ``sink``: the ``finally`` above has already reset
     # the ContextVar by the time this line runs.
     return InvocationResult(exit_code=code, result=sink.result, error=sink.error)

@@ -19,6 +19,7 @@ import subprocess
 import time
 
 from twicc.provider_homes import provider_env_overlay
+from twicc.server_env import DJANGO_SETTINGS_ENV
 from twicc.terminal import HYBRID_TMUX_SOCKET_NAME, get_tmux_path
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,9 @@ _PURGED_ENV_NAMES = (
     "CLAUDE_CODE_SESSION_ID",
     "CLAUDE_CODE_CHILD_SESSION",
     "CLAUDE_CODE_EXECPATH",
+    # Not a Claude marker: twicc's own settings module, which must not reach the
+    # Bash tools of the embedded CLI (it would hijack the user's Django projects).
+    DJANGO_SETTINGS_ENV,
 )
 
 # Environment variables FORCED on the hybrid claude process, passed as
