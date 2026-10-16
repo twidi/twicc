@@ -4046,10 +4046,12 @@ class BaseSessionCompute:
                 AgentRunEnd.objects.filter(id__in=run_ends_to_delete).delete()
 
         with timed_sync_phase('compute_final_facts'):
-            # Publish the complete fact set only in the final transaction. Item
-            # pre-apply chunks do not advance the compute version.
+            # Progressive facts remain hidden until this final version publication.
             operation = msg.get('_storage_operation')
-            if operation is not None and operation.history_facts_stage is not None:
+            if operation is not None and operation.progressive_facts:
+                if not operation.history_facts_published:
+                    raise ValueError('Progressive history fact publication is incomplete')
+            elif operation is not None and operation.history_facts_stage is not None:
                 publish_compute_history_facts(operation.history_facts_stage)
             else:
                 replace_history_facts(session_id, [HistoryFact(**fact) for fact in msg['history_facts']])

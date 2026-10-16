@@ -515,7 +515,7 @@ def _settle_placement_epoch(placement):
 class ComputeStorageOperation:
     """Worker-owned mutable state; only successful publications settle cursors."""
 
-    def __init__(self, msg, observation, placement, references):
+    def __init__(self, msg, observation, placement, references, *, progressive_facts=False):
         self.message = msg
         self.observation = observation
         self.placement = placement
@@ -527,6 +527,8 @@ class ComputeStorageOperation:
         self.pending_batch = None
         self.reconciled_contents = {}
         self.history_facts_stage = None
+        self.progressive_facts = progressive_facts
+        self.history_facts_published = False
         self.stopped_agents = None
         self.stopped_agents_complete = False
         self.preparation_ms = 0.0
@@ -564,6 +566,13 @@ def validate_compute_application(operation):
     if operation.closed:
         raise SupersededStorageResult('superseded')
     operation.references.validate_connection()
+    if operation.progressive_facts:
+        from twicc.providers.history_facts import history_facts_are_current
+
+        session = Session.objects.only('provider', 'compute_version').filter(
+            pk=operation.observation.session_id).first()
+        if session is None or history_facts_are_current(session):
+            raise SupersededStorageResult('superseded')
     return _validate_observation(operation.observation, operation.placement['root_epoch'])
 
 
@@ -586,7 +595,7 @@ def _validate_observation(observation, expected_epoch):
     return True
 
 
-def begin_compute_application(msg):
+def begin_compute_application(msg, *, progressive_facts=False):
     """Capture exact target/root observations under a short write-first guard."""
     from twicc.core.content_storage.references import SessionReferenceOperation
     from twicc.providers.compute_base import BaseSessionCompute
@@ -624,7 +633,7 @@ def begin_compute_application(msg):
         references.uses_counts = False
         references.initialized = True
     references.validate_connection()
-    operation = ComputeStorageOperation(msg, observation, placement, references)
+    operation = ComputeStorageOperation(msg, observation, placement, references, progressive_facts=progressive_facts)
     return operation
 
 
@@ -684,6 +693,15 @@ def prepare_compute_batch(operation):
             elif operation.phase == 'reconciliation':
                 local = {**msg, '_storage_reconcile_position': operation.cursor}
                 batch = _prepare_reconciliation(local, operation.cursor[0], ROW_BUDGET, BYTE_BUDGET)
+            elif operation.phase == 'history_stage':
+                prepare_compute_history_stage(operation)
+                batch = PreparedComputeBatch('history_stage', 0, (), (), None, 0, True)
+            elif operation.phase in {'history_delete', 'history_insert'}:
+                from twicc.providers.history_facts import prepare_fact_delete_page, prepare_fact_insert_page
+
+                prepare = prepare_fact_delete_page if operation.phase == 'history_delete' else prepare_fact_insert_page
+                page = prepare(operation.history_facts_stage, operation.cursor)
+                batch = PreparedComputeBatch(operation.phase, page.cursor, page.positions, (), None, page.bytes, page.done)
             else:
                 raise ValueError('Compute storage preparation is complete')
     finally:
@@ -724,6 +742,11 @@ def publish_compute_batch(operation, batch, active_ids):
             publish_agent_stops({**msg, '_storage_final_root': placement}, batch.rows)
         elif batch.phase == 'reconciliation':
             _publish_reconciliation(msg, batch)
+        elif batch.phase in {'history_delete', 'history_insert'}:
+            from twicc.providers.history_facts import FactPage, publish_fact_delete_page, publish_fact_insert_page
+
+            publish = publish_fact_delete_page if batch.phase == 'history_delete' else publish_fact_insert_page
+            publish(operation.history_facts_stage, FactPage(batch.cursor, batch.rows, batch.bytes, batch.done))
         _settle_placement_epoch(placement)
         epoch = placement['root_epoch']
     operation.max_publication_ms = max(operation.max_publication_ms, (perf_counter() - started) * 1000)
@@ -733,11 +756,16 @@ def publish_compute_batch(operation, batch, active_ids):
     if batch.done:
         if batch.phase == 'stopped_agents':
             operation.stopped_agents_complete = True
+        if batch.phase == 'history_insert':
+            operation.history_facts_published = True
         next_phase = {'counts': 'metadata', 'metadata': 'overrides', 'overrides': 'extraction',
                       'extraction': 'stopped_agents', 'stopped_agents': 'reconciliation',
-                      'reconciliation': 'final'}[batch.phase]
+                      'reconciliation': 'history_stage' if operation.progressive_facts else 'final',
+                      'history_stage': 'history_delete', 'history_delete': 'history_insert',
+                      'history_insert': 'final'}[batch.phase]
         operation.phase = next_phase
-        operation.cursor = -1 if next_phase == 'extraction' else (-1, 1) if next_phase == 'reconciliation' else 0
+        operation.cursor = (-1 if next_phase in {'extraction', 'history_insert'}
+                            else (-1, 1) if next_phase == 'reconciliation' else 0)
     logger.debug('Compute storage publication: session=%s phase=%s rows=%d bytes=%d elapsed_ms=%.1f cursor=%s',
                  msg['session_id'], batch.phase, len(batch.rows), batch.bytes,
                  (perf_counter() - started) * 1000, batch.cursor)
@@ -758,7 +786,7 @@ def prepare_compute_history_stage(operation):
     """Build private facts on the retained worker before activity version sampling."""
     from twicc.providers.history_facts import HistoryFact, prepare_compute_history_facts
 
-    if operation.phase != 'final' or operation.pending_batch is not None:
+    if operation.phase not in {'history_stage', 'final'} or operation.pending_batch is not None:
         raise ValueError('Compute storage publication is incomplete')
     validate_compute_application(operation)
     if operation.history_facts_stage is None:
@@ -771,7 +799,8 @@ def prepare_compute_history_stage(operation):
                 )
             validate_compute_application(operation)
         finally:
-            operation.preparation_ms += (perf_counter() - started) * 1000
+            if operation.phase == 'final':
+                operation.preparation_ms += (perf_counter() - started) * 1000
 
 
 def close_compute_application(operation):

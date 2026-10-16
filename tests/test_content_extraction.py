@@ -859,17 +859,21 @@ def test_final_child_validation_does_not_certify_its_root():
     assert root.plaintext_verified_epoch is None
 
 
-def test_compute_phase_order_includes_stopped_agents_and_compatibility_clears_stops():
+@pytest.mark.parametrize('progressive', [False, True])
+def test_compute_phase_order_includes_stopped_agents_and_compatibility_clears_stops(progressive):
     from twicc.core.content_storage import extraction
 
     root = make_session()
-    operation = extraction.begin_compute_application(message(root))
+    operation = extraction.begin_compute_application(message(root), progressive_facts=progressive)
     phases = []
     try:
         while operation.phase != 'final':
             phases.append(operation.phase)
             extraction.publish_compute_batch(operation, extraction.prepare_compute_batch(operation), frozenset())
-        assert phases == ['counts', 'metadata', 'overrides', 'extraction', 'stopped_agents', 'reconciliation']
+        expected = ['counts', 'metadata', 'overrides', 'extraction', 'stopped_agents', 'reconciliation']
+        if progressive:
+            expected += ['history_stage', 'history_delete', 'history_insert']
+        assert phases == expected
         assert operation.stopped_agents_complete
     finally:
         extraction.close_compute_application(operation)

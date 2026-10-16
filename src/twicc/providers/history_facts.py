@@ -116,7 +116,7 @@ def prepare_compute_history_facts(session_id: str, facts: Sequence[HistoryFact])
     stage = ComputeHistoryFactsStage(session_id)
     fields = [SessionHistoryFact._meta.get_field(name) for name in ('session', 'line_num', 'kind', 'key', 'data')]
     columns = ', '.join(connection.ops.quote_name(field.column) for field in fields)
-    definitions = ['source_order integer NOT NULL']
+    definitions = ['source_order INTEGER PRIMARY KEY']
     for field in fields:
         name = connection.ops.quote_name(field.column)
         parameters = field.db_parameters(connection=connection)
@@ -162,6 +162,78 @@ def publish_compute_history_facts(stage: ComputeHistoryFactsStage) -> None:
         cursor.execute(f'DELETE FROM {table} WHERE session_id = %s', [stage.session_id])
         cursor.execute(f'INSERT OR IGNORE INTO {table} ({columns}) '
                        f'SELECT {columns} FROM temp.{stage.table} ORDER BY source_order')
+
+
+class FactPage(NamedTuple):
+    cursor: int
+    positions: tuple[int, ...]
+    bytes: int
+    done: bool
+
+
+def _validate_fact_stage(stage, *, publication=False):
+    stage.validate_connection()
+    if stage.closed:
+        raise ValueError('History fact stage is closed')
+    if publication and not connection.in_atomic_block:
+        raise transaction.TransactionManagementError('History fact publication requires a caller-owned transaction')
+
+
+def _prepare_fact_page(stage, after, *, insert, row_budget, byte_budget):
+    _validate_fact_stage(stage)
+    if row_budget < 1 or byte_budget < 1:
+        raise ValueError('Fact page budgets must be positive')
+    table = f'temp.{stage.table}' if insert else connection.ops.quote_name(SessionHistoryFact._meta.db_table)
+    position = 'source_order' if insert else 'id'
+    scope = '' if insert else 'session_id = %s AND '
+    parameters = [] if insert else [stage.session_id]
+    with connection.cursor() as cursor:
+        cursor.execute(f'SELECT {position}, LENGTH(CAST(data AS BLOB)) FROM {table} '
+                       f'WHERE {scope}{position} > %s ORDER BY {position} LIMIT %s',
+                       [*parameters, after, row_budget + 1])
+        rows = cursor.fetchall()
+    positions, size = [], 0
+    for value, length in rows[:row_budget]:
+        if positions and size + length > byte_budget:
+            break
+        positions.append(value)
+        size += length
+    return FactPage(positions[-1] if positions else after, tuple(positions), size, len(positions) == len(rows))
+
+
+def prepare_fact_delete_page(stage, after_id: int, *, row_budget=128, byte_budget=262144) -> FactPage:
+    """Select source-scoped primary keys and serialized sizes outside the writer."""
+    return _prepare_fact_page(stage, after_id, insert=False, row_budget=row_budget, byte_budget=byte_budget)
+
+
+def prepare_fact_insert_page(stage, after_order: int, *, row_budget=128, byte_budget=262144) -> FactPage:
+    """Select an indexed source-order interval without decoding fact JSON."""
+    return _prepare_fact_page(stage, after_order, insert=True, row_budget=row_budget, byte_budget=byte_budget)
+
+
+def publish_fact_delete_page(stage, page: FactPage) -> None:
+    """Delete exactly the admitted source-session IDs under the caller's guard."""
+    _validate_fact_stage(stage, publication=True)
+    if page.positions:
+        table = connection.ops.quote_name(SessionHistoryFact._meta.db_table)
+        placeholders = ', '.join(['%s'] * len(page.positions))
+        with connection.cursor() as cursor:
+            cursor.execute(f'DELETE FROM {table} WHERE session_id = %s AND id IN ({placeholders})',
+                           [stage.session_id, *page.positions])
+
+
+def publish_fact_insert_page(stage, page: FactPage) -> None:
+    """Insert only the admitted indexed interval in stable source order."""
+    _validate_fact_stage(stage, publication=True)
+    if page.positions:
+        table = connection.ops.quote_name(SessionHistoryFact._meta.db_table)
+        columns = ', '.join(connection.ops.quote_name(SessionHistoryFact._meta.get_field(name).column)
+                            for name in ('session', 'line_num', 'kind', 'key', 'data'))
+        with connection.cursor() as cursor:
+            cursor.execute(f'INSERT OR IGNORE INTO {table} ({columns}) '
+                           f'SELECT {columns} FROM temp.{stage.table} '
+                           'WHERE source_order >= %s AND source_order <= %s ORDER BY source_order',
+                           [page.positions[0], page.cursor])
 
 
 def _fact_rows(session_id: str, facts: Sequence[HistoryFact]) -> list[SessionHistoryFact]:

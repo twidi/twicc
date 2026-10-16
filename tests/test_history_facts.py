@@ -220,7 +220,7 @@ def test_private_stage_preserves_old_facts_and_exact_first_valid_replacement(ses
         assert len(_private_fact_tables()) == 1
         with connection.cursor() as cursor:
             cursor.execute(f'PRAGMA table_info({stage.table})')
-            assert all(row[5] == 0 for row in cursor.fetchall())
+            assert [(row[1], row[5]) for row in cursor.fetchall() if row[5]] == [('source_order', 1)]
         with transaction.atomic():
             history_facts.publish_compute_history_facts(stage)
         assert list(iter_history_facts(session.id, old.kind, 'same', before_line=10)) == [

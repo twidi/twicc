@@ -2068,7 +2068,7 @@ async def _advance_pending_compute_body() -> bool:
     """Collect completed preparation or publish one already-prepared slice."""
     from twicc.core.content_storage.extraction import (
         SupersededStorageResult, begin_compute_application, final_compute_message,
-        prepare_compute_batch, prepare_compute_history_stage, publish_compute_batch,
+        prepare_compute_batch, publish_compute_batch,
     )
     from twicc.providers.compute_base import BaseSessionCompute, ComputeApplyResult
     from twicc.content_maintenance_task import defer_background_promotions
@@ -2090,22 +2090,14 @@ async def _advance_pending_compute_body() -> bool:
         if pending.operation is None:
             async def begin():
                 _require_live_compute_run(pending)
-                pending.operation = await run_compute_application_sync(begin_compute_application, pending.message)
+                pending.operation = await run_compute_application_sync(
+                    begin_compute_application, pending.message, progressive_facts=True)
                 observation = pending.operation.observation
                 if observation.root_id and observation.root_incarnation:
                     pending.deferral = defer_background_promotions(observation.root_id, observation.root_incarnation)
             if not await _background_turn(begin, diagnostics=pending, phase='begin'):
                 return False
         elif pending.operation.phase == 'final':
-            if pending.operation.history_facts_stage is None:
-                context = contextvars.copy_context()
-                context.run(write_priority.set, WritePriority.BACKGROUND)
-                pending.batch = None
-                pending.preparation = asyncio.create_task(
-                    run_compute_application_sync(prepare_compute_history_stage, pending.operation), context=context,
-                )
-                pending.preparation.add_done_callback(lambda task, signals=_writer_signals: signals.notify_dispatch())
-                return True
             async def finalize():
                 _require_live_compute_run(pending)
                 active = _active_compute_ids()
