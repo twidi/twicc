@@ -373,3 +373,41 @@ Current time and specific runtime activity are evaluated for each decision.
 - The one copy can contain up to 20 publications from the exploratory run before the final interval.
 - Independent whole-change review belongs to the controller after this task. This report does not substitute for that review.
 - The user controls any subsequent `devctl.py` restart or reset/full-compute request.
+
+## Final combined review correction
+
+The correction reads selected payloads and their representation metadata in the same SQL result.
+Preparation skips candidates whose representation metadata changed after initial selection.
+It keeps the original owner observation for publication validation and does not duplicate owner-list reads.
+The unchanged peer still publishes when another candidate changes representation.
+A payload that changes without matching representation metadata still raises `ContentIntegrityError`.
+The metadata-first selection, row/byte budgets, and one-oversized-row behavior remain unchanged.
+Publication does not reread payloads.
+
+Recovery now reports discovery progress through the existing ten-second metrics throttle.
+Startup uses the `plaintext_recovery_discovery` operation kind with start and terminal events.
+Periodic discovery uses the existing periodic operation and keeps its compression cursor and counters.
+Summaries expose `discovery_cursor`, `discovery_pages`, `discovery_sessions`, `recovery_reference_probes`, and `discovery_preparation_ms`.
+Discovery preparation also contributes to `preparation_ms`.
+These counters use existing page results, cache statistics, and clocks, without added SQL or writer requests.
+
+Fresh correction evidence:
+
+- RED: both plain-to-compressed and compressed-to-plain concurrent changes raise false integrity errors before the correction.
+- RED: all three conformant-hot discovery cases fail because startup operation events are absent.
+- GREEN: the six affected modules below pass: **175 passed in 11.50s**.
+- The three new discovery cases use multiple one-session pages and eleven seconds of fake elapsed time per probe page.
+- They cover startup, periodic discovery, and stop during each phase, with no payload reads or writer grants.
+- Existing E2E cancellation coverage verifies admitted publication draining and cache/observer cleanup.
+- Scoped ruff passes; `git diff --check` passes.
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/feature-content-storage-compression && TWICC_DATA_DIR=$PWD uv run pytest -q tests/test_content_maintenance_reads.py tests/test_content_maintenance_metrics.py tests/test_content_maintenance_compute_gate.py tests/test_content_maintenance.py tests/test_content_maintenance_end_to_end.py tests/test_content_session_promotion.py --tb=short
+cd /home/twidi/dev/twicc-poc/.worktrees/feature-content-storage-compression && TWICC_DATA_DIR=$PWD uvx ruff check src/twicc/content_maintenance_task.py src/twicc/core/content_storage/maintenance_metrics.py tests/test_content_maintenance_reads.py tests/test_content_maintenance_metrics.py tests/test_content_maintenance_end_to_end.py
+cd /home/twidi/dev/twicc-poc/.worktrees/feature-content-storage-compression && git diff --check
+```
+
+These are fresh scoped results for the correction.
+Earlier full-suite and benchmark results precede this correction and do not validate its exact final tree.
+The controller owns the running full suite and the final scoped re-review.
+No service, current database, migration, dependency, or benchmark operation runs for this correction.

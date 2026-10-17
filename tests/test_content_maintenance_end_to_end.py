@@ -72,7 +72,7 @@ def test_compute_then_conformant_pass_has_zero_payload_or_publication(
 
     class ObservedMetrics(MaintenanceMetrics):
         def emit(self, event):
-            if event == 'complete':
+            if event == 'complete' and self.operation_kind == 'periodic_compression':
                 summaries.append(dict(self.counts))
 
     def reject_grant():

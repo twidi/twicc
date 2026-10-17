@@ -20,6 +20,7 @@ def test_counts_progress_and_timing(monkeypatch, caplog):
     operation.emit('start')
     page = maintenance.CompressionPage(100, (), False, maintenance.CompressionPageCounts(scanned=100, prepared=3))
     operation.record_page(page)
+    operation.record_discovery('session-cursor', 2, 1, 25)
     operation.emit('progress')
     clock[0] = 10
     operation.emit('progress')
@@ -34,6 +35,9 @@ def test_counts_progress_and_timing(monkeypatch, caplog):
     assert summary['resource_wait_ms'] == 500 and summary['writer_hold_max_ms'] == 10
     assert summary['transaction_ms'] == 5
     assert summary['cursor'] == 100 and 'percentage' not in summary
+    assert summary['discovery_cursor'] == 'session-cursor'
+    assert summary['discovery_pages'] == 1 and summary['recovery_reference_probes'] == 1
+    assert summary['preparation_ms'] == summary['discovery_preparation_ms'] == 25
     assert summary['writer_hold_p95_upper_ms'] >= 10
 
 
@@ -108,7 +112,7 @@ def test_periodic_outcome_cache_lifetime_and_deadline(
     monkeypatch.setattr(maintenance, '_wait', wait)
     asyncio.run(maintenance.start_content_maintenance_task(stop, compute_work=ComputeWorkState()))
     events = [record.maintenance for record in caplog.records if hasattr(record, 'maintenance')]
-    assert [event['event'] for event in events] == ['start', outcome]
+    assert [event['event'] for event in events if event['operation_kind'] == 'periodic_compression'] == ['start', outcome]
     assert passes == [1800]
     assert caches[0] is recovered[-1]
     from twicc.providers.db_writer import get_write_coordinator
@@ -163,3 +167,76 @@ def test_nested_publication_observes_only_outer_foreground_grant(writer_state):
         finally:
             unsubscribe()
     asyncio.run(scenario())
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('cancel_during', [None, 'startup', 'periodic'])
+def test_conformant_hot_recovery_reports_discovery_progress(
+    writer_state, compute_executor_started, content_row_factory, monkeypatch, settings, caplog, cancel_during,
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from tests.test_content_root_state import session
+    from tests.test_content_maintenance_reads import payload_selects
+    from twicc.core.models import SessionItem
+    from twicc.providers.db_writer import get_write_coordinator
+
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    owners = [session(f'hot-{index}', content_storage_version=1, storage_incarnation=f'inc-{index}')
+              for index in range(3)]
+    for owner in owners:
+        row = content_row_factory(owner.id, False, session_ids=[owner.id])
+        SessionItem.objects.create(session=owner, line_num=1, content='', current_content=row)
+    caplog.set_level(logging.INFO, logger=metrics.__name__)
+    clock, scheduler_clock, scans, payload_reads, caches = [0.0], [0.0], [], [], []
+    stop = asyncio.Event()
+    monkeypatch.setattr(metrics, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(maintenance, 'perf_counter', lambda: clock[0])
+    monkeypatch.setattr(maintenance, '_maintenance_time', lambda: scheduler_clock[0])
+    monkeypatch.setattr(maintenance, 'TREE_PAGE_SIZE', 1)
+    original = maintenance.recovery_promotion_targets
+
+    def recovery(ids, cache):
+        with CaptureQueriesContext(connection) as queries:
+            result = original(ids, cache)
+        assert not result
+        payload_reads.extend(payload_selects(queries))
+        caches.append(cache)
+        clock[0] += 11
+        phase = 'startup' if scheduler_clock[0] == 0 else 'periodic'
+        scans.append(phase)
+        if phase == cancel_during and scans.count(phase) == 2:
+            stop.set()
+        return result
+
+    def forbidden_grant():
+        pytest.fail('Conformant discovery must not request a writer grant')
+
+    async def wait(stop, wake, timeout):
+        if scheduler_clock[0] == 0:
+            assert timeout == 1800
+            scheduler_clock[0] = 1800
+        else:
+            assert timeout == 86400
+            stop.set()
+
+    monkeypatch.setattr(maintenance, 'recovery_promotion_targets', recovery)
+    monkeypatch.setattr(get_write_coordinator(), 'try_background_lease', forbidden_grant)
+    monkeypatch.setattr(maintenance, '_wait', wait)
+    asyncio.run(maintenance.start_content_maintenance_task(stop, compute_work=ComputeWorkState()))
+    events = [record.maintenance for record in caplog.records if hasattr(record, 'maintenance')]
+    startup = [event for event in events if event['operation_kind'] == 'plaintext_recovery_discovery']
+    assert startup[0]['event'] == 'start'
+    assert startup[-1]['event'] == ('cancelled' if cancel_during == 'startup' else 'complete')
+    kinds = ['plaintext_recovery_discovery'] + ([] if cancel_during == 'startup' else ['periodic_compression'])
+    for kind in kinds:
+        progress = [event for event in events if event['operation_kind'] == kind and event['event'] == 'progress']
+        assert len(progress) >= 2
+        assert [event['discovery_cursor'] for event in progress[:2]] == ['hot-0', 'hot-1']
+        assert progress[1]['discovery_pages'] == progress[1]['recovery_reference_probes'] == 2
+        assert progress[1]['discovery_preparation_ms'] == 22000
+        assert progress[1]['cursor'] is None and progress[1]['scanned'] == 0
+        assert progress[1]['payload_bytes_loaded'] == progress[1]['publication_batches'] == 0
+    assert not payload_reads
+    assert all(cache._closed and not cache._metadata for cache in caches)
+    assert not get_write_coordinator()._foreground_wait_observers

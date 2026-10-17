@@ -523,19 +523,23 @@ def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_
             continue
         pending.append((metadata, dictionary, policy))
     payloads = {}
+    representation_fields = tuple(field for field in COMPRESSION_METADATA_FIELDS if field != 'session_ids')
     payload_ids = [metadata['id'] for metadata, _, _ in pending]
     for offset in range(0, len(payload_ids), TREE_PAGE_SIZE):
-        payloads.update(SessionItemContent.objects.filter(pk__in=payload_ids[offset:offset + TREE_PAGE_SIZE])
-                        .values_list('id', 'payload'))
-    counts['payload_bytes_loaded'] = sum(len(payload) for payload in payloads.values())
+        payloads.update((row['id'], row) for row in SessionItemContent.objects.filter(
+            pk__in=payload_ids[offset:offset + TREE_PAGE_SIZE],
+        ).values(*representation_fields, 'payload'))
+    counts['payload_bytes_loaded'] = sum(len(row['payload']) for row in payloads.values())
     for metadata, dictionary, policy in pending:
-        if metadata['id'] not in payloads:
+        current = payloads.get(metadata['id'])
+        if current is None or any(current[field] != metadata[field] for field in representation_fields):
+            # Selection is advisory. Decode only one coherent representation, and
+            # leave concurrently changed candidates for a later pass.
             continue
-        row = SessionItemContent(**{field: metadata[field] for field in COMPRESSION_METADATA_FIELDS},
-                                 payload=payloads[metadata['id']])
+        row = SessionItemContent(**current, session_ids=metadata['session_ids'])
         observation = CompressionObservation(
             row.id, bytes(row.sha256), row.raw_size, row.codec, row.dictionary_id, row.dictionary_provider,
-            tuple(row.session_ids), row.compression_attempt_version, row.compression_no_gain, metadata['stored_size'],
+            tuple(row.session_ids), row.compression_attempt_version, row.compression_no_gain, len(row.payload),
         )
         try:
             candidate = prepare_representation(row.id, policy, row, dictionary, dictionary_cache)
@@ -767,26 +771,50 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
             await wait(None)
         return False
 
-    async def recover(*, periodic=False, session_cache=None):
+    async def recover(*, periodic=False, session_cache=None, metrics=None):
         owned = session_cache is None
         cache = MaintenanceSessionCache() if owned else session_cache
+        owns_metrics = metrics is None
+        if owns_metrics:
+            metrics = MaintenanceMetrics(uuid4().hex, 'plaintext_recovery_discovery')
+            metrics.cache_statistics = cache.statistics
+            metrics.emit('start')
+        outcome = 'cancelled'
         try:
-            await recover_pages(cache, periodic=periodic)
+            await recover_pages(cache, periodic=periodic, metrics=metrics)
+            if not stop_event.is_set():
+                outcome = 'complete'
+        except Exception:
+            outcome = 'failure'
+            raise
         finally:
-            if owned:
-                cache.close()
+            try:
+                if owns_metrics:
+                    metrics.emit(outcome)
+            finally:
+                if owned:
+                    cache.close()
 
-    async def recover_pages(cache, *, periodic=False):
+    async def recover_pages(cache, *, periodic=False, metrics):
         after = None
         while not stop_event.is_set():
             if periodic and not await periodic_ready():
                 return
+            started = perf_counter()
             page = await prepare(pending_session_page, after)
+            duration_ms = (perf_counter() - started) * 1000
             if not page:
                 break
             if periodic and not await periodic_ready():
                 return
+            probes_before = cache.statistics.get('recovery_reference_probes', 0)
+            started = perf_counter()
             eligible = await prepare(recovery_promotion_targets, page, cache)
+            duration_ms += (perf_counter() - started) * 1000
+            metrics.record_discovery(
+                page[-1], len(page), cache.statistics.get('recovery_reference_probes', 0) - probes_before, duration_ms,
+            )
+            metrics.emit('progress')
             for session_id in page:
                 if session_id in eligible and session_id not in targets:
                     targets[session_id] = _PromotionTarget(
@@ -915,7 +943,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                 failure_deadline = None
                 metrics.emit('start')
                 try:
-                    await recover(periodic=True, session_cache=session_cache)
+                    await recover(periodic=True, session_cache=session_cache, metrics=metrics)
                     while any(target.periodic for target in targets.values()) and not stop_event.is_set():
                         if not await periodic_ready():
                             break

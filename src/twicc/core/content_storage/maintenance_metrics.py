@@ -29,8 +29,10 @@ class MaintenanceMetrics:
             'writer_hold_max_ms', 'foreground_coordinator_wait_count', 'foreground_coordinator_wait_ms',
             'foreground_coordinator_wait_max_ms', 'writer_hold_ge_100_ms', 'writer_hold_ge_250_ms',
             'writer_hold_ge_500_ms', 'writer_hold_ge_1000_ms',
+            'discovery_pages', 'discovery_sessions', 'recovery_reference_probes', 'discovery_preparation_ms',
         ), 0))
         self.cursor = None
+        self.discovery_cursor = None
         self.cache_statistics = {}
         self.hold_bins = [0] * len(_HOLD_BOUNDS)
 
@@ -38,6 +40,14 @@ class MaintenanceMetrics:
         self.counts.update(page.counts._asdict())
         self.counts['batches_completed'] += 1
         self.cursor = page.cursor
+
+    def record_discovery(self, cursor, sessions, probes, duration_ms):
+        self.discovery_cursor = cursor
+        self.counts['discovery_pages'] += 1
+        self.counts['discovery_sessions'] += sessions
+        self.counts['recovery_reference_probes'] += probes
+        self.counts['discovery_preparation_ms'] += duration_ms
+        self.record_preparation(duration_ms)
 
     def record_preparation(self, duration_ms):
         self.counts['preparation_ms'] += duration_ms
@@ -89,7 +99,7 @@ class MaintenanceMetrics:
         summary = dict(self.counts)
         summary.update(operation_id=self.operation_id, operation_kind=self.operation_kind, event=event,
                        started_at=self.started_at, elapsed_ms=(now - self.started) * 1000,
-                       cursor=self.cursor, cache=dict(self.cache_statistics),
+                       cursor=self.cursor, discovery_cursor=self.discovery_cursor, cache=dict(self.cache_statistics),
                        writer_hold_p50_upper_ms=self._percentile(.5),
                        writer_hold_p95_upper_ms=self._percentile(.95),
                        writer_hold_p99_upper_ms=self._percentile(.99))

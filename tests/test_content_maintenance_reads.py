@@ -386,3 +386,48 @@ def test_committed_invalidations_reload_only_changed_owner(content_row_factory, 
     for row in rows:
         row.refresh_from_db()
     assert [row.codec for row in rows] == ['zstd', 'plain', 'zstd']
+
+
+@pytest.mark.parametrize('change', ['compress', 'restore', 'corrupt'])
+def test_payload_selection_uses_coherent_representation(
+    content_row_factory, session_cache, monkeypatch, change,
+):
+    from twicc.core.content_storage.codec import ContentIntegrityError, transcode_content
+    from twicc.core.models import SessionItemContent
+
+    owner = cold('owner')
+    # A different provider dictionary makes the compressed input a recompression candidate.
+    stale = content_row_factory('changing content ' * 100, change == 'restore', session_ids=[owner.id])
+    peer = content_row_factory('unaffected content ' * 100, False, session_ids=[owner.id])
+    if change == 'restore':
+        dictionary = content_storage_helpers._public_dictionary('claude_code')
+        encoded, _ = transcode_content(stale, dictionary.id)
+        SessionItemContent.objects.filter(pk=stale.id).update(
+            payload=encoded.payload, codec=encoded.codec, dictionary_id=encoded.dictionary_id,
+        )
+    decisions = session_cache.decisions
+
+    def concurrent_change(*args, **kwargs):
+        result = decisions(*args, **kwargs)
+        stale.refresh_from_db()
+        if change == 'corrupt':
+            SessionItemContent.objects.filter(pk=stale.id).update(payload=b'corrupt')
+        else:
+            dictionary_id = None if change == 'restore' else content_storage_helpers._public_dictionary('codex').id
+            encoded, _ = transcode_content(stale, dictionary_id)
+            SessionItemContent.objects.filter(pk=stale.id).update(
+                payload=encoded.payload, codec=encoded.codec, dictionary_id=encoded.dictionary_id,
+            )
+        return result
+
+    monkeypatch.setattr(session_cache, 'decisions', concurrent_change)
+    if change == 'corrupt':
+        with pytest.raises(ContentIntegrityError):
+            maintenance.prepare_compression_batch(0, session_cache=session_cache)
+        return
+    page = maintenance.prepare_compression_batch(0, session_cache=session_cache)
+    assert page.done and [entry.candidate.content_id for entry in page.entries] == [peer.id]
+    monkeypatch.setattr(session_cache, 'decisions', decisions)
+    assert maintenance._publish(page.entries, frozenset(), session_cache=session_cache).changed == 1
+    peer.refresh_from_db()
+    assert peer.codec == 'zstd'
