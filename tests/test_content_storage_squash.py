@@ -69,7 +69,8 @@ def test_storage_replacement_upgrade_preserves_data_and_history(
             "SELECT name, rootpage FROM sqlite_master WHERE name IN ('core_session', 'core_sessionitem') ORDER BY name"
         ).fetchall()
         executor = MigrationExecutor(db)
-        targets = executor.loader.graph.leaf_nodes('core')
+        # The squash itself, not the leaf: later migrations (e.g. the timeline's) are not under test here.
+        targets = [STORAGE_SQUASH]
         plan = executor.migration_plan(targets)
         if applied_count == 0:
             assert [(migration.name, backwards) for migration, backwards in plan] == [(STORAGE_SQUASH[1], False)]

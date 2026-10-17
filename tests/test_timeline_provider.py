@@ -93,19 +93,18 @@ def test_the_two_display_indexes_exist_in_the_model_and_in_the_database():
         assert name in constraints
 
 
-def test_migration_0159_adds_the_column_and_the_two_indexes_only():
-    module = importlib.import_module("twicc.core.migrations.0159_timeline_event_provider")
+def test_migration_0163_creates_the_provider_column_and_the_two_display_indexes():
+    module = importlib.import_module("twicc.core.migrations.0163_timeline_event")
     migration = module.Migration
-    assert migration.dependencies == [("core", "0158_timeline_event_origin")]
-    assert [type(op) for op in migration.operations] == [
-        migrations.AddField, migrations.AddIndex, migrations.AddIndex,
-    ]
-    assert {op.model_name for op in migration.operations} == {"timelineevent"}
-    assert migration.operations[0].name == "provider"
-    field = migration.operations[0].field
-    # Nullable and without a default: the rows that already exist read NULL, nothing is rewritten.
+    assert [type(op) for op in migration.operations] == [migrations.CreateModel]
+    create = migration.operations[0]
+    assert create.name == "TimelineEvent"
+    field = dict(create.fields)["provider"]
+    # Nullable and without a default: a row written without a provider reads NULL.
     assert field.null is True and not field.has_default() and field.max_length == 50
-    assert [op.index.name for op in migration.operations[1:]] == ["idx_timeline_occurred", "idx_timeline_provider"]
+    index_names = [index.name for index in create.options["indexes"]]
+    assert "idx_timeline_occurred" in index_names
+    assert "idx_timeline_provider" in index_names
 
 
 def test_the_models_and_the_migrations_agree():
