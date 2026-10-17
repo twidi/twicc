@@ -6,6 +6,8 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from itertools import islice
 from typing import NamedTuple
+from time import perf_counter
+from uuid import uuid4
 
 
 from channels.db import database_sync_to_async
@@ -17,6 +19,7 @@ from django.utils import timezone
 from twicc.core.content_storage.codec import ContentIntegrityError, transcode_content
 from twicc.core.content_storage.lifecycle import active_session_ids, set_root_promotion_wakeup
 from twicc.core.content_storage.maintenance_cache import MaintenanceSessionCache
+from twicc.core.content_storage.maintenance_metrics import MaintenanceMetrics
 from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION, compression_policy_version
 from twicc.core.content_storage.session_policy import resolve_content_decisions
 from twicc.core.content_storage.state import (
@@ -28,7 +31,7 @@ from twicc.core.content_storage.types import PreparedRepresentation, RootPromoti
 from twicc.core.models import Session, SessionItem, SessionItemContent
 from twicc.core.content_storage.dictionaries import get_provider_dictionary
 from twicc.providers.compute_work import ComputeWorkState
-from twicc.providers.write_coordinator import WritePriority, write_priority
+from twicc.providers.write_coordinator import WritePriority, WriteResources, write_priority
 
 logger = logging.getLogger(__name__)
 INITIAL_DELAY = 1800
@@ -549,23 +552,56 @@ def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_
                            CompressionPageCounts(**counts))
 
 
-async def _apply(function, *args, priority=WritePriority.FOREGROUND, lease=None):
+async def _apply(function, *args, priority=WritePriority.FOREGROUND, lease=None, metrics=None):
     from twicc.providers.compute_executor import run_compute_sync
     from twicc.providers.db_writer import (
-        _drive_publication, _run_with_content_activity, run_under_storage_write_lock,
+        _drive_publication, _run_with_content_activity, get_write_coordinator, run_under_storage_write_lock,
     )
 
-    async def apply():
-        return await run_compute_sync(function, *args, active_session_ids.get())
+    requested = perf_counter()
+    ownership = None
+    owned_lease = lease
+    transaction_ms = 0.0
+    result = None
 
-    if lease is None:
-        return await run_under_storage_write_lock(apply, priority=priority, content_activity=True)
+    def measured(*values):
+        nonlocal transaction_ms
+        started = perf_counter()
+        try:
+            return function(*values)
+        finally:
+            transaction_ms += (perf_counter() - started) * 1000
+
+    async def apply():
+        nonlocal ownership, owned_lease, result
+        if owned_lease is None:
+            owned_lease = next((holder for holder in get_write_coordinator().holders
+                                if holder.resources & WriteResources.WRITER), None)
+        ownership = owned_lease.granted_at if owned_lease is not None else perf_counter()
+        result = await run_compute_sync(measured, *args, active_session_ids.get())
+        return result
+
     try:
+        if lease is None:
+            return await run_under_storage_write_lock(apply, priority=priority, content_activity=True)
         return await _drive_publication(
             lambda: _run_with_content_activity(apply), lease.priority, lease.resources,
         )
     finally:
-        lease.release()
+        released = perf_counter()
+        if lease is not None:
+            lease.release()
+        if metrics is not None and ownership is not None:
+            publication = result if isinstance(result, PublicationResult) else None
+            if args and isinstance(args[0], PromotionBatch):
+                batch = args[0]
+                publication = PublicationResult(
+                    changed=len(batch.entries) if result == batch.cursor else 0,
+                    stale=len(batch.entries) if result == START_CURSOR else 0,
+                )
+            metrics.record_publication(publication, wait_ms=max(0, (ownership - requested) * 1000),
+                                       transaction_ms=transaction_ms,
+                                       hold_ms=((owned_lease.released_at or released) - ownership) * 1000)
 
 
 def _snapshot(session_id, active, *, recovery=False, session_cache=None):
@@ -606,12 +642,18 @@ async def _wait(stop_event, wake, timeout):
 class _PromotionTarget:
     """One resumable target; scheduling priority never determines recovery eligibility."""
 
-    def __init__(self, *, recovery, priority, periodic=False):
+    def __init__(self, *, recovery, priority, periodic=False, session_cache=None, coordinator=None):
         self.periodic = periodic
         self.recovery = recovery
         self.priority = priority
         self.demand = None
-        self.session_cache = MaintenanceSessionCache()
+        self.owns_cache = session_cache is None
+        self.session_cache = MaintenanceSessionCache() if self.owns_cache else session_cache
+        self.metrics = MaintenanceMetrics(uuid4().hex, 'plaintext_restoration')
+        self.metrics.cache_statistics = self.session_cache.statistics
+        self.unsubscribe = (coordinator.observe_foreground_wait(self.metrics.record_foreground_wait)
+                            if coordinator is not None else lambda: None)
+        self.metrics.emit('start')
         self.reset()
 
     def reset(self):
@@ -621,7 +663,19 @@ class _PromotionTarget:
         self.batch = None
         self.deferred = False
 
+    def finish(self, event):
+        try:
+            self.metrics.cache_statistics = self.session_cache.statistics
+            self.metrics.emit(event)
+        finally:
+            self.unsubscribe()
+            if self.owns_cache:
+                self.session_cache.close()
+
     def explicit(self):
+        if self.periodic and not self.owns_cache:
+            self.session_cache = MaintenanceSessionCache()
+            self.owns_cache = True
         self.periodic = False
         self.recovery = False
         if self.snapshot is not None and getattr(self.snapshot, 'recovery', False):
@@ -657,7 +711,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
             return
         target = targets.get(session_id)
         if target is None:
-            target = targets[session_id] = _PromotionTarget(recovery=False, priority=priority)
+            target = targets[session_id] = _PromotionTarget(recovery=False, priority=priority, coordinator=coordinator)
         target.explicit()
         if priority is WritePriority.FOREGROUND:
             if target.priority is WritePriority.BACKGROUND:
@@ -713,12 +767,14 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
             await wait(None)
         return False
 
-    async def recover(*, periodic=False):
-        cache = MaintenanceSessionCache()
+    async def recover(*, periodic=False, session_cache=None):
+        owned = session_cache is None
+        cache = MaintenanceSessionCache() if owned else session_cache
         try:
             await recover_pages(cache, periodic=periodic)
         finally:
-            cache.close()
+            if owned:
+                cache.close()
 
     async def recover_pages(cache, *, periodic=False):
         after = None
@@ -735,13 +791,14 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                 if session_id in eligible and session_id not in targets:
                     targets[session_id] = _PromotionTarget(
                         recovery=True, priority=WritePriority.BACKGROUND, periodic=periodic,
+                        session_cache=cache if periodic else None, coordinator=coordinator,
                     )
             await promote()
             after = page[-1]
 
-    def settle(session_id, target):
+    def settle(session_id, target, event='complete'):
         targets.pop(session_id)
-        target.session_cache.close()
+        target.finish(event)
         if target.demand is not None:
             target.demand.release()
 
@@ -773,9 +830,21 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
             try:
                 if target.snapshot is not None and target.batch is None:
                     recovery = target.recovery
+                    preparation_started = perf_counter()
                     batch = await prepare(partial(prepare_promotion_batch, session_cache=target.session_cache),
                                           target.snapshot, target.cursor,
                                           ROW_BUDGET, BYTE_BUDGET)
+                    target.metrics.record_preparation((perf_counter() - preparation_started) * 1000)
+                    target.metrics.record_page(CompressionPage(
+                        batch.cursor, (), batch.cursor.done, CompressionPageCounts(
+                            scanned=batch.cursor.rows, prepared=len(batch.entries),
+                            payload_bytes_loaded=sum(entry.observation.stored_size for entry in batch.entries),
+                            candidate_raw_bytes=sum(entry.candidate.encoded.raw_size for entry in batch.entries),
+                            candidate_stored_bytes=sum(len(entry.candidate.encoded.payload) for entry in batch.entries),
+                        ),
+                    ))
+                    target.metrics.cache_statistics = target.session_cache.statistics
+                    target.metrics.emit('progress')
                     # An upgrade must retry a rejection under the old recovery eligibility.
                     if recovery and not target.recovery and batch.cursor == target.cursor and not batch.verified:
                         continue
@@ -787,7 +856,9 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                     lease = coordinator.try_background_lease()
                     if lease is None:
                         # Never await a background grant in the foreground dispatcher.
+                        waiting = perf_counter()
                         await wait(0.05)
+                        target.metrics.counts['resource_wait_ms'] += (perf_counter() - waiting) * 1000
                         continue
                 if target.periodic and compute_pending():
                     if lease is not None:
@@ -796,7 +867,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                 if target.snapshot is None:
                     recovery = target.recovery
                     target.snapshot = await _apply(partial(_snapshot, recovery=recovery, session_cache=target.session_cache), session_id,
-                                                   priority=target.priority, lease=lease)
+                                                   priority=target.priority, lease=lease, metrics=target.metrics)
                     if target.snapshot is None:
                         if recovery and not target.recovery:
                             continue
@@ -807,7 +878,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                 verified = target.verified and target.batch.verified
                 cursor = await _apply(partial(apply_promotion_batch, pass_verified=verified,
                                               session_cache=target.session_cache), target.batch,
-                                      priority=target.priority, lease=lease)
+                                      priority=target.priority, lease=lease, metrics=target.metrics)
                 if cursor == START_CURSOR:
                     target.reset()
                 elif cursor.done:
@@ -819,7 +890,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                     targets[session_id] = targets.pop(session_id)
                 await asyncio.sleep(0)
             except Exception:
-                settle(session_id, target)
+                settle(session_id, target, 'failure')
                 logger.exception('Content promotion failed for session %s', session_id)
 
     deadline = _maintenance_time() + INITIAL_DELAY
@@ -836,17 +907,31 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
             if stop_event.is_set():
                 break
             if _maintenance_time() >= deadline and not compute_pending():
-                session_cache = None
+                session_cache = MaintenanceSessionCache()
+                metrics = MaintenanceMetrics(uuid4().hex, 'periodic_compression')
+                metrics.cache_statistics = session_cache.statistics
+                unsubscribe = coordinator.observe_foreground_wait(metrics.record_foreground_wait)
+                outcome = 'cancelled'
+                failure_deadline = None
+                metrics.emit('start')
                 try:
-                    await recover(periodic=True)
+                    await recover(periodic=True, session_cache=session_cache)
+                    while any(target.periodic for target in targets.values()) and not stop_event.is_set():
+                        if not await periodic_ready():
+                            break
+                        if any(target.periodic for target in targets.values()):
+                            await wait(None)
                     await promote()
-                    session_cache = MaintenanceSessionCache()
                     cursor, done = 0, False
                     while not done and not stop_event.is_set():
                         if not await periodic_ready():
                             break
+                        preparation_started = perf_counter()
                         page = await prepare(partial(prepare_compression_batch, session_cache=session_cache),
                                              cursor, ROW_BUDGET, BYTE_BUDGET)
+                        metrics.record_preparation((perf_counter() - preparation_started) * 1000)
+                        metrics.record_page(page)
+                        metrics.emit('progress')
                         cursor, entries, done = page.cursor, page.entries, page.done
                         while entries and not stop_event.is_set():
                             if not await periodic_ready():
@@ -855,18 +940,31 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                                 break
                             lease = coordinator.try_background_lease()
                             if lease is None:
+                                waiting = perf_counter()
                                 await wait(0.05)
+                                metrics.counts['resource_wait_ms'] += (perf_counter() - waiting) * 1000
                                 continue
                             if compute_pending():
                                 lease.release()
                                 continue
-                            await _apply(partial(_publish, session_cache=session_cache), entries, lease=lease)
+                            await _apply(partial(_publish, session_cache=session_cache), entries, lease=lease,
+                                         metrics=metrics)
                             break
                         await asyncio.sleep(0)
+                    if done and not stop_event.is_set():
+                        outcome = 'complete'
                 except Exception:
+                    outcome = 'failure'
+                    failure_deadline = _maintenance_time() + INTERVAL
                     logger.exception('Periodic content maintenance failed')
                 finally:
-                    if session_cache is not None:
+                    try:
+                        for session_id, target in tuple(targets.items()):
+                            if target.session_cache is session_cache:
+                                settle(session_id, target, outcome)
+                        metrics.emit(outcome)
+                    finally:
+                        unsubscribe()
                         session_cache.close()
                 if settings.SESSION_DIRS_CLEANUP_ENABLED and not stop_event.is_set():
                     try:
@@ -876,7 +974,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                                 break
                     except Exception:
                         logger.exception('Session directory maintenance failed')
-                deadline = _maintenance_time() + INTERVAL
+                deadline = failure_deadline if failure_deadline is not None else _maintenance_time() + INTERVAL
             remaining = max(0, deadline - _maintenance_time())
             await wait(None if remaining == 0 and compute_pending() else remaining)
     except asyncio.CancelledError:
@@ -902,6 +1000,6 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
             close_task.result()
         finally:
             for target in targets.values():
-                target.session_cache.close()
+                target.finish('cancelled')
                 if target.demand is not None:
                     target.demand.release()

@@ -234,3 +234,32 @@ def test_cancelled_waiter_notifies_progress_after_request_removal():
         assert states[-1] == 0
         held.release()
     asyncio.run(run())
+
+
+def test_foreground_wait_observers_are_overlapping_and_isolated(monkeypatch):
+    async def scenario():
+        mod = api()
+        clock = [0.0]
+        monkeypatch.setattr(mod, 'monotonic', lambda: clock[0])
+        coordinator = mod.WriterCoordinator()
+        first, second = [], []
+        unsubscribe = coordinator.observe_foreground_wait(first.append)
+        coordinator.observe_foreground_wait(lambda value: 1 / 0)
+        coordinator.observe_foreground_wait(second.append)
+        held = await coordinator.acquire(mod.WriteResources.WRITER, mod.WritePriority.FOREGROUND)
+        waiter = await queued(coordinator, mod.WriteResources.WRITER, mod.WritePriority.FOREGROUND)
+        cancelled = await queued(coordinator, mod.WriteResources.WRITER, mod.WritePriority.FOREGROUND)
+        cancelled.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+        admission = await coordinator.acquire(mod.WriteResources.ADMISSION, mod.WritePriority.FOREGROUND)
+        admission.release()
+        clock[0] = .125
+        held.release()
+        (await waiter).release()
+        assert first == second == [0, 125]
+        unsubscribe()
+        unsubscribe()
+        (await coordinator.acquire(mod.WriteResources.WRITER, mod.WritePriority.FOREGROUND)).release()
+        assert first == [0, 125] and second == [0, 125, 0]
+    asyncio.run(scenario())

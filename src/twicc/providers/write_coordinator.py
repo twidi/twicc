@@ -13,6 +13,7 @@ from collections.abc import Callable
 from contextvars import ContextVar
 from enum import Enum, IntFlag, auto
 from typing import NamedTuple
+from time import monotonic, perf_counter
 
 
 class WritePriority(Enum):
@@ -37,11 +38,14 @@ class ResourceLease:
         self.resources = resources
         self.priority = priority
         self.released = False
+        self.granted_at = perf_counter()
+        self.released_at = None
 
     def release(self) -> None:
         if self.released:
             return
         self.released = True
+        self.released_at = perf_counter()
         self.coordinator.holders.remove(self)
         self.coordinator._schedule()
 
@@ -66,18 +70,37 @@ class _Request(NamedTuple):
     resources: WriteResources
     priority: WritePriority
     future: asyncio.Future[ResourceLease]
+    inserted_at: float
 
 
 class WriterCoordinator:
     """Own resource state for one writer lifetime. Public state is read-only to callers."""
 
     def __init__(self, *, on_progress: Callable[[], None] | None = None) -> None:
+        self._foreground_wait_observers = set()
         self._on_progress = on_progress
         self.requests: list[_Request] = []
         self.holders: set[ResourceLease] = set()
         self.demands: set[ForegroundDemand] = set()
         self._idle = asyncio.Event()
         self._idle.set()
+
+    def observe_foreground_wait(self, callback: Callable[[float], None]) -> Callable[[], None]:
+        # Use a token so repeated subscription of one callback stays independent.
+        token = (object(), callback)
+        self._foreground_wait_observers.add(token)
+        return lambda: self._foreground_wait_observers.discard(token)
+
+    def _observe_grant(self, request):
+        if request.priority is not WritePriority.FOREGROUND or not request.resources & WriteResources.WRITER:
+            return
+        elapsed = max(0.0, (monotonic() - request.inserted_at) * 1000)
+        for _, callback in tuple(self._foreground_wait_observers):
+            try:
+                callback(elapsed)
+            except Exception:
+                # Observability cannot alter grants, priority, or resource ownership.
+                pass
 
     def foreground_demand(self) -> ForegroundDemand:
         return ForegroundDemand(self)
@@ -111,6 +134,7 @@ class WriterCoordinator:
                 self.requests.remove(request)
                 if not request.future.cancelled():
                     request.future.set_result(self._grant(request.resources, priority))
+                    self._observe_grant(request)
         if not self.requests and not self.holders:
             self._idle.set()
         if self._on_progress is not None:
@@ -122,7 +146,7 @@ class WriterCoordinator:
         if not isinstance(priority, WritePriority):
             raise TypeError('Expected a write priority')
         future = asyncio.get_running_loop().create_future()
-        request = _Request(resources, priority, future)
+        request = _Request(resources, priority, future, monotonic())
         self.requests.append(request)
         self._idle.clear()
         self._schedule()
