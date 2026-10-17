@@ -142,6 +142,28 @@ def no_real_notification_delivery(monkeypatch):
     monkeypatch.setattr(apprise.Apprise, "async_notify", _swallow)
 
 
+@pytest.fixture
+def fresh_data_dir(tmp_path, monkeypatch) -> Path:
+    """An empty data dir of the test's own, in a process pinned to UTC.
+
+    For the code that lists or watches the data dir root (the data dir
+    backups): the suite-wide isolated data dir is shared by every test. UTC
+    makes "local calendar day" equal to the UTC day; a test that needs another
+    zone sets ``TZ`` through ``monkeypatch`` and calls ``time.tzset()``, and
+    this fixture's ``undo()`` restores both.
+    """
+    import time
+
+    path = tmp_path / "data"
+    path.mkdir()
+    monkeypatch.setenv("TWICC_DATA_DIR", str(path))
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    yield path
+    monkeypatch.undo()
+    time.tzset()
+
+
 @pytest.fixture(autouse=True)
 def fresh_synced_settings_cache():
     """Start and end every test with an empty synced-settings cache.

@@ -281,6 +281,10 @@ async def run_server(port: int):
     # Start before provider watchers can submit live requests. The runner owns
     # no boot scan; initial sync does not request automatic title checks.
     title_auto_task = asyncio.create_task(start_title_auto_task(shutdown_event))
+    # Back up the data dir root files on each change. Its catch-up scan covers
+    # the startup writes made since the startup scan of ``main()``.
+    from twicc.data_backups_watcher import run_data_backups_watcher
+    data_backups_task = asyncio.create_task(run_data_backups_watcher())
     inline_exports = None
     try:
         from twicc.inline_artifacts.share_exports import get_inline_export_coordinator
@@ -526,11 +530,15 @@ async def run_server(port: int):
     finally:
         # Own partial coordinator startup and provider/configuration failures too.
         try:
-            if not title_auto_task.done():
-                await _cancel_task(title_auto_task, "Automatic title task")
+            if not data_backups_task.done():
+                await _cancel_task(data_backups_task, "Data backups watcher")
         finally:
-            if inline_exports is not None:
-                await inline_exports.stop()
+            try:
+                if not title_auto_task.done():
+                    await _cancel_task(title_auto_task, "Automatic title task")
+            finally:
+                if inline_exports is not None:
+                    await inline_exports.stop()
 
 
 def _close_log_file_handlers() -> None:
@@ -576,6 +584,15 @@ def main():
                     "Trimmed backend.log: dropped %.0f MB of entries before %s",
                     trim.dropped_bytes / 1_000_000, trim.cut_date,
                 )
+
+        # Back up the data dir root files as left on disk, before any backend
+        # write to them (the first ones run in ``run_server()``: MCP password
+        # enforcement, provider auto-enable, telemetry bootstrap, then the
+        # legacy-key rewrite of the first settings read and the changelog
+        # bookkeeping). After the log trim: the scan logs, which opens the
+        # delayed file handler.
+        from twicc.data_backups import scan_all
+        scan_all()
 
         logger.info("TWICC starting...")
         logger.info("Environment loaded")

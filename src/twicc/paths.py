@@ -389,6 +389,15 @@ def get_project_icons_dir() -> Path:
     return get_data_dir() / "project-icons"
 
 
+def get_backups_dir() -> Path:
+    """Return the data dir root files backups directory (``<data_dir>/backups/``).
+
+    One folder per backed-up file, one file per version; see ``twicc.data_backups``.
+    Created on demand; not pre-created here.
+    """
+    return get_data_dir() / "backups"
+
+
 def get_scratch_dir() -> Path:
     """Return the scratch root directory (``<data_dir>/scratch/``).
 

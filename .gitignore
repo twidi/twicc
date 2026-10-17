@@ -247,6 +247,11 @@ cache/
 # into it). Root-anchored for the same reason as above.
 /project-icons/
 
+# Same for the dated versions of the data dir root files (twicc/data_backups.py):
+# a real per-worktree dir holding copies of .env and secret-key, which must never
+# be committed. Root-anchored for the same reason as above.
+/backups/
+
 # The worktree's own Claude Code / Codex homes, created by
 # `devctl start --fresh-providers`. Root-anchored like the dirs above.
 /provider-homes/

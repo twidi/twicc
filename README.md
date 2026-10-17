@@ -253,7 +253,7 @@ Yes. TwiCC only reads provider data files and never modifies them.
 
 ### Where is my data stored?
 
-By default in `~/.twicc/`. This includes the SQLite database, logs, and user settings. Set `TWICC_DATA_DIR` to change the location.
+By default in `~/.twicc/`. This includes the SQLite database, logs, and user settings. Previous versions of the settings files (settings, workspaces, layouts, presets…) are kept in the `backups/` folder of the data directory, one folder per file. Set `TWICC_DATA_DIR` to change the location.
 
 ### Can I point TwiCC at another Claude Code / Codex home?
 
