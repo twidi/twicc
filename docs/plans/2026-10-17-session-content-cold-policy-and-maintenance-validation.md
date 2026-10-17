@@ -59,7 +59,8 @@ The suite starts before Task 8 adds its tests and changes ingestion indexing.
 It collects the old wrappers and assertions before their correction.
 This is broad evidence from the initial execution, supplemented by current affected-module checks.
 It is not a claim that a second complete suite runs against the final tree.
-The controller explicitly accepts focused verification for these changes instead of another 11,000-test run.
+At that stage, the controller accepts focused verification for those changes.
+A later broad run completes successfully; its snapshot boundary appears below.
 
 The three pytest warnings concern unawaited test coroutines:
 
@@ -144,7 +145,8 @@ The metadata-inspection zero-grant statement is also structural; no writer acqui
 
 These corrections do not change the measured maintenance interval. Recorded benchmark trials remain applicable.
 The controller starts another broad suite from `46dfb490` before this correction.
-That run does not collect these seven new tests. Current focused checks cover the correction.
+That run later completes successfully, as recorded below.
+It does not collect these seven new tests. Current focused checks cover the correction.
 The three earlier warnings remain attributed to the unchanged SDK and shell-notice test paths above.
 
 ## Benchmark method
@@ -409,5 +411,29 @@ cd /home/twidi/dev/twicc-poc/.worktrees/feature-content-storage-compression && g
 
 These are fresh scoped results for the correction.
 Earlier full-suite and benchmark results precede this correction and do not validate its exact final tree.
-The controller owns the running full suite and the final scoped re-review.
+The controller completes the broad run and the final scoped re-review, as recorded below.
 No service, current database, migration, dependency, or benchmark operation runs for this correction.
+
+## Final review and broad verification result
+
+The controller's broad pytest run completes with exit **0**:
+**11,014 passed, 28 skipped, 3 warnings in 647.73 seconds**.
+Raw output: `/tmp/twicc-task8-logs/final-tree-pytest.txt`.
+
+The collected snapshot starts at `46dfb490`, before the output-safety and final combined correction waves.
+This result provides broad repository coverage for that snapshot.
+It does not establish a full-suite pass for the exact final code.
+Fresh focused checks cover the later changes: **16 output-safety/E2E tests** and **175 final correction tests**.
+No further full-suite run occurs for this documentation update.
+
+The final scoped re-review approves both corrections for the Important findings.
+It reports no Critical or Important finding.
+The three warnings remain the unchanged unawaited test coroutines at
+`tests/test_codex_sdk_wrappers.py:133`, `tests/test_codex_sdk_wrappers.py:152`, and `tests/shell_notice_helpers.py:31`.
+They remain separate from the expected uv environment warning.
+
+The recorded benchmark limits remain unchanged.
+Actual-copy recovery remains exploratory, and the actual candidate sample remains small and unstratified.
+Large actual candidate holds remain unmeasured, and cache state is not guaranteed cold.
+The source copy can include up to twenty earlier exploratory publications.
+No new benchmark runs validate the final correction's exact code.
