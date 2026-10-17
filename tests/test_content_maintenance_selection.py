@@ -1,6 +1,7 @@
 """Periodic discovery selects only hot extracted roots before applying its limit."""
 
 import asyncio
+from contextlib import closing
 from datetime import timedelta
 
 import pytest
@@ -197,3 +198,116 @@ def test_root_activated_below_cursor_uses_targeted_restoration(
     row.refresh_from_db()
     assert row.codec == 'plain'
     assert cursors == [None, 'z-hot']
+
+
+def test_production_metadata_query_uses_plain_index(content_row_factory):
+    from django.db import connection
+
+    for index in range(200):
+        content_row_factory(f'mixed {index} ' * 20, index % 10 != 0)
+    query = maintenance._compression_metadata_query(50, 10)
+    sql, params = query.query.sql_with_params()
+    with connection.cursor() as cursor:
+        cursor.execute('EXPLAIN QUERY PLAN ' + sql, params)
+        plan = '\n'.join(row[3] for row in cursor.fetchall())
+    assert 'idx_content_plain_id' in plan
+    assert 'SEARCH' in plan and 'id>?' in plan
+    assert 'TEMP B-TREE' not in plan
+
+
+def test_compressed_rows_never_enter_metadata_page(content_row_factory):
+    plain = []
+    for index in range(6):
+        content_row_factory(f'compressed {index}', True)
+        plain.append(content_row_factory(f'plain {index}', False).id)
+    assert [row['id'] for row in maintenance._compression_metadata_query(0, 3)] == plain[:3]
+    assert [row['id'] for row in maintenance._compression_metadata_query(plain[2], 3)] == plain[3:]
+
+
+def test_all_rejected_plain_page_advances_cursor(content_row_factory):
+    from tests.test_content_maintenance import cold, policy
+    from tests.test_content_maintenance_reads import payload_selects
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from twicc.core.content_storage.maintenance_cache import MaintenanceSessionCache
+
+    owner = cold('cold')
+    hot = session('hot')
+    no_gain = content_row_factory('no gain', False, session_ids=[owner.id])
+    no_gain.compression_no_gain = True
+    no_gain.compression_attempt_version = policy()
+    no_gain.save()
+    rejected = content_row_factory('hot content', False, session_ids=[hot.id])
+    eligible = content_row_factory('eligible content ' * 100, False, session_ids=[owner.id])
+    with closing(MaintenanceSessionCache()) as cache:
+        with CaptureQueriesContext(connection) as queries:
+            page = maintenance.prepare_compression_batch(0, row_budget=2, session_cache=cache)
+        assert page.cursor == rejected.id and not page.done and page.entries == ()
+        assert page.counts.no_gain_skips == page.counts.ineligible_owners == 1
+        assert payload_selects(queries) == []
+        next_page = maintenance.prepare_compression_batch(page.cursor, row_budget=2, session_cache=cache)
+        assert next_page.done and [entry.candidate.content_id for entry in next_page.entries] == [eligible.id]
+
+
+def test_trailing_compressed_rows_finish_plain_scan(content_row_factory):
+    from tests.test_content_maintenance import cold
+    from twicc.core.content_storage.maintenance_cache import MaintenanceSessionCache
+
+    owner = cold('cold')
+    plain = content_row_factory('plain content ' * 100, False, session_ids=[owner.id])
+    content_row_factory('trailing compressed', True)
+    with closing(MaintenanceSessionCache()) as cache:
+        page = maintenance.prepare_compression_batch(0, row_budget=1, session_cache=cache)
+    assert page.cursor == plain.id and page.done and len(page.entries) == 1
+
+
+def test_all_compressed_table_finishes_in_one_empty_page(content_row_factory):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from tests.test_content_maintenance_reads import payload_selects, owner_selects
+    from twicc.core.content_storage.maintenance_cache import MaintenanceSessionCache
+
+    for index in range(105):
+        content_row_factory(f'compressed {index}', True, session_ids=['unresolved'])
+    with closing(MaintenanceSessionCache()) as cache, CaptureQueriesContext(connection) as queries:
+        page = maintenance.prepare_compression_batch(0, session_cache=cache)
+        result = maintenance._publish(page.entries, frozenset(), session_cache=cache)
+    assert page.cursor == 0 and page.done and page.entries == () and page.counts.scanned == 0
+    assert result == maintenance.PublicationResult()
+    assert len(queries) == 1
+    assert payload_selects(queries) == owner_selects(queries) == []
+    assert not any(query['sql'].startswith(('UPDATE', 'INSERT', 'DELETE')) for query in queries)
+
+
+def test_remaining_plain_rows_compressed_concurrently_finish_scan(content_row_factory):
+    from twicc.core.content_storage.maintenance_cache import MaintenanceSessionCache
+    from twicc.core.models import SessionItemContent
+
+    first = content_row_factory('first', False)
+    remaining = content_row_factory('remaining', False)
+    with closing(MaintenanceSessionCache()) as cache:
+        page = maintenance.prepare_compression_batch(0, row_budget=1, session_cache=cache)
+        assert page.cursor == first.id and not page.done
+        SessionItemContent.objects.filter(pk=remaining.id).update(codec='zstd')
+        page = maintenance.prepare_compression_batch(page.cursor, row_budget=1, session_cache=cache)
+    assert page.cursor == first.id and page.done and page.entries == () and page.counts.scanned == 0
+
+
+def test_index_membership_changes_preserve_cursor(content_row_factory):
+    from twicc.core.content_storage.maintenance_cache import MaintenanceSessionCache
+    from twicc.core.models import SessionItemContent
+
+    below = content_row_factory('below', True)
+    first = content_row_factory('first', False)
+    removed = content_row_factory('removed', False)
+    with closing(MaintenanceSessionCache()) as cache:
+        page = maintenance.prepare_compression_batch(0, row_budget=1, session_cache=cache)
+        assert page.cursor == first.id and not page.done
+        SessionItemContent.objects.filter(pk__in=[first.id, removed.id]).update(codec='zstd')
+        SessionItemContent.objects.filter(pk=below.id).update(codec='plain', dictionary=None)
+        inserted = content_row_factory('inserted', False)
+        page = maintenance.prepare_compression_batch(page.cursor, row_budget=1, session_cache=cache)
+        assert page.cursor == inserted.id and page.done and page.counts.scanned == 1
+        # Restored rows below the cursor enter the next complete pass.
+        page = maintenance.prepare_compression_batch(0, row_budget=1, session_cache=cache)
+        assert page.cursor == below.id and not page.done

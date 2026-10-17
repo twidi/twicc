@@ -853,6 +853,9 @@ class SessionItemContent(models.Model):
     compression_attempt_version = models.CharField(max_length=255, null=True)
     compression_no_gain = models.BooleanField(default=False)
 
+    class Meta:
+        indexes = [models.Index(fields=['id'], name='idx_content_plain_id', condition=Q(codec='plain'))]
+
 
 class SessionItem(models.Model):
     """A session item corresponds to a single line in a JSONL file"""

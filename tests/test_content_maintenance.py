@@ -624,19 +624,34 @@ def test_compression_never_queries_reverse_item_ownership(content_row_factory, s
     assert not any('core_sessionitem"' in query['sql'] for query in queries)
 
 
-def test_recompression_budget_includes_decoded_input_for_large_compressed_rows(content_row_factory, session_cache):
+def test_older_dictionary_compressed_rows_are_excluded_without_payload_reads(content_row_factory, session_cache):
     import hashlib
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from tests.test_content_maintenance_reads import payload_selects, owner_selects
     from twicc import content_maintenance_task as maintenance
     from twicc.core.models import ContentDictionary
 
     owner = cold('cold')
-    rows = [content_row_factory(str(n) * (5 * 1024 * 1024), True, session_ids=[owner.id]) for n in range(3)]
+    for n in range(3):
+        content_row_factory(str(n) * (5 * 1024 * 1024), True, session_ids=[owner.id])
     payload = b'new public synthetic dictionary'
     ContentDictionary.objects.create(provider='codex', version=2, format='raw', payload=payload,
                                      sha256=hashlib.sha256(payload).digest())
-    cursor, entries, done, _ = maintenance.prepare_compression_batch(0, 500, 8 * 1024 * 1024, session_cache=session_cache)
-    assert len(entries) == 1
-    assert cursor == rows[0].id and not done
+    with CaptureQueriesContext(connection) as queries:
+        page = maintenance.prepare_compression_batch(0, session_cache=session_cache)
+    assert page.cursor == 0 and page.done and page.entries == () and page.counts.scanned == 0
+    assert payload_selects(queries) == owner_selects(queries) == []
+
+
+def test_plaintext_budget_includes_large_input_and_output(content_row_factory, session_cache):
+    from twicc import content_maintenance_task as maintenance
+
+    owner = cold('cold')
+    rows = [content_row_factory(str(n) * (5 * 1024 * 1024), False, session_ids=[owner.id]) for n in range(3)]
+    page = maintenance.prepare_compression_batch(0, 100, 8 * 1024 * 1024, session_cache=session_cache)
+    assert len(page.entries) == 1
+    assert page.cursor == rows[0].id and not page.done
 
 
 def test_compression_budget_charges_owner_list_bytes_even_for_ineligible_rows(content_row_factory, monkeypatch, session_cache):

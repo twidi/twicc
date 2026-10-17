@@ -269,8 +269,8 @@ def test_only_candidates_load_payloads_and_publish_metadata(content_row_factory,
     try:
         with CaptureQueriesContext(connection) as preparation:
             page = maintenance.prepare_compression_batch(0, session_cache=cache)
-        assert page.done and page.counts.scanned == 100
-        assert page.counts.already_compressed == 97 and page.counts.prepared == 3
+        assert page.done and page.counts.scanned == 3
+        assert page.counts.already_compressed == 0 and page.counts.prepared == 3
         assert read_ids == [row.id for row in candidates]
         assert len(payload_selects(preparation)) == 1
         assert f'IN ({", ".join(str(row.id) for row in candidates)})' in payload_selects(preparation)[0]
@@ -303,8 +303,8 @@ def test_conformant_page_needs_no_owner_payload_or_publication_reads(
     with CaptureQueriesContext(connection) as queries:
         page = maintenance.prepare_compression_batch(0, session_cache=session_cache)
     assert page.done and page.entries == ()
-    assert page.counts.scanned == 1
-    assert page.counts.already_compressed == (representation == 'zstd')
+    assert page.counts.scanned == (representation == 'no_gain')
+    assert page.counts.already_compressed == 0
     assert page.counts.no_gain_skips == (representation == 'no_gain')
     assert page.counts.payload_bytes_loaded == 0
     assert payload_selects(queries) == owner_selects(queries) == []
@@ -456,3 +456,28 @@ def test_root_selection_metadata_is_loaded_once_per_pass(content_row_factory, se
                                                      session_cache=session_cache).done
         maintenance.prepare_compression_batch(0, session_cache=session_cache)
     assert not [sql for sql in owner_selects(publication) if '"created_at"' in sql.split(' FROM ')[0]]
+
+
+@pytest.mark.parametrize('provider', ['claude_code', 'codex'])
+@pytest.mark.parametrize('attempt', ['same', 'old-policy', None])
+def test_plain_no_gain_policy_controls_payload_selection(content_row_factory, session_cache, provider, attempt):
+    from twicc.core.content_storage.policy import compression_policy_version
+    from twicc.providers.helpers import get_provider_helpers
+
+    owner = cold('owner')
+    owner.provider = provider
+    owner.compute_version = get_provider_helpers(provider).current_compute_version
+    owner.save(update_fields=['provider', 'compute_version'])
+    dictionary = content_storage_helpers._public_dictionary(provider)
+    version = compression_policy_version(provider, dictionary.id)
+    row = content_row_factory('no gain input', False, provider=provider, session_ids=[owner.id])
+    row.compression_no_gain = True
+    row.compression_attempt_version = version if attempt == 'same' else attempt
+    row.save(update_fields=['compression_no_gain', 'compression_attempt_version'])
+    with CaptureQueriesContext(connection) as queries:
+        page = maintenance.prepare_compression_batch(0, session_cache=session_cache)
+    assert page.done and page.counts.scanned == 1
+    assert len(page.entries) == (0 if attempt == 'same' else 1)
+    assert page.counts.no_gain_skips == (attempt == 'same')
+    assert len(payload_selects(queries)) == (0 if attempt == 'same' else 1)
+    assert len(owner_selects(queries)) == (0 if attempt == 'same' else 1)

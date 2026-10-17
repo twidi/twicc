@@ -81,7 +81,7 @@ def test_storage_migration_keeps_legacy_tables_and_skips_legacy_fk_scans(tmp_pat
         statements = []
         db.connection.set_trace_callback(statements.append)
         migration = executor.loader.get_migration("core", "0156_content_storage_schema")
-        executor.apply_migration(state, migration)
+        state = executor.apply_migration(state, migration)
         db.connection.set_trace_callback(None)
         assert db.connection.execute(
             "SELECT name, rootpage FROM sqlite_master WHERE name IN ('core_session', 'core_sessionitem')"
@@ -99,6 +99,69 @@ def test_storage_migration_keeps_legacy_tables_and_skips_legacy_fk_scans(tmp_pat
         ]
         assert not any('new__core_session' in sql for sql in statements)
         assert not any("CREATE INDEX" in sql and 'ON "core_sessionitem"' in sql for sql in statements)
+
+        # Run the remaining branch chain with legacy content still present.
+        for name in (
+            '0157_compute_aggregate_repair', '0158_statistics_queue', '0159_remove_compute_aggregate_repair',
+            '0160_statistics_queue_force_cost_sessions', '0161_session_compute_root_index',
+        ):
+            state = executor.apply_migration(state, executor.loader.get_migration('core', name))
+        before_index = state.clone()
+        migration = executor.loader.get_migration('core', '0162_content_plain_partial_index')
+        counts_at_create = []
+
+        def observe_index(execute, sql, params, many, context):
+            if str(sql).startswith('CREATE INDEX "idx_content_plain_id"'):
+                counts_at_create.append(db.connection.execute('SELECT COUNT(*) FROM core_sessionitemcontent').fetchone()[0])
+            return execute(sql, params, many, context)
+
+        statements.clear()
+        db.connection.set_trace_callback(statements.append)
+        with db.execute_wrapper(observe_index):
+            state = executor.apply_migration(state, migration)
+        db.connection.set_trace_callback(None)
+        assert counts_at_create == [0]
+        assert not any(sql.startswith('PRAGMA foreign_key_check') for sql in statements)
+        assert not any('new__core_sessionitem' in sql for sql in statements)
+        assert db.connection.execute(
+            "SELECT name, rootpage FROM sqlite_master WHERE name IN ('core_session', 'core_sessionitem')"
+        ).fetchall() == before
+        assert db.connection.execute('SELECT content FROM core_sessionitem').fetchall() == [('legacy é',)]
+
+        content = state.apps.get_model('core', 'SessionItemContent')
+        first = content.objects.using(alias).create(sha256=b'a' * 32, payload=b'first', raw_size=5)
+        second = content.objects.using(alias).create(sha256=b'b' * 32, payload=b'second', raw_size=6, codec='zstd')
+
+        def members():
+            return db.connection.execute(
+                "SELECT id FROM core_sessionitemcontent INDEXED BY idx_content_plain_id WHERE codec = 'plain' ORDER BY id"
+            ).fetchall()
+
+        assert members() == [(first.id,)]
+        content.objects.using(alias).filter(pk=first.id).update(codec='zstd')
+        assert members() == []
+        content.objects.using(alias).filter(pk=second.id).update(codec='plain')
+        assert members() == [(second.id,)]
+        executor.unapply_migration(before_index, migration)
+        assert db.connection.execute("SELECT name FROM sqlite_master WHERE name = 'idx_content_plain_id'").fetchall() == []
+        state = executor.apply_migration(before_index, migration)
+        assert members() == [(second.id,)]
     finally:
         db.close()
         delattr(connections._connections, alias)
+
+
+@pytest.mark.django_db
+def test_plain_partial_index_definition():
+    from django.db import connection
+
+    indexes = {index.name: index for index in core.SessionItemContent._meta.indexes}
+    assert 'idx_content_plain_id' in indexes
+    index = indexes['idx_content_plain_id']
+    assert index.fields == ['id']
+    assert index.condition == models.Q(codec='plain')
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT sql FROM sqlite_master WHERE name = %s", ['idx_content_plain_id'])
+        ddl = cursor.fetchone()[0]
+        assert 'ON "core_sessionitemcontent" ("id")' in ddl
+        assert ddl.endswith("WHERE \"codec\" = 'plain'")

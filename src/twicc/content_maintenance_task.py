@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from channels.db import database_sync_to_async
 from django.db import connections, transaction
-from django.db.models import BinaryField
+from django.db.models import BinaryField, QuerySet
 from django.db.models.functions import Cast, Length
 from django.utils import timezone
 
@@ -477,6 +477,15 @@ def recovery_promotion_targets(session_ids, session_cache=None):
             session_cache.close()
 
 
+def _compression_metadata_query(after_id: int, row_budget: int) -> QuerySet:
+    """Select plaintext metadata through the partial index before applying the page limit."""
+    query = SessionItemContent.objects.filter(codec='plain', pk__gt=after_id).order_by('id')
+    return query.annotate(
+        stored_size=Length('payload'), owner_size=Length(Cast('session_ids', BinaryField())),
+    ).values(*(field for field in COMPRESSION_METADATA_FIELDS if field != 'session_ids'),
+             'stored_size', 'owner_size')[:row_budget]
+
+
 def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_BUDGET, *,
                               session_cache: MaintenanceSessionCache) -> CompressionPage:
     """Filter bounded metadata before resolving owners or loading candidate payloads."""
@@ -488,11 +497,9 @@ def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_
     dictionaries = {}
     dictionary_cache = {}
     counts = CompressionPageCounts()._asdict()
-    query = SessionItemContent.objects.filter(pk__gt=after_id).order_by('id')
-    rows = list(query.annotate(
-        stored_size=Length('payload'), owner_size=Length(Cast('session_ids', BinaryField())),
-    ).values(*(field for field in COMPRESSION_METADATA_FIELDS if field != 'session_ids'),
-             'stored_size', 'owner_size')[:row_budget])
+    rows = list(_compression_metadata_query(after_id, row_budget))
+    if not rows:
+        return CompressionPage(after_id, (), True, CompressionPageCounts())
     selected = []
     for metadata in rows:
         cost = metadata['raw_size'] + metadata['stored_size'] + metadata['owner_size']
@@ -511,9 +518,6 @@ def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_
             dictionaries[provider] = dictionary, policy
         dictionary, policy = dictionaries[provider]
         if dictionary is None:
-            continue
-        if metadata['codec'] == 'zstd' and metadata['dictionary_id'] == dictionary.id:
-            counts['already_compressed'] += 1
             continue
         if metadata['compression_attempt_version'] == policy and metadata['compression_no_gain']:
             counts['no_gain_skips'] += 1
@@ -564,7 +568,7 @@ def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_
         counts['prepared'] += 1
         counts['candidate_raw_bytes'] += candidate.encoded.raw_size
         counts['candidate_stored_bytes'] += len(candidate.encoded.payload)
-    return CompressionPage(last, tuple(entries), not SessionItemContent.objects.filter(pk__gt=last).exists(),
+    return CompressionPage(last, tuple(entries), not SessionItemContent.objects.filter(codec='plain', pk__gt=last).exists(),
                            CompressionPageCounts(**counts))
 
 
