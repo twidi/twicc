@@ -1736,6 +1736,8 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
         # The "latch" family (atis-latch, isolation-latch, ...) restores
         # conversation state on --resume / fork; atis carries the opaque
         # experiment token the CLI sends as the `x-cc-atis` request header.
+        # The "api-request" family (CLI 2.1.301+) logs the raw API request
+        # payloads (shape + deduplicated blobs): hundreds of lines per session.
         # This list is deliberately NOT versioned: adding a type here without
         # bumping CLAUDE_CODE_COMPUTE_VERSION leaves already-stored lines as
         # COLLAPSIBLE and only fixes newly computed ones, which is enough for
@@ -1752,6 +1754,7 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
             'bridge-session', 'observer-ref', 'fork-context-ref',
             'marble-origami-commit', 'marble-origami-snapshot',
             'marble-origami-reset', 'cost-state',
+            'api-request', 'api-request-shape', 'api-request-blob',
         ):
             return ItemKind.SYSTEM
 
