@@ -176,12 +176,12 @@ def test_periodic_candidate_waits_for_real_compute_cleanup(publication_tree, mon
         assert release_cleanup.wait(8)
         return original_close(operation)
 
-    def configure(function, *args):
+    def configure(function, *args, **kwargs):
         connections['default'].settings_dict = {**connections['default'].settings_dict, 'NAME': str(path)}
-        return function(*args)
+        return function(*args, **kwargs)
 
-    def compression(*args):
-        result = configure(original_compress, *args)
+    def compression(*args, **kwargs):
+        result = configure(original_compress, *args, **kwargs)
         assert any(entry.candidate.content_id == candidate.id for entry in result[1])
         # Arrival follows actual codec preparation, before maintenance publication.
         loop.call_soon_threadsafe(queue_compute)
@@ -192,11 +192,11 @@ def test_periodic_candidate_waits_for_real_compute_cleanup(publication_tree, mon
         runs.append(enqueue(msg))
         compute_queued.set()
 
-    def maintenance_publish(entries, active):
+    def maintenance_publish(entries, active, **kwargs):
         assert operations[0].closed
         assert not db_writer.has_pending_source_applications()
         published.extend(entries)
-        result = original_maintenance_publish(entries, active)
+        result = original_maintenance_publish(entries, active, **kwargs)
         loop.call_soon_threadsafe(maintenance_stop.set)
         return result
 

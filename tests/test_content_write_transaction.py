@@ -8,30 +8,34 @@ from django.db.backends.sqlite3.base import DatabaseWrapper
 from django.db.transaction import TransactionManagementError
 from django.test.utils import CaptureQueriesContext
 
+from tests import test_content_maintenance
 from tests.test_content_maintenance import cold
 from twicc import content_maintenance_task as maintenance
 from twicc.core.models import SessionItem
 
+session_cache = test_content_maintenance.session_cache
+
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-def prepared_content(content_row_factory):
+def prepared_content(content_row_factory, session_cache):
     owner = cold('owner')
     row = content_row_factory('content ' * 100, False, session_ids=[owner.id])
     SessionItem.objects.create(session=owner, line_num=1, content='', current_content=row, original_content=row)
-    _, entries, _ = maintenance.prepare_compression_batch(0)
+    page = maintenance.prepare_compression_batch(0, session_cache=session_cache)
+    entries = page.entries
     assert len(entries) == 1
     return row, entries
 
 
-def test_publication_begins_immediate_without_primary_key_update_or_fk_scan(content_row_factory):
-    row, entries = prepared_content(content_row_factory)
+def test_publication_begins_immediate_without_primary_key_update_or_fk_scan(content_row_factory, session_cache):
+    row, entries = prepared_content(content_row_factory, session_cache)
     with connection.cursor() as cursor:
         cursor.execute('PRAGMA foreign_keys')
         assert cursor.fetchone() == (1,)
     previous_mode = connection.transaction_mode
     with CaptureQueriesContext(connection) as queries:
-        assert maintenance._publish(entries, frozenset()) == 1
+        assert maintenance._publish(entries, frozenset(), session_cache=session_cache).changed == 1
     sql = [query['sql'] for query in queries]
     assert sql[0] == 'BEGIN IMMEDIATE'
     assert not any('SET "id" = "id"' in statement for statement in sql)
@@ -45,14 +49,14 @@ def test_publication_begins_immediate_without_primary_key_update_or_fk_scan(cont
 
 
 @pytest.mark.parametrize('fail', [False, True])
-def test_publication_commits_callbacks_only_on_success(content_row_factory, monkeypatch, fail):
-    row, entries = prepared_content(content_row_factory)
+def test_publication_commits_callbacks_only_on_success(content_row_factory, monkeypatch, fail, session_cache):
+    row, entries = prepared_content(content_row_factory, session_cache)
     previous_mode = connection.transaction_mode
     committed = []
     publish = maintenance.publish_prepared_batch
 
-    def publish_then_finish(*args):
-        count = publish(*args)
+    def publish_then_finish(*args, **kwargs):
+        count = publish(*args, **kwargs)
         transaction.on_commit(lambda: committed.append('committed'))
         if fail:
             raise ValueError('publication failed')
@@ -61,9 +65,9 @@ def test_publication_commits_callbacks_only_on_success(content_row_factory, monk
     monkeypatch.setattr(maintenance, 'publish_prepared_batch', publish_then_finish)
     if fail:
         with pytest.raises(ValueError, match='publication failed'):
-            maintenance._publish(entries, frozenset())
+            maintenance._publish(entries, frozenset(), session_cache=session_cache)
     else:
-        assert maintenance._publish(entries, frozenset()) == 1
+        assert maintenance._publish(entries, frozenset(), session_cache=session_cache).changed == 1
     assert connection.transaction_mode == previous_mode
     assert connection.get_autocommit()
     assert committed == ([] if fail else ['committed'])
@@ -71,25 +75,25 @@ def test_publication_commits_callbacks_only_on_success(content_row_factory, monk
     assert row.codec == ('plain' if fail else 'zstd')
 
 
-def test_empty_publication_does_not_open_transaction():
+def test_empty_publication_does_not_open_transaction(session_cache):
     with CaptureQueriesContext(connection) as queries:
-        assert maintenance._publish((), frozenset()) == 0
+        assert maintenance._publish((), frozenset(), session_cache=session_cache).changed == 0
     assert list(queries) == []
 
 
 @pytest.mark.parametrize('outer', ['atomic', 'manual'])
-def test_publication_rejects_outer_transaction_before_validation(content_row_factory, outer):
-    _, entries = prepared_content(content_row_factory)
+def test_publication_rejects_outer_transaction_before_validation(content_row_factory, outer, session_cache):
+    _, entries = prepared_content(content_row_factory, session_cache)
     previous_mode = connection.transaction_mode
     if outer == 'atomic':
         with (transaction.atomic(), CaptureQueriesContext(connection) as queries,
               pytest.raises(TransactionManagementError)):
-            maintenance._publish(entries, frozenset())
+            maintenance._publish(entries, frozenset(), session_cache=session_cache)
     else:
         connection.set_autocommit(False)
         try:
             with CaptureQueriesContext(connection) as queries, pytest.raises(TransactionManagementError):
-                maintenance._publish(entries, frozenset())
+                maintenance._publish(entries, frozenset(), session_cache=session_cache)
         finally:
             connection.rollback()
             connection.set_autocommit(True)

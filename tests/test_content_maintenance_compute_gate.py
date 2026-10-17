@@ -30,9 +30,9 @@ def test_pending_compute_retains_first_deadline_and_completion_interval(
     monkeypatch.setattr(maintenance, '_maintenance_time', lambda: clock[0])
     original = maintenance.prepare_compression_batch
 
-    def compression(*args):
+    def compression(*args, **kwargs):
         preparations.append(clock[0])
-        result = original(*args)
+        result = original(*args, **kwargs)
         clock[0] += 20
         return result
 
@@ -69,9 +69,9 @@ def test_overdue_waits_for_all_providers_and_recovery_without_worker(
         inspections.append(clock[0])
         return original(*args)
 
-    def compression(*args):
+    def compression(*args, **kwargs):
         preparations.append(clock[0])
-        return 0, (), True
+        return maintenance.CompressionPage(0, (), True, maintenance.CompressionPageCounts())
 
     async def clean(**kwargs):
         cleanup.append(clock[0])
@@ -110,16 +110,16 @@ def test_compute_restart_pauses_prepared_publication_and_resumes_cursor(
     loop = None
     monkeypatch.setattr(maintenance, '_maintenance_time', lambda: clock[0])
 
-    def compression(cursor, *args):
+    def compression(cursor, *args, **kwargs):
         cursors.append(cursor)
         if cursor == 0:
             if restart == 'preparation':
                 loop.call_soon_threadsafe(work.set_pending, provider, True)
-            return 9, ('prepared',), False
-        return 10, (), True
+            return maintenance.CompressionPage(9, ('prepared',), False, maintenance.CompressionPageCounts(prepared=1))
+        return maintenance.CompressionPage(10, (), True, maintenance.CompressionPageCounts())
 
     async def apply(function, *args, **kwargs):
-        if function is maintenance._publish:
+        if getattr(function, 'func', function) is maintenance._publish:
             assert not work.has_pending()
             published.extend(args[0])
             if restart == 'publication':
@@ -180,9 +180,9 @@ def test_foreground_plaintext_demand_runs_while_periodic_is_overdue(
     clock, waits, preparations = [0], [], []
     monkeypatch.setattr(maintenance, '_maintenance_time', lambda: clock[0])
 
-    def compression(*args):
+    def compression(*args, **kwargs):
         preparations.append(clock[0])
-        return 0, (), True
+        return maintenance.CompressionPage(0, (), True, maintenance.CompressionPageCounts())
 
     def restored():
         row.refresh_from_db()
@@ -243,9 +243,9 @@ def test_change_between_inspection_and_wait_is_not_lost(
                     work.set_pending('codex', False)
         return result
 
-    def compression(*args):
+    def compression(*args, **kwargs):
         preparations.append(clock[0])
-        return 0, (), True
+        return maintenance.CompressionPage(0, (), True, maintenance.CompressionPageCounts())
 
     async def wait(stop, wake, timeout):
         waits.append(timeout)
@@ -348,8 +348,8 @@ def test_periodic_recovery_pauses_prepared_promotion_when_compute_restarts(
         # This target becomes visible only after the startup inventory.
         return [] if clock[0] == 0 else original_page(*args)
 
-    def prepare(*args):
-        result = original_prepare(*args)
+    def prepare(*args, **kwargs):
+        result = original_prepare(*args, **kwargs)
         prepared.append(args[0].root_id)
         loop.call_soon_threadsafe(work.set_pending, 'codex', True)
         return result
@@ -421,10 +421,10 @@ def test_last_application_release_wakes_overdue_maintenance_without_provider_cha
         async def notify(*args):
             await notifications.wait()
 
-        def compression(*args):
+        def compression(*args, **kwargs):
             assert not ingress.pending_sources
             preparations.append(clock[0])
-            return 0, (), True
+            return maintenance.CompressionPage(0, (), True, maintenance.CompressionPageCounts())
 
         async def wait(stop, wake, timeout):
             if clock[0] == 0:
@@ -492,8 +492,8 @@ def test_prepared_periodic_candidate_rechecks_gate_after_lease(
         ingress = db_writer.ComputeIngressQueue(on_put=signals.notify_sources)
         monkeypatch.setattr(db_writer, '_subprocess_queue', ingress)
 
-        def prepare(*args):
-            result = original_prepare(*args)
+        def prepare(*args, **kwargs):
+            result = original_prepare(*args, **kwargs)
             observations.extend(result[1])
             return result
 
@@ -505,10 +505,10 @@ def test_prepared_periodic_candidate_rechecks_gate_after_lease(
                 ingress.put_nowait(message)
             return result
 
-        def publish(entries, active):
+        def publish(entries, active, **kwargs):
             assert not ingress.pending_sources, 'Gate closes after preparation and lease acquisition'
             published.extend(entries)
-            return original_publish(entries, active)
+            return original_publish(entries, active, **kwargs)
 
         async def wait(stop, wake, timeout):
             if clock[0] == 0:
@@ -538,8 +538,6 @@ def test_prepared_periodic_candidate_rechecks_gate_after_lease(
     asyncio.run(scenario())
     row.refresh_from_db()
     assert raced and published == observations and len(published) == 1
-    if change_epoch:
-        assert row.codec == 'plain' and row.compression_attempt_version is None
-    else:
-        assert row.compression_no_gain is no_gain
-        assert row.codec == ('plain' if no_gain else 'zstd')
+    # Structural epochs do not change the owner's own lifecycle eligibility.
+    assert row.compression_no_gain is no_gain
+    assert row.codec == ('plain' if no_gain else 'zstd')

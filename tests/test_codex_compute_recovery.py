@@ -1260,9 +1260,9 @@ def test_startup_failure_recovers_outdated_roots_before_periodic_admission(
     clock, preparations = [0], []
     monkeypatch.setattr(maintenance, '_maintenance_time', lambda: clock[0])
 
-    def compression(*args):
+    def compression(*args, **kwargs):
         preparations.append(versions(path))
-        return 0, (), True
+        return maintenance.CompressionPage(0, (), True, maintenance.CompressionPageCounts())
 
     monkeypatch.setattr(maintenance, 'prepare_compression_batch', compression)
 

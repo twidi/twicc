@@ -1,4 +1,5 @@
 from datetime import timedelta
+from functools import partial
 
 import pytest
 from django.db import transaction
@@ -8,6 +9,7 @@ from tests import content_storage_helpers, test_content_storage_admission
 from tests.content_storage_helpers import _public_dictionary
 from tests.test_content_root_state import session
 from twicc.core.content_storage.codec import decode_content
+from twicc.core.content_storage.maintenance_cache import MaintenanceSessionCache
 from twicc.core.content_storage.policy import compression_policy_version
 from twicc.content_maintenance_task import prepare_representation, publish_representation
 from twicc.providers.compute_work import ComputeWorkState
@@ -16,6 +18,13 @@ content_row_factory = content_storage_helpers.content_row_factory
 writer_state = test_content_storage_admission.writer_state
 
 pytestmark = pytest.mark.django_db
+
+
+@pytest.fixture
+def session_cache():
+    cache = MaintenanceSessionCache()
+    yield cache
+    cache.close()
 
 
 def cold(name):
@@ -82,7 +91,7 @@ def test_representation_change_rejects_old_candidate(content_row_factory):
         assert not publish_representation(candidate, frozenset())
 
 
-def test_same_no_gain_skips_and_changed_policy_retries(content_row_factory, monkeypatch):
+def test_same_no_gain_skips_and_changed_policy_retries(content_row_factory, monkeypatch, session_cache):
     from twicc import content_maintenance_task as maintenance
 
     owner = cold('cold')
@@ -92,23 +101,23 @@ def test_same_no_gain_skips_and_changed_policy_retries(content_row_factory, monk
     row.save()
     attempts = []
     original = maintenance.prepare_representation
-    def prepare(*args):
+    def prepare(*args, **kwargs):
         attempts.append(args)
-        return original(*args)
+        return original(*args, **kwargs)
     monkeypatch.setattr(maintenance, 'prepare_representation', prepare)
-    maintenance.prepare_compression_batch(0)
+    maintenance.prepare_compression_batch(0, session_cache=session_cache)
     assert attempts == []
     row.compression_attempt_version = 'old-policy'
     row.save(update_fields=['compression_attempt_version'])
-    _, entries, _ = maintenance.prepare_compression_batch(0)
+    _, entries, _, _ = maintenance.prepare_compression_batch(0, session_cache=session_cache)
     assert len(attempts) == len(entries) == 1
     with transaction.atomic():
-        assert maintenance.publish_prepared_batch(entries, frozenset()) == 1
+        assert maintenance.publish_prepared_batch(entries, frozenset(), session_cache=session_cache).no_gain_recorded == 1
     row.refresh_from_db()
     assert row.compression_no_gain and row.codec == 'plain'
 
 
-def test_optional_encoder_failure_does_not_record_no_gain(content_row_factory, monkeypatch):
+def test_optional_encoder_failure_does_not_record_no_gain(content_row_factory, monkeypatch, session_cache):
     from twicc import content_maintenance_task as maintenance
 
     owner = cold('cold')
@@ -116,46 +125,44 @@ def test_optional_encoder_failure_does_not_record_no_gain(content_row_factory, m
     def failure(*args, **kwargs):
         raise RuntimeError('optional encoder unavailable')
     monkeypatch.setattr(maintenance, 'transcode_content', failure)
-    _, entries, _ = maintenance.prepare_compression_batch(0)
+    _, entries, _, _ = maintenance.prepare_compression_batch(0, session_cache=session_cache)
     row.refresh_from_db()
     assert entries == ()
     assert row.compression_attempt_version is None and not row.compression_no_gain
 
 
-def test_stale_root_metadata_retains_plain_then_periodic_recovers(content_row_factory):
+def test_own_recent_lifecycle_retains_plain_then_periodic_recovers(content_row_factory, session_cache):
     from twicc import content_maintenance_task as maintenance
+    from twicc.core.content_storage.lifecycle import update_lifecycle
 
     owner = cold('cold')
-    current_version = owner.compute_version
-    owner.compute_version = 0
-    owner.save(update_fields=['compute_version'])
+    update_lifecycle(type(owner).objects.filter(pk=owner.id), last_started_at=timezone.now())
     row = content_row_factory('content' * 100, False, session_ids=[owner.id])
-    assert maintenance.prepare_compression_batch(0)[1] == ()
-    owner.compute_version = current_version
-    owner.save(update_fields=['compute_version'])
-    _, entries, _ = maintenance.prepare_compression_batch(0)
+    assert maintenance.prepare_compression_batch(0, session_cache=session_cache).entries == ()
+    update_lifecycle(type(owner).objects.filter(pk=owner.id), last_started_at=timezone.now() - timedelta(days=31))
+    page = maintenance.prepare_compression_batch(0, session_cache=session_cache)
     with transaction.atomic():
-        assert maintenance.publish_prepared_batch(entries, frozenset()) == 1
+        assert maintenance.publish_prepared_batch(page.entries, frozenset(), session_cache=session_cache).changed == 1
     row.refresh_from_db()
     assert row.codec == 'zstd'
 
 
-def test_stored_byte_budget_allows_one_oversized_row(content_row_factory):
+def test_stored_byte_budget_allows_one_oversized_row(content_row_factory, session_cache):
     from twicc import content_maintenance_task as maintenance
 
     owner = cold('cold')
     first = content_row_factory('first' * 100, False, session_ids=[owner.id])
     second = content_row_factory('second' * 100, False, session_ids=[owner.id])
-    cursor, entries, done = maintenance.prepare_compression_batch(0, 500, 1)
+    cursor, entries, done, _ = maintenance.prepare_compression_batch(0, 500, 1, session_cache=session_cache)
     assert cursor == first.id and not done and len(entries) == 1
-    cursor, entries, done = maintenance.prepare_compression_batch(cursor, 500, 1)
+    cursor, entries, done, _ = maintenance.prepare_compression_batch(cursor, 500, 1, session_cache=session_cache)
     assert cursor == second.id and done and len(entries) == 1
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize('change', ['epoch', 'membership', 'incarnation'])
-def test_actual_publication_path_rejects_change_back(content_row_factory, writer_state,
-                                                     compute_executor_started, monkeypatch, change):
+def test_actual_publication_accepts_current_cold_metadata_after_change_back(content_row_factory, writer_state,
+                                                     compute_executor_started, monkeypatch, change, session_cache):
     import asyncio
     from twicc import content_maintenance_task as maintenance
     from twicc.core.content_storage import state
@@ -165,7 +172,7 @@ def test_actual_publication_path_rejects_change_back(content_row_factory, writer
     owner = cold('cold')
     other = cold('other')
     row = content_row_factory('content' * 100, False, session_ids=[owner.id])
-    _, entries, _ = maintenance.prepare_compression_batch(0)
+    _, entries, _, _ = maintenance.prepare_compression_batch(0, session_cache=session_cache)
     with transaction.atomic():
         if change == 'membership':
             row.session_ids = [owner.id, other.id]
@@ -180,14 +187,14 @@ def test_actual_publication_path_rejects_change_back(content_row_factory, writer
             update_lifecycle(type(owner).objects.filter(pk=owner.id), archived=True)
         else:
             type(owner).objects.filter(pk=owner.id).update(storage_incarnation='replacement')
-    assert asyncio.run(maintenance._apply(maintenance._publish, entries)) == 0
+    assert asyncio.run(maintenance._apply(partial(maintenance._publish, session_cache=session_cache), entries)).changed == 1
     row.refresh_from_db()
-    assert row.codec == 'plain'
+    assert row.codec == 'zstd'
 
 
 @pytest.mark.django_db(transaction=True)
-def test_actual_publication_captures_active_native_child(content_row_factory, writer_state,
-                                                         compute_executor_started, monkeypatch):
+def test_actual_publication_ignores_unrelated_active_native_child(content_row_factory, writer_state,
+                                                         compute_executor_started, monkeypatch, session_cache):
     import asyncio
     from types import SimpleNamespace
     from twicc import content_maintenance_task as maintenance
@@ -196,29 +203,35 @@ def test_actual_publication_captures_active_native_child(content_row_factory, wr
     owner = cold('cold')
     child = session('child', type='subagent', parent_session=owner)
     row = content_row_factory('content' * 100, False, session_ids=[owner.id])
-    _, entries, _ = maintenance.prepare_compression_batch(0)
+    _, entries, _, _ = maintenance.prepare_compression_batch(0, session_cache=session_cache)
     monkeypatch.setattr(get_agent_manager_registry(), 'get_active_agents',
                         lambda: [SimpleNamespace(session_id=child.id)])
-    assert asyncio.run(maintenance._apply(maintenance._publish, entries)) == 0
+    assert asyncio.run(maintenance._apply(partial(maintenance._publish, session_cache=session_cache), entries)).changed == 1
     row.refresh_from_db()
-    assert row.codec == 'plain'
+    assert row.codec == 'zstd'
 
 
 @pytest.mark.django_db(transaction=True)
-def test_combined_timer_uses_controlled_clock_and_filesystem_flag(writer_state, compute_executor_started,
+def test_combined_timer_empty_pages_take_no_lease_and_preserve_filesystem_flag(writer_state, compute_executor_started,
                                                                  monkeypatch, settings):
     import asyncio
     from twicc import content_maintenance_task as maintenance, session_dirs_cleanup_task
 
+    from twicc.providers.db_writer import get_write_coordinator
+
+    def reject_lease():
+        pytest.fail('Empty candidate pages must not request a writer lease')
+
+    monkeypatch.setattr(get_write_coordinator(), 'try_background_lease', reject_lease)
     settings.SESSION_DIRS_CLEANUP_ENABLED = False
     clock = [0.0]
     waits = []
     passes = []
     monkeypatch.setattr(maintenance, '_maintenance_time', lambda: clock[0])
     original = maintenance.prepare_compression_batch
-    def compression(*args):
+    def compression(*args, **kwargs):
         passes.append(clock[0])
-        return original(*args)
+        return original(*args, **kwargs)
     monkeypatch.setattr(maintenance, 'prepare_compression_batch', compression)
     async def no_filesystem():
         pytest.fail('Filesystem disable must retain content maintenance only')
@@ -383,10 +396,10 @@ def test_cancelled_coordinator_drains_admitted_publication(content_row_factory, 
     entered = threading.Event()
     release = threading.Event()
     original = maintenance._publish
-    def publish(entries, active):
+    def publish(entries, active, **kwargs):
         entered.set()
         assert release.wait(5)
-        return original(entries, active)
+        return original(entries, active, **kwargs)
     monkeypatch.setattr(maintenance, '_publish', publish)
     async def scenario():
         task = asyncio.create_task(maintenance.start_content_maintenance_task(
@@ -534,15 +547,15 @@ def test_hot_promotion_precedes_prepared_compression_publication(content_row_fac
     release = threading.Event()
     trace = []
     original_prepare = maintenance.prepare_compression_batch
-    def prepare(*args):
-        result = original_prepare(*args)
+    def prepare(*args, **kwargs):
+        result = original_prepare(*args, **kwargs)
         prepared.set()
         assert release.wait(5)
         return result
     original_publish = maintenance._publish
-    def publish(entries, active):
+    def publish(entries, active, **kwargs):
         trace.append('compression')
-        return original_publish(entries, active)
+        return original_publish(entries, active, **kwargs)
     original_promote = maintenance.apply_promotion_batch
     def promote(*args, **kwargs):
         trace.append('promotion')
@@ -597,7 +610,7 @@ def test_root_readiness_does_not_wait_for_unextracted_empty_descendant(content_r
     assert root.plaintext_verified_epoch == root.content_state_epoch and row.codec == 'plain'
 
 
-def test_compression_never_queries_reverse_item_ownership(content_row_factory):
+def test_compression_never_queries_reverse_item_ownership(content_row_factory, session_cache):
     from django.db import connection
     from django.test.utils import CaptureQueriesContext
     from twicc import content_maintenance_task as maintenance
@@ -605,13 +618,13 @@ def test_compression_never_queries_reverse_item_ownership(content_row_factory):
     owner = cold('cold')
     content_row_factory('content' * 100, False, session_ids=[owner.id])
     with CaptureQueriesContext(connection) as queries:
-        _, entries, _ = maintenance.prepare_compression_batch(0)
+        _, entries, _, _ = maintenance.prepare_compression_batch(0, session_cache=session_cache)
         with transaction.atomic():
-            assert maintenance.publish_prepared_batch(entries, frozenset()) == 1
+            assert maintenance.publish_prepared_batch(entries, frozenset(), session_cache=session_cache).changed == 1
     assert not any('core_sessionitem"' in query['sql'] for query in queries)
 
 
-def test_recompression_budget_includes_decoded_input_for_large_compressed_rows(content_row_factory):
+def test_recompression_budget_includes_decoded_input_for_large_compressed_rows(content_row_factory, session_cache):
     import hashlib
     from twicc import content_maintenance_task as maintenance
     from twicc.core.models import ContentDictionary
@@ -621,12 +634,12 @@ def test_recompression_budget_includes_decoded_input_for_large_compressed_rows(c
     payload = b'new public synthetic dictionary'
     ContentDictionary.objects.create(provider='codex', version=2, format='raw', payload=payload,
                                      sha256=hashlib.sha256(payload).digest())
-    cursor, entries, done = maintenance.prepare_compression_batch(0, 500, 8 * 1024 * 1024)
+    cursor, entries, done, _ = maintenance.prepare_compression_batch(0, 500, 8 * 1024 * 1024, session_cache=session_cache)
     assert len(entries) == 1
     assert cursor == rows[0].id and not done
 
 
-def test_compression_budget_charges_owner_list_bytes_even_for_ineligible_rows(content_row_factory, monkeypatch):
+def test_compression_budget_charges_owner_list_bytes_even_for_ineligible_rows(content_row_factory, monkeypatch, session_cache):
     from twicc import content_maintenance_task as maintenance
 
     owners = [f'missing-owner-{n}' for n in range(1000)]
@@ -643,12 +656,12 @@ def test_compression_budget_charges_owner_list_bytes_even_for_ineligible_rows(co
         return decode(value, expression, connection)
 
     monkeypatch.setattr(field, 'from_db_value', record_decode)
-    cursor, entries, done = maintenance.prepare_compression_batch(0, 500, 1024)
+    cursor, entries, done, _ = maintenance.prepare_compression_batch(0, 500, 1024, session_cache=session_cache)
     assert cursor == first.id and entries == () and not done
     assert len(decoded_owner_lists) == 1
 
 
-def test_compression_prepares_the_observed_content_once(content_row_factory):
+def test_compression_prepares_the_observed_content_once(content_row_factory, session_cache):
     from django.db import connection
     from django.test.utils import CaptureQueriesContext
     from twicc import content_maintenance_task as maintenance
@@ -656,12 +669,13 @@ def test_compression_prepares_the_observed_content_once(content_row_factory):
     owner = cold('one-observed-row')
     row = content_row_factory('exact observed bytes ' * 100, False, session_ids=[owner.id])
     with CaptureQueriesContext(connection) as queries:
-        _, entries, _ = maintenance.prepare_compression_batch(0)
+        _, entries, _, _ = maintenance.prepare_compression_batch(0, session_cache=session_cache)
     payload_reads = [query for query in queries if 'SELECT' in query['sql']
                      and '"core_sessionitemcontent"."payload"' in query['sql'] and 'LENGTH(' not in query['sql']]
     assert len(payload_reads) == 1
     assert len(entries) == 1
-    assert entries[0].proof.payload == bytes(row.payload)
+    assert entries[0].observation.sha256 == bytes(row.sha256)
+    assert not hasattr(entries[0].observation, 'payload')
     assert decode_content(type(row)(**entries[0].candidate.encoded._asdict())) == 'exact observed bytes ' * 100
 
 
@@ -1401,10 +1415,9 @@ def test_stale_plaintext_root_recovery_uses_metadata_without_traversal():
 
 
 @pytest.mark.parametrize('owner_state,expected', [('hot', 3), ('active', 3), ('outdated', 0), ('orphan', 0)])
-def test_prepared_plain_publication_uses_resolved_hot_owners(content_row_factory, owner_state, expected):
+def test_direct_plain_publication_uses_resolved_hot_owners(content_row_factory, owner_state, expected):
     from django.db import connection
     from django.test.utils import CaptureQueriesContext
-    from twicc import content_maintenance_task as maintenance
     from tests.test_content_maintenance_reads import payload_selects, owner_selects
 
     owner = cold('owner')
@@ -1419,14 +1432,13 @@ def test_prepared_plain_publication_uses_resolved_hot_owners(content_row_factory
         owner.type = 'subagent'
         owner.save(update_fields=['type'])
     rows = [content_row_factory(f'{index} content ' * 100, True, session_ids=[owner.id]) for index in range(3)]
-    entries = tuple(maintenance.PreparedEntry(prepare_representation(row.id, 'plain'), maintenance._proof(row))
-                    for row in rows)
+    candidates = tuple(prepare_representation(row.id, 'plain') for row in rows)
     active = frozenset({owner.id}) if owner_state == 'active' else frozenset()
     with transaction.atomic(), CaptureQueriesContext(connection) as queries:
-        assert maintenance.publish_prepared_batch(entries, active) == expected
-    assert len(payload_selects(queries)) == 1
+        assert sum(publish_representation(candidate, active) for candidate in candidates) == expected
+    assert len(payload_selects(queries)) == 3
     # Metadata comes from bounded owner groups, even for persistent plaintext publication.
-    assert len(owner_selects(queries)) <= 3
+    assert len(owner_selects(queries)) <= 12
     for row in rows:
         row.refresh_from_db()
         assert row.codec == ('plain' if expected else 'zstd')

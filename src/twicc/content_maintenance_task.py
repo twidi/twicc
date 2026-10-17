@@ -1,14 +1,12 @@
 """Bounded content promotion and the combined daily data-maintenance timer."""
 
 import asyncio
-import hashlib
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from itertools import islice
 from typing import NamedTuple
 
-import orjson
 
 from channels.db import database_sync_to_async
 from django.db import connections, transaction
@@ -16,10 +14,10 @@ from django.db.models import BinaryField, F, Q
 from django.db.models.functions import Cast, Length
 from django.utils import timezone
 
-from twicc.core.content_storage.cold_cache import cached_lifecycle_metadata, cached_root_decisions
 from twicc.core.content_storage.codec import ContentIntegrityError, transcode_content
 from twicc.core.content_storage.lifecycle import active_session_ids, set_root_promotion_wakeup
-from twicc.core.content_storage.policy import COLD_FIELDS, CONTENT_STORAGE_VERSION, compression_policy_version
+from twicc.core.content_storage.maintenance_cache import MaintenanceSessionCache
+from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION, compression_policy_version
 from twicc.core.content_storage.state import (
     TREE_PAGE_SIZE, _require_writer_transaction, _snapshot_matches,
     resolve_root_decision, resolve_root_decisions, session_plaintext_metadata, snapshot_session_promotion,
@@ -72,18 +70,48 @@ def defer_background_promotions(root_id: str, root_incarnation: str) -> Promotio
     return PromotionDeferral(root_id, root_incarnation)
 
 
-class RepresentationProof(NamedTuple):
-    """Operation-local observations; never persisted or cached across batches."""
-    owners: tuple[str, ...]
-    metadata_digest: bytes
-    payload: bytes
+class CompressionObservation(NamedTuple):
+    id: int
     sha256: bytes
     raw_size: int
+    codec: str
+    dictionary_id: int | None
+    dictionary_provider: str
+    session_ids: tuple[str, ...]
+    compression_attempt_version: str | None
+    compression_no_gain: bool
+    stored_size: int
 
 
 class PreparedEntry(NamedTuple):
     candidate: PreparedRepresentation
-    proof: RepresentationProof
+    observation: CompressionObservation
+
+
+class CompressionPageCounts(NamedTuple):
+    scanned: int = 0
+    already_compressed: int = 0
+    no_gain_skips: int = 0
+    ineligible_owners: int = 0
+    prepared: int = 0
+    payload_bytes_loaded: int = 0
+    candidate_raw_bytes: int = 0
+    candidate_stored_bytes: int = 0
+
+
+class CompressionPage(NamedTuple):
+    cursor: int
+    entries: tuple[PreparedEntry, ...]
+    done: bool
+    counts: CompressionPageCounts
+
+
+class PublicationResult(NamedTuple):
+    changed: int = 0
+    no_gain_recorded: int = 0
+    already_conformant: int = 0
+    stale: int = 0
+    bytes_saved: int = 0
 
 
 class PromotionEntry(NamedTuple):
@@ -104,103 +132,9 @@ def request_root_promotion(session_id: str, *, priority: WritePriority | None = 
         _wakeup(session_id, write_priority.get() if priority is None else priority)
 
 
-OWNER_PROOF_FIELDS = ('id', 'type', 'parent_session_id', 'storage_incarnation', 'content_storage_version')
-ROOT_PROOF_FIELDS = ('id', 'storage_incarnation', 'content_state_epoch', 'provider', 'compute_version', *COLD_FIELDS)
-
-
-class OwnerReadiness(NamedTuple):
-    cold: bool
-    proof_record: tuple
-    hot: bool = False
-
-
-class PublicationContext(NamedTuple):
-    """Authoritative rows and readiness owned by one publication transaction."""
-    rows: dict[int, SessionItemContent]
-    readiness: dict[str, OwnerReadiness]
-
-
-def _owner_readiness(owner_ids, active):
-    """Resolve operation-local readiness from current metadata and activity."""
-    from twicc.providers.helpers import get_provider_helpers
-
-    decisions = cached_root_decisions(owner_ids | active, timezone.now(), active)
-    active_resolved = all(decisions[identity].resolved for identity in active)
-    roots = {decisions[identity].root_id for identity in owner_ids if decisions[identity].resolved}
-    lifecycle = cached_lifecycle_metadata(roots)
-    fields = tuple(dict.fromkeys((*OWNER_PROOF_FIELDS, *ROOT_PROOF_FIELDS[:-len(COLD_FIELDS)])))
-    metadata = {}
-    ids = sorted(owner_ids | roots)
-    for offset in range(0, len(ids), TREE_PAGE_SIZE):
-        metadata.update({row['id']: row for row in Session.objects.filter(
-            pk__in=ids[offset:offset + TREE_PAGE_SIZE],
-        ).values(*fields)})
-    readiness = {}
-    for identity in owner_ids:
-        decision = decisions[identity]
-        owner = metadata.get(identity)
-        root = metadata.get(decision.root_id)
-        cold = bool(active_resolved and owner and root and decision.is_cold
-                    and owner['content_storage_version'] == CONTENT_STORAGE_VERSION
-                    and root['storage_incarnation'] and root['content_state_epoch'] is not None
-                    and root['compute_version'] == get_provider_helpers(root['provider']).current_compute_version)
-        root_fields = None
-        if root is not None and lifecycle.get(decision.root_id) is not None:
-            root_fields = {**root, **lifecycle[decision.root_id]}
-        record = (identity, None if owner is None else tuple(owner[field] for field in OWNER_PROOF_FIELDS),
-                  decision.root_id, decision.resolved,
-                  None if root_fields is None else tuple(root_fields[field] for field in ROOT_PROOF_FIELDS))
-        readiness[identity] = OwnerReadiness(cold, record, decision.resolved and not decision.is_cold)
-    return readiness
-
-
-def _metadata_proof(owners, readiness=None):
-    """Hash deterministic owner/root pages, with optional operation-local metadata."""
-    digest = hashlib.sha256()
-    owner_fields = OWNER_PROOF_FIELDS
-    root_fields = ROOT_PROOF_FIELDS
-    now = timezone.now()
-    for offset in range(0, len(owners), TREE_PAGE_SIZE):
-        page = owners[offset:offset + TREE_PAGE_SIZE]
-        if readiness is not None:
-            for owner_id in page:
-                digest.update(orjson.dumps(readiness[owner_id].proof_record))
-                digest.update(b'\n')
-            continue
-        metadata = {row[0]: row for row in Session.objects.filter(pk__in=page).values_list(*owner_fields)}
-        decisions = resolve_root_decisions(page, now, frozenset())
-        root_ids = sorted({decision.root_id for decision in decisions.values() if decision.resolved})
-        roots = {row[0]: row for row in Session.objects.filter(pk__in=root_ids).values_list(*root_fields)}
-        # Include missing/cyclic ancestry explicitly. Current active eligibility
-        # is independently captured and checked under admission at publication.
-        for owner_id in page:
-            decision = decisions[owner_id]
-            record = (owner_id, metadata.get(owner_id), decision.root_id, decision.resolved,
-                      roots.get(decision.root_id))
-            digest.update(orjson.dumps(record))
-            digest.update(b'\n')
-    return digest.digest()
-
-
-def _proof(row, readiness=None):
-    return RepresentationProof(tuple(row.session_ids), _metadata_proof(row.session_ids, readiness), bytes(row.payload),
-                               bytes(row.sha256), row.raw_size)
-
-
-def _proof_matches(entry, row, *, readiness=None):
-    proof = entry.proof
-    # Compare incarnation-bearing metadata before accepting any old generation.
-    return (tuple(row.session_ids) == proof.owners and _metadata_proof(row.session_ids, readiness) == proof.metadata_digest
-            and bytes(row.payload) == proof.payload and bytes(row.sha256) == proof.sha256
-            and row.raw_size == proof.raw_size)
-
-
-def _owners_cold(row, active, readiness=None):
+def _owners_cold(row, active):
     if not row.session_ids:
         return False
-    if readiness is not None:
-        return (len(row.session_ids) == len(set(row.session_ids))
-                and all(readiness[identity].cold for identity in row.session_ids))
     from twicc.providers.helpers import get_provider_helpers
 
     now = timezone.now()
@@ -259,12 +193,10 @@ def prepare_representation(content_id: int, policy_version: str, observed=None, 
     return PreparedRepresentation(row.id, row.codec, row.dictionary_id, encoded, policy_version, no_gain)
 
 
-def publish_representation(candidate: PreparedRepresentation, active_root_ids: frozenset[str], *,
-                           context: PublicationContext | None = None) -> bool:
-    """Publish under admission and writer ownership after the caller validates its companion proof."""
+def publish_representation(candidate: PreparedRepresentation, active_root_ids: frozenset[str]) -> bool:
+    """Publish under admission and writer ownership after the caller validates its preparation."""
     _require_writer_transaction()
-    row = (SessionItemContent.objects.filter(pk=candidate.content_id).first() if context is None
-           else context.rows.get(candidate.content_id))
+    row = SessionItemContent.objects.filter(pk=candidate.content_id).first()
     if (row is None or row.codec != candidate.observed_codec
             or row.dictionary_id != candidate.observed_dictionary_id):
         return False
@@ -273,17 +205,15 @@ def publish_representation(candidate: PreparedRepresentation, active_root_ids: f
         return False
     if candidate.policy_version != 'plain':
         dictionary = _dictionary(row)
-        readiness = None if context is None else context.readiness
         if (dictionary is None or compression_policy_version(row.dictionary_provider, dictionary.id)
-                != candidate.policy_version or not _owners_cold(row, active_root_ids, readiness)):
+                != candidate.policy_version or not _owners_cold(row, active_root_ids)):
             return False
         if encoded.codec == 'zstd' and encoded.dictionary_id != dictionary.id:
             return False
     else:
-        hot_owner = (any(context.readiness[identity].hot for identity in row.session_ids) if context is not None
-                     else any(decision.resolved and not decision.is_cold for decision in resolve_root_decisions(
-                         row.session_ids, timezone.now(), active_root_ids,
-                     ).values()))
+        hot_owner = any(decision.resolved and not decision.is_cold for decision in resolve_root_decisions(
+            row.session_ids, timezone.now(), active_root_ids,
+        ).values())
         if not row.session_ids or not hot_owner:
             return False
     # CPU preparation already verifies the exact logical bytes. Publication
@@ -300,31 +230,77 @@ def publish_representation(candidate: PreparedRepresentation, active_root_ids: f
     return True
 
 
-def _publication_context(entries: tuple[PreparedEntry, ...], active: frozenset[str]) -> PublicationContext:
-    rows = {row.id: row for row in SessionItemContent.objects.filter(
-        pk__in=[entry.candidate.content_id for entry in entries],
-    )}
-    owners = {identity for row in rows.values() for identity in row.session_ids}
-    return PublicationContext(rows, _owner_readiness(owners, active))
+COMPRESSION_METADATA_FIELDS = (
+    'id', 'sha256', 'raw_size', 'codec', 'dictionary_id', 'dictionary_provider',
+    'session_ids', 'compression_attempt_version', 'compression_no_gain',
+)
 
 
-def publish_prepared_batch(entries: tuple[PreparedEntry, ...], active: frozenset[str]) -> int:
-    """Recheck every preparation observation in the publication transaction.
+def _candidate_owners_cold(owner_ids, decisions):
+    return bool(owner_ids and len(owner_ids) == len(set(owner_ids))
+                and all(decisions[identity].resolved and decisions[identity].is_cold for identity in owner_ids))
 
-    Callers must use entries from the same operation-local preparation batch.
-    A public candidate alone cannot establish preparation-time ownership or
-    root generations. No proof survives cancellation, restart, or tree changes.
-    """
+
+def publish_prepared_batch(entries: tuple[PreparedEntry, ...], active: frozenset[str], *,
+                           session_cache: MaintenanceSessionCache) -> PublicationResult:
+    """Validate candidate metadata under write ownership without loading persisted payloads."""
     _require_writer_transaction()
     if not entries:
-        return 0
-    context = _publication_context(entries, active)
-    published = 0
+        return PublicationResult()
+    rows = {row['id']: row for row in SessionItemContent.objects.filter(
+        pk__in=[entry.candidate.content_id for entry in entries],
+    ).values(*COMPRESSION_METADATA_FIELDS)}
+    decisions = session_cache.decisions(
+        {identity for row in rows.values() for identity in row['session_ids']}, timezone.now(), active,
+    )
+    changed = no_gain_recorded = already_conformant = stale = bytes_saved = 0
     for entry in entries:
-        row = context.rows.get(entry.candidate.content_id)
-        if row is not None and _proof_matches(entry, row, readiness=context.readiness):
-            published += publish_representation(entry.candidate, active, context=context)
-    return published
+        candidate, observed = entry
+        row = rows.get(candidate.content_id)
+        encoded = candidate.encoded
+        if (row is None or row['id'] != observed.id or bytes(row['sha256']) != observed.sha256
+                or row['raw_size'] != observed.raw_size
+                or row['dictionary_provider'] != observed.dictionary_provider
+                or encoded.sha256 != observed.sha256 or encoded.raw_size != observed.raw_size):
+            stale += 1
+            continue
+        dictionary_entry = get_provider_dictionary(row['dictionary_provider'])
+        dictionary = None if dictionary_entry is None else dictionary_entry.row
+        if (dictionary is None or candidate.policy_version != compression_policy_version(
+                row['dictionary_provider'], dictionary.id, dictionary=dictionary)
+                or not _candidate_owners_cold(row['session_ids'], decisions)):
+            stale += 1
+            continue
+        if (row['codec'] == 'zstd' and row['dictionary_id'] == dictionary.id
+                or row['compression_attempt_version'] == candidate.policy_version and row['compression_no_gain']):
+            already_conformant += 1
+            continue
+        if (row['codec'] != observed.codec or row['dictionary_id'] != observed.dictionary_id
+                or row['compression_attempt_version'] != observed.compression_attempt_version
+                or row['compression_no_gain'] != observed.compression_no_gain
+                or candidate.observed_codec != observed.codec
+                or candidate.observed_dictionary_id != observed.dictionary_id):
+            stale += 1
+            continue
+        if candidate.no_gain:
+            if encoded.codec != 'plain' or encoded.dictionary_id is not None or len(encoded.payload) != encoded.raw_size:
+                stale += 1
+                continue
+            updates = {'compression_attempt_version': candidate.policy_version, 'compression_no_gain': True}
+            no_gain_recorded += 1
+        elif encoded.codec == 'zstd' and encoded.dictionary_id == dictionary.id:
+            updates = {'payload': encoded.payload, 'codec': encoded.codec, 'dictionary_id': encoded.dictionary_id,
+                       'compression_attempt_version': candidate.policy_version, 'compression_no_gain': False}
+            changed += 1
+            bytes_saved += observed.stored_size - len(encoded.payload)
+        else:
+            stale += 1
+            continue
+        updates = {field: value for field, value in updates.items()
+                   if field == 'payload' or row[field] != value}
+        # Ownership is independently mutable. Never publish the preparation's owner list.
+        SessionItemContent.objects.filter(pk=row['id']).update(**updates)
+    return PublicationResult(changed, no_gain_recorded, already_conformant, stale, bytes_saved)
 
 
 def _promotion_keys(snapshot, cursor):
@@ -478,7 +454,9 @@ def recovery_promotion_targets(root_ids):
                 and not session_plaintext_metadata(root_id)}
 
 
-def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_BUDGET):
+def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_BUDGET, *,
+                              session_cache: MaintenanceSessionCache) -> CompressionPage:
+    """Filter bounded metadata before resolving owners or loading candidate payloads."""
     if row_budget <= 0 or byte_budget <= 0:
         raise ValueError('Maintenance budgets must be positive')
     entries = []
@@ -486,46 +464,68 @@ def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_
     last = after_id
     dictionaries = {}
     dictionary_cache = {}
+    counts = CompressionPageCounts()._asdict()
     query = SessionItemContent.objects.filter(pk__gt=after_id).order_by('id')
     rows = list(query.annotate(
         stored_size=Length('payload'), owner_size=Length(Cast('session_ids', BinaryField())),
-    ).values('id', 'raw_size', 'stored_size', 'owner_size')[:row_budget])
-    selected_ids = []
+    ).values(*(field for field in COMPRESSION_METADATA_FIELDS if field != 'session_ids'),
+             'stored_size', 'owner_size')[:row_budget])
+    selected = []
     for metadata in rows:
         cost = metadata['raw_size'] + metadata['stored_size'] + metadata['owner_size']
         if last != after_id and size + cost > byte_budget:
             break
         last = metadata['id']
         size += cost
-        selected_ids.append(last)
-    selected = list(SessionItemContent.objects.filter(pk__in=selected_ids).defer('payload').order_by('id'))
-    active = active_session_ids.get()
-    readiness = _owner_readiness({identity for row in selected for identity in row.session_ids}, active)
-    pending = []
-    for row in selected:
-        if not _owners_cold(row, active, readiness):
-            continue
-        if row.dictionary_provider not in dictionaries:
-            dictionary = _dictionary(row)
+        counts['scanned'] += 1
+        provider = metadata['dictionary_provider']
+        if provider not in dictionaries:
+            entry = get_provider_dictionary(provider)
+            dictionary = None if entry is None else entry.row
             policy = None if dictionary is None else compression_policy_version(
-                row.dictionary_provider, dictionary.id, dictionary=dictionary,
+                provider, dictionary.id, dictionary=dictionary,
             )
-            dictionaries[row.dictionary_provider] = dictionary, policy
-        dictionary, policy = dictionaries[row.dictionary_provider]
+            dictionaries[provider] = dictionary, policy
+        dictionary, policy = dictionaries[provider]
         if dictionary is None:
             continue
-        if (row.compression_attempt_version == policy and row.compression_no_gain
-                or row.codec == 'zstd' and row.dictionary_id == dictionary.id):
+        if metadata['codec'] == 'zstd' and metadata['dictionary_id'] == dictionary.id:
+            counts['already_compressed'] += 1
             continue
-        pending.append((row, dictionary, policy))
+        if metadata['compression_attempt_version'] == policy and metadata['compression_no_gain']:
+            counts['no_gain_skips'] += 1
+            continue
+        selected.append((metadata, dictionary, policy))
+    owners = dict(SessionItemContent.objects.filter(
+        pk__in=[metadata['id'] for metadata, _, _ in selected],
+    ).values_list('id', 'session_ids'))
+    selected = [(dict(metadata, session_ids=owners[metadata['id']]), dictionary, policy)
+                for metadata, dictionary, policy in selected if metadata['id'] in owners]
+    active = active_session_ids.get()
+    decisions = session_cache.decisions(
+        {identity for metadata, _, _ in selected for identity in metadata['session_ids']}, timezone.now(), active,
+    )
+    pending = []
+    for metadata, dictionary, policy in selected:
+        if not _candidate_owners_cold(metadata['session_ids'], decisions):
+            counts['ineligible_owners'] += 1
+            continue
+        pending.append((metadata, dictionary, policy))
     payloads = {}
-    payload_ids = [row.id for row, _, _ in pending]
+    payload_ids = [metadata['id'] for metadata, _, _ in pending]
     for offset in range(0, len(payload_ids), TREE_PAGE_SIZE):
         payloads.update(SessionItemContent.objects.filter(pk__in=payload_ids[offset:offset + TREE_PAGE_SIZE])
                         .values_list('id', 'payload'))
-    for row, dictionary, policy in pending:
-        row.payload = payloads[row.id]
-        proof = _proof(row, readiness)
+    counts['payload_bytes_loaded'] = sum(len(payload) for payload in payloads.values())
+    for metadata, dictionary, policy in pending:
+        if metadata['id'] not in payloads:
+            continue
+        row = SessionItemContent(**{field: metadata[field] for field in COMPRESSION_METADATA_FIELDS},
+                                 payload=payloads[metadata['id']])
+        observation = CompressionObservation(
+            row.id, bytes(row.sha256), row.raw_size, row.codec, row.dictionary_id, row.dictionary_provider,
+            tuple(row.session_ids), row.compression_attempt_version, row.compression_no_gain, metadata['stored_size'],
+        )
         try:
             candidate = prepare_representation(row.id, policy, row, dictionary, dictionary_cache)
         except ContentIntegrityError:
@@ -533,8 +533,12 @@ def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_
         except Exception:
             logger.warning('Optional content compression failed for %s', row.id, exc_info=True)
             continue
-        entries.append(PreparedEntry(candidate, proof))
-    return last, tuple(entries), not SessionItemContent.objects.filter(pk__gt=last).exists()
+        entries.append(PreparedEntry(candidate, observation))
+        counts['prepared'] += 1
+        counts['candidate_raw_bytes'] += candidate.encoded.raw_size
+        counts['candidate_stored_bytes'] += len(candidate.encoded.payload)
+    return CompressionPage(last, tuple(entries), not SessionItemContent.objects.filter(pk__gt=last).exists(),
+                           CompressionPageCounts(**counts))
 
 
 async def _apply(function, *args, priority=WritePriority.FOREGROUND, lease=None):
@@ -570,11 +574,11 @@ def _snapshot(session_id, active, *, recovery=False):
         return snapshot
 
 
-def _publish(entries, active):
+def _publish(entries, active, *, session_cache):
     if not entries:
-        return 0
+        return PublicationResult()
     with immediate_content_transaction():
-        return publish_prepared_batch(entries, active)
+        return publish_prepared_batch(entries, active, session_cache=session_cache)
 
 
 def _maintenance_time():
@@ -804,14 +808,18 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
             if stop_event.is_set():
                 break
             if _maintenance_time() >= deadline and not compute_pending():
+                session_cache = None
                 try:
                     await recover(periodic=True)
                     await promote()
+                    session_cache = MaintenanceSessionCache()
                     cursor, done = 0, False
                     while not done and not stop_event.is_set():
                         if not await periodic_ready():
                             break
-                        cursor, entries, done = await prepare(prepare_compression_batch, cursor, ROW_BUDGET, BYTE_BUDGET)
+                        page = await prepare(partial(prepare_compression_batch, session_cache=session_cache),
+                                             cursor, ROW_BUDGET, BYTE_BUDGET)
+                        cursor, entries, done = page.cursor, page.entries, page.done
                         while entries and not stop_event.is_set():
                             if not await periodic_ready():
                                 break
@@ -824,11 +832,14 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                             if compute_pending():
                                 lease.release()
                                 continue
-                            await _apply(_publish, entries, lease=lease)
+                            await _apply(partial(_publish, session_cache=session_cache), entries, lease=lease)
                             break
                         await asyncio.sleep(0)
                 except Exception:
                     logger.exception('Periodic content maintenance failed')
+                finally:
+                    if session_cache is not None:
+                        session_cache.close()
                 if settings.SESSION_DIRS_CLEANUP_ENABLED and not stop_event.is_set():
                     try:
                         while await periodic_ready():

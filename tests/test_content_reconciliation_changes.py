@@ -213,6 +213,7 @@ def test_promotion_between_pages_is_not_hidden_by_visited_ids(content_row_factor
 
 def test_maintenance_conforming_content_skips_payload(content_row_factory):  # noqa: F811 -- fixture name
     from twicc.content_maintenance_task import prepare_compression_batch
+    from twicc.core.content_storage.maintenance_cache import MaintenanceSessionCache
     from twicc.providers.helpers import get_provider_helpers
     owner = make_session(archived=True, created_at=timezone.now() - timedelta(days=60),
                          compute_version=get_provider_helpers('codex').current_compute_version,
@@ -220,7 +221,11 @@ def test_maintenance_conforming_content_skips_payload(content_row_factory):  # n
     row = content_row_factory('schema ' * 100, True, session_ids=[owner.id])
     SessionItem.objects.create(session=owner, line_num=1, content='', current_content=row)
     with CaptureQueriesContext(connection) as queries:
-        _, entries, _ = prepare_compression_batch(0)
+        cache = MaintenanceSessionCache()
+        try:
+            entries = prepare_compression_batch(0, session_cache=cache).entries
+        finally:
+            cache.close()
     assert entries == ()
     assert not any('core_sessionitemcontent' in q['sql'] and '"payload"' in q['sql']
                    and 'SELECT' in q['sql'] and 'LENGTH(' not in q['sql'] for q in queries)
