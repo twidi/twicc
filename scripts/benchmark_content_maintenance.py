@@ -29,10 +29,7 @@ def arguments():
     return parser.parse_args()
 
 
-def destination(args):
-    work = args.work_dir.resolve()
-    if work.exists() and any(work.iterdir()):
-        raise ValueError('Work directory must be empty')
+def protected_directories():
     # Do not infer or import application settings to resolve the running database.
     # Refuse known data directories, project DB directories, and their aliases.
     checkout = Path(__file__).resolve().parents[1]
@@ -40,6 +37,27 @@ def destination(args):
     inherited = os.environ.get('TWICC_DATA_DIR')
     if inherited:
         forbidden.add(Path(inherited).resolve())
+    return forbidden
+
+
+def validate_output(args):
+    output = args.output.resolve()
+    target = args.work_dir.resolve() / 'benchmark.sqlite'
+    if output == target or (args.source_db and output == args.source_db.resolve()):
+        raise ValueError('Output must differ from source and destination databases')
+    if any(output == path or output.is_relative_to(path) for path in protected_directories()):
+        raise ValueError('Output resolves inside an instance data directory')
+    # Reject all existing files, including hard links and dangling symbolic links.
+    if args.output.exists() or args.output.is_symlink():
+        raise ValueError('Output already exists')
+    return output
+
+
+def destination(args):
+    work = args.work_dir.resolve()
+    if work.exists() and any(work.iterdir()):
+        raise ValueError('Work directory must be empty')
+    forbidden = protected_directories()
     if any(work == path or work.is_relative_to(path) for path in forbidden):
         raise ValueError('Work directory resolves inside an instance data directory')
     work.mkdir(parents=True, exist_ok=True)
@@ -379,7 +397,9 @@ async def run_pass(scenario, source=False):
                 'full_metadata_inspection': source_metadata,
                 'recovery': ({'not_run': True, 'reason': 'Source recovery remains exploratory; synthetic trials measure it'}
                              if source else {'elapsed_ms': recovery_time, 'sql': dict(recovery_sql), 'targets': targets,
-                                             'writer_grants': 0, 'payload_reads': recovery_sql['payload_selects']}),
+                                             'writer_grants_structural_assertion':
+                                                 'Discovery invokes no writer acquisition API',
+                                             'payload_reads': recovery_sql['payload_selects']}),
                 'foreground': {'count': len(latencies), 'request_to_commit_p50_ms': percentile(latencies, .5),
                                 'request_to_commit_p95_ms': percentile(latencies, .95),
                                 'request_to_commit_p99_ms': percentile(latencies, .99),
@@ -447,6 +467,7 @@ def acquisition(first):
 
 def main():
     args = arguments()
+    output = validate_output(args)
     work, target = destination(args)
     configure(work, target, source=bool(args.source_db))
     fixture = {'source_backup': True} if args.source_db else seed(args.scenario)
@@ -462,9 +483,11 @@ def main():
                                 **asyncio.run(run_pass(args.scenario))))
         result = samples
     import orjson
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_bytes(orjson.dumps({'scenario': args.scenario, 'fixture': fixture, 'result': result},
-                                       option=orjson.OPT_INDENT_2))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    # Exclusive creation also protects files installed after initial validation.
+    with output.open('xb') as destination_file:
+        destination_file.write(orjson.dumps({'scenario': args.scenario, 'fixture': fixture, 'result': result},
+                                           option=orjson.OPT_INDENT_2))
 
 
 if __name__ == '__main__':

@@ -386,3 +386,82 @@ def test_changed_owner_skips_only_its_candidate_and_foreground_commits_between_s
     for row in rows:
         row.refresh_from_db()
     assert [row.codec for row in rows] == ['plain', 'zstd', 'zstd']
+
+
+@pytest.mark.parametrize('alias', ['source', 'destination', 'protected', 'symlink', 'hardlink'])
+def test_benchmark_rejects_output_alias_before_execution(benchmark_module, tmp_path, monkeypatch, alias):
+    import os
+    from types import SimpleNamespace
+
+    source = tmp_path / 'source.sqlite'
+    source.write_bytes(b'original source bytes')
+    work = tmp_path / 'work'
+    instance = tmp_path / 'instance'
+    instance.mkdir()
+    protected = instance / 'data.sqlite'
+    protected.write_bytes(b'original instance bytes')
+    output = {'source': source, 'destination': work / 'benchmark.sqlite', 'protected': protected}.get(alias)
+    if alias in {'symlink', 'hardlink'}:
+        output = tmp_path / 'alias.json'
+        if alias == 'symlink':
+            output.symlink_to(source)
+        else:
+            os.link(source, output)
+    args = SimpleNamespace(work_dir=work, source_db=source, output=output, scenario='conformant')
+    monkeypatch.setenv('TWICC_DATA_DIR', str(instance))
+    monkeypatch.setattr(benchmark_module, 'arguments', lambda: args)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('Output rejection must precede backup and configuration')
+
+    monkeypatch.setattr(benchmark_module, 'destination', forbidden)
+    monkeypatch.setattr(benchmark_module, 'configure', forbidden)
+    with pytest.raises(ValueError, match='Output'):
+        benchmark_module.main()
+    assert source.read_bytes() == b'original source bytes'
+    assert protected.read_bytes() == b'original instance bytes'
+    assert not work.exists()
+
+
+def test_benchmark_output_created_during_execution_stays_unchanged(benchmark_module, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    output = tmp_path / 'result.json'
+    work = tmp_path / 'work'
+    args = SimpleNamespace(work_dir=work, source_db=tmp_path / 'source.sqlite', output=output,
+                           scenario='conformant')
+    monkeypatch.setenv('TWICC_DATA_DIR', str(tmp_path / 'instance'))
+    monkeypatch.setattr(benchmark_module, 'arguments', lambda: args)
+    monkeypatch.setattr(benchmark_module, 'destination', lambda args: (work, work / 'benchmark.sqlite'))
+    monkeypatch.setattr(benchmark_module, 'configure', lambda *args, **kwargs: None)
+
+    async def measured(*args):
+        output.write_bytes(b'created by another writer')
+        return {}
+
+    monkeypatch.setattr(benchmark_module, 'run_pass', measured)
+    with pytest.raises(FileExistsError):
+        benchmark_module.main()
+    assert output.read_bytes() == b'created by another writer'
+
+
+def test_benchmark_creates_new_output_inside_work_directory(benchmark_module, tmp_path, monkeypatch):
+    import orjson
+    from types import SimpleNamespace
+
+    work = tmp_path / 'work'
+    output = work / 'result.json'
+    args = SimpleNamespace(work_dir=work, source_db=tmp_path / 'source.sqlite', output=output,
+                           scenario='conformant')
+    monkeypatch.setenv('TWICC_DATA_DIR', str(tmp_path / 'instance'))
+    monkeypatch.setattr(benchmark_module, 'arguments', lambda: args)
+    monkeypatch.setattr(benchmark_module, 'destination', lambda args: (work, work / 'benchmark.sqlite'))
+    monkeypatch.setattr(benchmark_module, 'configure', lambda *args, **kwargs: None)
+
+    async def measured(*args):
+        assert not output.exists()
+        return {'scanned': 0}
+
+    monkeypatch.setattr(benchmark_module, 'run_pass', measured)
+    benchmark_module.main()
+    assert orjson.loads(output.read_bytes())['result'] == {'scanned': 0}

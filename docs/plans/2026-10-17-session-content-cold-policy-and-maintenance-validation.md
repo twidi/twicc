@@ -114,6 +114,39 @@ The requested paths pass. All 42 changed Python paths also receive an explicit c
 The exact additional file list is `/tmp/twicc-task8-logs/ruff-files.txt`; full output is `ruff-all-changed.txt`.
 `git diff --check` passes.
 
+
+## Task 8 review correction: output safety
+
+Review identifies an important CLI defect: the output write can replace an existing database or an alias.
+The correction validates output before backup, fixture construction, or Django configuration.
+It rejects source/destination aliases, protected instance paths, and every existing output file.
+Existing-file rejection covers hard links. Resolved-path checks cover symbolic links and directory aliases.
+The final write uses exclusive `xb` creation on the validated canonical path.
+A file created after validation therefore remains unchanged. A new output inside the disposable work directory still works.
+
+```bash
+TWICC_DATA_DIR=$PWD uv run pytest tests/test_content_maintenance_end_to_end.py -q -k 'output_'
+TWICC_DATA_DIR=$PWD uv run pytest tests/test_content_maintenance_end_to_end.py -q
+uvx ruff check scripts/benchmark_content_maintenance.py tests/test_content_maintenance_end_to_end.py
+```
+
+RED: **6 failed, 9 deselected in 5.29 seconds**, before the guard exists.
+GREEN: **16 passed in 6.28 seconds**, including seven new output tests and the nine original cases.
+Tests cover source, destination, protected database, symlink, hardlink, concurrent file creation, and valid new output.
+Alias rejection preserves original bytes and precedes execution.
+Raw outputs: `output-safety-red.txt`, `output-safety-green.txt`, and `output-safety-final-green.txt` in the same log directory.
+Ruff and `git diff --check` pass.
+
+The earlier JSON `recovery.writer_grants=0` is a structural assertion, not an instrumented grant counter.
+Recovery discovery calls no writer acquisition API. The updated script states this as `writer_grants_structural_assertion`.
+The live periodic end-to-end tests independently instrument coordinator grants for their zero-work assertions.
+The metadata-inspection zero-grant statement is also structural; no writer acquisition occurs in that function.
+
+These corrections do not change the measured maintenance interval. Recorded benchmark trials remain applicable.
+The controller starts another broad suite from `46dfb490` before this correction.
+That run does not collect these seven new tests. Current focused checks cover the correction.
+The three earlier warnings remain attributed to the unchanged SDK and shell-notice test paths above.
+
 ## Benchmark method
 
 `scripts/benchmark_content_maintenance.py` requires an empty work directory.
@@ -184,6 +217,7 @@ Each pass prepares and changes zero entries, loads zero payload bytes, and grant
 Compression selection executes 2,004/2,003/2,003 SQL statements. It does not select payloads.
 The pass cache loads 109 session IDs in one grouped query. It records 101 hits and 101 recovery reference probes.
 Recovery separately takes 88.20/73.73/77.58 ms with 206 SQL statements each.
+Its zero writer-grant value in saved JSON is the structural assertion clarified above.
 Recovery identifies zero targets, reads zero payloads, and takes zero writer grants.
 The large hot owner has 100,000 items. Another 100 hot children already have plaintext references.
 
