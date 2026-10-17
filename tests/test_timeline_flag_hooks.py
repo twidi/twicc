@@ -23,7 +23,8 @@ def no_agent_side_effects(monkeypatch):
     from twicc.agent import registry
 
     monkeypatch.setattr(registry, "get_agent_manager_registry",
-                        lambda: SimpleNamespace(kill_agent=AsyncMock(), get_agent_info=lambda session_id: None))
+                        lambda: SimpleNamespace(kill_agent=AsyncMock(), get_agent_info=lambda session_id: None,
+                                                get_active_agents=list))
     monkeypatch.setattr(terminal, "kill_all_tmux_terminals", lambda scope: None)
 
 
