@@ -11,7 +11,7 @@ from typing import NamedTuple
 import orjson
 
 from channels.db import database_sync_to_async
-from django.db import connection, connections, transaction
+from django.db import connections, transaction
 from django.db.models import BinaryField, F, Q
 from django.db.models.functions import Cast, Length
 from django.utils import timezone
@@ -24,6 +24,7 @@ from twicc.core.content_storage.state import (
     TREE_PAGE_SIZE, _require_writer_transaction, _snapshot_matches,
     resolve_root_decision, resolve_root_decisions, session_plaintext_metadata, snapshot_session_promotion,
 )
+from twicc.core.content_storage.transactions import immediate_content_transaction
 from twicc.core.content_storage.types import PreparedRepresentation, RootPromotionCursor, RootStorageSnapshot, SessionPromotionSnapshot
 from twicc.core.models import Session, SessionItem, SessionItemContent
 from twicc.core.content_storage.dictionaries import get_provider_dictionary
@@ -299,18 +300,6 @@ def publish_representation(candidate: PreparedRepresentation, active_root_ids: f
     return True
 
 
-def _acquire_publication_write_guard(entries: tuple[PreparedEntry, ...]) -> None:
-    """Acquire SQLite write ownership before reading authoritative publication state."""
-    if not entries:
-        return
-    quote = connection.ops.quote_name
-    table = quote(SessionItemContent._meta.db_table)
-    column = quote(SessionItemContent._meta.pk.column)
-    with connection.cursor() as cursor:
-        cursor.execute(f'UPDATE {table} SET {column} = {column} WHERE {column} = %s',
-                       [entries[0].candidate.content_id])
-
-
 def _publication_context(entries: tuple[PreparedEntry, ...], active: frozenset[str]) -> PublicationContext:
     rows = {row.id: row for row in SessionItemContent.objects.filter(
         pk__in=[entry.candidate.content_id for entry in entries],
@@ -329,7 +318,6 @@ def publish_prepared_batch(entries: tuple[PreparedEntry, ...], active: frozenset
     _require_writer_transaction()
     if not entries:
         return 0
-    _acquire_publication_write_guard(entries)
     context = _publication_context(entries, active)
     published = 0
     for entry in entries:
@@ -583,7 +571,9 @@ def _snapshot(session_id, active, *, recovery=False):
 
 
 def _publish(entries, active):
-    with transaction.atomic():
+    if not entries:
+        return 0
+    with immediate_content_transaction():
         return publish_prepared_batch(entries, active)
 
 

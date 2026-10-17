@@ -175,9 +175,8 @@ def test_publication_shared_owners_reuses_metadata_and_content_rows(content_row_
         # All selected owners fit in one metadata page, regardless of content count.
         assert len(owner_selects(queries)) == len(owner_selects(one_queries))
     selects = [index for index, query in enumerate(queries) if query['sql'].startswith('SELECT')]
-    guard = queries[0]['sql']
-    assert guard.startswith('UPDATE "core_sessionitemcontent" SET "id" = "id" WHERE "id" = ')
-    assert selects[0] > 0
+    assert selects[0] == 0
+    assert not any('SET "id" = "id"' in query['sql'] for query in queries)
 
 
 def test_empty_publication_performs_no_queries():
