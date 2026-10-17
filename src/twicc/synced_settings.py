@@ -21,6 +21,7 @@ import logging
 import os
 import tempfile
 import threading
+from pathlib import Path
 from typing import NamedTuple
 
 import orjson
@@ -193,6 +194,12 @@ class RoutingSettingsSnapshot(NamedTuple):
 # Empty dict means not yet initialized (initialized cache always has at least the defaults).
 _cache: dict = {}
 
+# The file the active cache was read from or last written to. A read that
+# resolves another file reloads instead of serving the cache, so settings read
+# under one data dir are never written back under another (on 2026-10-17 a
+# test run wrote defaults cached from a temp dir into the real settings.json).
+_cache_path: Path | None = None
+
 # False when the observation that initialized the active cache found an
 # unreadable, malformed, or non-object source. General settings callers can
 # use defaults, but public-origin routing must fail closed.
@@ -338,14 +345,15 @@ def _migrate_legacy_settings(file_data: dict) -> bool:
 
 
 def _read_synced_settings_locked() -> dict:
-    """Populate the cache on first read and return a copy.
+    """Populate the cache on first read (or when the settings path changed) and return a copy.
 
     The caller MUST already hold ``_settings_lock``. Both public readers go
     through this helper so neither re-acquires the lock a second time.
     """
-    global _routing_settings_available
-    if not _cache:
-        path = get_synced_settings_path()
+    global _routing_settings_available, _cache_path
+    path = get_synced_settings_path()
+    if not _cache or path != _cache_path:
+        _cache.clear()
         available = True
         try:
             raw = path.read_bytes()
@@ -369,6 +377,7 @@ def _read_synced_settings_locked() -> dict:
         migrated = available and _migrate_legacy_settings(file_data)
         _cache.update({**SYNCED_SETTINGS_DEFAULTS, **file_data})
         _cache.setdefault("_version", 0)
+        _cache_path = path
         _routing_settings_available = available
         if migrated:
             # Persist the cleaned data so old keys do not reappear next read.
@@ -396,7 +405,7 @@ def read_routing_settings() -> RoutingSettingsSnapshot:
 
 def write_synced_settings(data: dict) -> None:
     """Atomically write settings and publish one available cache snapshot."""
-    global _routing_settings_available
+    global _routing_settings_available, _cache_path
     with _settings_lock:
         path = get_synced_settings_path()
         content = orjson.dumps(data, option=orjson.OPT_INDENT_2)
@@ -416,6 +425,7 @@ def write_synced_settings(data: dict) -> None:
 
         _cache.clear()
         _cache.update({**SYNCED_SETTINGS_DEFAULTS, **data})
+        _cache_path = path
         _routing_settings_available = True
 
 

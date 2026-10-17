@@ -20,6 +20,7 @@ def env_loader(tmp_path):
     """
     saved_env = dict(os.environ)
     saved_loaded, saved_warnings = paths._ENV_LOADED, list(paths._ENV_WARNINGS)
+    saved_undo = dict(paths._ENV_LOAD_UNDO)
     os.environ["TWICC_DATA_DIR"] = str(tmp_path)
     # The settings_test isolation values would otherwise be "inherited" here.
     for key in paths.PROVIDER_HOME_KEYS:
@@ -30,6 +31,28 @@ def env_loader(tmp_path):
     os.environ.update(saved_env)
     paths._ENV_LOADED = saved_loaded
     paths._ENV_WARNINGS[:] = saved_warnings
+    paths._ENV_LOAD_UNDO.clear()
+    paths._ENV_LOAD_UNDO.update(saved_undo)
+
+
+def test_undo_gives_back_the_inherited_environment(env_loader):
+    """What ``settings_test`` relies on to keep an instance's ``.env`` out of the tests."""
+    os.environ["TWICC_TEST_FOO"] = "inherited"
+    os.environ["CODEX_HOME"] = "/inherited/codex"
+    os.environ.pop("TWICC_TEST_BAR", None)
+    env_loader.write_text("TWICC_TEST_FOO=from-file\nTWICC_TEST_BAR=from-file\n")
+    paths.ensure_env_loaded()
+    assert os.environ["TWICC_TEST_FOO"] == "from-file"
+    assert os.environ["TWICC_TEST_BAR"] == "from-file"
+    assert "CODEX_HOME" not in os.environ  # .env-exclusive: the inherited value was dropped
+
+    paths._undo_env_load()
+    assert os.environ["TWICC_TEST_FOO"] == "inherited"
+    assert "TWICC_TEST_BAR" not in os.environ
+    assert os.environ["CODEX_HOME"] == "/inherited/codex"
+    # Still marked as loaded: the file is never read again.
+    paths.ensure_env_loaded()
+    assert "TWICC_TEST_BAR" not in os.environ
 
 
 def test_loads_once_per_process(env_loader):

@@ -32,7 +32,7 @@ uv + npm · Django 6 ASGI (Uvicorn, Python ≥ 3.13) · Channels + InMemoryChann
 
 **Python lint: ruff (line-length=120), NOT an installed dependency** — always `uvx ruff check .`; `uv run ruff` fails with `Failed to spawn: ruff`. (It gets declared and pinned the day the project-wide lint pass happens, not before.) Same rule for **any** Python tool absent from the env: run it with `uvx <tool> …` instead of reporting it as missing, and never `uv add` it just to make a command work.
 
-**Tests: pytest + pytest-django** (declared in the default `dev` dependency group, so `uv run` installs them in each checkout's own `.venv`, worktrees included). Main repo: `uv run pytest`. Worktree: `cd <worktree> && TWICC_DATA_DIR=$PWD uv run pytest`.
+**Tests: pytest + pytest-django** (declared in the default `dev` dependency group, so `uv run` installs them in each checkout's own `.venv`, worktrees included). Run `cd <checkout> && uv run pytest` (main repo or worktree): `twicc.settings_test` isolates everything on its own — a throwaway data dir, provider homes and DB, no `TWICC_*` variable or `.env` inherited — and forbids the real data dirs (`~/.twicc` and any inherited `TWICC_DATA_DIR`), so a test that escapes the isolation fails instead of writing into a live instance. Never add `TWICC_DATA_DIR=` to a pytest command: it is ignored.
 
 **Hermetic LLM diagnostic:** after changing the small Codex model (`TITLE_MODEL`, `_REFRESH_MODEL`), updating Codex or its vendored SDK (`docs/codex-vendoring.md`), or updating the Claude Agent SDK, run `uv run python scripts/diagnose_hermetic_llm.py --provider all --live --yes` and do not ship on a `FAIL` or `INCONCLUSIVE`.
 

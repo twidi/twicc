@@ -57,6 +57,14 @@ PROVIDER_HOME_KEYS: tuple[str, ...] = (
 
 _ENV_LOADED = False
 _ENV_WARNINGS: list[str] = []
+# What the first :func:`ensure_env_loaded` replaced: key -> inherited value
+# (None = the key was absent). Lets the test harness undo the load.
+_ENV_LOAD_UNDO: dict[str, str | None] = {}
+
+# Data dirs this process must never resolve. Always empty in production: the
+# test settings fill it with the developer's real data dirs, so a test that
+# escapes the isolated one fails instead of writing into a live instance.
+_FORBIDDEN_DATA_DIRS: tuple[Path, ...] = ()
 
 
 def get_data_dir() -> Path:
@@ -67,9 +75,27 @@ def get_data_dir() -> Path:
     2. ~/.twicc/ (default)
     """
     env_value = os.environ.get(TWICC_DATA_DIR_ENV, "").strip()
-    if env_value:
-        return Path(env_value).resolve()
-    return DEFAULT_DATA_DIR
+    data_dir = Path(env_value).resolve() if env_value else DEFAULT_DATA_DIR
+    if _FORBIDDEN_DATA_DIRS:
+        _refuse_forbidden_data_dir(data_dir)
+    return data_dir
+
+
+def _refuse_forbidden_data_dir(data_dir: Path) -> None:
+    """Raise when ``data_dir`` is, or lies inside, one of :data:`_FORBIDDEN_DATA_DIRS`."""
+    resolved = data_dir.resolve()
+    for forbidden in _FORBIDDEN_DATA_DIRS:
+        if resolved.is_relative_to(forbidden):
+            raise RuntimeError(
+                f"Data dir {resolved} is forbidden in this process (inside {forbidden}): "
+                "tests must only use the isolated data dir set by twicc.settings_test"
+            )
+
+
+def _forbid_data_dirs(*data_dirs: Path) -> None:
+    """Tests only: make :func:`get_data_dir` raise for these dirs and everything below them."""
+    global _FORBIDDEN_DATA_DIRS
+    _FORBIDDEN_DATA_DIRS = tuple(dict.fromkeys(path.resolve() for path in data_dirs))
 
 
 def ensure_env_loaded() -> None:
@@ -103,12 +129,14 @@ def ensure_env_loaded() -> None:
         del values[TWICC_DATA_DIR_ENV]
     for key, value in values.items():
         if value is not None:  # bare ``KEY`` lines carry None
+            _ENV_LOAD_UNDO.setdefault(key, os.environ.get(key))
             os.environ[key] = value
     for key in PROVIDER_HOME_KEYS:
         if values.get(key) is None and key in os.environ:
             _ENV_WARNINGS.append(
                 f"Ignoring inherited {key}={os.environ[key]!r}: not set in {env_path}"
             )
+            _ENV_LOAD_UNDO.setdefault(key, os.environ[key])
             del os.environ[key]
     _ENV_LOADED = True
 
@@ -123,6 +151,23 @@ def _reset_env_loader() -> None:
     global _ENV_LOADED
     _ENV_LOADED = False
     _ENV_WARNINGS.clear()
+    _ENV_LOAD_UNDO.clear()
+
+
+def _undo_env_load() -> None:
+    """Tests only: give ``os.environ`` back the values the ``.env`` load replaced.
+
+    The loader stays marked as done, so a later :func:`ensure_env_loaded` does
+    not load the file again: the process behaves as if its ``.env`` were empty.
+    """
+    global _ENV_LOADED
+    for key, inherited in _ENV_LOAD_UNDO.items():
+        if inherited is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = inherited
+    _ENV_LOAD_UNDO.clear()
+    _ENV_LOADED = True
 
 
 def tmux_socket_suffix() -> str:

@@ -120,12 +120,12 @@ def no_fsync(monkeypatch):
 def no_real_notification_delivery(monkeypatch):
     """Cut the wire at Apprise: no test may reach a real notification service.
 
-    ``settings_test`` isolates the DB and the provider homes, but not the data
-    dir: ``read_synced_settings()`` reads the developer's real
-    ``<data_dir>/settings.json``, so any test exercising a genuine dispatch
-    path picks up their live targets. On 2026-09-09 a full-suite run pushed
-    several "Message from alice" events from ``test_peer_messages.py`` to the
-    developer's ntfy phone.
+    ``settings_test`` now isolates the data dir too, so no test reads the
+    developer's live targets any more. This stays as a second line: a test
+    that writes a real target into the isolated ``settings.json`` must still
+    not reach the service. On 2026-09-09, before that isolation, a full-suite
+    run pushed several "Message from alice" events from
+    ``test_peer_messages.py`` to the developer's ntfy phone.
 
     ``async_notify`` is the single network boundary — the only Apprise call
     either send path makes. Stubbing it there leaves every layer above it
@@ -140,6 +140,20 @@ def no_real_notification_delivery(monkeypatch):
         return True
 
     monkeypatch.setattr(apprise.Apprise, "async_notify", _swallow)
+
+
+@pytest.fixture(autouse=True)
+def fresh_synced_settings_cache():
+    """Start and end every test with an empty synced-settings cache.
+
+    The cache is module-level: without this, the settings one test read or
+    wrote would leak into the next one.
+    """
+    from twicc import synced_settings
+
+    synced_settings._cache.clear()
+    yield
+    synced_settings._cache.clear()
 
 
 @pytest.fixture(autouse=True)

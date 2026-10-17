@@ -218,13 +218,13 @@ class TestSettingsTestIsolation:
     def test_every_accessor_is_under_the_temporary_root(self):
         from django.conf import settings
 
-        from twicc.settings_test import _PROVIDER_HOMES_ROOT
+        from twicc.settings_test import _TEST_ROOT
         from twicc.providers.claude_code import auth as claude_auth
         from twicc.providers.claude_code import trust as claude_trust
         from twicc.providers.codex import credentials as codex_credentials
         from twicc.providers.codex import trust as codex_trust
 
-        root = str(_PROVIDER_HOMES_ROOT)
+        root = str(_TEST_ROOT)
         paths = [
             provider_homes.claude_config_dir().path,
             provider_homes.claude_secure_storage_dir().path,

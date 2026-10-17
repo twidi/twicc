@@ -25,13 +25,22 @@ def devctl():
     return _load_devctl()
 
 
-def test_default_data_dir_keeps_the_bare_names(monkeypatch):
+@pytest.fixture
+def default_data_dir(monkeypatch, tmp_path):
+    """A stand-in for ``~/.twicc``: the real one is forbidden in tests."""
+    default = tmp_path / "default-data-dir"
+    default.mkdir()
+    monkeypatch.setattr(paths, "DEFAULT_DATA_DIR", default)
+    return default
+
+
+def test_default_data_dir_keeps_the_bare_names(monkeypatch, default_data_dir):
     monkeypatch.delenv("TWICC_DATA_DIR", raising=False)
     assert paths.get_data_dir() == paths.DEFAULT_DATA_DIR
     assert paths.tmux_socket_suffix() == ""
 
 
-def test_symlink_to_the_default_data_dir_is_the_default(monkeypatch, tmp_path):
+def test_symlink_to_the_default_data_dir_is_the_default(monkeypatch, tmp_path, default_data_dir):
     link = tmp_path / "twicc-link"
     link.symlink_to(paths.DEFAULT_DATA_DIR)
     monkeypatch.setenv("TWICC_DATA_DIR", str(link))
@@ -46,7 +55,7 @@ def test_other_data_dir_gets_a_stable_hash_suffix(monkeypatch, tmp_path):
     assert len(expected) == 9
 
 
-def test_devctl_mirror_matches_the_backend(monkeypatch, tmp_path, devctl):
+def test_devctl_mirror_matches_the_backend(monkeypatch, tmp_path, devctl, default_data_dir):
     monkeypatch.setenv("TWICC_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(devctl, "DATA_DIR", tmp_path)
     assert devctl.tmux_socket_suffix() == paths.tmux_socket_suffix()

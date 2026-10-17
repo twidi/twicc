@@ -94,19 +94,24 @@ def load_tokens() -> list[TokenRecord]:
 
 # --- mtime cache for the request hot path -------------------------------
 
-_cache: dict = {"mtime": object(), "records": []}
+_cache: dict = {"key": object(), "records": []}
 
 
 def load_tokens_cached() -> list[TokenRecord]:
-    """Read the store with an mtime cache (used per request by the middleware)."""
+    """Read the store with a (path, mtime) cache (used per request by the middleware).
+
+    The path is part of the key: two absent stores share the ``None`` mtime, so
+    a data dir change would otherwise keep serving the previous store's records.
+    """
     path = get_api_tokens_path()
     try:
         mtime = path.stat().st_mtime
     except OSError:
         mtime = None
-    if mtime != _cache["mtime"]:
+    key = (path, mtime)
+    if key != _cache["key"]:
         _cache["records"] = load_tokens()
-        _cache["mtime"] = mtime
+        _cache["key"] = key
     return _cache["records"]
 
 
