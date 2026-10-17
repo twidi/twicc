@@ -341,12 +341,12 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
             cache_write_5m_price=Decimal("5.00"),
             cache_write_1h_price=Decimal("8.00"),
         ),
-        "sonnet": FamilyPrices(
-            input_price=Decimal("3.00"),
-            output_price=Decimal("15.00"),
-            cache_read_price=Decimal("0.30"),
-            cache_write_5m_price=Decimal("3.75"),
-            cache_write_1h_price=Decimal("6.00"),
+        "sonnet": FamilyPrices(  # Sonnet 5.5 pricing (the family's latest; Sonnet 4.x is 3.00 / 15.00)
+            input_price=Decimal("2.00"),
+            output_price=Decimal("10.00"),
+            cache_read_price=Decimal("0.10"),
+            cache_write_5m_price=Decimal("2.50"),
+            cache_write_1h_price=Decimal("4.00"),
         ),
         # Haiku 5.5 pricing (the family's latest; Haiku 4.5 is 1.00 / 5.00). Prompts over 100K
         # tokens bill higher (0.50 / 2.50), which this flat table cannot express.
