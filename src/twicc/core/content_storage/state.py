@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from twicc.core.content_storage.policy import COLD_FIELDS, CONTENT_STORAGE_VERSION, cold_from_fields, scratch_cold_from_fields
 from twicc.core.content_storage.types import RootDecision, RootStorageSnapshot, SessionPromotionSnapshot
+from twicc.core.content_storage.session_policy import resolve_content_decisions
 from twicc.core.models import ContentDictionary, Session, SessionItem, SessionItemContent
 
 TREE_PAGE_SIZE = 128
@@ -111,7 +112,7 @@ def invalidate_roots(root_ids: Iterable[str], *, promotion_targets: Iterable[str
     from twicc.providers.write_coordinator import write_priority
 
     priority = write_priority.get()
-    decisions = resolve_root_decisions(targets, timezone.now(), active_session_ids.get())
+    decisions = resolve_content_decisions(targets, timezone.now(), active_session_ids.get())
     for session_id, decision in decisions.items():
         if decision.resolved and not decision.is_cold:
             transaction.on_commit(lambda session_id=session_id, priority=priority:
@@ -341,7 +342,7 @@ def require_plaintext_search(session_id: str) -> RootStorageSnapshot:
     decision = resolve_root_decision(session_id, timezone.now(), frozenset())
     if not decision.resolved:
         raise PlaintextSearchUnavailable('unresolved_ancestry')
-    if decision.is_cold:
+    if resolve_content_decisions([session_id], timezone.now(), frozenset())[session_id].is_cold:
         raise PlaintextSearchUnavailable('cold')
     fields = Session.objects.filter(pk=decision.root_id).values(
         'storage_incarnation', 'content_storage_version', 'content_state_epoch', 'plaintext_verified_epoch',

@@ -9,6 +9,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from twicc.core.content_storage.policy import COLD_FIELDS
+from twicc.core.content_storage.session_policy import resolve_content_decisions
 from twicc.core.content_storage.state import (
     TREE_PAGE_SIZE, capture_plaintext_certificate, carry_plaintext_certificate,
     invalidate_roots, resolve_root_decisions, session_plaintext_metadata,
@@ -61,7 +62,7 @@ def lifecycle_change(session_ids: Iterable[str], *, defer_plaintext_inspection: 
         before = _metadata(ids)
         old_roots = _root_map(ids)
         # Compare persisted policy. Runtime activity may precede the timestamp write.
-        old_decisions = resolve_root_decisions(ids, timezone.now(), frozenset())
+        old_decisions = resolve_content_decisions(ids, timezone.now(), frozenset())
         certificates = {root: capture_plaintext_certificate(root) for root in set(old_roots.values())}
         yield
         after = _metadata(ids)
@@ -78,7 +79,7 @@ def lifecycle_change(session_ids: Iterable[str], *, defer_plaintext_inspection: 
                        or any(before[identity][field] != after[identity][field]
                               for field in ('type', 'parent_session_id')) for identity in changed)
         schedule_cold_invalidation(changed | roots, mappings=mappings, lifecycle_session_ids=changed)
-        decisions = resolve_root_decisions(changed, timezone.now(), active_session_ids.get())
+        decisions = resolve_content_decisions(changed, timezone.now(), active_session_ids.get())
         from twicc.core.content_storage.ingestion import ingestion_preserves_plaintext
 
         # Deferred inspection retains a targeted obligation; a root proof covers only its own references.

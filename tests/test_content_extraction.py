@@ -775,8 +775,8 @@ def test_final_root_certification_rechecks_snapshot_fences(monkeypatch, change):
     assert session.plaintext_verified_epoch is None
 
 
-def test_final_active_native_child_keeps_cold_root_plaintext_ready():
-    """Removing active native-root resolution leaves an active archived root uncertified."""
+def test_final_active_native_child_does_not_certify_cold_root():
+    """Only the root's own lifecycle and activity can authorize its certificate."""
     from datetime import timedelta
     from django.utils import timezone
 
@@ -787,7 +787,7 @@ def test_final_active_native_child_keeps_cold_root_plaintext_ready():
     assert result.outcome == 'applied'
     session.refresh_from_db()
     assert session.content_storage_version == 1
-    assert session.plaintext_verified_epoch == session.content_state_epoch
+    assert session.plaintext_verified_epoch != session.content_state_epoch
 
 
 def test_public_verification_rescans_metadata_after_final_root_certification():

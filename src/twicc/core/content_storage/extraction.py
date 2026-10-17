@@ -21,13 +21,13 @@ from django.utils import timezone
 from twicc.core.content_storage.dictionaries import get_provider_dictionary
 from twicc.core.content_storage.codec import ContentIntegrityError, encode_plain, transcode_content
 from twicc.core.content_storage.policy import (
-    COLD_FIELDS, CONTENT_STORAGE_VERSION, cold_from_fields, compression_policy_version,
+    COLD_FIELDS, compression_policy_version,
 )
 from twicc.core.content_storage.references import (
     bind_persisted_items, intern_contents, prepare_intern_contents, prepared_content_guard, reconcile_session_memberships,
 )
 from twicc.core.content_storage.state import resolve_root_decision
-from twicc.core.content_storage.cold_cache import cached_root_decisions
+from twicc.core.content_storage.session_policy import content_decision_from_fields, resolve_content_decisions
 from twicc.core.content_storage.types import (
     ContentBinding, StorageCursor, ItemStorageObservation,
     PreparedComputeBatch, ComputeStorageProgress, ComputeStorageObservation,
@@ -60,7 +60,7 @@ def guard_storage(session_id, incarnation, epoch, upper_line, offset=None):
     if placement is not None and placement.get('operation') is not None:
         validate_compute_application(placement['operation'])
     if placement is not None:
-        root_id, actual = pending_root_fields(session_id, {}, placement['active_roots'])
+        root_id, actual = pending_root_fields(session_id, {}, placement['active_session_ids'])
         if root_id != placement['root_id'] or actual and (
             actual['storage_incarnation'] != placement['root_incarnation']
             or actual['content_state_epoch'] != placement['root_epoch']
@@ -69,8 +69,8 @@ def guard_storage(session_id, incarnation, epoch, upper_line, offset=None):
             raise SupersededStorageResult('superseded')
 
 
-def pending_root_fields(session_id, pending, active_roots):
-    decision = cached_root_decisions([session_id], timezone.now(), active_roots)[session_id]
+def pending_root_fields(session_id, pending, _active_session_ids):
+    decision = resolve_root_decision(session_id, timezone.now(), frozenset())
     if not decision.resolved:
         return None, None
     fields = Session.objects.filter(pk=decision.root_id).values(
@@ -105,30 +105,16 @@ def cold_placement(session_id):
 
 
 def _cold_placement(session_id):
-    """Recheck real native ancestry and guarded final lifecycle values."""
+    """Evaluate each owner's lifecycle, using this result's final target fields."""
     placement = _placement.get()
-    if (placement is None or placement['unresolved_active']
-            or placement.get('operation') is not None and placement['operation'].plaintext_required):
+    if placement is None:
         return False
-    root_id, effective = pending_root_fields(session_id, {}, placement['active_roots'])
-    if (root_id is None or root_id in placement['active_roots']
-            or session_id == placement['pending_session_id'] and root_id != placement['root_id']):
-        return False
-    if root_id != placement['pending_session_id']:
-        from twicc.providers.helpers import get_provider_helpers
-
-        root = Session.objects.only('provider', 'compute_version').get(pk=root_id)
-        if root.compute_version != get_provider_helpers(root.provider).current_compute_version:
+    if session_id == placement['pending_session_id']:
+        if placement.get('operation') is not None and placement['operation'].plaintext_required:
             return False
-    if root_id == placement['root_id']:
-        # Representation updates invalidate epochs; incarnation and lifecycle
-        # fields remain stable under the held writer/admission lease.
-        if (effective['storage_incarnation'] != placement['root_incarnation']
-                or effective['content_state_epoch'] != placement['root_epoch']
-                or any(effective[name] != value for name, value in placement['initial_fields'].items())):
-            return False
-        effective.update(placement['final_fields'])
-    return cold_from_fields(effective, placement['now'])
+        fields = placement['session_final_fields']
+        return content_decision_from_fields(session_id, fields, placement['now'], placement['active_session_ids']).is_cold
+    return resolve_content_decisions([session_id], placement['now'], placement['active_session_ids'])[session_id].is_cold
 
 
 def prepare_texts(texts, provider, session_id):
@@ -295,14 +281,11 @@ def _owners_cold(row, cache=None):
         owner_ids = [owner for owner in row.session_ids[start:start + 128] if owner not in cache]
         if not owner_ids:
             continue
-        owners = list(Session.objects.filter(pk__in=owner_ids).values('id', 'content_storage_version', 'storage_incarnation'))
-        if len(owners) != len(owner_ids) or any(
-            not owner['storage_incarnation'] or (owner['id'] != placement['pending_session_id']
-            and owner['content_storage_version'] != CONTENT_STORAGE_VERSION) for owner in owners
-        ):
-            return False
-        for owner in owner_ids:
-            cache[owner] = cold_placement(owner)
+        others = [owner for owner in owner_ids if owner != placement['pending_session_id']]
+        decisions = resolve_content_decisions(others, placement['now'], placement['active_session_ids'])
+        cache.update({owner: decision.is_cold for owner, decision in decisions.items()})
+        if placement['pending_session_id'] in owner_ids:
+            cache[placement['pending_session_id']] = cold_placement(placement['pending_session_id'])
     return all(cache.get(owner, False) for owner in row.session_ids)
 
 
@@ -489,7 +472,8 @@ def initialize_compute_session(session_id):
             snapshot_root_storage(root.root_id)
 
 
-_TARGET_FIELDS = ('storage_incarnation', 'history_epoch', 'last_offset', 'last_line', 'type', 'parent_session_id')
+_TARGET_FIELDS = ('storage_incarnation', 'history_epoch', 'last_offset', 'last_line', 'type', 'parent_session_id',
+                  *COLD_FIELDS)
 
 
 def _native_ancestry(session_id):
@@ -561,11 +545,7 @@ def _compute_scope(operation, active_ids):
 
 
 def _refresh_active_placement(placement, active_ids):
-    now = timezone.now()
-    decisions = cached_root_decisions(active_ids, now, frozenset())
-    roots = {decision.root_id for decision in decisions.values() if decision.resolved}
-    unresolved = any(not decision.resolved for decision in decisions.values())
-    placement.update(active_roots=frozenset(roots), unresolved_active=unresolved, now=now)
+    placement.update(active_session_ids=frozenset(active_ids), now=timezone.now())
 
 
 def validate_compute_application(operation):
@@ -624,10 +604,16 @@ def begin_compute_application(msg, *, progressive_facts=False):
         root_id, final = pending_root_fields(session.id, msg.get('session_fields', {}), frozenset())
         final = final or {}
         initial = Session.objects.filter(pk=root_id).values(*COLD_FIELDS).first()
-        placement = {'root_id': root_id, 'root_incarnation': final.get('storage_incarnation'),
+        session_final = {name: getattr(session, name) for name in COLD_FIELDS}
+        for name in COLD_FIELDS:
+            if name in msg.get('session_fields', {}):
+                value = msg['session_fields'][name]
+                session_final[name] = datetime.fromisoformat(value) if isinstance(value, str) else value
+        placement = {'session_final_fields': session_final, 'root_id': root_id,
+                     'root_incarnation': final.get('storage_incarnation'),
                      'root_epoch': final.get('content_state_epoch'), 'initial_fields': initial,
                      'final_fields': {name: final[name] for name in COLD_FIELDS if name in final},
-                     'active_roots': frozenset(), 'unresolved_active': False, 'now': timezone.now(),
+                     'active_session_ids': frozenset(), 'now': timezone.now(),
                      'pending_session_id': session.id, 'observed_offset': msg.get('observed_last_offset')}
         observation = ComputeStorageObservation(session.id, tuple(getattr(session, name) for name in _TARGET_FIELDS),
                                                _native_ancestry(session.id), root_id,
@@ -904,12 +890,9 @@ def validate_final_compute_operation(msg):
     pending = msg.get('_storage_final_root')
     if pending is not None:
         _refresh_active_placement(pending, msg.get('_active_session_ids', ()))
-        decision = resolve_root_decision(msg['session_id'], timezone.now(), pending['active_roots'])
-        root_id, effective = pending_root_fields(msg['session_id'], msg.get('session_fields', {}),
-                                                 pending['active_roots'])
-        plaintext_needed = (pending['unresolved_active'] or not decision.resolved
-                              or root_id in pending['active_roots']
-                              or not cold_from_fields(effective or {}, timezone.now()))
+        plaintext_needed = not content_decision_from_fields(
+            msg['session_id'], pending['session_final_fields'], timezone.now(), pending['active_session_ids'],
+        ).is_cold
         if operation is not None and operation.progressive_facts:
             from twicc.core.content_storage.validation import requires_plaintext
 
@@ -937,18 +920,21 @@ def finish_storage_result(msg):
     session_id = msg['session_id']
     pending = msg.get('_storage_final_root')
     if pending:
-        root_id, actual = pending_root_fields(session_id, {}, pending['active_roots'])
+        root_id, actual = pending_root_fields(session_id, {}, pending['active_session_ids'])
         if root_id != pending['root_id'] or (actual and (
             actual['storage_incarnation'] != pending['root_incarnation']
             or actual['content_state_epoch'] != pending['root_epoch']
             or any(actual[name] != value for name, value in pending['final_fields'].items())
         )):
             raise SupersededStorageResult('superseded')
-    decision = resolve_root_decision(session_id, timezone.now(), pending['active_roots'] if pending else frozenset())
-    if decision.resolved and decision.root_id == session_id and not decision.is_cold:
-        _finish_plaintext_root_storage(session_id, active_root_ids=pending['active_roots'] if pending else frozenset())
+    decision = resolve_root_decision(session_id, timezone.now(), frozenset())
+    content = resolve_content_decisions(
+        [session_id], timezone.now(), pending['active_session_ids'] if pending else frozenset(),
+    )[session_id]
+    if decision.resolved and decision.root_id == session_id and not content.is_cold:
+        _finish_plaintext_root_storage(session_id, active_root_ids=pending['active_session_ids'] if pending else frozenset())
     else:
-        plaintext_needed = not decision.is_cold or bool(pending and pending['unresolved_active'])
+        plaintext_needed = not content.is_cold
         if _session_has_invalid_storage_metadata(session_id, requires_plaintext=plaintext_needed):
             if plaintext_needed:
                 raise ContentIntegrityError('Hot compute storage requires plaintext through both references')

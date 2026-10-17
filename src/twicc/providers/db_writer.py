@@ -283,6 +283,23 @@ _async_queue: asyncio.Queue | None = None
 _background_async_queue: asyncio.Queue | None = None
 _pending_compute: PendingComputeApplication | None = None
 _pending_ingestion = None
+_UNPREPARED_INGESTION = object()
+
+
+class _PendingIngestion(NamedTuple):
+    payload: object
+    prepared: object
+
+
+def _prepare_ingestion_payload(payload):
+    from twicc.core.content_storage.ingestion import prepare_ingestion_contents
+
+    if isinstance(payload, (CreateSessionPayload, UpdateSessionPayload)):
+        try:
+            return prepare_ingestion_contents(payload.session, [text for _, text in payload.items])
+        except Exception:
+            logger.warning('Optional ingestion content preparation failed', exc_info=True)
+    return None
 
 
 class _ForegroundJobQueue(NotifyingAsyncQueue):
@@ -1993,22 +2010,29 @@ async def _drain_one() -> bool:
         if not _async_queue.empty():
             return True
 
-    # Background initialization and ingestion each get one turn. Inspect FIFO
-    # heads only after a grant; a failed grant never removes a queued payload.
+    # Background initialization and ingestion each get one turn. Retain the
+    # prepared FIFO head until publication receives its background grant.
     if not _background_async_queue.empty():
         async def initialize():
             await _dispatch_queued_job(_background_async_queue.get_nowait())
         processed |= await _background_turn(initialize)
     global _pending_ingestion
     if _pending_ingestion is None and not _thread_queue.empty():
-        _pending_ingestion = _thread_queue.get_nowait()
+        _pending_ingestion = _PendingIngestion(_thread_queue.get_nowait(), _UNPREPARED_INGESTION)
     if _pending_ingestion is not None:
-        payload = _pending_ingestion
+        if _pending_ingestion.prepared is _UNPREPARED_INGESTION:
+            payload = _pending_ingestion.payload
+            prepared = await run_compute_sync(_prepare_ingestion_payload, payload)
+            _pending_ingestion = _PendingIngestion(payload, prepared)
+        payload, prepared = _pending_ingestion
         async def ingest():
             global _pending_ingestion
             _pending_ingestion = None
             with provider_log_context(getattr(payload, 'provider', None)):
-                await _process_thread_message(payload)
+                if isinstance(payload, (CreateSessionPayload, UpdateSessionPayload)):
+                    await _process_thread_message(payload, prepared=prepared)
+                else:
+                    await _process_thread_message(payload)
         processed |= await _background_turn(ingest)
 
     if _pending_compute is not None:
@@ -2936,7 +2960,7 @@ async def _broadcast_project_updated(project_id: str) -> None:
 # =============================================================================
 
 
-async def _process_thread_message(msg) -> None:
+async def _process_thread_message(msg, *, prepared=None) -> None:
     """Apply one message drained from the shared thread queue."""
     if isinstance(msg, InitialSyncDoneMarker):
         # Drained after every real payload of the run (FIFO). Resolve the
@@ -2958,7 +2982,7 @@ async def _process_thread_message(msg) -> None:
 
     try:
         if isinstance(msg, CreateSessionPayload):
-            project, created, adopted = await run_compute_sync(_apply_create_session_payload, msg)
+            project, created, adopted = await run_compute_sync(_apply_create_session_payload, msg, prepared=prepared)
             if project is not None:
                 # Post-commit side effects, kept out of transaction.atomic so
                 # a project is never announced before it commits. Workspace
@@ -2982,7 +3006,7 @@ async def _process_thread_message(msg) -> None:
                 # counted separately, but still surfaced in the run summary.
                 _initial_sync_orphan_skips[msg.provider] += 1
         elif isinstance(msg, UpdateSessionPayload):
-            await run_compute_sync(_apply_update_session_payload, msg)
+            await run_compute_sync(_apply_update_session_payload, msg, prepared=prepared)
         elif isinstance(msg, MarkSessionsStalePayload):
             await run_compute_sync(_apply_mark_sessions_stale_payload, msg)
         elif isinstance(msg, DeleteSessionsPayload):
@@ -3014,7 +3038,9 @@ async def _process_thread_message(msg) -> None:
             _initial_sync_failures[provider] += 1
 
 
-def _apply_create_session_payload(payload: CreateSessionPayload) -> tuple[object, bool, bool]:
+def _apply_create_session_payload(
+    payload: CreateSessionPayload, *, prepared=_UNPREPARED_INGESTION,
+) -> tuple[object, bool, bool]:
     """Persist a new session (and project if missing) plus its items, atomically.
 
     Returns ``(project, project_was_created, adopted_directory)`` so the async
@@ -3031,10 +3057,14 @@ def _apply_create_session_payload(payload: CreateSessionPayload) -> tuple[object
     """
     from twicc.providers.live_aggregates import apply_contribution_changes, session_contribution
     from twicc.core.models import Session, SessionItem
-    from twicc.core.content_storage.ingestion import initialize_ingestion_session, insert_ingested_items
+    from twicc.core.content_storage.ingestion import (
+        initialize_ingestion_session, insert_ingested_items, prepare_ingestion_contents,
+    )
     from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION
     from twicc.projects import register_project_db_only
 
+    if prepared is _UNPREPARED_INGESTION:
+        prepared = prepare_ingestion_contents(payload.session, [text for _, text in payload.items])
     parent_id = payload.session.parent_session_id
     if parent_id is not None and not Session.objects.filter(id=parent_id).exists():
         logger.warning(
@@ -3064,7 +3094,7 @@ def _apply_create_session_payload(payload: CreateSessionPayload) -> tuple[object
             insert_ingested_items(payload.session, [
                 (SessionItem(session=payload.session, line_num=ln, content=ct), ct)
                 for ln, ct in payload.items
-            ])
+            ], prepared=prepared)
         payload.session.last_offset = max(payload.session.last_offset, payload.last_offset)
         payload.session.last_line = max(payload.session.last_line, payload.last_line)
         payload.session.mtime = max(payload.session.mtime, payload.mtime)
@@ -3077,12 +3107,16 @@ def _apply_create_session_payload(payload: CreateSessionPayload) -> tuple[object
     return project, created, adopted
 
 
-def _apply_update_session_payload(payload: UpdateSessionPayload) -> None:
+def _apply_update_session_payload(payload: UpdateSessionPayload, *, prepared=_UNPREPARED_INGESTION) -> None:
     """Append items to an existing session and update tracking fields, atomically."""
     from twicc.providers.live_aggregates import apply_contribution_changes, session_contribution
     from twicc.core.models import SessionItem
-    from twicc.core.content_storage.ingestion import initialize_ingestion_session, insert_ingested_items
+    from twicc.core.content_storage.ingestion import (
+        initialize_ingestion_session, insert_ingested_items, prepare_ingestion_contents,
+    )
 
+    if prepared is _UNPREPARED_INGESTION:
+        prepared = prepare_ingestion_contents(payload.session, [text for _, text in payload.items])
     with transaction.atomic():
         payload.session.refresh_from_db()
         initialize_ingestion_session(payload.session)
@@ -3091,7 +3125,7 @@ def _apply_update_session_payload(payload: UpdateSessionPayload) -> None:
             insert_ingested_items(payload.session, [
                 (SessionItem(session=payload.session, line_num=ln, content=ct), ct)
                 for ln, ct in payload.items
-            ])
+            ], prepared=prepared)
         update_fields = ["last_offset", "last_line", "mtime"]
         payload.session.last_offset = payload.last_offset
         payload.session.last_line = payload.last_line

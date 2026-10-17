@@ -368,3 +368,88 @@ def test_new_child_preserves_root_only_certificate_without_demand(monkeypatch):
     owner.refresh_from_db()
     assert owner.plaintext_verified_epoch == owner.content_state_epoch
     assert requests == []
+
+
+@pytest.mark.parametrize('provider', ['claude_code', 'codex'])
+@pytest.mark.parametrize('complete', [False, True])
+def test_initial_ingestion_uses_complete_own_lifecycle(provider, complete, monkeypatch):
+    from datetime import timedelta
+    from django.utils import timezone
+    from tests.content_storage_helpers import _public_dictionary
+    from twicc.core.content_storage import references
+
+    _public_dictionary(provider)
+    session = Session(id='cold-ingestion', project_id='ingestion-project', provider=provider,
+                      file_path='/initial/cold-ingestion', created_at=timezone.now() - timedelta(days=60) if complete else None)
+    source = 'initial repeated text ' * 1000
+    blocks = []
+    encode = references.encode_cold
+    def observe(*args, **kwargs):
+        blocks.append(connection.in_atomic_block)
+        return encode(*args, **kwargs)
+    monkeypatch.setattr(references, 'encode_cold', observe)
+    payload = CreateSessionPayload(provider, session.project_id, None, False, session, [(1, source)], 100, 1, 1.0)
+    _apply_create_session_payload(payload)
+    item = SessionItem.objects.get(session=session)
+    assert item.current_content.codec == ('zstd' if complete else 'plain')
+    assert decode_content(item.current_content) == source
+    assert not any(blocks)
+
+
+def test_ingestion_rechecks_hot_policy_after_cold_preparation(monkeypatch):
+    from datetime import timedelta
+    from django.utils import timezone
+    from tests.content_storage_helpers import _public_dictionary
+    from twicc.core.content_storage import references
+
+    _public_dictionary('codex')
+    session = Session(id='changed-ingestion', project_id='ingestion-project', provider='codex',
+                      file_path='/initial/changed-ingestion', created_at=timezone.now() - timedelta(days=60))
+    encode = references.encode_cold
+    def activate(*args, **kwargs):
+        session.created_at = timezone.now()
+        return encode(*args, **kwargs)
+    monkeypatch.setattr(references, 'encode_cold', activate)
+    payload = CreateSessionPayload('codex', session.project_id, None, False, session,
+                                   [(1, 'changed repeat ' * 1000)], 100, 1, 1.0)
+    _apply_create_session_payload(payload)
+    assert SessionItem.objects.get(session=session).current_content.codec == 'plain'
+
+
+def test_ingestion_dispatch_prepares_before_writer_lease(monkeypatch):
+    import asyncio
+    from datetime import timedelta
+    from django.utils import timezone
+    from tests.content_storage_helpers import _public_dictionary
+    from twicc.core.content_storage import references
+    from twicc.providers import db_writer
+
+    _public_dictionary('codex')
+    session = Session(id='dispatch-ingestion', project_id='ingestion-project', provider='codex',
+                      file_path='/initial/dispatch-ingestion', created_at=timezone.now() - timedelta(days=60))
+    payload = CreateSessionPayload('codex', session.project_id, None, False, session,
+                                   [(1, 'dispatch repeat ' * 1000)], 100, 1, 1.0)
+    observed = []
+    encode = references.encode_cold
+    def observe(*args, **kwargs):
+        lease = db_writer._db_write_lock_lease.get()
+        observed.append((connection.in_atomic_block, lease))
+        return encode(*args, **kwargs)
+    monkeypatch.setattr(references, 'encode_cold', observe)
+    monkeypatch.setattr(db_writer, '_db_writer_loop', db_writer._db_writer_loop_body)
+    async def run():
+        completed = asyncio.Event()
+        async def publish(actual, *, prepared=None):
+            assert actual is payload
+            assert prepared and any(record.encoded.codec == 'zstd' for record in prepared.values())
+            assert db_writer._db_write_lock_lease.get() is not None
+            completed.set()
+        monkeypatch.setattr(db_writer, '_process_thread_message', publish)
+        db_writer.start_db_writer()
+        try:
+            db_writer.get_thread_queue().put_nowait(payload)
+            await asyncio.wait_for(completed.wait(), 5)
+        finally:
+            await db_writer.stop_db_writer()
+    asyncio.run(run())
+    assert observed == [(False, None)]

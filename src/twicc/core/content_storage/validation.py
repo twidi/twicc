@@ -4,7 +4,8 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from twicc.core.content_storage.codec import ContentIntegrityError
-from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION, cold_from_fields
+from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION
+from twicc.core.content_storage.session_policy import content_decision_from_fields
 from twicc.core.content_storage.types import PreparedComputeBatch, StorageValidationState
 from twicc.core.models import ContentDictionary, Session, SessionItem, SessionItemContent
 
@@ -48,14 +49,13 @@ def _metadata_rows(session_id, where, params, *, limit=None, requires_plaintext=
 
 
 def requires_plaintext(operation, placement):
-    """Evaluate proposed native-root lifecycle and admitted activity together."""
-    effective = dict(placement['initial_fields'] or {})
-    effective.update(placement['final_fields'])
+    """Evaluate the target's proposed lifecycle and exact admitted activity."""
+    decision = content_decision_from_fields(
+        placement['pending_session_id'], placement['session_final_fields'], timezone.now(), placement['active_session_ids'],
+    )
     return (operation.plaintext_required
             or operation.validation is not None and operation.validation.requires_plaintext
-            or placement['unresolved_active'] or placement['root_id'] is None
-            or placement['root_id'] in placement['active_roots']
-            or not cold_from_fields(effective, timezone.now()))
+            or not decision.is_cold)
 
 
 def prepare_validation_page(operation, *, row_budget=256, byte_budget=262144):
@@ -146,7 +146,7 @@ def complete_validated_storage(operation, final_msg):
     if requires_plaintext(operation, pending) and not operation.validation.requires_plaintext:
         raise SupersededStorageResult('superseded')
     session_id = operation.observation.session_id
-    root_id, actual = pending_root_fields(session_id, {}, pending['active_roots'])
+    root_id, actual = pending_root_fields(session_id, {}, pending['active_session_ids'])
     if root_id != pending['root_id'] or (actual and (
         actual['storage_incarnation'] != pending['root_incarnation']
         or actual['content_state_epoch'] != pending['root_epoch']
@@ -155,7 +155,7 @@ def complete_validated_storage(operation, final_msg):
         raise SupersededStorageResult('superseded')
     Session.objects.filter(pk=session_id, storage_incarnation=operation.observation.target[0]).update(
         content_storage_version=CONTENT_STORAGE_VERSION)
-    decision = resolve_root_decision(session_id, timezone.now(), pending['active_roots'])
+    decision = resolve_root_decision(session_id, timezone.now(), pending['active_session_ids'])
     if (operation.validation.requires_plaintext and decision.resolved and decision.root_id == session_id
             and not decision.is_cold):
         Session.objects.filter(pk=session_id, storage_incarnation=pending['root_incarnation'],

@@ -61,7 +61,7 @@ def test_recent_root_waits_for_descendant_before_certifying_storage():
 
 
 @pytest.mark.parametrize('active_child', [False, True])
-def test_active_native_tree_prevents_initial_compression(active_child):
+def test_only_active_owner_prevents_initial_compression(active_child):
     _public_dictionary('codex')
     old = timezone.now() - timedelta(days=60)
     session = make_session(archived=True, created_at=old)
@@ -72,10 +72,10 @@ def test_active_native_tree_prevents_initial_compression(active_child):
     msg = message(session, _active_session_ids=frozenset({active.id}))
     assert BaseSessionCompute.apply_session_complete(msg).outcome == 'applied'
     item.refresh_from_db()
-    assert item.current_content.codec == 'plain'
+    assert item.current_content.codec == ('zstd' if active_child else 'plain')
 
 
-def test_unknown_active_ancestry_keeps_initial_contents_plain():
+def test_unrelated_unknown_activity_does_not_block_compression():
     _public_dictionary('codex')
     old = timezone.now() - timedelta(days=60)
     session = make_session(archived=True, created_at=old)
@@ -84,7 +84,7 @@ def test_unknown_active_ancestry_keeps_initial_contents_plain():
         session, _active_session_ids=frozenset({'unresolved-active'}),
     )).outcome == 'applied'
     item.refresh_from_db()
-    assert item.current_content.codec == 'plain'
+    assert item.current_content.codec == 'zstd'
 
 
 def test_shared_hot_original_requires_plaintext_during_cold_compute():
@@ -122,7 +122,7 @@ def test_old_root_metadata_cannot_authorize_descendant_compression():
     assert root.compute_version is None
 
 
-def test_shared_owner_without_storage_completion_keeps_plain():
+def test_shared_cold_owner_without_storage_completion_allows_compression():
     from django.db import transaction
     from twicc.core.content_storage.references import bind_persisted_items, intern_contents
     from twicc.core.content_storage.types import ContentBinding
@@ -141,7 +141,7 @@ def test_shared_owner_without_storage_completion_keeps_plain():
     item = SessionItem.objects.create(session=current, line_num=1, content=text)
     assert BaseSessionCompute.apply_session_complete(message(current)).outcome == 'applied'
     item.refresh_from_db()
-    assert item.current_content.codec == 'plain'
+    assert item.current_content.codec == 'zstd'
 
 
 def test_optional_encoding_failure_does_not_block_extraction(monkeypatch):
@@ -229,7 +229,7 @@ def test_candidate_owner_validation_does_not_repeat_reverse_item_scans():
     assert not [sql for sql in queries if sql.startswith(f'SELECT "{SessionItem._meta.db_table}"."session_id" AS "session_id" FROM')]
 
 
-def test_new_active_child_between_prepare_and_publish_supersedes_compressed_candidate():
+def test_new_active_unrelated_child_does_not_supersede_compressed_candidate():
     from tests.test_content_extraction import _advance_storage_operation
     from twicc.core.content_storage import extraction
 
@@ -242,10 +242,9 @@ def test_new_active_child_between_prepare_and_publish_supersedes_compressed_cand
         _advance_storage_operation(operation, 'extraction')
         batch = extraction.prepare_compute_batch(operation)
         assert any(record.encoded is not None and record.encoded.codec == 'zstd' for _, record in batch.prepared)
-        with pytest.raises(extraction.SupersededStorageResult):
-            extraction.publish_compute_batch(operation, batch, frozenset({child.id}))
+        extraction.publish_compute_batch(operation, batch, frozenset({child.id}))
         item.refresh_from_db()
-        assert item.current_content_id is None
+        assert item.current_content.codec == 'zstd'
     finally:
         extraction.close_compute_application(operation)
 
@@ -333,3 +332,116 @@ def test_elapsed_cold_threshold_is_fresh_between_storage_phases(monkeypatch):
         assert read_current(item) == 'repeated ' * 1000
     finally:
         extraction.close_compute_application(operation)
+
+
+@pytest.mark.parametrize('provider', ['claude_code', 'codex'])
+@pytest.mark.parametrize('root_cold', [False, True])
+def test_cold_child_compresses_before_outdated_root(provider, root_cold):
+    from twicc.core.models import Session
+    from twicc.providers.helpers import get_provider_helpers
+
+    _public_dictionary(provider)
+    old = timezone.now() - timedelta(days=60)
+    root = make_session(id='policy-root', created_at=old if root_cold else timezone.now())
+    child = make_session(id='policy-child', type='subagent', parent_session=root, created_at=old)
+    Session.objects.filter(pk__in=[root.id, child.id]).update(provider=provider)
+    item = SessionItem.objects.create(session=child, line_num=1, content='child repeat ' * 1000)
+    msg = message(child)
+    current = get_provider_helpers(provider).current_compute_version
+    msg['session_fields']['compute_version'] = current
+    assert BaseSessionCompute.apply_session_complete(msg).outcome == 'applied'
+    child.refresh_from_db()
+    root.refresh_from_db()
+    item.refresh_from_db()
+    assert child.compute_version == current
+    assert root.compute_version != current
+    assert item.current_content.codec == 'zstd'
+    assert child.content_storage_version == 1
+
+
+@pytest.mark.parametrize('provider', ['claude_code', 'codex'])
+def test_shared_cold_child_and_unextracted_root_compress(provider):
+    from django.db import transaction
+    from twicc.core.content_storage.references import bind_persisted_items, intern_contents
+    from twicc.core.content_storage.types import ContentBinding
+    from twicc.core.models import Session
+
+    _public_dictionary(provider)
+    old = timezone.now() - timedelta(days=60)
+    root = make_session(id='shared-root', created_at=old)
+    child = make_session(id='shared-child', type='subagent', parent_session=root, created_at=old)
+    Session.objects.filter(pk__in=[root.id, child.id]).update(provider=provider)
+    text = 'shared cold repeat ' * 1000
+    with transaction.atomic():
+        pk = intern_contents([text], provider)[text]
+        owner = SessionItem.objects.create(session=root, line_num=1, content='', current_content_id=pk)
+        bind_persisted_items([ContentBinding(owner.id, root.id, pk, None)])
+    item = SessionItem.objects.create(session=child, line_num=1, content=text)
+    assert BaseSessionCompute.apply_session_complete(message(child)).outcome == 'applied'
+    item.refresh_from_db()
+    assert item.current_content_id == pk
+    assert item.current_content.codec == 'zstd'
+
+
+@pytest.mark.parametrize('provider', ['claude_code', 'codex'])
+def test_cold_child_final_validation_accepts_compressed_storage(provider):
+    from tests.test_content_extraction import _advance_storage_operation
+    from twicc.core.content_storage import extraction
+    from twicc.core.models import Session
+
+    _public_dictionary(provider)
+    old = timezone.now() - timedelta(days=60)
+    root = make_session(id='validation-root', created_at=timezone.now())
+    child = make_session(id='validation-child', type='subagent', parent_session=root, created_at=old)
+    Session.objects.filter(pk__in=[root.id, child.id]).update(provider=provider)
+    item = SessionItem.objects.create(session=child, line_num=1, content='compressed validation ' * 1000)
+    operation = extraction.begin_compute_application(message(child), progressive_facts=True)
+    try:
+        _advance_storage_operation(operation, 'final')
+        assert operation.validation.complete
+        assert not operation.validation.requires_plaintext
+        final = extraction.final_compute_message(operation, frozenset())
+        assert BaseSessionCompute._apply_session_complete_final(final).outcome == 'applied'
+        item.refresh_from_db()
+        assert item.current_content.codec == 'zstd'
+    finally:
+        extraction.close_compute_application(operation)
+
+
+def test_hot_root_finalization_preserves_cold_descendants():
+    from twicc.core.models import Session
+
+    _public_dictionary('codex')
+    old = timezone.now() - timedelta(days=60)
+    root = make_session(id='mixed-root', created_at=timezone.now())
+    cold = make_session(id='mixed-cold', type='subagent', parent_session=root, created_at=old)
+    active = make_session(id='mixed-active', type='subagent', parent_session=root, created_at=old)
+    leaf = make_session(id='mixed-leaf', type='subagent', parent_session=cold, created_at=old)
+    for owner in (leaf, cold, active, root):
+        SessionItem.objects.create(session=owner, line_num=1, content=f'{owner.id} repeat ' * 1000)
+        assert BaseSessionCompute.apply_session_complete(message(owner, _active_session_ids={active.id})).outcome == 'applied'
+    before = dict(Session.objects.filter(pk__in=[cold.id, leaf.id]).values_list('id', 'compute_version'))
+    assert BaseSessionCompute.apply_session_complete(message(root, _active_session_ids={active.id})).outcome == 'applied'
+    assert dict(Session.objects.filter(pk__in=before).values_list('id', 'compute_version')) == before
+    for owner in (cold, leaf):
+        assert SessionItem.objects.get(session=owner).current_content.codec == 'zstd'
+    assert SessionItem.objects.get(session=active).current_content.codec == 'plain'
+
+
+@pytest.mark.parametrize('provider', ['claude_code', 'codex'])
+@pytest.mark.parametrize('final_hot', [False, True])
+def test_child_placement_uses_own_final_lifecycle(provider, final_hot):
+    from twicc.core.models import Session
+
+    _public_dictionary(provider)
+    old = timezone.now() - timedelta(days=60)
+    root = make_session(id='final-root', created_at=old if final_hot else timezone.now())
+    child = make_session(id='final-child', type='subagent', parent_session=root,
+                         created_at=old if final_hot else None)
+    Session.objects.filter(pk__in=[root.id, child.id]).update(provider=provider)
+    item = SessionItem.objects.create(session=child, line_num=1, content='final lifecycle repeat ' * 1000)
+    msg = message(child)
+    msg['session_fields']['created_at'] = (timezone.now() if final_hot else old).isoformat()
+    assert BaseSessionCompute.apply_session_complete(msg).outcome == 'applied'
+    item.refresh_from_db()
+    assert item.current_content.codec == ('plain' if final_hot else 'zstd')

@@ -47,12 +47,13 @@ def test_public_contains_rejects_root_state(reason, command, capsysbinary):
     assert reason in capsysbinary.readouterr().err.decode()
 
 
-def test_deep_native_root_cold_inheritance_and_no_active_override():
+def test_deep_cold_session_has_no_active_override():
     root = make_session()
     prepare_plaintext_search(root)
     Session.objects.filter(pk=root.pk).update(hidden=True, created_at=timezone.now() - timedelta(days=31))
     child = make_session('child', type='subagent', parent_session=root)
     leaf = make_session('leaf', type='subagent', parent_session=child)
+    Session.objects.filter(pk=leaf.id).update(created_at=timezone.now() - timedelta(days=60))
     token = active_session_ids.set(frozenset({leaf.id}))
     try:
         with transaction.atomic(), pytest.raises(state.PlaintextSearchUnavailable) as error:
@@ -259,3 +260,22 @@ def test_ready_content_range_and_and_terms_precede_tail(capsysbinary):
     result = orjson.loads(capsysbinary.readouterr().out)
     assert [item['line_num'] for item in result['items']] == [3, 4]
     assert result['pagination'] == {'limit': 2, 'offset': 1, 'total': 3, 'has_more': True}
+
+
+@pytest.mark.parametrize('provider', ['claude_code', 'codex'])
+@pytest.mark.parametrize('child_cold', [False, True])
+def test_contains_uses_requested_session_policy(provider, child_cold):
+    root = make_session('policy-root', content_storage_version=1)
+    child = make_session('policy-child', type='subagent', parent_session=root, content_storage_version=1)
+    Session.objects.filter(pk__in=[root.id, child.id]).update(provider=provider)
+    cold = child if child_cold else root
+    Session.objects.filter(pk=cold.id).update(created_at=timezone.now() - timedelta(days=60))
+    with transaction.atomic():
+        state.ensure_storage_incarnation(root.id)
+        state.ensure_storage_incarnation(child.id)
+        if child_cold:
+            with pytest.raises(state.PlaintextSearchUnavailable) as error:
+                state.require_plaintext_search(child.id)
+            assert error.value.reason == 'cold'
+        else:
+            assert state.require_plaintext_search(child.id).root_id == root.id

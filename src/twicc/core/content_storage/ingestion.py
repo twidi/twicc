@@ -9,9 +9,12 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from twicc.core.content_storage.lifecycle import active_session_ids
-from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION
+from twicc.core.content_storage.policy import COLD_FIELDS, CONTENT_STORAGE_VERSION
 from twicc.core.content_storage.readers import effective_current, set_current_override
-from twicc.core.content_storage.references import bind_persisted_items, intern_contents
+from twicc.core.content_storage.references import (
+    bind_persisted_items, intern_contents, prepare_intern_contents, prepared_content_guard,
+)
+from twicc.core.content_storage.session_policy import content_decision_from_fields, resolve_content_decisions
 from twicc.core.content_storage.state import (
     capture_plaintext_certificate, carry_plaintext_certificate,
     ensure_storage_incarnation, invalidate_roots, resolve_root_decision,
@@ -112,8 +115,17 @@ def initialize_ingestion_session(
                 carry_plaintext_certificate(certificate)
 
 
+def prepare_ingestion_contents(session: Session, texts: Sequence[str]):
+    """Prepare initial cold representations before the source writer transaction."""
+    fields = Session.objects.filter(pk=session.id).values(*COLD_FIELDS).first()
+    decision = content_decision_from_fields(
+        session.id, fields if fields is not None else session.__dict__, timezone.now(), active_session_ids.get(),
+    )
+    return prepare_intern_contents(texts, session.provider, cold=True) if texts and decision.is_cold else None
+
+
 def insert_ingested_items(
-    session: Session, items: Sequence[tuple[SessionItem, str]], *, promote: bool = True,
+    session: Session, items: Sequence[tuple[SessionItem, str]], *, promote: bool = True, prepared=None,
 ) -> set[int]:
     """Persist source/current strings, bind actual inserts, and promote reused hot rows.
 
@@ -140,7 +152,15 @@ def insert_ingested_items(
                 texts.extend((original, current))
             if not candidates:
                 continue
-            ids = intern_contents(texts, session.provider)
+            batch_prepared = None
+            cold = resolve_content_decisions([session.id], timezone.now(), active_session_ids.get())[session.id].is_cold
+            if prepared is not None and cold:
+                wanted = set(texts)
+                batch_prepared = {digest: record for digest, record in prepared.items() if record.text in wanted}
+                if {record.text for record in batch_prepared.values()} != wanted:
+                    batch_prepared = None
+            with prepared_content_guard(lambda cold=cold: cold):
+                ids = intern_contents(texts, session.provider, batch_prepared)
             for item, original, current in candidates:
                 item.original_content_id = ids[original]
                 item.current_content_id = ids[current]
@@ -162,9 +182,7 @@ def insert_ingested_items(
 def promote_ingested_items(session: Session, items: Sequence[tuple[SessionItem, str]]) -> None:
     """Place only this batch's persisted references in plaintext under final policy."""
     _require_transaction()
-    from twicc.core.content_storage.cold_cache import cached_root_decisions
-
-    decision = cached_root_decisions([session.id], timezone.now(), active_session_ids.get())[session.id]
+    decision = resolve_content_decisions([session.id], timezone.now(), active_session_ids.get())[session.id]
     if decision.is_cold:
         return
     source = iter(items)
