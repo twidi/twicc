@@ -775,7 +775,7 @@ def synthetic_selection_trials():
         for repeat in range(3):
             for size in sizes:
                 owner = Session.objects.get(pk='owner-0')
-                text = (f'index-{repeat}-{indexed}-{size} ' * (size // 8 + 1))[:size]
+                text = (f'index-{repeat}-{size} ' * (size // 8 + 1))[:size]
                 start = time.perf_counter()
                 prepared = prepare_ingestion_contents(owner, [text])
                 codec_ms = (time.perf_counter() - start) * 1000
@@ -798,7 +798,8 @@ def synthetic_selection_trials():
                         changed = maintenance.publish_representation(candidate, frozenset())
                     transitions.append({'mode': 'restore' if mode == 'plain' else 'compress', 'changed': changed,
                                             'codec_ms': prepare_ms, 'writer_commit_ms': (time.perf_counter() - start) * 1000})
-                samples.append({'raw_bytes': size, 'preparation_ms': codec_ms, 'insert_writer_commit_ms': insert_ms,
+                samples.append({'raw_bytes': size, 'input_sha256': row.sha256.hex(),
+                                    'preparation_ms': codec_ms, 'insert_writer_commit_ms': insert_ms,
                                     'transitions': transitions})
                 # Matched variants reuse line numbers and remove only this trial's rows outside timing.
                 SessionItem.objects.filter(

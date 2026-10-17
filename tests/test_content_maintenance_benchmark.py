@@ -87,6 +87,18 @@ connections.close_all()
     assert variants['filtered_without_index']['scanned'] == variants['filtered_with_index']['scanned']
     assert any('idx_content_plain_id' in line for line in
                variants['filtered_with_index']['plans']['candidate_lookup'])
+    writes = measured['index_write_overhead']
+    assert writes['repeats'] == 3
+    assert set(writes['samples']) == {'without_index', 'with_index'}
+    for samples in writes['samples'].values():
+        assert len(samples) == 12
+        assert sorted(sample['raw_bytes'] for sample in samples) == sorted([128, 65536, 1048576, 16777216] * 3)
+        for sample in samples:
+            assert [transition['mode'] for transition in sample['transitions']] == ['restore', 'compress']
+            assert all(transition['changed'] is True for transition in sample['transitions'])
+    assert [sample['input_sha256'] for sample in writes['samples']['without_index']] == [
+        sample['input_sha256'] for sample in writes['samples']['with_index']
+    ]
 
 
 def test_backup_keeps_one_snapshot_when_source_commits_between_steps(tmp_path, monkeypatch):

@@ -1,7 +1,8 @@
 # Periodic content maintenance: root selection and plaintext indexing
 
 Date: 2026-10-17.
-Status: adversarially reviewed in two rounds by two independent reviewers; ready for user review.
+Status: implemented on `feature/content-storage-compression`; see [validation](2026-10-17-periodic-maintenance-selection-validation.md).
+Planning review: adversarially reviewed in two rounds by two independent reviewers before implementation.
 Baseline: `feature/content-storage-compression`.
 
 ## 1. Outcome and decisions

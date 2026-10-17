@@ -81,6 +81,10 @@ Index write trials run three repetitions per payload size, without and with the 
 They use production ingestion preparation, `insert_ingested_items()`, and representation preparation/publication.
 Each trial measures insertion and zstd/plain transitions.
 
+The final benchmark correction removes the index boolean from synthetic input construction.
+All 12 paired samples now use identical bytes, verified by retained `input_sha256` values.
+Both variants perform 24 successful transitions: 48 total, with every `changed` value equal to `true`.
+
 Ingestion inserts cold prepared representations.
 Restoration and compression add and remove partial-index entries.
 Hot plaintext insertion is not timed separately.
@@ -174,16 +178,16 @@ These restoration totals remain separate from the periodic compression totals ab
 
 | Raw size | Insert without/with index | Restore without/with index | Compress without/with index |
 | --- | ---: | ---: | ---: |
-| 128 B | 5.171 / 5.208 ms | 1.140 / 1.176 ms | 1.269 / 1.273 ms |
-| 64 KiB | 5.552 / 5.086 ms | 1.213 / 1.202 ms | 1.276 / 1.280 ms |
-| 1 MiB | 5.158 / 5.231 ms | 2.228 / 2.251 ms | 1.555 / 1.603 ms |
-| 16 MiB | 7.338 / 7.688 ms | 113.792 / 101.842 ms | 9.797 / 9.743 ms |
+| 128 B | 5.803 / 5.387 ms | 1.248 / 1.225 ms | 1.297 / 1.360 ms |
+| 64 KiB | 5.123 / 5.210 ms | 1.218 / 1.265 ms | 1.301 / 1.337 ms |
+| 1 MiB | 5.370 / 5.627 ms | 2.411 / 2.443 ms | 1.597 / 1.612 ms |
+| 16 MiB | 6.857 / 6.867 ms | 100.235 / 93.880 ms | 9.823 / 11.811 ms |
 
 Each write value is the median of three isolated transaction/commit samples.
-Ingestion preparation medians without/with index are 0.836/0.840, 1.380/0.961, 3.832/3.816, and 48.844/49.647 ms.
+Ingestion preparation medians without/with index are 0.925/0.862, 1.363/1.013, 3.904/3.937, and 49.239/49.244 ms.
 The JSON retains separate preparation timings for each restoration and compression sample.
 
-The largest insert median increases by 0.350 ms with the index.
+The largest insert median increases by 0.010 ms with the index.
 Other small differences change direction across operations and remain subject to cache and ordering noise.
 No universal index-write penalty follows from three repetitions.
 
@@ -196,6 +200,29 @@ The source comparison process starts before page-count heartbeat logging is adde
 Its selection queries, projections, and populations remain unchanged.
 
 The synthetic subprocess loads the final expanded fixture.
+
+## Final synthetic correction provenance
+
+The source-selection, root-selection, index-build, fixture, and complete-pass result groups remain byte-for-byte unchanged.
+Only `result.index_write_overhead` receives the corrected synthetic measurements above.
+The original dispatcher measurements above remain from the original disk-backed run.
+
+The replacement command omits `--source-db` and creates only disposable synthetic databases:
+
+```bash
+cd /home/twidi/dev/twicc-poc/.worktrees/feature-content-storage-compression && uv run python scripts/benchmark_content_maintenance.py --scenario selection --work-dir /tmp/twicc-maint-selection-final-fix-20261017-a --output /tmp/twicc-maint-selection-final-fix-20261017-a.json
+```
+
+The CLI runs its small synthetic selection fixture and synthetic dispatcher before the write trials.
+Those extra result groups are discarded; no source backup or whole-source selection runs.
+The focused benchmark tests overlap this synthetic run; ambient host activity remains uncontrolled.
+
+The correction passes `uv run pytest tests/test_content_maintenance_benchmark.py -q`: **7 passed in 19.38 seconds**.
+The RED run fails on differing paired input hashes before the input correction.
+The expanded assertions require both variants, four sizes repeated three times, and all 48 successful transitions.
+
+Only this correction's created 36,487,168-byte and 113,696,768-byte databases and known sidecars are removed after process exit.
+The final focused checks include explicit Ruff and `git diff --check`; no full repository test run occurs.
 
 ## Acceptance mapping
 

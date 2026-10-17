@@ -169,229 +169,241 @@
         "without_index": [
           {
             "raw_bytes": 128,
-            "preparation_ms": 1.149273943156004,
-            "insert_writer_commit_ms": 7.541118888184428,
+            "input_sha256": "12d92d0e51a979b3f2a612e36b8184dd0cd0b31725541bf5bfb2d7c0a6346934",
+            "preparation_ms": 0.9252890013158321,
+            "insert_writer_commit_ms": 6.724117090925574,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 0.6071249954402447,
-                "writer_commit_ms": 1.65279908105731
+                "codec_ms": 0.52035809494555,
+                "writer_commit_ms": 1.248450018465519
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 0.6193339359015226,
-                "writer_commit_ms": 1.7493960913270712
+                "codec_ms": 0.6549658719450235,
+                "writer_commit_ms": 1.6836179420351982
               }
             ]
           },
           {
             "raw_bytes": 65536,
-            "preparation_ms": 1.3801089953631163,
-            "insert_writer_commit_ms": 6.879239110276103,
+            "input_sha256": "cc89a05d2e2e4ecbb05d8e3fbfbf98992ace19228d6d8ef417f6af8677217e46",
+            "preparation_ms": 1.4857091009616852,
+            "insert_writer_commit_ms": 6.201657932251692,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 0.8207359351217747,
-                "writer_commit_ms": 1.664506969973445
+                "codec_ms": 0.6315079517662525,
+                "writer_commit_ms": 1.218266086652875
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 0.7630069740116596,
-                "writer_commit_ms": 1.5095770359039307
+                "codec_ms": 0.9938359726220369,
+                "writer_commit_ms": 1.506011001765728
               }
             ]
           },
           {
             "raw_bytes": 1048576,
-            "preparation_ms": 3.8317819125950336,
-            "insert_writer_commit_ms": 5.15751913189888,
+            "input_sha256": "9e3bf0a1067dfd8b58abda63b4cc4cda7faca09a7e1ec8114412192b4ace5723",
+            "preparation_ms": 4.344012821093202,
+            "insert_writer_commit_ms": 6.203401833772659,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 3.4596759360283613,
-                "writer_commit_ms": 2.2279671393334866
+                "codec_ms": 3.3240311313420534,
+                "writer_commit_ms": 2.5936008896678686
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 4.330344032496214,
-                "writer_commit_ms": 6.240734830498695
+                "codec_ms": 3.8687391206622124,
+                "writer_commit_ms": 5.981646943837404
               }
             ]
           },
           {
             "raw_bytes": 16777216,
-            "preparation_ms": 50.435106037184596,
-            "insert_writer_commit_ms": 7.954936940222979,
+            "input_sha256": "7d0676d1e1bef6a0679772c4ab0fe7788b1099204ba0eee88455ac589535e72b",
+            "preparation_ms": 54.6354609541595,
+            "insert_writer_commit_ms": 6.630377843976021,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 45.65404402092099,
-                "writer_commit_ms": 162.3240930493921
+                "codec_ms": 44.99715683050454,
+                "writer_commit_ms": 156.17985487915576
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 58.60454589128494,
-                "writer_commit_ms": 9.824801003560424
+                "codec_ms": 51.364263985306025,
+                "writer_commit_ms": 10.364684043452144
               }
             ]
           },
           {
             "raw_bytes": 128,
-            "preparation_ms": 0.8081111591309309,
-            "insert_writer_commit_ms": 5.125571042299271,
+            "input_sha256": "002f7df2300460bc4ae1e7c8c1799f8ef5a42c99bd2d16092674aadeaf3bc36d",
+            "preparation_ms": 0.8637660648673773,
+            "insert_writer_commit_ms": 5.195477046072483,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 0.4241380374878645,
-                "writer_commit_ms": 1.139843137934804
+                "codec_ms": 0.41146506555378437,
+                "writer_commit_ms": 1.1651709210127592
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 0.46039815060794353,
-                "writer_commit_ms": 1.2691309675574303
+                "codec_ms": 0.47295214608311653,
+                "writer_commit_ms": 1.297426875680685
               }
             ]
           },
           {
             "raw_bytes": 65536,
-            "preparation_ms": 0.9606899693608284,
-            "insert_writer_commit_ms": 4.928449867293239,
+            "input_sha256": "4a17ca7db8445ad377c7fce2cc7ebbe79b64c479bb712885532921b009906e91",
+            "preparation_ms": 1.0119159705936909,
+            "insert_writer_commit_ms": 5.123157985508442,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 0.5950240883976221,
-                "writer_commit_ms": 1.1966791935265064
+                "codec_ms": 0.6231938023120165,
+                "writer_commit_ms": 1.2335190549492836
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 0.6570690311491489,
-                "writer_commit_ms": 1.2630759738385677
+                "codec_ms": 0.6792370695620775,
+                "writer_commit_ms": 1.3011391274631023
               }
             ]
           },
           {
             "raw_bytes": 1048576,
-            "preparation_ms": 3.7792420480400324,
-            "insert_writer_commit_ms": 5.147631978616118,
+            "input_sha256": "3df79169f48147d1ad81f13a795aa181cea2668b04bde283428c2a9ee32fb728",
+            "preparation_ms": 3.903633914887905,
+            "insert_writer_commit_ms": 5.370037164539099,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 3.348174039274454,
-                "writer_commit_ms": 2.1785630378872156
+                "codec_ms": 3.2186810858547688,
+                "writer_commit_ms": 2.410625107586384
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 3.7692440673708916,
-                "writer_commit_ms": 1.5476220287382603
+                "codec_ms": 3.727976931259036,
+                "writer_commit_ms": 1.5965981874614954
               }
             ]
           },
           {
             "raw_bytes": 16777216,
-            "preparation_ms": 48.49210102111101,
-            "insert_writer_commit_ms": 6.526547018438578,
+            "input_sha256": "c739484d759ab332ed96bccfe1f18f0905cc1f84c84fd4af0c9582edc36ab98b",
+            "preparation_ms": 48.61453105695546,
+            "insert_writer_commit_ms": 7.605465827509761,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 48.06059808470309,
-                "writer_commit_ms": 113.79244411364198
+                "codec_ms": 44.56244013272226,
+                "writer_commit_ms": 100.23506102152169
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 58.87573980726302,
-                "writer_commit_ms": 9.796604048460722
+                "codec_ms": 59.47429803200066,
+                "writer_commit_ms": 9.823217988014221
               }
             ]
           },
           {
             "raw_bytes": 128,
-            "preparation_ms": 0.8359178900718689,
-            "insert_writer_commit_ms": 5.1707758102566,
+            "input_sha256": "8539f136612c1a1e8209527aa14a4f66b61fdfc5e9eaf70a52767fec1bca0f7e",
+            "preparation_ms": 0.9528649970889091,
+            "insert_writer_commit_ms": 5.802966887131333,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 0.4277168773114681,
-                "writer_commit_ms": 1.140194945037365
+                "codec_ms": 0.4364228807389736,
+                "writer_commit_ms": 1.4984540175646544
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 0.4627890884876251,
-                "writer_commit_ms": 1.2471049558371305
+                "codec_ms": 0.6355459336191416,
+                "writer_commit_ms": 1.275649992749095
               }
             ]
           },
           {
             "raw_bytes": 65536,
-            "preparation_ms": 1.414039870724082,
-            "insert_writer_commit_ms": 5.552157061174512,
+            "input_sha256": "3a91546f468982089a14850e0225aa5eb8fabb19dd41d65c8a20246c72ad8830",
+            "preparation_ms": 1.3625191058963537,
+            "insert_writer_commit_ms": 5.050895037129521,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 0.6218699272722006,
-                "writer_commit_ms": 1.2127310037612915
+                "codec_ms": 0.6122759077697992,
+                "writer_commit_ms": 1.1873648036271334
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 0.669633038341999,
-                "writer_commit_ms": 1.2758830562233925
+                "codec_ms": 0.6607868708670139,
+                "writer_commit_ms": 1.2598091270774603
               }
             ]
           },
           {
             "raw_bytes": 1048576,
-            "preparation_ms": 3.835539100691676,
-            "insert_writer_commit_ms": 5.269844783470035,
+            "input_sha256": "5382f4b323bbdfed44094becb87bbeac4a8719c4e2633b7abbf1086516cd3c09",
+            "preparation_ms": 3.745300928130746,
+            "insert_writer_commit_ms": 5.165603943169117,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 3.3805251587182283,
-                "writer_commit_ms": 2.293140161782503
+                "codec_ms": 3.1041509937494993,
+                "writer_commit_ms": 2.2993378806859255
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 3.631630912423134,
-                "writer_commit_ms": 1.5553110279142857
+                "codec_ms": 3.6804908886551857,
+                "writer_commit_ms": 1.573455985635519
               }
             ]
           },
           {
             "raw_bytes": 16777216,
-            "preparation_ms": 48.84437704458833,
-            "insert_writer_commit_ms": 7.338017923757434,
+            "input_sha256": "e1c98d4eb16feb5e25870fc96849b6f0ba7885ba2661bf08b823518698d17c27",
+            "preparation_ms": 49.238931853324175,
+            "insert_writer_commit_ms": 6.856995867565274,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 44.35107810422778,
-                "writer_commit_ms": 97.88990905508399
+                "codec_ms": 47.52462403848767,
+                "writer_commit_ms": 93.62162905745208
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 74.58942895755172,
-                "writer_commit_ms": 9.570091031491756
+                "codec_ms": 50.53896899335086,
+                "writer_commit_ms": 9.408049052581191
               }
             ]
           }
@@ -399,229 +411,241 @@
         "with_index": [
           {
             "raw_bytes": 128,
-            "preparation_ms": 0.9389519691467285,
-            "insert_writer_commit_ms": 5.532901966944337,
+            "input_sha256": "12d92d0e51a979b3f2a612e36b8184dd0cd0b31725541bf5bfb2d7c0a6346934",
+            "preparation_ms": 0.8639339357614517,
+            "insert_writer_commit_ms": 5.4713229183107615,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 0.4624221473932266,
-                "writer_commit_ms": 1.230972120538354
+                "codec_ms": 0.46443589963018894,
+                "writer_commit_ms": 1.224706880748272
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 0.4720150027424097,
-                "writer_commit_ms": 1.3209008611738682
+                "codec_ms": 0.4868488758802414,
+                "writer_commit_ms": 1.367148943245411
               }
             ]
           },
           {
             "raw_bytes": 65536,
-            "preparation_ms": 0.9492540266364813,
-            "insert_writer_commit_ms": 4.890071926638484,
+            "input_sha256": "cc89a05d2e2e4ecbb05d8e3fbfbf98992ace19228d6d8ef417f6af8677217e46",
+            "preparation_ms": 1.0130719747394323,
+            "insert_writer_commit_ms": 5.168024217709899,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 0.6007440388202667,
-                "writer_commit_ms": 1.2020550202578306
+                "codec_ms": 0.6468209903687239,
+                "writer_commit_ms": 1.268839929252863
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 0.6679589860141277,
-                "writer_commit_ms": 1.2653670273721218
+                "codec_ms": 0.7030670531094074,
+                "writer_commit_ms": 1.337149878963828
               }
             ]
           },
           {
             "raw_bytes": 1048576,
-            "preparation_ms": 3.806901164352894,
-            "insert_writer_commit_ms": 5.110879894345999,
+            "input_sha256": "9e3bf0a1067dfd8b58abda63b4cc4cda7faca09a7e1ec8114412192b4ace5723",
+            "preparation_ms": 3.936727996915579,
+            "insert_writer_commit_ms": 5.308524006977677,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 3.4196979831904173,
-                "writer_commit_ms": 2.226867014542222
+                "codec_ms": 3.1679710373282433,
+                "writer_commit_ms": 2.2854970302432775
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 3.655951004475355,
-                "writer_commit_ms": 1.5637071337550879
+                "codec_ms": 3.6473709624260664,
+                "writer_commit_ms": 1.6654368955641985
               }
             ]
           },
           {
             "raw_bytes": 16777216,
-            "preparation_ms": 49.153277883306146,
-            "insert_writer_commit_ms": 7.863573031499982,
+            "input_sha256": "7d0676d1e1bef6a0679772c4ab0fe7788b1099204ba0eee88455ac589535e72b",
+            "preparation_ms": 49.60248712450266,
+            "insert_writer_commit_ms": 6.86666090041399,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 45.45158799737692,
-                "writer_commit_ms": 112.2466828674078
+                "codec_ms": 44.32214703410864,
+                "writer_commit_ms": 93.8796941190958
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 76.592753874138,
-                "writer_commit_ms": 9.445202071219683
+                "codec_ms": 50.773411989212036,
+                "writer_commit_ms": 9.79280797764659
               }
             ]
           },
           {
             "raw_bytes": 128,
-            "preparation_ms": 0.8399770595133305,
-            "insert_writer_commit_ms": 5.204793997108936,
+            "input_sha256": "002f7df2300460bc4ae1e7c8c1799f8ef5a42c99bd2d16092674aadeaf3bc36d",
+            "preparation_ms": 0.8363339584320784,
+            "insert_writer_commit_ms": 5.151019198819995,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 0.4465829115360975,
-                "writer_commit_ms": 1.1502569541335106
+                "codec_ms": 0.4380189348012209,
+                "writer_commit_ms": 1.1713718995451927
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 0.46049198135733604,
-                "writer_commit_ms": 1.2683388777077198
+                "codec_ms": 0.5216789431869984,
+                "writer_commit_ms": 1.3442460913211107
               }
             ]
           },
           {
             "raw_bytes": 65536,
-            "preparation_ms": 0.9609370026737452,
-            "insert_writer_commit_ms": 5.0859160255640745,
+            "input_sha256": "4a17ca7db8445ad377c7fce2cc7ebbe79b64c479bb712885532921b009906e91",
+            "preparation_ms": 0.9893060196191072,
+            "insert_writer_commit_ms": 5.210384028032422,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 0.6063021719455719,
-                "writer_commit_ms": 1.2254570610821247
+                "codec_ms": 0.6409680936485529,
+                "writer_commit_ms": 1.2383179273456335
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 0.6677850615233183,
-                "writer_commit_ms": 1.2873720843344927
+                "codec_ms": 1.057980814948678,
+                "writer_commit_ms": 2.031192183494568
               }
             ]
           },
           {
             "raw_bytes": 1048576,
-            "preparation_ms": 3.817132906988263,
-            "insert_writer_commit_ms": 5.332409869879484,
+            "input_sha256": "3df79169f48147d1ad81f13a795aa181cea2668b04bde283428c2a9ee32fb728",
+            "preparation_ms": 5.96170499920845,
+            "insert_writer_commit_ms": 5.871789995580912,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 3.4162600059062243,
-                "writer_commit_ms": 2.251124009490013
+                "codec_ms": 3.2437320332974195,
+                "writer_commit_ms": 2.5493530556559563
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 3.694400191307068,
-                "writer_commit_ms": 1.6642010305076838
+                "codec_ms": 3.651481121778488,
+                "writer_commit_ms": 1.611724030226469
               }
             ]
           },
           {
             "raw_bytes": 16777216,
-            "preparation_ms": 49.647176871076226,
-            "insert_writer_commit_ms": 7.157966960221529,
+            "input_sha256": "c739484d759ab332ed96bccfe1f18f0905cc1f84c84fd4af0c9582edc36ab98b",
+            "preparation_ms": 48.70515805669129,
+            "insert_writer_commit_ms": 6.7213240545243025,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 47.10400803014636,
-                "writer_commit_ms": 97.20683703199029
+                "codec_ms": 46.32892203517258,
+                "writer_commit_ms": 93.30138494260609
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 55.41007709689438,
-                "writer_commit_ms": 9.912644047290087
+                "codec_ms": 66.85970700345933,
+                "writer_commit_ms": 27.24874299019575
               }
             ]
           },
           {
             "raw_bytes": 128,
-            "preparation_ms": 0.8219119627028704,
-            "insert_writer_commit_ms": 5.208235001191497,
+            "input_sha256": "8539f136612c1a1e8209527aa14a4f66b61fdfc5e9eaf70a52767fec1bca0f7e",
+            "preparation_ms": 0.8620778098702431,
+            "insert_writer_commit_ms": 5.387288983911276,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 0.4277301486581564,
-                "writer_commit_ms": 1.1761749628931284
+                "codec_ms": 0.44490909203886986,
+                "writer_commit_ms": 1.2350420001894236
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 0.46905106864869595,
-                "writer_commit_ms": 1.2726360000669956
+                "codec_ms": 0.49683498218655586,
+                "writer_commit_ms": 1.3595111668109894
               }
             ]
           },
           {
             "raw_bytes": 65536,
-            "preparation_ms": 0.9646960534155369,
-            "insert_writer_commit_ms": 5.088401027023792,
+            "input_sha256": "3a91546f468982089a14850e0225aa5eb8fabb19dd41d65c8a20246c72ad8830",
+            "preparation_ms": 1.254216069355607,
+            "insert_writer_commit_ms": 5.4902019910514355,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 0.5974490195512772,
-                "writer_commit_ms": 1.2010710779577494
+                "codec_ms": 0.6428631022572517,
+                "writer_commit_ms": 1.264974009245634
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 0.6734761409461498,
-                "writer_commit_ms": 1.2798209208995104
+                "codec_ms": 0.6914020050317049,
+                "writer_commit_ms": 1.3239372055977583
               }
             ]
           },
           {
             "raw_bytes": 1048576,
-            "preparation_ms": 3.8159198593348265,
-            "insert_writer_commit_ms": 5.230509908869863,
+            "input_sha256": "5382f4b323bbdfed44094becb87bbeac4a8719c4e2633b7abbf1086516cd3c09",
+            "preparation_ms": 3.79628106020391,
+            "insert_writer_commit_ms": 5.627217004075646,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 3.473819000646472,
-                "writer_commit_ms": 2.5692519266158342
+                "codec_ms": 3.200344042852521,
+                "writer_commit_ms": 2.443386008962989
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 3.710004035383463,
-                "writer_commit_ms": 1.6032489947974682
+                "codec_ms": 3.6265370436012745,
+                "writer_commit_ms": 1.5363851562142372
               }
             ]
           },
           {
             "raw_bytes": 16777216,
-            "preparation_ms": 49.971177941188216,
-            "insert_writer_commit_ms": 7.687947014346719,
+            "input_sha256": "e1c98d4eb16feb5e25870fc96849b6f0ba7885ba2661bf08b823518698d17c27",
+            "preparation_ms": 49.244215013459325,
+            "insert_writer_commit_ms": 7.031091023236513,
             "transitions": [
               {
                 "mode": "restore",
                 "changed": true,
-                "codec_ms": 45.48923298716545,
-                "writer_commit_ms": 101.84223088435829
+                "codec_ms": 45.45545391738415,
+                "writer_commit_ms": 117.85018094815314
               },
               {
                 "mode": "compress",
                 "changed": true,
-                "codec_ms": 77.36583612859249,
-                "writer_commit_ms": 9.742512833327055
+                "codec_ms": 52.7285379357636,
+                "writer_commit_ms": 11.811190051957965
               }
             ]
           }

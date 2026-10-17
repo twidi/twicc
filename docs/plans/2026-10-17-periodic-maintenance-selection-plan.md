@@ -10,7 +10,9 @@
 
 **Spec:** [Periodic content maintenance: root selection and plaintext indexing](2026-10-17-periodic-maintenance-selection-spec.md).
 
-**Status:** Self-reviewed and adversarially reviewed by two independent reviewers. No remaining blocker or important defect.
+**Status:** Implemented on `feature/content-storage-compression`; see [validation](2026-10-17-periodic-maintenance-selection-validation.md).
+
+**Planning review:** Self-reviewed and adversarially reviewed by two independent reviewers. No remaining blocker or important defect at planning review.
 
 ## Global Constraints
 
