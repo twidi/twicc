@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 from threading import RLock
+from weakref import WeakSet
 
 from django.db import connection, transaction
 
@@ -12,6 +13,7 @@ from twicc.core.content_storage.types import RootDecision
 from twicc.core.models import Session
 
 _lock = RLock()
+_maintenance_caches = WeakSet()
 _metadata = {}
 _generations = {}
 _database = None
@@ -33,6 +35,8 @@ def reset_cold_cache() -> None:
     """Fence all pending fills and discard metadata after database replacement."""
     global _reset_generation, _database, _revision
     with _lock:
+        for cache in tuple(_maintenance_caches):
+            cache._reset_locked()
         _metadata.clear()
         _generations.clear()
         _database = None
@@ -40,30 +44,39 @@ def reset_cold_cache() -> None:
         _revision += 1
 
 
-def invalidate_cold_metadata(session_ids: Iterable[str], *, mappings: bool = False) -> None:
+def invalidate_cold_metadata(
+    session_ids: Iterable[str], *, mappings: bool = False, lifecycle_session_ids: Iterable[str] | None = None,
+) -> None:
     """Discard committed lifecycle changes; mapping changes can affect every descendant."""
     global _reset_generation, _revision
+    ids = frozenset(session_ids)
+    lifecycle_ids = ids if lifecycle_session_ids is None else frozenset(lifecycle_session_ids)
     with _lock:
+        for cache in tuple(_maintenance_caches):
+            cache._invalidate_locked(lifecycle_ids)
         _revision += 1
         if mappings:
             _metadata.clear()
             _generations.clear()
             _reset_generation += 1
         else:
-            for identity in set(session_ids):
+            for identity in ids:
                 _metadata.pop(identity, None)
                 # Keep tombstones: a pending read can still hold the previous generation.
                 _generations[identity] = _generations.get(identity, 0) + 1
 
 
-def schedule_cold_invalidation(session_ids: Iterable[str], *, mappings: bool = False) -> None:
+def schedule_cold_invalidation(
+    session_ids: Iterable[str], *, mappings: bool = False, lifecycle_session_ids: Iterable[str] | None = None,
+) -> None:
     """Use Django's savepoint-aware commit queue as the transaction-local overlay."""
     ids = frozenset(session_ids)
+    lifecycle_ids = ids if lifecycle_session_ids is None else frozenset(lifecycle_session_ids)
 
     def committed():
-        invalidate_cold_metadata(ids, mappings=mappings)
+        invalidate_cold_metadata(ids, mappings=mappings, lifecycle_session_ids=lifecycle_ids)
 
-    committed.cold_metadata_invalidation = (ids, mappings)
+    committed.cold_metadata_invalidation = (ids, mappings, lifecycle_ids)
     transaction.on_commit(committed)
 
 
@@ -78,6 +91,16 @@ def _pending_invalidations():
             ids.update(pending[0])
             mappings |= pending[1]
     return ids, mappings
+
+
+def _pending_lifecycle_invalidations():
+    """Return only own-session changes queued on this transaction's commit hooks."""
+    ids = set()
+    for _, callback, _ in connection.run_on_commit:
+        pending = getattr(callback, 'cold_metadata_invalidation', None)
+        if pending is not None:
+            ids.update(pending[2])
+    return ids
 
 
 def _read_metadata(ids):

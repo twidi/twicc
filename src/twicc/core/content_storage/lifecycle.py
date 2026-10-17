@@ -77,7 +77,7 @@ def lifecycle_change(session_ids: Iterable[str], *, defer_plaintext_inspection: 
         mappings = any(before.get(identity) is None or after.get(identity) is None
                        or any(before[identity][field] != after[identity][field]
                               for field in ('type', 'parent_session_id')) for identity in changed)
-        schedule_cold_invalidation(changed | roots, mappings=mappings)
+        schedule_cold_invalidation(changed | roots, mappings=mappings, lifecycle_session_ids=changed)
         decisions = resolve_root_decisions(changed, timezone.now(), active_session_ids.get())
         from twicc.core.content_storage.ingestion import ingestion_preserves_plaintext
 
