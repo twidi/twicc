@@ -152,8 +152,10 @@ def archive_sessions_bulk(ids: set[str]) -> list[str]:
     """Archive ``ids`` and record ``archived.started`` per flipped session; return the flipped ids.
 
     Sync; call under the DB write lock from a worker thread, and keep that hold short.
-    The caller did all its reads (candidate selection) BEFORE taking the lock; nothing is read
-    here. The write is two statements plus ONE batched timeline insert, whatever ``len(ids)``.
+    The caller did all its reads (candidate selection) BEFORE taking the lock. The write is two
+    statements plus ONE batched timeline insert, whatever ``len(ids)``. ``archived`` is a content
+    lifecycle field: the statements run inside ``lifecycle_change`` (the content storage contract
+    of ``update_lifecycle``), scoped to the requested ids that still exist.
 
     Race analysis. ``ids`` was computed outside the lock, so another writer may have archived,
     unarchived or deleted any of them since. The flip is a conditional
@@ -166,6 +168,7 @@ def archive_sessions_bulk(ids: set[str]) -> list[str]:
     at the next boot: the flipped rows in the first statement, the already-archived ones in the second
     (``IS NOT 0``, not ``!= 0``: the column is nullable and ``NULL != 0`` is NULL, which would skip them).
     """
+    from twicc.core.content_storage.lifecycle import lifecycle_change
     from twicc.core.models import Session
 
     if not ids:
@@ -177,6 +180,10 @@ def archive_sessions_bulk(ids: set[str]) -> list[str]:
     ids_json = orjson.dumps(sorted(ids)).decode()
     with transaction.atomic():
         with connection.cursor() as cursor:
+            # Like ``update_lifecycle``: the lifecycle scope is the rows that exist under the lock.
+            cursor.execute(f"SELECT id FROM {table} WHERE id IN (SELECT value FROM json_each(%s))", [ids_json])
+            existing = [row[0] for row in cursor.fetchall()]
+        with lifecycle_change(existing), connection.cursor() as cursor:
             cursor.execute(
                 f"UPDATE {table} SET archived = 1, search_version = 0 "
                 f"WHERE id IN (SELECT value FROM json_each(%s)) AND archived = 0 RETURNING id, project_id, provider",

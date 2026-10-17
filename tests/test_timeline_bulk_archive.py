@@ -149,5 +149,10 @@ def test_the_number_of_write_statements_does_not_grow_with_the_number_of_session
         flipped = archive_sessions_bulk({f"s{i:04d}" for i in range(count)})
     assert len(flipped) == count
     assert TimelineEvent.objects.filter(kind="archived.started").count() == count
+    # The content storage lifecycle invalidation (``lifecycle_change``, owned by main's storage code) pages
+    # its own ``content_state_epoch`` writes: it is checked to run, and left out of the timeline's count.
     writes = _write_statements(captured.captured_queries)
-    assert len(writes) == 3, writes  # flip UPDATE, search_version UPDATE, one batched INSERT
+    lifecycle = [sql for sql in writes if '"content_state_epoch"' in sql]
+    assert lifecycle
+    own = [sql for sql in writes if sql not in lifecycle]
+    assert len(own) == 3, own  # flip UPDATE, search_version UPDATE, one batched INSERT

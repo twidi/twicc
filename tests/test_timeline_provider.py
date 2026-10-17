@@ -268,7 +268,8 @@ def test_the_bulk_archive_takes_the_provider_from_the_update_not_from_a_query(pr
     with CaptureQueriesContext(connection) as captured:
         assert sorted(archive_sessions_bulk({"a", "b"})) == ["a", "b"]
     assert dict(TimelineEvent.objects.values_list("session_id", "provider")) == {"a": "codex", "b": "claude_code"}
-    assert select_session_queries(captured) == []
+    # The content storage lifecycle reads the session rows (main's ``lifecycle_change``); none reads the provider.
+    assert [sql for sql in select_session_queries(captured) if '"provider"' in sql] == []
 
 
 def test_the_boot_reconciliation_uses_the_process_run_provider_even_without_a_session_row(project):
