@@ -20,6 +20,17 @@ from typing import NamedTuple
 from twicc.core.enums import Provider
 from twicc.providers.helpers import AgentSettingCategory, ModelVersion, assert_unique_weights
 
+# Settings every TwiCC-launched Claude Code process gets through its flag-settings layer, whatever the
+# user's own settings.json says (the SDK agent and the hybrid CLI share this table).
+#
+# ``idleCompaction`` — the CLI compacts a conversation of 200K+ tokens left idle for about 54 minutes
+# (announced in 2.1.299), ahead of its one-hour prompt-cache expiry. A compaction nobody asked for must
+# not appear in an idle session, so it is forced off. The CLI reads this boolean since at least 2.1.294:
+# ``false`` stops idle compaction, ``true`` does not turn it on.
+FORCED_CLI_SETTINGS: dict[str, bool] = {
+    "idleCompaction": False,
+}
+
 
 class ClaudeCodeModelExtra(NamedTuple):
     """Capability flags carried in :attr:`ModelVersion.provider_extra` for Claude Code."""

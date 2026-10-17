@@ -55,6 +55,7 @@ from twicc.core.models import Session
 from twicc.core.services.attachments.manifest import build_manifest
 from twicc.core.services.attachments.types import AttachmentContent
 from twicc.pending_session_attributes import get_pending_session_attributes
+from twicc.providers.claude_code.constants import FORCED_CLI_SETTINGS
 from twicc.providers.helpers import AgentSettings
 from twicc.server_env import strip_django_settings_env
 
@@ -141,6 +142,15 @@ class _ShellTask:
     command: str | None
     output_path: str | None
     started_at: float
+
+
+def build_sdk_flag_settings(fast_mode: bool) -> str:
+    """Inline JSON of the flag-settings layer an SDK-launched session gets.
+
+    ``fastMode`` is always passed explicitly (true or false) so the per-session choice overrides any
+    ``/fast`` toggle persisted in the user's own settings; :data:`FORCED_CLI_SETTINGS` rides along.
+    """
+    return orjson.dumps({**FORCED_CLI_SETTINGS, "fastMode": bool(fast_mode)}).decode()
 
 
 def _rg_replace_trap(command: str) -> bool:
@@ -1162,9 +1172,7 @@ class ClaudeCodeAgent(BaseAgent):
             # Inline JSON is accepted by the SDK transport when the string
             # starts with ``{`` (see ``_build_settings_value`` in the SDK's
             # ``subprocess_cli``).
-            fast_mode_settings = orjson.dumps(
-                {"fastMode": bool(self.agent_settings.fast_mode)}
-            ).decode()
+            fast_mode_settings = build_sdk_flag_settings(self.agent_settings.fast_mode)
 
             # ``question_widget=False`` → the agent must ask its questions as
             # plain text. We strip ``AskUserQuestion`` from the tools the SDK

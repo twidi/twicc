@@ -28,6 +28,7 @@ from twicc.agent.plugin import get_plugin_dir
 from twicc.core.enums import Provider
 from twicc.paths import get_hybrid_hooks_dir, get_session_hybrid_dir
 from twicc.providers.claude_code.bin import resolve_bundled_binary
+from twicc.providers.claude_code.constants import FORCED_CLI_SETTINGS
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
 
 # How long the CLI lets the PermissionRequest hook live — i.e. how long the
@@ -59,7 +60,8 @@ def chrome_onboarding_completed() -> bool:
 
 def build_hooks_settings(session_id: str, fast_mode: bool, *, skip_bypass_dialog: bool = False) -> str:
     """Inline ``--settings`` JSON: fastMode + forced file checkpointing + the
-    single ``PermissionRequest`` hook.
+    settings forced on every launch (:data:`FORCED_CLI_SETTINGS`) + the single
+    ``PermissionRequest`` hook.
 
     With ``skip_bypass_dialog`` the CLI's one-time "Bypass Permissions mode"
     confirmation is not shown (``skipDangerousModePermissionPrompt``, honoured
@@ -92,6 +94,7 @@ def build_hooks_settings(session_id: str, fast_mode: bool, *, skip_bypass_dialog
         f'sleep 0.2; done'
     )
     settings = {
+        **FORCED_CLI_SETTINGS,
         "fastMode": fast_mode,
         # Forced ON: off by default in SDK mode and user-disablable in user
         # settings; the original-file capture (compute) depends on it. The
