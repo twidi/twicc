@@ -651,6 +651,7 @@ class _PromotionTarget:
         self.recovery = recovery
         self.priority = priority
         self.demand = None
+        self.clear_retry()
         self.owns_cache = session_cache is None
         self.session_cache = MaintenanceSessionCache() if self.owns_cache else session_cache
         self.metrics = MaintenanceMetrics(uuid4().hex, 'plaintext_restoration')
@@ -667,6 +668,24 @@ class _PromotionTarget:
         self.batch = None
         self.deferred = False
 
+    def clear_retry(self) -> None:
+        self.retry_at: float | None = None
+        self.retry_attempts: int = 0
+
+    def schedule_retry(self, now: float) -> None:
+        """Retain restoration intent while releasing foreground pressure between attempts."""
+        self.retry_attempts += 1
+        self.retry_at = now + min(2 ** min(self.retry_attempts - 1, 6), 60)
+        self.reset()
+        if not self.owns_cache:
+            self.session_cache = MaintenanceSessionCache()
+            self.owns_cache = True
+            self.metrics.cache_statistics = self.session_cache.statistics
+        if self.demand is not None:
+            self.demand.release()
+            self.demand = None
+        self.priority = WritePriority.BACKGROUND
+
     def finish(self, event):
         try:
             self.metrics.cache_statistics = self.session_cache.statistics
@@ -680,6 +699,7 @@ class _PromotionTarget:
         if self.periodic and not self.owns_cache:
             self.session_cache = MaintenanceSessionCache()
             self.owns_cache = True
+            self.metrics.cache_statistics = self.session_cache.statistics
         self.periodic = False
         self.recovery = False
         if self.snapshot is not None and getattr(self.snapshot, 'recovery', False):
@@ -717,6 +737,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
         if target is None:
             target = targets[session_id] = _PromotionTarget(recovery=False, priority=priority, coordinator=coordinator)
         target.explicit()
+        target.clear_retry()
         if priority is WritePriority.FOREGROUND:
             if target.priority is WritePriority.BACKGROUND:
                 targets[session_id] = targets.pop(session_id)
@@ -746,6 +767,9 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
     async def wait(timeout):
         # Callers clear events before inspecting authoritative state. A change
         # between that inspection and task creation remains visible here.
+        delay = retry_delay()
+        if delay is not None:
+            timeout = delay if timeout is None else min(timeout, delay)
         tasks = [asyncio.create_task(_wait(stop_event, wake, timeout)),
                  asyncio.create_task(compute_work.changed.wait()),
                  asyncio.create_task(sources_changed.wait())]
@@ -830,7 +854,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
         if target.demand is not None:
             target.demand.release()
 
-    def eligible(target):
+    def eligible(target, *, check_retry=True):
         if target.periodic and compute_pending():
             return False
         snapshot = target.snapshot
@@ -843,7 +867,16 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
         if target.deferred:
             # Compute may change generations while paused. Never adopt those epochs.
             target.reset()
-        return True
+        return not check_retry or target.retry_at is None or target.retry_at <= _maintenance_time()
+
+    def retry_delay() -> float | None:
+        delays = [max(0, target.retry_at - _maintenance_time()) for target in targets.values()
+                  if target.retry_at is not None and eligible(target, check_retry=False)]
+        return min(delays) if delays else None
+
+    def pending_periodic():
+        # Sleeping retries own separate caches and must not hold up compression.
+        return any(target.periodic and target.retry_at is None for target in targets.values())
 
     async def promote():
         while targets and not stop_event.is_set():
@@ -855,6 +888,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                 return
             session_id = next((key for key in ready if targets[key].priority is WritePriority.FOREGROUND), ready[0])
             target = targets[session_id]
+            target.retry_at = None
             try:
                 if target.snapshot is not None and target.batch is None:
                     recovery = target.recovery
@@ -910,15 +944,19 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                 if cursor == START_CURSOR:
                     target.reset()
                 elif cursor.done:
+                    target.clear_retry()
                     # Incomplete extraction sleeps until a new writer invalidation.
                     settle(session_id, target)
                 else:
+                    if cursor != target.cursor:
+                        target.clear_retry()
                     target.cursor, target.verified, target.batch = cursor, verified, None
                     # Eligible peers retain FIFO at each bounded publication boundary.
                     targets[session_id] = targets.pop(session_id)
                 await asyncio.sleep(0)
             except Exception:
-                settle(session_id, target, 'failure')
+                target.schedule_retry(_maintenance_time())
+                targets[session_id] = targets.pop(session_id)
                 logger.exception('Content promotion failed for session %s', session_id)
 
     deadline = _maintenance_time() + INITIAL_DELAY
@@ -944,10 +982,10 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                 metrics.emit('start')
                 try:
                     await recover(periodic=True, session_cache=session_cache, metrics=metrics)
-                    while any(target.periodic for target in targets.values()) and not stop_event.is_set():
+                    while pending_periodic() and not stop_event.is_set():
                         if not await periodic_ready():
                             break
-                        if any(target.periodic for target in targets.values()):
+                        if pending_periodic():
                             await wait(None)
                     await promote()
                     cursor, done = 0, False

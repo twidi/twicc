@@ -521,7 +521,7 @@ def test_promotion_failure_does_not_disable_periodic_recovery(content_row_factor
     row.refresh_from_db()
     root.refresh_from_db()
     assert row.codec == 'plain' and root.plaintext_verified_epoch == 4
-    assert len(attempts) == 2 and waits == [1800, 86400]
+    assert len(attempts) == 2 and waits == [1, 1799]
 
 
 @pytest.mark.django_db(transaction=True)
