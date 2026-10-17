@@ -158,11 +158,11 @@ def test_excluded_member_stays_pending_and_forced_current_sources_obey_final_ack
 
 def test_compute_root_migration_creates_only_index_without_global_fk_check(tmp_path, django_db_blocker):
     from django.db.migrations.executor import MigrationExecutor
-    from tests.test_sqlite_migration_integration import default_alias_database, trace
+    from tests.test_sqlite_migration_integration import default_alias_database, original_storage_migrations, trace
 
     previous = ('core', '0160_statistics_queue_force_cost_sessions')
     target = ('core', '0161_session_compute_root_index')
-    with default_alias_database(tmp_path / 'migration.sqlite3', django_db_blocker) as db:
+    with original_storage_migrations(), default_alias_database(tmp_path / 'migration.sqlite3', django_db_blocker) as db:
         assert str(db.settings_dict['NAME']).startswith(str(tmp_path))
         MigrationExecutor(db).migrate([previous])
         with trace(db) as statements:

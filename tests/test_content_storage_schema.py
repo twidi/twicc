@@ -80,7 +80,7 @@ def test_storage_migration_keeps_legacy_tables_and_skips_legacy_fk_scans(tmp_pat
         ).fetchall()
         statements = []
         db.connection.set_trace_callback(statements.append)
-        migration = executor.loader.get_migration("core", "0156_content_storage_schema")
+        migration = executor.loader.disk_migrations[("core", "0156_content_storage_schema")]
         state = executor.apply_migration(state, migration)
         db.connection.set_trace_callback(None)
         assert db.connection.execute(
@@ -105,9 +105,9 @@ def test_storage_migration_keeps_legacy_tables_and_skips_legacy_fk_scans(tmp_pat
             '0157_compute_aggregate_repair', '0158_statistics_queue', '0159_remove_compute_aggregate_repair',
             '0160_statistics_queue_force_cost_sessions', '0161_session_compute_root_index',
         ):
-            state = executor.apply_migration(state, executor.loader.get_migration('core', name))
+            state = executor.apply_migration(state, executor.loader.disk_migrations[('core', name)])
         before_index = state.clone()
-        migration = executor.loader.get_migration('core', '0162_content_plain_partial_index')
+        migration = executor.loader.disk_migrations[('core', '0162_content_plain_partial_index')]
         counts_at_create = []
 
         def observe_index(execute, sql, params, many, context):

@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 from contextlib import contextmanager
+from unittest.mock import patch
 
 import pytest
 from django.core.management import call_command
@@ -30,6 +31,20 @@ M157 = ("core", "0157_compute_aggregate_repair")
 M158 = ("core", "0158_statistics_queue")
 M159 = ("core", "0159_remove_compute_aggregate_repair")
 M160 = ("core", "0160_statistics_queue_force_cost_sessions")
+STORAGE_SQUASH = ("core", "0156_content_storage_schema_squashed_0162_content_plain_partial_index")
+
+
+@contextmanager
+def original_storage_migrations():
+    """Replay the unreleased original chain without its replacement."""
+    load_disk = MigrationLoader.load_disk
+
+    def load_originals(loader):
+        load_disk(loader)
+        loader.disk_migrations.pop(STORAGE_SQUASH, None)
+
+    with patch.object(MigrationLoader, "load_disk", load_originals):
+        yield
 
 
 def disposable_config(path, standard):
@@ -84,7 +99,7 @@ def migrated_145(tmp_path_factory, django_db_blocker):
 def migrated_157(tmp_path_factory, django_db_blocker, migrated_145):
     path = tmp_path_factory.mktemp("migrated_157") / "template.sqlite3"
     shutil.copyfile(migrated_145, path)
-    with default_alias_database(path, django_db_blocker) as db:
+    with original_storage_migrations(), default_alias_database(path, django_db_blocker) as db:
         MigrationExecutor(db).migrate([M157])
     return path
 
@@ -471,7 +486,7 @@ def test_populated_145_upgrade_146_skips_unrelated_checks(disposable_db, migrate
 
 @pytest.mark.parametrize("standard", [False, True], ids=["dedicated", "standard"])
 def test_actual_158_to_160_preserve_populated_data(disposable_db, migrated_157, standard):
-    with disposable_db(standard=standard, template=migrated_157) as db:
+    with original_storage_migrations(), disposable_db(standard=standard, template=migrated_157) as db:
         executor = MigrationExecutor(db)
         state = executor.loader.project_state([M157])
         populate_items(db, state)
