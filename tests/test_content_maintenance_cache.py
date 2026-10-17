@@ -301,11 +301,15 @@ def test_atomic_miss_is_retained_only_after_successful_commit(cache):
     assert len(queries) == 0
 
 
-def test_pending_atomic_fill_is_fenced_before_commit(cache):
+@pytest.mark.parametrize('reset', [False, True])
+def test_pending_atomic_fill_is_fenced_before_commit(cache, reset):
     make_session('owner')
     with transaction.atomic():
         assert decide(cache, ['owner'])['owner'].is_cold
-        cold_cache.invalidate_cold_metadata(['owner'])
+        if reset:
+            cold_cache.reset_cold_cache()
+        else:
+            cold_cache.invalidate_cold_metadata(['owner'])
     assert 'owner' not in cache._metadata
 
 
@@ -372,3 +376,41 @@ def test_controlled_concurrent_fill_retries_after_invalidation(cache, monkeypatc
     assert failures == []
     assert results[0]['owner'].is_cold
     assert calls == [('owner',), ('owner',)]
+
+
+def test_atomic_unrelated_invalidation_retains_new_owner_fill(cache):
+    make_session('changed')
+    make_session('unchanged')
+    decide(cache, ['changed'])
+    with transaction.atomic():
+        lifecycle.update_lifecycle(Session.objects.filter(pk='changed'), last_updated_at=timezone.now())
+        assert decide(cache, ['unchanged'])['unchanged'].is_cold
+    with CaptureQueriesContext(connection) as queries:
+        assert decide(cache, ['unchanged'])['unchanged'].is_cold
+    assert len(queries) == 0
+
+
+@pytest.mark.parametrize('atomic', [False, True])
+def test_unrelated_inflight_invalidation_loads_owner_once(cache, monkeypatch, atomic):
+    from contextlib import nullcontext
+
+    make_session('changed')
+    make_session('unchanged')
+    decide(cache, ['changed'])
+    original = cache._read_metadata
+    calls = []
+
+    def read_then_invalidate_other(ids):
+        rows = original(ids)
+        calls.append(tuple(ids))
+        if len(calls) == 1:
+            cold_cache.invalidate_cold_metadata(['changed'])
+        return rows
+
+    monkeypatch.setattr(cache, '_read_metadata', read_then_invalidate_other)
+    with transaction.atomic() if atomic else nullcontext():
+        decide(cache, ['unchanged'])
+    with CaptureQueriesContext(connection) as queries:
+        assert decide(cache, ['unchanged'])['unchanged'].is_cold
+    assert calls == [('unchanged',)]
+    assert len(queries) == 0

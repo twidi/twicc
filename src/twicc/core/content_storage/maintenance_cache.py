@@ -24,6 +24,7 @@ class MaintenanceSessionCache:
         self._reload_pending = set()
         self._database = None
         self._revision = 0
+        self._reset_generation = 0
         self._closed = False
         self.statistics = dict.fromkeys(
             ('owner_ids_requested', 'hits', 'ids_loaded', 'grouped_queries', 'invalidations', 'reloads'), 0,
@@ -45,6 +46,7 @@ class MaintenanceSessionCache:
         self._metadata.clear()
         self._generations.clear()
         self._database = None
+        self._reset_generation += 1
         self._revision += 1
 
     def _invalidate_locked(self, ids):
@@ -81,7 +83,7 @@ class MaintenanceSessionCache:
                 loaded.update({key: self._metadata[key] for key in missing
                                if key in self._metadata and key not in pending_ids})
                 missing -= loaded.keys()
-                revision = self._revision
+                reset_generation = self._reset_generation
                 generations = {key: self._generations.setdefault(key, 0) for key in missing}
                 self._inflight.update(missing)
             if not missing:
@@ -95,7 +97,8 @@ class MaintenanceSessionCache:
                     for key in missing:
                         if self._closed:
                             raise RuntimeError('Maintenance session cache is closed')
-                        if revision != self._revision or generations[key] != self._generations.get(key, 0):
+                        if (reset_generation != self._reset_generation
+                                or generations[key] != self._generations.get(key, 0)):
                             if connection.in_atomic_block:
                                 loaded[key] = None
                             continue
@@ -104,7 +107,9 @@ class MaintenanceSessionCache:
                         if value is not None:
                             if connection.in_atomic_block:
                                 # Savepoint rollback drops this fill with its transaction.
-                                transaction.on_commit(self._committed_fill(key, value, revision))
+                                transaction.on_commit(self._committed_fill(
+                                    key, value, generations[key], reset_generation,
+                                ))
                             else:
                                 self._metadata[key] = value
             finally:
@@ -113,10 +118,11 @@ class MaintenanceSessionCache:
                     self._inflight += Counter()
         return loaded
 
-    def _committed_fill(self, key, value, revision):
+    def _committed_fill(self, key, value, generation, reset_generation):
         def install():
             with cold_cache._lock:
-                if not self._closed and revision == self._revision:
+                if (not self._closed and reset_generation == self._reset_generation
+                        and generation == self._generations.get(key, 0)):
                     self._metadata[key] = value
         return install
 
