@@ -1,5 +1,6 @@
 """Bounded operation counters. Logging never queries content or session tables.
 
+Restoration targets own their publication totals; periodic summaries own compression totals.
 Foreground observations overlap when operations overlap. Do not add their totals.
 The coordinator sample excludes earlier job-queue delay.
 """
@@ -15,12 +16,16 @@ _HOLD_BOUNDS = (1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, float(
 
 
 class MaintenanceMetrics:
-    def __init__(self, operation_id: str, operation_kind: str):
+    def __init__(self, operation_id: str, operation_kind: str, *, parent_operation_id: str | None = None):
         self.operation_id = operation_id
         self.operation_kind = operation_kind
+        self.parent_operation_id = parent_operation_id
         self.started_at = datetime.now(UTC).isoformat()
         self.started = monotonic()
         self.last_progress = self.started
+        self.stage = 'root_restoration' if operation_kind == 'periodic_compression' else None
+        self.stage_started = self.started
+        self.stage_elapsed_ms = {}
         self.counts = Counter(dict.fromkeys((
             'scanned', 'already_compressed', 'no_gain_skips', 'ineligible_owners', 'prepared',
             'payload_bytes_loaded', 'candidate_raw_bytes', 'candidate_stored_bytes', 'changed',
@@ -29,12 +34,33 @@ class MaintenanceMetrics:
             'writer_hold_max_ms', 'foreground_coordinator_wait_count', 'foreground_coordinator_wait_ms',
             'foreground_coordinator_wait_max_ms', 'writer_hold_ge_100_ms', 'writer_hold_ge_250_ms',
             'writer_hold_ge_500_ms', 'writer_hold_ge_1000_ms',
+            'root_selected', 'root_inspected', 'root_selection_ms', 'root_inspection_ms',
             'discovery_pages', 'discovery_sessions', 'recovery_reference_probes', 'discovery_preparation_ms',
         ), 0))
         self.cursor = None
         self.discovery_cursor = None
         self.cache_statistics = {}
         self.hold_bins = [0] * len(_HOLD_BOUNDS)
+
+    def set_stage(self, stage: str) -> None:
+        """Emit transitions without the progress throttle; keep bounded stage timings."""
+        if stage not in {'root_restoration', 'plaintext_compression'}:
+            raise ValueError('Unknown maintenance stage')
+        if stage == self.stage:
+            return
+        now = monotonic()
+        if self.stage is not None:
+            self.stage_elapsed_ms[self.stage] = self.stage_elapsed_ms.get(self.stage, 0) + (
+                now - self.stage_started) * 1000
+        self.stage = stage
+        self.stage_started = now
+        self.emit('stage_transition')
+
+    def record_root_selection(self, selected: int, inspected: int, duration_ms: float) -> None:
+        """Record selected roots and completed inspections, using selection query time only."""
+        self.counts['root_selected'] += selected
+        self.counts['root_inspected'] += inspected
+        self.counts['root_selection_ms'] += duration_ms
 
     def record_page(self, page):
         self.counts.update(page.counts._asdict())
@@ -76,6 +102,7 @@ class MaintenanceMetrics:
         if hold_ms >= 100:
             logger.warning('Content maintenance long writer hold', extra={'maintenance': {
                 'event': 'long_hold', 'operation_id': self.operation_id, 'operation_kind': self.operation_kind,
+                'parent_operation_id': self.parent_operation_id, 'stage': self.stage,
                 'batch': self.counts['publication_batches'], 'cursor': self.cursor,
                 'writer_hold_ms': hold_ms, 'changed': 0 if result is None else result.changed,
             }})
@@ -103,6 +130,13 @@ class MaintenanceMetrics:
                        writer_hold_p50_upper_ms=self._percentile(.5),
                        writer_hold_p95_upper_ms=self._percentile(.95),
                        writer_hold_p99_upper_ms=self._percentile(.99))
+        if self.parent_operation_id is not None:
+            summary['parent_operation_id'] = self.parent_operation_id
+        if self.stage is not None:
+            elapsed = dict(self.stage_elapsed_ms)
+            elapsed[self.stage] = elapsed.get(self.stage, 0) + (now - self.stage_started) * 1000
+            summary.update(stage=self.stage, stage_elapsed_ms=elapsed,
+                           selection='plaintext' if self.stage == 'plaintext_compression' else 'hot_roots')
         if event in {'complete', 'failure', 'cancelled'}:
             summary['ended_at'] = datetime.now(UTC).isoformat()
         logger.info('Content maintenance %s: %s', event, summary, extra={'maintenance': summary})

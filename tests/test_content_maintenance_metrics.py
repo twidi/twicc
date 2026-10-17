@@ -6,6 +6,7 @@ import logging
 import pytest
 
 from tests import test_content_storage_admission
+from tests.test_content_maintenance_retry import retry_scenario
 from twicc.providers.compute_work import ComputeWorkState
 
 from twicc import content_maintenance_task as maintenance
@@ -113,7 +114,10 @@ def test_periodic_outcome_cache_lifetime_and_deadline(
     monkeypatch.setattr(maintenance, '_wait', wait)
     asyncio.run(maintenance.start_content_maintenance_task(stop, compute_work=ComputeWorkState()))
     events = [record.maintenance for record in caplog.records if hasattr(record, 'maintenance')]
-    assert [event['event'] for event in events if event['operation_kind'] == 'periodic_compression'] == ['start', outcome]
+    assert [event['event'] for event in events if event['operation_kind'] == 'periodic_compression'] == ['start', 'stage_transition', outcome]
+    periodic_events = [event for event in events if event['operation_kind'] == 'periodic_compression']
+    assert periodic_events[-1]['stage'] == 'plaintext_compression'
+    assert periodic_events[-1]['root_selected'] == periodic_events[-1]['root_inspected'] == 1
     assert passes == [1800]
     assert caches[0] is recovered[-1]
     from twicc.providers.db_writer import get_write_coordinator
@@ -236,8 +240,107 @@ def test_conformant_hot_recovery_reports_discovery_progress(
         assert [event['discovery_cursor'] for event in progress[:2]] == ['hot-0', 'hot-1']
         assert progress[1]['discovery_pages'] == progress[1]['recovery_reference_probes'] == 2
         assert progress[1]['discovery_preparation_ms'] == 22000
+        if kind == 'periodic_compression':
+            assert progress[1]['root_selection_ms'] == 0
+            assert progress[1]['root_inspection_ms'] == 22000
         assert progress[1]['cursor'] is None and progress[1]['scanned'] == 0
         assert progress[1]['payload_bytes_loaded'] == progress[1]['publication_batches'] == 0
+    periodic_events = [event for event in events if event['operation_kind'] == 'periodic_compression']
+    if cancel_during == 'periodic':
+        assert periodic_events[-1]['stage'] == 'root_restoration'
+        assert periodic_events[-1]['root_selected'] == periodic_events[-1]['root_inspected'] == 2
     assert not payload_reads
     assert all(cache._closed and not cache._metadata for cache in caches)
     assert not get_write_coordinator()._foreground_wait_observers
+
+
+def test_periodic_stages_have_distinct_populations(monkeypatch, caplog):
+    clock = [0.0]
+    monkeypatch.setattr(metrics, 'monotonic', lambda: clock[0])
+    caplog.set_level(logging.INFO, logger=metrics.__name__)
+    operation = metrics.MaintenanceMetrics('staged', 'periodic_compression')
+    operation.emit('start')
+    clock[0] = 11
+    operation.record_root_selection(selected=3, inspected=2, duration_ms=25)
+    operation.emit('progress')
+    clock[0] = 12
+    operation.set_stage('plaintext_compression')
+    operation.record_page(maintenance.CompressionPage(7, (), True, maintenance.CompressionPageCounts(scanned=4)))
+    clock[0] = 22
+    operation.emit('progress')
+    clock[0] = 25
+    operation.emit('complete')
+    events = [record.maintenance for record in caplog.records if hasattr(record, 'maintenance')]
+    assert [event['event'] for event in events] == ['start', 'progress', 'stage_transition', 'progress', 'complete']
+    assert [event['stage'] for event in events] == ['root_restoration', 'root_restoration',
+                                                 'plaintext_compression', 'plaintext_compression',
+                                                 'plaintext_compression']
+    assert events[0]['selection'] == 'hot_roots'
+    assert events[1]['scanned'] == 0
+    summary = events[-1]
+    assert summary['root_selected'] == 3 and summary['root_inspected'] == 2
+    assert summary['root_selection_ms'] == 25 and summary['scanned'] == 4
+    assert summary['stage_elapsed_ms'] == {'root_restoration': 12000, 'plaintext_compression': 13000}
+    assert summary['selection'] == 'plaintext'
+
+
+@pytest.mark.django_db
+def test_stage_metrics_do_not_count_compressed_rows_with_sql(caplog):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    caplog.set_level(logging.INFO, logger=metrics.__name__)
+    with CaptureQueriesContext(connection) as queries:
+        operation = metrics.MaintenanceMetrics('query-free', 'periodic_compression')
+        operation.emit('start')
+        operation.record_root_selection(2, 2, 1)
+        operation.set_stage('plaintext_compression')
+        operation.emit('complete')
+    assert len(queries) == 0
+    assert caplog.records[-1].maintenance['scanned'] == 0
+
+
+@pytest.mark.django_db(transaction=True)
+def test_retry_diagnostics_survive_pass_completion(retry_scenario, caplog):
+    caplog.set_level(logging.INFO, logger=metrics.__name__)
+    row, attempts, _, _, caches = retry_scenario(origin='periodic')
+    assert row.codec == 'plain' and attempts == [1900, 1901]
+    assert caches[0] is not caches[1]
+    events = [record.maintenance for record in caplog.records if hasattr(record, 'maintenance')]
+    periodic = next(event for event in events
+                    if event['operation_kind'] == 'periodic_compression' and event['event'] == 'complete')
+    restoration = next(event for event in events
+                       if event['operation_kind'] == 'plaintext_restoration' and event['event'] == 'complete')
+    assert restoration['parent_operation_id'] == periodic['operation_id']
+    assert events.index(restoration) > events.index(periodic)
+    assert periodic['changed'] == periodic['publication_batches'] == 0
+    assert restoration['changed'] == 1
+
+
+@pytest.mark.django_db(transaction=True)
+def test_root_inspection_failure_reports_selection_and_closes_pass_cache(
+    writer_state, compute_executor_started, monkeypatch, settings, caplog,
+):
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    caplog.set_level(logging.INFO, logger=metrics.__name__)
+    caches = []
+    monkeypatch.setattr(maintenance, 'INITIAL_DELAY', 0)
+    monkeypatch.setattr(maintenance, 'pending_session_page', lambda after: [])
+    monkeypatch.setattr(maintenance, 'periodic_hot_root_page', lambda after, now: ['root'])
+
+    def fail(ids, cache):
+        caches.append(cache)
+        raise ValueError('injected root inspection failure')
+
+    async def wait(stop, wake, timeout):
+        stop.set()
+
+    monkeypatch.setattr(maintenance, 'recovery_promotion_targets', fail)
+    monkeypatch.setattr(maintenance, '_wait', wait)
+    asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()))
+    events = [record.maintenance for record in caplog.records if hasattr(record, 'maintenance')]
+    failure = next(event for event in events if event['event'] == 'failure')
+    assert failure['stage'] == 'root_restoration'
+    assert failure['root_selected'] == 1 and failure['root_inspected'] == 0
+    assert failure['scanned'] == failure['payload_bytes_loaded'] == failure['publication_batches'] == 0
+    assert caches[0]._closed

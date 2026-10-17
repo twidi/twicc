@@ -24,7 +24,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 @pytest.mark.parametrize('provider', ['claude_code', 'codex'])
 def test_compute_then_conformant_pass_has_zero_payload_or_publication(
-    provider, monkeypatch, writer_state, compute_executor_started, settings,
+    provider, monkeypatch, writer_state, compute_executor_started, settings, caplog,
 ):
     _public_dictionary(provider)
     now = timezone.now()
@@ -68,10 +68,19 @@ def test_compute_then_conformant_pass_has_zero_payload_or_publication(
     from twicc.providers import db_writer
     from twicc.providers.compute_work import ComputeWorkState
 
+    import logging
+    from twicc.core.content_storage import maintenance_metrics
+
+    caplog.set_level(logging.INFO, logger=maintenance_metrics.__name__)
+    monkeypatch.setattr(maintenance_metrics.logger, 'disabled', False)
+    monkeypatch.setattr(maintenance_metrics.logger, 'propagate', True)
+    ticks = iter(range(0, 1000, 11))
+    monkeypatch.setattr(maintenance_metrics, 'monotonic', lambda: next(ticks))
     summaries = []
 
     class ObservedMetrics(MaintenanceMetrics):
         def emit(self, event):
+            super().emit(event)
             if event == 'complete' and self.operation_kind == 'periodic_compression':
                 summaries.append(dict(self.counts))
 
@@ -89,6 +98,15 @@ def test_compute_then_conformant_pass_has_zero_payload_or_publication(
     asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()))
     assert len(summaries) == 1
     assert summaries[0]['prepared'] == summaries[0]['changed'] == summaries[0]['publication_batches'] == 0
+    events = [record.maintenance for record in caplog.records
+              if hasattr(record, 'maintenance') and record.maintenance['operation_kind'] == 'periodic_compression']
+    assert events[0]['stage'] == 'root_restoration'
+    assert events[-1]['stage'] == 'plaintext_compression'
+    assert events[-1]['root_selected'] == events[-1]['root_inspected'] == 1
+    assert {event['stage'] for event in events if event['event'] == 'progress'} == {
+        'root_restoration', 'plaintext_compression',
+    }
+    assert all(event['payload_bytes_loaded'] == event['publication_batches'] == 0 for event in events)
 
 
 def test_ingestion_prepared_lookup_visits_each_record_once():

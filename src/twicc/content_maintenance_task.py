@@ -674,7 +674,7 @@ async def _wait(stop_event, wake, timeout):
 class _PromotionTarget:
     """One resumable target; scheduling priority never determines recovery eligibility."""
 
-    def __init__(self, *, recovery, priority, periodic=False, session_cache=None, coordinator=None):
+    def __init__(self, *, recovery, priority, periodic=False, session_cache=None, coordinator=None, parent_operation_id=None):
         self.periodic = periodic
         self.recovery = recovery
         self.priority = priority
@@ -682,7 +682,8 @@ class _PromotionTarget:
         self.clear_retry()
         self.owns_cache = session_cache is None
         self.session_cache = MaintenanceSessionCache() if self.owns_cache else session_cache
-        self.metrics = MaintenanceMetrics(uuid4().hex, 'plaintext_restoration')
+        self.metrics = MaintenanceMetrics(uuid4().hex, 'plaintext_restoration',
+                                          parent_operation_id=parent_operation_id)
         self.metrics.cache_statistics = self.session_cache.statistics
         self.unsubscribe = (coordinator.observe_foreground_wait(self.metrics.record_foreground_wait)
                             if coordinator is not None else lambda: None)
@@ -858,6 +859,8 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
             page = (await prepare(periodic_hot_root_page, after, selection_time) if periodic
                     else await prepare(pending_session_page, after))
             duration_ms = (perf_counter() - started) * 1000
+            if periodic:
+                metrics.record_root_selection(len(page), 0, duration_ms)
             if not page:
                 break
             if periodic and not await periodic_ready():
@@ -865,7 +868,11 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
             probes_before = cache.statistics.get('recovery_reference_probes', 0)
             started = perf_counter()
             eligible = await prepare(recovery_promotion_targets, page, cache)
-            duration_ms += (perf_counter() - started) * 1000
+            inspection_ms = (perf_counter() - started) * 1000
+            duration_ms += inspection_ms
+            if periodic:
+                metrics.record_root_selection(0, len(page), 0)
+                metrics.counts['root_inspection_ms'] += inspection_ms
             metrics.record_discovery(
                 page[-1], len(page), cache.statistics.get('recovery_reference_probes', 0) - probes_before, duration_ms,
             )
@@ -875,6 +882,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                     targets[session_id] = _PromotionTarget(
                         recovery=True, priority=WritePriority.BACKGROUND, periodic=periodic,
                         session_cache=cache if periodic else None, coordinator=coordinator,
+                        parent_operation_id=metrics.operation_id if periodic else None,
                     )
             await promote()
             after = page[-1]
@@ -1019,6 +1027,8 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                         if pending_periodic():
                             await wait(None)
                     await promote()
+                    if not stop_event.is_set():
+                        metrics.set_stage('plaintext_compression')
                     cursor, done = 0, False
                     while not done and not stop_event.is_set():
                         if not await periodic_ready():
