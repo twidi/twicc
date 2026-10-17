@@ -253,3 +253,41 @@ def test_retry_cancel_drains_admitted_work_and_closes_cache(retry_scenario):
 def test_retry_wait_releases_writer_and_foreground_demand(retry_scenario):
     row, attempts, _, _, _ = retry_scenario(origin='explicit')
     assert row.codec == 'plain' and attempts == [100, 101]
+
+
+def test_due_retry_peers_preserve_resource_contention_wait(writer_state, monkeypatch, settings):
+    """Due peers must not reduce the background resource wait to zero."""
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    clock, waits, failed = [100.0], [], []
+    coordinator = db_writer.get_write_coordinator()
+    pressure = []
+
+    async def apply(function, session_id, **kwargs):
+        failed.append(session_id)
+        raise RuntimeError('injected snapshot failure')
+
+    async def wait(stop, wake, timeout):
+        waits.append(timeout)
+        if len(waits) == 1:
+            maintenance.request_root_promotion('first')
+            maintenance.request_root_promotion('second')
+            await wake.wait()
+        elif len(waits) == 2:
+            clock[0] = 101
+            # Real foreground pressure denies background leases to both due retries.
+            pressure.append(coordinator.foreground_demand())
+        elif len(waits) == 4:
+            stop.set()
+
+    monkeypatch.setattr(maintenance, '_maintenance_time', lambda: clock[0])
+    monkeypatch.setattr(maintenance, 'pending_session_page', lambda *args: [])
+    monkeypatch.setattr(maintenance, '_apply', apply)
+    monkeypatch.setattr(maintenance, '_wait', wait)
+    try:
+        asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()))
+    finally:
+        for demand in pressure:
+            demand.release()
+    assert failed == ['first', 'second']
+    assert waits == [1800, 1, 0.05, 0.05]
+    assert not coordinator.holders and not coordinator.demands

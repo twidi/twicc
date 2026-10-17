@@ -764,10 +764,11 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
         finally:
             active_session_ids.reset(token)
 
-    async def wait(timeout):
+    async def wait(timeout, *, retry_wakeup=True):
         # Callers clear events before inspecting authoritative state. A change
         # between that inspection and task creation remains visible here.
-        delay = retry_delay()
+        # Due peers cannot advance work while writer resources remain unavailable.
+        delay = retry_delay() if retry_wakeup else None
         if delay is not None:
             timeout = delay if timeout is None else min(timeout, delay)
         tasks = [asyncio.create_task(_wait(stop_event, wake, timeout)),
@@ -919,7 +920,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                     if lease is None:
                         # Never await a background grant in the foreground dispatcher.
                         waiting = perf_counter()
-                        await wait(0.05)
+                        await wait(0.05, retry_wakeup=False)
                         target.metrics.counts['resource_wait_ms'] += (perf_counter() - waiting) * 1000
                         continue
                 if target.periodic and compute_pending():
@@ -1007,7 +1008,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                             lease = coordinator.try_background_lease()
                             if lease is None:
                                 waiting = perf_counter()
-                                await wait(0.05)
+                                await wait(0.05, retry_wakeup=False)
                                 metrics.counts['resource_wait_ms'] += (perf_counter() - waiting) * 1000
                                 continue
                             if compute_pending():
