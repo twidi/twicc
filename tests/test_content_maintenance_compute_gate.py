@@ -63,7 +63,7 @@ def test_overdue_waits_for_all_providers_and_recovery_without_worker(
     work.set_pending('claude', True)
     work.set_pending('codex', True)
     monkeypatch.setattr(maintenance, '_maintenance_time', lambda: clock[0])
-    original = maintenance.pending_root_page
+    original = maintenance.pending_session_page
 
     def page(*args):
         inspections.append(clock[0])
@@ -91,7 +91,7 @@ def test_overdue_waits_for_all_providers_and_recovery_without_worker(
             stop.set()
 
     from twicc import session_dirs_cleanup_task
-    monkeypatch.setattr(maintenance, 'pending_root_page', page)
+    monkeypatch.setattr(maintenance, 'pending_session_page', page)
     monkeypatch.setattr(maintenance, 'prepare_compression_batch', compression)
     monkeypatch.setattr(session_dirs_cleanup_task, '_run_cleanup_pass', clean)
     monkeypatch.setattr(maintenance, '_wait', wait)
@@ -170,7 +170,7 @@ def test_foreground_plaintext_demand_runs_while_periodic_is_overdue(
     row = content_row_factory('foreground text' * 1000, True, session_ids=[owner.id])
     SessionItem.objects.create(session=owner, line_num=1, content='', current_content=row)
     # The demand arrives after the startup inventory completes.
-    monkeypatch.setattr(maintenance, 'pending_root_page', lambda *args: [])
+    monkeypatch.setattr(maintenance, 'pending_session_page', lambda *args: [])
     work = ComputeWorkState()
     work.set_pending('codex', provider_pending)
     if not provider_pending:
@@ -339,7 +339,7 @@ def test_periodic_recovery_pauses_prepared_promotion_when_compute_restarts(
     clock, waits, prepared, published = [0], [], [], []
     work = ComputeWorkState()
     loop = None
-    original_page = maintenance.pending_root_page
+    original_page = maintenance.pending_session_page
     original_prepare = maintenance.prepare_promotion_batch
     original_apply = maintenance.apply_promotion_batch
     monkeypatch.setattr(maintenance, '_maintenance_time', lambda: clock[0])
@@ -370,7 +370,7 @@ def test_periodic_recovery_pauses_prepared_promotion_when_compute_restarts(
         else:
             stop.set()
 
-    monkeypatch.setattr(maintenance, 'pending_root_page', page)
+    monkeypatch.setattr(maintenance, 'pending_session_page', page)
     monkeypatch.setattr(maintenance, 'prepare_promotion_batch', prepare)
     monkeypatch.setattr(maintenance, 'apply_promotion_batch', apply)
     monkeypatch.setattr(maintenance, '_wait', wait)

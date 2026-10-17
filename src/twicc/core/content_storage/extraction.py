@@ -914,7 +914,7 @@ def finish_storage_result(msg):
     """Verify this computed session and optionally certify the root's own plaintext."""
     from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION
     from twicc.core.content_storage.state import (
-        _finish_plaintext_root_storage, _session_has_invalid_storage_metadata,
+        _finish_plaintext_root_storage, _session_has_invalid_storage_metadata, ensure_storage_incarnation,
     )
 
     session_id = msg['session_id']
@@ -939,6 +939,7 @@ def finish_storage_result(msg):
             if plaintext_needed:
                 raise ContentIntegrityError('Hot compute storage requires plaintext through both references')
             raise ContentIntegrityError('Compute storage placement is incomplete')
+        ensure_storage_incarnation(session_id)
         Session.objects.filter(pk=session_id).update(content_storage_version=CONTENT_STORAGE_VERSION)
     operation = msg.get('_storage_operation')
     if operation is not None:

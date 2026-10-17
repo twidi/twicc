@@ -10,7 +10,7 @@ from typing import NamedTuple
 
 from channels.db import database_sync_to_async
 from django.db import connections, transaction
-from django.db.models import BinaryField, F, Q
+from django.db.models import BinaryField
 from django.db.models.functions import Cast, Length
 from django.utils import timezone
 
@@ -18,9 +18,10 @@ from twicc.core.content_storage.codec import ContentIntegrityError, transcode_co
 from twicc.core.content_storage.lifecycle import active_session_ids, set_root_promotion_wakeup
 from twicc.core.content_storage.maintenance_cache import MaintenanceSessionCache
 from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION, compression_policy_version
+from twicc.core.content_storage.session_policy import resolve_content_decisions
 from twicc.core.content_storage.state import (
     TREE_PAGE_SIZE, _require_writer_transaction, _snapshot_matches,
-    resolve_root_decision, resolve_root_decisions, session_plaintext_metadata, snapshot_session_promotion,
+    session_plaintext_metadata, snapshot_session_promotion,
 )
 from twicc.core.content_storage.transactions import immediate_content_transaction
 from twicc.core.content_storage.types import PreparedRepresentation, RootPromotionCursor, RootStorageSnapshot, SessionPromotionSnapshot
@@ -116,7 +117,7 @@ class PublicationResult(NamedTuple):
 
 class PromotionEntry(NamedTuple):
     candidate: PreparedRepresentation
-    observed_payload: bytes
+    observation: CompressionObservation
 
 
 class PromotionBatch(NamedTuple):
@@ -133,34 +134,13 @@ def request_root_promotion(session_id: str, *, priority: WritePriority | None = 
 
 
 def _owners_cold(row, active):
-    if not row.session_ids:
-        return False
-    from twicc.providers.helpers import get_provider_helpers
-
-    now = timezone.now()
-    # Unresolved active ancestry cannot prove that an owner tree is inactive.
-    for offset in range(0, len(active), TREE_PAGE_SIZE):
-        if any(not decision.resolved for decision in resolve_root_decisions(
-            tuple(active)[offset:offset + TREE_PAGE_SIZE], now, active,
-        ).values()):
-            return False
-    for offset in range(0, len(row.session_ids), TREE_PAGE_SIZE):
-        ids = row.session_ids[offset:offset + TREE_PAGE_SIZE]
-        owners = list(Session.objects.filter(pk__in=ids).values('id', 'content_storage_version'))
-        if len(owners) != len(ids) or any(owner['content_storage_version'] != CONTENT_STORAGE_VERSION
-                                         for owner in owners):
-            return False
-        decisions = resolve_root_decisions(ids, now, active)
-        if any(not decision.resolved or not decision.is_cold for decision in decisions.values()):
-            return False
-        roots = {decision.root_id for decision in decisions.values()}
-        metadata = list(Session.objects.filter(pk__in=roots).values('provider', 'compute_version',
-                                                                   'storage_incarnation', 'content_state_epoch'))
-        if any(not root['storage_incarnation'] or root['content_state_epoch'] is None
-               or root['compute_version'] != get_provider_helpers(root['provider']).current_compute_version
-               for root in metadata):
-            return False
-    return True
+    """Authorize legacy direct publication with the same own-session policy as batch publication."""
+    cache = MaintenanceSessionCache()
+    try:
+        decisions = cache.decisions(row.session_ids, timezone.now(), active)
+        return _candidate_owners_cold(row.session_ids, decisions)
+    finally:
+        cache.close()
 
 
 def _dictionary(row):
@@ -196,7 +176,7 @@ def prepare_representation(content_id: int, policy_version: str, observed=None, 
 def publish_representation(candidate: PreparedRepresentation, active_root_ids: frozenset[str]) -> bool:
     """Publish under admission and writer ownership after the caller validates its preparation."""
     _require_writer_transaction()
-    row = SessionItemContent.objects.filter(pk=candidate.content_id).first()
+    row = SessionItemContent.objects.filter(pk=candidate.content_id).only(*COMPRESSION_METADATA_FIELDS).first()
     if (row is None or row.codec != candidate.observed_codec
             or row.dictionary_id != candidate.observed_dictionary_id):
         return False
@@ -211,7 +191,7 @@ def publish_representation(candidate: PreparedRepresentation, active_root_ids: f
         if encoded.codec == 'zstd' and encoded.dictionary_id != dictionary.id:
             return False
     else:
-        hot_owner = any(decision.resolved and not decision.is_cold for decision in resolve_root_decisions(
+        hot_owner = any(decision.resolved and not decision.is_cold for decision in resolve_content_decisions(
             row.session_ids, timezone.now(), active_root_ids,
         ).values())
         if not row.session_ids or not hot_owner:
@@ -337,13 +317,25 @@ def _session_keys(pages, cursor):
                 yield session_id, -1, 1, None, valid
 
 
+def _target_decision(session_id, active, session_cache=None):
+    owned = session_cache is None
+    session_cache = MaintenanceSessionCache() if owned else session_cache
+    try:
+        return session_cache.decisions([session_id], timezone.now(), active)[session_id]
+    finally:
+        if owned:
+            session_cache.close()
+
+
 @transaction.atomic
-def prepare_promotion_batch(snapshot, cursor, row_budget=ROW_BUDGET, byte_budget=BYTE_BUDGET):
+def prepare_promotion_batch(snapshot, cursor, row_budget=ROW_BUDGET, byte_budget=BYTE_BUDGET, *, session_cache=None):
     if row_budget <= 0 or byte_budget <= 0:
         raise ValueError('Maintenance budgets must be positive')
     if not _snapshot_matches(snapshot):
         return PromotionBatch(snapshot, cursor, (), False)
-    decision = resolve_root_decision(snapshot.root_id, timezone.now(), frozenset())
+    target_id = getattr(snapshot, 'session_id', snapshot.root_id)
+    eligibility_active = active_session_ids.get()
+    decision = _target_decision(target_id, eligibility_active, session_cache)
     if not decision.resolved or (getattr(snapshot, 'recovery', False) and decision.is_cold):
         return PromotionBatch(snapshot, cursor, (), False)
     # Fetch only bounded FK metadata before loading any payload bytes.
@@ -378,40 +370,47 @@ def prepare_promotion_batch(snapshot, cursor, row_budget=ROW_BUDGET, byte_budget
             prepared_ids.add(row.id)
             encoded, _ = transcode_content(row, dictionary_cache=dictionary_cache)
             candidate = PreparedRepresentation(row.id, row.codec, row.dictionary_id, encoded, 'plain', False)
-            entries.append(PromotionEntry(candidate, bytes(row.payload)))
+            entries.append(PromotionEntry(candidate, CompressionObservation(
+                row.id, bytes(row.sha256), row.raw_size, row.codec, row.dictionary_id,
+                row.dictionary_provider, tuple(row.session_ids), row.compression_attempt_version,
+                row.compression_no_gain, len(row.payload),
+            )))
         last = RootPromotionCursor(session_id, line, slot, len(selected), size, False)
     return PromotionBatch(snapshot, last._replace(rows=len(selected), bytes=size, done=len(selected) == len(keys)),
                           tuple(entries), verified)
 
 
-def apply_promotion_batch(batch, active, *, pass_verified=False):
-    with transaction.atomic():
+def apply_promotion_batch(batch, active, *, pass_verified=False, session_cache=None):
+    with immediate_content_transaction():
         if not _snapshot_matches(batch.snapshot):
             return START_CURSOR
-        eligibility_active = frozenset() if getattr(batch.snapshot, 'recovery', False) else active
-        decision = resolve_root_decision(batch.snapshot.root_id, timezone.now(), eligibility_active)
+        target_id = getattr(batch.snapshot, 'session_id', batch.snapshot.root_id)
+        decision = _target_decision(target_id, active, session_cache)
         if not decision.resolved or decision.is_cold:
             return START_CURSOR
         _require_writer_transaction()
-        rows = SessionItemContent.objects.in_bulk(entry.candidate.content_id for entry in batch.entries)
+        rows = {row['id']: row for row in SessionItemContent.objects.filter(
+            pk__in=[entry.candidate.content_id for entry in batch.entries],
+        ).values(*COMPRESSION_METADATA_FIELDS)}
         changed = []
         for entry in batch.entries:
             candidate = entry.candidate
             row = rows.get(candidate.content_id)
             encoded = candidate.encoded
-            # Decompression needs representation CAS, not compression eligibility.
-            # Owner changes remain intact; tree/reference changes invalidate the root epoch.
-            if (row is None or row.codec != candidate.observed_codec
-                    or row.dictionary_id != candidate.observed_dictionary_id
-                    or bytes(row.payload) != entry.observed_payload
-                    or bytes(row.sha256) != encoded.sha256 or row.raw_size != encoded.raw_size):
+            observed = entry.observation
+            # Immutable logical identity and representation metadata fence prepared bytes.
+            # Owner changes remain intact; reference changes invalidate the root epoch.
+            if (row is None or row['codec'] != observed.codec
+                    or row['dictionary_id'] != observed.dictionary_id
+                    or bytes(row['sha256']) != observed.sha256 or row['raw_size'] != observed.raw_size
+                    or row['dictionary_provider'] != observed.dictionary_provider
+                    or encoded.sha256 != observed.sha256 or encoded.raw_size != observed.raw_size
+                    or encoded.codec != 'plain' or encoded.dictionary_id is not None
+                    or len(encoded.payload) != encoded.raw_size):
                 return START_CURSOR
-            row.payload = encoded.payload
-            row.codec = 'plain'
-            row.dictionary_id = None
-            changed.append(row)
-        if changed:
-            SessionItemContent.objects.bulk_update(changed, ['payload', 'codec', 'dictionary'], batch_size=ROW_BUDGET)
+            changed.append((row['id'], encoded.payload))
+        for content_id, payload in changed:
+            SessionItemContent.objects.filter(pk=content_id).update(payload=payload, codec='plain', dictionary_id=None)
         if (batch.cursor.done and pass_verified and batch.verified
                 and getattr(batch.snapshot, 'session_id', batch.snapshot.root_id) == batch.snapshot.root_id):
             # Only the root's own slots receive a durable readiness certificate.
@@ -435,23 +434,32 @@ def promote_root_slice(snapshot: RootStorageSnapshot, cursor: RootPromotionCurso
     return apply_promotion_batch(batch, active_session_ids.get(), pass_verified=cursor == START_CURSOR)
 
 
-def pending_root_page(after_id=None):
-    """Recover root-only demand from metadata; never infer demand for inherited-hot children."""
-    query = Session.objects.filter(type='session', parent_session__isnull=True,
-                                   storage_incarnation__isnull=False, content_state_epoch__isnull=False)
-    query = query.filter(Q(plaintext_verified_epoch__isnull=True) | ~Q(plaintext_verified_epoch=F('content_state_epoch')))
+def pending_session_page(after_id: str | None = None) -> list[str]:
+    """Page durable extraction identities at every native depth, independent of certificates."""
+    query = Session.objects.filter(storage_incarnation__isnull=False,
+                                   content_storage_version=CONTENT_STORAGE_VERSION)
     if after_id is not None:
         query = query.filter(pk__gt=after_id)
     return list(query.order_by('id').values_list('id', flat=True)[:TREE_PAGE_SIZE])
 
 
-def recovery_promotion_targets(root_ids):
-    """Recover persisted-hot roots only; an active child does not create demand for its cold root."""
-    with transaction.atomic():
-        decisions = resolve_root_decisions(root_ids, timezone.now(), frozenset())
-        return {root_id for root_id, decision in decisions.items()
-                if decision.resolved and decision.root_id == root_id and not decision.is_cold
-                and not session_plaintext_metadata(root_id)}
+def recovery_promotion_targets(session_ids, session_cache=None):
+    """Probe only hot sessions' reference metadata outside writer ownership."""
+    owned = session_cache is None
+    session_cache = MaintenanceSessionCache() if owned else session_cache
+    try:
+        # Fill committed cache metadata before entering the short reference snapshot.
+        decisions = session_cache.decisions(session_ids, timezone.now(), active_session_ids.get())
+        hot_ids = [session_id for session_id, decision in decisions.items()
+                   if decision.resolved and not decision.is_cold]
+        session_cache.statistics['recovery_reference_probes'] = (
+            session_cache.statistics.get('recovery_reference_probes', 0) + len(hot_ids)
+        )
+        with transaction.atomic():
+            return {session_id for session_id in hot_ids if not session_plaintext_metadata(session_id)}
+    finally:
+        if owned:
+            session_cache.close()
 
 
 def prepare_compression_batch(after_id, row_budget=ROW_BUDGET, byte_budget=BYTE_BUDGET, *,
@@ -560,17 +568,16 @@ async def _apply(function, *args, priority=WritePriority.FOREGROUND, lease=None)
         lease.release()
 
 
-def _snapshot(session_id, active, *, recovery=False):
+def _snapshot(session_id, active, *, recovery=False, session_cache=None):
     with transaction.atomic():
-        eligibility_active = frozenset() if recovery else active
-        decision = resolve_root_decision(session_id, timezone.now(), eligibility_active)
-        if (not decision.resolved or decision.is_cold
-                or recovery and decision.root_id != session_id):
+        decision = _target_decision(session_id, active, session_cache)
+        if not decision.resolved or decision.is_cold:
             return None
         snapshot = snapshot_session_promotion(session_id)
         if recovery:
             return SessionPromotionSnapshot(snapshot.root_id, snapshot.incarnation, snapshot.epoch,
-                                            session_id, snapshot.incarnation, recovery=True)
+                                            session_id, getattr(snapshot, 'session_incarnation', snapshot.incarnation),
+                                            recovery=True)
         return snapshot
 
 
@@ -604,6 +611,7 @@ class _PromotionTarget:
         self.recovery = recovery
         self.priority = priority
         self.demand = None
+        self.session_cache = MaintenanceSessionCache()
         self.reset()
 
     def reset(self):
@@ -647,7 +655,9 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
     def enqueue(session_id, priority):
         if closing or stop_event.is_set():
             return
-        target = targets.setdefault(session_id, _PromotionTarget(recovery=False, priority=priority))
+        target = targets.get(session_id)
+        if target is None:
+            target = targets[session_id] = _PromotionTarget(recovery=False, priority=priority)
         target.explicit()
         if priority is WritePriority.FOREGROUND:
             if target.priority is WritePriority.BACKGROUND:
@@ -665,7 +675,15 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
     set_root_promotion_wakeup(request_root_promotion)
 
     async def prepare(function, *args):
-        return await database_sync_to_async(partial(function, *args), thread_sensitive=False, executor=executor)()
+        from twicc.agent.registry import get_agent_manager_registry
+
+        token = active_session_ids.set(frozenset(
+            agent.session_id for agent in get_agent_manager_registry().get_active_agents()
+        ))
+        try:
+            return await database_sync_to_async(partial(function, *args), thread_sensitive=False, executor=executor)()
+        finally:
+            active_session_ids.reset(token)
 
     async def wait(timeout):
         # Callers clear events before inspecting authoritative state. A change
@@ -696,26 +714,34 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
         return False
 
     async def recover(*, periodic=False):
+        cache = MaintenanceSessionCache()
+        try:
+            await recover_pages(cache, periodic=periodic)
+        finally:
+            cache.close()
+
+    async def recover_pages(cache, *, periodic=False):
         after = None
         while not stop_event.is_set():
             if periodic and not await periodic_ready():
                 return
-            page = await prepare(pending_root_page, after)
+            page = await prepare(pending_session_page, after)
             if not page:
                 break
             if periodic and not await periodic_ready():
                 return
-            eligible = await prepare(recovery_promotion_targets, page)
+            eligible = await prepare(recovery_promotion_targets, page, cache)
             for session_id in page:
-                if session_id in eligible:
-                    targets.setdefault(session_id, _PromotionTarget(
+                if session_id in eligible and session_id not in targets:
+                    targets[session_id] = _PromotionTarget(
                         recovery=True, priority=WritePriority.BACKGROUND, periodic=periodic,
-                    ))
+                    )
             await promote()
             after = page[-1]
 
     def settle(session_id, target):
         targets.pop(session_id)
+        target.session_cache.close()
         if target.demand is not None:
             target.demand.release()
 
@@ -747,7 +773,8 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
             try:
                 if target.snapshot is not None and target.batch is None:
                     recovery = target.recovery
-                    batch = await prepare(prepare_promotion_batch, target.snapshot, target.cursor,
+                    batch = await prepare(partial(prepare_promotion_batch, session_cache=target.session_cache),
+                                          target.snapshot, target.cursor,
                                           ROW_BUDGET, BYTE_BUDGET)
                     # An upgrade must retry a rejection under the old recovery eligibility.
                     if recovery and not target.recovery and batch.cursor == target.cursor and not batch.verified:
@@ -768,7 +795,7 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                     continue
                 if target.snapshot is None:
                     recovery = target.recovery
-                    target.snapshot = await _apply(partial(_snapshot, recovery=recovery), session_id,
+                    target.snapshot = await _apply(partial(_snapshot, recovery=recovery, session_cache=target.session_cache), session_id,
                                                    priority=target.priority, lease=lease)
                     if target.snapshot is None:
                         if recovery and not target.recovery:
@@ -778,7 +805,8 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
                         target.explicit()
                     continue
                 verified = target.verified and target.batch.verified
-                cursor = await _apply(partial(apply_promotion_batch, pass_verified=verified), target.batch,
+                cursor = await _apply(partial(apply_promotion_batch, pass_verified=verified,
+                                              session_cache=target.session_cache), target.batch,
                                       priority=target.priority, lease=lease)
                 if cursor == START_CURSOR:
                     target.reset()
@@ -874,5 +902,6 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
             close_task.result()
         finally:
             for target in targets.values():
+                target.session_cache.close()
                 if target.demand is not None:
                     target.demand.release()

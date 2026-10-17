@@ -315,3 +315,21 @@ def test_deferred_update_keyword_never_reaches_query_update(monkeypatch):
     assert all('defer_plaintext_inspection' not in query['sql'] for query in queries)
     root.refresh_from_db()
     assert root.content_state_epoch == 5
+
+
+@pytest.mark.parametrize('cold', [False, True])
+def test_completed_child_extraction_initializes_durable_identity_without_root_epochs(cold):
+    from tests.test_content_root_state import session
+    from twicc.core.content_storage.extraction import finish_storage_result
+
+    root = session('root')
+    child = session('child', type='subagent', parent_session=root, archived=cold,
+                    created_at=timezone.now() - timedelta(days=20))
+    with transaction.atomic():
+        finish_storage_result({'session_id': child.id})
+    child.refresh_from_db()
+    root.refresh_from_db()
+    assert child.storage_incarnation
+    assert child.content_storage_version == 1
+    assert child.content_state_epoch is child.plaintext_verified_epoch is None
+    assert root.storage_incarnation is root.content_storage_version is None

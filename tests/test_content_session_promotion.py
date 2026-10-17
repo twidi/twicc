@@ -15,7 +15,7 @@ from twicc.providers.compute_work import ComputeWorkState
 content_row_factory = content_storage_helpers.content_row_factory
 writer_state = test_content_storage_admission.writer_state
 
-pytestmark = pytest.mark.django_db
+pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def native_pair():
@@ -210,10 +210,13 @@ def test_coordinator_recovers_only_root_then_handles_explicit_child_resume(
     settings.SESSION_DIRS_CLEANUP_ENABLED = False
     monkeypatch.setattr(get_agent_manager_registry(), 'get_active_agents', list)
     monkeypatch.setattr(maintenance, 'ROW_BUDGET', 1)
+    from datetime import timedelta
+
     root, child = native_pair()
+    Session.objects.filter(pk=child.id).update(archived=True, created_at=timezone.now() - timedelta(days=40))
     sibling = session('sibling', type='subagent', parent_session=root,
                       storage_incarnation='sibling-inc', content_storage_version=1,
-                      content_state_epoch=0)
+                      content_state_epoch=0, archived=True, created_at=timezone.now() - timedelta(days=40))
     rows = []
     for owner in (root, child, sibling):
         row = content_row_factory(owner.id * 100, True, session_ids=[owner.id])
@@ -223,9 +226,9 @@ def test_coordinator_recovers_only_root_then_handles_explicit_child_resume(
     targets = []
     original = maintenance.prepare_promotion_batch
 
-    def prepare(observation, cursor, *args):
+    def prepare(observation, cursor, *args, **kwargs):
         targets.append(getattr(observation, 'session_id', observation.root_id))
-        return original(observation, cursor, *args)
+        return original(observation, cursor, *args, **kwargs)
 
     monkeypatch.setattr(maintenance, 'prepare_promotion_batch', prepare)
     phases = []
@@ -249,7 +252,7 @@ def test_coordinator_recovers_only_root_then_handles_explicit_child_resume(
     for row in rows:
         row.refresh_from_db()
     assert [row.codec for row in rows] == ['plain', 'plain', 'zstd']
-    assert sibling.id not in maintenance.pending_root_page()
+    assert sibling.id in maintenance.pending_session_page()
 
 
 def test_plain_root_contains_survives_child_only_epoch_invalidation(content_row_factory):
@@ -310,10 +313,9 @@ def test_recovery_skips_cold_root_with_active_child_and_advances_to_hot_root(
     asyncio.run(maintenance.start_content_maintenance_task(asyncio.Event(), compute_work=ComputeWorkState()))
     for row in rows:
         row.refresh_from_db()
-    assert [row.codec for row in rows] == ['zstd', 'zstd', 'plain']
+    assert [row.codec for row in rows] == ['zstd', 'plain', 'plain']
     # Explicit child demand still uses admitted active-tree protection.
-    with transaction.atomic():
-        observation = maintenance._snapshot(child.id, frozenset({child.id}))
+    observation = maintenance._snapshot(child.id, frozenset({child.id}))
     batch = maintenance.prepare_promotion_batch(observation, START)
     assert maintenance.apply_promotion_batch(batch, frozenset({child.id}), pass_verified=True).done
     rows[0].refresh_from_db()
@@ -383,8 +385,8 @@ def test_recovery_rechecks_persisted_hot_policy_across_admission_barriers(
     name = 'recovery_promotion_targets' if barrier == 'filter_to_snapshot' else 'prepare_promotion_batch'
     original = getattr(maintenance, name)
 
-    def cross_threshold(*args):
-        result = original(*args)
+    def cross_threshold(*args, **kwargs):
+        result = original(*args, **kwargs)
         if not crossed:
             crossed.append(True)
             # Elapsed time changes persisted cold policy without a metadata write or epoch change.
@@ -403,3 +405,124 @@ def test_recovery_rechecks_persisted_hot_policy_across_admission_barriers(
     root.refresh_from_db()
     assert row.codec == 'zstd'
     assert root.plaintext_verified_epoch is None
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('depth,interrupt,active', [(1, False, False), (3, False, False),
+                                                    (3, True, False), (3, False, True)])
+def test_restart_recovers_hot_extracted_child_without_child_epochs(
+    content_row_factory, writer_state, compute_executor_started, monkeypatch, settings, depth, interrupt, active,
+):
+    import asyncio
+    from datetime import timedelta
+    from twicc.agent.registry import get_agent_manager_registry
+
+    settings.SESSION_DIRS_CLEANUP_ENABLED = False
+    monkeypatch.setattr(get_agent_manager_registry(), 'get_active_agents', list)
+    monkeypatch.setattr(maintenance, 'ROW_BUDGET', 1)
+    old = timezone.now() - timedelta(days=20)
+    root = session('root', archived=True, created_at=old, storage_incarnation='root-inc',
+                   content_storage_version=1, content_state_epoch=4, plaintext_verified_epoch=4)
+    parent = root
+    for index in range(depth):
+        parent = session(f'child-{index}', type='subagent', parent_session=parent, archived=True,
+                         created_at=old, storage_incarnation=f'child-inc-{index}', content_storage_version=1)
+    child = parent
+    sibling = session('sibling', type='subagent', parent_session=root, archived=True, created_at=old,
+                      storage_incarnation='sibling-inc', content_storage_version=1)
+    exclusive = content_row_factory('exclusive' * 100, True, session_ids=[child.id])
+    shared = content_row_factory('shared' * 100, True, session_ids=[child.id, sibling.id])
+    sibling_exclusive = content_row_factory('sibling' * 100, True, session_ids=[sibling.id])
+    item(child, exclusive, shared)
+    item(sibling, sibling_exclusive, shared)
+    # Commit the lifecycle change without retaining its wakeup or target.
+    monkeypatch.setattr(lifecycle, 'request_root_promotion', lambda *args, **kwargs: None)
+    if active:
+        from types import SimpleNamespace
+        monkeypatch.setattr(get_agent_manager_registry(), 'get_active_agents',
+                            lambda: [SimpleNamespace(session_id=child.id)])
+    else:
+        lifecycle.update_lifecycle(Session.objects.filter(pk=child.id), archived=False)
+    root.refresh_from_db()
+    Session.objects.filter(pk=root.id).update(plaintext_verified_epoch=root.content_state_epoch)
+    targets = []
+    original_prepare = maintenance.prepare_promotion_batch
+    original_apply = maintenance.apply_promotion_batch
+
+    def prepare(observation, *args, **kwargs):
+        targets.append(getattr(observation, 'session_id', observation.root_id))
+        return original_prepare(observation, *args, **kwargs)
+
+    monkeypatch.setattr(maintenance, 'prepare_promotion_batch', prepare)
+
+    async def wait(stop, wake, timeout):
+        stop.set()
+
+    monkeypatch.setattr(maintenance, '_wait', wait)
+
+    async def run(interrupted):
+        stop = asyncio.Event()
+
+        def apply(*args, **kwargs):
+            cursor = original_apply(*args, **kwargs)
+            if interrupted:
+                stop.set()
+            return cursor
+
+        monkeypatch.setattr(maintenance, 'apply_promotion_batch', apply)
+        await maintenance.start_content_maintenance_task(stop, compute_work=ComputeWorkState())
+
+    if interrupt:
+        asyncio.run(run(True))
+        exclusive.refresh_from_db()
+        shared.refresh_from_db()
+        assert [exclusive.codec, shared.codec] == ['plain', 'zstd']
+    asyncio.run(run(False))
+    assert set(targets) == {child.id}
+    for row in (exclusive, shared, sibling_exclusive):
+        row.refresh_from_db()
+    assert [exclusive.codec, shared.codec, sibling_exclusive.codec] == ['plain', 'plain', 'zstd']
+    child.refresh_from_db()
+    assert child.content_state_epoch is child.plaintext_verified_epoch is None
+
+
+def test_plain_child_recovery_and_publication_read_only_metadata(content_row_factory):
+    from contextlib import closing
+    from tests.test_content_maintenance_reads import payload_selects
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from twicc.core.content_storage.maintenance_cache import MaintenanceSessionCache
+
+    root, child = native_pair()
+    row = content_row_factory('already plain', False, session_ids=[child.id])
+    item(child, row, row)
+    with closing(MaintenanceSessionCache()) as cache:
+        with CaptureQueriesContext(connection) as queries:
+            assert maintenance.recovery_promotion_targets([child.id], cache) == set()
+            observation = maintenance._snapshot(child.id, frozenset(), session_cache=cache)
+            batch = maintenance.prepare_promotion_batch(observation, START, session_cache=cache)
+            assert maintenance.apply_promotion_batch(batch, frozenset(), session_cache=cache).done
+        assert cache.statistics['recovery_reference_probes'] == 1
+    assert payload_selects(queries) == []
+    assert all(not query['sql'].startswith('UPDATE "core_sessionitemcontent"') for query in queries)
+
+
+def test_restoration_reuses_target_lifecycle_cache_across_batches(content_row_factory):
+    from contextlib import closing
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from twicc.core.content_storage.maintenance_cache import MaintenanceSessionCache
+
+    root, child = native_pair()
+    current = content_row_factory('current' * 100, True, session_ids=[child.id])
+    original = content_row_factory('original' * 100, True, session_ids=[child.id])
+    item(child, current, original)
+    with closing(MaintenanceSessionCache()) as cache:
+        observation = maintenance._snapshot(child.id, frozenset(), session_cache=cache)
+        cursor = START
+        with CaptureQueriesContext(connection) as queries:
+            while not cursor.done:
+                batch = maintenance.prepare_promotion_batch(observation, cursor, 1, session_cache=cache)
+                cursor = maintenance.apply_promotion_batch(batch, frozenset(), session_cache=cache)
+        assert cache.statistics['ids_loaded'] == 1
+    assert not any('"created_at"' in query['sql'] for query in queries)

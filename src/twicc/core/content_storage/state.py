@@ -210,6 +210,23 @@ def snapshot_session_promotion(session_id: str) -> RootStorageSnapshot | Session
     return SessionPromotionSnapshot(root.root_id, root.incarnation, root.epoch, session_id, incarnation)
 
 
+def _native_root_identity(session_id: str) -> str | None:
+    """Validate native ancestry without reloading lifecycle policy metadata."""
+    visited = set()
+    while session_id not in visited:
+        visited.add(session_id)
+        fields = Session.objects.filter(pk=session_id).values('type', 'parent_session_id').first()
+        if fields is None:
+            return None
+        parent_id = fields['parent_session_id']
+        if fields['type'] == 'session' and parent_id is None:
+            return session_id
+        if fields['type'] != 'subagent' or parent_id is None:
+            return None
+        session_id = parent_id
+    return None
+
+
 def _snapshot_matches(snapshot: RootStorageSnapshot | SessionPromotionSnapshot) -> bool:
     fields = Session.objects.filter(pk=snapshot.root_id).values('storage_incarnation', 'content_state_epoch').first()
     if (fields is None or fields['storage_incarnation'] != snapshot.incarnation
@@ -217,11 +234,9 @@ def _snapshot_matches(snapshot: RootStorageSnapshot | SessionPromotionSnapshot) 
         return False
     if isinstance(snapshot, SessionPromotionSnapshot):
         incarnation = Session.objects.filter(pk=snapshot.session_id).values_list('storage_incarnation', flat=True).first()
-        decision = resolve_root_decision(snapshot.session_id, timezone.now(), frozenset())
-        return (incarnation == snapshot.session_incarnation and decision.resolved
-                and decision.root_id == snapshot.root_id)
-    decision = resolve_root_decision(snapshot.root_id, timezone.now(), frozenset())
-    return decision.resolved and decision.root_id == snapshot.root_id
+        return (incarnation == snapshot.session_incarnation
+                and _native_root_identity(snapshot.session_id) == snapshot.root_id)
+    return _native_root_identity(snapshot.root_id) == snapshot.root_id
 
 
 def session_plaintext_metadata(session_id: str) -> bool:

@@ -13,7 +13,7 @@ from twicc.content_maintenance_task import promote_root_slice
 
 content_row_factory = content_storage_helpers.content_row_factory
 
-pytestmark = pytest.mark.django_db
+pytestmark = pytest.mark.django_db(transaction=True)
 START = RootPromotionCursor(None, -1, 1, 0, 0, False)
 
 
@@ -192,7 +192,7 @@ def test_promotion_avoids_compression_eligibility_proofs(content_row_factory, mo
     def forbidden(*args, **kwargs):
         pytest.fail('Promotion performs compression eligibility proof work')
 
-    monkeypatch.setattr(maintenance, '_metadata_proof', forbidden)
+    monkeypatch.setattr(maintenance, 'publish_prepared_batch', forbidden)
     monkeypatch.setattr(maintenance, '_owners_cold', forbidden)
     batch = maintenance.prepare_promotion_batch(snapshot(root), START)
     # Unrelated shared-owner lifecycle changes do not invalidate exact decompression.
@@ -206,7 +206,7 @@ def test_promotion_avoids_compression_eligibility_proofs(content_row_factory, mo
     assert root.plaintext_verified_epoch == root.content_state_epoch
 
 
-@pytest.mark.parametrize('change', ['payload', 'sha256', 'raw_size', 'codec', 'dictionary_id', 'delete'])
+@pytest.mark.parametrize('change', ['sha256', 'raw_size', 'codec', 'dictionary_id', 'delete'])
 def test_promotion_rejects_changed_source_representation(content_row_factory, change):
     from twicc import content_maintenance_task as maintenance
     from twicc.core.models import SessionItemContent
@@ -318,7 +318,7 @@ def test_preparation_byte_accounting_survives_separate_connection_promotion(cont
         connections['default'] = source
     assert attempted == ['committed']
     assert len(batch.entries) == 1
-    assert batch.entries[0].observed_payload == stored
+    assert batch.entries[0].observation.stored_size == len(stored)
     assert batch.cursor.bytes >= plain.raw_size + len(stored)
 
 
@@ -331,7 +331,7 @@ def test_rejected_source_keeps_other_prepared_content_compressed(content_row_fac
     original = content_row_factory('original' * 200, True, session_ids=[root.id])
     item(root, current, original)
     batch = maintenance.prepare_promotion_batch(snapshot(root), START)
-    SessionItemContent.objects.filter(pk=original.pk).update(payload=b'replaced')
+    SessionItemContent.objects.filter(pk=original.pk).update(sha256=b'x' * 32)
     assert maintenance.apply_promotion_batch(batch, frozenset(), pass_verified=True) == START
     current.refresh_from_db()
     assert current.codec == 'zstd'

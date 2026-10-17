@@ -51,13 +51,13 @@ def test_shared_hot_original_owner_prevents_compression(content_row_factory):
     assert row.codec == 'plain'
 
 
-def test_active_native_child_prevents_publication(content_row_factory):
+def test_active_native_child_does_not_block_cold_root_only_publication(content_row_factory):
     owner = cold('cold')
     child = session('child', type='subagent', parent_session=owner)
     row = content_row_factory('large content ' * 100, False, session_ids=[owner.id])
     candidate = prepare_representation(row.id, policy())
     with transaction.atomic():
-        assert not publish_representation(candidate, frozenset({child.id}))
+        assert publish_representation(candidate, frozenset({child.id}))
 
 
 def test_empty_ownership_is_not_cold(content_row_factory):
@@ -308,11 +308,11 @@ def test_interactive_write_runs_between_maintenance_slices(content_row_factory, 
     release = threading.Event()
     trace = []
     original_prepare = maintenance.prepare_promotion_batch
-    def prepare(snapshot, cursor, *args):
+    def prepare(snapshot, cursor, *args, **kwargs):
         if cursor.session_id is not None and not second_preparation.is_set():
             second_preparation.set()
             assert release.wait(5)
-        return original_prepare(snapshot, cursor, *args)
+        return original_prepare(snapshot, cursor, *args, **kwargs)
     original_apply = maintenance.apply_promotion_batch
     def apply(batch, active, **kwargs):
         result = original_apply(batch, active, **kwargs)
@@ -448,12 +448,12 @@ def test_cancelled_promotion_restarts_proof_from_zero(content_row_factory, write
     release = threading.Event()
     original = maintenance.prepare_promotion_batch
     cursors = []
-    def prepare(snapshot, cursor, *args):
+    def prepare(snapshot, cursor, *args, **kwargs):
         cursors.append(cursor)
         if cursor.session_id is not None and not entered.is_set():
             entered.set()
             assert release.wait(5)
-        return original(snapshot, cursor, *args)
+        return original(snapshot, cursor, *args, **kwargs)
     monkeypatch.setattr(maintenance, 'prepare_promotion_batch', prepare)
     async def cancel():
         task = asyncio.create_task(maintenance.start_content_maintenance_task(
@@ -501,11 +501,11 @@ def test_promotion_failure_does_not_disable_periodic_recovery(content_row_factor
     SessionItem.objects.create(session=root, line_num=1, current_content=row, content='')
     attempts = []
     original = maintenance.prepare_promotion_batch
-    def prepare(*args):
+    def prepare(*args, **kwargs):
         attempts.append(True)
         if len(attempts) == 1:
             raise RuntimeError('temporary worker failure')
-        return original(*args)
+        return original(*args, **kwargs)
     monkeypatch.setattr(maintenance, 'prepare_promotion_batch', prepare)
     clock = [0]
     waits = []
@@ -580,7 +580,7 @@ def test_hot_promotion_precedes_prepared_compression_publication(content_row_fac
             release.set()
         await asyncio.wait_for(task, 5)
     asyncio.run(scenario())
-    assert trace == ['promotion', 'compression']
+    assert trace == ['promotion', 'promotion', 'compression']
     cold_row.refresh_from_db()
     hot_row.refresh_from_db()
     assert cold_row.codec == 'zstd' and hot_row.codec == 'plain'
@@ -704,8 +704,8 @@ def test_foreground_targets_interrupt_recovery_at_next_grant(
     original_prepare, original_apply = maintenance.prepare_promotion_batch, maintenance.apply_promotion_batch
     trace = []
 
-    def prepare(snapshot, cursor, *args):
-        result = original_prepare(snapshot, cursor, *args)
+    def prepare(snapshot, cursor, *args, **kwargs):
+        result = original_prepare(snapshot, cursor, *args, **kwargs)
         if snapshot.root_id == 'a' and not entered.is_set():
             entered.set()
             assert release.wait(5)
@@ -846,9 +846,9 @@ def test_recovery_upgrade_preserves_prepared_work_and_foreground_fifo(
     original_prepare, original_apply = maintenance.prepare_promotion_batch, maintenance.apply_promotion_batch
     preparations, publications = [], []
 
-    def prepare(snapshot, *args):
+    def prepare(snapshot, *args, **kwargs):
         preparations.append(snapshot.root_id)
-        result = original_prepare(snapshot, *args)
+        result = original_prepare(snapshot, *args, **kwargs)
         if snapshot.root_id == 'a':
             entered.set()
             assert release.wait(5)
@@ -908,8 +908,8 @@ def test_foreground_pressure_settles_after_worker_drain(
     publishing, allow_publish = threading.Event(), threading.Event()
     original_prepare, original_apply = maintenance.prepare_promotion_batch, maintenance.apply_promotion_batch
 
-    def prepare(*args):
-        result = original_prepare(*args)
+    def prepare(*args, **kwargs):
+        result = original_prepare(*args, **kwargs)
         prepared.set()
         assert allow_prepare.wait(5)
         if phase == 'prepare' and outcome == 'failure':
@@ -989,7 +989,7 @@ def test_background_deferral_coalesces_changed_epochs_and_preserves_exact_target
     child = session('child', type='subagent', parent_session=root, content_storage_version=1,
                     storage_incarnation='child-inc')
     sibling = session('sibling', type='subagent', parent_session=root, content_storage_version=1,
-                      storage_incarnation='sibling-inc')
+                      storage_incarnation='sibling-inc', archived=True, created_at=timezone.now() - timedelta(days=40))
     rows = []
     for owner in (root, child, sibling):
         row = content_row_factory(owner.id * 1000, True, session_ids=[owner.id])
@@ -998,9 +998,9 @@ def test_background_deferral_coalesces_changed_epochs_and_preserves_exact_target
     preparations, publications = [], []
     original_prepare, original_apply = maintenance.prepare_promotion_batch, maintenance.apply_promotion_batch
 
-    def prepare(snapshot, *args):
+    def prepare(snapshot, *args, **kwargs):
         preparations.append(getattr(snapshot, 'session_id', snapshot.root_id))
-        return original_prepare(snapshot, *args)
+        return original_prepare(snapshot, *args, **kwargs)
 
     def apply(batch, active, **kwargs):
         publications.append((getattr(batch.snapshot, 'session_id', batch.snapshot.root_id),
@@ -1047,8 +1047,8 @@ def test_background_deferral_coalesces_changed_epochs_and_preserves_exact_target
         assert not db_writer.get_write_coordinator().demands
 
     asyncio.run(scenario())
-    assert preparations == ['root', 'child']
-    assert publications == [('root', True, WritePriority.BACKGROUND), ('child', False, WritePriority.BACKGROUND)]
+    assert preparations == ['child', 'root']
+    assert publications == [('child', False, WritePriority.BACKGROUND), ('root', True, WritePriority.BACKGROUND)]
     for row in rows:
         row.refresh_from_db()
     assert [row.codec for row in rows] == ['plain', 'plain', 'zstd']
@@ -1079,8 +1079,8 @@ def test_deferral_pauses_existing_recovery_and_foreground_bypasses_it(
     publications = []
     token = None
 
-    def prepare(*args):
-        batch = original_prepare(*args)
+    def prepare(*args, **kwargs):
+        batch = original_prepare(*args, **kwargs)
         prepared.set()
         assert release.wait(5)
         return batch
@@ -1145,9 +1145,9 @@ def test_deferral_successor_survives_old_release_and_late_callback_across_restar
     phase, waits = 0, 0
     successor = None
 
-    def prepare(*args):
+    def prepare(*args, **kwargs):
         preparations.append(args[0].root_id)
-        return original(*args)
+        return original(*args, **kwargs)
 
     async def wait(stop, wake, timeout):
         nonlocal waits
@@ -1245,8 +1245,8 @@ def test_explicit_upgrade_retries_recovery_eligibility_rejected_during_await(
 
     settings.SESSION_DIRS_CLEANUP_ENABLED = False
     monkeypatch.setattr(maintenance, 'ROW_BUDGET', 1)
-    monkeypatch.setattr(get_agent_manager_registry(), 'get_active_agents',
-                        lambda: [SimpleNamespace(session_id='root')])
+    active = []
+    monkeypatch.setattr(get_agent_manager_registry(), 'get_active_agents', lambda: active)
     now = [timezone.now()]
     root = session('root', archived=True, created_at=now[0] - timedelta(days=14),
                    content_storage_version=1, storage_incarnation='root-inc', content_state_epoch=4)
@@ -1263,21 +1263,21 @@ def test_explicit_upgrade_retries_recovery_eligibility_rejected_during_await(
         if phase == 'snapshot' and not rejected.is_set():
             now[0] += timedelta(days=2)
             result = original_snapshot(*args, **kwargs)
-            assert result is None  # Recovery has no active override.
+            assert result is None  # This recovery target has no current activity.
             rejected.set()
             assert release.wait(5)
             return result
         return original_snapshot(*args, **kwargs)
 
-    def prepare(snapshot, cursor, *args):
+    def prepare(snapshot, cursor, *args, **kwargs):
         if phase == 'later_preparation' and cursor != maintenance.START_CURSOR and not rejected.is_set():
             now[0] += timedelta(days=2)
-            result = original_prepare(snapshot, cursor, *args)
+            result = original_prepare(snapshot, cursor, *args, **kwargs)
             assert result.cursor == cursor and not result.verified
             rejected.set()
             assert release.wait(5)
             return result
-        return original_prepare(snapshot, cursor, *args)
+        return original_prepare(snapshot, cursor, *args, **kwargs)
 
     async def wait(stop, wake, timeout):
         stop.set()
@@ -1292,6 +1292,7 @@ def test_explicit_upgrade_retries_recovery_eligibility_rejected_during_await(
         coordinator = db_writer.get_write_coordinator()
         try:
             assert await asyncio.to_thread(rejected.wait, 5)
+            active.append(SimpleNamespace(session_id='root'))
             maintenance.request_root_promotion('root')
             await asyncio.sleep(0)
             assert len(coordinator.demands) == 1
@@ -1344,7 +1345,7 @@ def test_hot_append_restart_does_not_recover_plaintext_scan(
             state.invalidate_roots([owner.id])
     traversals = []
     prepare = maintenance.prepare_promotion_batch
-    def track(*args):
+    def track(*args, **kwargs):
         traversals.append(args[0].root_id)
         return prepare(*args)
     monkeypatch.setattr(maintenance, 'prepare_promotion_batch', track)
@@ -1373,7 +1374,8 @@ def test_interrupted_resume_still_recovers_after_restart(
                     content_storage_version=1, storage_incarnation='aged-inc',
                     content_state_epoch=4, plaintext_verified_epoch=4)
     child = session('child', type='subagent', parent_session=owner,
-                    content_storage_version=1, storage_incarnation='child-inc')
+                    content_storage_version=1, storage_incarnation='child-inc',
+                    archived=True, created_at=timezone.now() - timedelta(days=40))
     row = content_row_factory('root content' * 100, True, session_ids=[owner.id])
     child_row = content_row_factory('child content' * 100, True, session_ids=[child.id])
     SessionItem.objects.create(session=owner, line_num=1, content='', current_content=row)
@@ -1388,7 +1390,7 @@ def test_interrupted_resume_still_recovers_after_restart(
     assert requests == [owner.id]
     owner.refresh_from_db()
     assert owner.plaintext_verified_epoch != owner.content_state_epoch
-    assert owner.id in maintenance.pending_root_page()
+    assert owner.id in maintenance.pending_session_page()
     async def wait(stop, wake, timeout):
         stop.set()
     monkeypatch.setattr(maintenance, '_wait', wait)
@@ -1436,10 +1438,22 @@ def test_direct_plain_publication_uses_resolved_hot_owners(content_row_factory, 
     active = frozenset({owner.id}) if owner_state == 'active' else frozenset()
     with transaction.atomic(), CaptureQueriesContext(connection) as queries:
         assert sum(publish_representation(candidate, active) for candidate in candidates) == expected
-    assert len(payload_selects(queries)) == 3
+    assert len(payload_selects(queries)) == 0
     # Metadata comes from bounded owner groups, even for persistent plaintext publication.
     assert len(owner_selects(queries)) <= 12
     for row in rows:
         row.refresh_from_db()
         assert row.codec == ('plain' if expected else 'zstd')
         assert decode_content(row).endswith('content ')
+
+
+@pytest.mark.parametrize('active_child', [False, True])
+def test_legacy_publication_uses_child_policy_without_root_or_extraction_gate(content_row_factory, active_child):
+    root = session('hot-root', created_at=timezone.now())
+    child = session('cold-child', type='subagent', parent_session=root, archived=True,
+                    created_at=timezone.now() - timedelta(days=20))
+    row = content_row_factory('child data ' * 100, False, session_ids=[child.id])
+    candidate = prepare_representation(row.id, policy())
+    active = frozenset({root.id, child.id}) if active_child else frozenset({root.id})
+    with transaction.atomic():
+        assert publish_representation(candidate, active) is (not active_child)
