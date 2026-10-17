@@ -22,7 +22,7 @@ import time
 
 def arguments():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--scenario', choices=('conformant', 'compress', 'foreground', 'acquisition'), required=True)
+    parser.add_argument('--scenario', choices=('conformant', 'compress', 'foreground', 'acquisition', 'selection'), required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--work-dir', type=Path, required=True)
     parser.add_argument('--source-db', type=Path)
@@ -72,7 +72,8 @@ def destination(args):
 
         with (closing(sqlite3.connect(source.as_uri() + '?mode=ro', uri=True)) as reader,
               closing(sqlite3.connect(target)) as writer):
-            reader.backup(writer, pages=2048, sleep=.01)
+            # One step holds a consistent snapshot. Stepped copies restart on busy sources.
+            reader.backup(writer, pages=-1)
     return work, target
 
 
@@ -187,7 +188,7 @@ def seed(scenario):
     for index in range(total):
         size = 128 if scenario in {'conformant', 'acquisition'} else (1024, 65536, 1024**2, 16 * 1024**2)[index % 4]
         text = (f'public synthetic content {index} ' * (size // 20 + 1))[:size]
-        if scenario == 'conformant':
+        if scenario == 'conformant' or (scenario == 'selection' and index % 3):
             text = text if index % 2 else f'x{index}'
             encoded, no_gain = encode_cold(text, dictionary.id, policy)
             payload, codec, dictionary_id = encoded.payload, encoded.codec, encoded.dictionary_id
@@ -465,16 +466,364 @@ def acquisition(first):
     return {'children_100000': first_samples, 'children_1000000': second_samples, 'unindexed_content_fks': True}
 
 
+def selection_index(enabled):
+    from django.db import connection
+    with connection.cursor() as cursor:
+        cursor.execute('DROP INDEX IF EXISTS idx_content_plain_id')
+        if enabled:
+            cursor.execute("CREATE INDEX idx_content_plain_id ON core_sessionitemcontent(id) WHERE codec='plain'")
+
+
+def measure_selection(function):
+    """Fresh Django/SQLite connection and process IO delta; OS cache stays uncontrolled."""
+    from django.db import connection
+    connection.close()
+    counts, plans = Counter(), {}
+    before, started = io_sample(), time.perf_counter()
+    with queries(counts, plans):
+        population = function()
+    after = io_sample()
+    return dict(population, elapsed_ms=(time.perf_counter() - started) * 1000, sql=dict(counts), plans=plans,
+                process_interval_delta={key: after[key] - before[key] for key in before},
+                cache_condition='fresh application/SQLite caches; OS page cache uncontrolled')
+
+
+def run_selection_benchmark() -> dict:
+    from django.db import connection
+    from django.db.models import BinaryField
+    from django.db.models.functions import Cast, Length
+    from django.utils import timezone
+    from twicc import content_maintenance_task as maintenance
+    from twicc.core.content_storage.maintenance_cache import MaintenanceSessionCache
+    from twicc.core.models import SessionItemContent
+
+    def roots(periodic):
+        cache, after, selected, targets = MaintenanceSessionCache(), None, 0, 0
+        now = timezone.now()
+        pages, report_at = 0, time.monotonic() + 5
+        try:
+            while page := (maintenance.periodic_hot_root_page(after, now) if periodic
+                           else maintenance.pending_session_page(after)):
+                selected += len(page)
+                targets += len(maintenance.recovery_promotion_targets(page, cache))
+                after = page[-1]
+                pages += 1
+                if time.monotonic() >= report_at:
+                    print(f'selection roots: periodic={periodic} pages={pages} sessions={selected} targets={targets}',
+                          flush=True)
+                    report_at = time.monotonic() + 5
+            return {'pages': pages, 'selected': selected, 'restoration_targets': targets, 'cache': dict(cache.statistics)}
+        finally:
+            cache.close()
+
+    def content(filtered):
+        after, scanned, raw, stored, owners = 0, 0, 0, 0, 0
+        pages, report_at = 0, time.monotonic() + 5
+        while True:
+            if filtered:
+                query = maintenance._compression_metadata_query(after, maintenance.ROW_BUDGET)
+            else:
+                query = SessionItemContent.objects.filter(pk__gt=after).order_by('id').annotate(
+                    stored_size=Length('payload'), owner_size=Length(Cast('session_ids', BinaryField())),
+                ).values(*(field for field in maintenance.COMPRESSION_METADATA_FIELDS if field != 'session_ids'),
+                         'stored_size', 'owner_size')[:maintenance.ROW_BUDGET]
+            rows = list(query)
+            if not rows:
+                break
+            scanned += len(rows)
+            raw += sum(row['raw_size'] for row in rows)
+            stored += sum(row['stored_size'] for row in rows)
+            owners += sum(row['owner_size'] for row in rows)
+            after = rows[-1]['id']
+            pages += 1
+            if time.monotonic() >= report_at:
+                print(f'selection content: filtered={filtered} pages={pages} rows={scanned} stored_bytes={stored}',
+                      flush=True)
+                report_at = time.monotonic() + 5
+        return {'pages': pages, 'scanned': scanned, 'represented_raw_bytes': raw, 'represented_stored_bytes': stored,
+                    'owner_metadata_bytes': owners, 'payload_bytes_loaded': 0, 'row_budget': maintenance.ROW_BUDGET}
+
+    print('selection: all-depth discovery', flush=True)
+    root = {'all_depth_recovery': measure_selection(lambda: roots(False)),
+            'periodic_hot_roots': measure_selection(lambda: roots(True))}
+    print('selection: all-content metadata baseline', flush=True)
+    selection_index(False)
+    content_results = {'all_content': measure_selection(lambda: content(False))}
+    print('selection: plaintext metadata without index', flush=True)
+    content_results['filtered_without_index'] = measure_selection(lambda: content(True))
+    print('selection: populated-copy partial-index build', flush=True)
+    started = time.perf_counter()
+    selection_index(True)
+    build = {'elapsed_ms': (time.perf_counter() - started) * 1000}
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT sum(pgsize) FROM dbstat WHERE name='idx_content_plain_id'")
+        build['bytes'] = cursor.fetchone()[0] or 0
+    print('selection: production plaintext metadata with index', flush=True)
+    content_results['filtered_with_index'] = measure_selection(lambda: content(True))
+    print('selection: isolated synthetic dispatcher and index-write trials', flush=True)
+    import subprocess
+    import sys
+    import orjson
+    # A fresh process keeps application globals, dictionaries and executor state independent of the source clone.
+    work = Path(connection.settings_dict['NAME']).parent / 'synthetic'
+    code = ("import importlib.util,pathlib,orjson; "
+            f"s=importlib.util.spec_from_file_location('bench',{str(Path(__file__).resolve())!r}); "
+            "m=importlib.util.module_from_spec(s); s.loader.exec_module(m); "
+            f"w=pathlib.Path({str(work)!r}); w.mkdir(); m.configure(w,w/'benchmark.sqlite'); "
+            "print(orjson.dumps(m.synthetic_selection_trials()).decode())")
+    completed = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
+    if completed.returncode:
+        raise RuntimeError(completed.stderr)
+    synthetic = orjson.loads(completed.stdout)
+    return dict(root_selection=root, content_selection=content_results, index_build=build, **synthetic)
+
+
+async def dispatcher_trial(*, failures=False):
+    """Run the production dispatcher; patch only clock, stop boundary and fault injection."""
+    from unittest.mock import patch
+    from channels.db import database_sync_to_async
+    from django.db import connections, transaction
+    from twicc import content_maintenance_task as maintenance
+    from twicc.agent.registry import get_agent_manager_registry
+    from twicc.core.content_storage.maintenance_metrics import MaintenanceMetrics
+    from twicc.core.models import Project, SessionItem, SessionItemContent
+    from twicc.providers import db_writer
+    from twicc.providers.compute_executor import start_compute_executor, stop_compute_executor, run_compute_sync
+    from twicc.providers.compute_work import ComputeWorkState
+    from twicc.providers.write_coordinator import WriterCoordinator, WriteResources
+
+    get_agent_manager_registry()
+    from types import SimpleNamespace
+    db_writer._writer_signals = SimpleNamespace(sources=asyncio.Event())
+    coordinator = WriterCoordinator()
+    db_writer._db_writer_stop_event = asyncio.Event()
+    db_writer._write_coordinator = coordinator
+    db_writer._db_write_lock = coordinator.foreground_lock(WriteResources.WRITER)
+    db_writer._storage_admission_lock = coordinator.foreground_lock(WriteResources.ADMISSION)
+    stop, clock, emissions, latencies, attempts = asyncio.Event(), [0.0], [], [], Counter()
+    pass_count = 0
+    current_stage = ['startup_recovery']
+    foreground_stages, stage_sql = {}, {}
+    original_snapshot = maintenance._snapshot
+
+    class ObservedMetrics(MaintenanceMetrics):
+        def emit(self, event):
+            nonlocal pass_count
+            if self.operation_kind == 'periodic_compression':
+                current_stage[0] = self.stage
+            emissions.append({'kind': self.operation_kind, 'event': event, 'stage': self.stage,
+                                  'counts': dict(self.counts), 'cache': dict(self.cache_statistics),
+                                  'parent_operation_id': self.parent_operation_id,
+                                  'elapsed_ms': (time.monotonic() - self.started) * 1000,
+                                  'hold_p95_upper_ms': self._percentile(.95)})
+            if event == 'complete' and self.operation_kind == 'periodic_compression':
+                pass_count += 1
+                if pass_count >= (2 if failures else 1):
+                    stop.set()
+
+    def snapshot(session_id, *args, **kwargs):
+        if failures and session_id in {'hot', 'fault-permanent'}:
+            attempts[session_id] += 1
+            if session_id == 'fault-permanent' or attempts[session_id] == 1:
+                raise RuntimeError('injected benchmark restoration failure')
+        return original_snapshot(session_id, *args, **kwargs)
+
+    async def wait(stop_event, wake, timeout):
+        clock[0] += max(timeout or 0, 1)
+        await asyncio.sleep(.001)
+
+    def foreground_write():
+        with transaction.atomic():
+            Project.objects.filter(pk='benchmark').update(name='foreground')
+
+    async def foreground():
+        while not stop.is_set():
+            started = time.perf_counter()
+            requested_stage = current_stage[0]
+            await db_writer.run_under_db_write_lock(lambda: run_compute_sync(foreground_write))
+            latency = (time.perf_counter() - started) * 1000
+            latencies.append(latency)
+            foreground_stages.setdefault(requested_stage, []).append(latency)
+            await asyncio.sleep(.002)
+
+    start_compute_executor()
+    started = time.perf_counter()
+    sql = Counter()
+    from django.db.backends.signals import connection_created
+
+    def recorder(execute, statement, params, many, context):
+        sql['sql'] += 1
+        stage_sql.setdefault(current_stage[0], Counter())['sql'] += 1
+        if statement.startswith('SELECT'):
+            sql['selects'] += 1
+            if 'core_sessionitemcontent' in statement and 'payload' in statement.split(' FROM ')[0]:
+                if 'LENGTH(' not in statement.split(' FROM ')[0]:
+                    sql['payload_selects'] += 1
+        return execute(statement, params, many, context)
+
+    observed_connections = []
+
+    def attach(sender, connection, **kwargs):
+        if recorder not in connection.execute_wrappers:
+            connection.execute_wrappers.append(recorder)
+            observed_connections.append(connection)
+
+    connection_created.connect(attach, weak=False)
+    foreground_task = asyncio.create_task(foreground())
+    try:
+        with (patch.object(maintenance, 'INITIAL_DELAY', 0), patch.object(maintenance, '_maintenance_time', lambda: clock[0]),
+              patch.object(maintenance, '_wait', wait), patch.object(maintenance, '_snapshot', snapshot),
+              patch.object(maintenance, 'MaintenanceMetrics', ObservedMetrics),
+              patch.object(maintenance.logger, 'disabled', True)):
+            await asyncio.wait_for(maintenance.start_content_maintenance_task(
+                stop, compute_work=ComputeWorkState()), timeout=30)
+    finally:
+        stop.set()
+        await foreground_task
+        await stop_compute_executor()
+        await database_sync_to_async(connections.close_all, thread_sensitive=False)()
+        connection_created.disconnect(attach)
+        for observed in observed_connections:
+            if recorder in observed.execute_wrappers:
+                observed.execute_wrappers.remove(recorder)
+    summaries = [event for event in emissions if event['kind'] == 'periodic_compression' and event['event'] == 'complete']
+    counts = Counter()
+    for event in summaries:
+        counts.update(event['counts'])
+    latencies.sort()
+    result = dict(counts, elapsed_ms=(time.perf_counter() - started) * 1000, sql=dict(sql), events=emissions,
+                  foreground={'count': len(latencies), 'p50_ms': percentile(latencies, .5),
+                                  'p95_ms': percentile(latencies, .95), 'max_ms': max(latencies, default=0)})
+    result['sql_by_stage'] = {stage: dict(value) for stage, value in stage_sql.items()}
+    result['foreground_by_request_stage'] = {
+        stage: {'count': len(values), 'p50_ms': percentile(sorted(values), .5),
+                'p95_ms': percentile(sorted(values), .95), 'max_ms': max(values)}
+        for stage, values in foreground_stages.items()
+    }
+    if failures:
+        def remaining():
+            return {
+                'unaffected_compressed': SessionItemContent.objects.filter(
+                    sha256=hashlib.sha256(b'unaffected new cold ' * 500).digest(), codec='zstd').exists(),
+                'transient_restored': not SessionItem.objects.filter(
+                    session_id='hot', current_content__codec='zstd').exists(),
+            }
+        result.update(transient_attempts=attempts['hot'], permanent_attempts=attempts['fault-permanent'],
+                      **await database_sync_to_async(remaining)())
+    return result
+
+
+def synthetic_selection_trials():
+    from django.db import connection, transaction
+    from django.utils import timezone
+    from twicc import content_maintenance_task as maintenance
+    from twicc.core.content_storage.ingestion import insert_ingested_items, prepare_ingestion_contents
+    from twicc.core.content_storage.policy import compression_policy_version
+    from twicc.core.models import ContentDictionary, Session, SessionItem, SessionItemContent
+
+    started = time.perf_counter()
+    fixture = seed('compress')
+    # Mostly post-compute contents have real shared references and current policy metadata.
+    from twicc.core.content_storage.codec import encode_cold
+    dictionary = ContentDictionary.objects.get(provider='codex', version=1)
+    policy = compression_policy_version('codex', dictionary.id)
+    for offset in range(0, 10000, 500):
+        rows = []
+        for index in range(offset, offset + 500):
+            text = (f'public conformant benchmark {index} ' * 50)[:1024]
+            encoded, no_gain = encode_cold(text, dictionary.id, policy)
+            assert encoded.codec == 'zstd' and not no_gain
+            rows.append(SessionItemContent(
+                sha256=encoded.sha256, payload=encoded.payload, raw_size=encoded.raw_size, codec=encoded.codec,
+                dictionary_id=encoded.dictionary_id, dictionary_provider='codex',
+                session_ids=['owner-0', 'owner-1'], compression_attempt_version=policy,
+                compression_no_gain=False,
+            ))
+        with transaction.atomic():
+            SessionItemContent.objects.bulk_create(rows, batch_size=500)
+            SessionItem.objects.bulk_create([
+                SessionItem(session_id=owner, line_num=30000 + offset + index, content='',
+                            current_content=row, original_content=row)
+                for index, row in enumerate(rows) for owner in ('owner-0', 'owner-1')
+            ], batch_size=500)
+    fixture['contents'] += 10000
+    fixture['preconformant_contents'] = 10000
+    fixture['shared_cold_references'] = 20000
+    setup_ms = (time.perf_counter() - started) * 1000
+    complete = {'compressible': asyncio.run(dispatcher_trial()), 'conformant': asyncio.run(dispatcher_trial())}
+    # Make one shared compressed row reference two hot roots. Recovery sees real compressed references.
+    hot = Session.objects.get(pk='hot')
+    permanent = Session.objects.create(id='fault-permanent', project=hot.project, provider='codex',
+                                      created_at=timezone.now(), storage_incarnation='fault-permanent',
+                                      content_storage_version=1, compute_version=999999, file_path='/public/fault')
+    row = SessionItemContent.objects.filter(codec='zstd').first()
+    row.session_ids = sorted(set(row.session_ids + [hot.id, permanent.id]))
+    row.save(update_fields=['session_ids'])
+    SessionItem.objects.create(session=permanent, line_num=1, current_content=row, original_content=row)
+    SessionItem.objects.create(session=hot, line_num=10001, current_content=row, original_content=row)
+    raw = b'unaffected new cold ' * 500
+    SessionItemContent.objects.create(sha256=hashlib.sha256(raw).digest(), payload=raw, raw_size=len(raw),
+                                      codec='plain', dictionary_provider='codex', session_ids=['owner-0', 'owner-1'])
+    complete['restoration_failures'] = asyncio.run(dispatcher_trial(failures=True))
+    writes = {}
+    dictionary = ContentDictionary.objects.get(provider='codex', version=1)
+    policy = compression_policy_version('codex', dictionary.id)
+    sizes = [128, 65536, 1024**2, 16 * 1024**2]
+    for indexed in (False, True):
+        selection_index(indexed)
+        samples = []
+        for repeat in range(3):
+            for size in sizes:
+                owner = Session.objects.get(pk='owner-0')
+                text = (f'index-{repeat}-{indexed}-{size} ' * (size // 8 + 1))[:size]
+                start = time.perf_counter()
+                prepared = prepare_ingestion_contents(owner, [text])
+                codec_ms = (time.perf_counter() - start) * 1000
+                start = time.perf_counter()
+                with transaction.atomic():
+                    insert_ingested_items(owner, [(SessionItem(session=owner, line_num=20000 + repeat * 4 + sizes.index(size),
+                                                              content=text), text)], prepared=prepared)
+                insert_ms = (time.perf_counter() - start) * 1000
+                row = SessionItemContent.objects.get(sha256=hashlib.sha256(text.encode()).digest())
+                # A hot owner authorizes zstd -> plain. A cold owner authorizes plain -> zstd.
+                transitions = []
+                for mode in ('plain', policy):
+                    row.session_ids = ['hot'] if mode == 'plain' else ['owner-0']
+                    row.save(update_fields=['session_ids'])
+                    start = time.perf_counter()
+                    candidate = maintenance.prepare_representation(row.id, mode)
+                    prepare_ms = (time.perf_counter() - start) * 1000
+                    start = time.perf_counter()
+                    with transaction.atomic():
+                        changed = maintenance.publish_representation(candidate, frozenset())
+                    transitions.append({'mode': 'restore' if mode == 'plain' else 'compress', 'changed': changed,
+                                            'codec_ms': prepare_ms, 'writer_commit_ms': (time.perf_counter() - start) * 1000})
+                samples.append({'raw_bytes': size, 'preparation_ms': codec_ms, 'insert_writer_commit_ms': insert_ms,
+                                    'transitions': transitions})
+                # Matched variants reuse line numbers and remove only this trial's rows outside timing.
+                SessionItem.objects.filter(
+                    session=owner, line_num=20000 + repeat * 4 + sizes.index(size),
+                ).delete()
+                SessionItemContent.objects.filter(pk=row.pk).delete()
+        writes['with_index' if indexed else 'without_index'] = samples
+    selection_index(True)
+    connection.close()
+    return {'index_write_overhead': {'samples': writes, 'repeats': 3,
+                                         'note': 'writer transaction plus commit; no coordinator queue; preparation separate'},
+                'complete_pass': complete, 'synthetic_fixture': dict(fixture, setup_ms=setup_ms)}
+
+
 def main():
     args = arguments()
     output = validate_output(args)
     work, target = destination(args)
     configure(work, target, source=bool(args.source_db))
     fixture = {'source_backup': True} if args.source_db else seed(args.scenario)
-    result = asyncio.run(run_pass(args.scenario, bool(args.source_db)))
+    result = (run_selection_benchmark() if args.scenario == 'selection'
+              else asyncio.run(run_pass(args.scenario, bool(args.source_db))))
     if args.scenario == 'acquisition':
         result = acquisition(result)
-    elif not args.source_db:
+    elif not args.source_db and args.scenario != 'selection':
         samples = [dict(cache_state='first measured pass; fixture pages may be warm', **result)]
         for _ in range(2):
             if args.scenario in {'compress', 'foreground'}:
