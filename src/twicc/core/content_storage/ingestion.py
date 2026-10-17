@@ -137,6 +137,8 @@ def insert_ingested_items(
     with ingestion_plaintext_change(session):
         source = iter(items)
         inserted = set()
+        prepared_by_text = ({record.text: (digest, record) for digest, record in prepared.items()}
+                            if prepared is not None else {})
         while batch := list(islice(source, INSERT_BATCH_SIZE)):
             existing = set(SessionItem.objects.filter(session_id=session.id, line_num__in=[i.line_num for i, _ in batch])
                            .values_list('line_num', flat=True))
@@ -156,7 +158,7 @@ def insert_ingested_items(
             cold = resolve_content_decisions([session.id], timezone.now(), active_session_ids.get())[session.id].is_cold
             if prepared is not None and cold:
                 wanted = set(texts)
-                batch_prepared = {digest: record for digest, record in prepared.items() if record.text in wanted}
+                batch_prepared = dict(prepared_by_text[text] for text in wanted if text in prepared_by_text)
                 if {record.text for record in batch_prepared.values()} != wanted:
                     batch_prepared = None
             with prepared_content_guard(lambda cold=cold: cold):

@@ -1,0 +1,471 @@
+#!/usr/bin/env python3
+"""Disk-backed content maintenance measurements on disposable databases only.
+
+Synthetic databases use model schema creation, never migrations. An explicit source
+is opened read-only and backed up once. Only the new destination receives writes.
+Output contains counters and query plans, never content or session identities.
+"""
+
+import argparse
+import asyncio
+from collections import Counter
+from contextlib import contextmanager
+from datetime import timedelta
+import hashlib
+import os
+from pathlib import Path
+import resource
+import shutil
+import sqlite3
+import time
+
+
+def arguments():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--scenario', choices=('conformant', 'compress', 'foreground', 'acquisition'), required=True)
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--work-dir', type=Path, required=True)
+    parser.add_argument('--source-db', type=Path)
+    return parser.parse_args()
+
+
+def destination(args):
+    work = args.work_dir.resolve()
+    if work.exists() and any(work.iterdir()):
+        raise ValueError('Work directory must be empty')
+    # Do not infer or import application settings to resolve the running database.
+    # Refuse known data directories, project DB directories, and their aliases.
+    checkout = Path(__file__).resolve().parents[1]
+    forbidden = {(checkout / 'db').resolve(), (Path.home() / '.twicc').resolve()}
+    inherited = os.environ.get('TWICC_DATA_DIR')
+    if inherited:
+        forbidden.add(Path(inherited).resolve())
+    if any(work == path or work.is_relative_to(path) for path in forbidden):
+        raise ValueError('Work directory resolves inside an instance data directory')
+    work.mkdir(parents=True, exist_ok=True)
+    target = work / 'benchmark.sqlite'
+    if args.source_db:
+        source = args.source_db.resolve(strict=True)
+        if source == target:
+            raise ValueError('Source and destination must differ')
+        if shutil.disk_usage(work).free < source.stat().st_size * 1.25 + 1024**3:
+            raise ValueError('Insufficient free disk space for one backup and bounded writes')
+        from contextlib import closing
+
+        with (closing(sqlite3.connect(source.as_uri() + '?mode=ro', uri=True)) as reader,
+              closing(sqlite3.connect(target)) as writer):
+            reader.backup(writer, pages=2048, sleep=.01)
+    return work, target
+
+
+def configure(work, target, *, source=False):
+    # Set the data directory before importing twicc. No instance settings are imported.
+    os.environ['TWICC_DATA_DIR'] = str(work)
+    import django
+    from django.conf import settings
+
+    settings.configure(INSTALLED_APPS=['twicc.core'], SECRET_KEY='disposable-benchmark', USE_TZ=True, TIME_ZONE='UTC',
+                       DATABASES={'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': str(target),
+                                             'OPTIONS': {'timeout': 30, 'init_command':
+                                                 'PRAGMA synchronous=NORMAL; PRAGMA mmap_size=134217728; '
+                                                 'PRAGMA journal_size_limit=27103364; PRAGMA cache_size=2000;'}}},
+                       CLAUDE_CODE_COMPUTE_VERSION=999999, CODEX_COMPUTE_VERSION=999999,
+                       SESSION_DIRS_CLEANUP_ENABLED=False)
+    django.setup()
+    from django.db import connection
+    with connection.cursor() as cursor:
+        # Candidate writes are bounded; normal checkpoints bound the source clone WAL.
+        cursor.execute('PRAGMA journal_mode=WAL')
+        cursor.execute('PRAGMA synchronous=NORMAL')
+    if 'core_session' not in connection.introspection.table_names():
+        from django.apps import apps
+        with connection.schema_editor() as editor:
+            for model in apps.get_app_config('core').get_models():
+                editor.create_model(model)
+
+
+def io_sample():
+    usage = resource.getrusage(resource.RUSAGE_SELF)
+    io = {}
+    path = Path('/proc/self/io')
+    if path.exists():
+        io = {key: int(value) for line in path.read_text().splitlines() for key, value in [line.split(':')]}
+    return dict(cpu_seconds=usage.ru_utime + usage.ru_stime, **io)
+
+
+@contextmanager
+def queries(counts, plans=None):
+    from django.db import connection
+
+    def record(execute, sql, params, many, context):
+        if sql.startswith(('EXPLAIN ', 'SELECT rootpage FROM sqlite_master')):
+            counts['profiling_sql'] += 1
+            return execute(sql, params, many, context)
+        counts['sql'] += 1
+        if sql.lstrip().startswith('SELECT'):
+            counts['selects'] += 1
+            head = sql.split(' FROM ')[0]
+            if 'core_sessionitemcontent' in sql and 'payload' in head and 'LENGTH(' not in head:
+                counts['payload_selects'] += 1
+            if 'FROM "core_session"' in sql:
+                counts['session_selects'] += 1
+        if (plans is not None and 'candidate_lookup' not in plans and sql.startswith('SELECT')
+                and 'FROM "core_sessionitemcontent"' in sql):
+            with connection.cursor() as cursor:
+                cursor.execute('EXPLAIN QUERY PLAN ' + sql, params)
+                plans['candidate_lookup'] = [row[3] for row in cursor.fetchall()]
+        if plans is not None and sql.startswith('UPDATE "core_sessionitemcontent"'):
+            # EXPLAIN includes SQLite FK work, unlike EXPLAIN QUERY PLAN.
+            with connection.cursor() as cursor:
+                cursor.execute('EXPLAIN ' + sql, params)
+                instructions = cursor.fetchall()
+            plans['publication_opcodes'] = sorted({row[1] for row in instructions})
+            plans['publication_fk_counter'] = any(row[1] == 'FkCounter' for row in instructions)
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT rootpage FROM sqlite_master WHERE name='core_sessionitem'")
+                child_root = cursor.fetchone()[0]
+            plans['publication_opens_child_table'] = any(
+                row[1] in {'OpenRead', 'OpenWrite'} and row[3] == child_root for row in instructions)
+        return execute(sql, params, many, context)
+    with connection.execute_wrapper(record):
+        yield
+
+
+def seed(scenario):
+    import orjson
+    from django.db import transaction
+    from django.utils import timezone
+    from importlib.resources import files
+    from twicc.core.content_storage.codec import encode_cold
+    from twicc.core.models import ContentDictionary, Project, Session, SessionItem, SessionItemContent
+
+    from twicc.core.content_storage.policy import compression_policy_version
+
+    directory = files('twicc.core.content_storage').joinpath('dictionaries')
+    manifest = orjson.loads(directory.joinpath('manifest.json').read_bytes())
+    entry = next(row for row in manifest['dictionaries'] if row['provider'] == 'codex' and row['version'] == 1)
+    payload = directory.joinpath(entry['file']).read_bytes()
+    assert hashlib.sha256(payload).hexdigest() == entry['sha256']
+    assert len(payload) == entry['byte_length'] and 0 < len(payload) <= 16384
+    dictionary = ContentDictionary.objects.create(provider='codex', version=1, format=entry['format'],
+                                                  sha256=hashlib.sha256(payload).digest(), payload=payload)
+    policy = compression_policy_version('codex', dictionary.id)
+    project = Project.objects.create(id='benchmark')
+    now = timezone.now()
+    owners = [Session(id=f'owner-{i}', project=project, provider='codex', type='session',
+                      storage_incarnation=f'incarnation-{i}', content_storage_version=1,
+                      compute_version=999999, created_at=now - timedelta(days=60)) for i in range(8)]
+    hot = Session(id='hot', project=project, provider='codex', storage_incarnation='hot-incarnation',
+                  content_storage_version=1, compute_version=999999, created_at=now)
+    owners.append(hot)
+    owners.extend(Session(id=f'hot-child-{i}', project=project, provider='codex', type='subagent', parent_session=hot,
+                          storage_incarnation=f'hot-child-incarnation-{i}', content_storage_version=1,
+                          compute_version=999999, created_at=now) for i in range(100))
+    for owner in owners:
+        owner.file_path = '/public-benchmark/' + owner.id
+    Session.objects.bulk_create(owners)
+    total = 100000 if scenario == 'conformant' else (4 if scenario == 'acquisition' else 24)
+    rows = []
+    for index in range(total):
+        size = 128 if scenario in {'conformant', 'acquisition'} else (1024, 65536, 1024**2, 16 * 1024**2)[index % 4]
+        text = (f'public synthetic content {index} ' * (size // 20 + 1))[:size]
+        if scenario == 'conformant':
+            text = text if index % 2 else f'x{index}'
+            encoded, no_gain = encode_cold(text, dictionary.id, policy)
+            payload, codec, dictionary_id = encoded.payload, encoded.codec, encoded.dictionary_id
+            attempt = policy
+        else:
+            payload, codec, dictionary_id, attempt, no_gain = text.encode(), 'plain', None, None, False
+        raw = text.encode()
+        owner_ids = [owners[index % 8].id, owners[(index + 1) % 8].id]
+        if scenario != 'conformant' and index % 10 == 0:
+            owner_ids.append(hot.id)
+        rows.append(SessionItemContent(sha256=hashlib.sha256(raw).digest(), payload=payload, codec=codec,
+                                      dictionary_id=dictionary_id, raw_size=len(raw), dictionary_provider='codex',
+                                      session_ids=sorted(owner_ids), compression_attempt_version=attempt,
+                                      compression_no_gain=no_gain))
+        if len(rows) == 100:
+            SessionItemContent.objects.bulk_create(rows, batch_size=100)
+            rows.clear()
+    if rows:
+        SessionItemContent.objects.bulk_create(rows, batch_size=100)
+    # Recovery has a large conformant hot session and 100 conformant hot descendants.
+    plain = SessionItemContent.objects.create(sha256=hashlib.sha256(b'hot reference').digest(), payload=b'hot reference',
+                                             raw_size=13, codec='plain', dictionary_provider='codex',
+                                             session_ids=sorted(owner.id for owner in owners[8:]))
+    hot_items = 100000 if scenario in {'conformant', 'acquisition'} else 100
+    with transaction.atomic():
+        for offset in range(0, hot_items, 1000):
+            SessionItem.objects.bulk_create([SessionItem(session=hot, line_num=i, content='', current_content=plain,
+                                                        original_content=plain) for i in range(offset, min(offset + 1000, hot_items))])
+        SessionItem.objects.bulk_create([SessionItem(session=owner, line_num=1, content='', current_content=plain,
+                                                    original_content=plain) for owner in owners[9:]])
+    return {'contents': total + 1, 'hot_session_items': hot_items, 'hot_descendants': 100,
+            'public_dictionary_sha256': bytes(dictionary.sha256).hex(), 'orjson_version': orjson.__version__}
+
+
+def inspect_source_metadata(cache):
+    """Inspect the whole copy's eligibility without preparing its payload backlog."""
+    from django.db.models import BinaryField
+    from django.db.models.functions import Cast, Length
+    from django.utils import timezone
+    from twicc import content_maintenance_task as maintenance
+    from twicc.core.content_storage.dictionaries import get_provider_dictionary
+    from twicc.core.content_storage.policy import compression_policy_version
+    from twicc.core.models import SessionItemContent
+
+    counts, sql, selected_ids = Counter(), Counter(), []
+    before, started = io_sample(), time.perf_counter()
+    cursor = 0
+    with queries(sql):
+        while True:
+            rows = list(SessionItemContent.objects.filter(pk__gt=cursor).order_by('id').annotate(
+                stored_size=Length('payload'), owner_size=Length(Cast('session_ids', BinaryField())),
+            ).values(*(field for field in maintenance.COMPRESSION_METADATA_FIELDS if field != 'session_ids'),
+                     'stored_size', 'owner_size')[:100])
+            if not rows:
+                break
+            pending = []
+            for row in rows:
+                counts['scanned'] += 1
+                counts['raw_bytes'] += row['raw_size']
+                counts['stored_bytes'] += row['stored_size']
+                dictionary = get_provider_dictionary(row['dictionary_provider'])
+                if dictionary is None:
+                    counts['missing_dictionary'] += 1
+                    continue
+                policy = compression_policy_version(row['dictionary_provider'], dictionary.row.id)
+                if row['codec'] == 'zstd' and row['dictionary_id'] == dictionary.row.id:
+                    counts['already_compressed'] += 1
+                elif row['compression_no_gain'] and row['compression_attempt_version'] == policy:
+                    counts['no_gain_skips'] += 1
+                else:
+                    pending.append(row['id'])
+            owners = dict(SessionItemContent.objects.filter(pk__in=pending).values_list('id', 'session_ids'))
+            decisions = cache.decisions({owner for ids in owners.values() for owner in ids},
+                                        timezone.now(), frozenset())
+            for content_id, owner_ids in owners.items():
+                if maintenance._candidate_owners_cold(owner_ids, decisions):
+                    counts['eligible'] += 1
+                    if len(selected_ids) < 20:
+                        selected_ids.append(content_id)
+                else:
+                    counts['ineligible_owners'] += 1
+            cursor = rows[-1]['id']
+    after = io_sample()
+    return {'elapsed_ms': (time.perf_counter() - started) * 1000, 'counts': dict(counts), 'sql': dict(sql),
+            'cache': dict(cache.statistics),
+            'process_interval_delta': {key: after[key] - before[key] for key in before},
+            'selected_ids': selected_ids}
+
+
+async def run_pass(scenario, source=False):
+    from functools import partial
+    from concurrent.futures import ThreadPoolExecutor
+    from channels.db import database_sync_to_async
+    from django.db import connections, transaction
+    from twicc import content_maintenance_task as maintenance
+    from twicc.core.content_storage.maintenance_cache import MaintenanceSessionCache
+    from twicc.core.content_storage.maintenance_metrics import MaintenanceMetrics
+    from twicc.core.models import Project
+    from twicc.providers import db_writer
+    from twicc.providers.compute_executor import run_compute_sync, start_compute_executor, stop_compute_executor
+    from twicc.providers.write_coordinator import WriterCoordinator, WriteResources
+
+    # run_server imports ASGI, which imports the registry before task startup.
+    bootstrap_started = time.perf_counter()
+    from twicc.agent.registry import get_agent_manager_registry
+    get_agent_manager_registry()
+    bootstrap_ms = (time.perf_counter() - bootstrap_started) * 1000
+    coordinator = WriterCoordinator()
+    db_writer._db_writer_stop_event = asyncio.Event()
+    db_writer._write_coordinator = coordinator
+    db_writer._db_write_lock = coordinator.foreground_lock(WriteResources.WRITER)
+    db_writer._storage_admission_lock = coordinator.foreground_lock(WriteResources.ADMISSION)
+    cache, metrics = MaintenanceSessionCache(), MaintenanceMetrics('benchmark', 'periodic_compression')
+    sql, plans, latencies = Counter(), {}, []
+    unsubscribe = coordinator.observe_foreground_wait(metrics.record_foreground_wait)
+    start_compute_executor()
+    codec_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='benchmark-content-codec')
+    before, started = io_sample(), time.perf_counter()
+    recovery_sql, recovery_time = Counter(), 0
+    finished = asyncio.Event()
+    foreground_sequence = 0
+
+    def recover():
+        start = time.perf_counter()
+        targets, cursor = 0, None
+        with queries(recovery_sql):
+            while ids := maintenance.pending_session_page(cursor):
+                targets += len(maintenance.recovery_promotion_targets(ids, cache))
+                cursor = ids[-1]
+        return targets, (time.perf_counter() - start) * 1000
+
+    def prepare(cursor):
+        with queries(sql):
+            return maintenance.prepare_compression_batch(cursor, row_budget=1 if source else 100, session_cache=cache)
+
+    def publish(entries, active):
+        with queries(sql, plans):
+            return maintenance._publish(entries, active, session_cache=cache)
+
+    def write():
+        nonlocal foreground_sequence
+        foreground_sequence += 1
+        with transaction.atomic():
+            Project.objects.filter(pk='benchmark').update(name=f'foreground-{foreground_sequence}')
+
+    async def foreground():
+        while not finished.is_set():
+            requested = time.perf_counter()
+            await db_writer.run_under_db_write_lock(lambda: run_compute_sync(write))
+            latencies.append((time.perf_counter() - requested) * 1000)
+            await asyncio.sleep(.002)
+
+    foreground_task = asyncio.create_task(foreground()) if scenario == 'foreground' else None
+    source_metadata = None
+    try:
+        if source:
+            source_metadata = await database_sync_to_async(
+                inspect_source_metadata, thread_sensitive=False, executor=codec_executor,
+            )(cache)
+            source_ids = iter(source_metadata.pop('selected_ids'))
+            targets = None
+        else:
+            targets, recovery_time = await database_sync_to_async(
+                recover, thread_sensitive=False, executor=codec_executor,
+            )()
+        cursor, done = 0, False
+        while not done:
+            if source:
+                content_id = next(source_ids, None)
+                if content_id is None:
+                    break
+                cursor = content_id - 1
+            start = time.perf_counter()
+            page = await database_sync_to_async(
+                prepare, thread_sensitive=False, executor=codec_executor,
+            )(cursor)
+            metrics.record_preparation((time.perf_counter() - start) * 1000)
+            metrics.record_page(page)
+            cursor, done = page.cursor, page.done if not source else False
+            entries = page.entries
+            if entries:
+                requested = time.perf_counter()
+                while (lease := coordinator.try_background_lease()) is None:
+                    await asyncio.sleep(0)
+                metrics.counts['resource_wait_ms'] += (time.perf_counter() - requested) * 1000
+                await maintenance._apply(partial(publish), entries, lease=lease, metrics=metrics)
+            await asyncio.sleep(0)
+    finally:
+        finished.set()
+        if foreground_task:
+            await foreground_task
+        await stop_compute_executor()
+        await database_sync_to_async(connections.close_all, thread_sensitive=False, executor=codec_executor)()
+        codec_executor.shutdown(wait=True)
+        unsubscribe()
+        cache_statistics = dict(cache.statistics)
+        cache.close()
+    after = io_sample()
+    latencies.sort()
+    return {'application_registry_initialization_ms': bootstrap_ms,
+                'elapsed_ms': (time.perf_counter() - started) * 1000,
+                'process_interval_delta': {key: after[key] - before[key] for key in before},
+                'counts': dict(metrics.counts), 'sql': dict(sql), 'cache': cache_statistics,
+                'writer_hold_percentile_upper_ms': {'p50': metrics._percentile(.5),
+                                                    'p95': metrics._percentile(.95),
+                                                    'p99': metrics._percentile(.99)},
+                'full_metadata_inspection': source_metadata,
+                'recovery': ({'not_run': True, 'reason': 'Source recovery remains exploratory; synthetic trials measure it'}
+                             if source else {'elapsed_ms': recovery_time, 'sql': dict(recovery_sql), 'targets': targets,
+                                             'writer_grants': 0, 'payload_reads': recovery_sql['payload_selects']}),
+                'foreground': {'count': len(latencies), 'request_to_commit_p50_ms': percentile(latencies, .5),
+                                'request_to_commit_p95_ms': percentile(latencies, .95),
+                                'request_to_commit_p99_ms': percentile(latencies, .99),
+                                'request_to_commit_max_ms': max(latencies, default=0)}, 'plans': plans,
+                'sqlite_journal_mode': 'wal'}
+
+
+def percentile(values, fraction):
+    return values[min(len(values) - 1, int(len(values) * fraction))] if values else 0
+
+
+def restore_candidates():
+    from django.db import transaction
+    from twicc.core.content_storage.codec import decode_content
+    from twicc.core.models import SessionItemContent
+
+    # Fixture reset is outside the measured interval. Never used on source data.
+    with transaction.atomic():
+        for row in SessionItemContent.objects.filter(codec='zstd').iterator(chunk_size=1):
+            row.payload = decode_content(row).encode()
+            row.codec, row.dictionary_id = 'plain', None
+            row.compression_attempt_version, row.compression_no_gain = None, False
+            row.save(update_fields=['payload', 'codec', 'dictionary_id',
+                                    'compression_attempt_version', 'compression_no_gain'])
+
+
+def acquisition(first):
+    from django.db import connection, transaction
+    from twicc.core.models import SessionItem, SessionItemContent
+
+    # Both FK columns retain their production db_index=False model declaration.
+    assert not SessionItem._meta.get_field('current_content').db_index
+    assert not SessionItem._meta.get_field('original_content').db_index
+    with connection.cursor() as cursor:
+        cursor.execute('PRAGMA index_list(core_sessionitem)')
+        indexes = [row[1] for row in cursor.fetchall()]
+        columns = []
+        for index in indexes:
+            cursor.execute('PRAGMA index_info("' + index.replace('"', '""') + '")')
+            columns.extend(row[2] for row in cursor.fetchall())
+    assert 'current_content_id' not in columns and 'original_content_id' not in columns
+    first_samples = [dict(cache_state='first measured pass; fixture pages may be warm', **first)]
+    for _ in range(2):
+        restore_candidates()
+        first_samples.append(dict(cache_state='warm repeat on the same database',
+                                  **asyncio.run(run_pass('acquisition'))))
+    row = SessionItemContent.objects.get(raw_size=13)
+    with transaction.atomic():
+        for offset in range(100000, 1000000, 1000):
+            SessionItem.objects.bulk_create([SessionItem(session_id='hot', line_num=i, content='',
+                                                        current_content=row, original_content=row)
+                                            for i in range(offset, offset + 1000)])
+    second_samples = []
+    for iteration in range(3):
+        restore_candidates()
+        result = asyncio.run(run_pass('acquisition'))
+        result['cache_state'] = ('first measured pass at this child count' if iteration == 0
+                                 else 'warm repeat on the same database')
+        second_samples.append(result)
+    for result in first_samples + second_samples:
+        # dictionary_id checks its parent dictionary; FkCounter is valid there.
+        assert not result['plans']['publication_opens_child_table']
+    return {'children_100000': first_samples, 'children_1000000': second_samples, 'unindexed_content_fks': True}
+
+
+def main():
+    args = arguments()
+    work, target = destination(args)
+    configure(work, target, source=bool(args.source_db))
+    fixture = {'source_backup': True} if args.source_db else seed(args.scenario)
+    result = asyncio.run(run_pass(args.scenario, bool(args.source_db)))
+    if args.scenario == 'acquisition':
+        result = acquisition(result)
+    elif not args.source_db:
+        samples = [dict(cache_state='first measured pass; fixture pages may be warm', **result)]
+        for _ in range(2):
+            if args.scenario in {'compress', 'foreground'}:
+                restore_candidates()
+            samples.append(dict(cache_state='warm repeat on the same database',
+                                **asyncio.run(run_pass(args.scenario))))
+        result = samples
+    import orjson
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_bytes(orjson.dumps({'scenario': args.scenario, 'fixture': fixture, 'result': result},
+                                       option=orjson.OPT_INDENT_2))
+
+
+if __name__ == '__main__':
+    main()

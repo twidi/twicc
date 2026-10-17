@@ -215,7 +215,7 @@ def test_periodic_candidate_waits_for_real_compute_cleanup(publication_tree, mon
     monkeypatch.setattr(maintenance, '_maintenance_time', lambda: clock[0])
     monkeypatch.setattr(maintenance, '_wait', wait)
     # The codec worker and publication worker use the same isolated WAL database.
-    monkeypatch.setattr(maintenance, 'pending_root_page', lambda *args: [])
+    monkeypatch.setattr(maintenance, 'pending_session_page', lambda *args: [])
     monkeypatch.setattr(compute_executor, 'run_compute_sync', db_writer.run_compute_sync)
 
     async def scenario():

@@ -74,12 +74,11 @@ def test_missing_or_invalid_dictionary_fails():
 
 @pytest.mark.django_db(transaction=True)
 def test_rolled_back_dictionary_is_not_published():
-    with pytest.raises(RuntimeError):
-        with transaction.atomic():
-            row = ContentDictionary.objects.create(provider='rollback', version=1, format='raw', payload=b'abc',
-                                                   sha256=hashlib.sha256(b'abc').digest())
-            codec.encode_cold('abc' * 100, row.id, 'policy')
-            raise RuntimeError('rollback')
+    with pytest.raises(RuntimeError), transaction.atomic():
+        row = ContentDictionary.objects.create(provider='rollback', version=1, format='raw', payload=b'abc',
+                                               sha256=hashlib.sha256(b'abc').digest())
+        codec.encode_cold('abc' * 100, row.id, 'policy')
+        raise RuntimeError('rollback')
     with pytest.raises(codec.ContentIntegrityError):
         codec.encode_cold('abc' * 100, row.id, 'policy')
 

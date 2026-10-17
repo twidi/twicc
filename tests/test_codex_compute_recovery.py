@@ -1256,7 +1256,7 @@ def test_startup_failure_recovers_outdated_roots_before_periodic_admission(
     monkeypatch.setattr(background_compute, 'sync_to_async', background.sync_to_async)
     monkeypatch.setattr(background_compute, 'load_project_directories', lambda: None)
     monkeypatch.setattr(background_compute, 'load_project_git_roots', lambda: None)
-    monkeypatch.setattr(maintenance, 'pending_root_page', lambda *args: [])
+    monkeypatch.setattr(maintenance, 'pending_session_page', lambda *args: [])
     clock, preparations = [0], []
     monkeypatch.setattr(maintenance, '_maintenance_time', lambda: clock[0])
 

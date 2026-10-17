@@ -510,9 +510,9 @@ def test_child_compute_defers_existing_root_recovery_and_binding_targets(
         Session.objects.filter(pk=root.id).update(last_line=1, content_storage_version=1, content_state_epoch=0)
         return child
 
-    def prepare(snapshot, *args):
+    def prepare(snapshot, *args, **kwargs):
         scans.append(getattr(snapshot, 'session_id', snapshot.root_id))
-        batch = original_prepare(snapshot, *args)
+        batch = original_prepare(snapshot, *args, **kwargs)
         if not recovery_prepared.is_set():
             recovery_prepared.set()
             assert release_recovery.wait(5)

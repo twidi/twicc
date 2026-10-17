@@ -128,9 +128,9 @@ def test_identical_override_produces_no_item_update():
         if sql.startswith('UPDATE "core_sessionitem"'):
             updates.append(sql)
         return execute(sql, params, many, context)
-    with references.session_reference_operation(root.id, item_count=1, expected_batches=1) as operation:
-        with connection.execute_wrapper(capture):
-            apply_override_slice(message(root), [{'id': row.id, 'content': 'same'}], operation)
+    with (references.session_reference_operation(root.id, item_count=1, expected_batches=1) as operation,
+          connection.execute_wrapper(capture)):
+        apply_override_slice(message(root), [{'id': row.id, 'content': 'same'}], operation)
     assert updates == []
     row.refresh_from_db()
     assert row.current_content_id == pk
@@ -173,11 +173,11 @@ def test_conflicting_overrides_reject_before_interning():
     from tests.test_content_extraction import make_session, message
     root = make_session()
     row = SessionItem.objects.create(session=root, line_num=1, content='legacy')
-    with references.session_reference_operation(root.id, item_count=1, expected_batches=1) as operation:
-        with pytest.raises(ContentIntegrityError):
-            apply_override_slice(message(root), [
-                {'id': row.id, 'content': 'first'}, {'id': row.id, 'content': 'second'},
-            ], operation)
+    with (references.session_reference_operation(root.id, item_count=1, expected_batches=1) as operation,
+          pytest.raises(ContentIntegrityError)):
+        apply_override_slice(message(root), [
+            {'id': row.id, 'content': 'first'}, {'id': row.id, 'content': 'second'},
+        ], operation)
     row.refresh_from_db()
     assert row.current_content_id is None
     assert row.content == 'legacy'

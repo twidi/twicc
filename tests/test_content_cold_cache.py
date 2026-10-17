@@ -152,11 +152,10 @@ def test_publication_reuses_policy_within_one_writer_lease():
     from twicc.core.content_storage import extraction
     make_session('root', created_at=timezone.now() - timedelta(days=31))
     decisions(['root'])
-    placement = {
-        'unresolved_active': False, 'active_roots': frozenset(), 'root_id': 'root',
-        'pending_session_id': 'root', 'root_incarnation': None, 'root_epoch': None,
-        'initial_fields': {}, 'final_fields': {}, 'now': timezone.now(),
-    }
+    # A shared owner uses committed session metadata rather than pending target fields.
+    placement = {'pending_session_id': 'different-target', 'active_session_ids': frozenset(),
+                 'now': timezone.now()}
+
     token = extraction._placement.set(placement)
     try:
         with transaction.atomic(), extraction._publication_decisions():
