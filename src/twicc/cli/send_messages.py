@@ -225,6 +225,7 @@ def send_messages_cmd(
     from twicc.cli._drop_request.prompt import PromptError, resolve_prompt
     from twicc.cli._drop_request.sender_header import prefix_sender_header
     from twicc.cli._drop_request.output import emit_validation_errors
+    from twicc.cli._drop_request.session_lookup import SessionLookupError, ensure_conversation
     from twicc.cli._drop_request.validation import ValidationError
     from twicc.cli._drop_request.whoami import resolve_current_session
     from twicc.cli._output import emit_error
@@ -264,6 +265,10 @@ def send_messages_cmd(
 
     def _prepare(resolved):
         """Per-id: build the send payload and stage this recipient's own copy of the files (D19)."""
+        try:
+            ensure_conversation(resolved)
+        except SessionLookupError as e:
+            return [ValidationError("SESSION_ID", e.code, e.message)]
         payload = {
             "session_id": resolved.session_id,
             "_send_origin": send_origin,

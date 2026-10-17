@@ -133,6 +133,7 @@ def send_message_cmd(
     from twicc.cli._drop_request.sender_header import prefix_sender_header
     from twicc.cli._drop_request.session_lookup import (
         SessionLookupError,
+        ensure_conversation,
         lookup_session,
     )
     from twicc.cli._drop_request.validation import ValidationError
@@ -215,6 +216,7 @@ def send_message_cmd(
     # state changed between this lookup and the actual send.
     try:
         resolved = lookup_session(session_id)
+        ensure_conversation(resolved)
     except SessionLookupError as e:
         emit_validation_errors(
             [ValidationError("SESSION_ID", e.code, e.message)],

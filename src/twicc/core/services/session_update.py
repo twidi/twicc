@@ -116,13 +116,6 @@ async def _lookup_session_for_update(
                                 "subagents cannot be updated directly. "
                                 "Target the parent session instead."),
         ])
-    if session.stale:
-        return None, None, None, UpdateSessionResult(False, None, None, None, [
-            UpdateSessionError("session_id", "session_stale",
-                                f"Session {session_id!r} is stale "
-                                "(its JSONL file no longer exists on disk)"),
-        ])
-
     project = session.project
     if project is None or not project.directory:
         return None, None, None, UpdateSessionResult(False, None, None, None, [
@@ -183,8 +176,7 @@ async def update_session_settings_from_payload(payload: dict) -> UpdateSessionRe
       AgentSettings field.
     - Plus the standard session-lookup guards shared by every
       ``update_*`` service (``session_not_found``, ``is_subagent``,
-      ``session_stale``, ``project_no_directory``, ``unknown_provider``,
-      ``provider_disabled``).
+      ``project_no_directory``, ``unknown_provider``, ``provider_disabled``).
     """
     session_id = payload.get("session_id")
     updates: dict[str, Any] = payload.get("updates") or {}
@@ -219,7 +211,8 @@ async def update_session_settings_from_payload(payload: dict) -> UpdateSessionRe
     # The CLI pre-validates this too; the server re-checks because the
     # drop file is a trust boundary — a direct write or a race condition
     # could bypass the CLI guard.
-    if session.hidden:
+    # Skipped for a stale session: it can never run again.
+    if session.hidden and not session.stale:
         from twicc.cli._drop_request.validation import validate_hidden_constraints
         # Build the merged settings: current DB values overlaid with the
         # incoming updates so the check reflects what would actually be written.
@@ -370,13 +363,15 @@ async def update_session_title_from_payload(payload: dict) -> UpdateSessionResul
     # against stale CLI re-appends; Codex calls ``thread/name/set``. The
     # DB is already updated, so a transient failure here is logged and
     # the watcher / next resume reconciles.
-    try:
-        await helpers.rename_session(session_id, title)
-    except Exception:
-        logger.warning(
-            "[update_session_title] provider rename_session failed for %s",
-            session_id, exc_info=True,
-        )
+    # A stale session has no conversation file left: the title stays local.
+    if not session.stale:
+        try:
+            await helpers.rename_session(session_id, title)
+        except Exception:
+            logger.warning(
+                "[update_session_title] provider rename_session failed for %s",
+                session_id, exc_info=True,
+            )
 
     # --- broadcast ----------------------------------------------------
     # Always broadcast explicitly even though the provider rename usually
@@ -871,7 +866,7 @@ async def update_session_mute_on_user_turn_from_payload(payload: dict) -> Update
 async def update_session_hidden_from_payload(payload: dict):
     """Drop-file glue for ``kind="session:update_hidden"``.
 
-    Looks up the session via the standard guards (not_found, subagent, stale,
+    Looks up the session via the standard guards (not_found, subagent,
     no_directory, unknown_provider, provider_disabled), then delegates to
     :func:`session_visibility.hide_session` or
     :func:`session_visibility.unhide_session` based on the boolean in the

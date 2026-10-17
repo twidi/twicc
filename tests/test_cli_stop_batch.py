@@ -76,16 +76,6 @@ def test_a_subagent_is_refused_with_its_own_status(project, db):
     assert result[0]["status"] == "skipped_subagent"
 
 
-def test_a_stale_session_is_refused_with_its_own_status(project, db):
-    make_session(project, "stale", stale=True)
-
-    result = _stop_batch.stop_session_ids(
-        ["stale"], timeout=1, force=False, twicc_pid=TWICC_PID,
-    )
-
-    assert result[0]["status"] == "skipped_stale"
-
-
 def test_the_output_follows_the_input_order(project, db):
     """`sessions stop` keys it under `results` in the same order, so a
     reordering breaks it."""

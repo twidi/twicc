@@ -41,14 +41,17 @@ async def hide_session(session) -> SessionVisibilityResult:
 
     Pre-conditions: session is type=SESSION, permission_mode is in the
     hidden whitelist for its provider, question_widget is not True
-    (Claude Code).
+    (Claude Code). A stale session skips the settings checks: it can
+    never be resumed.
     """
     errors = _check_type_session(session)
     if errors:
         return _fail(session, errors)
     if session.hidden:
         return _ok(session)  # no-op: already hidden
-    errors = _check_hidden_invariants(session)
+    # A stale session can never run again: the non-interactive whitelist
+    # protects nothing.
+    errors = [] if session.stale else _check_hidden_invariants(session)
     if errors:
         return _fail(session, errors)
 

@@ -49,7 +49,7 @@ async def kill_session_process_from_payload(payload: dict) -> UpdateSessionResul
 
     Business-rule rejections (returned as ``success=False``):
     - the standard session-lookup guards shared by every other CLI
-      service (``session_not_found``, ``is_subagent``, ``session_stale``,
+      service (``session_not_found``, ``is_subagent``,
       ``project_no_directory``, ``unknown_provider``, ``provider_disabled``).
     """
     session_id = payload.get("session_id")

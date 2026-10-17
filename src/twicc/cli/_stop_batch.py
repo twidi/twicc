@@ -21,7 +21,6 @@ POLL_INTERVAL_SECONDS = 0.1
 _LOOKUP_CODE_TO_SKIP_STATUS = {
     "session_not_found": "skipped_unknown",
     "is_subagent": "skipped_subagent",
-    "session_stale": "skipped_stale",
     "project_no_directory": "skipped_no_directory",
     "unknown_provider": "skipped_unknown_provider",
 }

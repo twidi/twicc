@@ -64,7 +64,7 @@ def update_title_cmd(
     except ServerDownError as e:
         emit_error(str(e), code=2)
 
-    # Local pre-check: session must exist, not be a subagent, not be stale,
+    # Local pre-check: session must exist, not be a subagent,
     # and have a project directory. The watcher-side service re-validates
     # the same conditions in case the DB state changed.
     try:

@@ -42,7 +42,7 @@ def stop_cmd(
     except ServerDownError as e:
         emit_error(str(e), code=2)
 
-    # Local pre-check: session must exist, not be a subagent, not be stale,
+    # Local pre-check: session must exist, not be a subagent,
     # and have a project directory. Mirrors the guards every other CLI
     # session-targeted command runs.
     try:

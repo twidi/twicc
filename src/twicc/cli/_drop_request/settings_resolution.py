@@ -233,7 +233,8 @@ def prepare_settings(
 
     # Hidden invariants: if the session is currently hidden, the EFFECTIVE
     # settings after this update must keep the non-interactive whitelist.
-    if resolved.hidden:
+    # Skipped for a stale session: it can never run again.
+    if resolved.hidden and not resolved.stale:
         merged_base = resolved.current_settings._asdict()
         merged_base.update(updates)
         merged_settings = AgentSettings(**merged_base)

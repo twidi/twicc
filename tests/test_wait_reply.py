@@ -1127,7 +1127,7 @@ def _run_send_message(monkeypatch, status_data: dict, *,
         session_lookup, "lookup_session",
         lambda sid: type("R", (), {
             "session_id": session.id, "provider": "claude_code",
-            "spawned_by_id": None,
+            "spawned_by_id": None, "stale": False,
         })(),
     )
 

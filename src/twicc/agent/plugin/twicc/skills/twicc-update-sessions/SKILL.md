@@ -48,7 +48,7 @@ Every sub-command takes a positional `SESSION_ID...` list plus optional scope fi
 
 - Argument-level problems fail the whole command (exit 1, plain text on stderr): bad `--timeout`, `--spawned-by`/`--descendants` together, `parent` scope, `--annotation` without a filiation scope, neither ids nor scope. Each file lists its own.
 - Per-session problems never fail the batch. They land in `results[<id>]`:
-  - `validation_error` — local lookup failure: `session_not_found`, `is_subagent`, `session_stale`, `project_no_directory`, `unknown_provider`. `settings` adds its own codes.
+  - `validation_error` — local lookup failure: `session_not_found`, `is_subagent`, `project_no_directory`, `unknown_provider`. `settings` adds its own codes.
   - `rejected` — server business rule (e.g. hidden constraints).
 - Same code vocabulary as `twicc-update-session`.
 

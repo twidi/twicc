@@ -3,8 +3,10 @@
 Shared by ``twicc send-message`` / ``twicc send-messages`` and
 ``twicc update-session`` / ``twicc update-sessions``. The CLI side
 does this pre-check before dropping the request so the user gets an immediate,
-locally diagnosable error for the common cases (session id unknown, session
-stale because its JSONL was deleted, project without directory, subagent).
+locally diagnosable error for the common cases (session id unknown, project
+without directory, subagent). A stale session (JSONL deleted) is NOT refused
+here: only the callers that need the conversation call
+:func:`ensure_conversation`.
 The watcher-side service re-validates the same conditions in case the DB
 state changed between this lookup and the actual operation.
 """
@@ -38,6 +40,8 @@ class ResolvedSession(NamedTuple):
     project_id: str
     directory: str
     hidden: bool
+    stale: bool
+    """The session's JSONL file no longer exists on disk (``Session.stale``)."""
     spawned_by_id: str | None
     """Id of the session that spawned this one (``None`` for a root session).
 
@@ -53,6 +57,20 @@ class ResolvedSession(NamedTuple):
     ``resolve_agent_settings`` + ``enforce_agent_settings_consistency`` before
     any constraint check. This avoids an extra DB round-trip.
     """
+
+
+def ensure_conversation(resolved: ResolvedSession) -> None:
+    """Raise ``session_stale`` when the session's conversation file is gone.
+
+    Only for the callers that need the conversation (``send-message(s)``,
+    which resumes the session). Metadata updates must not call it.
+    """
+    if resolved.stale:
+        raise SessionLookupError(
+            "session_stale",
+            f"Session {resolved.session_id!r} is stale "
+            "(its JSONL file no longer exists on disk)",
+        )
 
 
 def lookup_session(session_id: str) -> ResolvedSession:
@@ -81,12 +99,6 @@ def lookup_session(session_id: str) -> ResolvedSession:
             f"Session {session_id!r} is a subagent; subagents cannot be "
             "messaged or updated directly. Target the parent session instead.",
         )
-    if session.stale:
-        raise SessionLookupError(
-            "session_stale",
-            f"Session {session_id!r} is stale "
-            "(its JSONL file no longer exists on disk)",
-        )
     project = session.project
     if project is None or not project.directory:
         raise SessionLookupError(
@@ -106,6 +118,7 @@ def lookup_session(session_id: str) -> ResolvedSession:
         project_id=session.project_id,
         directory=project.directory,
         hidden=bool(session.hidden),
+        stale=bool(session.stale),
         spawned_by_id=session.spawned_by_id,
         current_settings=AgentSettings.from_session(session),
     )

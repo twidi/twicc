@@ -69,7 +69,7 @@ $TWICC update-session <SESSION_ID|self> <SUB-COMMAND> [ARGS] [--timeout SECONDS]
 Local (exit 1), on every sub-command:
 
 - `is_subagent` — subagents cannot be updated directly; target the parent session.
-- `session_not_found`, `session_stale`, `project_no_directory`, `provider_disabled`.
+- `session_not_found`, `project_no_directory`, `provider_disabled`.
 
 Server (exit 3): every local code — the common ones above and each sub-command file's own — re-checked server-side, plus the server-only codes each file lists.
 
