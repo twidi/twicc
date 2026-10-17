@@ -3,6 +3,8 @@
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 
+from django.db.models import Q
+
 from twicc.core.content_storage.codec import ContentIntegrityError
 
 
@@ -27,6 +29,18 @@ def cold_from_fields(fields: Mapping, now: datetime) -> bool:
     days = 15 if fields['archived'] or fields['hidden'] else 30
     dates = [fields[name] for name in COLD_DATE_FIELDS if fields[name] is not None]
     return bool(dates) and max(dates) <= now - timedelta(days=days)
+
+
+def content_hot_q(now: datetime, active_ids: frozenset[str]) -> Q:
+    """Match the scalar hot policy, including null dates and current runtime activity."""
+    all_null = Q(**{f'{name}__isnull': True for name in COLD_DATE_FIELDS})
+    restricted = Q(archived=True) | Q(hidden=True)
+
+    def recent(days):
+        threshold = now - timedelta(days=days)
+        return Q(*(Q(**{f'{name}__gt': threshold}) for name in COLD_DATE_FIELDS), _connector=Q.OR) | all_null
+
+    return (restricted & recent(15)) | (Q(archived=False, hidden=False) & recent(30)) | Q(pk__in=active_ids)
 
 
 def scratch_cold_from_fields(fields: dict, now: datetime) -> bool:

@@ -84,6 +84,7 @@ def retry_scenario(content_row_factory, writer_state, compute_executor_started, 
         work = ComputeWorkState()
         original_target = maintenance._PromotionTarget
         original_page = maintenance.pending_session_page
+        original_periodic_page = maintenance.periodic_hot_root_page
         original_prepare = maintenance.prepare_promotion_batch
         original_publish = maintenance.apply_promotion_batch
         tokens = []
@@ -98,6 +99,9 @@ def retry_scenario(content_row_factory, writer_state, compute_executor_started, 
             if origin == 'explicit' or origin == 'periodic' and clock[0] == 100:
                 return []
             return original_page(*args)
+
+        def periodic_page(after, now):
+            return [] if origin == 'explicit' else original_periodic_page(after, now)
 
         def fail_or_run(function, *args, **kwargs):
             attempts.append(clock[0])
@@ -164,6 +168,7 @@ def retry_scenario(content_row_factory, writer_state, compute_executor_started, 
         monkeypatch.setattr(maintenance, '_PromotionTarget', target)
         monkeypatch.setattr(maintenance, '_maintenance_time', lambda: clock[0])
         monkeypatch.setattr(maintenance, 'pending_session_page', page)
+        monkeypatch.setattr(maintenance, 'periodic_hot_root_page', periodic_page)
         monkeypatch.setattr(maintenance, 'prepare_promotion_batch', prepare)
         monkeypatch.setattr(maintenance, 'apply_promotion_batch', publish)
         monkeypatch.setattr(maintenance, 'prepare_compression_batch', compression)

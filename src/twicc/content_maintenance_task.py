@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from functools import partial
 from itertools import islice
 from typing import NamedTuple
@@ -20,7 +21,7 @@ from twicc.core.content_storage.codec import ContentIntegrityError, transcode_co
 from twicc.core.content_storage.lifecycle import active_session_ids, set_root_promotion_wakeup
 from twicc.core.content_storage.maintenance_cache import MaintenanceSessionCache
 from twicc.core.content_storage.maintenance_metrics import MaintenanceMetrics
-from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION, compression_policy_version
+from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION, compression_policy_version, content_hot_q
 from twicc.core.content_storage.session_policy import resolve_content_decisions
 from twicc.core.content_storage.state import (
     TREE_PAGE_SIZE, _require_writer_transaction, _snapshot_matches,
@@ -446,6 +447,17 @@ def pending_session_page(after_id: str | None = None) -> list[str]:
     return list(query.order_by('id').values_list('id', flat=True)[:TREE_PAGE_SIZE])
 
 
+def periodic_hot_root_page(after_id: str | None, now: datetime) -> list[str]:
+    """Select hot extracted roots before pagination, transferring identities only."""
+    query = Session.objects.filter(
+        content_hot_q(now, active_session_ids.get()), type='session', parent_session__isnull=True,
+        storage_incarnation__isnull=False, content_storage_version=CONTENT_STORAGE_VERSION,
+    )
+    if after_id is not None:
+        query = query.filter(pk__gt=after_id)
+    return list(query.order_by('id').values_list('id', flat=True)[:TREE_PAGE_SIZE])
+
+
 def recovery_promotion_targets(session_ids, session_cache=None):
     """Probe only hot sessions' reference metadata outside writer ownership."""
     owned = session_cache is None
@@ -613,7 +625,19 @@ def _snapshot(session_id, active, *, recovery=False, session_cache=None):
         decision = _target_decision(session_id, active, session_cache)
         if not decision.resolved or decision.is_cold:
             return None
-        snapshot = snapshot_session_promotion(session_id)
+        # Extracted roots need only current structural identity here. Their own
+        # lifecycle policy is already resolved through the invalidatable pass cache.
+        fields = Session.objects.filter(
+            pk=session_id, type='session', parent_session__isnull=True,
+            storage_incarnation__isnull=False, content_storage_version=CONTENT_STORAGE_VERSION,
+        ).values('storage_incarnation', 'content_state_epoch').first()
+        if fields is not None:
+            if fields['content_state_epoch'] is None:
+                Session.objects.filter(pk=session_id, content_state_epoch__isnull=True).update(content_state_epoch=0)
+                fields['content_state_epoch'] = 0
+            snapshot = RootStorageSnapshot(session_id, fields['storage_incarnation'], fields['content_state_epoch'])
+        else:
+            snapshot = snapshot_session_promotion(session_id)
         if recovery:
             return SessionPromotionSnapshot(snapshot.root_id, snapshot.incarnation, snapshot.epoch,
                                             session_id, getattr(snapshot, 'session_incarnation', snapshot.incarnation),
@@ -822,11 +846,13 @@ async def start_content_maintenance_task(stop_event: asyncio.Event, *, compute_w
 
     async def recover_pages(cache, *, periodic=False, metrics):
         after = None
+        selection_time = timezone.now() if periodic else None
         while not stop_event.is_set():
             if periodic and not await periodic_ready():
                 return
             started = perf_counter()
-            page = await prepare(pending_session_page, after)
+            page = (await prepare(periodic_hot_root_page, after, selection_time) if periodic
+                    else await prepare(pending_session_page, after))
             duration_ms = (perf_counter() - started) * 1000
             if not page:
                 break

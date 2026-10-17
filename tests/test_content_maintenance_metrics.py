@@ -107,6 +107,7 @@ def test_periodic_outcome_cache_lifetime_and_deadline(
             stop.set()
 
     monkeypatch.setattr(maintenance, 'pending_session_page', discovery)
+    monkeypatch.setattr(maintenance, 'periodic_hot_root_page', lambda after, now: discovery(after))
     monkeypatch.setattr(maintenance, 'recovery_promotion_targets', recovery)
     monkeypatch.setattr(maintenance, 'prepare_compression_batch', compression)
     monkeypatch.setattr(maintenance, '_wait', wait)

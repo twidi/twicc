@@ -431,3 +431,28 @@ def test_payload_selection_uses_coherent_representation(
     assert maintenance._publish(page.entries, frozenset(), session_cache=session_cache).changed == 1
     peer.refresh_from_db()
     assert peer.codec == 'zstd'
+
+
+def test_root_selection_metadata_is_loaded_once_per_pass(content_row_factory, session_cache):
+    roots = [session(f'root-{index}', content_storage_version=1, storage_incarnation=f'inc-{index}')
+             for index in range(2)]
+    for root in roots:
+        row = content_row_factory(f'{root.id} text ' * 1000, True, session_ids=[root.id])
+        SessionItem.objects.create(session=root, line_num=1, content='', current_content=row)
+    with CaptureQueriesContext(connection) as selection:
+        ids = maintenance.periodic_hot_root_page(None, timezone.now())
+    assert len(selection) == 1
+    assert selection[0]['sql'].split(' FROM ')[0] == 'SELECT "core_session"."id" AS "id"'
+    with CaptureQueriesContext(connection) as recovery:
+        assert maintenance.recovery_promotion_targets(ids, session_cache) == set(ids)
+    lifecycle = [sql for sql in owner_selects(recovery) if '"created_at"' in sql.split(' FROM ')[0]]
+    assert len(lifecycle) == 1
+    assert all(f"'{root.id}'" in lifecycle[0] for root in roots)
+    with CaptureQueriesContext(connection) as publication:
+        for root in roots:
+            snapshot = maintenance._snapshot(root.id, frozenset(), recovery=True, session_cache=session_cache)
+            batch = maintenance.prepare_promotion_batch(snapshot, maintenance.START_CURSOR, session_cache=session_cache)
+            assert maintenance.apply_promotion_batch(batch, frozenset(), pass_verified=True,
+                                                     session_cache=session_cache).done
+        maintenance.prepare_compression_batch(0, session_cache=session_cache)
+    assert not [sql for sql in owner_selects(publication) if '"created_at"' in sql.split(' FROM ')[0]]
