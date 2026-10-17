@@ -53,7 +53,7 @@ def test_loaded_native_ancestry_never_queries_and_spawned_sessions_are_independe
                                         type='subagent', parent_session=child)
     spawned = Session.objects.create(id='spawned', project=project, provider='codex', file_path='s', spawned_by=root)
     with django_assert_num_queries(0):
-        assert grandchild.is_cold_for_content
+        assert not grandchild.is_cold_for_content
         assert grandchild.is_cold_for_scratch
         assert not spawned.is_cold_for_content
         assert not spawned.is_cold_for_scratch
@@ -69,3 +69,107 @@ def test_loaded_native_ancestry_never_queries_and_spawned_sessions_are_independe
     with django_assert_num_queries(0):
         assert not grandchild.is_cold_for_content
         assert not grandchild.is_cold_for_scratch
+
+
+@pytest.mark.parametrize('archived,hidden,days', [(True, False, 15), (False, True, 15), (False, False, 30)])
+@pytest.mark.parametrize('offset,cold', [(-1, True), (0, True), (1, False)])
+def test_session_decision_precise_boundaries(archived, hidden, days, offset, cold):
+    from twicc.core.content_storage.session_policy import content_decision_from_fields
+
+    now = timezone.now()
+    metadata = fields(now) | {
+        'archived': archived, 'hidden': hidden,
+        'created_at': now - timedelta(days=days) + timedelta(microseconds=offset),
+    }
+    decision = content_decision_from_fields('session', metadata, now, frozenset())
+    assert decision.session_id == 'session'
+    assert decision.resolved
+    assert not decision.active
+    assert decision.is_cold is cold
+
+
+@pytest.mark.parametrize('latest', policy.COLD_DATE_FIELDS)
+def test_session_decision_uses_latest_date(latest):
+    from twicc.core.content_storage.session_policy import content_decision_from_fields
+
+    now = timezone.now()
+    metadata = fields(now) | {name: now - timedelta(days=31) for name in policy.COLD_DATE_FIELDS}
+    metadata[latest] = now - timedelta(days=14)
+    assert not content_decision_from_fields('session', metadata, now, frozenset()).is_cold
+
+
+def test_unknown_session_metadata_stays_hot():
+    from twicc.core.content_storage.session_policy import content_decision_from_fields
+
+    now = timezone.now()
+    missing = content_decision_from_fields('missing', None, now, frozenset())
+    assert not missing.resolved and not missing.is_cold
+    for name in policy.COLD_FIELDS:
+        metadata = fields(now)
+        del metadata[name]
+        assert not content_decision_from_fields('partial', metadata, now, frozenset()).is_cold
+    metadata = fields(now) | dict.fromkeys(policy.COLD_DATE_FIELDS)
+    assert not content_decision_from_fields('unknown', metadata, now, frozenset()).is_cold
+
+
+@pytest.mark.django_db
+def test_session_content_policy_ignores_ancestry_and_parent_readiness(django_assert_num_queries):
+    from twicc.core.content_storage.lifecycle import active_session_ids
+    from twicc.core.content_storage.session_policy import resolve_content_decisions
+    from twicc.core.content_storage.state import resolve_scratch_root_decisions
+
+    now = timezone.now()
+    project = Project.objects.create(id='own', directory='/own')
+
+    def create(name, date, **kwargs):
+        return Session.objects.create(id=name, project=project, provider='codex', file_path=name,
+                                      created_at=date, **kwargs)
+
+    root = create('hot-root', now)
+    old_child = create('old-child', now - timedelta(days=31), type='subagent', parent_session=root)
+    cold_root = create('cold-root', now - timedelta(days=31), archived=True)
+    active_child = create('active-child', now - timedelta(days=31), type='subagent', parent_session=cold_root)
+    child = create('child', now, type='subagent', parent_session=cold_root)
+    grandchild = create('grandchild', now - timedelta(days=31), type='subagent', parent_session=child)
+    leaf = create('leaf', now, type='subagent', parent_session=grandchild)
+    ids = [root.id, old_child.id, cold_root.id, active_child.id, child.id, grandchild.id, leaf.id, 'missing']
+    active = frozenset({active_child.id})
+    scratch_before = resolve_scratch_root_decisions(ids, now, active)
+    with django_assert_num_queries(1):
+        decisions = resolve_content_decisions(ids, now, active)
+    assert decisions[old_child.id].is_cold
+    assert decisions[cold_root.id].is_cold
+    assert not decisions[active_child.id].is_cold
+    assert decisions[active_child.id].active
+    assert decisions[grandchild.id].is_cold
+    assert not decisions[leaf.id].is_cold
+    assert not decisions['missing'].resolved
+    token = active_session_ids.set(active)
+    try:
+        with django_assert_num_queries(0):
+            assert old_child.is_cold_for_content == decisions[old_child.id].is_cold
+            assert not active_child.is_cold_for_content
+            assert grandchild.is_cold_for_content
+            assert not leaf.is_cold_for_content
+    finally:
+        active_session_ids.reset(token)
+    assert scratch_before == resolve_scratch_root_decisions(ids, now, active)
+    unloaded = Session.objects.get(pk=old_child.id)
+    with django_assert_num_queries(0):
+        assert unloaded.is_cold_for_content
+
+
+@pytest.mark.django_db
+def test_grouped_session_metadata_queries_are_bounded(django_assert_num_queries):
+    from twicc.core.content_storage.session_policy import resolve_content_decisions
+
+    project = Project.objects.create(id='bounded', directory='/bounded')
+    now = timezone.now()
+    sessions = [Session(id=f's{i:03}', project=project, provider='codex', file_path=str(i),
+                        type='subagent', created_at=now - timedelta(days=31)) for i in range(257)]
+    Session.objects.bulk_create(sessions)
+    with django_assert_num_queries(3) as queries:
+        decisions = resolve_content_decisions((session.id for session in sessions), now, frozenset({'unrequested'}))
+    assert len(decisions) == 257
+    assert all(decision.is_cold for decision in decisions.values())
+    assert all('parent_session_id' not in query['sql'] and 'compute_version' not in query['sql'] for query in queries)

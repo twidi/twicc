@@ -1,5 +1,6 @@
 """Stable identity for the compression attempt policy."""
 
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 
 from twicc.core.content_storage.codec import ContentIntegrityError
@@ -19,7 +20,7 @@ COLD_FIELDS = ('archived', 'hidden', *COLD_DATE_FIELDS)
 CONTENT_STORAGE_VERSION = 1
 
 
-def cold_from_fields(fields: dict, now: datetime) -> bool:
+def cold_from_fields(fields: Mapping, now: datetime) -> bool:
     """Use complete loaded lifecycle metadata; unknown metadata cannot authorize cold placement."""
     if any(name not in fields for name in COLD_FIELDS):
         return False

@@ -31,6 +31,13 @@ class ContentBinding(NamedTuple):
     original_id: int | None
 
 
+class SessionContentDecision(NamedTuple):
+    session_id: str
+    is_cold: bool
+    resolved: bool
+    active: bool
+
+
 class RootDecision(NamedTuple):
     root_id: str | None
     is_cold: bool

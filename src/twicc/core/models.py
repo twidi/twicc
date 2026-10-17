@@ -738,12 +738,15 @@ class Session(models.Model):
 
     @property
     def is_cold_for_content(self) -> bool:
-        """Use explicitly loaded native ancestry without implicit database queries."""
+        """Inspect this session's loaded lifecycle and activity without database queries."""
         from django.utils import timezone
 
-        from twicc.core.content_storage.policy import cold_from_loaded_session
+        from twicc.core.content_storage.lifecycle import active_session_ids
+        from twicc.core.content_storage.session_policy import content_decision_from_fields
 
-        return cold_from_loaded_session(self, timezone.now())
+        return content_decision_from_fields(
+            self.__dict__.get('id'), self.__dict__, timezone.now(), active_session_ids.get(),
+        ).is_cold
 
     @property
     def is_cold_for_scratch(self) -> bool:
