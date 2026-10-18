@@ -116,8 +116,10 @@ def write_unavailable_root_rows_sync(session_id: str) -> int:
     try:
         from twicc.providers.compute_tree import resolve_native_root
 
-        root = resolve_native_root(session_id)
-        return write_creation_rows_sync(root, require_computed=True)
+        # The whole step runs in a savepoint: a failure anywhere in it discards only this step.
+        with transaction.atomic():
+            root = resolve_native_root(session_id)
+            return write_creation_rows_sync(root, require_computed=True)
     except Exception:
         logger.exception("Timeline creation rows could not be written for the root of session %s", session_id)
         return 0
