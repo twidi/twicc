@@ -1,10 +1,11 @@
 <script setup>
 // TimelineSessionMention.vue - One mention of a session in the Timeline: provider icon, then the title,
-// as a link or as plain text (display design sections 5.3 and 5.4). The same rules serve the group head,
+// as a link or as plain text (display design sections 5.3 and 5.4). The same rules serve the block header,
 // the "by <session>" author label and the parent of `session.created`.
 //
-// The `mention` comes from utils/timeline/sessions.js, which already decided link or not. Markers (archived,
-// hidden) are shown on group heads only, through `markers`.
+// The `mention` comes from utils/timeline/sessions.js, which already decided link or not. The block header
+// uses `truncate`: the provider icon in a fixed box, the title on one line with an ellipsis and the full
+// title as tooltip. No state marker (archived, hidden) is shown: the current state is not an event.
 
 import { computed } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
@@ -14,8 +15,8 @@ import ProviderIcon from '../ui/ProviderIcon.vue'
 const props = defineProps({
     /** See `sessionMention` in utils/timeline/sessions.js. */
     mention: { type: Object, required: true },
-    /** Show the archived / hidden markers (the group head only). */
-    markers: { type: Boolean, default: false },
+    /** One line with an ellipsis, the full title as tooltip, the icon in a fixed box (the block header). */
+    truncate: { type: Boolean, default: false },
 })
 
 const route = useRoute()
@@ -23,17 +24,18 @@ const route = useRoute()
 const location = computed(() => (props.mention.link
     ? sessionRouteLocation({ id: props.mention.id, project_id: props.mention.projectId }, route)
     : null))
+const tooltip = computed(() => (props.truncate ? props.mention.title : null))
 </script>
 
 <template>
-    <span class="timeline-session">
-        <ProviderIcon v-if="mention.provider" :provider="mention.provider" class="timeline-session-icon" />
-        <RouterLink v-if="location" :to="location" class="timeline-session-title">{{ mention.title }}</RouterLink>
-        <span v-else class="timeline-session-title timeline-session-title--plain">{{ mention.title }}</span>
-        <template v-if="markers">
-            <wa-icon v-if="mention.archived" name="box-archive" label="Archived" title="Archived" class="timeline-marker"></wa-icon>
-            <wa-icon v-if="mention.hidden" name="eye-slash" label="Hidden" title="Hidden" class="timeline-marker"></wa-icon>
-        </template>
+    <span class="timeline-session" :class="{ 'timeline-session--truncate': truncate }">
+        <!-- The box keeps its width with no icon, so the title start (and the event lines under it) never moves. -->
+        <span v-if="truncate" class="timeline-session-lead">
+            <ProviderIcon v-if="mention.provider" :provider="mention.provider" class="timeline-session-icon" />
+        </span>
+        <ProviderIcon v-else-if="mention.provider" :provider="mention.provider" class="timeline-session-icon" />
+        <RouterLink v-if="location" :to="location" class="timeline-session-title" :title="tooltip">{{ mention.title }}</RouterLink>
+        <span v-else class="timeline-session-title timeline-session-title--plain" :title="tooltip">{{ mention.title }}</span>
     </span>
 </template>
 
@@ -65,10 +67,24 @@ a.timeline-session-title:hover {
     text-decoration: underline;
 }
 
-.timeline-marker {
-    flex-shrink: 0;
-    align-self: center;
-    color: var(--wa-color-text-quiet);
-    font-size: var(--wa-font-size-s);
+/* The width and the gap come from the row (TimelineEventRow), which indents its event lines by their sum. */
+.timeline-session--truncate {
+    align-items: center;
+    gap: var(--timeline-provider-gap, var(--wa-space-xs));
+}
+
+.timeline-session-lead {
+    flex: none;
+    display: inline-flex;
+    justify-content: center;
+    width: var(--timeline-provider-width, 1.25rem);
+}
+
+.timeline-session--truncate .timeline-session-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow-wrap: normal;
 }
 </style>

@@ -8,8 +8,11 @@ import { formatDayKey, formatDaySeparatorLabel } from '../date.js'
 import { parseOccurredAt } from './eventTime.js'
 import { groupHeadIdentity } from './sessions.js'
 
-/** Estimated heights (px) the scroller starts from, per row type, before it measures. */
-export const ROW_HEIGHT_ESTIMATES = { day: 40, event: 34, nav: 96 }
+/**
+ * Estimated heights (px) the scroller starts from, per row type, before it measures. `head` is an event row
+ * that opens a session block: its header line (title, project) sits above its event line.
+ */
+export const ROW_HEIGHT_ESTIMATES = { day: 40, event: 34, head: 66, nav: 96 }
 
 /**
  * @typedef {Object} DayRow
@@ -23,7 +26,7 @@ export const ROW_HEIGHT_ESTIMATES = { day: 40, event: 34, nav: 96 }
  * @property {'event'} type
  * @property {Object} event
  * @property {boolean} instance - A `backend.*` event: no session, never indented, never a head.
- * @property {boolean} head - First event row of its group: it carries the session identity.
+ * @property {boolean} head - First event row of its group: it carries the session identity (the block header).
  * @property {boolean} indented - A following row of a group.
  * @property {Object|null} identity - `groupHeadIdentity` for a head, else null.
  */
@@ -73,6 +76,7 @@ export function buildTimelineRows(events, { sessions, scope, isSubagent, dayKeyO
  * @returns {number} The height the scroller assumes until it measures the row.
  */
 export function estimateRowHeight(row) {
+    if (row.type === 'event' && row.head) return ROW_HEIGHT_ESTIMATES.head
     return ROW_HEIGHT_ESTIMATES[row.type] ?? ROW_HEIGHT_ESTIMATES.event
 }
 

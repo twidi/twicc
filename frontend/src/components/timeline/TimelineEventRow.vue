@@ -1,7 +1,12 @@
 <script setup>
-// TimelineEventRow.vue - One event line of the Timeline (display design section 5.1):
-//   [indent] icon | [group head: provider icon, session title, project name, markers] wording, tag, badge,
-//   author label | time on the right.
+// TimelineEventRow.vue - One event row of the Timeline, in session blocks (display design section 5.1):
+//   group head:  [provider icon] session title (one line, ellipsis) ............ project
+//                    icon | wording, tag, badge, author label                    | time
+//   following:       icon | wording ...                                          | time
+//   instance:    icon | wording (semibold)                                       | time
+// The header line is the head row's own first line; every event line of a session sits at the same indent,
+// under the start of the title. The time is a fixed right column; long text wraps in its own column.
+// The current state of a session (archived, hidden, pinned) is not shown: it is not an event.
 //
 // All the decisions (wording, icon, severity, links, time) are made by the pure modules of
 // utils/timeline/; this component only shows them. Every string from data is rendered as TEXT with
@@ -36,71 +41,109 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
 <template>
     <div
         class="timeline-row"
-        :class="[`timeline-row--${vm.severity}`, { 'timeline-row--indented': row.indented, 'timeline-row--head': row.head }]"
+        :class="[`timeline-row--${vm.severity}`, {
+            'timeline-row--indented': row.indented,
+            'timeline-row--head': row.head,
+            'timeline-row--instance': row.instance,
+        }]"
         :data-kind="vm.kind"
     >
-        <wa-icon :name="vm.icon" class="timeline-row-icon" auto-width :title="vm.tooltip"></wa-icon>
-        <div class="timeline-row-main">
-            <span v-if="identity" class="timeline-identity">
-                <TimelineSessionMention :mention="identity.mention" markers />
-                <template v-if="identity.showProject && identity.projectId">
-                    <!-- A plain jump to that project: the router guard keeps the current workspace when the project belongs to it. -->
-                    <RouterLink
-                        v-if="knownProject"
-                        :to="{ name: 'project', params: { projectId: identity.projectId } }"
-                        class="timeline-project"
-                    ><ProjectBadge :project-id="identity.projectId" /></RouterLink>
-                    <span v-else class="timeline-project timeline-project--plain">{{ identity.projectId }}</span>
-                </template>
-            </span>
-            <span class="timeline-wording">
-                <template v-for="(part, index) in vm.parts" :key="index">
-                    <span v-if="part.type === 'text'">{{ part.text }}</span>
-                    <TimelineSessionMention v-else :mention="part.mention" />
-                </template>
-            </span>
-            <span v-if="vm.tag" class="timeline-tag">{{ vm.tag }}</span>
-            <wa-badge v-if="vm.badge" variant="warning" appearance="outlined" class="timeline-badge" :title="vm.badge.title">{{ vm.badge.text }}</wa-badge>
-            <span v-if="vm.author.parts.length" class="timeline-author">
-                <template v-for="(part, index) in vm.author.parts" :key="index">
-                    <span v-if="part.type === 'text'">{{ part.text }}</span>
-                    <TimelineSessionMention v-else :mention="part.mention" />
-                </template>
-            </span>
-            <span v-if="vm.detail" class="timeline-error">
-                <code class="timeline-error-line">{{ vm.detail.first }}</code>
-                <button
-                    v-if="vm.detail.rest"
-                    type="button"
-                    class="timeline-row__expand"
-                    :aria-expanded="expanded ? 'true' : 'false'"
-                    :aria-controls="errorRestId"
-                    @click="expanded = !expanded"
-                >{{ expanded ? 'Show less' : 'Show more' }}</button>
-                <pre v-if="expanded && vm.detail.rest" :id="errorRestId" class="timeline-error-rest">{{ vm.detail.rest }}</pre>
-            </span>
+        <div v-if="identity" class="timeline-row-header">
+            <TimelineSessionMention :mention="identity.mention" truncate class="timeline-row-title" />
+            <template v-if="identity.showProject && identity.projectId">
+                <!-- A plain jump to that project: the router guard keeps the current workspace when the project belongs to it. -->
+                <RouterLink
+                    v-if="knownProject"
+                    :to="{ name: 'project', params: { projectId: identity.projectId } }"
+                    class="timeline-project"
+                ><ProjectBadge :project-id="identity.projectId" /></RouterLink>
+                <span v-else class="timeline-project timeline-project--plain">{{ identity.projectId }}</span>
+            </template>
         </div>
-        <span class="timeline-time" :class="{ 'timeline-time--estimated': vm.time.estimated }" :title="vm.tooltip">{{ vm.time.text }}</span>
+        <div class="timeline-event-line" :class="{ 'timeline-event-line--indented': !row.instance }">
+            <wa-icon :name="vm.icon" class="timeline-row-icon" auto-width :title="vm.tooltip"></wa-icon>
+            <div class="timeline-row-main">
+                <span class="timeline-wording">
+                    <template v-for="(part, index) in vm.parts" :key="index">
+                        <span v-if="part.type === 'text'">{{ part.text }}</span>
+                        <TimelineSessionMention v-else :mention="part.mention" />
+                    </template>
+                </span>
+                <span v-if="vm.tag" class="timeline-tag">{{ vm.tag }}</span>
+                <wa-badge v-if="vm.badge" variant="warning" appearance="outlined" class="timeline-badge" :title="vm.badge.title">{{ vm.badge.text }}</wa-badge>
+                <span v-if="vm.author.parts.length" class="timeline-author">
+                    <template v-for="(part, index) in vm.author.parts" :key="index">
+                        <span v-if="part.type === 'text'">{{ part.text }}</span>
+                        <TimelineSessionMention v-else :mention="part.mention" />
+                    </template>
+                </span>
+                <span v-if="vm.detail" class="timeline-error">
+                    <code class="timeline-error-line">{{ vm.detail.first }}</code>
+                    <button
+                        v-if="vm.detail.rest"
+                        type="button"
+                        class="timeline-row__expand"
+                        :aria-expanded="expanded ? 'true' : 'false'"
+                        :aria-controls="errorRestId"
+                        @click="expanded = !expanded"
+                    >{{ expanded ? 'Show less' : 'Show more' }}</button>
+                    <pre v-if="expanded && vm.detail.rest" :id="errorRestId" class="timeline-error-rest">{{ vm.detail.rest }}</pre>
+                </span>
+            </div>
+            <span class="timeline-time" :class="{ 'timeline-time--estimated': vm.time.estimated }" :title="vm.tooltip">{{ vm.time.text }}</span>
+        </div>
     </div>
 </template>
 
 <style scoped>
 .timeline-row {
-    display: flex;
-    align-items: baseline;
-    gap: var(--wa-space-s);
-    padding: var(--wa-space-2xs) var(--wa-space-l);
-    min-height: 2rem;
+    /* The provider icon box of the header and its gap to the title (TimelineSessionMention `truncate` reads
+       both): an event line of a session is indented by their sum, so its icon sits under the title start. */
+    --timeline-provider-width: 1.25rem;
+    --timeline-provider-gap: var(--wa-space-xs);
+    /* The event icon column: icons have their own widths (auto-width), the column keeps the text aligned. */
+    --timeline-icon-width: 1.25rem;
+    padding-inline: var(--wa-space-l);
     font-size: var(--wa-font-size-s);
 }
 
-.timeline-row--indented {
-    padding-inline-start: calc(var(--wa-space-l) + var(--wa-space-xl));
+/* A little air above each session block. */
+.timeline-row--head {
+    padding-block-start: var(--wa-space-2xs);
 }
 
+/* The block header: title truncates first; the project keeps its size up to half the line, then truncates. */
+.timeline-row-header {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-s);
+    min-height: 1.75rem;
+    min-width: 0;
+}
+
+.timeline-row-title {
+    flex: 1 1 auto;
+}
+
+/* Three columns: event icon | text (wraps under its own start) | time (never wraps, never pushed). */
+.timeline-event-line {
+    display: grid;
+    grid-template-columns: var(--timeline-icon-width) minmax(0, 1fr) auto;
+    column-gap: var(--wa-space-s);
+    align-items: baseline;
+    min-height: 2rem;
+    padding-block: var(--wa-space-2xs);
+}
+
+.timeline-event-line--indented {
+    padding-inline-start: calc(var(--timeline-provider-width) + var(--timeline-provider-gap));
+}
+
+/* One line box high, centred in its column: on a wrapped wording it stays on the first line. */
 .timeline-row-icon {
-    flex-shrink: 0;
-    align-self: center;
+    align-self: start;
+    justify-self: center;
+    height: 1lh;
     color: var(--wa-color-text-quiet);
 }
 
@@ -109,7 +152,6 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
 .timeline-row--danger .timeline-row-icon { color: var(--wa-color-danger-60); }
 
 .timeline-row-main {
-    flex: 1;
     min-width: 0;
     display: flex;
     flex-wrap: wrap;
@@ -119,21 +161,28 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
     overflow-wrap: anywhere;
 }
 
-.timeline-identity {
-    display: inline-flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: var(--wa-space-xs);
-    min-width: 0;
+.timeline-row--instance .timeline-wording {
+    font-weight: var(--wa-font-weight-semibold);
 }
 
 .timeline-project {
+    flex: 0 0 auto;
+    min-width: 0;
+    max-width: 50%;
+    overflow: hidden;
     color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-xs);
 }
 
+/* A flex container, so the badge inside can shrink: its names carry their own ellipsis. */
 a.timeline-project {
+    display: flex;
     text-decoration: none;
+}
+
+.timeline-project--plain {
+    white-space: nowrap;
+    text-overflow: ellipsis;
 }
 
 .timeline-tag,
@@ -189,8 +238,12 @@ a.timeline-project {
     white-space: pre-wrap;
 }
 
+/* At least the width of "~00:00", so the text column ends at the same place on every line. */
 .timeline-time {
-    flex-shrink: 0;
+    justify-self: end;
+    min-width: 6ch;
+    text-align: end;
+    white-space: nowrap;
     font-variant-numeric: tabular-nums;
     color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-xs);

@@ -149,9 +149,18 @@ test('the head identity follows the scope: project name on a workspace page, not
 test('row height estimates exist per row type; an unknown type uses the event one', () => {
     assert.equal(estimateRowHeight({ type: 'day' }), ROW_HEIGHT_ESTIMATES.day)
     assert.equal(estimateRowHeight({ type: 'event' }), ROW_HEIGHT_ESTIMATES.event)
+    assert.equal(estimateRowHeight({ type: 'event', head: false, indented: true }), ROW_HEIGHT_ESTIMATES.event)
+    assert.equal(estimateRowHeight({ type: 'event', instance: true, head: false }), ROW_HEIGHT_ESTIMATES.event)
     assert.equal(estimateRowHeight({ type: 'nav' }), ROW_HEIGHT_ESTIMATES.nav)
     assert.equal(estimateRowHeight({ type: 'mystery' }), ROW_HEIGHT_ESTIMATES.event)
     assert.ok(ROW_HEIGHT_ESTIMATES.day !== ROW_HEIGHT_ESTIMATES.event)
+})
+
+test('a group head starts from a taller estimate: its header line sits above its event line', () => {
+    const rows = build([ev('2026-10-14T12:00:01.000000Z', 'a'), ev('2026-10-14T12:00:00.000000Z', 'a')])
+    assert.equal(estimateRowHeight(rows[1]), ROW_HEIGHT_ESTIMATES.head)
+    assert.equal(estimateRowHeight(rows[2]), ROW_HEIGHT_ESTIMATES.event)
+    assert.ok(ROW_HEIGHT_ESTIMATES.head > ROW_HEIGHT_ESTIMATES.event)
 })
 
 test('the next page is requested when the visible range is within ten rows of the end', () => {

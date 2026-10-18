@@ -74,30 +74,93 @@ test('a plain row: icon with severity, wording and the time on the right with th
     assert.match(time.props.title, /Precision: exact/)
 })
 
-test('the group head shows the provider icon and the session title as a link, once', async (t) => {
+test('the group head: a header line (provider icon, title link) above its own event line', async (t) => {
     const root = await render(t, [make('turn.started')])
-    const link = descendants(root, (n) => n.type === 'a')[0]
+    const [row] = byClass(root, 'timeline-row')
+    assert.equal(byClass(root, 'timeline-row-header').length, 1)
+    const [header] = byClass(root, 'timeline-row-header')
+    const [line] = byClass(root, 'timeline-event-line')
+    // The header and the event line are siblings: the header is a line of its own, above the event.
+    assert.deepEqual(row.children.filter((n) => n.type !== '#comment').map(classesOf), ['timeline-row-header', 'timeline-event-line timeline-event-line--indented'])
+    assert.equal(descendants(line, (n) => n === header).length, 0)
+    const link = descendants(header, (n) => n.type === 'a')[0]
     assert.equal(JSON.parse(link.props['data-to']).params.sessionId, 's1')
     assert.equal(textOf(link), 'Fix the build')
-    assert.equal(descendants(root, (n) => n.type === 'i')[0].props['data-provider'], 'codex')
-    assert.equal(byClass(root, 'timeline-identity').length, 1)
+    assert.equal(descendants(header, (n) => n.type === 'i')[0].props['data-provider'], 'codex')
+    // The event line carries the event only: icon, wording, time; no session mention.
+    assert.equal(byClass(line, 'timeline-session').length, 0)
+    assert.equal(descendants(line, (n) => n.type === 'wa-icon' && classesOf(n).includes('timeline-row-icon')).length, 1)
+    assert.equal(byClass(line, 'timeline-time').length, 1)
 })
 
-test('a following row is indented and has no identity', async (t) => {
+test('the header title is one truncating line with the full title as tooltip, link or plain text', async (t) => {
+    const long = 'A very long session title that will never fit on one narrow mobile line'
+    const linked = await render(t, [make('turn.started')], { sessionTable: { s1: { ...sessions.s1, title: long } } })
+    const [title] = byClass(byClass(linked, 'timeline-row-header')[0], 'timeline-session-title')
+    assert.equal(title.type, 'a')
+    assert.equal(title.props.title, long)
+    assert.match(classesOf(byClass(linked, 'timeline-session')[0]), /timeline-session--truncate/)
+    const plain = await render(t, [make('turn.started', { session_id: 'secret', provider: 'claude_code' })])
+    const [plainTitle] = byClass(byClass(plain, 'timeline-row-header')[0], 'timeline-session-title')
+    assert.equal(plainTitle.type, 'span')
+    assert.equal(plainTitle.props.title, 'Hidden one')
+})
+
+test('the mentions inside the wording and the author label keep the plain variant: no tooltip, no truncation', async (t) => {
+    const created = await render(t, [make('session.created', { actor: 'user', via: 'ui', data: { origin: 'twicc', spawned_by: 'parent' } })])
+    const labelled = await render(t, [make('archived.started', { actor: 'agent', via: 'cli', actor_ref: 'parent' })])
+    for (const container of [byClass(created, 'timeline-wording')[0], byClass(labelled, 'timeline-author')[0]]) {
+        const [mention] = byClass(container, 'timeline-session')
+        assert.doesNotMatch(classesOf(mention), /timeline-session--truncate/)
+        assert.equal(byClass(mention, 'timeline-session-title')[0].props.title ?? null, null)
+    }
+})
+
+test('a following row has no header, and its event line has the same indent as the head one', async (t) => {
     const root = await render(t, [make('turn.ended', { occurred_at: '2026-10-14T14:32:09.000000Z', data: { background_work: null } }), make('turn.started')], { index: 1 })
     assert.match(classesOf(byClass(root, 'timeline-row')[0]), /timeline-row--indented/)
-    assert.equal(byClass(root, 'timeline-identity').length, 0)
+    assert.equal(byClass(root, 'timeline-row-header').length, 0)
+    assert.equal(byClass(root, 'timeline-session').length, 0)
+    assert.match(classesOf(byClass(root, 'timeline-event-line')[0]), /timeline-event-line--indented/)
 })
 
-test('a hidden and archived session is plain text with both markers; an archived one keeps its link', async (t) => {
+test('an instance event is one line: no header, not indented, the instance class for its semibold wording', async (t) => {
+    const root = await render(t, [make('backend.started', { session_id: null, project_id: null, provider: null, actor: 'system', data: {} })])
+    const [row] = byClass(root, 'timeline-row')
+    assert.match(classesOf(row), /timeline-row--instance/)
+    assert.equal(byClass(root, 'timeline-row-header').length, 0)
+    const [line] = byClass(root, 'timeline-event-line')
+    assert.doesNotMatch(classesOf(line), /timeline-event-line--indented/)
+    assert.equal(byClass(line, 'timeline-time').length, 1)
+})
+
+test('every event line has its time: head, following and instance rows', async (t) => {
+    const events = [
+        make('turn.ended', { occurred_at: '2026-10-14T14:32:09.000000Z', data: { background_work: null } }),
+        make('turn.started'),
+        make('backend.started', { session_id: null, project_id: null, provider: null, actor: 'system', data: {} }),
+    ]
+    for (const index of [0, 1, 2]) {
+        const root = await render(t, events, { index })
+        const lines = byClass(root, 'timeline-event-line')
+        assert.equal(lines.length, 1, `row ${index}`)
+        assert.equal(byClass(lines[0], 'timeline-time').length, 1, `row ${index}`)
+        assert.match(textOf(byClass(lines[0], 'timeline-time')[0]), /^\d\d:\d\d$/, `row ${index}`)
+    }
+})
+
+test('the header carries no state marker: a hidden and archived session is plain text, an archived one keeps its link', async (t) => {
+    const stateIcon = (n) => n.type === 'wa-icon' && ['box-archive', 'eye-slash', 'thumbtack'].includes(n.props.name)
     const hidden = await render(t, [make('turn.started', { session_id: 'secret', provider: 'claude_code' })])
     assert.equal(sessionLinks(hidden).length, 0)
     assert.equal(textOf(byClass(hidden, 'timeline-session-title--plain')[0]), 'Hidden one')
-    assert.deepEqual(descendants(hidden, (n) => n.type === 'wa-icon' && String(n.props.class).includes('timeline-marker')).map((n) => n.props.name), ['box-archive', 'eye-slash'])
+    assert.equal(descendants(hidden, stateIcon).length, 0)
+    assert.equal(byClass(hidden, 'timeline-marker').length, 0)
     const archivedOnly = { s1: { ...sessions.s1, archived: true } }
     const archived = await render(t, [make('turn.started')], { sessionTable: archivedOnly })
     assert.equal(sessionLinks(archived).length, 1)
-    assert.deepEqual(descendants(archived, (n) => n.type === 'wa-icon' && String(n.props.class).includes('timeline-marker')).map((n) => n.props.name), ['box-archive'])
+    assert.equal(descendants(archived, stateIcon).length, 0)
+    assert.equal(byClass(archived, 'timeline-marker').length, 0)
 })
 
 test('a session with no entry shows its id as plain text', async (t) => {
@@ -112,29 +175,30 @@ test('the project name: a link on a global page, plain text for an unknown proje
     assert.equal(JSON.parse(links[1].props['data-to']).params.projectId, 'p1')
     assert.equal(sessionLinks(global).length, 1)
     assert.equal(descendants(global, (n) => n.type === 'b')[0].text, 'p1')
+    assert.equal(byClass(byClass(global, 'timeline-row-header')[0], 'timeline-project').length, 1, 'the project is on the header line')
     const unknown = await render(t, [make('turn.started', { project_id: 'gone' })])
     assert.equal(descendants(unknown, (n) => n.type === 'a').length, 1, 'the session link only')
     assert.equal(textOf(byClass(unknown, 'timeline-project--plain')[0]), 'gone')
     const worktree = await render(t, [make('turn.started')], { scope: { kind: 'worktree', projectId: 'p1' } })
     assert.equal(byClass(worktree, 'timeline-project').length, 0)
+    assert.equal(byClass(worktree, 'timeline-row-header').length, 1, 'the header stays, without the project')
 })
 
 test('the author label follows the wording, and an agent label links its session', async (t) => {
     const root = await render(t, [make('archived.started', { actor: 'agent', via: 'cli', actor_ref: 's1' })])
     assert.equal(textOf(byClass(root, 'timeline-author')[0]), 'by Fix the build (CLI)')
     assert.equal(descendants(byClass(root, 'timeline-author')[0], (n) => n.type === 'a').length, 1)
-    assert.equal(byClass(root, 'timeline-identity').length, 1)
+    assert.equal(byClass(root, 'timeline-row-header').length, 1)
 })
 
-test('the markers are on the group head only: the session of an author label and a parent carry none', async (t) => {
+test('no marker anywhere: the session of an author label and a parent carry none either', async (t) => {
     // The actor is a hidden AND archived session; the parent of session.created is archived too.
     const table = { ...sessions, parent: { ...sessions.parent, archived: true } }
     const labelled = await render(t, [make('archived.started', { actor: 'agent', via: 'cli', actor_ref: 'secret' })], { sessionTable: table })
     assert.equal(textOf(byClass(labelled, 'timeline-author')[0]), 'by Hidden one (CLI)')
-    assert.equal(descendants(byClass(labelled, 'timeline-author')[0], (n) => String(n.props.class).includes('timeline-marker')).length, 0)
+    assert.equal(byClass(labelled, 'timeline-marker').length, 0)
     const created = await render(t, [make('session.created', { actor: 'user', via: 'ui', data: { origin: 'twicc', spawned_by: 'parent' } })], { sessionTable: table })
-    assert.equal(descendants(byClass(created, 'timeline-wording')[0], (n) => String(n.props.class).includes('timeline-marker')).length, 0)
-    assert.equal(descendants(created, (n) => String(n.props.class).includes('timeline-marker')).length, 0, 'no marker anywhere: the head session is not archived')
+    assert.equal(byClass(created, 'timeline-marker').length, 0)
 })
 
 test('the parent of session.created is rendered as a session mention with its link', async (t) => {
@@ -194,4 +258,13 @@ test('strings from data are text, never markup', async (t) => {
 test('an unknown kind does not break the row', async (t) => {
     const root = await render(t, [make('plan.approved', { data: 'garbage' })])
     assert.equal(textOf(byClass(root, 'timeline-wording')[0]), 'plan.approved')
+})
+
+test('the layout CSS: a fixed time column that never wraps, a wrapping text column, a truncating header title', () => {
+    const row = readFileSync(new URL('./TimelineEventRow.vue', import.meta.url), 'utf8')
+    assert.match(row, /\.timeline-event-line \{[^}]*display: grid;[^}]*grid-template-columns: var\(--timeline-icon-width\) minmax\(0, 1fr\) auto;/)
+    assert.match(row, /\.timeline-time \{[^}]*white-space: nowrap;[^}]*font-variant-numeric: tabular-nums;/)
+    assert.match(row, /\.timeline-event-line--indented \{[^}]*padding-inline-start: calc\(var\(--timeline-provider-width\) \+ var\(--timeline-provider-gap\)\);/)
+    const mention = readFileSync(new URL('./TimelineSessionMention.vue', import.meta.url), 'utf8')
+    assert.match(mention, /\.timeline-session--truncate \.timeline-session-title \{[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/)
 })
