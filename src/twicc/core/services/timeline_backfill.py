@@ -102,3 +102,22 @@ def write_creation_rows_sync(session_id: str, *, require_computed: bool = False)
     except Exception:
         logger.exception("Timeline creation rows could not be written for session %s", session_id)
         return 0
+
+
+def write_unavailable_root_rows_sync(session_id: str) -> int:
+    """Write the creation rows of the root of ``session_id``'s tree (C9). Returns the rows inserted.
+
+    Called by the DB writer job that marks a Codex session unavailable: such a session, and the
+    root of its tree, never reach the compute's final transaction. The root is ``session_id`` itself
+    when it is a root. Only a root with a ``compute_version`` is written: the conservative proxy for
+    a stored ``created_at`` read from the file's first line (spec section 5.4). Never raises: a
+    missing session or a cyclic tree is logged and returns 0.
+    """
+    try:
+        from twicc.providers.compute_tree import resolve_native_root
+
+        root = resolve_native_root(session_id)
+        return write_creation_rows_sync(root, require_computed=True)
+    except Exception:
+        logger.exception("Timeline creation rows could not be written for the root of session %s", session_id)
+        return 0

@@ -446,8 +446,16 @@ async def apply_replace_codex_history_job_in_slices(job: ReplaceCodexHistoryJob)
     return await run_compute_sync(_finish_replace_codex_history, job)
 
 
+@transaction.atomic
 def _apply_mark_session_unavailable_job(job: MarkSessionUnavailableJob) -> int:
-    return Session.objects.filter(id=job.session_id).update(unavailable_reason=job.reason)
+    count = Session.objects.filter(id=job.session_id).update(unavailable_reason=job.reason)
+    if count and job.reason is not None:
+        # Neither this session nor the root of its tree reaches the compute's final transaction:
+        # the root's creation rows commit with the flag here (spec 2026-10-18, C9). A clearing
+        # writes nothing: the normal compute then finds the rows, or writes them itself.
+        from twicc.core.services.timeline_backfill import write_unavailable_root_rows_sync
+        write_unavailable_root_rows_sync(job.session_id)
+    return count
 
 
 @transaction.atomic
