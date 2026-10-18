@@ -166,24 +166,24 @@ def test_the_raw_batch_insert_itself_is_silent(pokes):
 
 
 def test_the_creation_rows_request_one_signal_after_commit_and_none_when_nothing_is_written(project, pokes):
-    from twicc.core.services.timeline_backfill import write_creation_rows_sync
+    from twicc.core.services.timeline_backfill import write_creation_row_sync
 
     Session.objects.create(id="a", file_path="a.jsonl", project=project, provider="codex",
                            created_at=timezone.now(), archived=True)
     with transaction.atomic():
-        assert write_creation_rows_sync("a") == 1
+        assert write_creation_row_sync("a") == 1
         assert pokes == []
     assert pokes == [1]
-    assert write_creation_rows_sync("a") == 0
+    assert write_creation_row_sync("a") == 0
     assert pokes == [1]
 
 
 def test_a_rolled_back_transaction_requests_no_signal(project, pokes):
-    from twicc.core.services.timeline_backfill import write_creation_rows_sync
+    from twicc.core.services.timeline_backfill import write_creation_row_sync
 
     Session.objects.create(id="a", file_path="a.jsonl", project=project, provider="codex", created_at=timezone.now())
     with pytest.raises(RuntimeError), transaction.atomic():
-        write_creation_rows_sync("a")
+        write_creation_row_sync("a")
         raise RuntimeError("compute failed later")
     assert pokes == [] and TimelineEvent.objects.count() == 0
 

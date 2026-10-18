@@ -4218,9 +4218,9 @@ class BaseSessionCompute:
             # title change (spec 2026-10-18, C7); inside the transaction, so a rolled-back
             # publication discards its row (§5.1). Never raises.
             if session.type == SessionType.SESSION:
-                from twicc.core.services.timeline_backfill import write_creation_rows_sync
+                from twicc.core.services.timeline_backfill import write_creation_row_sync
 
-                write_creation_rows_sync(session_id)
+                write_creation_row_sync(session_id)
 
         with timed_sync_phase('compute_final_project_directory'):
             # 9. Update project directory

@@ -133,7 +133,7 @@ def test_an_unmatched_id_through_the_job_writes_nothing(pokes):
 
 def test_a_missing_session_through_the_function_never_raises(pokes):
     with log_records_of(timeline_backfill.logger) as records:
-        assert timeline_backfill.write_unavailable_root_rows_sync("ghost") == 0
+        assert timeline_backfill.write_unavailable_root_creation_row_sync("ghost") == 0
     assert TimelineEvent.objects.count() == 0
     assert any(record.exc_info and isinstance(record.exc_info[1], Session.DoesNotExist) for record in records)
     assert pokes == []
@@ -155,14 +155,14 @@ def test_a_cyclic_tree_never_raises(project, pokes):
 def test_the_flag_and_the_rows_share_one_transaction(project, monkeypatch):
     make_computed_root(project)
     in_atomic = []
-    original = timeline_backfill.write_unavailable_root_rows_sync
+    original = timeline_backfill.write_unavailable_root_creation_row_sync
 
     def recording(session_id):
         in_atomic.append(transaction.get_connection().in_atomic_block)
         return original(session_id)
 
     # The job imports the function lazily at call time, so it reads this module attribute.
-    monkeypatch.setattr(timeline_backfill, "write_unavailable_root_rows_sync", recording)
+    monkeypatch.setattr(timeline_backfill, "write_unavailable_root_creation_row_sync", recording)
     assert mark("r") == 1
     assert in_atomic == [True]
     assert kinds("r") == ["session.created"]

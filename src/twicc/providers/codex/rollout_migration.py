@@ -453,8 +453,8 @@ def _apply_mark_session_unavailable_job(job: MarkSessionUnavailableJob) -> int:
         # Neither this session nor the root of its tree reaches the compute's final transaction:
         # the root's ``session.created`` row commits with the flag here (spec 2026-10-18, C9). A
         # clearing writes nothing: the normal compute then finds the row, or writes it itself.
-        from twicc.core.services.timeline_backfill import write_unavailable_root_rows_sync
-        write_unavailable_root_rows_sync(job.session_id)
+        from twicc.core.services.timeline_backfill import write_unavailable_root_creation_row_sync
+        write_unavailable_root_creation_row_sync(job.session_id)
     return count
 
 

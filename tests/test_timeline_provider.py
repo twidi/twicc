@@ -28,7 +28,7 @@ from twicc.core.services.session_update import (
     apply_session_archived_change, apply_session_mute_on_user_turn_change, apply_session_pinned_change,
     archive_sessions_bulk, record_settings_change,
 )
-from twicc.core.services.timeline_backfill import write_creation_rows_sync
+from twicc.core.services.timeline_backfill import write_creation_row_sync
 from twicc.core.services.timeline_boot import reconcile_at_boot
 from twicc.request_origin import UI_ORIGIN
 from tests.timeline_helpers import mark_known, run_with_direct_writes
@@ -356,8 +356,8 @@ def test_the_flag_hooks_pass_the_session_provider(project, explicit_hints, no_ag
 def test_the_backfill_writes_the_session_provider(project):
     make_session(project, "a", provider="codex", created_at=timezone.now(), archived=True)
     make_session(project, "b", provider="claude_code", created_at=timezone.now())
-    write_creation_rows_sync("a")
-    write_creation_rows_sync("b")
+    write_creation_row_sync("a")
+    write_creation_row_sync("b")
     assert dict(TimelineEvent.objects.filter(kind="session.created").values_list("session_id", "provider")) == {
         "a": "codex", "b": "claude_code",
     }
@@ -379,7 +379,7 @@ def test_guard_no_row_with_a_session_keeps_a_null_provider_after_any_writer_ran(
     record_settings_change("s1", {"effort": "low"}, {"effort": "high"})
     run_with_direct_writes(lambda: apply_session_pinned_change(session, "all"))
     _apply_visibility_flag("s1", True)
-    write_creation_rows_sync("backfilled")
+    write_creation_row_sync("backfilled")
     assert TimelineEvent.objects.filter(session_id__isnull=False).count() >= 9
     assert rows_without_provider() == []
 

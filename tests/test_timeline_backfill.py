@@ -8,7 +8,7 @@ from django.utils import timezone
 from twicc.core.models import Project, Session, SessionType, TimelineEvent
 from twicc.core.services import timeline_backfill, timeline_signal
 from twicc.core.services.session_timeline import _conflict_clause, insert_event_rows, record_event_sync
-from twicc.core.services.timeline_backfill import write_creation_rows_sync
+from twicc.core.services.timeline_backfill import write_creation_row_sync
 from tests.timeline_helpers import kinds, log_records_of, mark_known
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -24,7 +24,7 @@ def make(project, sid="s1", **kw):
 
 
 def write(sid="s1", **kw):
-    return write_creation_rows_sync(sid, **kw)
+    return write_creation_row_sync(sid, **kw)
 
 
 def test_creation_row_is_derived_from_created_at(project):
