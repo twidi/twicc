@@ -85,7 +85,9 @@ def test_workflow_regions_cross_linked_nonworkflow_intermediate():
     assert workflow.phases_cost == {'1': 5.0, '2': 4.0}
 
 
-def test_interrupted_partial_publication_retains_new_arrival_and_self_recovers(monkeypatch):
+def test_interrupted_partial_publication_retains_new_arrival_and_self_recovers(monkeypatch, settings):
+    # The writer-started consumer retries the retained queue: the test needs the autostart.
+    settings.TWICC_STATISTICS_CONSUMER_AUTOSTART = True
     from twicc.providers import db_writer, statistics_publication, statistics_runtime
     project = Project.objects.create(id='retry-integration')
     root = source('root', project, 'codex')

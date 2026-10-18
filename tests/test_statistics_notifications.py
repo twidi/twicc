@@ -117,7 +117,9 @@ def test_workflow_notification_preserves_envelope_and_failure_retains_queue(monk
 
 
 @pytest.mark.django_db(transaction=True)
-def test_startup_consumes_existing_queue_after_provider_initial_sync_failure(monkeypatch):
+def test_startup_consumes_existing_queue_after_provider_initial_sync_failure(monkeypatch, settings):
+    # The consumer the writer starts drains the queue left at boot: the test needs the autostart.
+    settings.TWICC_STATISTICS_CONSUMER_AUTOSTART = True
     from types import SimpleNamespace
     from twicc import orchestrator
     from twicc.core.models import Project, Session, StatisticsQueueEntry

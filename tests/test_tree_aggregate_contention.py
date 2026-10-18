@@ -12,7 +12,9 @@ from twicc.providers import db_writer, statistics_runtime
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-def test_400_member_publication_has_no_historical_reads_under_writer(monkeypatch):
+def test_400_member_publication_has_no_historical_reads_under_writer(monkeypatch, settings):
+    # The writer-started consumer publishes under the real writer: the test needs the autostart.
+    settings.TWICC_STATISTICS_CONSUMER_AUTOSTART = True
     project = Project.objects.create(id='contention')
     stamp = datetime(2026, 10, 14, tzinfo=UTC)
     root = Session.objects.create(id='root', project=project, provider='codex', last_updated_at=stamp)

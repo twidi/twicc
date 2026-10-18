@@ -200,6 +200,9 @@ TWICC_ALLOW_INSECURE_REMOTE = os.environ.get("TWICC_ALLOW_INSECURE_REMOTE", "").
 # a tunnel keeps asking for the password. Never set this in a .env.
 TWICC_DEV_LOCAL_BYPASS = os.environ.get("TWICC_DEV_LOCAL_BYPASS", "").strip().lower() in ("1", "true", "yes")
 
+# Start the statistics consumer with the DB writer (read when the writer loop starts; tests turn it off).
+TWICC_STATISTICS_CONSUMER_AUTOSTART = True
+
 # Session settings
 # Prefixed default (not Django's bare "sessionid"): TwiCC and a user's own dev
 # app often both run on localhost, and cookies ignore the port — a shared

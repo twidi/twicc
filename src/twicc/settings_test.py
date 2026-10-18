@@ -97,6 +97,12 @@ TWICC_PASSWORD_HASH = ""
 # pass through instead. Tests that want it opt in explicitly.
 TWICC_DEV_LOCAL_BYPASS = False
 
+# No statistics consumer started with the DB writer: on the shared-cache memory
+# DB, the consumer's concurrent queue read makes a writer's append fail at once
+# ("database table is locked"). Tests that need the real consumer with the
+# writer opt in through the ``settings`` fixture.
+TWICC_STATISTICS_CONSUMER_AUTOSTART = False
+
 # Disable logging during tests
 LOGGING = {
     "version": 1,

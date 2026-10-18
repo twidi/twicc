@@ -233,7 +233,9 @@ def test_batch_failure_keeps_every_captured_entry(monkeypatch):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_writer_owns_consumer_lifecycle(monkeypatch):
+def test_writer_owns_consumer_lifecycle(monkeypatch, settings):
+    # The writer's own start and close of the consumer: the test needs the autostart.
+    settings.TWICC_STATISTICS_CONSUMER_AUTOSTART = True
     from twicc.providers import db_writer
     module = runtime()
     events = []
@@ -256,6 +258,38 @@ def test_writer_owns_consumer_lifecycle(monkeypatch):
         await db_writer.stop_db_writer()
     asyncio.run(scenario())
     assert events == ['start', 'close']
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('autostart', [False, True])
+def test_writer_starts_the_consumer_only_when_the_autostart_setting_is_on(monkeypatch, settings, autostart):
+    from twicc.providers import db_writer
+    module = runtime()
+    settings.TWICC_STATISTICS_CONSUMER_AUTOSTART = autostart
+    started = []
+
+    class Consumer:
+        def start(self):
+            started.append(self)
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(module, 'StatisticsConsumer', Consumer)
+
+    async def scenario():
+        db_writer.start_db_writer()
+        try:
+            await db_writer.wait_db_writer_ready()
+            await turns()
+            return db_writer._statistics_consumer
+        finally:
+            await db_writer.stop_db_writer()
+    consumer = asyncio.run(scenario())
+    if autostart:
+        assert len(started) == 1 and consumer is started[0]
+    else:
+        assert started == [] and consumer is None
 
 
 def test_retry_delay_doubles_and_stops_at_sixty_seconds(monkeypatch):

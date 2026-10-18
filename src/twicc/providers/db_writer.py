@@ -2519,7 +2519,8 @@ async def _db_writer_loop() -> None:
                     future.set_exception(error)
             raise
         _db_writer_ready.set_result(None)
-        if not _db_writer_stop_event.is_set():
+        from django.conf import settings
+        if not _db_writer_stop_event.is_set() and settings.TWICC_STATISTICS_CONSUMER_AUTOSTART:
             from twicc.providers.statistics_runtime import StatisticsConsumer
             _statistics_consumer = StatisticsConsumer()
             _statistics_consumer.start()
