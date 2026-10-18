@@ -666,8 +666,8 @@ def test_final_apply_logs_remaining_subphase_timings(caplog, monkeypatch):
     assert BaseSessionCompute.apply_session_complete(message(session)).outcome == 'applied'
     phases = {record.args[0] for record in caplog.records if record.msg.startswith('Sync phase operation=')}
     assert {
-        'compute_final_plan_docs', 'compute_final_titles', 'compute_final_project_directory',
-        'compute_final_stopped_agents', 'compute_final_project_metadata',
+        'compute_final_plan_docs', 'compute_final_titles', 'compute_final_timeline',
+        'compute_final_project_directory', 'compute_final_stopped_agents', 'compute_final_project_metadata',
     } <= phases
 
 

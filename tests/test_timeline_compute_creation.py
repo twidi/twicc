@@ -102,13 +102,18 @@ def test_a_failing_timeline_step_leaves_the_compute_applied(project, pokes, monk
 
 
 def test_a_rolled_back_publication_leaves_no_row_and_no_signal(project, pokes, monkeypatch):
+    rows_before_failure = []
+
     def fail(msg):
+        rows_before_failure.append(TimelineEvent.objects.filter(session_id="s1").count())
         raise RuntimeError("late failure")
 
     monkeypatch.setattr("twicc.core.content_storage.extraction.finish_storage_result", fail)
     make(project)
     with pytest.raises(RuntimeError, match="late failure"):
         publish("s1")
+    # The rows were written inside the transaction, then discarded with its rollback.
+    assert rows_before_failure == [1]
     assert TimelineEvent.objects.count() == 0
     assert pokes == []
     assert Session.objects.get(id="s1").compute_version is None
