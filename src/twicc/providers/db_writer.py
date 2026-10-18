@@ -3061,12 +3061,11 @@ def _apply_create_session_payload(
     FK.
     """
     from twicc.providers.live_aggregates import apply_contribution_changes, session_contribution
-    from twicc.core.models import Session, SessionItem, SessionType
+    from twicc.core.models import Session, SessionItem
     from twicc.core.content_storage.ingestion import (
         initialize_ingestion_session, insert_ingested_items, prepare_ingestion_contents,
     )
     from twicc.core.content_storage.policy import CONTENT_STORAGE_VERSION
-    from twicc.core.services.session_timeline import record_session_created
     from twicc.projects import register_project_db_only
 
     if prepared is _UNPREPARED_INGESTION:
@@ -3092,9 +3091,7 @@ def _apply_create_session_payload(
         if is_new:
             payload.session.content_storage_version = CONTENT_STORAGE_VERSION
             payload.session.save()
-            # Only the writer that creates the row records its creation.
-            if payload.session.type == SessionType.SESSION:
-                record_session_created(payload.session, origin="sync")
+            # The creation row of an initial-sync session is written by its first compute (spec 2026-10-18).
         else:
             payload.session.refresh_from_db()
         initialize_ingestion_session(payload.session, invalidate=is_new, invalidate_mappings=is_new)

@@ -80,7 +80,7 @@ def test_subagent_sessions_get_no_event(project):
     assert kinds("child") == []
 
 
-def test_initial_sync_payload_records_origin_sync(project):
+def test_the_initial_sync_insert_writes_no_timeline_row(project):
     session = Session(id="synced", project_id=project.id, provider=Provider.CODEX, file_path="synced.jsonl",
                       type=SessionType.SESSION)
     payload = CreateSessionPayload(
@@ -88,8 +88,7 @@ def test_initial_sync_payload_records_origin_sync(project):
         session=session, items=[], last_offset=0, last_line=0, mtime=0.0,
     )
     _apply_create_session_payload(payload)
-    data = TimelineEvent.objects.get(session_id="synced").data
-    assert data["origin"] == "sync" and data["settings"] is None and data["spawned_by"] is None
+    assert kinds("synced") == []
 
 
 def test_deleting_sessions_purges_their_timeline_rows(project):

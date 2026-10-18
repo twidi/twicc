@@ -4212,6 +4212,16 @@ class BaseSessionCompute:
                 msg.get('placeholder_titles', {}), msg.get('provider_titles', {}), apply_provider_title,
             )
 
+        with timed_sync_phase('compute_final_timeline'):
+            # 8bis. Write the timeline creation rows of a session the timeline does not know yet.
+            # After the titles, so the first compute of a historical session records no title
+            # change (spec 2026-10-18, C7); inside the transaction, so a rolled-back publication
+            # discards its rows (§5.1). Never raises.
+            if session.type == SessionType.SESSION:
+                from twicc.core.services.timeline_backfill import write_creation_rows_sync
+
+                write_creation_rows_sync(session_id)
+
         with timed_sync_phase('compute_final_project_directory'):
             # 9. Update project directory
             project_id = msg.get('project_id')
