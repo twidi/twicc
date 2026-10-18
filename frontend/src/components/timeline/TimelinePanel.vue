@@ -25,7 +25,7 @@ import { useWorkspacesStore } from '../../stores/workspaces'
 import { getProviderHelpers } from '../../providers'
 import { compactHeight } from '../../utils/compactHeight'
 import { bindTimelineEvents } from '../../utils/timeline/liveEvents'
-import { buildTimelineRows, estimateRowHeight, isNearEnd } from '../../utils/timeline/rows'
+import { buildTimelineRows, estimateRowHeight, isEventRowKey, isNearEnd } from '../../utils/timeline/rows'
 import { createLabelsFor } from '../../utils/timeline/providerLabels'
 import { resolveTimelineScope } from '../../utils/timeline/scope'
 import { createScrollKeeper } from '../../utils/timeline/scrollKeeper'
@@ -146,7 +146,8 @@ onBeforeUnmount(() => topObserver?.disconnect())
 
 // ── Scroll: rows inserted above the view must not move it ─────────────────────────────────────────────────
 const scrollerRef = ref(null)
-const scrollKeeper = createScrollKeeper(() => scrollerRef.value)
+// Anchored on event rows only: the top room and the day separators keep their index when rows land below them.
+const scrollKeeper = createScrollKeeper(() => scrollerRef.value, { isAnchorKey: isEventRowKey })
 
 watch(items, async (next) => {
     const snapshot = scrollKeeper.capture()

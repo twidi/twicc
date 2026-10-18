@@ -11,14 +11,14 @@ import { groupHeadIdentity } from './sessions.js'
 /**
  * Estimated heights (px, at the default 16px root size) the scroller starts from, before it measures.
  *   - `event`: one event line (2rem) and a little more.
- *   - `head`: an event row that opens a session block: the air above the block (0.25rem), the top of the card
- *     (1px border, 0.5rem padding) and the header line (title, project, 1.75rem) above its event line.
+ *   - `head`: an event row that opens a session block: half of the gap between two blocks (0.5rem), the top of
+ *     the card (1px border, 0.5rem padding) and the header line (title, project, 1.75rem) above its event line.
  *   - `blockEnd`: ADDED to the row that ends a session block: the bottom of the card (0.5rem padding, 1px
- *     border) and the gap to the next block (0.75rem).
+ *     border) and the other half of the gap (0.5rem).
  *   - `band`, `nav`: the room the top row of the list keeps for the "Timeline" band and, in compact-height
  *     mode, for the navigation list above it (both are drawn over that room, see TimelinePanel.vue).
  */
-export const ROW_HEIGHT_ESTIMATES = { day: 40, event: 34, head: 75, blockEnd: 21, band: 48, nav: 96 }
+export const ROW_HEIGHT_ESTIMATES = { day: 40, event: 34, head: 79, blockEnd: 17, band: 48, nav: 96 }
 
 /**
  * @typedef {Object} DayRow
@@ -37,6 +37,11 @@ export const ROW_HEIGHT_ESTIMATES = { day: 40, event: 34, head: 75, blockEnd: 21
  * @property {boolean} last - Last event row of its group: it closes the session block (never for an instance row).
  * @property {Object|null} identity - `groupHeadIdentity` for a head, else null.
  */
+
+/** Whether a row key is an event row's (`event-<id>`), not a day separator nor the top room of the list. */
+export function isEventRowKey(key) {
+    return typeof key === 'string' && key.startsWith('event-')
+}
 
 /**
  * @param {Array<Object>} events - Newest first (`occurred_at` descending, then `id` descending).

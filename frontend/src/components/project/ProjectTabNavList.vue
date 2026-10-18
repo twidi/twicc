@@ -23,8 +23,10 @@ defineProps({
 </template>
 
 <style scoped>
+/* A flex item of the tab's scroll container (Stats tab panel, Timeline scroller): it must not be squashed. */
 .project-tab-nav {
     display: none;
+    flex-shrink: 0;
 }
 
 :where(html.compact-height) .project-tab-nav {

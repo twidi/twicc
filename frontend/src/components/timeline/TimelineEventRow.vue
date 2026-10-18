@@ -112,22 +112,22 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
     --timeline-provider-gap: var(--wa-space-xs);
     /* The event icon column: icons have their own widths (auto-width), the column keeps the text aligned. */
     --timeline-icon-width: 1.25rem;
-    /* The block card: its distance to the panel edges, its inner padding, the gap below it. */
+    /* The block card: its distance to the panel edges, its inner padding, the gap between two blocks. */
     --timeline-card-inset: var(--wa-space-m);
     --timeline-card-padding: var(--wa-space-s);
-    --timeline-block-gap: var(--wa-space-s);
+    --timeline-block-gap: var(--wa-space-m);
     padding-inline: var(--timeline-card-inset);
     font-size: var(--wa-font-size-s);
 }
 
-/* A little air above each session block (it also parts a block from an instance line above it). */
+/* The gap between two blocks, outside the cards, in the rows the scroller measures: half above the head, half below
+   the end. An instance line or a day separator between two blocks then has the same space above and below it. */
 .timeline-row--head {
-    padding-block-start: var(--wa-space-2xs);
+    padding-block-start: calc(var(--timeline-block-gap) / 2);
 }
 
-/* The gap to what follows the block, outside the card, in the row the scroller measures. */
 .timeline-row--last {
-    padding-block-end: var(--timeline-block-gap);
+    padding-block-end: calc(var(--timeline-block-gap) / 2);
 }
 
 /* The sides of the card, on every row of the block. The Orchestration cards' shadow (dark mode) is left out: a

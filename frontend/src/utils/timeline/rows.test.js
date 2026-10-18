@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { formatDaySeparatorLabel } from '../date.js'
-import { ROW_HEIGHT_ESTIMATES, buildTimelineRows, estimateRowHeight, isNearEnd } from './rows.js'
+import { ROW_HEIGHT_ESTIMATES, buildTimelineRows, estimateRowHeight, isEventRowKey, isNearEnd } from './rows.js'
 
 const GLOBAL = { kind: 'global' }
 let nextId = 1
@@ -188,6 +188,10 @@ test('a block head starts from a taller estimate (header line, top of the card);
     assert.equal(estimateRowHeight(single), ROW_HEIGHT_ESTIMATES.head + ROW_HEIGHT_ESTIMATES.blockEnd)
     assert.ok(ROW_HEIGHT_ESTIMATES.head > ROW_HEIGHT_ESTIMATES.event)
     assert.ok(ROW_HEIGHT_ESTIMATES.blockEnd > 0)
+    // Half of the 1rem gap on each side of the card (8px), the card's 1px border and its 0.5rem padding: the top of a
+    // block and its bottom take the same room, around a 1.75rem header line for the head.
+    assert.equal(ROW_HEIGHT_ESTIMATES.head - ROW_HEIGHT_ESTIMATES.event, 8 + 1 + 8 + 28)
+    assert.equal(ROW_HEIGHT_ESTIMATES.blockEnd, 8 + 1 + 8)
 })
 
 test('the next page is requested when the visible range is within ten rows of the end', () => {
@@ -197,4 +201,11 @@ test('the next page is requested when the visible range is within ten rows of th
     assert.equal(isNearEnd(5, 4), true)
     assert.equal(isNearEnd(0, 0), true)
     assert.equal(isNearEnd(100, 50, 60), true)
+})
+
+test('only the event rows have an event row key', () => {
+    const rows = build([ev('2026-10-14T12:00:00.000000Z', 'a')])
+    assert.deepEqual(rows.map((row) => isEventRowKey(row.key)), [false, true])
+    assert.equal(isEventRowKey('timeline-top'), false)
+    assert.equal(isEventRowKey(undefined), false)
 })

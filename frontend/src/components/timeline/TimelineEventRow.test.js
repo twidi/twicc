@@ -333,8 +333,13 @@ test('the block card CSS: the shared block-card look, drawn in parts across the 
     assert.equal(last.get('border-block-end'), '1px solid var(--block-card-border)')
     assert.equal(last.get('border-end-start-radius'), 'var(--wa-border-radius-m)')
     assert.equal(last.get('border-end-end-radius'), 'var(--wa-border-radius-m)')
-    // The gap to the next block is outside the card, in the row the scroller measures.
-    assert.equal(declarationsOf(style, '.timeline-row--last').get('padding-block-end'), 'var(--timeline-block-gap)')
+    // The gap between two blocks is outside the cards, in the rows the scroller measures, half above the head and half
+    // below the end: an instance line (or a day separator) between two blocks has the same space above and below it.
+    assert.equal(declarationsOf(style, '.timeline-row--head').get('padding-block-start'), 'calc(var(--timeline-block-gap) / 2)')
+    assert.equal(declarationsOf(style, '.timeline-row--last').get('padding-block-end'), 'calc(var(--timeline-block-gap) / 2)')
+    const instanceLine = declarationsOf(style, '.timeline-event-line')
+    assert.equal(instanceLine.get('padding-block'), 'var(--wa-space-2xs)', 'the instance line itself is symmetric')
+    assert.ok(!/\.timeline-row--instance \{[^}]*padding-block/.test(style), 'no extra space on one side of an instance row')
     // The Orchestration cards carry their state in a thick left border; a session block has no state to show.
     assert.ok(!/border-left|border-inline-start:\s*[2-9]/.test(style))
     // An instance row is no card, but its content lines up with the content of the cards.

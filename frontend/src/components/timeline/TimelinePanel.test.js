@@ -67,6 +67,8 @@ function createFakeScroller() {
                 // moved it names the old row, asked after it names whatever sits there then.
                 getScrollAnchor: () => (rendered[log.anchorIndex] === undefined
                     ? null : { key: rendered[log.anchorIndex], index: log.anchorIndex, offset: 7 }),
+                // Every rendered row is 30px tall.
+                get positions() { return rendered.map((key, index) => ({ key, top: index * 30, height: 30 })) },
                 // A restore also records the rows rendered at that moment: before the render they are the old ones.
                 scrollToAnchor: (anchor) => log.calls.push(['anchor', anchor, [...rendered]]),
                 scrollToTop: () => log.calls.push(['top']),
@@ -479,6 +481,8 @@ test('source pins: Stats uses the same two pieces, the navigation list above its
     const detail = readFileSync(new URL('../project/ProjectDetailPanel.vue', import.meta.url), 'utf8')
     assert.match(detail, /<wa-tab-panel name="stats">\s*<ProjectTabNavList :project-id="projectId" \/>\s*<ContributionGraphs/)
     assert.ok(!detail.includes('stats-nav-list'))
+    const nav = readFileSync(new URL('../project/ProjectTabNavList.vue', import.meta.url), 'utf8')
+    assert.match(nav, /\.project-tab-nav \{[^}]*flex-shrink: 0;/, 'a flex parent must not squash the navigation list')
     const graphs = readFileSync(new URL('../activity/ContributionGraphs.vue', import.meta.url), 'utf8')
     assert.match(graphs, /<template>\s*(?:<!--[\s\S]*?-->\s*)?<StickyBand v-if="showProviderSelect" class="provider-filter">/)
     assert.ok(!/position: sticky/.test(graphs.slice(graphs.indexOf('<style'))))
@@ -574,6 +578,23 @@ test('scrolled down, rows inserted above put the first visible row back; at the 
     signal(5)
     await settle()
     assert.deepEqual(f.scroller.log.calls.filter(([name]) => name !== 'seed'), [])
+})
+
+test('scrolled within the top room (the room row is the anchor), a live insertion puts the visible events back', async (t) => {
+    const f = fixture({ fakeScroller: true })
+    await mount(t, f)
+    f.server.respond = ((respond) => (params) => (params.afterId !== null
+        ? { events: [event(4)], has_more: false, truncated: false, latest_id: 4, sessions: {} }
+        : respond(params)))(f.server.respond)
+    // Rows: top room (0), day separator (1), event-3 (2). 20px down the room: the room row is the first visible one.
+    f.scroller.log.anchorIndex = 0
+    f.scroller.log.scrollTop = 20
+    signal(4)
+    await settle()
+    const restores = f.scroller.log.calls.filter(([name]) => name !== 'seed')
+    // The anchor is the first event row (event-3, 60px below the room top), not the room that never moves.
+    assert.equal(restores.length, 1)
+    assert.deepEqual(restores[0][1], { key: 'event-3', index: 2, offset: 7 - 60 })
 })
 
 test('source pins: the live events and the active prop are wired, useWebSocket dispatches them', () => {
