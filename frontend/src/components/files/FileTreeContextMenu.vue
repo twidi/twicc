@@ -1,5 +1,7 @@
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue'
+import { formatAttachmentSize } from '../../utils/composerAttachments'
+import { formatFullDateTime } from '../../utils/date'
 
 const props = defineProps({
     visible: { type: Boolean, default: false },
@@ -11,6 +13,9 @@ const props = defineProps({
     fullPath: { type: String, default: '' },
     writable: { type: Boolean, default: false },
     writableLoading: { type: Boolean, default: false },
+    // Size (bytes) and modification time (epoch seconds) of a file; null until known or when unavailable
+    size: { type: Number, default: null },
+    mtime: { type: Number, default: null },
     // Menu of a lazy root (see FileTreePanel `lazyRoot`): only the creation actions
     createOnly: { type: Boolean, default: false },
     // Whether "Upload files…" is offered (the owning panel has an upload origin)
@@ -35,6 +40,11 @@ const emit = defineEmits([
 const dropdownRef = ref(null)
 const triggerRef = ref(null)
 let openedByUs = false
+
+const metaLabel = computed(() => {
+    if (props.nodeType !== 'file' || props.size === null || props.mtime === null) return ''
+    return `${formatAttachmentSize(props.size)} · ${formatFullDateTime(props.mtime * 1000)}`
+})
 
 const isFilesMode = computed(() => props.mode === 'files')
 const isGitIndex = computed(() => props.mode === 'git-index')
@@ -144,6 +154,7 @@ watch([() => props.x, () => props.y], () => {
 
             <wa-dropdown-item disabled class="context-menu-header">
                 {{ nodeName }}
+                <div v-if="metaLabel" class="context-menu-meta">{{ metaLabel }}</div>
             </wa-dropdown-item>
             <wa-divider></wa-divider>
 
@@ -282,6 +293,11 @@ watch([() => props.x, () => props.y], () => {
 
 .context-menu-header {
     font-size: var(--wa-font-size-s);
+}
+
+.context-menu-meta {
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-text-quiet);
 }
 
 .copy-preview {

@@ -44,15 +44,17 @@ def get_file_meta(file_path):
     """Return lightweight metadata for a file or directory (no content read).
 
     Returns:
-        {"writable": bool, "type": "file"|"directory"}
-        or {"error": str} on failure.
+        {"writable": bool, "type": "file"|"directory", "size": int, "mtime": float}
+        (``mtime`` in epoch seconds) or {"error": str} on failure.
     """
-    if not os.path.exists(file_path):
+    try:
+        stat = os.stat(file_path)
+    except OSError:
         return {"error": "Path not found"}
     path_type = "directory" if os.path.isdir(file_path) else "file"
     parent_dir = os.path.dirname(file_path)
     writable = os.access(parent_dir, os.W_OK) and os.access(file_path, os.W_OK)
-    return {"writable": writable, "type": path_type}
+    return {"writable": writable, "type": path_type, "size": stat.st_size, "mtime": stat.st_mtime}
 
 
 def get_file_content(file_path):

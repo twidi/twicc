@@ -1063,6 +1063,8 @@ const contextMenu = ref({
     createOnly: false,
     writable: false,
     writableLoading: false,
+    size: null,
+    mtime: null,
     stagedStatus: null,
     unstagedStatus: null,
     status: null,
@@ -1091,22 +1093,31 @@ async function onContextMenu(data) {
         createOnly,
         writable: createOnly,
         writableLoading: !createOnly && props.contextMenuMode === 'files',
+        size: null,
+        mtime: null,
         stagedStatus: data.stagedStatus || null,
         unstagedStatus: data.unstagedStatus || null,
         status: data.status || null,
     }
 
-    // In files mode, check writable status via API. In git modes, skip.
-    if (createOnly || props.contextMenuMode !== 'files') return
+    // Files mode: writable status + size/mtime. Git index: size/mtime of the file on disk
+    // (a deleted file has none). Git commit: the file is not on disk, nothing to read.
+    const isFilesMode = props.contextMenuMode === 'files'
+    if (createOnly || (!isFilesMode && props.contextMenuMode !== 'git-index')) return
 
+    const metaPath = isFilesMode ? data.path : computeFullPath(data.path)
     try {
         const res = await apiFetch(
-            `${apiPrefix.value}/file-content/?path=${encodeURIComponent(data.path)}&meta_only=true`
+            `${apiPrefix.value}/file-content/?path=${encodeURIComponent(metaPath)}&meta_only=true`
         )
         if (res.ok) {
             const meta = await res.json()
             if (contextMenu.value.path === data.path && contextMenu.value.visible) {
-                contextMenu.value.writable = meta.writable
+                if (isFilesMode) contextMenu.value.writable = meta.writable
+                if (meta.type === 'file') {
+                    contextMenu.value.size = meta.size
+                    contextMenu.value.mtime = meta.mtime
+                }
             }
         }
     } catch {
@@ -1485,6 +1496,8 @@ defineExpose({
                 :create-only="contextMenu.createOnly"
                 :writable="contextMenu.writable"
                 :writable-loading="contextMenu.writableLoading"
+                :size="contextMenu.size"
+                :mtime="contextMenu.mtime"
                 :can-upload="!!uploadOrigin"
                 :mode="contextMenuMode"
                 :staged-status="contextMenu.stagedStatus"
