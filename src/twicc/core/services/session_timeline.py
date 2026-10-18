@@ -377,6 +377,10 @@ def record_session_created(
 ) -> TimelineEvent | None:
     """Write ``session.created`` and the initial flag intervals of a new row.
 
+    Called only for the rows created by the watcher's creation function (a session born while TwiCC
+    runs). The sessions found by an initial sync get their creation rows from the background compute
+    (``timeline_backfill.py``), never from here.
+
     A session created already hidden or muted gets the matching ``*.started``
     rows, same ``occurred_at``, ``caused_by`` the creation event (design §5).
     ``pinned`` is never set at creation. Sync: call from worker-thread code.

@@ -731,6 +731,7 @@ class BaseSessionsWatcher:
         from twicc.core.services.session_timeline import record_session_created
 
         origin = "twicc" if ProcessRun.objects.filter(session_id=session.id).exists() else "external"
+        # The only live writer of a creation row: sessions found by an initial sync get theirs from the compute.
         # The creating request travels with the pending attributes: this runs long after it.
         record_session_created(session, origin=origin, creator=pending.origin if pending is not None else None)
         return session
