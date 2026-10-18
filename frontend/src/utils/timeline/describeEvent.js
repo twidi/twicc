@@ -8,7 +8,8 @@
 
 import { describeAuthor } from './authorLabel.js'
 import { describeBackgroundWork } from './backgroundBadge.js'
-import { ARROW, formatClock, formatFullTime, parseOccurredAt, splitFirstLine, truncateText } from './eventTime.js'
+import { formatClock, formatFullTime, parseOccurredAt, splitFirstLine, truncateText } from './eventTime.js'
+import { arrowPart, textPart, titlePart } from './parts.js'
 import { describeSettingsChange } from './settingsDiff.js'
 import { sessionMention } from './sessions.js'
 
@@ -53,9 +54,7 @@ const SESSION_CREATED_BASE = {
 
 const TITLE_SOURCE_TAGS = { auto: 'automatic', agent: 'by the agent' }
 
-function text(value) {
-    return { type: 'text', text: value }
-}
+const text = textPart
 
 /** `map[key]` for an own key only: a reason named "constructor" must not read the prototype. */
 function lookup(map, key) {
@@ -95,17 +94,18 @@ function describeTitleChanged(event, data) {
     const next = asString(data.new)
     const previous = asString(data.old)
     const tooltip = []
-    const quote = (value, label) => {
-        const cut = truncateText(value, TITLE_MAX)
-        if (cut.truncated) tooltip.push(`${label}: ${value}`)
-        return `"${cut.text}"`
+    // A title is a value, not prose: its own part (no quotes), cut near TITLE_MAX with the full text in the tooltip.
+    const value = (title, label) => {
+        const cut = truncateText(title, TITLE_MAX)
+        if (cut.truncated) tooltip.push(`${label}: ${title}`)
+        return titlePart(cut.text)
     }
-    let wording
-    if (next === null) wording = 'Title cleared'
-    else if (previous === null) wording = `Titled ${quote(next, 'New title')}`
-    else wording = `Renamed ${quote(previous, 'Old title')}${ARROW}${quote(next, 'New title')}`
+    let parts
+    if (next === null) parts = [text('Title cleared')]
+    else if (previous === null) parts = [text('Titled '), value(next, 'New title')]
+    else parts = [text('Renamed '), value(previous, 'Old title'), arrowPart(), value(next, 'New title')]
     return {
-        icon: 'pencil', severity: 'neutral', parts: [text(wording)], tag: lookup(TITLE_SOURCE_TAGS, data.source) ?? null, tooltip,
+        icon: 'pencil', severity: 'neutral', parts, tag: lookup(TITLE_SOURCE_TAGS, data.source) ?? null, tooltip,
     }
 }
 
@@ -113,7 +113,7 @@ function describeSettings(event, data, context) {
     const provider = event.provider ?? context.sessions?.[event.session_id]?.provider ?? null
     const change = describeSettingsChange(data.changes, event.reason, context.labelsFor?.(provider) ?? null)
     return {
-        icon: 'sliders', severity: change.severity, parts: [text(change.text)],
+        icon: 'sliders', severity: change.severity, parts: change.parts,
         tooltip: change.full !== change.text ? [change.full] : [],
     }
 }
@@ -238,8 +238,8 @@ function describeTime(event, context) {
  * @property {string} kind
  * @property {string} icon - Font Awesome Free solid name.
  * @property {'neutral'|'success'|'warning'|'danger'} severity
- * @property {Array<Object>} parts - Wording segments: `{type: 'text', text}` or `{type: 'session', mention}`.
- * @property {string|null} tag - Small muted tag after the wording ("automatic", "by the agent").
+ * @property {Array<Object>} parts - Wording segments (parts.js): `text`, `title` (a value), `arrow`, `session`.
+ * @property {string|null} tag - Small tag at the end of the wording ("automatic", "by the agent").
  * @property {{text: string, title: string}|null} badge - Background-work badge of `turn.ended`.
  * @property {{first: string, rest: string}|null} detail - Monospace first line of an error, with the rest behind an expand control.
  * @property {import('./authorLabel.js').AuthorLabel} author

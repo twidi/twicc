@@ -8,8 +8,9 @@
 // `Date.parse` (milliseconds) would lose. Ordering and cursors use the string; only DISPLAY
 // converts to a Date.
 
-/** The arrow between an old and a new value ("Renamed ... -> ..."), kept in one place. */
-export const ARROW = ' -> '
+/** The arrow between an old and a new value in the PLAIN-TEXT forms (tooltips), kept in one place. The row itself
+ *  renders an arrow part (parts.js) as an icon. */
+export const ARROW = ' → '
 
 /**
  * Newest-first comparator `(occurred_at, id)` descending: negative when `a` sorts before `b`.

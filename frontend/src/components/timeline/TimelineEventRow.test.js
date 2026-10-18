@@ -5,6 +5,7 @@ import * as Vue from 'vue'
 
 import { compileComponent, descendants, flush, makeRenderer } from '../../../tests/helpers/scrollerComponentHarness.js'
 import * as describeEventModule from '../../utils/timeline/describeEvent.js'
+import * as partsModule from '../../utils/timeline/parts.js'
 import { buildTimelineRows } from '../../utils/timeline/rows.js'
 
 const RouterLink = { props: ['to'], setup: (props, { slots }) => () => Vue.h('a', { 'data-to': JSON.stringify(props.to) }, slots.default?.()) }
@@ -20,12 +21,15 @@ const Mention = compileComponent(new URL('./TimelineSessionMention.vue', import.
     '../../utils/sessionRoute': { sessionRouteLocation: (target) => ({ name: 'session', params: { projectId: 'p1', sessionId: target.id } }) },
     '../ui/ProviderIcon.vue': ProviderIcon,
 })
+const WordingPart = compileComponent(new URL('./TimelineWordingPart.vue', import.meta.url), { './TimelineSessionMention.vue': Mention })
 const Row = compileComponent(new URL('./TimelineEventRow.vue', import.meta.url), {
     'vue-router': { RouterLink },
     '../../stores/data': { useDataStore: () => dataStore },
     '../../utils/timeline/describeEvent': describeEventModule,
+    '../../utils/timeline/parts': partsModule,
     '../project/ProjectBadge.vue': ProjectBadge,
     './TimelineSessionMention.vue': Mention,
+    './TimelineWordingPart.vue': WordingPart,
 })
 
 const sessions = {
@@ -252,7 +256,7 @@ test('strings from data are text, never markup', async (t) => {
     assert.equal(descendants(root, (n) => n.type === 'img').length, 0)
     assert.ok(textOf(byClass(root, 'timeline-wording')[0]).includes(hostile))
     assert.ok(textOf(byClass(root, 'timeline-author')[0]).includes(hostile))
-    for (const file of ['TimelineEventRow.vue', 'TimelineSessionMention.vue']) {
+    for (const file of ['TimelineEventRow.vue', 'TimelineSessionMention.vue', 'TimelineWordingPart.vue']) {
         assert.ok(!readFileSync(new URL(`./${file}`, import.meta.url), 'utf8').includes('v-html'), file)
     }
 })
@@ -357,4 +361,47 @@ test('the block-card look is declared once and the Orchestration cards read it',
     const orchestration = readFileSync(new URL('../orchestration/OrchestrationPanel.vue', import.meta.url), 'utf8')
     assert.match(orchestration, /--orch-card-bg: var\(--block-card-bg\);\s*--orch-card-border: var\(--block-card-border\);\s*--orch-card-shadow: var\(--block-card-shadow\);/)
     assert.ok(!orchestration.includes('.wa-dark .orchestration-panel'), 'no second definition of the look')
+})
+
+test('a rename: the two titles are values of their own, the arrow an icon with a text alternative, the source tag at the end of the wording', async (t) => {
+    const root = await render(t, [make('title.changed', { data: { source: 'auto', old: 'Old one', new: 'New one' } })])
+    const [wording] = byClass(root, 'timeline-wording')
+    assert.ok(!textOf(wording).includes('"') && !textOf(wording).includes('->'), 'no raw quotes, no ASCII arrow')
+    const [arrow] = descendants(wording, (n) => n.type === 'wa-icon')
+    assert.deepEqual([arrow.props.name, arrow.props.label, classesOf(arrow)], ['arrow-right', 'to', 'timeline-arrow'])
+    // The order of the flow: "Renamed", old, arrow, new, then the tag, all inside the wording; the last word and the
+    // tag are glued in one box, so they wrap together.
+    const flow = wording.children.filter((n) => n.type !== '#comment' && n.type !== '#text')
+    const label = (n) => (n.type === 'wa-icon' ? 'arrow' : n.type === 'wa-tag' ? `tag:${textOf(n)}` : textOf(n))
+    assert.deepEqual(flow.map((n) => (classesOf(n) === 'timeline-tag-glue' ? n.children.filter((c) => c.type !== '#comment').map(label) : label(n))),
+        ['Renamed ', 'Old one', 'arrow', 'New ', ['one', 'tag:automatic']])
+    assert.deepEqual(byClass(wording, 'timeline-value').map(textOf), ['Old one', 'New ', 'one'], 'the glued word keeps the value style')
+    const [tag] = descendants(wording, (n) => n.type === 'wa-tag')
+    assert.deepEqual([tag.props.size, tag.props.variant, classesOf(tag)], ['small', 'neutral', 'timeline-tag'])
+    // No tag left outside the wording flow.
+    assert.equal(byClass(byClass(root, 'timeline-row-main')[0], 'timeline-tag').length, 1)
+})
+
+test('a first title and a settings change use the same parts: the value, the same arrow icon', async (t) => {
+    const titled = await render(t, [make('title.changed', { data: { source: 'user', old: null, new: 'Fresh' } })])
+    assert.deepEqual(byClass(titled, 'timeline-value').map(textOf), ['Fresh'])
+    assert.equal(byClass(titled, 'timeline-tag').length, 0)
+    const settings = await render(t, [make('settings.changed', { data: { changes: { effort: ['low', 'high'] } } })])
+    const [arrow] = descendants(byClass(settings, 'timeline-wording')[0], (n) => n.type === 'wa-icon')
+    assert.deepEqual([arrow.props.name, arrow.props.label], ['arrow-right', 'to'])
+})
+
+test('the wording CSS: a value is set apart from the prose, the arrow sits on the text, the tag flows inline', () => {
+    const row = readFileSync(new URL('./TimelineEventRow.vue', import.meta.url), 'utf8')
+    const style = row.slice(row.indexOf('<style'))
+    const part = readFileSync(new URL('./TimelineWordingPart.vue', import.meta.url), 'utf8')
+    const partStyle = part.slice(part.indexOf('<style'))
+    assert.equal(declarationsOf(partStyle, '.timeline-value').get('font-weight'), 'var(--wa-font-weight-bold)')
+    const arrow = declarationsOf(partStyle, '.timeline-arrow')
+    assert.equal(arrow.get('color'), 'var(--wa-color-text-quiet)')
+    assert.equal(arrow.get('vertical-align'), '-0.125em')
+    const tag = declarationsOf(style, '.timeline-tag')
+    assert.equal(tag.get('vertical-align'), 'baseline')
+    assert.ok(!tag.has('display') && !tag.has('flex-basis'), 'never forced onto a line of its own')
+    assert.equal(declarationsOf(style, '.timeline-tag-glue').get('display'), 'inline-block')
 })

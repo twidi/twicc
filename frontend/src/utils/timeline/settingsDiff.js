@@ -5,6 +5,7 @@
 // stores and the DOM).
 
 import { ARROW } from './eventTime.js'
+import { arrowPart, mergeTextParts, textPart } from './parts.js'
 
 /** The eight fields of the closed agent-settings bundle (the only keys a payload can carry). */
 const KNOWN_FIELDS = new Set([
@@ -41,31 +42,44 @@ function formatValue(field, value, labels) {
     return labels.choice(field, value) ?? String(value)
 }
 
+/** One change: `[before the arrow, after the arrow]`. */
 function formatChange(field, [oldValue, newValue], labels) {
     const name = labels && KNOWN_FIELDS.has(field) ? labels.field(field) : field
-    return `${name}: ${formatValue(field, oldValue, labels)}${ARROW}${formatValue(field, newValue, labels)}`
+    return [`${name}: ${formatValue(field, oldValue, labels)}`, formatValue(field, newValue, labels)]
 }
+
+const asText = ([before, after]) => `${before}${ARROW}${after}`
 
 /**
  * @param {*} changes - `data.changes`: `{field: [old, new]}`.
  * @param {string} reason - The row's `reason` column.
  * @param {SettingsLabels|null} labels
- * @returns {{text: string, full: string, severity: 'neutral'|'warning'}}
+ * @returns {{text: string, full: string, parts: Array<Object>, severity: 'neutral'|'warning'}} `text` and `full` are
+ *   the plain-text forms (tooltip); `parts` is what the row shows (parts.js), the arrow as its own part.
  */
 export function describeSettingsChange(changes, reason, labels) {
     const entries = changes && typeof changes === 'object' && !Array.isArray(changes)
         ? Object.entries(changes).filter(([, pair]) => Array.isArray(pair) && pair.length === 2)
         : []
-    if (!entries.length) return { text: 'Settings changed', full: 'Settings changed', severity: 'neutral' }
+    if (!entries.length) {
+        return { text: 'Settings changed', full: 'Settings changed', parts: [textPart('Settings changed')], severity: 'neutral' }
+    }
     const prefix = Object.hasOwn(REASON_PREFIXES, reason) ? REASON_PREFIXES[reason] : ''
     const lines = entries.map(([field, pair]) => formatChange(field, pair, labels))
-    const shown = lines.slice(0, MAX_SHOWN_CHANGES).join(', ')
+    const shownLines = lines.slice(0, MAX_SHOWN_CHANGES)
     const hidden = lines.length - MAX_SHOWN_CHANGES
+    const more = hidden > 0 ? `, +${hidden} more` : ''
+    const parts = [textPart(prefix)]
+    shownLines.forEach(([before, after], index) => {
+        parts.push(textPart(index ? `, ${before}` : before), arrowPart(), textPart(after))
+    })
+    parts.push(textPart(more))
     const permission = changes.permission_mode
     const opens = Array.isArray(permission) && OPEN_PERMISSION_MODES.has(permission[1])
     return {
-        text: `${prefix}${shown}${hidden > 0 ? `, +${hidden} more` : ''}`,
-        full: `${prefix}${lines.join(', ')}`,
+        text: `${prefix}${shownLines.map(asText).join(', ')}${more}`,
+        full: `${prefix}${lines.map(asText).join(', ')}`,
+        parts: mergeTextParts(parts).filter((part) => part.type !== 'text' || part.text !== ''),
         severity: opens ? 'warning' : 'neutral',
     }
 }

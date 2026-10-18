@@ -9,31 +9,31 @@ const labels = {
     model: (value) => ({ sonnet: 'Sonnet', opus: 'Opus' }[value] ?? value),
 }
 
-test('a change reads "<Field>: <old> -> <new>" with provider labels, joined by commas', () => {
+test('a change reads "<Field>: <old> → <new>" with provider labels, joined by commas', () => {
     const result = describeSettingsChange(
         { selected_model: ['sonnet', 'opus'], effort: ['high', 'max'] }, '', labels,
     )
-    assert.equal(result.text, 'Model: Sonnet -> Opus, Effort: High -> Max')
+    assert.equal(result.text, 'Model: Sonnet → Opus, Effort: High → Max')
     assert.equal(result.severity, 'neutral')
 })
 
 test('booleans read on/off and null reads default', () => {
     const result = describeSettingsChange({ fast_mode: [false, true], effort: [null, 'high'] }, '', labels)
-    assert.equal(result.text, 'Fast mode: off -> on, Effort: default -> High')
+    assert.equal(result.text, 'Fast mode: off → on, Effort: default → High')
 })
 
 test('an unknown provider shows raw field names and raw values, still with on/off and default', () => {
     const result = describeSettingsChange({ selected_model: ['sonnet', 'opus'], fast_mode: [true, null] }, '', null)
-    assert.equal(result.text, 'selected_model: sonnet -> opus, fast_mode: on -> default')
+    assert.equal(result.text, 'selected_model: sonnet → opus, fast_mode: on → default')
 })
 
 test('a field outside the bundle keeps its raw name and raw values even with labels', () => {
     const result = describeSettingsChange({ brand_new: ['a', 'b'] }, '', labels)
-    assert.equal(result.text, 'brand_new: a -> b')
+    assert.equal(result.text, 'brand_new: a → b')
 })
 
 test('a value with no choice label falls back to the raw value', () => {
-    assert.equal(describeSettingsChange({ effort: ['low', 'high'] }, '', labels).text, 'Effort: low -> High')
+    assert.equal(describeSettingsChange({ effort: ['low', 'high'] }, '', labels).text, 'Effort: low → High')
 })
 
 test('at most three changes are written, then "+N more"; the full text lists all', () => {
@@ -43,9 +43,9 @@ test('at most three changes are written, then "+N more"; the full text lists all
     }
     const result = describeSettingsChange(changes, '', labels)
     assert.equal(MAX_SHOWN_CHANGES, 3)
-    assert.equal(result.text, 'Model: Sonnet -> Opus, Effort: High -> Max, Permission: Default -> YOLO, +2 more')
-    assert.match(result.full, /Fast mode: off -> on/)
-    assert.match(result.full, /thinking_enabled: on -> off/)
+    assert.equal(result.text, 'Model: Sonnet → Opus, Effort: High → Max, Permission: Default → YOLO, +2 more')
+    assert.match(result.full, /Fast mode: off → on/)
+    assert.match(result.full, /thinking_enabled: on → off/)
     assert.ok(!result.full.includes('more'))
 })
 
@@ -56,14 +56,14 @@ test('exactly three changes get no "+N more"', () => {
 
 test('the reason prefixes', () => {
     const changes = { effort: ['high', 'max'] }
-    assert.equal(describeSettingsChange(changes, 'model_retired', labels).text, 'Model upgraded (retired): Effort: High -> Max')
-    assert.equal(describeSettingsChange(changes, 'set_mode', labels).text, 'Permission mode set: Effort: High -> Max')
-    assert.equal(describeSettingsChange(changes, 'switch-hybrid', labels).text, 'Hybrid switch: Effort: High -> Max')
-    assert.equal(describeSettingsChange(changes, 'something-new', labels).text, 'Effort: High -> Max')
-    assert.equal(describeSettingsChange(changes, '', labels).text, 'Effort: High -> Max')
+    assert.equal(describeSettingsChange(changes, 'model_retired', labels).text, 'Model upgraded (retired): Effort: High → Max')
+    assert.equal(describeSettingsChange(changes, 'set_mode', labels).text, 'Permission mode set: Effort: High → Max')
+    assert.equal(describeSettingsChange(changes, 'switch-hybrid', labels).text, 'Hybrid switch: Effort: High → Max')
+    assert.equal(describeSettingsChange(changes, 'something-new', labels).text, 'Effort: High → Max')
+    assert.equal(describeSettingsChange(changes, '', labels).text, 'Effort: High → Max')
     // An unknown reason has no prefix, even when it names an Object.prototype member.
     for (const reason of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
-        assert.equal(describeSettingsChange(changes, reason, labels).text, 'Effort: High -> Max', reason)
+        assert.equal(describeSettingsChange(changes, reason, labels).text, 'Effort: High → Max', reason)
     }
 })
 
@@ -77,4 +77,16 @@ test('empty, missing or malformed changes read "Settings changed"', () => {
     for (const changes of [undefined, null, {}, [], 'x', { effort: 'oops' }, { effort: ['only-one'] }]) {
         assert.equal(describeSettingsChange(changes, '', labels).text, 'Settings changed', JSON.stringify(changes))
     }
+})
+
+test('the parts: text segments with an arrow part between each old and new value, the "+N more" at the end', () => {
+    const arrow = { type: 'arrow', label: 'to' }
+    assert.deepEqual(describeSettingsChange({ effort: ['high', 'max'] }, 'set_mode', labels).parts,
+        [{ type: 'text', text: 'Permission mode set: Effort: High' }, arrow, { type: 'text', text: 'Max' }])
+    const changes = { selected_model: ['sonnet', 'opus'], effort: ['high', 'max'], permission_mode: ['default', 'yolo'], fast_mode: [false, true] }
+    assert.deepEqual(describeSettingsChange(changes, '', labels).parts, [
+        { type: 'text', text: 'Model: Sonnet' }, arrow, { type: 'text', text: 'Opus, Effort: High' }, arrow,
+        { type: 'text', text: 'Max, Permission: Default' }, arrow, { type: 'text', text: 'YOLO, +1 more' },
+    ])
+    assert.deepEqual(describeSettingsChange({}, '', labels).parts, [{ type: 'text', text: 'Settings changed' }])
 })

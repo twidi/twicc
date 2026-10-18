@@ -23,6 +23,6 @@ test('the diff uses them and falls back to the raw value when the helper has no 
     const labels = labelsFor('claude_code')
     assert.equal(
         describeSettingsChange({ effort: ['low', 'high'], selected_model: ['mystery', 'opus'] }, '', labels).text,
-        'Effort: low -> High, Model: mystery -> Opus',
+        'Effort: low → High, Model: mystery → Opus',
     )
 })

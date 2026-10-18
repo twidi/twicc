@@ -21,8 +21,10 @@ import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useDataStore } from '../../stores/data'
 import { describeEvent } from '../../utils/timeline/describeEvent'
+import { splitLastWord } from '../../utils/timeline/parts'
 import ProjectBadge from '../project/ProjectBadge.vue'
 import TimelineSessionMention from './TimelineSessionMention.vue'
+import TimelineWordingPart from './TimelineWordingPart.vue'
 
 const props = defineProps({
     /** An event row of `buildTimelineRows`. */
@@ -34,6 +36,8 @@ const props = defineProps({
 const dataStore = useDataStore()
 
 const vm = computed(() => describeEvent(props.row.event, props.context))
+// With a tag, the last word of the wording is kept apart: the two are glued and wrap together.
+const wording = computed(() => (vm.value.tag ? splitLastWord(vm.value.parts) : { lead: vm.value.parts, last: null }))
 const identity = computed(() => props.row.identity)
 // A project the store does not know (deleted) is shown as plain text, never as a broken link.
 const knownProject = computed(() => (identity.value?.projectId ? !!dataStore.getProject(identity.value.projectId) : false))
@@ -71,19 +75,18 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
         <div class="timeline-event-line" :class="{ 'timeline-event-line--indented': !row.instance }">
             <wa-icon :name="vm.icon" class="timeline-row-icon" auto-width :title="vm.tooltip"></wa-icon>
             <div class="timeline-row-main">
+                <!-- The parts of utils/timeline/parts.js. The tag is inline content of the wording, glued to its last
+                     word: they wrap together, the tag is never on a line of its own. -->
                 <span class="timeline-wording">
-                    <template v-for="(part, index) in vm.parts" :key="index">
-                        <span v-if="part.type === 'text'">{{ part.text }}</span>
-                        <TimelineSessionMention v-else :mention="part.mention" />
-                    </template>
+                    <TimelineWordingPart v-for="(part, index) in wording.lead" :key="index" :part="part" />
+                    <span v-if="vm.tag" class="timeline-tag-glue">
+                        <TimelineWordingPart v-if="wording.last" :part="wording.last" />
+                        <wa-tag size="small" variant="neutral" class="timeline-tag">{{ vm.tag }}</wa-tag>
+                    </span>
                 </span>
-                <span v-if="vm.tag" class="timeline-tag">{{ vm.tag }}</span>
                 <wa-badge v-if="vm.badge" variant="warning" appearance="outlined" class="timeline-badge" :title="vm.badge.title">{{ vm.badge.text }}</wa-badge>
                 <span v-if="vm.author.parts.length" class="timeline-author">
-                    <template v-for="(part, index) in vm.author.parts" :key="index">
-                        <span v-if="part.type === 'text'">{{ part.text }}</span>
-                        <TimelineSessionMention v-else :mention="part.mention" />
-                    </template>
+                    <TimelineWordingPart v-for="(part, index) in vm.author.parts" :key="index" :part="part" />
                 </span>
                 <span v-if="vm.detail" class="timeline-error">
                     <code class="timeline-error-line">{{ vm.detail.first }}</code>
@@ -234,7 +237,18 @@ a.timeline-project {
     text-overflow: ellipsis;
 }
 
-.timeline-tag,
+/* The last word and the tag move to the next line together. An inline block: a last word longer than the line
+   still breaks inside it (the column's overflow-wrap). */
+.timeline-tag-glue {
+    display: inline-block;
+}
+
+/* The source of the event ("automatic", "by the agent"): a small tag right after the last word of the wording. */
+.timeline-tag {
+    margin-inline-start: var(--wa-space-xs);
+    vertical-align: baseline;
+}
+
 .timeline-author {
     color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-xs);

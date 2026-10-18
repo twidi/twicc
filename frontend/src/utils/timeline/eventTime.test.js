@@ -71,6 +71,6 @@ test('splitFirstLine separates the first line from the rest', () => {
     assert.deepEqual(splitFirstLine('one\ntwo\nthree'), { first: 'one', rest: 'two\nthree' })
 })
 
-test('the arrow is one constant', () => {
-    assert.equal(ARROW, ' -> ')
+test('the arrow of the plain-text forms (tooltips) is one constant', () => {
+    assert.equal(ARROW, ' → ')
 })

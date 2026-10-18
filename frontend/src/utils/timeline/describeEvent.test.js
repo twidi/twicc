@@ -15,13 +15,19 @@ const make = (kind, fields = {}) => ({
     actor_ref: null, actor_name: null, reason: '', data: {}, session_id: 's1', project_id: 'p', provider: 'codex', ...fields,
 })
 const describe = (kind, fields, context = {}) => describeEvent(make(kind, fields), { sessions, time: TIME, ...context })
-const words = (vm) => vm.parts.map((part) => (part.type === 'text' ? part.text : `<${part.mention.title}>`)).join('')
+// Text as is, a title value in [brackets], the arrow as " → ", a session mention in <angle brackets>.
+const words = (vm) => vm.parts.map((part) => {
+    if (part.type === 'text') return part.text
+    if (part.type === 'title') return `[${part.text}]`
+    if (part.type === 'arrow') return ' → '
+    return `<${part.mention.title}>`
+}).join('')
 
 test('the 19 kinds: wording, icon and severity (section 6.1)', () => {
     const cases = [
         ['session.created', { data: { origin: 'twicc' } }, 'Session created', 'plus', 'neutral'],
-        ['title.changed', { data: { source: 'user', new: 'B', old: 'A' } }, 'Renamed "A" -> "B"', 'pencil', 'neutral'],
-        ['settings.changed', { data: { changes: { effort: ['low', 'high'] } } }, 'effort: low -> high', 'sliders', 'neutral'],
+        ['title.changed', { data: { source: 'user', new: 'B', old: 'A' } }, 'Renamed [A] → [B]', 'pencil', 'neutral'],
+        ['settings.changed', { data: { changes: { effort: ['low', 'high'] } } }, 'effort: low → high', 'sliders', 'neutral'],
         ['process.started', { data: { cause: 'new' } }, 'Process started', 'play', 'success'],
         ['process.ended', { reason: 'manual' }, 'Process stopped', 'power-off', 'neutral'],
         ['turn.started', {}, 'Turn started', 'robot', 'neutral'],
@@ -164,9 +170,9 @@ test('session.created: the parent appears once, and never next to an agent autho
 
 test('title.changed: renamed, titled, cleared, source tags', () => {
     const title = (data) => describe('title.changed', { data })
-    assert.equal(words(title({ source: 'user', old: 'A', new: 'B' })), 'Renamed "A" -> "B"')
-    assert.equal(words(title({ source: 'user', old: null, new: 'B' })), 'Titled "B"')
-    assert.equal(words(title({ source: 'user', old: '', new: 'B' })), 'Titled "B"')
+    assert.equal(words(title({ source: 'user', old: 'A', new: 'B' })), 'Renamed [A] → [B]')
+    assert.equal(words(title({ source: 'user', old: null, new: 'B' })), 'Titled [B]')
+    assert.equal(words(title({ source: 'user', old: '', new: 'B' })), 'Titled [B]')
     assert.equal(words(title({ source: 'user', old: 'A', new: null })), 'Title cleared')
     assert.equal(words(title({ source: 'user', old: 'A', new: '' })), 'Title cleared')
     assert.equal(title({ source: 'user', new: 'B' }).tag, null)
@@ -176,12 +182,29 @@ test('title.changed: renamed, titled, cleared, source tags', () => {
     assert.equal(title({ source: 'constructor', new: 'B' }).tag, null)
 })
 
+test('title.changed: the titles are value parts (no quotes), the arrow is its own part with a text alternative', () => {
+    const vm = describe('title.changed', { data: { source: 'auto', old: 'Old one', new: 'New one' } })
+    assert.deepEqual(vm.parts, [
+        { type: 'text', text: 'Renamed ' }, { type: 'title', text: 'Old one' }, { type: 'arrow', label: 'to' }, { type: 'title', text: 'New one' },
+    ])
+    assert.deepEqual(describe('title.changed', { data: { new: 'B' } }).parts, [{ type: 'text', text: 'Titled ' }, { type: 'title', text: 'B' }])
+    assert.deepEqual(describe('title.changed', { data: { old: 'A' } }).parts, [{ type: 'text', text: 'Title cleared' }])
+})
+
+test('settings.changed: the same arrow part between the old and the new value', () => {
+    const vm = describe('settings.changed', { data: { changes: { effort: ['low', 'high'], fast_mode: [false, true] } } })
+    assert.deepEqual(vm.parts, [
+        { type: 'text', text: 'effort: low' }, { type: 'arrow', label: 'to' }, { type: 'text', text: 'high, fast_mode: off' },
+        { type: 'arrow', label: 'to' }, { type: 'text', text: 'on' },
+    ])
+})
+
 test('title.changed: long titles are cut near 80 characters and the full text goes to the tooltip', () => {
     const old = 'O'.repeat(200)
     const next = 'N'.repeat(200)
     const vm = describe('title.changed', { data: { source: 'user', old, new: next } })
     // TITLE_MAX (80) counts the ellipsis: 79 characters of each title, then the ellipsis.
-    assert.equal(words(vm), `Renamed "${'O'.repeat(79)}…"${ARROW}"${'N'.repeat(79)}…"`)
+    assert.equal(words(vm), `Renamed [${'O'.repeat(79)}…] → [${'N'.repeat(79)}…]`)
     assert.ok(vm.tooltip.includes(`Old title: ${old}`) && vm.tooltip.includes(`New title: ${next}`))
     const short = describe('title.changed', { data: { source: 'user', old: 'a', new: 'b' } })
     assert.ok(!short.tooltip.includes('Old title'))
@@ -189,7 +212,7 @@ test('title.changed: long titles are cut near 80 characters and the full text go
 
 test('strings from data stay plain strings: markup is not interpreted here', () => {
     const vm = describe('title.changed', { data: { source: 'user', old: null, new: '<img src=x onerror=alert(1)>' } })
-    assert.equal(words(vm), 'Titled "<img src=x onerror=alert(1)>"')
+    assert.equal(words(vm), 'Titled [<img src=x onerror=alert(1)>]')
 })
 
 test('settings.changed: labels come from the provider of the row, then of the session', () => {
@@ -208,7 +231,8 @@ test('settings.changed: a long diff keeps all changes in the tooltip; opening pe
     const vm = describe('settings.changed', { data: { changes } })
     assert.equal(vm.severity, 'warning')
     assert.match(words(vm), /\+1 more$/)
-    assert.match(vm.tooltip, /permission_mode: default -> yolo/)
+    assert.ok(vm.tooltip.includes(`permission_mode: default${ARROW}yolo`), 'the tooltip is plain text with the arrow character')
+    assert.equal(ARROW, ' → ')
 })
 
 test('pinned: scope wording and fallbacks', () => {
